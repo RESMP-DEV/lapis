@@ -316,6 +316,10 @@ void TerminalSurface::setInteractive(bool enabled) {
     if (interactive_ == enabled)
         return;
     interactive_ = enabled;
+    if (!enabled) {
+        preedit_.clear();
+        publishFrame(false);
+    }
     setFlag(ItemAcceptsInputMethod, enabled);
     setAcceptedMouseButtons(enabled ? Qt::LeftButton : Qt::NoButton);
     setActiveFocusOnTab(enabled);

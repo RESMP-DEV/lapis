@@ -18,6 +18,10 @@
 namespace {
 void add_options(QCommandLineParser& parser) {
     parser.addHelpOption();
+    parser.addOption({QStringLiteral("new-session"),
+                      QStringLiteral("Explicitly start a new session on an unused endpoint")});
+    parser.addOption({QStringLiteral("discover"),
+                      QStringLiteral("Explicitly discover and remember an existing session")});
     parser.addOption({QStringLiteral("socket"),
                       QStringLiteral("Session service socket path (required for explicit launch)"),
                       QStringLiteral("path")});
@@ -51,6 +55,19 @@ void add_options(QCommandLineParser& parser) {
     parser.addPositionalArgument(QStringLiteral("program"),
                                  QStringLiteral("Program and literal arguments after --"),
                                  QStringLiteral("[PROGRAM ARG...]"));
+}
+bool valid_connection_options(const QCommandLineParser& parser) {
+    const bool create = parser.isSet(QStringLiteral("new-session"));
+    const bool discover = parser.isSet(QStringLiteral("discover"));
+    if (create && discover) {
+        qCritical("--new-session and --discover are mutually exclusive");
+        return false;
+    }
+    if ((create || discover) && parser.isSet(QStringLiteral("ui-preview"))) {
+        qCritical("Session actions cannot be combined with --ui-preview");
+        return false;
+    }
+    return true;
 }
 bool valid_options(const QCommandLineParser& parser) {
     const bool preview = parser.isSet(QStringLiteral("ui-preview"));
@@ -122,7 +139,7 @@ int main(int argc, char** argv) {
     parser.setOptionsAfterPositionalArgumentsMode(QCommandLineParser::ParseAsPositionalArguments);
     add_options(parser);
     parser.process(arguments);
-    if (!valid_options(parser))
+    if (!valid_options(parser) || !valid_connection_options(parser))
         return 2;
     if (qEnvironmentVariableIsEmpty("QT_VULKAN_LIB"))
         qputenv("QT_VULKAN_LIB", LAPIS_VULKAN_LIBRARY);
@@ -133,6 +150,10 @@ int main(int argc, char** argv) {
         const bool isolated = parser.isSet(QStringLiteral("ui-preview"));
         WorkspaceOptions options;
         if (!isolated) {
+            if (parser.isSet(QStringLiteral("new-session")))
+                options.mode = lapis::session::wire::AttachMode::create;
+            else if (parser.isSet(QStringLiteral("discover")))
+                options.mode = lapis::session::wire::AttachMode::discover;
             if (parser.isSet(QStringLiteral("socket")))
                 options.endpoint =
                     QFileInfo(parser.value(QStringLiteral("socket"))).absoluteFilePath();

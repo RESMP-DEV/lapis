@@ -162,6 +162,40 @@ ApplicationWindow {
             }
 
             Button {
+                id: sessionTools
+                visible: !preview.active
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                font.pixelSize: 10
+                topPadding: 0
+                bottomPadding: 0
+                text: qsTr("Session")
+                onClicked: sessionMenu.open()
+                Menu {
+                    id: sessionMenu
+                    readonly property bool available: workspace.focusedSession &&
+                        workspace.focusedSession.connectionState !== "connecting" &&
+                        workspace.focusedSession.connectionState !== "synchronizing" &&
+                        !workspace.focusedSession.inputReady
+                    MenuItem {
+                        text: qsTr("Reconnect")
+                        enabled: sessionMenu.available
+                        onTriggered: workspace.focusedSession.reconnect()
+                    }
+                    MenuItem {
+                        text: qsTr("Discover existing session")
+                        enabled: sessionMenu.available
+                        onTriggered: workspace.focusedSession.discoverSession()
+                    }
+                    MenuItem {
+                        text: qsTr("Start new session")
+                        enabled: sessionMenu.available
+                        onTriggered: workspace.focusedSession.startNewSession()
+                    }
+                }
+            }
+
+            Button {
                 id: previewTools
                 visible: preview.active
                 Layout.preferredHeight: 18
@@ -257,7 +291,7 @@ ApplicationWindow {
                 objectName: "liveTerminal"
                 anchors.margins: 18
                 document: workspace.focusedSession
-                interactive: true
+                interactive: preview.active || (document && document.inputReady)
                 focus: true
                 Component.onCompleted: forceActiveFocus()
             }

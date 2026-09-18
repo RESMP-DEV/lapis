@@ -166,7 +166,7 @@ needs them. Every first-party target uses `lapis_project_options`.
 | `services/session/src/platform/posix/` | Native descriptor ownership, then PTY launch/I/O/resize/reaping | `UniqueFd` on macOS/Linux; Qt-owned PTY launch/I/O/resize/reaping exercised on macOS |
 | `tools/terminal_probe/` | Shared headless workloads and independent Ghostty/Contour consumers | Implemented; pinned builds and eight-case replay on macOS/Linux |
 | `services/session/src/terminal/` | Wrap the selected engine's parsing, mode-aware input and screen extraction | Implemented as `lapis_terminal`; 14 behavioral cases on macOS/Linux ARM64 |
-| `services/session/include/lapis/session/` | Owned commands, session identity and snapshots for clients | Owned terminal values implemented; internal version 2 snapshot framing under `src/transport/` |
+| `services/session/include/lapis/session/` | Owned commands, session identity and snapshots for clients | Owned terminal values implemented; internal version 3 attachment/snapshot framing under `src/transport/` |
 | `services/session/src/` | Service event loop and session lifecycle, then local IPC | Separate one-terminal service with explicit argv/cwd and bounded local transport on macOS |
 | `apps/desktop/` | Minimal Qt view, input routing and terminal surface | Live enlarged shell and static carousel composition; macOS Vulkan capture |
 | `adapters/codex/` | Codex protocol mapping and attention delivery | Ordinary Codex TUI launch exercised; structured attention remains investigation |
@@ -348,24 +348,24 @@ programs or cwd overrides require `--socket`; all child arguments follow `--`.
 Fixture mode rejects launch/endpoint options and does not inspect the user's
 shell. Shell smoke injection rejects explicit launch/cwd overrides.
 
-Service IPC is now **version 2**. Before hello or input, a client sends an attach
-frame containing the protocol version and SHA-256 of a Qt_6_0 big-endian stream
-of executable path, argument list and canonical cwd. Initial/current terminal size
-is excluded so resize does not invalidate reattachment. This is launch matching,
-not a secret authentication token or a stable session identity; owner-only socket
-directory permissions provide the local access boundary. A mismatch never
-replaces the active client. At most eight handshakes wait for up to three seconds,
-with bounded input. The desktop also bounds its handshake wait and only starts a
-service for a missing/refused endpoint, not a permission error or rejected match.
+Service IPC is **version 3**. The launch fingerprint remains SHA-256 of a
+Qt_6_0 big-endian stream of executable path, arguments and canonical cwd; terminal
+size is excluded. It checks launch matching, while the session ID, service epoch
+and attachment generation establish continuity. Neither is a secret token;
+owner-only socket directory permissions provide the local access boundary.
+Mismatched candidates never replace the active client. At most eight initial
+handshakes wait three seconds, and each accepted client must acknowledge its
+first full snapshot within three seconds of attachment, including a blocked hello. The desktop bounds synchronization to
+five seconds. Only an explicit new-session action starts a service.
 
 Socket parents must be private and owned by the current user. Ordinary files,
 symlinks and live foreign listeners are rejected; existing directories are not
-chmodded. The default `runtime/desktop-v2.sock` leaves old v1 sessions alone.
+chmodded. The default `runtime/desktop-v3.sock` leaves old v1/v2 sessions alone.
 No state migration, multi-session manager or automatic service recovery is implied.
 Launch profiles, hooks and approval policies remain owned by the selected CLI.
 
 Ownership stays separated: the PTY owns the child; the service owns parsing and
-attachment; the desktop routes input after hello. `scripts/check_cli_launch.py`
+attachment; the desktop routes input after applying and acknowledging the initial screen. `scripts/check_cli_launch.py`
 exercises literal argv/cwd, resize, paste, exit, detached output, mismatches and
 malformed handshakes against real service processes. Its optional GUI and Codex
 modes add GPU captures and no-prompt TUI interaction. Actual Codex attention and
@@ -420,40 +420,38 @@ acceptance. The static cards remain review fixtures.
 
 ### Implementation queue after PR #2
 
-Planning baseline: merged `99567cb` (September 18, 2026). These are proposed
-implementation slices, not completed capabilities. The next user-visible result
+Planning baseline: merged `99567cb` (September 18, 2026). Slice A is implemented with the qualification recorded in
+[its receipt](../evidence/session-reconnect.json); the other slices remain proposed. The next user-visible result
 is a terminal that can reconnect to the same running session, show whether its
 state is current, and refuse input aimed at an obsolete attachment. The following
 work makes that terminal usable with native input and real TUIs. Keep
 milestone 1 open until its acceptance below is exercised.
 
-| Order | Reviewable slice and owner | Acceptance result |
+| Order | Reviewable slice | Acceptance result |
 | --- | --- | --- |
-| A: start here | Session identity and safe attachment; shared contributors | GUI reconnect preserves session identity and child; a replaced attachment cannot send input; input stays disabled until the initial authoritative screen is applied; service replacement is reported distinctly |
-| B1: parallel with A | Cell layout and font fidelity; shared contributors | Wide/combining characters, fallback fonts, styles and cursor placement match the engine grid through resize; real shell/TUI captures reproduce the cases |
-| B2: after B1 | Native input and first responsiveness measurements; shared contributors | Real keyboard, paste and IME composition/cancellation work without losing input ownership; selection/clipboard/accessibility gaps are explicitly exercised or remain open; correlated input/service/frame measurements report p50/p95/p99 and their endpoint limits |
-| C: after A | Bounded older history; service owner | Recent screen stays warm while older history is stored under per-session/global quotas; scrollback retrieval, eviction, disk-full and interrupted-write recovery remain bounded and preserve the live screen |
-| D: minimal Linux qualification | Platform/verification owner, integrating A through C and native input fixes | Named Linux host, display stack and driver exercise PTY lifecycle, real Vulkan rendering, input, resize and detach/reattach; a headless or software-only result does not qualify the GPU desktop |
+| A: implemented | Session identity and safe attachment | GUI reconnect preserves session identity and child; a replaced attachment cannot send input; input stays disabled until the initial authoritative screen is applied; service replacement is reported distinctly |
+| B1: next | Cell layout and font fidelity | Wide/combining characters, fallback fonts, styles and cursor placement match the engine grid through resize; real shell/TUI captures reproduce the cases |
+| B2: after B1 | Native input and first responsiveness measurements | Real keyboard, paste and IME composition/cancellation work without losing input ownership; selection/clipboard/accessibility gaps are explicitly exercised or remain open; correlated input/service/frame measurements report p50/p95/p99 and their endpoint limits |
+| C: after A | Bounded older history | Recent screen stays warm while older history is stored under per-session/global quotas; scrollback retrieval, eviction, disk-full and interrupted-write recovery remain bounded and preserve the live screen |
+| D: minimal Linux qualification | Integrate A through C and native input fixes | Named Linux host, display stack and driver exercise PTY lifecycle, real Vulkan rendering, input, resize and detach/reattach; a headless or software-only result does not qualify the GPU desktop |
 
 B1 can land before A because the owned `TerminalSnapshot` value contract remains
 its boundary. Linux build/dependency investigation and Codex observation-route
 research can also start independently. Final Linux acceptance follows integration;
 a remote compute host or headless container alone cannot supply native desktop
 input evidence. Record the actual host/display prerequisites before scheduling
-that acceptance. No calendar estimate is assigned until the new contributor's
-scope and the qualification host are established.
+that acceptance. No calendar estimate is assigned until the shared implementation scope and
+qualification host are established.
 
 #### First implementation PR: session identity and input readiness
 
-The current v2 hello carries only protocol version and child PID. The desktop
-marks itself ready on hello, before receiving the initial screen; disconnect ends
-the current connection, and a new launch can create a replacement service. The
-launch fingerprint verifies executable/arguments/cwd, not session continuity.
-Extend this one-session path before building a session registry or more live cards.
+Wire v3 extends the one-session path with identity and readiness; there is no
+session registry or additional live card. The v2 launch fingerprint alone could
+not distinguish the original child from a replacement at the same endpoint.
 
-Proposed minimum contract for the next PR:
+Implemented contract:
 
-- A service-issued session ID remains stable for the running session across GUI
+- A session ID remains stable for the running session across GUI
   detach/reattach. A fresh service incarnation has a fresh epoch; the PID is
   diagnostic data, never the authority for identity. Reopening an ended session
   must not silently present a newly launched child as the old session.
@@ -480,15 +478,43 @@ Proposed minimum contract for the next PR:
 - Introduce wire v3 for the incompatible identity envelope. Leave running v2
   endpoints untouched and use a separate default endpoint. Test both version
   mismatch directions. Shared serialization and client/server behavior land
-  together; the exact field encoding is settled in the implementation PR.
+  together. Encoding is specified below.
 
-Extend the existing service harness and protocol cases with two successive GUI
-attachments, stale-generation input/resize, fragmented handshakes, disconnect
-before the first snapshot, slow/non-reading clients, and a service replacement
-at the same endpoint. Assert the original child's identity and continued output
-for GUI loss, and absence of stale input on the replacement. Exercise atomic paste
-rejection and queue overflow without silently dropping control events. These are
-planned additions to existing suites, not claims of current coverage.
+The wire uses big-endian integers and nonzero raw 16-byte UUIDs. Attach contains
+u32 version, fingerprint[32], u8 mode (discover/reconnect/create), expected
+session[16] and epoch[16]. Missing expected fields are zeros on the wire. Discover
+requires both missing; reconnect requires both; create requires only session.
+An attachment tuple is session[16], epoch[16], u64 nonzero generation. Hello is
+u32 version, tuple, u64 child PID. Snapshot is tuple, u64 publication sequence,
+then the existing terminal snapshot encoding. Text, paste, key and resize carry
+the tuple before their existing payload (maximum 64 KiB). Ready acknowledges the
+tuple and first applied sequence. Typed status distinguishes rejection, ended,
+replaced and overload. Full frames remain bounded to 8 MiB. Publication sequences
+can skip coalesced terminal revisions; the client rejects duplicate/regressing
+sequences and mismatched tuples.
+
+`--new-session` generates a creation ID and passes it to the detached service;
+that service creates a fresh epoch. A racing creator cannot adopt or displace a
+service with another ID. Default launch reads `<socket>.session`: a 73-byte hint
+(`LAPIS-S1\n`, session[16], epoch[16], fingerprint[32]), owned by the current user,
+regular, singly linked and mode 0600. Writes sync a temporary file and atomically
+rename it. The desktop performs the synced write on a bounded Qt worker pool;
+its completion is checked against the current attachment before enabling input.
+Retired sockets can drain a final status for up to one second, with at most eight
+retired sockets retained. A non-reading peer may see EOF before the final status.
+This is an identity hint, not durable process recovery. Explicit
+discovery may replace corrupt contents only in a safe file. A GUI reconnect
+makes at most 30 connection attempts, 100 ms apart, with no automatic retry after
+an established connection is lost. Unsynchronized input is rejected, not buffered.
+
+The service harness exercises successive attachments, stale-generation text and
+resize, fragmented handshakes, pre-ready input, missing acknowledgements,
+non-reading clients, bounded PTY input overflow, atomic oversized paste rejection
+and replacement at the same endpoint. A separate real Qt socket fixture exercises
+desktop synchronization, loss before the first screen, explicit discovery,
+descriptor reuse, stale snapshots and old-server rejection. GUI capture fixtures
+close and reopen against the same child. Neither these nor fake-server tests
+qualify physical keyboard or IME behavior.
 
 Acceptance commands are `python3 scripts/check_cpp.py dev`,
 `python3 scripts/check_cpp.py desktop` and

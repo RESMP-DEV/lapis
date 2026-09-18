@@ -26,8 +26,8 @@ incomplete.**
 | Component | Exercised | Remaining |
 | --- | --- | --- |
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
-| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS | Linux service qualification, recovery identities, disk-backed history |
-| Local transport | Version 2 launch-matching attachment, bounded frames/snapshots and malformed-message rejection without displacing the active client | Attachment generations, hostile/slow-client and failure recovery cases |
+| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS | Linux service qualification, recovery after service loss, disk-backed history |
+| Local transport | Version 3 identity/epoch/generation attachment, restored-screen input gating, bounded queues and explicit reconnect | Automatic recovery policy and multi-session registry |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact window captures on M4 Max via MoltenVK | Full shaping, IME, selection, accessibility, Linux GUI and latency/frame qualification |
 | UI iteration and attention fixture | Isolated source-QML reload, PNG captures, LLDB launch/attach, compact header and finite red cue replay | Maintainer visual review, rebindable navigation and real attention integration |
 | Codex integration | Direct TUI launch, no-prompt editing/navigation/paste/resize, normal/compact GPU captures and same-child reattachment; separate schema/init/list probe | Real model-turn attention requests, responses and source reconnect handling |
@@ -48,8 +48,8 @@ The [launch receipt](evidence/cli-launch.json) records the exercised macOS scope
 dated sanitizer limitations. The [PR #2 repair](evidence/pr2-review.json) resolves
 the renderer TSan reports and records subsequent review fixes. The
 [merge preparation receipt](evidence/pr2-merge.json) covers cursor presentation,
-descendant cleanup and contributor/test procedures. Session identity/recovery,
-terminal fidelity, disk history
+descendant cleanup and contributor/test procedures. The [session reconnect receipt](evidence/session-reconnect.json) records identity binding,
+input readiness and failure-boundary checks. Terminal fidelity, disk history
 and Linux qualification remain in the
 [ordered plan](docs/architecture.md#next-complete-persistent-terminal-acceptance).
 The [Codex route comparison](adapters/codex/README.md#integration-route-comparison)
@@ -68,29 +68,34 @@ just ui-check     # Bounded preview captures and failure cases
 just cli-check    # Dedicated CLI/service/GUI acceptance fixtures
 ```
 
-The shell starts in this checkout. Closing the window detaches it; reopening
-reattaches to the same service-owned shell. Type `exit` to end the shell. The
-current preview allows one attached window per socket endpoint. Builds stay under
-`build/`; its owner-only local socket and service log stay under `runtime/`.
-An additional window replaces the previous attachment. A service failure is not
-GUI detachment: the current client reports disconnection and does not automatically
-recover the session. Reopening after the service has exited starts a new shell.
+On first use, choose **Session → Start new session**. The shell starts in this
+checkout. Closing the window detaches it; reopening verifies the saved identity
+and restores the same service-owned shell. Input stays disabled until its screen
+is restored. Type `exit` to end the shell. An additional window replaces the
+previous attachment; there is still one attached window per socket.
+
+The Session menu offers Reconnect, Discover existing session, and Start new
+session after disconnection. Reconnect never starts another process or replays
+unsent input. If the old service ended or the endpoint now belongs to another
+session, choose an explicit action. Builds stay under `build/`; private sockets,
+logs and the bounded `.session` identity hint stay under `runtime/`.
 
 To launch Codex directly in its own persistent terminal:
 
 ```sh
 build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop \
-  --socket "$PWD/runtime/codex.sock" --cwd "$PWD" -- codex --no-daemon
+  --new-session --socket "$PWD/runtime/codex-v3.sock" --cwd "$PWD" -- codex --no-daemon
 ```
 
-Repeat the same command to reattach. `--no-daemon` selects a Codex backend owned
+Repeat without `--new-session` to reconnect. Use `--discover` only to explicitly
+adopt an existing matching session when no usable saved identity exists. `--no-daemon` selects a Codex backend owned
 by that TUI; it is an explicit choice for this example, not a lapis default.
 Other executables and literal arguments work after `--`. Explicit programs or
 `--cwd` require `--socket`; a launch mismatch is rejected before replacing the
 existing window. No hooks or approval settings are changed. There is still one
 live pane per window; its other cards remain fixtures.
 
-The new default socket is `runtime/desktop-v2.sock`. Older v1 sessions are not
+The default socket is `runtime/desktop-v3.sock`. Older v1/v2 sessions are not
 migrated or terminated by this build. See the
 [qualification procedure](CONTRIBUTING.md#cli-integration-qualification) for the
 optional no-prompt Codex check and current limits.

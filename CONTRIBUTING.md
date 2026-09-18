@@ -46,12 +46,14 @@ SHA and log before mixing repairs into a large change.
 
 ### Large changes and parallel contributors
 
-Agree on a compact task brief before implementation: objective and milestone,
-owner, allowed files, dependencies, shared interface/version, acceptance commands
-and integration owner. Use the [ownership boundaries](docs/architecture.md#component-ownership)
-to divide work. Root CMake files, shared headers, architecture and status docs need
-one coordinating owner; reserve overlapping edits explicitly. Independent work
-can proceed in separate worktrees from the same committed baseline.
+Contributors share ownership and work together on the same feature. Agree on a
+compact task brief: objective, milestone, current editing scope, dependencies,
+shared interface/version and acceptance commands. Use the
+[component boundaries](docs/architecture.md#component-ownership) to preserve
+interfaces, not to assign permanent contributor roles. Coordinate overlapping
+edits to root CMake files, shared headers, architecture and status docs. Temporary
+worker scopes prevent collisions; separate worktrees are useful when independent
+changes need isolated builds.
 
 For sweeping changes, open reviewable checkpoints that keep `main` buildable.
 Separate mechanical moves from behavior changes where practical. Settle the
@@ -208,7 +210,7 @@ For a repeatable visual/input check:
 
 ```sh
 build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop \
-  --smoke-input --capture "$PWD/build/window.png"
+  --new-session --smoke-input --capture "$PWD/build/window.png"
 ```
 
 This opens a real window, clears a harmless partial command with Control-U, sends
@@ -238,14 +240,23 @@ by these C++ presets; a passing test is not coverage of those implementations.
 
 ### CLI integration qualification
 
-The default desktop launches `$SHELL -i` (or `/bin/sh -i`) in the checkout.
+The shell launch specification is `$SHELL -i` (or `/bin/sh -i`) in the checkout.
+First use requires **Session → Start new session** or `--new-session`.
+Subsequent launches without that flag reconnect using the saved identity; they
+never create a replacement process. `--discover` explicitly adopts an existing
+matching service. Both flags are mutually exclusive and unavailable in fixture mode.
 Use `--socket PATH --cwd DIRECTORY -- PROGRAM ARG...` for an explicit launch.
 Arguments are literal; use `--` to separate lapis options from the child's options.
-Repeat the same launch to reattach; changing executable/argv/cwd on an occupied
+Repeat the same launch without `--new-session` to reattach; changing executable/argv/cwd on an occupied
 endpoint is rejected. A socket parent must be owned by you and private (0700).
 Existing directories/files are not repurposed. Logs are written beside each
-socket as `<socket>.log`. The default endpoint is `runtime/desktop-v2.sock`;
-old v1 sessions stay untouched.
+socket as `<socket>.log`. The default endpoint is `runtime/desktop-v3.sock`;
+old v1/v2 sessions stay untouched. The `<socket>.session` hint is a private 0600
+regular file containing session ID, epoch and launch fingerprint. A missing or
+corrupt hint disables implicit attachment. Explicit discovery can replace corrupt
+contents in a safe file; unsafe modes, symlinks or hardlinks require repair first.
+The service identity is always checked live. After the service ends, choose Start
+new session explicitly; an occupied endpoint will be rejected, preserving its child.
 
 Run `just cli-check` for isolated service and GUI fixtures. For the optional
 installed Codex test:
@@ -262,8 +273,8 @@ and quits from the empty composer with Ctrl-D.
 It does not send Enter or start a model turn. Service IPC drives those Codex inputs;
 the separate shell smoke drives Qt key events. No physical-key, IME or attention
 claim follows. Logs/captures stay in a unique directory beside the receipt; runtime
-sockets use a fresh private directory. The [saved receipt](evidence/cli-launch.json)
-delimits this checkpoint.
+sockets use a fresh private directory. The [launch receipt](evidence/cli-launch.json) and
+[reconnect receipt](evidence/session-reconnect.json) delimit the exercised scope.
 
 Read-only Codex inventory can be repeated now, without starting a model turn:
 
@@ -446,13 +457,17 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `session-platform-ownership` | Headless and desktop | POSIX descriptor ownership and moves |
 | `terminal-behavior` | Headless and desktop | Ghostty parsing, snapshots, history, resize and mode-aware input |
 | `launch-spec` | Desktop-enabled | Literal launch validation and private endpoint rules |
-| `local-protocol` | Desktop-enabled | Framing, bounds, snapshots and invalid messages |
+| `local-protocol` | Desktop-enabled | v3 identity envelopes, framing, bounds, snapshots and invalid messages |
+| `session-descriptor` | Desktop-enabled | Private identity hint, atomic replacement, corruption and unsafe-file rejection |
+| `live-connection` | Desktop-enabled | Screen-before-input, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
 | `ui-preview` | Desktop-enabled | Qt reload, attention, input and render lifecycle |
 
-`just desktop` runs these seven suites plus static checks. The separate Python
+`just desktop` runs these nine suites plus static checks. The separate Python
 GUI harness checks five preview captures and three expected failures. The CLI
-harness checks detached service behavior; `--desktop` adds Qt-to-shell input and
+harness checks detached service behavior, attachment generations, fragmented
+handshakes, synchronization timeout, stale controls, bounded queue failure and
+replacement identities; `--desktop` adds Qt-to-shell input and
 captures, and optional `--codex` adds the installed no-prompt TUI acceptance.
 A screenshot, a headless suite and a real agent approval round trip prove different
 things. See [CLI qualification](#cli-integration-qualification) for the latter gap.
@@ -463,6 +478,9 @@ rerun the failing suite, then rerun the relevant complete check on the final dif
 For a capture watchdog failure, inspect its log and window activation/frame
 prerequisites; stop competing GUI checks and reproduce that case in isolation.
 Preserve the original failure even if a clean run subsequently passes.
+For process-group cleanup, poll for `ESRCH`; a temporary macOS `EPERM` is
+not proof that the group disappeared. The test retains PID, errno and elapsed
+time in its failure diagnostic.
 Do not weaken assertions, add broad suppressions or count an expected-failure
 probe as a pass unless its expected diagnostic was observed. Raw CMake/CTest
 commands below do not run format, clang-tidy or Cppcheck; `just desktop` supplies
@@ -493,7 +511,7 @@ python3 scripts/check_cli_launch.py --build-dir build/desktop-asan \
 Repeat those configure/build/test/harness commands with preset `tsan` and all
 `desktop-asan` paths changed to `desktop-tsan`. Do not combine instrumentation or
 use `ctest --preset asan` for the custom directory: that preset targets
-`build/asan`. Each desktop-enabled directory must list all seven suites above.
+`build/asan`. Each desktop-enabled directory must list all nine suites above.
 Use the same LLVM installation for normal and instrumented builds. Ccache is
 optional (`-DCMAKE_CXX_COMPILER_LAUNCHER=...`); raw CMake does not discover it.
 Reduce `--parallel` for host resource limits. The CLI command above runs service
