@@ -127,10 +127,13 @@ void envelope_messages() {
     Terminal terminal({20, 4});
     const auto decoded = terminal.snapshot();
     const auto encoded = wire::encode_snapshot(decoded);
-    const wire::SnapshotMessage snapshot_message{attachment, quint64{7}, decoded};
+    const wire::SnapshotMessage snapshot_message{attachment, quint64{7}, decoded, {100, 110, 120}};
     const QByteArray encoded_snapshot_message = wire::encode_snapshot_message(snapshot_message);
     const auto decoded_snapshot_message = wire::decode_snapshot_message(encoded_snapshot_message);
-    require(encoded_snapshot_message.size() == 48 + encoded.size());
+    require(decoded_snapshot_message.timing.pty_read_ns == 100 &&
+            decoded_snapshot_message.timing.parse_end_ns == 110 &&
+            decoded_snapshot_message.timing.publish_ns == 120);
+    require(encoded_snapshot_message.size() == wire::snapshot_header_bytes + encoded.size());
     require(decoded_snapshot_message.attachment == attachment &&
             decoded_snapshot_message.sequence == 7 &&
             wire::encode_snapshot(decoded_snapshot_message.snapshot) == encoded);

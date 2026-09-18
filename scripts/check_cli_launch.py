@@ -172,7 +172,7 @@ class WireClient:
         sequence = struct.unpack_from(">Q", data, 40)[0]
         require(sequence > self.sequence, "Snapshot sequence did not advance")
         self.sequence = sequence
-        return decode_snapshot(data[48:])
+        return decode_snapshot(data[72:])
 
     def snapshot(self, predicate=lambda _: True, timeout=WAIT):
         deadline = time.monotonic() + timeout

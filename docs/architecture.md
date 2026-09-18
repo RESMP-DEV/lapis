@@ -485,7 +485,10 @@ README status table and a sanitized receipt; do not create another roadmap.
 The active implementation stays on a feature branch until the complete milestone
 has been exercised; PR creation is deferred at the maintainer's request.
 Wire v4 adds attachment-bound, request-correlated history paging independently of
-live snapshot sequence. Older v3 endpoints remain running and are rejected by new
+live snapshot sequence. Snapshot envelopes carry monotonic nanosecond timestamps
+for the most recent PTY read, parse completion and publication; zero means no PTY
+output has been observed. Desktop measurement reports native/Qt input receipt,
+snapshot application and the correlated frameSwapped proxy separately. Older v3 endpoints remain running and are rejected by new
 clients rather than adopted silently. Historical pages are read-only and retain
 their original cell geometry; returning to Live restores the latest warm screen.
 History browsing must not resize the child or receive terminal input.

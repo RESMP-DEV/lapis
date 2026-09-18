@@ -156,17 +156,23 @@ QByteArray encode_snapshot_message(const SnapshotMessage& message) {
     check(message.sequence != 0);
     QByteArray result = encode_attachment(message.attachment);
     append_quint64(result, message.sequence);
+    append_quint64(result, message.timing.pty_read_ns);
+    append_quint64(result, message.timing.parse_end_ns);
+    append_quint64(result, message.timing.publish_ns);
     result += encode_snapshot(message.snapshot);
     return result;
 }
 SnapshotMessage decode_snapshot_message(const QByteArray& payload) {
-    check(payload.size() > 48);
+    check(payload.size() > snapshot_header_bytes);
     const unsigned char* cursor = reinterpret_cast<const unsigned char*>(payload.constData());
     SnapshotMessage result;
     result.attachment = decode_attachment(cursor);
     result.sequence = read_quint64(cursor);
     check(result.sequence != 0);
-    result.snapshot = decode_snapshot(payload.sliced(48));
+    result.timing.pty_read_ns = read_quint64(cursor);
+    result.timing.parse_end_ns = read_quint64(cursor);
+    result.timing.publish_ns = read_quint64(cursor);
+    result.snapshot = decode_snapshot(payload.sliced(snapshot_header_bytes));
     return result;
 }
 QByteArray encode_history_request(const HistoryRequest& request) {

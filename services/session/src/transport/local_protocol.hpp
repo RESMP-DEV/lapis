@@ -44,10 +44,17 @@ struct Hello {
     Attachment attachment;
     quint64 pid{};
 };
+struct SnapshotTiming {
+    quint64 pty_read_ns{};
+    quint64 parse_end_ns{};
+    quint64 publish_ns{};
+};
+constexpr qsizetype snapshot_header_bytes = 72;
 struct SnapshotMessage {
     Attachment attachment;
     quint64 sequence{};
     TerminalSnapshot snapshot;
+    SnapshotTiming timing{};
 };
 enum class HistoryDirection : quint8 { older = 0, newer = 1 };
 struct HistoryRequest {
@@ -90,7 +97,8 @@ struct Status {
 // Hello: BE u32 version, attachment[40], BE u64 child PID.
 [[nodiscard]] QByteArray encode_hello(const Hello& hello);
 [[nodiscard]] Hello decode_hello(const QByteArray& payload);
-// Snapshot: attachment[40], BE u64 sequence, existing snapshot encoding.
+// Snapshot: attachment[40], BE u64 sequence, three monotonic BE u64 timestamps,
+// existing snapshot encoding. Zero timing means no observed PTY output yet.
 [[nodiscard]] QByteArray encode_snapshot_message(const SnapshotMessage& message);
 [[nodiscard]] SnapshotMessage decode_snapshot_message(const QByteArray& payload);
 // Text/paste/key/resize: attachment[40], existing payload (at most 64 KiB).
