@@ -2,10 +2,9 @@
 
 This is the single implementation plan for lapis. See the
 [current status](../README.md#current-status) for what has been implemented and exercised.
-The target platforms are macOS and Linux. The immediate milestone is **one
-persistent terminal session on macOS**, followed by Linux terminal qualification.
-The headless engine has already been exercised on Linux; the session service and
-desktop have not.
+macOS is the active target. The immediate milestone is **one persistent terminal
+session on macOS**. A Linux desktop port is deferred; the headless engine has
+already been exercised on Linux, but the session service and desktop have not.
 
 ## Product philosophy
 
@@ -28,7 +27,8 @@ initial design choices, not a new animation framework or measured performance cl
 Design for high-end M-series machines (Pro/Max/Ultra class), with this M4 Max,
 128 GB unified memory and 120 Hz display mode as the initial reference. These
 are observed reference-machine properties, not minimum specifications or measured
-lapis performance. Linux will need its own named hardware/workload reference.
+lapis performance. If Linux is ported later, it will need its own named
+hardware/workload reference.
 Aim at 120 Hz on capable displays and follow higher refresh rates where qualified.
 
 Use RAM generously to buy immediate switching: retain every live terminal's
@@ -83,11 +83,11 @@ for ownership, shared contracts and integration checks across large changes.
 
 | Topic | Current position | Decision gate |
 | --- | --- | --- |
-| Platform | macOS first; Linux required next | Check Linux during engine selection; qualify its minimal GUI before expanding the desktop |
-| Desktop | C++20 and Qt 6.11.2 Quick with public QSGTextNode terminal drawing | macOS Vulkan visual checkpoint exercised; Linux and performance qualification remain |
+| Platform | macOS active; Linux desktop deferred | Keep portable platform boundaries; qualify Linux separately if and when the port is scheduled |
+| Desktop | C++20 and Qt 6.11.2 Quick with public QSGTextNode terminal drawing | macOS Vulkan visual checkpoint exercised; macOS performance qualification remains |
 | Engine | Pinned Ghostty `libghostty-vt` selected for the first adapter | Eight-case macOS/Linux replay passes; isolate unstable C API and resolve dependency-notice gaps |
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
-| Transport | Version 2 local framing, launch matching and bounded owned snapshots for one terminal | Add stable service/session identities, attachment generations and failure recovery |
+| Transport | Version 3 local framing with session/epoch/generation identity, readiness and bounded owned snapshots | Automatic recovery policy and multi-session registry remain |
 | Codex mode | Keep the ordinary TUI under a PTY first; evaluate hooks or attachment to its actual server for attention | Installed CLI advertises remote/daemon options; qualify delivery and response ownership before choosing a route |
 
 The [research receipt](../evidence/terminal-research.json) retains pinned upstream
@@ -112,7 +112,7 @@ The preferred common GPU path to qualify is Vulkan:
 | Platform | GPU paths to qualify | Priority |
 | --- | --- | --- |
 | macOS | Vulkan through MoltenVK, which translates to Metal | First implementation |
-| Linux | Vulkan through the GPU driver | Required next platform |
+| Linux | Vulkan through the GPU driver | Deferred port; not claimed or currently scheduled |
 
 macOS has no native Vulkan driver; [MoltenVK](https://github.com/KhronosGroup/MoltenVK)
 supplies a portability implementation over Metal and converts SPIR-V shaders.
@@ -138,9 +138,9 @@ Qt's default macOS transaction layer produced five-second display-lock stalls in
 this Vulkan window. Setting `QT_MTL_NO_TRANSACTION=1` selected the plain
 CAMetalLayer path and removed the warnings in the same threaded-render-loop
 capture. This workaround is isolated to macOS startup and tied to Qt 6.11.2;
-revalidate it on upgrades. Linux rendering, continuous resize, presentation timing
-and packaging still need qualification. Compare native Metal if later matched
-measurements warrant it; no second custom renderer is needed for that comparison.
+revalidate it on upgrades. Continuous resize, presentation timing and packaging
+still need qualification. Linux rendering, if scheduled later, needs its own evidence. Compare native Metal if later matched measurements warrant it; no
+second custom renderer is needed for that comparison.
 
 Avoid OpenGL-only `QQuickFramebufferObject` and upstream private renderer APIs.
 Use [Qt's backend selection](https://doc.qt.io/qt-6/qtquick-visualcanvas-adaptations.html)
@@ -269,7 +269,7 @@ split paste/IME operations. Selecting a session never sends a response.
 
 Keep real attention adapters, automatic carousel movement, multiple live sessions
 and prompt/approval routing out of this fixture. Complete persistent-terminal
-acceptance and qualify the minimal Linux view before expanding the live workspace.
+acceptance before expanding the live macOS workspace.
 
 For parallel changes, commit the shared contract first and assign disjoint files
 with one coordinator/build owner. Preview hosting lives in `ui_preview.*`, layout
@@ -392,8 +392,8 @@ See the [review repair receipt](../evidence/pr2-review.json) and
 
 #### Remaining terminal acceptance
 
-Close these dependent gaps before expanding the live
-workspace. Parallelize independent investigation, with one integration/build owner.
+Close the macOS gaps below before expanding the live
+workspace; the Linux port is deferred. Parallelize independent investigation, with one integration/build owner.
 
 1. **Identity and recovery — implemented checkpoint.** Wire v3 binds input to
    session ID, service epoch and attachment generation. The
@@ -409,9 +409,10 @@ workspace. Parallelize independent investigation, with one integration/build own
 3. **History — session service.** Add bounded disk-backed older history, quotas,
    pressure handling and disk-full recovery while preserving the current screen.
    A passing viewport-eviction test is not disk-history acceptance.
-4. **Minimal Linux qualification — platform and verification.** Carry the same
+4. **Deferred Linux port — platform and verification.** Carry the same
    PTY/service/Qt view to a named Linux host and exercise Vulkan, native input,
-   resize and detach/reattach before expanding workspace behavior.
+   resize and detach/reattach when that port is scheduled; it is not current
+   milestone 1 acceptance.
 
 Keep real attention integration, automatic carousel behavior, multiple live
 sessions and the 32-session benchmark in the following milestones. Protocol and
@@ -422,38 +423,40 @@ acceptance. The static cards remain review fixtures.
 
 Planning baseline: merged `99567cb` (September 18, 2026), followed by the verified
 session checkpoint `31cabfe`. Slice A is implemented with qualification recorded
-in [its receipt](../evidence/session-reconnect.json). The next visible result is a
-terminal whose text and backgrounds stay aligned to the engine's cell grid through
-fallback fonts, wide characters and resize. Native input, history and platform
-qualification follow. Keep milestone 1 open until its acceptance below is exercised.
+in [its receipt](../evidence/session-reconnect.json). B1 now has a verified macOS
+cell-grid checkpoint for fallback fonts, wide characters, decorations and resize.
+Native input and history follow.
+Keep milestone 1 open until its acceptance below is exercised.
 
 | Order | Reviewable slice | Acceptance result |
 | --- | --- | --- |
 | A: implemented | Session identity and safe attachment | GUI reconnect preserves session identity and child; a replaced attachment cannot send input; input stays disabled until the initial authoritative screen is applied; service replacement is reported distinctly |
-| B1: next | Cell layout and font fidelity | Wide/combining characters, fallback fonts, styles and cursor placement match the engine grid through resize; real shell/TUI captures reproduce the cases |
+| B1: exercised checkpoint | Cell layout and font fidelity | Native Vulkan pixel regressions align wide/combining and fallback glyphs, backgrounds, decorations and cursor through resize; shell/Codex captures pass; cross-cell contextual shaping remains open |
 | B2: after B1 | Native input and first responsiveness measurements | Real keyboard, paste and IME composition/cancellation work without losing input ownership; selection/clipboard/accessibility gaps are explicitly exercised or remain open; correlated input/service/frame measurements report p50/p95/p99 and their endpoint limits |
 | C: after A | Bounded older history | Recent screen stays warm while older history is stored under per-session/global quotas; scrollback retrieval, eviction, disk-full and interrupted-write recovery remain bounded and preserve the live screen |
-| D: minimal Linux qualification | Integrate A through C and native input fixes | Named Linux host, display stack and driver exercise PTY lifecycle, real Vulkan rendering, input, resize and detach/reattach; a headless or software-only result does not qualify the GPU desktop |
+| D: deferred Linux port | Integrate A through C and native input fixes when scheduling the port | Named Linux host, display stack and driver exercise PTY lifecycle, real Vulkan rendering, input, resize and detach/reattach; a headless or software-only result does not qualify the GPU desktop |
 
 B1 retains the owned `TerminalSnapshot` value contract and wire v3 unchanged.
-History API investigation and Linux host/dependency probes can run alongside it.
-Final Linux acceptance follows integration;
-a remote compute host or headless container alone cannot supply native desktop
-input evidence. Record the actual host/display prerequisites before scheduling
-that acceptance. No calendar estimate is assigned until the shared implementation scope and
-qualification host are established.
+History API investigation can run alongside it. The Linux port has no current
+host requirement or acceptance date; when scheduled, a remote compute host or
+headless container cannot supply native desktop input evidence. Record the
+actual host/display prerequisites first.
 
-#### Remaining work packages
+#### Work packages and remaining acceptance
 
 These packages describe acceptance, not permanent contributor assignments.
 Contributors share the feature; temporary edit and build scopes prevent collisions.
 
-1. **B1: cell grid and font fidelity.** Fix row layout so fallback glyph advances
-   and bidirectional text do not move later terminal cells. Shape each grapheme,
-   preserve wide-cell occupancy, and align backgrounds, decorations and cursor
-   repaint with the engine grid. Independently authored Vulkan pixel tests must
-   fail on the previous layout and pass through resize. Keep row caching and
-   immutable render state; record contextual shaping limitations explicitly.
+1. **B1: cell grid checkpoint implemented.** Runs begin at engine cell coordinates;
+   printable ASCII batches only when styled advances match the grid, with kerning
+   and optional ligatures disabled. Other graphemes shape locally at a common
+   baseline. Backgrounds precede glyphs, decorations follow, and unchanged rows
+   retain their nodes. The native Vulkan regression fails on the previous layout
+   and passes with wide/combining characters, emoji, Hebrew/Arabic fallback,
+   decoration gaps, inverse/invisible text, real engine resize, clearing and cursor
+   movement. This does not implement contextual shaping across cells; curly
+   underlines retain the previous single-line fallback. Detailed results and
+   sanitizer limits are in the [fidelity receipt](../evidence/terminal-fidelity.json).
 2. **B2: native input and measurement.** Exercise physical key/Option handling,
    IME preedit/commit/cancel, paste and disconnect while composing in a dedicated
    shell/TUI. Synthetic Qt events remain separate evidence. Add correlated input,
@@ -465,11 +468,12 @@ Contributors share the feature; temporary edit and build scopes prevent collisio
    before implementation. Then exercise quotas, eviction, truncated records,
    disk-full handling and resize/reflow while output and the current screen remain
    responsive. A transcript recorder alone does not satisfy scrollback acceptance.
-4. **D: Linux window.** Identify a reachable host with a real graphics session,
-   a Vulkan driver and native-input access. Record tool/dependency versions, build
-   the minimal terminal there, and repeat PTY lifecycle, rendering, native input,
-   resize and reconnect checks. Keep headless build evidence separate from desktop
-   qualification; host unavailability does not block the macOS work packages.
+4. **D: deferred Linux port.** When scheduled, identify a host with a real
+   graphics session, a Vulkan driver and native-input access. Record
+   tool/dependency versions, build the minimal terminal there, and repeat PTY
+   lifecycle, rendering, native input, resize and reconnect checks. Keep headless
+   build evidence separate from desktop qualification; this package is not a
+   current milestone 1 gate.
 
 B1 integration runs the C++ checks, the renderer regression suite, desktop-enabled
 ASan and TSan, preview captures and the live CLI harness. GUI runs are serial even
@@ -616,6 +620,14 @@ correctness probe uses per-cell scratch buffers and is not a performance baselin
 
 Ghostty's configured 1 MiB history setting is read back through the API; the burst
 case checks viewport size, not a process memory ceiling or disk-backed history.
+A September 18 exploratory C API probe on the selected Ghostty static library
+from build run `aea255c0f528427e8e263ace819e3ea3` (SHA-256
+`ee4e3e23bbd9e9213db66afd80c764ca65f7f505fd9a175fa661cfb602934477`)
+encoded and decoded a 2,186-byte snapshot with unfinished CSI input, restoring
+an 81-row scrollable area containing 79 history rows; absolute viewport requests
+clamped beyond the end back to offset 79. It did not exercise multipage history,
+text/style equality, disk persistence or failure recovery. The service diagnostic
+`.log` is not PTY replay.
 The consumer passes ASan/UBSan; upstream Zig uses ReleaseSafe, which is a distinct
 kind of checking. No latency, shaping, IME, PTY or GUI-persistence claim follows.
 
@@ -660,14 +672,13 @@ Follow [AGENTS.md](../AGENTS.md): **2. attention state and real Codex qualificat
 → 3. full desktop, guarded keyboard ownership and carousel → 4. measured 32-session
 workload → 5. second CLI and platform qualification.** The minimal view in
 milestone 1 proves persistence; milestone 3 assembles the supervising workspace.
-Carry that minimal session to Linux before expanding the full desktop; final
-platform qualification still needs actual input, rendering and lifecycle evidence.
+A later Linux port still needs actual input, rendering and lifecycle evidence.
 The following sequence is planned, not implemented by the launch slice:
 
 | Milestone | Dependency and owner | Exit evidence |
 | --- | --- | --- |
 | 2: attention and Codex | Stable session/source/attachment identities; service policy and adapter owners | Deterministic replay of duplicates, gaps, cancellation and simultaneous requests; real input/approval, explicit response, continuation and reconnect reconciliation against a hashed Codex binary |
-| 3: supervising desktop | Qualified minimal Linux terminal and milestone 2; desktop owner | Two real retained sessions first, rebindable manual navigation, pin/snooze, guarded opt-in carousel, and actual typing/held-key/paste/IME/modal/inactive-window focus cases |
+| 3: supervising desktop | Qualified macOS terminal and milestone 2; desktop owner | Two real retained sessions first, rebindable manual navigation, pin/snooze, guarded opt-in carousel, and actual typing/held-key/paste/IME/modal/inactive-window focus cases |
 | 4: scale and responsiveness | Working multi-session desktop; verification owner | Controlled 32-session output/TUI workload, p50/p95/p99 input/switch/frame results, memory growth and idle CPU/GPU; distinguish synthetic replay from real agents |
 | 5: independent adapter and platform completion | Stable adapter capability contract; separate adapter/platform owners | Second CLI independently exercises observation/response/reconciliation; macOS and named Linux backends have actual lifecycle, native input and rendering evidence |
 

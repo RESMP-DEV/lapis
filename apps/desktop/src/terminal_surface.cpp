@@ -13,6 +13,7 @@
 #include <QTextLayout>
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 
 namespace lapis::desktop {
@@ -27,50 +28,254 @@ QFont terminal_font() {
     return font;
 }
 
-void add_row(QSGTextNode& node, const session::TerminalSnapshot& snapshot, std::size_t row,
-             const QFont& font, qreal row_height) {
+QFont styled_font(const QFont& font, const session::TerminalStyle& style) {
+    QFont result = font;
+    result.setBold(style.bold);
+    result.setItalic(style.italic);
+    return result;
+}
+
+QString grapheme_text(const session::TerminalSnapshot& snapshot, std::size_t index) {
+    const auto grapheme = snapshot.text(index);
+    return grapheme.empty()
+               ? QStringLiteral(" ")
+               : QString::fromUcs4(grapheme.data(), static_cast<qsizetype>(grapheme.size()));
+}
+
+std::uint32_t effective_color(const session::TerminalSnapshot& snapshot,
+                              const session::TerminalColor& value, bool background) {
+    switch (value.kind) {
+    case session::ColorKind::default_color:
+        return background ? snapshot.background_rgb : snapshot.foreground_rgb;
+    case session::ColorKind::indexed:
+        if (value.value >= snapshot.palette.size())
+            return background ? snapshot.background_rgb : snapshot.foreground_rgb;
+        return snapshot.palette[value.value];
+    case session::ColorKind::rgb:
+        return value.value;
+    }
+    return background ? snapshot.background_rgb : snapshot.foreground_rgb;
+}
+
+QTextCharFormat text_format(const session::TerminalSnapshot& snapshot, std::size_t index) {
+    const auto& cell = snapshot.cells[index];
+    QTextCharFormat format;
+    QColor foreground = color(snapshot.cell_foreground(index));
+    if (cell.style.faint)
+        foreground.setAlphaF(0.6F);
+    if (cell.style.invisible)
+        foreground.setAlpha(0);
+    format.setForeground(foreground);
+    format.setFontWeight(cell.style.bold ? QFont::Bold : QFont::Normal);
+    format.setFontItalic(cell.style.italic);
+    return format;
+}
+
+void add_rectangle(QSGNode& node, const QRectF& bounds, const QColor& value) {
+    auto rectangle = std::make_unique<QSGSimpleRectNode>(bounds, value);
+    node.appendChildNode(rectangle.release());
+}
+
+struct RowGeometry {
+    qreal cell_width;
+    qreal row_height;
+};
+
+enum class Decoration : std::uint8_t { underline, strike, overline };
+
+struct DecorationStyle {
+    session::Underline line{session::Underline::none};
+    QColor color;
+    bool operator==(const DecorationStyle&) const = default;
+};
+
+DecorationStyle decoration_style(const session::TerminalSnapshot& snapshot, std::size_t index,
+                                 Decoration decoration) {
+    const auto& style = snapshot.cells[index].style;
+    session::Underline line = session::Underline::none;
+    switch (decoration) {
+    case Decoration::underline:
+        line = style.underline;
+        break;
+    case Decoration::strike:
+        if (style.strikethrough)
+            line = session::Underline::single;
+        break;
+    case Decoration::overline:
+        if (style.overline)
+            line = session::Underline::single;
+        break;
+    }
+    QColor value = color(snapshot.cell_foreground(index));
+    if (decoration == Decoration::underline &&
+        style.underline_color.kind != session::ColorKind::default_color)
+        value = color(effective_color(snapshot, style.underline_color, false));
+    if (style.faint)
+        value.setAlphaF(0.6F);
+    if (style.invisible)
+        line = session::Underline::none;
+    return {line, value};
+}
+
+void draw_decoration(QSGNode& node, const QRectF& bounds, const DecorationStyle& style) {
+    if (style.line == session::Underline::none)
+        return;
+    // Preserve the existing single-line fallback for curly underlines until a
+    // proper wave primitive is qualified. Other patterns use cell-grid geometry.
+    if (style.line == session::Underline::dotted || style.line == session::Underline::dashed) {
+        const qreal dash = style.line == session::Underline::dotted ? 1 : 3;
+        const auto count = static_cast<std::size_t>(std::ceil(bounds.width() / (dash + 2)));
+        for (std::size_t i = 0; i < count; ++i) {
+            const qreal x = bounds.left() + static_cast<qreal>(i) * (dash + 2);
+            add_rectangle(
+                node, QRectF(x, bounds.top(), std::min(dash, bounds.right() - x), bounds.height()),
+                style.color);
+        }
+        return;
+    }
+    add_rectangle(node, bounds, style.color);
+    if (style.line == session::Underline::double_line)
+        add_rectangle(node, bounds.translated(0, bounds.height() + 1), style.color);
+}
+
+void add_decoration_spans(QSGNode& node, const session::TerminalSnapshot& snapshot, std::size_t row,
+                          const RowGeometry& geometry, Decoration decoration, qreal y) {
+    std::size_t start = 0;
+    while (start < snapshot.size.columns) {
+        const auto style =
+            decoration_style(snapshot, row * snapshot.size.columns + start, decoration);
+        std::size_t end = start + 1;
+        while (end < snapshot.size.columns &&
+               decoration_style(snapshot, row * snapshot.size.columns + end, decoration) == style)
+            ++end;
+        draw_decoration(node,
+                        QRectF(static_cast<qreal>(start) * geometry.cell_width, y,
+                               static_cast<qreal>(end - start) * geometry.cell_width, 1),
+                        style);
+        start = end;
+    }
+}
+
+void add_decorations(QSGNode& node, const session::TerminalSnapshot& snapshot, std::size_t row,
+                     const QFont& font, const RowGeometry& geometry) {
+    const QFontMetricsF metrics(font);
+    const qreal top = static_cast<qreal>(row) * geometry.row_height;
+    const qreal baseline = top + metrics.ascent();
+    add_decoration_spans(node, snapshot, row, geometry, Decoration::underline, baseline + 1);
+    add_decoration_spans(node, snapshot, row, geometry, Decoration::strike,
+                         baseline - metrics.strikeOutPos());
+    add_decoration_spans(node, snapshot, row, geometry, Decoration::overline, top + 1);
+}
+
+bool safe_ascii_cell(const session::TerminalCell& cell, const QString& value,
+                     const QFontMetricsF& metrics, const QFontMetricsF& bold_metrics,
+                     const QFontMetricsF& italic_metrics, const QFontMetricsF& bold_italic_metrics,
+                     qreal cell_width) {
+    if (cell.kind != session::CellKind::narrow || value.size() != 1 ||
+        value.front().unicode() <= 0x1f || value.front().unicode() > 0x7e)
+        return false;
+    const QFontMetricsF& styled = cell.style.bold && cell.style.italic ? bold_italic_metrics
+                                  : cell.style.bold                    ? bold_metrics
+                                  : cell.style.italic                  ? italic_metrics
+                                                                       : metrics;
+    return styled.horizontalAdvance(value) == cell_width;
+}
+
+void add_row(QSGNode& backgrounds, QSGTextNode& glyphs, const session::TerminalSnapshot& snapshot,
+             std::size_t row, const QFont& font, qreal cell_width, qreal row_height) {
     QString text;
     QList<QTextLayout::FormatRange> formats;
     session::TerminalStyle previous{};
+    std::size_t run_start = 0;
+    bool run_safe = true;
+    const QFontMetricsF metrics(font);
+    const QFontMetricsF bold_metrics = QFontMetricsF(styled_font(font, [] {
+        session::TerminalStyle style;
+        style.bold = true;
+        return style;
+    }()));
+    const QFontMetricsF italic_metrics = QFontMetricsF(styled_font(font, [] {
+        session::TerminalStyle style;
+        style.italic = true;
+        return style;
+    }()));
+    const QFontMetricsF bold_italic_metrics = QFontMetricsF(styled_font(font, [] {
+        session::TerminalStyle style;
+        style.bold = true;
+        style.italic = true;
+        return style;
+    }()));
+    const qreal top = static_cast<qreal>(row) * row_height;
+    QFont safe_font = font;
+    safe_font.setKerning(false);
+    safe_font.setFeature(QFont::Tag("liga"), 0);
+    safe_font.setFeature(QFont::Tag("clig"), 0);
+    safe_font.setFeature(QFont::Tag("dlig"), 0);
+    safe_font.setFeature(QFont::Tag("calt"), 0);
+    const auto flush_run = [&]() {
+        if (text.isEmpty())
+            return;
+        QTextLayout layout(text, run_safe ? safe_font : font);
+        QTextOption option;
+        option.setTextDirection(Qt::LeftToRight);
+        option.setAlignment(Qt::AlignLeft);
+        layout.setTextOption(option);
+        layout.setFormats(formats);
+        layout.beginLayout();
+        QTextLine line = layout.createLine();
+        if (line.isValid())
+            line.setLineWidth(100000);
+        layout.endLayout();
+        // Fallback fonts may have different ascents. Keep every run on the
+        // terminal baseline rather than aligning their layout boxes at the top.
+        const qreal baseline_offset = line.isValid() ? metrics.ascent() - line.ascent() : 0;
+        glyphs.addTextLayout(
+            QPointF(static_cast<qreal>(run_start) * cell_width, top + baseline_offset), &layout);
+        text.clear();
+        formats.clear();
+    };
+    QColor background = color(snapshot.background_rgb);
+    std::size_t background_start = 0;
+    const auto flush_background = [&](std::size_t end) {
+        if (background != color(snapshot.background_rgb))
+            add_rectangle(backgrounds,
+                          QRectF(static_cast<qreal>(background_start) * cell_width, top,
+                                 static_cast<qreal>(end - background_start) * cell_width,
+                                 row_height),
+                          background);
+        background_start = end;
+    };
     for (std::size_t column = 0; column < snapshot.size.columns; ++column) {
         const std::size_t index = row * snapshot.size.columns + column;
         const auto& cell = snapshot.cells[index];
-        if (cell.kind == session::CellKind::wide_tail)
+        const QColor cell_background = color(snapshot.cell_background(index));
+        if (cell_background != background) {
+            flush_background(column);
+            background = cell_background;
+        }
+        if (cell.kind == session::CellKind::wide_tail) {
+            flush_run();
             continue;
-        const auto grapheme = snapshot.text(index);
-        const QString value =
-            grapheme.empty()
-                ? QStringLiteral(" ")
-                : QString::fromUcs4(grapheme.data(), static_cast<qsizetype>(grapheme.size()));
+        }
+        const QString value = grapheme_text(snapshot, index);
+        const bool safe_cell = safe_ascii_cell(cell, value, metrics, bold_metrics, italic_metrics,
+                                               bold_italic_metrics, cell_width);
+        if (!safe_cell || !run_safe || text.isEmpty() || cell.style != previous) {
+            flush_run();
+            run_start = column;
+        }
+        run_safe = safe_cell;
         const int start = static_cast<int>(text.size());
         text += value;
         if (!formats.empty() && previous == cell.style) {
             formats.back().length += static_cast<int>(value.size());
             continue;
         }
-        QTextCharFormat format;
-        QColor foreground = color(snapshot.cell_foreground(index));
-        if (cell.style.faint)
-            foreground.setAlphaF(0.6F);
-        if (cell.style.invisible)
-            foreground.setAlpha(0);
-        format.setForeground(foreground);
-        format.setBackground(color(snapshot.cell_background(index)));
-        format.setFontWeight(cell.style.bold ? QFont::Bold : QFont::Normal);
-        format.setFontItalic(cell.style.italic);
-        format.setFontUnderline(cell.style.underline != session::Underline::none);
-        format.setFontStrikeOut(cell.style.strikethrough);
-        formats.push_back({start, static_cast<int>(value.size()), format});
+        formats.push_back({start, static_cast<int>(value.size()), text_format(snapshot, index)});
         previous = cell.style;
     }
-    QTextLayout layout(text, font);
-    layout.setFormats(formats);
-    layout.beginLayout();
-    QTextLine line = layout.createLine();
-    if (line.isValid())
-        line.setLineWidth(100000);
-    layout.endLayout();
-    node.addTextLayout(QPointF(0, static_cast<qreal>(row) * row_height), &layout);
+    flush_background(snapshot.size.columns);
+    flush_run();
 }
 
 void add_cursor(QSGNode& overlays, QQuickWindow& window, const session::TerminalSnapshot& snapshot,
@@ -125,7 +330,9 @@ void add_cursor(QSGNode& overlays, QQuickWindow& window, const session::Terminal
     layout.endLayout();
     auto glyph = std::unique_ptr<QSGTextNode>(window.createTextNode());
     glyph->setColor(color(snapshot.cell_background(index)));
-    glyph->addTextLayout(rectangle.topLeft(), &layout);
+    glyph->setRenderType(QSGTextNode::QtRendering);
+    const qreal baseline_offset = line.isValid() ? QFontMetricsF(font).ascent() - line.ascent() : 0;
+    glyph->addTextLayout(rectangle.topLeft() + QPointF(0, baseline_offset), &layout);
     overlays.appendChildNode(glyph.release());
 }
 
@@ -164,7 +371,7 @@ class TerminalNode final : public QSGTransformNode {
         appendChildNode(overlay_nodes.release());
     }
     void updateRows(QQuickWindow& window, const session::TerminalSnapshot& next, const QFont& font,
-                    qreal row_height) {
+                    qreal cell_width, qreal row_height) {
         if (!snapshot || snapshot->size != next.size) {
             while (auto* child = rows->firstChild()) {
                 rows->removeChildNode(child);
@@ -175,17 +382,30 @@ class TerminalNode final : public QSGTransformNode {
         for (std::size_t row = 0; row < next.size.rows; ++row) {
             auto* following = previous ? previous->nextSibling() : nullptr;
             if (!previous || !same_row(*snapshot, next, row)) {
+                auto row_node = std::make_unique<QSGNode>();
+                auto backgrounds = std::make_unique<QSGNode>();
+                auto decorations = std::make_unique<QSGNode>();
                 auto text = std::unique_ptr<QSGTextNode>(window.createTextNode());
                 text->setColor(color(next.foreground_rgb));
                 text->setRenderType(QSGTextNode::QtRendering);
-                add_row(*text, next, row, font, row_height);
+                add_row(*backgrounds, *text, next, row, font, cell_width, row_height);
+                add_decorations(*decorations, next, row, font, RowGeometry{cell_width, row_height});
+                row_node->appendChildNode(backgrounds.release());
+                row_node->appendChildNode(text.release());
+                row_node->appendChildNode(decorations.release());
                 if (previous) {
-                    rows->insertChildNodeBefore(text.release(), previous);
+                    rows->insertChildNodeBefore(row_node.release(), previous);
                     rows->removeChildNode(previous);
                     delete previous;
                 } else
-                    rows->appendChildNode(text.release());
+                    rows->appendChildNode(row_node.release());
             }
+            previous = following;
+        }
+        while (previous) {
+            auto* following = previous->nextSibling();
+            rows->removeChildNode(previous);
+            delete previous;
             previous = following;
         }
     }
@@ -283,7 +503,7 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
         QRectF(0, 0, snapshot.size.columns * cell_width, snapshot.size.rows * row_height));
     root->background->setColor(color(snapshot.background_rgb));
     if (root->snapshot != frame->snapshot)
-        root->updateRows(*window(), snapshot, font, row_height);
+        root->updateRows(*window(), snapshot, font, cell_width, row_height);
     root->snapshot = frame->snapshot;
     while (auto* child = root->overlays->firstChild()) {
         root->overlays->removeChildNode(child);

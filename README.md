@@ -4,8 +4,8 @@ Repository: [RESMP-DEV/lapis](https://github.com/RESMP-DEV/lapis).
 
 lapis is an early-stage project for a desktop workspace that supervises live CLI
 agents. The direction is persistent sessions, fast switching, GPU rendering and
-an opt-in attention carousel. macOS and Codex come first; Linux is the next
-required platform. A macOS terminal window is now available for a visual checkpoint.
+an opt-in attention carousel. macOS and Codex are the active target; a Linux
+desktop port is deferred. A macOS terminal window is now available for a visual checkpoint.
 
 The priority is **responsiveness, then ergonomics, then visuals**. Design for
 high-end M-series hardware and high-refresh displays; use generous, bounded RAM
@@ -26,9 +26,9 @@ incomplete.**
 | Component | Exercised | Remaining |
 | --- | --- | --- |
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
-| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS | Linux service qualification, recovery after service loss, disk-backed history |
+| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS | Recovery after service loss, disk-backed history and later Linux qualification |
 | Local transport | Version 3 identity/epoch/generation attachment, restored-screen input gating, bounded queues and explicit reconnect | Automatic recovery policy and multi-session registry |
-| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact window captures on M4 Max via MoltenVK | Full shaping, IME, selection, accessibility, Linux GUI and latency/frame qualification |
+| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK | Cross-cell contextual shaping, IME, selection, accessibility and latency/frame qualification; Linux GUI port is deferred |
 | UI iteration and attention fixture | Isolated source-QML reload, PNG captures, LLDB launch/attach, compact header and finite red cue replay | Maintainer visual review, rebindable navigation and real attention integration |
 | Codex integration | Direct TUI launch, no-prompt editing/navigation/paste/resize, normal/compact GPU captures and same-child reattachment; separate schema/init/list probe | Real model-turn attention requests, responses and source reconnect handling |
 
@@ -40,7 +40,7 @@ The [two UI refinements](docs/architecture.md#ui-refinement-checkpoint) are
 implemented for visual review: an isolated preview/debugging workflow and a compact
 header with replayable red attention cues. Rebindable navigation follows; real
 agent attention and automatic carousel behavior remain later work. Finish terminal
-acceptance and qualify the minimal Linux view before expanding the live workspace.
+acceptance before expanding the live macOS workspace.
 Latency and warm-switch targets remain provisional.
 
 Explicit CLI launch is now implemented through the existing service-owned PTY.
@@ -49,8 +49,10 @@ dated sanitizer limitations. The [PR #2 repair](evidence/pr2-review.json) resolv
 the renderer TSan reports and records subsequent review fixes. The
 [merge preparation receipt](evidence/pr2-merge.json) covers cursor presentation,
 descendant cleanup and contributor/test procedures. The [session reconnect receipt](evidence/session-reconnect.json) records identity binding,
-input readiness and failure-boundary checks. Terminal fidelity, disk history
-and Linux qualification remain in the
+input readiness and failure-boundary checks. The [terminal fidelity receipt](evidence/terminal-fidelity.json)
+records native GPU regression checks for cell positioning, fallback glyphs,
+decorations, resize and cursor repaint. Native input/IME, responsiveness measurements
+and disk history remain in the
 [ordered plan](docs/architecture.md#next-complete-persistent-terminal-acceptance).
 The [Codex route comparison](adapters/codex/README.md#integration-route-comparison)
 separates terminal operation from attention delivery.

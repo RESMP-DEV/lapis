@@ -40,7 +40,7 @@ The desktop steps require a logged-in graphical session and the exact dependenci
 below. Run GUI checks serially, including across worktrees, so windows do not steal
 focus from another test. The baseline is not a substitute for the scope-specific
 sanitizer, tooling or dependency checks in the [required matrix](#checks).
-On Linux, record a headless baseline and its platform limits; do not claim desktop
+For the deferred Linux port, record a headless baseline and its platform limits; do not claim desktop
 acceptance from a headless pass. Report a pre-existing failure with its command,
 SHA and log before mixing repairs into a large change.
 
@@ -217,9 +217,16 @@ This opens a real window, clears a harmless partial command with Control-U, send
 a unique `printf` marker and `stty size` through Qt key routing (including
 Alt-B/Alt-D shell word editing), waits for the
 service snapshot, captures the window, and exits. `--compact` tests 980×700 logical
-pixels. The shell survives the capture process. Keep captures private under
-`build/` unless reviewed for terminal content. This is functional acceptance, not
-an input-latency benchmark.
+pixels. Record the capture device pixel ratio and distinguish physical image
+coordinates from Qt logical coordinates. The shell survives the capture process.
+Keep captures private under `build/` unless reviewed for terminal content. This
+is functional acceptance, not an input-latency benchmark. Serialize every GUI
+check across worktrees; an offscreen or headless result never counts as
+native-display qualification. The two CTest GUI suites share `qt_gui` as a
+resource lock within one invocation; separate invocations still need explicit
+coordination. For renderer changes, run `terminal-render` against the previous
+renderer and the proposed change: a valid baseline failure must identify a
+pixel/layout assertion after window and snapshot preconditions pass.
 
 The macOS app sets `QT_MTL_NO_TRANSACTION=1` before Qt initialization. On this
 Qt/MoltenVK combination, the default transaction layer emitted five-second display
@@ -462,8 +469,9 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `live-connection` | Desktop-enabled | Screen-before-input, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
 | `ui-preview` | Desktop-enabled | Qt reload, attention, input and render lifecycle |
+| `terminal-render` | Desktop-enabled | Real Qt Vulkan pixel regressions for cell background grids, wide/combining characters, fallback/RTL text, styles/decorations, actual Ghostty resize, cursor placement and clearing |
 
-`just desktop` runs these nine suites plus static checks. The separate Python
+`just desktop` runs these ten suites plus static checks. The separate Python
 GUI harness checks five preview captures and three expected failures. The CLI
 harness checks detached service behavior, attachment generations, fragmented
 handshakes, synchronization timeout, stale controls, bounded queue failure and
@@ -511,7 +519,7 @@ python3 scripts/check_cli_launch.py --build-dir build/desktop-asan \
 Repeat those configure/build/test/harness commands with preset `tsan` and all
 `desktop-asan` paths changed to `desktop-tsan`. Do not combine instrumentation or
 use `ctest --preset asan` for the custom directory: that preset targets
-`build/asan`. Each desktop-enabled directory must list all nine suites above.
+`build/asan`. Each desktop-enabled directory must list all ten suites above.
 Use the same LLVM installation for normal and instrumented builds. Ccache is
 optional (`-DCMAKE_CXX_COMPILER_LAUNCHER=...`); raw CMake does not discover it.
 Reduce `--parallel` for host resource limits. The CLI command above runs service
