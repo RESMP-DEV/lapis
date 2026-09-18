@@ -10,6 +10,8 @@
 #include <QDebug>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QKeyEvent>
+#include <QKeySequence>
 #include <QQmlEngine>
 #include <QQuickStyle>
 #include <QQuickWindow>
@@ -17,6 +19,36 @@
 #include <exception>
 
 namespace {
+// Intercepts the appearance shortcut before any focused item sees it. The
+// terminal surface is a native focus item, so an item-level Shortcut never
+// fires while the user is typing in a session.
+class SettingsShortcutFilter final : public QObject {
+  public:
+    SettingsShortcutFilter(lapis::desktop::UiPreview& view, QObject* parent)
+        : QObject(parent), view_(view) {}
+
+  protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() != QEvent::KeyPress)
+            return QObject::eventFilter(watched, event);
+        auto* key = static_cast<QKeyEvent*>(event);
+        // Command-comma on macOS arrives as Meta with Key_Comma. Accept either
+        // modifier so a portable Ctrl+, binding also works off this host.
+        const bool comma = key->key() == Qt::Key_Comma;
+        const bool chord = key->modifiers().testFlag(Qt::ControlModifier) ||
+                           key->modifiers().testFlag(Qt::MetaModifier);
+        if (!comma || !chord || key->modifiers().testFlag(Qt::ShiftModifier))
+            return QObject::eventFilter(watched, event);
+        if (view_.openSettings()) {
+            event->accept();
+            return true;
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+  private:
+    lapis::desktop::UiPreview& view_;
+};
 void add_options(QCommandLineParser& parser) {
     parser.addHelpOption();
     parser.addOption({QStringLiteral("new-session"),
@@ -132,6 +164,11 @@ void wire_window(QQuickWindow& window, lapis::desktop::UiPreview& view,
         if (window.isActive())
             view.assignTerminalFocus();
     });
+    // Cmd-, opens appearance settings. A QML Shortcut cannot carry this: the
+    // terminal surface is a native focus item that consumes key events first, so
+    // the app has to intercept ahead of it. The key arrives at the window before
+    // any child, which makes this the earliest correct point.
+    window.installEventFilter(new SettingsShortcutFilter(view, &window));
     if (parser.isSet(QStringLiteral("capture")))
         capture_window(window, workspace, view,
                        {.image_path = parser.value(QStringLiteral("capture")),

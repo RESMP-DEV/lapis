@@ -19,10 +19,13 @@
     "focusRight": ["Ctrl+Right"],
 
     "cycleLayout": ["Ctrl+L"],
+    "openSettings": ["Ctrl+,"],
     "reloadConfig": ["Ctrl+R"]
   },
 
   "layout": "focus",
+  "theme": "lapis",
+  "density": "comfortable",
 
   "categories": [
     { "id": "shell", "title": "Shell" },

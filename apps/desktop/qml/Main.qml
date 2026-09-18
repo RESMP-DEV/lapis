@@ -52,22 +52,49 @@ ApplicationWindow {
     height: 960
     minimumWidth: 980
     minimumHeight: 700
-    color: "#0b101a"
-    title: "lapis"
     objectName: "workspaceWindow"
 
-    readonly property color backgroundColor: "#0b101a"
-    readonly property color surfaceColor: "#111927"
-    readonly property color cardColor: "#151c29"
-    readonly property color hoveredCardColor: "#1a2333"
-    readonly property color focusedColor: "#1f2838"
-    readonly property color borderColor: "#2b3546"
-    readonly property color focusedBorderColor: "#6a76e8"
-    readonly property color textColor: "#f2f3ea"
-    readonly property color mutedTextColor: "#98a0ae"
-    readonly property color attentionColor: "#ff5f56"
-    readonly property color attentionTextColor: "#fff4f2"
+    // Appearance comes from lapis.json. The fallbacks keep an isolated QML
+    // preview, which has no config, rendering the default Lapis scheme.
+    readonly property var appearance: typeof keymap !== "undefined" && keymap !== null ?
+                                           keymap.themes.find(t => t.name === keymap.themeName) : null
+    readonly property color backgroundColor: appearance ? appearance.background : "#0b101a"
+    readonly property color surfaceColor: appearance ? appearance.surface : "#111927"
+    readonly property color cardColor: appearance ? appearance.card : "#151c29"
+    readonly property color hoveredCardColor: appearance ? appearance.hoveredCard : "#1a2333"
+    readonly property color focusedColor: appearance ? appearance.focused : "#1f2838"
+    readonly property color borderColor: appearance ? appearance.border : "#2b3546"
+    readonly property color focusedBorderColor: appearance ? appearance.focusedBorder : "#6a76e8"
+    readonly property color textColor: appearance ? appearance.text : "#f2f3ea"
+    readonly property color mutedTextColor: appearance ? appearance.mutedText : "#98a0ae"
+    readonly property color attentionColor: appearance ? appearance.attention : "#ff5f56"
+    readonly property color attentionTextColor: appearance ? appearance.attentionText : "#fff4f2"
+    // The pane sits one shade off the window background so the terminal reads as
+    // a distinct surface in every scheme.
+    readonly property color paneColor: appearance ? appearance.surface : "#0d131d"
+    color: backgroundColor
+    title: "lapis"
     readonly property alias cueAnimationEnabled: cueRules.animationEnabled
+
+    // Layout and density come from lapis.json. The helpers keep the geometry
+    // expressions readable and fall back to the historical focus layout when no
+    // config is present, which is the isolated QML preview case.
+    readonly property string layoutMode: typeof keymap !== "undefined" && keymap !== null ?
+                                             keymap.layoutName : "focus"
+    readonly property string densityMode: typeof keymap !== "undefined" && keymap !== null ?
+                                              keymap.densityName : "comfortable"
+    readonly property bool blocksLayout: layoutMode === "blocks"
+    // Columns puts the preview strip in a left channel beside a narrower pane.
+    readonly property bool columnsLayout: layoutMode === "columns"
+    // Stack shows one session at a time with the carousel hidden.
+    readonly property bool stackLayout: layoutMode === "stack"
+    // The pane owns the keyboard only when it is the visible surface.
+    readonly property bool paneVisible: layoutMode === "focus" || columnsLayout
+    readonly property int cardSpacing: densityMode === "minimal" ? 8 :
+                                       densityMode === "compact" ? 10 : 14
+    readonly property int cardHeight: densityMode === "minimal" ? 104 :
+                                      densityMode === "compact" ? 128 : 156
+    readonly property int paneRadius: densityMode === "minimal" ? 6 : 12
 
     // Shortcuts come from lapis.json through the `keymap` context property. The
     // literals below are the fallback used only when no keymap is supplied, such
@@ -155,12 +182,57 @@ ApplicationWindow {
         }
     }
 
-    readonly property bool blocksLayout: typeof keymap !== "undefined" && keymap !== null && keymap.blocks
+    // Command-comma opens preferences in every native macOS app. The terminal
+    // surface is a native focus item that consumes key events before a QML
+    // Shortcut can fire, so C++ intercepts the key and calls this instead.
+    function openSettingsDialog() {
+        settingsDialog.open()
+        // The dialog holds the keyboard while open, so the terminal never
+        // receives the keystrokes meant for the appearance options.
+        if (settingsDialog.opened)
+            settingsDialog.forceActiveFocus()
+    }
+
+    Settings {
+        id: settingsDialog
+
+        themeModel: typeof keymap !== "undefined" && keymap !== null ? keymap.themes : []
+        layoutModel: window.layoutChoices
+        densityModel: window.densityChoices
+        currentTheme: typeof keymap !== "undefined" && keymap !== null ? keymap.themeName : "lapis"
+        currentLayout: window.layoutMode
+        currentDensity: window.densityMode
+        configPath: typeof keymap !== "undefined" && keymap !== null ? keymap.sourcePath : ""
+        configDiagnostic: typeof keymap !== "undefined" && keymap !== null ? keymap.diagnostic : ""
+
+        onClosed: window.setTerminalFocus()
+
+        onThemeChosen: function(name) {
+            if (typeof keymap !== "undefined" && keymap !== null)
+                keymap.setTheme(name)
+        }
+        onLayoutChosen: function(name) {
+            if (typeof keymap !== "undefined" && keymap !== null)
+                keymap.setLayout(name)
+        }
+        onDensityChosen: function(name) {
+            if (typeof keymap !== "undefined" && keymap !== null)
+                keymap.setDensity(name)
+        }
+    }
+
+    // The isolated QML preview has no keymap, so these literals keep the dialog
+    // usable there and double as the documented set of valid names.
+    readonly property var layoutChoices: typeof keymap !== "undefined" && keymap !== null ?
+                                             keymap.layouts : ["focus", "columns", "blocks", "stack"]
+    readonly property var densityChoices: typeof keymap !== "undefined" && keymap !== null ?
+                                              keymap.densities : ["comfortable", "compact", "minimal"]
 
     // Keyboard ownership lives in C++ so it can be asserted directly rather
-    // than inferred from QML property state. Both entry points call it.
+    // than inferred from QML property state. Both entry points call it, and a
+    // layout switch re-runs it so focus never lands on a hidden pane.
     onActiveChanged: if (active) keyboardOwnershipReady()
-    onBlocksLayoutChanged: keyboardOwnershipReady()
+    onLayoutModeChanged: keyboardOwnershipReady()
 
     signal keyboardOwnershipReady()
 
@@ -233,14 +305,32 @@ ApplicationWindow {
         workspace.replayAttention(scenario);
     }
 
-    ColumnLayout {
+    // Every layout shares this grid. The column count sets the flow direction
+    // and the pane and carousel declare their own geometry, so switching layout
+    // never rebuilds items and never reassigns a Shortcut.
+    GridLayout {
+        id: workspaceGrid
         anchors.fill: parent
         anchors.margins: 12
         anchors.topMargin: 6
-        spacing: 8
+        columnSpacing: 8
+        rowSpacing: 8
+        // Focus and blocks stack the pane above the strip; columns puts the
+        // strip beside the pane; stack has no pane, so the carousel is the only
+        // row and fills the window.
+        columns: window.columnsLayout ? 2 : 1
+        rows: window.columnsLayout ? 2 : 3
+        flow: GridLayout.LeftToRight
+        // Row 0 is the header, row 1 holds the pane or the channel, row 2 is the
+        // preview strip. Children declare their own stretch, because the
+        // stretch properties are attached and cannot be set on the layout.
 
         RowLayout {
             Layout.fillWidth: true
+            Layout.columnSpan: window.columnsLayout ? 2 : 1
+            Layout.row: 0
+            Layout.column: 0
+            Layout.maximumWidth: window.columnsLayout ? 320 : -1
             Layout.minimumHeight: 18
             Layout.maximumHeight: 18
             spacing: 6
@@ -357,7 +447,7 @@ ApplicationWindow {
                     }
                     MenuSeparator {}
                     PreviewMenuItem {
-                        text: qsTr("Layout: %1").arg(window.blocksLayout ? "blocks" : "focus")
+                        text: qsTr("Layout: %1").arg(window.layoutMode)
                         explanation: qsTr("Switch between one large pane and equal blocks. Ctrl-L also toggles this.")
                         onTriggered: if (typeof keymap !== "undefined" && keymap !== null)
                                          keymap.toggleLayout()
@@ -386,12 +476,24 @@ ApplicationWindow {
             // Blocks layout gives every session an equal tile, so the single
             // large pane collapses and the strip below becomes the workspace.
             // Focus layout keeps the current large pane plus a preview strip.
+            // Focus and blocks stack the pane above the strip, so the pane takes
+            // the free height. Columns puts the pane beside the channel, where it
+            // fills the height and claims a width share instead.
             Layout.fillWidth: true
-            Layout.fillHeight: !window.blocksLayout
-            Layout.preferredHeight: window.blocksLayout ? 0 : -1
-            visible: !window.blocksLayout
-            color: "#0d131d"
-            radius: 12
+            Layout.fillHeight: window.paneVisible
+            Layout.preferredWidth: window.columnsLayout ? Math.max(420, window.width * 0.62) : -1
+            Layout.preferredHeight: window.columnsLayout ? -1 :
+                                                           window.paneVisible ? -1 : 0
+            // The channel is declared after the pane, so pin the pane to column 1
+            // in columns mode and let the carousel occupy column 0 to its left.
+            Layout.column: window.columnsLayout ? 1 : 0
+            // An invisible item still occupies its grid row and its spacing, so
+            // collapse it out of the layout when it is not the active surface.
+            Layout.row: 1
+            Layout.rowSpan: window.paneVisible ? 1 : 0
+            visible: window.paneVisible
+            color: window.paneColor
+            radius: window.paneRadius
             border.color: window.focusedBorderColor
             border.width: 1
 
@@ -427,7 +529,7 @@ ApplicationWindow {
                 Label {
                     Layout.fillWidth: true
                     elide: Text.ElideRight
-                    color: "#a8b3c5"
+                    color: window.mutedTextColor
                     text: !historyBar.session ? "" :
                           historyBar.session.historyRequestPending ? qsTr("Loading history…") :
                           historyBar.session.historyActive ?
@@ -445,33 +547,52 @@ ApplicationWindow {
 // Input requires both the session being ready and this pane owning
                 // the keyboard, which blocks layout gives to a tile instead.
                 interactive: (preview.active || (document && document.inputReady))
-                             && !window.blocksLayout
-                focus: !window.blocksLayout
-                Component.onCompleted: if (!window.blocksLayout) forceActiveFocus()
+                             && window.paneVisible
+                focus: window.paneVisible
+                Component.onCompleted: if (window.paneVisible) forceActiveFocus()
                 // Claim the keyboard whenever this pane becomes the active
                 // surface, so switching layout never leaves focus on a button.
                 Connections {
                     target: window
-                    function onBlocksLayoutChanged() {
+                    function onLayoutModeChanged() {
                         window.setTerminalFocus()
                     }
                 }
             }
         }
 
+        // A GridView rather than a ListView: GridView wraps into rows, which is
+        // what blocks and stack need. A ListView never wraps, so its tiles ran
+        // off the right edge and the "grid" was only ever one scrolling row.
         ListView {
             id: carousel
 
-            // In blocks mode this becomes the workspace: it fills the window,
-            // wraps into a grid and sizes tiles to fill the available space.
+            // In blocks mode this becomes the workspace: it wraps into a grid and
+            // sizes tiles to fill the available space.
             Layout.fillWidth: true
-            Layout.fillHeight: window.blocksLayout
-            Layout.preferredHeight: window.blocksLayout ? -1 : 172
-            Layout.minimumHeight: window.blocksLayout ? 0 : 164
-            orientation: ListView.Horizontal
+            Layout.fillHeight: window.blocksLayout || window.stackLayout
+            Layout.preferredWidth: window.columnsLayout ? 320 : -1
+            Layout.maximumWidth: window.columnsLayout ? 320 : -1
+            Layout.preferredHeight: window.blocksLayout || window.stackLayout ? -1 :
+                                                                                window.cardHeight + 24
+            // Channels align to the top of the column; the strip sits under the
+            // pane. Without the explicit top alignment the vertical channel
+            // centers itself in the cell and the cards float.
+            Layout.column: 0
+            Layout.row: window.columnsLayout ? 1 : 2
+            Layout.alignment: Qt.AlignTop | Qt.AlignLeft
+            Layout.minimumHeight: window.blocksLayout || window.stackLayout ? 0 :
+                                                                             window.cardHeight + 16
+            // Flow builds the wrap direction: left to right for the wrapping
+            // layouts, top to bottom for the single-column channel.
+            // A ListView scrolls one axis and never wraps, which is what the
+            // strip, the channel and the stack all want. Blocks opts into the
+            // wrapping grid below.
+            orientation: window.columnsLayout || window.stackLayout ?
+                             ListView.Vertical :
+                             ListView.Horizontal
             boundsMovement: Flickable.StopAtBounds
             clip: true
-            spacing: 14
             topMargin: 3
             leftMargin: 1
             rightMargin: 1
@@ -481,14 +602,51 @@ ApplicationWindow {
             // vertical flow, which wraps into as many columns as fit. Tiles are
             // sized so the visible rows fill the viewport with no dead space;
             // more sessions than fit simply scroll.
-            readonly property int blockColumns: 3
+            // Only blocks wraps into a grid. Focus and columns are single-line
+            // scrollers: a strip of previews that never wraps, and a channel
+            // that never wraps. Stack wraps to fill the width.
+            readonly property int blockColumns: Math.max(1, Math.min(4, workspace.sessions.length))
+            readonly property int wrapColumns: window.blocksLayout ? blockColumns :
+                                               window.stackLayout ? Math.max(1, Math.floor(width / 320)) : 1
+            // GridView wraps by cell size, so a single-row layout must be wide
+            // enough that every cell lands in row 0 and scrolls sideways.
+            readonly property int flowColumns: window.blocksLayout || window.stackLayout ?
+                                                    wrapColumns :
+                                                    Math.max(1, workspace.sessions.length)
             readonly property int tileWidth: window.blocksLayout ?
-                                                 Math.max(220, Math.floor((width - spacing * (blockColumns - 1)) / blockColumns)) : 238
-            readonly property int tileHeight: window.blocksLayout ?
-                                                  Math.max(150, Math.floor((height - spacing) / 2)) : 156
+                                                 Math.max(220, Math.floor((width - window.cardSpacing * (blockColumns - 1)) / blockColumns)) :
+                                             window.stackLayout ?
+                                                 Math.max(260, Math.floor((width - window.cardSpacing * (wrapColumns - 1)) / wrapColumns)) :
+                                             window.columnsLayout ? Math.max(180, width - window.cardSpacing - 10) : 238
+            // Size tiles from the rows the sessions actually occupy, not the
+            // rows that could fit. Five sessions in three columns is two rows, so
+            // two tall rows fill the viewport instead of two short ones above a
+            // band of dead space.
+            readonly property int occupiedRows: Math.max(1, Math.ceil(Math.max(1, workspace.sessions.length) /
+                                                                      Math.max(1, wrapColumns)))
+            readonly property int tileRows: occupiedRows
+            readonly property real availableHeight: height > 0 ? height : window.height - 60
+            spacing: window.cardSpacing
+            readonly property int tileHeight: window.blocksLayout || window.stackLayout ?
+                                                  Math.max(150, Math.floor((availableHeight - window.cardSpacing * (tileRows - 1)) /
+                                                                           Math.max(1, tileRows))) :
+                                              window.columnsLayout ? Math.max(120, Math.floor(height / 4)) :
+                                                                     window.cardHeight
 
+            // The strip and the channel are single-line scrollers; blocks and
+            // stack wrap and scroll vertically. Showing the wrong axis leaves a
+            // bar that cannot move.
             ScrollBar.horizontal: ScrollBar {
+                visible: carousel.orientation === ListView.Horizontal && carousel.contentWidth > carousel.width
                 implicitHeight: 8
+                contentItem: Rectangle {
+                    radius: 4
+                    color: window.borderColor
+                }
+            }
+            ScrollBar.vertical: ScrollBar {
+                visible: carousel.orientation === ListView.Vertical || carousel.contentHeight > carousel.height
+                implicitWidth: 8
                 contentItem: Rectangle {
                     radius: 4
                     color: window.borderColor
@@ -501,6 +659,12 @@ ApplicationWindow {
                 required property int index
                 required property var modelData
 
+                // ListView sizes delegates from the view unless the delegate
+                // supplies its own height, so both are bound. implicitHeight
+                // alone is ignored and the tiles collapse to a fixed strip.
+                width: carousel.tileWidth
+                height: carousel.tileHeight
+                LayoutMirroring.enabled: false
                 implicitWidth: carousel.tileWidth
                 implicitHeight: carousel.tileHeight
                 objectName: "sessionCard_" + sessionCard.modelData.sessionId
@@ -545,7 +709,7 @@ ApplicationWindow {
 
                 onClicked: {
                     workspace.focusedIndex = sessionCard.index
-                    if (window.blocksLayout)
+                    if (!window.paneVisible)
                         cardTerminal.forceActiveFocus()
                     else
                         liveTerminal.forceActiveFocus()
@@ -642,9 +806,9 @@ ApplicationWindow {
                         Layout.topMargin: 9
                         Layout.leftMargin: 9
                         Layout.rightMargin: 9
-                        color: "#0d1421"
+                        color: window.paneColor
                         radius: 5
-                        border.color: "#283446"
+                        border.color: window.borderColor
                         border.width: 1
                         clip: true
 
@@ -656,13 +820,13 @@ ApplicationWindow {
                             // only when blocks mode makes this tile the pane.
                             objectName: "cardTerminal_" + sessionCard.modelData.sessionId
                             document: sessionCard.modelData
-                            enabled: window.blocksLayout
+                            enabled: !window.paneVisible
                                      && workspace.focusedIndex === sessionCard.index
                                      && sessionCard.modelData.live
-                            interactive: window.blocksLayout
+                            interactive: !window.paneVisible
                                          && workspace.focusedIndex === sessionCard.index
                                          && sessionCard.modelData.live
-                            focus: window.blocksLayout
+                            focus: !window.paneVisible
                                            && workspace.focusedIndex === sessionCard.index
                                            && sessionCard.modelData.live
                             Component.onCompleted: {
@@ -674,7 +838,7 @@ ApplicationWindow {
                             Connections {
                                 target: workspace
                                 function onFocusChanged() {
-                                    if (window.blocksLayout && sessionCard.modelData.live
+                                    if (!window.paneVisible && sessionCard.modelData.live
                                             && workspace.focusedIndex === sessionCard.index)
                                         cardTerminal.forceActiveFocus()
                                 }

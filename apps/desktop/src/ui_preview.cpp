@@ -145,12 +145,16 @@ bool UiPreview::assignTerminalFocus() {
     QQuickWindow* target_window = window();
     if (target_window == nullptr)
         return false;
-    // Focus mode uses the single live pane; blocks mode promotes one tile per
-    // session. Workspace owns which session is focused, so ask it for the id.
+    // Focus and columns keep the single live pane; blocks and stack promote one
+    // tile per session. Workspace owns which session is focused, so ask it for
+    // the id. This mirrors the QML paneVisible rule: the pane owns the keyboard
+    // only when it is actually on screen.
+    const KeyMap* keymap = options_.keymap;
+    const bool pane_visible = keymap == nullptr || keymap->layout() == WorkspaceLayout::Focus ||
+                              keymap->layout() == WorkspaceLayout::Columns;
     const QString name =
-        options_.keymap != nullptr && options_.keymap->blocks()
-            ? QStringLiteral("cardTerminal_") + workspace_.focusedSession()->sessionId()
-            : QStringLiteral("liveTerminal");
+        pane_visible ? QStringLiteral("liveTerminal")
+                     : QStringLiteral("cardTerminal_") + workspace_.focusedSession()->sessionId();
     QQuickItem* terminal = nullptr;
     const std::function<void(QQuickItem&)> visit = [&](QQuickItem& item) {
         if (terminal != nullptr)
@@ -167,6 +171,20 @@ bool UiPreview::assignTerminalFocus() {
         return false;
     terminal->forceActiveFocus(Qt::OtherFocusReason);
     return terminal->hasActiveFocus();
+}
+
+bool UiPreview::openSettings() {
+    QQuickWindow* target_window = window();
+    if (target_window == nullptr)
+        return false;
+    // Invoke the dialog through QML rather than duplicating its state in C++.
+    // The function lives on the root Window, which is the QML root object; the
+    // content item is a child and does not carry it.
+    if (engine_ == nullptr || engine_->rootObjects().isEmpty())
+        return false;
+    QObject* root = engine_->rootObjects().first();
+    return root != nullptr &&
+           QMetaObject::invokeMethod(root, "openSettingsDialog", Qt::DirectConnection);
 }
 
 bool UiPreview::loadCandidate() {

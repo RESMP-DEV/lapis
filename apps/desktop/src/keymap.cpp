@@ -8,6 +8,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QJsonValue>
+#include <QVariantMap>
+#include <array>
 
 namespace lapis::desktop {
 namespace {
@@ -15,6 +18,176 @@ namespace {
 // while "Meta" (or "Cmd") reaches the same modifier on this host.
 constexpr int kMaximumSequencesPerAction = 4;
 constexpr int kMaximumActions = 64;
+
+// Built-in colour schemes. Every theme keeps the same contrast relationships:
+// background is darkest, cards sit above it, focused borders are the brightest
+// accent, and text is near-white. A theme only changes the frame around the
+// terminal; the session's own palette still colours program output. A plain
+// std::array of literal pointers keeps this a constant-initialized table.
+constexpr std::array<Theme, 6> kThemes = {{
+    {.name = "lapis",
+     .label = "Lapis",
+     .background = "#0b101a",
+     .surface = "#111927",
+     .card = "#151c29",
+     .hovered_card = "#1a2333",
+     .focused = "#1f2838",
+     .border = "#2b3546",
+     .focused_border = "#6a76e8",
+     .text = "#f2f3ea",
+     .muted_text = "#98a0ae",
+     .attention = "#ff5f56",
+     .attention_text = "#fff4f2"},
+    {.name = "graphite",
+     .label = "Graphite",
+     .background = "#111214",
+     .surface = "#17191c",
+     .card = "#1d2024",
+     .hovered_card = "#24282d",
+     .focused = "#2a2f35",
+     .border = "#33383f",
+     .focused_border = "#8a93a3",
+     .text = "#eceef1",
+     .muted_text = "#969ca6",
+     .attention = "#f0a04b",
+     .attention_text = "#1a1408"},
+    {.name = "daylight",
+     .label = "Daylight",
+     .background = "#f4f5f7",
+     .surface = "#ffffff",
+     .card = "#eceef2",
+     .hovered_card = "#e2e5eb",
+     .focused = "#d8dce4",
+     .border = "#c6cbd4",
+     .focused_border = "#4a5bd4",
+     .text = "#14181f",
+     .muted_text = "#5d6675",
+     .attention = "#c8342c",
+     .attention_text = "#ffffff"},
+    {.name = "solarized",
+     .label = "Solarized",
+     .background = "#002b36",
+     .surface = "#073642",
+     .card = "#0a4050",
+     .hovered_card = "#0d4a5c",
+     .focused = "#105468",
+     .border = "#1c5f72",
+     .focused_border = "#b58900",
+     .text = "#eee8d5",
+     .muted_text = "#93a1a1",
+     .attention = "#dc322f",
+     .attention_text = "#fdf6e3"},
+    {.name = "amber",
+     .label = "Amber",
+     .background = "#17120a",
+     .surface = "#1f1810",
+     .card = "#261d12",
+     .hovered_card = "#2e2317",
+     .focused = "#372a1b",
+     .border = "#453520",
+     .focused_border = "#e8a33d",
+     .text = "#f6ead2",
+     .muted_text = "#a2916f",
+     .attention = "#ff6b3d",
+     .attention_text = "#1a1008"},
+    {.name = "contrast",
+     .label = "High contrast",
+     .background = "#000000",
+     .surface = "#000000",
+     .card = "#0a0a0a",
+     .hovered_card = "#141414",
+     .focused = "#1e1e1e",
+     .border = "#4a4a4a",
+     .focused_border = "#ffe14d",
+     .text = "#ffffff",
+     .muted_text = "#c8c8c8",
+     .attention = "#ff4d4d",
+     .attention_text = "#000000"},
+}};
+
+[[nodiscard]] const Theme& find_theme(const QString& name) {
+    for (const Theme& theme : kThemes) {
+        if (name == QLatin1String(theme.name))
+            return theme;
+    }
+    return kThemes.front();
+}
+
+// Collapse arrays of short strings onto one line. QJsonDocument's writer only
+// offers all-expanded or all-compact output, and this config is read and edited
+// by hand, so a list such as ["Ctrl+Q"] must stay on one line.
+[[nodiscard]] QByteArray collapse_string_arrays(const QByteArray& json) {
+    QByteArray out;
+    out.reserve(json.size());
+    qsizetype index = 0;
+    while (index < json.size()) {
+        const qsizetype open = json.indexOf('[', index);
+        if (open < 0) {
+            out.append(json.mid(index));
+            break;
+        }
+        const qsizetype close = json.indexOf(']', open);
+        if (close < 0) {
+            out.append(json.mid(index));
+            break;
+        }
+        const QByteArray body = json.mid(open + 1, close - open - 1);
+        const bool scalar_only = !body.contains('{') && !body.contains('[') && !body.contains(':');
+        out.append(json.mid(index, open - index + 1));
+        if (scalar_only) {
+            // Join the wrapped entries with a single space after each comma.
+            QByteArray joined;
+            const QList<QByteArray> parts = body.split(',');
+            for (const QByteArray& raw : parts) {
+                const QByteArray trimmed = raw.trimmed();
+                if (trimmed.isEmpty())
+                    continue;
+                if (!joined.isEmpty())
+                    joined.append(' ');
+                joined.append(trimmed);
+                joined.append(',');
+            }
+            if (!joined.isEmpty())
+                joined.chop(1); // drop the trailing comma
+            out.append(' ');
+            out.append(joined);
+            out.append(' ');
+        } else {
+            out.append(body);
+        }
+        out.append(']');
+        index = close + 1;
+    }
+    return out;
+}
+
+[[nodiscard]] QString density_name(CardDensity density) {
+    switch (density) {
+    case CardDensity::Compact:
+        return QStringLiteral("compact");
+    case CardDensity::Minimal:
+        return QStringLiteral("minimal");
+    case CardDensity::Comfortable:
+        break;
+    }
+    return QStringLiteral("comfortable");
+}
+
+} // namespace
+
+const std::array<Theme, 6>& theme_table() { return kThemes; }
+
+bool theme_exists(const QString& name) {
+    for (const Theme& theme : kThemes) {
+        if (name == QLatin1String(theme.name))
+            return true;
+    }
+    return false;
+}
+
+const Theme& theme_for(const QString& name) { return find_theme(name); }
+
+namespace {
 
 [[nodiscard]] QStringList normalise(const QJsonValue& value, QString* diagnostic,
                                     const QString& action) {
@@ -49,6 +222,44 @@ QString KeyMap::default_source_path() {
     return QDir(QStringLiteral(LAPIS_PROJECT_ROOT)).filePath(QStringLiteral("lapis.json"));
 }
 
+// Parse a requested layout. Returns false for an unrecognised name so the
+// caller can report it rather than silently switching.
+[[nodiscard]] bool parse_layout(const QString& name, WorkspaceLayout* out) {
+    if (name == QStringLiteral("focus")) {
+        *out = WorkspaceLayout::Focus;
+        return true;
+    }
+    if (name == QStringLiteral("blocks")) {
+        *out = WorkspaceLayout::Blocks;
+        return true;
+    }
+    if (name == QStringLiteral("columns")) {
+        *out = WorkspaceLayout::Columns;
+        return true;
+    }
+    if (name == QStringLiteral("stack")) {
+        *out = WorkspaceLayout::Stack;
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool parse_density(const QString& name, CardDensity* out) {
+    if (name == QStringLiteral("comfortable")) {
+        *out = CardDensity::Comfortable;
+        return true;
+    }
+    if (name == QStringLiteral("compact")) {
+        *out = CardDensity::Compact;
+        return true;
+    }
+    if (name == QStringLiteral("minimal")) {
+        *out = CardDensity::Minimal;
+        return true;
+    }
+    return false;
+}
+
 void KeyMap::apply_defaults() {
     bindings_ = {
         {QStringLiteral("quit"), {QStringLiteral("Ctrl+Q")}},
@@ -64,9 +275,12 @@ void KeyMap::apply_defaults() {
         {QStringLiteral("focusLeft"), {QStringLiteral("Ctrl+Left")}},
         {QStringLiteral("focusRight"), {QStringLiteral("Ctrl+Right")}},
         {QStringLiteral("cycleLayout"), {QStringLiteral("Ctrl+L")}},
+        {QStringLiteral("openSettings"), {QStringLiteral("Ctrl+,")}},
         {QStringLiteral("reloadConfig"), {QStringLiteral("Ctrl+R")}},
     };
     layout_ = WorkspaceLayout::Focus;
+    density_ = CardDensity::Comfortable;
+    theme_ = QStringLiteral("lapis");
 }
 
 bool KeyMap::load() {
@@ -103,15 +317,82 @@ bool KeyMap::load() {
             bindings_.insert(it.key(), sequences);
     }
     const QString requested_layout = root.value(QStringLiteral("layout")).toString();
-    if (requested_layout == QStringLiteral("blocks"))
-        layout_ = WorkspaceLayout::Blocks;
-    else if (requested_layout == QStringLiteral("focus"))
-        layout_ = WorkspaceLayout::Focus;
-    else if (!requested_layout.isEmpty())
+    if (!requested_layout.isEmpty() && !parse_layout(requested_layout, &layout_))
         diagnostic_ = QStringLiteral("Unknown layout '%1'; keeping focus").arg(requested_layout);
+
+    const QString requested_theme = root.value(QStringLiteral("theme")).toString();
+    if (requested_theme.isEmpty()) {
+        // Tolerate a theme object as well as a plain name, so a hand-written
+        // config can spell the window colour as structured data.
+        const QJsonObject theme_object = root.value(QStringLiteral("theme")).toObject();
+        const QString named = theme_object.value(QStringLiteral("name")).toString();
+        if (!named.isEmpty()) {
+            if (theme_exists(named))
+                theme_ = named;
+            else
+                diagnostic_ = QStringLiteral("Unknown theme '%1'; keeping lapis").arg(named);
+        }
+    } else if (theme_exists(requested_theme)) {
+        theme_ = requested_theme;
+    } else {
+        diagnostic_ = QStringLiteral("Unknown theme '%1'; keeping lapis").arg(requested_theme);
+    }
+
+    const QString requested_density = root.value(QStringLiteral("density")).toString();
+    if (!requested_density.isEmpty() && !parse_density(requested_density, &density_))
+        diagnostic_ =
+            QStringLiteral("Unknown density '%1'; keeping comfortable").arg(requested_density);
+
     loaded_ = true;
     emit changed();
     return true;
+}
+
+QString KeyMap::layoutName() const {
+    switch (layout_) {
+    case WorkspaceLayout::Blocks:
+        return QStringLiteral("blocks");
+    case WorkspaceLayout::Columns:
+        return QStringLiteral("columns");
+    case WorkspaceLayout::Stack:
+        return QStringLiteral("stack");
+    case WorkspaceLayout::Focus:
+        break;
+    }
+    return QStringLiteral("focus");
+}
+
+QString KeyMap::densityName() const { return density_name(density_); }
+
+QVariantList KeyMap::themes() const {
+    QVariantList list;
+    for (const Theme& theme : kThemes) {
+        list.append(QVariantMap{
+            {QStringLiteral("name"), QString::fromLatin1(theme.name)},
+            {QStringLiteral("label"), QString::fromLatin1(theme.label)},
+            {QStringLiteral("background"), QString::fromLatin1(theme.background)},
+            {QStringLiteral("surface"), QString::fromLatin1(theme.surface)},
+            {QStringLiteral("card"), QString::fromLatin1(theme.card)},
+            {QStringLiteral("hoveredCard"), QString::fromLatin1(theme.hovered_card)},
+            {QStringLiteral("focused"), QString::fromLatin1(theme.focused)},
+            {QStringLiteral("border"), QString::fromLatin1(theme.border)},
+            {QStringLiteral("focusedBorder"), QString::fromLatin1(theme.focused_border)},
+            {QStringLiteral("text"), QString::fromLatin1(theme.text)},
+            {QStringLiteral("mutedText"), QString::fromLatin1(theme.muted_text)},
+            {QStringLiteral("attention"), QString::fromLatin1(theme.attention)},
+            {QStringLiteral("attentionText"), QString::fromLatin1(theme.attention_text)},
+        });
+    }
+    return list;
+}
+
+QStringList KeyMap::layouts() const {
+    return {QStringLiteral("focus"), QStringLiteral("columns"), QStringLiteral("blocks"),
+            QStringLiteral("stack")};
+}
+
+QStringList KeyMap::densities() const {
+    return {QStringLiteral("comfortable"), QStringLiteral("compact"), QStringLiteral("minimal")};
 }
 
 QStringList KeyMap::sequences(const QString& action) const { return bindings_.value(action); }
@@ -127,5 +408,93 @@ void KeyMap::toggleLayout() {
     layout_ = layout_ == WorkspaceLayout::Blocks ? WorkspaceLayout::Focus : WorkspaceLayout::Blocks;
     qInfo().noquote() << "lapis layout:" << layoutName();
     emit changed();
+}
+
+bool KeyMap::setLayout(const QString& name) {
+    WorkspaceLayout requested = layout_;
+    if (!parse_layout(name, &requested)) {
+        diagnostic_ = QStringLiteral("Unknown layout '%1'").arg(name);
+        emit changed();
+        return false;
+    }
+    if (requested == layout_)
+        return true;
+    layout_ = requested;
+    diagnostic_.clear();
+    qInfo().noquote() << "lapis layout:" << layoutName();
+    emit changed();
+    return save();
+}
+
+bool KeyMap::setTheme(const QString& name) {
+    if (!theme_exists(name)) {
+        diagnostic_ = QStringLiteral("Unknown theme '%1'").arg(name);
+        emit changed();
+        return false;
+    }
+    if (name == theme_)
+        return true;
+    theme_ = name;
+    diagnostic_.clear();
+    qInfo().noquote() << "lapis theme:" << theme_;
+    emit changed();
+    return save();
+}
+
+bool KeyMap::setDensity(const QString& name) {
+    CardDensity requested = density_;
+    if (!parse_density(name, &requested)) {
+        diagnostic_ = QStringLiteral("Unknown density '%1'").arg(name);
+        emit changed();
+        return false;
+    }
+    if (requested == density_)
+        return true;
+    density_ = requested;
+    diagnostic_.clear();
+    qInfo().noquote() << "lapis density:" << densityName();
+    emit changed();
+    return save();
+}
+
+bool KeyMap::save() { return persist(); }
+
+bool KeyMap::persist() {
+    const QFileInfo info(source_path_);
+    QJsonObject root;
+    if (info.isFile()) {
+        QFile existing(source_path_);
+        if (existing.open(QIODevice::ReadOnly)) {
+            const QJsonDocument document = QJsonDocument::fromJson(existing.readAll());
+            existing.close();
+            if (document.isObject())
+                root = document.object();
+        }
+    }
+    // Only the appearance keys are rewritten here. Keybindings and categories
+    // stay as the user wrote them, including comments they may rely on being
+    // absent when they next open the file.
+    root.insert(QStringLiteral("layout"), layoutName());
+    root.insert(QStringLiteral("theme"), theme_);
+    root.insert(QStringLiteral("density"), densityName());
+    if (!root.contains(QStringLiteral("version")))
+        root.insert(QStringLiteral("version"), 1);
+
+    QFile file(source_path_);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        diagnostic_ =
+            QStringLiteral("Could not write %1: %2").arg(source_path_, file.errorString());
+        qWarning().noquote() << "lapis config:" << diagnostic_;
+        emit changed();
+        return false;
+    }
+    // This file is hand-edited, so keep short string arrays on one line. The
+    // default indented writer expands every array over three lines, which turns
+    // the keybinding block into an unreadable column.
+    file.write(collapse_string_arrays(QJsonDocument(root).toJson(QJsonDocument::Indented)));
+    file.close();
+    diagnostic_.clear();
+    emit changed();
+    return true;
 }
 } // namespace lapis::desktop
