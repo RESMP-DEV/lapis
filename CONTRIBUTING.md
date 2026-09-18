@@ -170,8 +170,10 @@ by these C++ presets; a passing test is not coverage of those implementations.
 
 ### Planned UI tuning and debugging
 
-This workflow is planned, not implemented. Use the existing Qt Quick/QML boundary
-for visual iteration and LLDB for native code; keep both paths available.
+This workflow is planned, not implemented. The ordered scope, file ownership and
+acceptance criteria live in the [two-step plan](docs/architecture.md#planned-ui-refinement).
+Use the existing Qt Quick/QML boundary for visual iteration and LLDB for native
+code; keep both paths available.
 
 - Add a separate preview mode with synthetic terminal snapshots and replay controls
   for request arrival, pending attention and resolution. It must not attach to,

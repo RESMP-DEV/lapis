@@ -34,11 +34,12 @@ incomplete.**
 [Desktop evidence](evidence/desktop-preview.json) and
 [adapter evidence](evidence/terminal-adapter.json) delimit these observations.
 Dependency packaging remains unfinished; this is a local developer build.
-The [planned UI refinement](docs/architecture.md#planned-ui-refinement)
-records a smaller top bar, overlay attention pulses and rebindable carousel
-navigation; these are documentation only. Next, close service/terminal acceptance gaps
-and qualify the minimal Linux view before adding carousel behavior. Latency and
-warm-switch targets remain provisional.
+The [next two implementation steps](docs/architecture.md#planned-ui-refinement)
+are an isolated UI preview/debugging workflow, then a compact header and replayable
+red attention cue. Neither has started. Rebindable navigation follows; real agent
+attention and automatic carousel behavior remain later work. Finish terminal
+acceptance and qualify the minimal Linux view before expanding the live workspace.
+Latency and warm-switch targets remain provisional.
 
 ## Run the window on macOS
 
