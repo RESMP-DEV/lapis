@@ -69,8 +69,56 @@ ApplicationWindow {
     readonly property color attentionTextColor: "#fff4f2"
     readonly property alias cueAnimationEnabled: cueRules.animationEnabled
 
+    // Cmd-W hides the window and leaves the service-owned session running, which
+    // is the documented detach behavior. It must not quit the app: Cmd-W is the
+    // key macOS users press to move between windows, and quitting also kills the
+    // input path while leaving an orphaned session behind. Cmd-Q still quits.
     Shortcut { sequences: [StandardKey.Quit]; onActivated: Qt.quit() }
-    Shortcut { sequences: [StandardKey.Close]; onActivated: Qt.quit() }
+    Shortcut {
+        sequences: [StandardKey.Close]
+        onActivated: window.hide()
+    }
+
+    // Session navigation. Only the focused session owns the keyboard; these
+    // change focus explicitly and never steal it automatically.
+    Shortcut {
+        sequence: "Ctrl+Tab"
+        onActivated: workspace.focusedIndex = (workspace.focusedIndex + 1) % workspace.sessions.length
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+Tab"
+        onActivated: workspace.focusedIndex =
+            (workspace.focusedIndex + workspace.sessions.length - 1) % workspace.sessions.length
+    }
+    Shortcut {
+        sequence: "Ctrl+1"
+        onActivated: workspace.focusedIndex = 0
+    }
+    Shortcut {
+        sequence: "Ctrl+2"
+        onActivated: workspace.focusedIndex = 1
+    }
+    Shortcut {
+        sequence: "Ctrl+3"
+        onActivated: workspace.focusedIndex = 2
+    }
+    Shortcut {
+        sequence: "Ctrl+4"
+        onActivated: workspace.focusedIndex = 3
+    }
+    Shortcut {
+        sequence: "Ctrl+5"
+        onActivated: workspace.focusedIndex = 4
+    }
+    Shortcut {
+        sequence: "Ctrl+Left"
+        onActivated: workspace.focusedIndex = Math.max(0, workspace.focusedIndex - 1)
+    }
+    Shortcut {
+        sequence: "Ctrl+Right"
+        onActivated: workspace.focusedIndex =
+            Math.min(workspace.sessions.length - 1, workspace.focusedIndex + 1)
+    }
 
     QtObject {
         id: cueRules
