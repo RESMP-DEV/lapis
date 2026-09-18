@@ -1,6 +1,6 @@
 {
   "schema": "lapis.codex-attention-route/1",
-  "recorded_at": "2026-09-18T20:50:48.888947+00:00",
+  "recorded_at": "2026-09-18T20:55:04.283218+00:00",
   "scope": "Milestone 2 first implementation checkpoint: standalone attention core and isolated shared-server route qualification",
   "platform": "macOS arm64",
   "milestone_two_complete": false,
@@ -13,13 +13,13 @@
       "services/session/src/attention.cpp": "60ef847396826a45caf15656fad39bee32a3368e16c8e7d6f8c4b1d9f513e1f5",
       "services/session/tests/attention_test.cpp": "116aa38ee5b3a9bfca77eb1006c6f517b4bcb80827a1246dd0b931565cec93e8",
       "scripts/check_codex_attention.py": "fa0cb7c7fce4e365054648113c3098d511b1dfb903f8c156b4fe846f747ac867",
-      "scripts/codex_probe_transport.py": "11d5aadb876f0aac4167875b5f0abcb03de5b37db2f0e217a58c42080a050e85",
+      "scripts/codex_probe_transport.py": "5629adc3e59bf18d58ddfa4be2d723d8909c73622179d46229a9b7d364686bdf",
       "scripts/probe_codex_attention.py": "c14d7ab11502fb33a06bd37d507dbb10c8c47359763c7c32a76d89be2a402735",
       "scripts/tests/test_check_codex_attention.py": "102c21c3821b70e3ef4c76e3ecfe3005a6557d8a098d5220482bd1361e1117ea",
-      "scripts/tests/test_codex_probe_transport.py": "c17ec6c4507c4a4f936f44bb6a209b9bf1f332fae5aec4a3b29b91199ba9d299",
+      "scripts/tests/test_codex_probe_transport.py": "ffefe9caf3b3f24bf65eb7c9dbeb1dad7e3b6c5882e4ee7057db1ef8c9b9a189",
       "scripts/tests/test_probe_codex_attention.py": "f74a5daf7e03e35545c6d36b2e4cb935de310bf07b95fd105a374a04af81189f"
     },
-    "implementation_revision": "5f1d8b70ac4f6c2cc65ae6100ab54508f4fbc994"
+    "implementation_revision": "1bc28c147b788c69c1cb75a3f283bc8e8b457749"
   },
   "selected_route": {
     "transport": "WebSocket over a private Unix-domain socket",
@@ -34,7 +34,7 @@
   "live": {
     "command": "python3 scripts/check_codex_attention.py --live-glm --with-tui --output build/m2-live-tracked.json",
     "schema": "lapis.codex-attention-live/1",
-    "recorded_at": "2026-09-18T20:49:12.466921+00:00",
+    "recorded_at": "2026-09-18T20:54:25.605955+00:00",
     "passed": true,
     "configured_model": "zai,glm-5.3",
     "configured_provider": "CCR on loopback port 3456",
@@ -86,7 +86,7 @@
   "no_turn": {
     "command": "python3 scripts/probe_codex_attention.py --output build/m2-shared-server.json",
     "schema": "lapis.codex-shared-server/1",
-    "recorded_at": "2026-09-18T20:50:02.330381+00:00",
+    "recorded_at": "2026-09-18T20:54:25.604626+00:00",
     "passed": true,
     "turns_started": 0,
     "real_attention_qualified": false,
@@ -138,10 +138,10 @@
     "route": "zai,glm-5.3",
     "log_message": "Direct routing: zai,glm-5.3 (not in tier list)",
     "timestamps": [
-      "2026-09-18T20:49:12.767178Z",
-      "2026-09-18T20:49:16.167408Z",
-      "2026-09-18T20:49:17.710268Z",
-      "2026-09-18T20:49:20.791378Z"
+      "2026-09-18T20:54:25.883154Z",
+      "2026-09-18T20:54:31.159592Z",
+      "2026-09-18T20:54:35.431772Z",
+      "2026-09-18T20:54:40.480370Z"
     ],
     "limitation": "Local router dispatch evidence; not an independent attestation of the upstream model weights"
   },
@@ -197,7 +197,7 @@
     {
       "command": "python3 -m unittest discover -s scripts/tests",
       "passed": true,
-      "tests": 41,
+      "tests": 43,
       "log": "build/m2-python-tests.log"
     },
     {
@@ -224,5 +224,21 @@
     "Native hooks and Linux desktop qualification remain unexercised",
     "No pixel presentation, hardware keyboard latency or performance acceptance is claimed",
     "This checkpoint adds no runtime dependency; distribution notice and SBOM work remains separate"
-  ]
+  ],
+  "review": {
+    "scope": "Independent CCR/GLM read-only review of attention core and probe transport, followed by coordinator verification",
+    "attention_core": "No actionable findings reported",
+    "transport_findings": [
+      {
+        "finding": "Blocked pong write had no transport deadline",
+        "resolution": "Bound every frame drain; timeout aborts the socket; regression exercises an unresponsive peer"
+      },
+      {
+        "finding": "Invalid close code bypassed cleanup",
+        "resolution": "Validate and encode inside the cleanup scope; regression verifies closed writer for invalid codes"
+      }
+    ],
+    "verification": "43 Python tests and repeated live input/approval/TUI/reconnect qualification passed after fixes",
+    "limitation": "Reviewer did not run builds; coordinator ran the recorded checks"
+  }
 }
