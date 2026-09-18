@@ -6,6 +6,8 @@
 #include <QQmlError>
 #include <QQuickWindow>
 #include <QRect>
+#include <QScreen>
+#include <QStringList>
 
 #include <utility>
 
@@ -38,6 +40,44 @@ constexpr int kMaximumDiagnosticsLength = 4096;
 
 [[nodiscard]] bool isLocalSource(const QUrl& source) {
     return source.isValid() && source.isLocalFile();
+}
+
+// Move a window onto the requested screen and keep it inside that screen's
+// usable area. Returns false when no screen name matches, so the caller can
+// report the available names instead of silently opening on the wrong display.
+bool move_to_screen(QQuickWindow& window, const QString& requested) {
+    const auto screens = QGuiApplication::screens();
+    QScreen* target = nullptr;
+    for (QScreen* screen : screens) {
+        if (screen->name().contains(requested, Qt::CaseInsensitive)) {
+            target = screen;
+            break;
+        }
+    }
+    if (target == nullptr) {
+        QStringList names;
+        names.reserve(screens.size());
+        for (QScreen* screen : screens)
+            names.append(screen->name());
+        qWarning().noquote() << "No screen matched" << requested
+                             << "; available:" << names.join(QStringLiteral(", "));
+        return false;
+    }
+    const QRect available = target->availableGeometry();
+    // Keep the window wholly visible; clamp after moving so a window larger
+    // than the panel still starts at the panel's origin.
+    QRect geometry = window.geometry();
+    if (geometry.width() > available.width())
+        geometry.setWidth(available.width());
+    if (geometry.height() > available.height())
+        geometry.setHeight(available.height());
+    geometry.moveTopLeft(available.topLeft());
+    window.setScreen(target);
+    window.setGeometry(geometry);
+    const QRect placed = window.geometry();
+    qInfo().noquote() << "lapis window screen:" << target->name() << "at" << placed.x()
+                      << placed.y() << "size" << placed.width() << placed.height();
+    return true;
 }
 
 } // namespace
@@ -189,6 +229,8 @@ bool UiPreview::loadCandidate() {
     }
 
     emit windowChanged(candidateWindow);
+    if (!options_.screen.isEmpty() && !reloading)
+        move_to_screen(*candidateWindow, options_.screen);
     candidateWindow->show();
 
     return true;

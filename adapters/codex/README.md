@@ -17,8 +17,8 @@ attention. Approval/input events and hooks still require end-to-end qualificatio
 On 2026-09-18 the read-only probe was repeated against the installed executable:
 436 schema files, all ten tracked methods advertised, successful initialization
 and an empty loaded-thread page on the newly started private server. No model
-turn was started. The same executable's help advertises `--remote`, `--no-daemon`,
-`app-server daemon` and `app-server proxy`; its effective feature listing reports
+turn was started. The same executable's help advertises `--remote`, the
+`app-server daemon`/`proxy` pair, and `exec-server`; its effective feature listing reports
 `hooks` and `daemon_auto_start` enabled. These observations establish available
 options, not hook delivery or shared-thread observation.
 
@@ -85,7 +85,9 @@ hooks or a supported shared-server attachment before claiming CLI attention
 coverage.
 
 The installed CLI advertises `--remote` endpoints including Unix sockets and
-WebSockets, and `--no-daemon` for a backend independent of the shared daemon.
+WebSockets, and an `app-server daemon` with a stdio `proxy`. The older
+`--no-daemon` flag is gone in 0.154.0; a plain TUI invocation is the backend
+owned by that terminal, and no lapis-specific flag selects it.
 Use an explicitly selected mode in qualification and record it. Killing a TUI
 process or retaining its PID says nothing by itself about daemon-owned work.
 Do not start/stop the user's shared daemon or install global hooks for a probe.
@@ -100,7 +102,7 @@ flow; it must not blindly be mapped to definitive task completion.
 ## Next qualification
 
 The [launch receipt](../../evidence/cli-launch.json) records the installed TUI
-exercise with `--no-daemon`, normal/compact GUI captures and no submitted prompt.
+exercise with no extra launch flags, normal/compact GUI captures and no submitted prompt.
 Input/navigation/paste were driven through service IPC; the shell smoke separately
 exercises Qt key routing. This does not qualify real IME or physical input latency.
 

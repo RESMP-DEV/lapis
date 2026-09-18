@@ -1,55 +1,62 @@
 default:
-    @just --list
+    @python3 scripts/lapis.py
 
-desktop-binary := "build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop"
+# Report which local dependencies are ready.
+doctor:
+    python3 scripts/lapis.py doctor
+
+# Build the pinned Ghostty VT dependency (once per checkout).
+bootstrap:
+    python3 scripts/lapis.py bootstrap
 
 # Compiler warnings, clang-format, clang-tidy, Cppcheck, and CTest.
 check:
-    python3 scripts/check_cpp.py dev
+    python3 scripts/lapis.py check
 
 # Check instrumented execution for memory errors and undefined behavior.
 asan:
-    python3 scripts/check_cpp.py asan
+    python3 scripts/lapis.py asan
 
 # Check instrumented execution for data races (separate from ASan).
 tsan:
-    python3 scripts/check_cpp.py tsan
+    python3 scripts/lapis.py tsan
 
 # An optimized build with debug symbols for a profiler.
 profile:
-    python3 scripts/check_cpp.py profile
+    python3 scripts/lapis.py profile
 
 # Apply the repository's C++ formatting rules.
 format:
-    python3 scripts/check_cpp.py format
+    python3 scripts/lapis.py format
 
 # Verify that known defects actually fail the configured tools.
 verify-tools:
-    python3 scripts/verify_cpp_tools.py
+    python3 scripts/lapis.py verify-tools
 
 # Build and check the runnable desktop preview.
 desktop:
-    python3 scripts/check_cpp.py desktop
+    python3 scripts/lapis.py build
 
-# Open the built macOS application; its session service survives window closure.
+# Open the live shell window; its session service survives window closure.
 run:
-    @test -x "{{desktop-binary}}" || { echo 'Desktop binary is not built; run: just desktop'; exit 2; }
-    open "$(dirname "{{desktop-binary}}")/../.."
+    python3 scripts/lapis.py run
 
 # Isolated visual fixture: edit QML, then use Reload in the preview controls.
 ui:
-    @test -x "{{desktop-binary}}" || { echo 'Desktop binary is not built; run: just desktop'; exit 2; }
-    exec "{{desktop-binary}}" --ui-preview --qml "{{justfile_directory()}}/apps/desktop/qml/Main.qml"
+    python3 scripts/lapis.py ui
 
 # Launch the isolated fixture under the macOS native debugger.
 ui-debug:
-    @test -x "{{desktop-binary}}" || { echo 'Desktop binary is not built; run: just desktop'; exit 2; }
-    exec xcrun lldb -- "{{desktop-binary}}" --ui-preview --qml "{{justfile_directory()}}/apps/desktop/qml/Main.qml"
+    python3 scripts/lapis.py ui-debug
 
 # Bounded isolated GUI and capture checks; never sends shell input.
 ui-check:
-    python3 scripts/check_ui_preview.py
+    python3 scripts/lapis.py ui-check
 
 # Dedicated service/desktop launch cases; no model turn or live-shell reuse.
 cli-check:
-    python3 scripts/check_cli_launch.py --desktop
+    python3 scripts/lapis.py cli-check
+
+# Drive Qt key input through the PTY and capture the window.
+smoke:
+    python3 scripts/lapis.py smoke

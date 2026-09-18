@@ -57,16 +57,25 @@ separates terminal operation from attention delivery.
 
 ## Run the window on macOS
 
-After the [dependency setup](CONTRIBUTING.md#desktop-preview):
+After the [dependency setup](CONTRIBUTING.md#desktop-preview), set up and run
+everything through one entry point. No environment variables need exporting:
 
 ```sh
-just desktop      # Build, behavioral cases and static checks
-just run          # Open the live shell window
-just ui           # Isolated fixture, source-QML reload and attention replay
-just ui-debug     # Launch the isolated fixture in LLDB
-just ui-check     # Bounded preview captures and failure cases
-just cli-check    # Dedicated CLI/service/GUI acceptance fixtures
+python3 scripts/lapis.py doctor    # report which dependencies are ready
+python3 scripts/lapis.py bootstrap # build the pinned Ghostty terminal library (once)
+python3 scripts/lapis.py check     # compile, lint, format-check and run CTest
+python3 scripts/lapis.py build     # build the desktop app and run its checks
+python3 scripts/lapis.py run       # open the live shell window
+python3 scripts/lapis.py ui        # isolated fixture, source-QML reload and attention replay
+python3 scripts/lapis.py ui-debug  # launch the isolated fixture in LLDB
+python3 scripts/lapis.py ui-check  # bounded preview captures and failure cases
+python3 scripts/lapis.py cli-check # CLI/service/GUI acceptance fixtures
 ```
+
+`just` recipes with the same names wrap the same launcher (`just run`,
+`just ui-check`, and so on), and `python3 scripts/lapis.py` alone lists every
+command. The launcher locates the bootstrapped terminal dependency, supplies the
+socket path, and opens windows on the laptop panel.
 
 The shell starts in this checkout. Closing the window detaches it; reopening
 reattaches to the same service-owned shell. Type `exit` to end the shell. The
@@ -76,19 +85,24 @@ An additional window replaces the previous attachment. A service failure is not
 GUI detachment: the current client reports disconnection and does not automatically
 recover the session. Reopening after the service has exited starts a new shell.
 
-To launch Codex directly in its own persistent terminal:
+To launch Codex directly in its own persistent terminal, use the launcher, which
+resolves the build environment and opens on the laptop panel:
 
 ```sh
-build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop \
-  --socket "$PWD/runtime/codex.sock" --cwd "$PWD" -- codex --no-daemon
+python3 scripts/lapis.py run --socket "$PWD/runtime/codex.sock" --cwd "$PWD" -- codex
 ```
 
-Repeat the same command to reattach. `--no-daemon` selects a Codex backend owned
-by that TUI; it is an explicit choice for this example, not a lapis default.
-Other executables and literal arguments work after `--`. Explicit programs or
-`--cwd` require `--socket`; a launch mismatch is rejected before replacing the
-existing window. No hooks or approval settings are changed. There is still one
-live pane per window; its other cards remain fixtures.
+Use a dedicated socket for a Codex session. The default socket keeps the shell
+that `just run` starts, and an occupied endpoint rejects a different program
+before replacing the window, so reusing it for Codex reports a launch mismatch.
+
+Repeat the same command to reattach to the same Codex process. Codex 0.154.0
+removed the older `--no-daemon` flag; the plain TUI is the owned backend, and no
+lapis-specific Codex options are required. Other executables and literal
+arguments work after `--`. Explicit programs or `--cwd` require a socket, which
+the launcher supplies by default; a launch mismatch is rejected before replacing
+the existing window. No hooks or approval settings are changed. There is still
+one live pane per window; its other cards remain fixtures.
 
 The new default socket is `runtime/desktop-v2.sock`. Older v1 sessions are not
 migrated or terminated by this build. See the
@@ -108,16 +122,16 @@ optional no-prompt Codex check and current limits.
 ## Check the C++ baseline
 
 ```sh
-just check         # Compile, lint, format-check, and run CTest
-just asan          # Memory errors and undefined behavior
-just tsan          # Data races
-just verify-tools  # Prove the tools detect deliberately faulty fixtures
+python3 scripts/lapis.py check         # Compile, lint, format-check and run CTest
+python3 scripts/lapis.py asan          # Memory errors and undefined behavior
+python3 scripts/lapis.py tsan          # Data races
+python3 scripts/lapis.py verify-tools  # Prove the tools detect faulty fixtures
 ```
 
-See the contribution guide for installation and Python commands without `just`.
-Default CTest covers the toolchain, POSIX descriptor ownership and the production
-terminal adapter. Bootstrap its pinned dependency as described in the contribution
-guide before the first check. `just desktop` additionally covers PTY, local transport and UI reload/attention
+The contribution guide covers installation. Default CTest covers the toolchain,
+POSIX descriptor ownership and the production terminal adapter; run
+`python3 scripts/lapis.py bootstrap` once first. `python3 scripts/lapis.py build`
+additionally covers PTY, local transport and UI reload/attention
 behavior; isolated captures and the live input probe are described in the
 contribution guide. The engine comparison runs separately below.
 

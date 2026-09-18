@@ -31,6 +31,10 @@ void add_options(QCommandLineParser& parser) {
                       QStringLiteral("path")});
     parser.addOption(
         {QStringLiteral("compact"), QStringLiteral("Open at the minimum review size")});
+    parser.addOption({QStringLiteral("screen"),
+                      QStringLiteral("Open on the QScreen whose name contains this text, "
+                                     "for example built-in or ultrawide"),
+                      QStringLiteral("name")});
     parser.addOption({QStringLiteral("reduced-motion"),
                       QStringLiteral("Preview steady attention markers without motion")});
     parser.addOption({QStringLiteral("scenario"),
@@ -158,8 +162,11 @@ int main(int argc, char** argv) {
                 ? QUrl::fromLocalFile(
                       QFileInfo(parser.value(QStringLiteral("qml"))).absoluteFilePath())
                 : QUrl(QStringLiteral("qrc:/qml/Main.qml"));
-        UiPreview view(workspace,
-                       {.source = source, .compact = parser.isSet(QStringLiteral("compact"))});
+        UiPreview view(workspace, {.source = source,
+                                   .compact = parser.isSet(QStringLiteral("compact")),
+                                   .screen = parser.isSet(QStringLiteral("screen"))
+                                                 ? parser.value(QStringLiteral("screen"))
+                                                 : qEnvironmentVariable("LAPIS_SCREEN")});
         view.setSystemReducedMotion(system_reduced_motion());
         view.setReducedMotion(parser.isSet(QStringLiteral("reduced-motion")));
         QObject::connect(&app, &QGuiApplication::applicationStateChanged, &view,
