@@ -90,8 +90,11 @@ automated macOS keyboard, clipboard and Japanese IME checks.
 On first use, choose **Session → Start new session**. The shell starts in this
 checkout. Closing the window detaches it; reopening verifies the saved identity
 and restores the same service-owned shell. Input stays disabled until its screen
-is restored. Type `exit` to end the shell. An additional window replaces the
-previous attachment; there is still one attached window per socket.
+is restored. The pane starts your login shell: `$SHELL` when set, otherwise the
+account's shell from the user database, so a launch from an agent or script with
+an empty environment does not silently fall back to `/bin/sh` and a `sh-3.2$`
+prompt. Type `exit` to end the shell. An additional window replaces the previous
+attachment; there is still one attached window per socket.
 
 The Session menu offers Reconnect, Discover existing session, and Start new
 session after disconnection. Reconnect never starts another process or replays

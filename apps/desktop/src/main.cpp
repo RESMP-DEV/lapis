@@ -1,3 +1,4 @@
+#include "keymap.hpp"
 #include "platform_preferences.hpp"
 #include "terminal_surface.hpp"
 #include "ui_capture.hpp"
@@ -122,6 +123,23 @@ bool valid_options(const QCommandLineParser& parser) {
     }
     return true;
 }
+
+// Connect keyboard ownership and any requested capture to the window that
+// UiPreview creates. Lives outside main() to keep main's branching flat.
+void wire_window(QQuickWindow& window, lapis::desktop::UiPreview& view,
+                 lapis::desktop::Workspace& workspace, const QCommandLineParser& parser) {
+    QObject::connect(&window, &QQuickWindow::activeChanged, &view, [&view, &window] {
+        if (window.isActive())
+            view.assignTerminalFocus();
+    });
+    if (parser.isSet(QStringLiteral("capture")))
+        capture_window(window, workspace, view,
+                       {.image_path = parser.value(QStringLiteral("capture")),
+                        .trace_path = parser.value(QStringLiteral("trace")),
+                        .scenario = parser.value(QStringLiteral("scenario")),
+                        .delay_ms = parser.value(QStringLiteral("capture-delay")).toInt(),
+                        .smoke_input = parser.isSet(QStringLiteral("smoke-input"))});
+}
 } // namespace
 int main(int argc, char** argv) {
     QStringList arguments;
@@ -175,9 +193,15 @@ int main(int argc, char** argv) {
             }
         }
         Workspace workspace(isolated ? WorkspaceMode::preview : WorkspaceMode::live, options);
+        KeyMap keymap;
+        keymap.load();
+        qInfo().noquote() << "lapis keymap:" << keymap.sourcePath()
+                          << (keymap.loaded() ? "loaded" : "defaults");
         qmlRegisterUncreatableType<SessionPreview>("Lapis", 1, 0, "SessionPreview",
                                                    "Sessions are owned by the workspace");
         qmlRegisterType<TerminalSurface>("Lapis", 1, 0, "TerminalSurface");
+        qmlRegisterUncreatableType<KeyMap>("Lapis", 1, 0, "KeyMap",
+                                           "The keymap is owned by the application");
         const auto source =
             parser.isSet(QStringLiteral("qml"))
                 ? QUrl::fromLocalFile(
@@ -187,7 +211,8 @@ int main(int argc, char** argv) {
                                    .compact = parser.isSet(QStringLiteral("compact")),
                                    .screen = parser.isSet(QStringLiteral("screen"))
                                                  ? parser.value(QStringLiteral("screen"))
-                                                 : qEnvironmentVariable("LAPIS_SCREEN")});
+                                                 : qEnvironmentVariable("LAPIS_SCREEN"),
+                                   .keymap = &keymap});
         view.setSystemReducedMotion(system_reduced_motion());
         view.setReducedMotion(parser.isSet(QStringLiteral("reduced-motion")));
         QObject::connect(&app, &QGuiApplication::applicationStateChanged, &view,
@@ -196,14 +221,9 @@ int main(int argc, char** argv) {
                                  view.setSystemReducedMotion(system_reduced_motion());
                          });
         QObject::connect(&view, &UiPreview::windowChanged, &view, [&](QQuickWindow* window) {
-            if (parser.isSet(QStringLiteral("capture")))
-                capture_window(*window, workspace, view,
-                               {.image_path = parser.value(QStringLiteral("capture")),
-                                .trace_path = parser.value(QStringLiteral("trace")),
-                                .scenario = parser.value(QStringLiteral("scenario")),
-                                .delay_ms = parser.value(QStringLiteral("capture-delay")).toInt(),
-                                .smoke_input = parser.isSet(QStringLiteral("smoke-input"))});
+            wire_window(*window, view, workspace, parser);
         });
+        QObject::connect(&keymap, &KeyMap::changed, &view, [&view] { view.assignTerminalFocus(); });
         if (!view.load())
             return 1;
         view.window()->requestActivate();

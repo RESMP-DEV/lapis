@@ -250,6 +250,40 @@ for direct app invocations. The launcher sets `LAPIS_SCREEN=built-in` and prints
 the chosen screen and geometry, so a capture cannot silently land on an external
 display. Pass `--screen ""` or `LAPIS_SCREEN=` to keep platform placement.
 
+### Keybindings and layout
+
+`lapis.json` at the project root holds the keybindings, the layout, and the
+category names. Edit it and press Ctrl-R in the running window, or choose
+"Reload keybindings" from the Preview tools menu; no rebuild is needed. The
+defaults are:
+
+| Action | Default | Purpose |
+| --- | --- | --- |
+| Quit | Ctrl+Q | Exit lapis |
+| Detach window | Ctrl+W | Hide the window and leave sessions running |
+| Next / previous category | Ctrl+Tab / Ctrl+Shift+Tab | Move between categories |
+| Category 1-4 | Ctrl+1 to Ctrl+4 | Jump straight to a category |
+| Next / previous window | Ctrl+Shift+] / Ctrl+Shift+[ | Move through sessions |
+| Focus left / right | Ctrl+Left / Ctrl+Right | Step one session |
+| Cycle layout | Ctrl+L | Switch focus and blocks layouts |
+| Reload config | Ctrl+R | Re-read `lapis.json` |
+
+Each action takes a string or a list of strings, so several chords can share one
+action. Qt names the macOS Command key `Meta`; write `Meta+` (or `Ctrl+` for
+portability) rather than `Cmd+`. A missing or malformed file falls back to the
+built-in defaults and reports the problem instead of failing to start, and the
+window logs the path it read.
+
+`layout` is either `focus`, which keeps one large pane with a preview strip, or
+`blocks`, which gives every session an equal tile in a wrapping grid. Ctrl-L
+toggles it at runtime for comparison; the file sets the startup value.
+
+Command-Left and Command-Right inside the terminal move to the start and end of
+the line, matching macOS editing. The terminal translates them to the Ctrl-A and
+Ctrl-E sequences that interactive shells already implement, so line editing stays
+with the shell rather than being reimplemented in lapis. Every other Command
+combination stays available to the window.
+
 The macOS app sets `QT_MTL_NO_TRANSACTION=1` before Qt initialization. On this
 Qt/MoltenVK combination, the default transaction layer emitted five-second display
 lock warnings; the plain CAMetalLayer path passed threaded Vulkan capture without

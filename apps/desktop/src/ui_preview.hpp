@@ -1,6 +1,7 @@
 #ifndef LAPIS_DESKTOP_UI_PREVIEW_HPP
 #define LAPIS_DESKTOP_UI_PREVIEW_HPP
 
+#include "keymap.hpp"
 #include "workspace.hpp"
 #include <QObject>
 #include <QPointer>
@@ -19,6 +20,9 @@ struct UiPreviewOptions {
     // "built-in" for the MacBook panel and "ultrawide" for an external one.
     // Empty keeps the platform's default placement.
     QString screen;
+    // User keybindings and layout, exposed to QML as `keymap`. Optional; a
+    // null value keeps the built-in shortcuts that Main.qml defines itself.
+    KeyMap* keymap{};
 };
 
 // View host shared by normal launch and the isolated development fixture.
@@ -42,6 +46,10 @@ class UiPreview final : public QObject {
     [[nodiscard]] QQuickWindow* window() const;
     bool load();
     Q_INVOKABLE bool reload();
+    // Give keyboard ownership to the live session's terminal surface. The
+    // surface differs by layout: the single pane in focus mode, the focused
+    // tile in blocks mode. Returns true when a terminal took focus.
+    Q_INVOKABLE bool assignTerminalFocus();
   signals:
     void reducedMotionChanged();
     void diagnosticsChanged();

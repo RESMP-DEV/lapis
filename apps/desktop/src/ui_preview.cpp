@@ -4,11 +4,13 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlError>
+#include <QQuickItem>
 #include <QQuickWindow>
 #include <QRect>
 #include <QScreen>
 #include <QStringList>
 
+#include <functional>
 #include <utility>
 
 namespace lapis::desktop {
@@ -139,10 +141,41 @@ bool UiPreview::reload() {
     return loadCandidate();
 }
 
+bool UiPreview::assignTerminalFocus() {
+    QQuickWindow* target_window = window();
+    if (target_window == nullptr)
+        return false;
+    // Focus mode uses the single live pane; blocks mode promotes one tile per
+    // session. Workspace owns which session is focused, so ask it for the id.
+    const QString name =
+        options_.keymap != nullptr && options_.keymap->blocks()
+            ? QStringLiteral("cardTerminal_") + workspace_.focusedSession()->sessionId()
+            : QStringLiteral("liveTerminal");
+    QQuickItem* terminal = nullptr;
+    const std::function<void(QQuickItem&)> visit = [&](QQuickItem& item) {
+        if (terminal != nullptr)
+            return;
+        if (item.objectName() == name) {
+            terminal = &item;
+            return;
+        }
+        for (QQuickItem* child : item.childItems())
+            visit(*child);
+    };
+    visit(*target_window->contentItem());
+    if (terminal == nullptr || !terminal->isVisible() || !terminal->isEnabled())
+        return false;
+    terminal->forceActiveFocus(Qt::OtherFocusReason);
+    return terminal->hasActiveFocus();
+}
+
 bool UiPreview::loadCandidate() {
     std::unique_ptr<QQmlApplicationEngine> candidate = std::make_unique<QQmlApplicationEngine>();
     candidate->rootContext()->setContextProperty(QStringLiteral("workspace"), &workspace_);
     candidate->rootContext()->setContextProperty(QStringLiteral("preview"), this);
+    // QML reads `keymap.actionSequences(...)`. Absent keymap keeps the literals.
+    if (options_.keymap != nullptr)
+        candidate->rootContext()->setContextProperty(QStringLiteral("keymap"), options_.keymap);
     candidate->setInitialProperties({{QStringLiteral("visible"), false}});
 
     QString candidateDiagnostics;

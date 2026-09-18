@@ -69,56 +69,100 @@ ApplicationWindow {
     readonly property color attentionTextColor: "#fff4f2"
     readonly property alias cueAnimationEnabled: cueRules.animationEnabled
 
+    // Shortcuts come from lapis.json through the `keymap` context property. The
+    // literals below are the fallback used only when no keymap is supplied, such
+    // as in an isolated QML preview that does not load a config file.
+    function bindings(action, fallback) {
+        if (typeof keymap !== "undefined" && keymap !== null) {
+            const configured = keymap.actionSequences(action)
+            if (configured.length > 0)
+                return configured
+        }
+        return fallback
+    }
+
     // Cmd-W hides the window and leaves the service-owned session running, which
     // is the documented detach behavior. It must not quit the app: Cmd-W is the
     // key macOS users press to move between windows, and quitting also kills the
-    // input path while leaving an orphaned session behind. Cmd-Q still quits.
-    Shortcut { sequences: [StandardKey.Quit]; onActivated: Qt.quit() }
+    // input path while leaving an orphaned session behind. Quit is explicit.
     Shortcut {
-        sequences: [StandardKey.Close]
+        sequences: window.bindings("quit", ["Ctrl+Q"])
+        onActivated: Qt.quit()
+    }
+    Shortcut {
+        sequences: window.bindings("detachWindow", ["Ctrl+W"])
         onActivated: window.hide()
     }
 
-    // Session navigation. Only the focused session owns the keyboard; these
-    // change focus explicitly and never steal it automatically.
+    // Category navigation: one key per category, exactly like the terminal
+    // setups this mirrors. Categories are listed in lapis.json.
     Shortcut {
-        sequence: "Ctrl+Tab"
-        onActivated: workspace.focusedIndex = (workspace.focusedIndex + 1) % workspace.sessions.length
+        sequences: window.bindings("nextCategory", ["Ctrl+Tab"])
+        onActivated: workspace.nextCategory()
     }
     Shortcut {
-        sequence: "Ctrl+Shift+Tab"
-        onActivated: workspace.focusedIndex =
-            (workspace.focusedIndex + workspace.sessions.length - 1) % workspace.sessions.length
+        sequences: window.bindings("previousCategory", ["Ctrl+Shift+Tab"])
+        onActivated: workspace.nextCategory(-1)
     }
     Shortcut {
-        sequence: "Ctrl+1"
-        onActivated: workspace.focusedIndex = 0
+        sequences: window.bindings("category1", ["Ctrl+1"])
+        onActivated: workspace.focusCategory(0)
     }
     Shortcut {
-        sequence: "Ctrl+2"
-        onActivated: workspace.focusedIndex = 1
+        sequences: window.bindings("category2", ["Ctrl+2"])
+        onActivated: workspace.focusCategory(1)
     }
     Shortcut {
-        sequence: "Ctrl+3"
-        onActivated: workspace.focusedIndex = 2
+        sequences: window.bindings("category3", ["Ctrl+3"])
+        onActivated: workspace.focusCategory(2)
     }
     Shortcut {
-        sequence: "Ctrl+4"
-        onActivated: workspace.focusedIndex = 3
+        sequences: window.bindings("category4", ["Ctrl+4"])
+        onActivated: workspace.focusCategory(3)
+    }
+
+    // Window navigation inside the current category. Holding the chord repeats,
+    // because Qt auto-repeats an activated Shortcut while the keys are held.
+    Shortcut {
+        sequences: window.bindings("nextWindow", ["Ctrl+Shift+]"])
+        onActivated: workspace.nextWindow()
     }
     Shortcut {
-        sequence: "Ctrl+5"
-        onActivated: workspace.focusedIndex = 4
+        sequences: window.bindings("previousWindow", ["Ctrl+Shift+["])
+        onActivated: workspace.nextWindow(-1)
     }
     Shortcut {
-        sequence: "Ctrl+Left"
-        onActivated: workspace.focusedIndex = Math.max(0, workspace.focusedIndex - 1)
+        sequences: window.bindings("focusLeft", ["Ctrl+Left"])
+        onActivated: workspace.nextWindow(-1)
     }
     Shortcut {
-        sequence: "Ctrl+Right"
-        onActivated: workspace.focusedIndex =
-            Math.min(workspace.sessions.length - 1, workspace.focusedIndex + 1)
+        sequences: window.bindings("focusRight", ["Ctrl+Right"])
+        onActivated: workspace.nextWindow()
     }
+
+    Shortcut {
+        sequences: window.bindings("cycleLayout", ["Ctrl+L"])
+        onActivated: {
+            if (typeof keymap !== "undefined" && keymap !== null)
+                keymap.toggleLayout()
+        }
+    }
+    Shortcut {
+        sequences: window.bindings("reloadConfig", ["Ctrl+R"])
+        onActivated: {
+            if (typeof keymap !== "undefined" && keymap !== null)
+                keymap.reload()
+        }
+    }
+
+    readonly property bool blocksLayout: typeof keymap !== "undefined" && keymap !== null && keymap.blocks
+
+    // Keyboard ownership lives in C++ so it can be asserted directly rather
+    // than inferred from QML property state. Both entry points call it.
+    onActiveChanged: if (active) keyboardOwnershipReady()
+    onBlocksLayoutChanged: keyboardOwnershipReady()
+
+    signal keyboardOwnershipReady()
 
     QtObject {
         id: cueRules
@@ -313,6 +357,19 @@ ApplicationWindow {
                     }
                     MenuSeparator {}
                     PreviewMenuItem {
+                        text: qsTr("Layout: %1").arg(window.blocksLayout ? "blocks" : "focus")
+                        explanation: qsTr("Switch between one large pane and equal blocks. Ctrl-L also toggles this.")
+                        onTriggered: if (typeof keymap !== "undefined" && keymap !== null)
+                                         keymap.toggleLayout()
+                    }
+                    PreviewMenuItem {
+                        text: qsTr("Reload keybindings")
+                        explanation: qsTr("Apply edits from lapis.json. Ctrl-R also reloads.")
+                        onTriggered: if (typeof keymap !== "undefined" && keymap !== null)
+                                         keymap.reload()
+                    }
+                    MenuSeparator {}
+                    PreviewMenuItem {
                         text: qsTr("Reload interface")
                         explanation: qsTr("Apply saved layout edits to this preview.")
                         onTriggered: preview.reload()
@@ -326,8 +383,13 @@ ApplicationWindow {
 
             objectName: "focusedPane"
 
+            // Blocks layout gives every session an equal tile, so the single
+            // large pane collapses and the strip below becomes the workspace.
+            // Focus layout keeps the current large pane plus a preview strip.
             Layout.fillWidth: true
-            Layout.fillHeight: true
+            Layout.fillHeight: !window.blocksLayout
+            Layout.preferredHeight: window.blocksLayout ? 0 : -1
+            visible: !window.blocksLayout
             color: "#0d131d"
             radius: 12
             border.color: window.focusedBorderColor
@@ -380,18 +442,32 @@ ApplicationWindow {
                 anchors.margins: 18
                 anchors.topMargin: historyBar.visible ? 54 : 18
                 document: workspace.focusedSession
-                interactive: preview.active || (document && document.inputReady)
-                focus: true
-                Component.onCompleted: forceActiveFocus()
+// Input requires both the session being ready and this pane owning
+                // the keyboard, which blocks layout gives to a tile instead.
+                interactive: (preview.active || (document && document.inputReady))
+                             && !window.blocksLayout
+                focus: !window.blocksLayout
+                Component.onCompleted: if (!window.blocksLayout) forceActiveFocus()
+                // Claim the keyboard whenever this pane becomes the active
+                // surface, so switching layout never leaves focus on a button.
+                Connections {
+                    target: window
+                    function onBlocksLayoutChanged() {
+                        window.setTerminalFocus()
+                    }
+                }
             }
         }
 
         ListView {
             id: carousel
 
+            // In blocks mode this becomes the workspace: it fills the window,
+            // wraps into a grid and sizes tiles to fill the available space.
             Layout.fillWidth: true
-            Layout.preferredHeight: 172
-            Layout.minimumHeight: 164
+            Layout.fillHeight: window.blocksLayout
+            Layout.preferredHeight: window.blocksLayout ? -1 : 172
+            Layout.minimumHeight: window.blocksLayout ? 0 : 164
             orientation: ListView.Horizontal
             boundsMovement: Flickable.StopAtBounds
             clip: true
@@ -400,6 +476,16 @@ ApplicationWindow {
             leftMargin: 1
             rightMargin: 1
             model: workspace.sessions
+
+            // Orientation cannot change at runtime, so blocks mode uses the
+            // vertical flow, which wraps into as many columns as fit. Tiles are
+            // sized so the visible rows fill the viewport with no dead space;
+            // more sessions than fit simply scroll.
+            readonly property int blockColumns: 3
+            readonly property int tileWidth: window.blocksLayout ?
+                                                 Math.max(220, Math.floor((width - spacing * (blockColumns - 1)) / blockColumns)) : 238
+            readonly property int tileHeight: window.blocksLayout ?
+                                                  Math.max(150, Math.floor((height - spacing) / 2)) : 156
 
             ScrollBar.horizontal: ScrollBar {
                 implicitHeight: 8
@@ -415,8 +501,8 @@ ApplicationWindow {
                 required property int index
                 required property var modelData
 
-                implicitWidth: 238
-                implicitHeight: 156
+                implicitWidth: carousel.tileWidth
+                implicitHeight: carousel.tileHeight
                 objectName: "sessionCard_" + sessionCard.modelData.sessionId
                 padding: 0
                 focusPolicy: Qt.NoFocus
@@ -457,7 +543,13 @@ ApplicationWindow {
                     }
                 }
 
-                onClicked: liveTerminal.forceActiveFocus()
+                onClicked: {
+                    workspace.focusedIndex = sessionCard.index
+                    if (window.blocksLayout)
+                        cardTerminal.forceActiveFocus()
+                    else
+                        liveTerminal.forceActiveFocus()
+                }
                 transform: Translate {
                     y: sessionCard.hovered ? -1 : 0
                     Behavior on y {
@@ -557,10 +649,42 @@ ApplicationWindow {
                         clip: true
 
                         TerminalSurface {
+                            id: cardTerminal
                             anchors.fill: parent
                             anchors.margins: 1
-                            enabled: false
+                            // Only the focused session owns the keyboard, and
+                            // only when blocks mode makes this tile the pane.
+                            objectName: "cardTerminal_" + sessionCard.modelData.sessionId
                             document: sessionCard.modelData
+                            enabled: window.blocksLayout
+                                     && workspace.focusedIndex === sessionCard.index
+                                     && sessionCard.modelData.live
+                            interactive: window.blocksLayout
+                                         && workspace.focusedIndex === sessionCard.index
+                                         && sessionCard.modelData.live
+                            focus: window.blocksLayout
+                                           && workspace.focusedIndex === sessionCard.index
+                                           && sessionCard.modelData.live
+                            Component.onCompleted: {
+                                // Blocks mode has no separate pane, so the
+                                // focused live tile takes keyboard ownership.
+                                if (focus)
+                                    forceActiveFocus()
+                            }
+                            Connections {
+                                target: workspace
+                                function onFocusChanged() {
+                                    if (window.blocksLayout && sessionCard.modelData.live
+                                            && workspace.focusedIndex === sessionCard.index)
+                                        cardTerminal.forceActiveFocus()
+                                }
+                            }
+                            Connections {
+                                target: window
+                                function onBlocksLayoutChanged() {
+                                    window.setTerminalFocus()
+                                }
+                            }
                         }
                     }
 

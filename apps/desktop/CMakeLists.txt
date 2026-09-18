@@ -3,6 +3,7 @@ find_package(Vulkan REQUIRED)
 set(CMAKE_AUTOMOC ON)
 add_library(lapis_desktop_view STATIC
     src/workspace.cpp src/workspace.hpp
+    src/keymap.cpp src/keymap.hpp
     src/live_connection.cpp src/live_connection.hpp
     src/terminal_surface.cpp src/terminal_surface.hpp
     src/ui_preview.cpp src/ui_preview.hpp)

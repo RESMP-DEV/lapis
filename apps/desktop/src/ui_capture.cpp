@@ -50,8 +50,13 @@ QJsonObject view_state(QQuickWindow& window, Workspace& workspace) {
     auto* focused = window.findChild<QQuickItem*>(QStringLiteral("focusedPane"));
     const auto size = workspace.focusedSession()->snapshot().size;
     auto* terminal = visual_item(*window.contentItem(), QStringLiteral("liveTerminal"));
+    // Blocks mode hides the single pane and promotes the focused tile instead,
+    // so either surface owning focus means the session owns the keyboard.
+    auto* tile = visual_item(*window.contentItem(), QStringLiteral("cardTerminal_") +
+                                                        workspace.focusedSession()->sessionId());
+    const bool owns_focus = (terminal && terminal->hasFocus()) || (tile && tile->hasFocus());
     return {
-        {"terminal_owns_focus", terminal && terminal->hasFocus()},
+        {"terminal_owns_focus", owns_focus},
         {"window_active", window.isActive()},
         {"focus", window.activeFocusItem() ? window.activeFocusItem()->objectName() : QString{}},
         {"cards", cards},
