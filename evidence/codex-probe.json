@@ -1,0 +1,41 @@
+{
+  "recorded_at": "2026-09-18T02:43:03.160972+00:00",
+  "binary_path": "/Users/kearm/codex/codex-rs/target/release/codex",
+  "binary_sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+  "reported_version": "codex-cli 0.0.0",
+  "schema_includes_experimental": true,
+  "schema_file_count": 436,
+  "attention_methods_advertised": [
+    "error",
+    "item/commandExecution/requestApproval",
+    "item/fileChange/requestApproval",
+    "item/permissions/requestApproval",
+    "item/tool/requestUserInput",
+    "mcpServer/elicitation/request",
+    "serverRequest/resolved",
+    "thread/status/changed",
+    "turn/completed",
+    "turn/started"
+  ],
+  "attention_methods_missing": [],
+  "live_probe": {
+    "transport": "newline-delimited JSON over private stdio",
+    "experimental_api": true,
+    "initialize": "passed",
+    "initialize_result_keys": [
+      "codexHome",
+      "platformFamily",
+      "platformOs",
+      "userAgent"
+    ],
+    "platform_os": "macos",
+    "thread_loaded_list": "passed",
+    "loaded_thread_count_in_page": 0,
+    "notification_methods_observed": [
+      "remoteControl/status/changed"
+    ],
+    "turns_started": 0,
+    "attention_events_exercised": false
+  },
+  "scope": "Schema export and initialization/list only; no model turn or hook exercise."
+}

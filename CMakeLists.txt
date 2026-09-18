@@ -1,0 +1,52 @@
+cmake_minimum_required(VERSION 3.25)
+project(lapis VERSION 0.1.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+option(LAPIS_WARNINGS_AS_ERRORS "Fail builds on compiler warnings" ON)
+set(LAPIS_SANITIZER "none" CACHE STRING "Runtime instrumentation: none, address, thread")
+set_property(CACHE LAPIS_SANITIZER PROPERTY STRINGS none address thread)
+
+# Apply only to lapis targets, not future third-party dependencies.
+add_library(lapis_project_options INTERFACE)
+if(MSVC)
+    target_compile_options(lapis_project_options INTERFACE /W4 /permissive-)
+    if(LAPIS_WARNINGS_AS_ERRORS)
+        target_compile_options(lapis_project_options INTERFACE /WX)
+    endif()
+else()
+    target_compile_options(lapis_project_options INTERFACE
+        -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow
+        -Wnon-virtual-dtor -Wold-style-cast -Woverloaded-virtual
+        -fno-omit-frame-pointer)
+    if(LAPIS_WARNINGS_AS_ERRORS)
+        target_compile_options(lapis_project_options INTERFACE -Werror)
+    endif()
+endif()
+
+if(NOT LAPIS_SANITIZER STREQUAL "none")
+    if(WIN32 OR NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        message(FATAL_ERROR "lapis sanitizer presets currently require Clang/GCC on macOS or Linux")
+    endif()
+    if(LAPIS_SANITIZER STREQUAL "address")
+        set(lapis_sanitizer_flags -fsanitize=address,undefined -fno-sanitize-recover=all)
+    elseif(LAPIS_SANITIZER STREQUAL "thread")
+        set(lapis_sanitizer_flags -fsanitize=thread)
+    else()
+        message(FATAL_ERROR "Unknown LAPIS_SANITIZER: ${LAPIS_SANITIZER}")
+    endif()
+    target_compile_options(lapis_project_options INTERFACE ${lapis_sanitizer_flags})
+    target_link_options(lapis_project_options INTERFACE ${lapis_sanitizer_flags})
+endif()
+
+include(CTest)
+if(BUILD_TESTING)
+    find_package(Threads REQUIRED)
+    add_executable(lapis_toolchain_smoke tools/verification/smoke.cpp)
+    target_link_libraries(lapis_toolchain_smoke PRIVATE lapis_project_options Threads::Threads)
+    add_test(NAME toolchain-smoke COMMAND lapis_toolchain_smoke)
+    set_tests_properties(toolchain-smoke PROPERTIES TIMEOUT 10)
+endif()

@@ -1,0 +1,316 @@
+{
+  "recorded_at": "2026-09-18T02:43:51.098364+00:00",
+  "scope": "Verification tool bootstrap on macOS ARM64. Only the standard-library toolchain smoke is application-like code. No renderer, CLI attention handling, frame-time measurements, or cross-platform qualification.",
+  "tools": {
+    "clang++": {
+      "path": "/opt/homebrew/opt/llvm/bin/clang++",
+      "version": "Homebrew clang version 23.1.1"
+    },
+    "clang-tidy": {
+      "path": "/opt/homebrew/opt/llvm/bin/clang-tidy",
+      "version": "Homebrew LLVM version 23.1.1"
+    },
+    "clang-format": {
+      "path": "/opt/homebrew/opt/llvm/bin/clang-format",
+      "version": "Homebrew clang-format version 23.1.1"
+    },
+    "clangd": {
+      "path": "/opt/homebrew/opt/llvm/bin/clangd",
+      "version": "Homebrew clangd version 23.1.1"
+    },
+    "cppcheck": {
+      "path": "/opt/homebrew/bin/cppcheck",
+      "version": "Cppcheck 2.21.0"
+    },
+    "cmake": {
+      "path": "/opt/homebrew/bin/cmake",
+      "version": "cmake version 4.4.3"
+    },
+    "ctest": {
+      "path": "/opt/homebrew/bin/ctest",
+      "version": "ctest version 4.4.3"
+    }
+  },
+  "source_sha256": {
+    ".clang-format": "54528b79c5c28588104746267d83ec10d7dfcd5705a980b33bc68356a0d9eaa9",
+    ".clang-tidy": "243bb1e6eb4dffccf5465d213d4bfda9dc977e012f12b59a3889bea0cc07f76a",
+    ".clangd": "6d93e81ed4ed222e847e80306dff49f2f4f7b4d57e6f828c6b6aec1d9f1ebd1e",
+    "CMakeLists.txt": "7a4579a647d7b94b13c17bf9d0d091504f5f00facc00200c1af75de5a710db34",
+    "CMakePresets.json": "2d7145e48334b322e4fbe7147a15bbafa9cc13de4d36f2f9933f40a5742ea823",
+    "Brewfile": "61f55016408798b27d47fa5a7be888c32b93eb39ea338113ba36848f1d9b3d8a",
+    "justfile": "fd76ccfaceec15062eb4b1021a7441b8de4ad9ddc53bab561cabfa9e422d44e2",
+    "tools/verification/smoke.cpp": "ed8776012a5a15bbe390da8b243e34a921703a1dd6a1c66b00eb6a0614c868e2",
+    "scripts/check_cpp.py": "d8f23819c06189f8d412c93da6772fb391efaf6b774a6cc10321e968e885bedc",
+    "scripts/verify_cpp_tools.py": "3b507f186365ef0b1dc43995337c7118d478f8160ae4851b311a11d0fbca8f53"
+  },
+  "checks": {
+    "dev": {
+      "recorded_at": "2026-09-18T02:43:03.135187+00:00",
+      "passed": true,
+      "results": [
+        {
+          "check": "configure",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.759,
+          "log": "build/reports/dev/configure.log"
+        },
+        {
+          "check": "build",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.393,
+          "log": "build/reports/dev/build.log"
+        },
+        {
+          "check": "ctest",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.01,
+          "log": "build/reports/dev/ctest.log"
+        },
+        {
+          "check": "clang-format",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.019,
+          "log": "build/reports/dev/clang-format.log"
+        },
+        {
+          "check": "cppcheck",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.009,
+          "log": "build/reports/dev/cppcheck.log"
+        },
+        {
+          "check": "clang-tidy-0",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.275,
+          "log": "build/reports/dev/clang-tidy-0.log"
+        }
+      ]
+    },
+    "asan": {
+      "recorded_at": "2026-09-18T02:43:02.925883+00:00",
+      "passed": true,
+      "results": [
+        {
+          "check": "configure",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.705,
+          "log": "build/reports/asan/configure.log"
+        },
+        {
+          "check": "build",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.468,
+          "log": "build/reports/asan/build.log"
+        },
+        {
+          "check": "ctest",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.052,
+          "log": "build/reports/asan/ctest.log"
+        }
+      ]
+    },
+    "tsan": {
+      "recorded_at": "2026-09-18T02:43:03.081540+00:00",
+      "passed": true,
+      "results": [
+        {
+          "check": "configure",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.752,
+          "log": "build/reports/tsan/configure.log"
+        },
+        {
+          "check": "build",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.4,
+          "log": "build/reports/tsan/build.log"
+        },
+        {
+          "check": "ctest",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.231,
+          "log": "build/reports/tsan/ctest.log"
+        }
+      ]
+    },
+    "profile": {
+      "recorded_at": "2026-09-18T02:43:02.915371+00:00",
+      "passed": true,
+      "results": [
+        {
+          "check": "configure",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.761,
+          "log": "build/reports/profile/configure.log"
+        },
+        {
+          "check": "build",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.443,
+          "log": "build/reports/profile/build.log"
+        },
+        {
+          "check": "ctest",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.009,
+          "log": "build/reports/profile/ctest.log"
+        }
+      ]
+    },
+    "tool-verification": {
+      "recorded_at": "2026-09-18T02:43:02.757842+00:00",
+      "passed": true,
+      "results": [
+        {
+          "check": "compiler-warning",
+          "passed": true,
+          "exit_code": 1,
+          "expected_diagnostic": "unused-variable",
+          "elapsed_seconds": 0.144,
+          "log": "build/reports/tool-verification/compiler-warning.log"
+        },
+        {
+          "check": "formatting",
+          "passed": true,
+          "exit_code": 1,
+          "expected_diagnostic": "clang-format-violations",
+          "elapsed_seconds": 0.123,
+          "log": "build/reports/tool-verification/formatting.log"
+        },
+        {
+          "check": "static-null",
+          "passed": true,
+          "exit_code": 1,
+          "expected_diagnostic": "clang-analyzer-core.NullDereference",
+          "elapsed_seconds": 0.157,
+          "log": "build/reports/tool-verification/static-null.log"
+        },
+        {
+          "check": "cppcheck-null",
+          "passed": true,
+          "exit_code": 1,
+          "expected_diagnostic": "nullPointer",
+          "elapsed_seconds": 0.022,
+          "log": "build/reports/tool-verification/cppcheck-null.log"
+        },
+        {
+          "check": "address-compile",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.276,
+          "log": "build/reports/tool-verification/address-compile.log"
+        },
+        {
+          "check": "address-detection-0",
+          "passed": true,
+          "exit_code": -6,
+          "expected_diagnostic": "AddressSanitizer: heap-buffer-overflow",
+          "elapsed_seconds": 0.156,
+          "log": "build/reports/tool-verification/address-detection-0.log"
+        },
+        {
+          "check": "undefined-compile",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.126,
+          "log": "build/reports/tool-verification/undefined-compile.log"
+        },
+        {
+          "check": "undefined-detection-0",
+          "passed": true,
+          "exit_code": -6,
+          "expected_diagnostic": "runtime error: signed integer overflow",
+          "elapsed_seconds": 0.009,
+          "log": "build/reports/tool-verification/undefined-detection-0.log"
+        },
+        {
+          "check": "thread-compile",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.276,
+          "log": "build/reports/tool-verification/thread-compile.log"
+        },
+        {
+          "check": "thread-detection-0",
+          "passed": true,
+          "exit_code": -6,
+          "expected_diagnostic": "ThreadSanitizer: data race",
+          "elapsed_seconds": 0.204,
+          "log": "build/reports/tool-verification/thread-detection-0.log"
+        },
+        {
+          "check": "thread-detection-1",
+          "passed": true,
+          "exit_code": -6,
+          "expected_diagnostic": "ThreadSanitizer: data race",
+          "elapsed_seconds": 0.192,
+          "log": "build/reports/tool-verification/thread-detection-1.log"
+        },
+        {
+          "check": "thread-detection-2",
+          "passed": true,
+          "exit_code": -6,
+          "expected_diagnostic": "ThreadSanitizer: data race",
+          "elapsed_seconds": 0.195,
+          "log": "build/reports/tool-verification/thread-detection-2.log"
+        }
+      ]
+    }
+  },
+  "clangd": {
+    "passed": true,
+    "errors": 0,
+    "log": "build/reports/clangd.log"
+  },
+  "profiling": {
+    "available_instruments_templates": [
+      "Time Profiler",
+      "Animation Hitches",
+      "Allocations",
+      "Leaks",
+      "Game Performance",
+      "Metal System Trace"
+    ],
+    "workload_traced": false
+  },
+  "dependency_audit": {
+    "runner": "/Users/kearm/AlphaHENG/scripts/audit-dependencies.sh",
+    "exit_code": 0,
+    "package_sources_found": 0,
+    "scope": "No supported project lockfiles. No vulnerability clearance for Homebrew development tools."
+  }
+}

@@ -1,0 +1,16 @@
+Checks: >-
+  -*,
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  concurrency-*,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-nodiscard,
+  readability-function-cognitive-complexity
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*'
+SystemHeaders: false
+CheckOptions:
+  readability-function-cognitive-complexity.Threshold: '25'
