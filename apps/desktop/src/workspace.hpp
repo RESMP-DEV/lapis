@@ -13,22 +13,37 @@
 
 namespace lapis::desktop {
 
+class LiveConnection;
+
 class SessionPreview final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString title READ title CONSTANT)
     Q_PROPERTY(QString directory READ directory CONSTANT)
-    Q_PROPERTY(QString activity READ activity CONSTANT)
+    Q_PROPERTY(QString activity READ activity NOTIFY snapshotChanged)
+    Q_PROPERTY(bool live READ live CONSTANT)
     Q_PROPERTY(QColor accent READ accent CONSTANT)
   public:
     SessionPreview(QString title, QString directory, QString activity, QColor accent,
                    std::string_view content);
-    [[nodiscard]] QString title() const { return title_; }
-    [[nodiscard]] QString directory() const { return directory_; }
-    [[nodiscard]] QString activity() const { return activity_; }
+    ~SessionPreview() override;
+    void startLive(const QString& endpoint, const QString& directory);
+    void applySnapshot(session::TerminalSnapshot snapshot);
+    void setActivity(const QString& activity);
+    void sendText(const QByteArray& bytes, bool paste = false);
+    void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
+    void resizeTerminal(session::TerminalSize size);
+    [[nodiscard]] bool live() const { return live_ != nullptr; }
+    [[nodiscard]] const QString& title() const { return title_; }
+    [[nodiscard]] const QString& directory() const { return directory_; }
+    [[nodiscard]] const QString& activity() const { return activity_; }
     [[nodiscard]] QColor accent() const { return accent_; }
     [[nodiscard]] const session::TerminalSnapshot& snapshot() const { return snapshot_; }
 
+  signals:
+    void snapshotChanged();
+
   private:
+    std::unique_ptr<LiveConnection> live_;
     QString title_;
     QString directory_;
     QString activity_;

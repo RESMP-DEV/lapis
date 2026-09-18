@@ -125,6 +125,49 @@ in Zig ReleaseSafe mode; ASan/UBSan instruments the C++ adapter and tests.
 No network download occurs during CMake configuration. Other bootstrap hosts
 remain unqualified; the existing pins cover macOS and Linux ARM64.
 
+### Desktop preview
+
+Install the macOS Brewfile dependencies and bootstrap Ghostty above. The desktop
+requires **Qt 6.11.2 exactly**, Vulkan headers/loader (exercised at 1.4.357.0), and
+MoltenVK (1.4.2). Homebrew formulae move; a newer Qt installation deliberately
+fails the CMake version check until that version is evaluated. The headless build
+does not depend on Qt. `just desktop` uses an optimized build with symbols;
+`just run` opens `build/desktop/apps/desktop/lapis_desktop.app`. The app locates its
+service using the build path; copying the bundle alone is not a portable install.
+
+For a repeatable visual/input check:
+
+```sh
+build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop \
+  --smoke-input --capture "$PWD/build/window.png"
+```
+
+This opens a real window, clears a harmless partial command with Control-U, sends
+a unique `printf` marker and `stty size` through Qt key routing, waits for the
+service snapshot, captures the window, and exits. `--compact` tests 980×700 logical
+pixels. The shell survives the capture process. Keep captures private under
+`build/` unless reviewed for terminal content. This is functional acceptance, not
+an input-latency benchmark.
+
+The macOS app sets `QT_MTL_NO_TRANSACTION=1` before Qt initialization. On this
+Qt/MoltenVK combination, the default transaction layer emitted five-second display
+lock warnings; the plain CAMetalLayer path passed threaded Vulkan capture without
+them. Recheck this version-specific workaround on Qt upgrades. The app verifies
+Vulkan selection at runtime instead of accepting a silent fallback.
+
+Qt Core/Gui/Network/Qml/Quick/QuickControls2 are dynamically linked under the open
+source LGPLv3 option; commercial licensing is an alternative. Redistribution must
+retain notices, meet the source/relinking requirements and audit the actual bundled
+modules/dependencies. MoltenVK and the Vulkan headers/loader formulae report Apache-2.0;
+verify their complete bundled notices before redistribution. Qt, Vulkan and Ghostty packaging/SBOM provenance are unfinished;
+no distributable binary is published by this checkpoint.
+
+To exercise the new PTY/transport code with sanitizers, configure the `asan` or
+`tsan` preset into a separate directory with `-DLAPIS_BUILD_DESKTOP=ON`, the same
+LLVM/SDK settings and Ghostty prefix, then build and run its CTest cases. Keep
+ASan and TSan separate. Vendor Qt/MoltenVK/Ghostty libraries are not instrumented
+by these C++ presets; a passing test is not coverage of those implementations.
+
 ## Checks
 
 Run from the repository root:
@@ -137,6 +180,8 @@ Run from the repository root:
 | `just verify-tools` | Known-bad fixtures must produce specific failure diagnostics |
 | `just format` | Apply C++ formatting |
 | `just profile` | Optimized build with debug symbols and CTest |
+| `just desktop` | Optimized desktop/service build, PTY/transport cases and static checks |
+| `just run` | Open the previously built macOS preview |
 
 Required checks accumulate when a change touches multiple areas:
 
@@ -150,13 +195,15 @@ Required checks accumulate when a change touches multiple areas:
 | Documentation or symlinks only | Verify paths, links and instruction consistency; no unrelated C++ rebuild |
 
 Without `just`, use `python3 scripts/check_cpp.py dev`, replacing `dev` with
-`asan`, `tsan`, `profile`, or `format` as appropriate. The detector check is
+`asan`, `tsan`, `profile`, `desktop`, or `format` as appropriate. The detector check is
 `python3 scripts/verify_cpp_tools.py`.
 
 Builds use Ninja and ccache when available. Analysis runs in parallel, up to
 eight workers by default; use `--jobs N` on `check_cpp.py` to adjust it. Each
 invocation records diagnostics, tool versions, exit codes, and durations under
-`build/reports/<mode>/`. Static analysis runs even when compilation is cached.
+`build/reports/<mode>/`. Static analysis runs even when compilation is cached. Desktop analysis uses the
+Qt Cppcheck library and excludes generated MOC/resource files from source analysis;
+the compiler still builds those files with project warnings enabled.
 
 Use these runner commands to select LLVM, the macOS SDK, and ccache together;
 raw CMake presets do not perform that tool discovery. The `dev` and `profile`

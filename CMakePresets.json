@@ -29,18 +29,21 @@
       "name": "profile",
       "inherits": "base",
       "cacheVariables": {"CMAKE_BUILD_TYPE": "RelWithDebInfo"}
-    }
+    },
+    {"name": "desktop", "inherits": "profile", "cacheVariables": {"LAPIS_BUILD_DESKTOP": "ON"}}
   ],
   "buildPresets": [
     {"name": "dev", "configurePreset": "dev"},
     {"name": "asan", "configurePreset": "asan"},
     {"name": "tsan", "configurePreset": "tsan"},
-    {"name": "profile", "configurePreset": "profile"}
+    {"name": "profile", "configurePreset": "profile"},
+    {"name": "desktop", "configurePreset": "desktop"}
   ],
   "testPresets": [
     {"name": "dev", "configurePreset": "dev", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
     {"name": "asan", "configurePreset": "asan", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
     {"name": "tsan", "configurePreset": "tsan", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
-    {"name": "profile", "configurePreset": "profile", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}}
+    {"name": "profile", "configurePreset": "profile", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}},
+    {"name": "desktop", "configurePreset": "desktop", "output": {"outputOnFailure": true}, "execution": {"noTestsAction": "error"}}
   ]
 }

@@ -12,6 +12,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(cmake/ProjectOptions.cmake)
 
+option(LAPIS_BUILD_DESKTOP "Build the live desktop preview and local session service" OFF)
+
 include(CTest)
 add_subdirectory(services/session)
 
@@ -25,4 +27,8 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_toolchain_smoke PRIVATE lapis_project_options Threads::Threads)
     add_test(NAME toolchain-smoke COMMAND lapis_toolchain_smoke)
     set_tests_properties(toolchain-smoke PROPERTIES TIMEOUT 10)
+endif()
+
+if(LAPIS_BUILD_DESKTOP)
+    add_subdirectory(apps/desktop)
 endif()

@@ -125,7 +125,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "mode",
-        choices=("dev", "asan", "tsan", "profile", "format"),
+        choices=("dev", "asan", "tsan", "profile", "desktop", "format"),
         default="dev",
         nargs="?",
     )
@@ -188,10 +188,19 @@ def main():
         tasks = [
             ("ctest", [tools["ctest"], "--preset", args.mode, "--parallel", args.jobs])
         ]
-        if args.mode == "dev":
-            database = ROOT / "build" / "dev" / "compile_commands.json"
+        if args.mode in ("dev", "desktop"):
+            database = ROOT / "build" / args.mode / "compile_commands.json"
             entries = json.loads(database.read_text())
+            # Qt-generated MOC/RCC files are compiler-checked, not hand-maintained
+            # source. Analyze first-party translation units with their real flags.
+            entries = [
+                entry
+                for entry in entries
+                if not Path(entry["file"]).is_relative_to(ROOT / "build")
+            ]
             sources = sorted({entry["file"] for entry in entries})
+            analysis_database = log_dir / "compile_commands.json"
+            analysis_database.write_text(json.dumps(entries, indent=2) + "\n")
             if not sources:
                 raise RuntimeError(
                     "Compilation database has no C++ sources; refusing an empty check"
@@ -217,7 +226,8 @@ def main():
                     "cppcheck",
                     [
                         tools["cppcheck"],
-                        f"--project={database}",
+                        f"--project={analysis_database}",
+                        *(["--library=qt"] if args.mode == "desktop" else []),
                         "--enable=warning,performance,portability",
                         "--error-exitcode=1",
                         "--inline-suppr",

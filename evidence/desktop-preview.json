@@ -1,0 +1,176 @@
+{
+  "recorded_at": "2026-09-18T07:43:11.556880+00:00",
+  "scope": "macOS developer visual checkpoint, not completed milestone 1 or packaged release",
+  "source": {
+    "base_commit": "9d243ff6ed92cfcd0c85edd53063a16404b668be",
+    "sha256": {
+      "CMakeLists.txt": "7e1a44fb8697536f8e5900d494c74b1b76a1f96e8597d1ea65552a67ad8bf667",
+      "CMakePresets.json": "14bef55ca5b53f4dce04dad7933784dbd52b8928356a083b5afc5bbd12741136",
+      "apps/desktop/CMakeLists.txt": "12b04dd503ae7ed30727db289bdb3dc766d2a9cc91cf19c10a29546c0aef9859",
+      "apps/desktop/qml/Main.qml": "0496ec48f59fdf6719d465e90934cdcdf9f3a6fcbb2fc62ec1bd6182f876fb21",
+      "apps/desktop/src/live_connection.cpp": "d7a02d465311b937b678e4fa46b0f765413af6f9f307a08c3ff843466f6e94a8",
+      "apps/desktop/src/live_connection.hpp": "b1f24eb772e9ba3d258997d343582519e93b164da21e3add0a6198fbafb86ce3",
+      "apps/desktop/src/main.cpp": "0fffc10f9b6de1d4c963d582546ce449d04f7e979cc78a488a81ebe35b743b57",
+      "apps/desktop/src/terminal_surface.cpp": "88a888a41a931f8d2fab0f510bea65ae93203261988006566135424aa4e64f60",
+      "apps/desktop/src/terminal_surface.hpp": "2efb122c1f237d6d1cf5faa9c399b560ea5cf29192fefcaed696c58c4b7d7c5f",
+      "apps/desktop/src/workspace.cpp": "4e0e773b992407f70027444c5ef2b55c7f97b0a3bcab6496332232ea58e43e5d",
+      "apps/desktop/src/workspace.hpp": "c06df79f783f8620294863f0e654a014056dee05f2e3db089bcb7fb6f42ea464",
+      "scripts/check_cpp.py": "2ac5dd8d261dd9fddb21588a1db5f3a5ff28e290ab50a3854c25eebec586a1ac",
+      "services/session/CMakeLists.txt": "c98f7bdbab09eafd23d9de74267e9251ac8bd39ba7ffbc4b73b064047b346d22",
+      "services/session/include/lapis/session/terminal.hpp": "b2e5042ccceaa76e80d9bfa477515af6caf786742e38220f4f68ed6e22b1b105",
+      "services/session/src/platform/posix/pty_process.cpp": "d4180752fec7e1a7f45b69ab67d1a7f67d3061bd67d2ebec6ec0316932ab3766",
+      "services/session/src/platform/posix/pty_process.hpp": "d368cad9e1d5c67807a41edc7288df6d6827b57b9730b0ffe66ff8aaedcb5528",
+      "services/session/src/platform/posix/unique_fd.cpp": "92efde7730f6ec07d350593d295915118f9a8bb4edc1bcd7c86a8a46d0196a78",
+      "services/session/src/platform/posix/unique_fd.hpp": "599c58ab530dac5f70327f70f07c325552cce833e1c35d71a2dc3dd79c9211ec",
+      "services/session/src/session_service.cpp": "fac28388b0e6e2850f79b73cdc16fc2ea890a5be5038469255a58ae6bcc0fce3",
+      "services/session/src/terminal/terminal.cpp": "d432cddc2108c369ffdeed0fea8a4c181d2cea694146dadd6bc0f8145faeba81",
+      "services/session/src/transport/local_protocol.cpp": "bf63ea4f650a98d15a6fd00fb21d22ce7f7de6e0f1d606d5d96bc6dffffaaab8",
+      "services/session/src/transport/local_protocol.hpp": "c94848fa0b6781320d7ac16d2400de37a0cabc771768c6c88cd3290edde893b1",
+      "services/session/tests/local_protocol_test.cpp": "0f920f98052754e44fb55dea5d317abe68ea6bf8f2f32d3cc1aa7e3fcd2b9ac5",
+      "services/session/tests/pty_process_test.cpp": "3d41ae57ca7330464c65bf7a746bcf4fe40427ee4d992d3a5014aa400e526cd6",
+      "services/session/tests/terminal/terminal_test.cpp": "3cca1566c41c9ed7d7e97ca6d465423a98c4ae4575b1524a9e22e462c75966bb",
+      "services/session/tests/unique_fd_test.cpp": "c50a4757f7d255e80ae8b58e1f567d7cc6a54ab195d6f360f5f711b42983d0a9"
+    }
+  },
+  "reference": {
+    "architecture": "arm64",
+    "gpu": "Apple M4 Max",
+    "qt": "6.11.2",
+    "vulkan_loader": "1.4.357.0",
+    "moltenvk": "1.4.2"
+  },
+  "implemented": [
+    "One real interactive shell owned by a separate session service",
+    "Enlarged focused terminal and six-card composition with five placeholder sessions",
+    "Opaque surfaces and 130-140 ms ease-out hover/color animation",
+    "Public Qt scene graph glyph rendering using Vulkan through MoltenVK",
+    "Bounded PTY I/O, local frames and coalesced owned snapshots"
+  ],
+  "visual_checks": [
+    {
+      "view": "final",
+      "exit_code": 0,
+      "elapsed_seconds": 0.73,
+      "shell_pid": 5894,
+      "vulkan": true,
+      "display_lock_warning": false,
+      "input_smoke": true
+    },
+    {
+      "view": "compact",
+      "exit_code": 0,
+      "elapsed_seconds": 0.615,
+      "shell_pid": 5894,
+      "vulkan": true,
+      "display_lock_warning": false,
+      "input_smoke": false
+    }
+  ],
+  "visual_timing_scope": "Whole warm launch, command/capture and exit; neither input latency nor frame-time measurement",
+  "snapshot_captures": {
+    "final-window.png": "f934b500ad68810b9f54bd128717d8eca2a1bebc988a8ce5f33584909d3a4cd4",
+    "compact-window.png": "d6187b9139d43b3961d52b5fb76f48cee68ff6981e9e9efaf93431d176722a4f"
+  },
+  "service_checks": [
+    {
+      "mode": "asan",
+      "same_child_after_detach": true,
+      "detached_output_rows": 5000,
+      "current_state_restored": true,
+      "resize": [
+        61,
+        17
+      ],
+      "clean_exit": true
+    },
+    {
+      "mode": "tsan",
+      "same_child_after_detach": true,
+      "detached_output_rows": 5000,
+      "current_state_restored": true,
+      "resize": [
+        61,
+        17
+      ],
+      "clean_exit": true
+    }
+  ],
+  "validation": {
+    "just desktop": "PASS, compiler/static checks and 5 CTest cases",
+    "desktop ASan/UBSan": "5/5 CTest passed",
+    "desktop TSan": "4/4 affected headless cases passed; GUI not run under TSan",
+    "live service ASan and TSan": "same child, 5000 detached output rows, restored state, resize, clean exit",
+    "Python": "Ruff check/format and 23 existing runner tests passed",
+    "just verify-tools": "PASS",
+    "instrumentation_limit": "Qt, MoltenVK and Ghostty dependency binaries are not sanitizer-instrumented"
+  },
+  "macos_workaround": {
+    "setting": "QT_MTL_NO_TRANSACTION=1 before QGuiApplication",
+    "before": "Qt QMetalLayer emitted five-second display-lock timeouts; basic render-loop diagnostic was stopped after stalling",
+    "after": "threaded Vulkan renderer, command/capture passed without display-lock warning",
+    "upstream": [
+      "https://github.com/qt/qtbase/blob/v6.11.2/src/gui/platform/darwin/qmetallayer.mm",
+      "https://github.com/qt/qtbase/blob/v6.11.2/src/plugins/platforms/cocoa/qnsview_drawing.mm"
+    ],
+    "requalification": "Recheck on Qt/MoltenVK upgrades and continuous resize workloads"
+  },
+  "dependencies": {
+    "direct_formula_inventory": [
+      {
+        "name": "qtbase",
+        "installed": [
+          "6.11.2"
+        ],
+        "formula_license": "(LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only) AND (GPL-3.0-only WITH Qt-GPL-exception-1.0) AND BSD-3-Clause AND GFDL-1.3-no-invariants-only"
+      },
+      {
+        "name": "qtdeclarative",
+        "installed": [
+          "6.11.2"
+        ],
+        "formula_license": "(LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only) AND (GPL-3.0-only WITH Qt-GPL-exception-1.0) AND BSD-2-Clause AND BSD-3-Clause"
+      },
+      {
+        "name": "vulkan-loader",
+        "installed": [
+          "1.4.357.0"
+        ],
+        "formula_license": "Apache-2.0"
+      },
+      {
+        "name": "molten-vk",
+        "installed": [
+          "1.4.2"
+        ],
+        "formula_license": "Apache-2.0"
+      },
+      {
+        "name": "vulkan-headers",
+        "installed": [
+          "1.4.357.0"
+        ],
+        "formula_license": "Apache-2.0"
+      }
+    ],
+    "linkage": "otool confirms dynamic Qt 6.11.2 frameworks, including transitive QtOpenGL; selected rendering API was Vulkan",
+    "audit": "Shared audit exited 1: OSV found no supported package sources. This is no vulnerability clearance. Full transitive SBOM/source and redistribution notice audit remains open."
+  },
+  "limitations": [
+    "One attached GUI and one live shell per checkout; cards do not switch sessions",
+    "No stable service/session epochs, disk-backed history or service crash recovery",
+    "Full shaping, IME, key protocols, selection and terminal accessibility unqualified",
+    "Linux qualification covers the prior headless adapter, not this Qt/PTy service or GUI",
+    "No measured input/frame/warm-switch latency or animation cadence",
+    "Unpackaged developer build refers to local service and Homebrew dependencies"
+  ],
+  "local_evidence": [
+    "build/reports/desktop/",
+    "build/desktop-preview/final-launch.log",
+    "build/desktop-preview/compact-launch.log",
+    "build/desktop-preview/asan-tests.log",
+    "build/desktop-preview/tsan-tests.log",
+    "build/desktop-preview/asan-service.log",
+    "build/desktop-preview/tsan-service.log",
+    "build/desktop-preview/dependency-audit.log"
+  ]
+}

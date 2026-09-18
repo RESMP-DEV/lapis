@@ -14,6 +14,17 @@ behavior and keyboard ownership remain requirements. Optimize the time from an
 action to visible feedback, including slow outliers during output bursts. Visual
 effects must fit within that interaction budget.
 
+Use a minimal blend of Apple's restraint and Material's clear hierarchy. Favor
+opaque surfaces, readable typography, generous spacing and subtle borders; avoid
+glass, heavy shadows and decorative motion. Snappy, continuous feedback contributes
+to perceived responsiveness, but never substitutes for fast input or correct state.
+Animate position and color, not terminal glyphs. Begin feedback immediately, keep
+transitions interruptible, and never gate keyboard input on animation completion.
+The current preview uses 130–140 ms ease-out hover/color transitions and a two-pixel
+lift. Future pane transitions should preserve spatial continuity without bounce;
+honor reduced-motion preferences before enabling animated navigation. These are
+initial design choices, not a new animation framework or measured performance claim.
+
 Design for high-end M-series machines (Pro/Max/Ultra class), with this M4 Max,
 128 GB unified memory and 120 Hz display mode as the initial reference. These
 are observed reference-machine properties, not minimum specifications or measured
@@ -71,10 +82,10 @@ subdirectories when implementation needs them.
 | Topic | Current position | Decision gate |
 | --- | --- | --- |
 | Platform | macOS first; Linux required next | Check Linux during engine selection; qualify its minimal GUI before expanding the desktop |
-| Desktop | C++20 baseline; Qt 6 Quick candidate and a portable terminal surface | Qualify Vulkan on Linux and Vulkan through MoltenVK on macOS |
+| Desktop | C++20 and Qt 6.11.2 Quick with public QSGTextNode terminal drawing | macOS Vulkan visual checkpoint exercised; Linux and performance qualification remain |
 | Engine | Pinned Ghostty `libghostty-vt` selected for the first adapter | Eight-case macOS/Linux replay passes; isolate unstable C API and resolve dependency-notice gaps |
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
-| Transport | Versioned local IPC, owned snapshots and explicit session IDs | Define framing, limits, attachment identity, resync and failure behavior |
+| Transport | Version 1 local framing and bounded owned snapshots for one shell | Add stable service/session identities, attachment generations and failure recovery |
 | Codex mode | Ordinary PTY CLI and lapis-owned app-server are distinct routes | Qualify the chosen attention route against the installed binary |
 
 The [research receipt](../evidence/terminal-research.json) retains pinned upstream
@@ -86,8 +97,8 @@ Qualify engines independently of upstream GUIs. Keep C++20 until an evidenced
 decision changes it.
 
 The [engine experiment](../evidence/terminal-engine-probe.json) records pinned
-builds and runtime results. Dependencies remain in the opt-in experiment; production
-integration and distribution packaging are the next work, not completed adoption.
+builds and runtime results. The production adapter now reuses that pinned library;
+distribution packaging remains unfinished.
 
 ## Portable rendering
 
@@ -108,15 +119,21 @@ performance failure. Use the common supported feature set and query capabilities
 Qt already abstracts GPU APIs, so choosing Vulkan does not by itself remove
 platform-specific input, font or process work.
 
-The [local probe](../evidence/vulkan-probe.json) using `vulkaninfo --summary`
-enumerated the Apple M4 Max through
-MoltenVK 1.4.2; [Qt 6.11.2 source](https://github.com/qt/qtbase/blob/ef55f427f2c8b410d34f8a7681020a3000cf6866/src/plugins/platforms/cocoa/qcocoavulkaninstance.mm)
-also contains Cocoa Vulkan surface integration. This establishes device discovery
-and source support, not lapis drawing or performance. Before committing the GPU
-choice, render the actual Qt terminal surface with Vulkan on both targets; check
-presentation, text/shaders, resize, idle behavior and packaging. Compare the Mac's
-native Metal backend if needed to quantify translation costs. No second custom
-renderer is required merely to make that comparison.
+The [local probe](../evidence/vulkan-probe.json) established device discovery. The
+[desktop checkpoint](../evidence/desktop-preview.json) now establishes actual Qt
+terminal drawing on the Apple M4 Max, using Vulkan through MoltenVK 1.4.2 and
+Qt 6.11.2. The application verifies the selected API at runtime. Its maintained
+surface uses public QSGTextNode/QTextLayout interfaces and Qt's glyph cache, not
+upstream private rendering code. Static scenes keep their retained nodes; new
+snapshots rebuild the text nodes. Dirty-row rendering remains a measured follow-up.
+
+Qt's default macOS transaction layer produced five-second display-lock stalls in
+this Vulkan window. Setting `QT_MTL_NO_TRANSACTION=1` selected the plain
+CAMetalLayer path and removed the warnings in the same threaded-render-loop
+capture. This workaround is isolated to macOS startup and tied to Qt 6.11.2;
+revalidate it on upgrades. Linux rendering, continuous resize, presentation timing
+and packaging still need qualification. Compare native Metal if later matched
+measurements warrant it; no second custom renderer is needed for that comparison.
 
 Avoid OpenGL-only `QQuickFramebufferObject` and upstream private renderer APIs.
 Use [Qt's backend selection](https://doc.qt.io/qt-6/qtquick-visualcanvas-adaptations.html)
@@ -139,12 +156,12 @@ needs them. Every first-party target uses `lapis_project_options`.
 
 | Location | First responsibility | Status |
 | --- | --- | --- |
-| `services/session/src/platform/posix/` | Native descriptor ownership, then PTY launch/I/O/resize/reaping | `UniqueFd` and real pipe ownership tests implemented; PTY work pending |
+| `services/session/src/platform/posix/` | Native descriptor ownership, then PTY launch/I/O/resize/reaping | `UniqueFd` on macOS/Linux; Qt-owned PTY launch/I/O/resize/reaping exercised on macOS |
 | `tools/terminal_probe/` | Shared headless workloads and independent Ghostty/Contour consumers | Implemented; pinned builds and eight-case replay on macOS/Linux |
 | `services/session/src/terminal/` | Wrap the selected engine's parsing, mode-aware input and screen extraction | Implemented as `lapis_terminal`; 14 behavioral cases on macOS/Linux ARM64 |
-| `services/session/include/lapis/session/` | Owned commands, session identity and snapshots for clients | Draft contract below; no public headers or wire format yet |
-| `services/session/src/` | Service event loop and session lifecycle, then local IPC | Not implemented |
-| `apps/desktop/` | Minimal Qt view, input routing and terminal surface | Pending production adapter and snapshot contract |
+| `services/session/include/lapis/session/` | Owned commands, session identity and snapshots for clients | Owned terminal values implemented; internal version 1 snapshot framing under `src/transport/` |
+| `services/session/src/` | Service event loop and session lifecycle, then local IPC | Separate one-shell service with bounded local transport on macOS |
+| `apps/desktop/` | Minimal Qt view, input routing and terminal surface | Live enlarged shell and static carousel composition; macOS Vulkan capture |
 | `adapters/codex/` | Codex protocol mapping and attention delivery | Existing investigation only; follows terminal persistence |
 
 The first target, `lapis_session_platform`, is an internal C++20 library with no
@@ -155,26 +172,33 @@ POSIX pipes to exercise transfer, I/O, EOF, release and replacement. This is a
 resource primitive, not a terminal or persistent service. No empty service or
 desktop executable is advertised as an application.
 
-**Provisional contract sketch (v0, not an API commitment).** Keep service/client
-messages as owned values. Start with session identity, terminal dimensions,
-launch/attach/detach, input, resize, explicit termination, exit status and a full
-screen snapshot. Session IDs survive GUI reconnects; service-instance identity
-must distinguish a service restart. Detach never means terminate. Bound message
-sizes and validate session, attachment and generation before accepting input.
-The GUI alone chooses keyboard ownership.
+### Current visual checkpoint
 
-Keep native handles, engine types, Qt objects and GPU resources out of these
-messages. Extend the experiment's tested cell/grapheme and ownership subset to
-the required attributes, cursor/mode data and snapshot limits before production
-headers or serialization are committed. Start with bounded full snapshots and a
-resync path; add deltas only when measured copying costs justify them. Freezing
-an IPC schema or building a generic plugin system now would precede that evidence.
+The desktop starts a separate Qt Core service on a private local socket. That
+service owns QProcess, a nonblocking POSIX PTY, and the Ghostty terminal. Closing
+the GUI only detaches the local socket: the service continues draining output.
+The enlarged pane is a live shell; the remaining cards are labeled placeholders.
+One GUI may attach at a time. A new attachment replaces the previous connection.
+The socket location identifies this checkout's one session; stable session IDs,
+service epochs and authenticated attachment generations are still required before
+multiple sessions or robust recovery. This wire format is internal and provisional.
 
-The next implementation order is the Ghostty adapter, PTY-backed service with
-headless lifecycle tests, then the minimal desktop with timing markers. The
-descriptor primitive and headless consumers provide the starting code.
-Keep control events reliable and display updates replaceable; the GUI must never
-be the owner of the shell process or block the service's output draining.
+Qt event loops own their respective objects. PTY reads yield after 64 KiB and
+input dispatch after 64 frames. Writes have a 1 MiB queue; text messages are at
+most 64 KiB. Snapshot frames are limited to 8 MiB, 32,768 cells and 65,536 codepoints.
+The service coalesces updates on a 16 ms timer with one snapshot in flight; a slow
+GUI does not block PTY parsing. That timer needs measurement against the 120 Hz
+reference before any latency claim. Current history uses the adapter's bounded
+memory budget; disk-backed history is not implemented.
+
+The GUI decodes owned snapshots and routes text, navigation, Control-letter input,
+paste and resize. The focused pane chooses the PTY dimensions; scaled previews do
+not resize it. Basic IME commit/preedit plumbing exists, but actual composition,
+font fallback, strict wide-cell alignment, selection and accessibility are not
+qualified. The renderer keeps static scene nodes and lets Qt schedule frames for
+updates and brief hover transitions. Input-to-presentation timing instrumentation
+and a repeatable animation workload remain acceptance gaps. The visual checkpoint
+does not complete milestone 1.
 
 ### Terminal adapter v0
 
@@ -220,33 +244,23 @@ build owner, and use bounded worker runs. Integrate and test worker output befor
 calling it complete. Preserve partial work after timeouts and avoid repeated
 optional checks once the affected behavior passes.
 
-### Next: persistent terminal
+### Next: complete persistent-terminal acceptance
 
-Deliver the rest of milestone 1 as small dependent changes:
+First review the compiled window's ergonomics with the maintainer. Then close
+these gaps in small dependent changes:
 
-1. **PTY backend:** extend `services/session/src/platform/posix/` and its tests to
-   launch a real child, route I/O, resize, signal and reap it. Prove exec failure,
-   EOF, partial writes, foreground process-group behavior and descriptor cleanup
-   on macOS, then Linux. Keep native handles out of public session messages.
-2. **Headless persistent service:** integrate PTY and engine under one owner loop;
-   add stable session/service identities, bounded queues and disk-backed history
-   with quotas and disk-full behavior. An independent service must keep draining
-   output during client detachment. A headless client must reconnect to the same
-   child PID and current state; service failure must produce a distinct outcome.
-3. **Local IPC:** define framing/version negotiation, message limits, endpoint
-   ownership, attachment generations, targeted input and full-snapshot resync.
-   Test stale input, malformed messages, disconnect during paste, slow clients and
-   queue overflow. Coalesce snapshots while preserving control/lifecycle events.
-4. **Minimal desktop:** after the service contract passes, dispatch
-   `apps/desktop/` for one Qt terminal surface and a separate GUI acceptance owner.
-   Qualify actual Vulkan/MoltenVK presentation, Unicode/font fallback, input/IME,
-   resize and close/reopen persistence. Include input-to-presentation timing from
-   this first view. Carry the minimal terminal to Linux before workspace expansion.
+1. Qualify terminal cell positioning, fallback fonts and real IME/key behavior;
+   add meaningful input-to-presentation and frame timing markers. Validate the
+   existing macOS resize/exit path with interactive TUIs and foreground jobs.
+2. Add stable session/service identities, attachment generations and recovery
+   behavior. Exercise stale input, partial paste, slow clients, queue overflow and
+   service failure. Add disk-backed history with quotas and disk-full handling.
+3. Carry the existing minimal PTY/service/Qt view to Linux and qualify Vulkan and
+   native input there before expanding workspace behavior.
 
-The service and IPC steps share lifecycle semantics and may be reviewed together
-if splitting them would produce a nonfunctional handoff. Keep Codex attention,
-carousel behavior, multiple-session UX and the 32-session benchmark in later
-milestones. Adapter acceptance alone does not complete milestone 1.
+Keep Codex attention, automatic carousel behavior, multiple live sessions and the
+32-session benchmark in later milestones. The static cards let the maintainer
+review composition now without implying those components are implemented.
 
 ### Engine experiment decision
 
@@ -270,10 +284,9 @@ keeps bold independent of palette brightening, and pins palette/default colors
 in replay. Indexed, explicit bright, inverse, bold-inverse and reset cases now
 exercise that policy on both platforms; the earlier truecolor-only case did not.
 Snapshots survive parser mutation, resize and engine destruction. Key-up and paste
-encoding follow terminal modes. This supports the direction of a snapshot-fed Qt
-surface; actual rendering remains unproven. Production snapshots still need the
-full style set, default/indexed color identity, wide-wrap spacer distinctions,
-cursor visibility and lifecycle/revision metadata. The experimental header is
+encoding follow terminal modes. This was evidence for the snapshot-fed surface now present in the desktop
+checkpoint. The production adapter has since added styles, tagged colors, wrap
+spacers and cursor data; stable service lifecycle identities remain outstanding. The experimental header is
 not a serialized service contract. Dirty-row APIs exist in Ghostty but incremental
 damage extraction has not been qualified; begin with bounded full snapshots.
 Measure allocation churn when building the production extraction path; the

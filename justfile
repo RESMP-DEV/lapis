@@ -24,3 +24,11 @@ format:
 # Verify that known defects actually fail the configured tools.
 verify-tools:
     python3 scripts/verify_cpp_tools.py
+
+# Build and check the runnable desktop preview.
+desktop:
+    python3 scripts/check_cpp.py desktop
+
+# Open the built macOS application; its session service survives window closure.
+run:
+    open build/desktop/apps/desktop/lapis_desktop.app

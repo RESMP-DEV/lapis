@@ -51,7 +51,7 @@ architecture document instead of creating another status or roadmap file.
   selected candidate for the first production adapter. Keep its unstable C API
   isolated and close the recorded dependency-notice gaps before redistribution.
   Contour's C++23 requirement is confined to the experiment. Qt 6 Quick with a
-  custom GPU terminal surface remains the desktop candidate. Record decisions and
+  custom GPU terminal surface is the macOS visual-checkpoint implementation. Record decisions and
   evidence in architecture before dependent work branches out.
 - Codex's Rust implementation does not require C++/Rust linkage. Prefer a
   supported external protocol; do not assume internal Rust crates are a stable
@@ -85,6 +85,16 @@ architecture document instead of creating another status or roadmap file.
   explicit user decision through the originating adapter. Hook-only adapters may
   require the user to answer in the original terminal. Attention hooks must not
   silently change the agent's execution or approval policy.
+
+## Visual and motion direction
+
+Use a minimal blend of Apple and Material design: mostly opaque surfaces, clear
+hierarchy, restrained borders and color, and readable terminal typography. Motion
+should make feedback immediate and changes easy to follow. Keep transitions short,
+interruptible and consistent; do not defer input until an animation finishes or
+animate terminal glyphs. Prefer position/color feedback over blur, transparency or
+ornamental motion. Respect reduced-motion preferences when expanding navigation.
+Keep detailed decisions in the architecture document, not another design file.
 
 ## C++ and resource discipline
 

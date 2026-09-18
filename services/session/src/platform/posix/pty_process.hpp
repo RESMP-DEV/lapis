@@ -14,13 +14,19 @@
 
 namespace lapis::session::posix {
 
+struct PtyLaunch {
+    QString shell;
+    QString directory;
+    TerminalSize size;
+};
+
 // Owned by the separate service event loop, never by the desktop window.
 class PtyProcess final : public QObject {
     Q_OBJECT
   public:
     explicit PtyProcess(QObject* parent = nullptr);
     ~PtyProcess() override;
-    void start(const QString& shell, const QString& directory, TerminalSize size);
+    void start(const PtyLaunch& launch);
     [[nodiscard]] bool writeBytes(const QByteArray& bytes);
     [[nodiscard]] bool resize(TerminalSize size);
     [[nodiscard]] qint64 processId() const { return process_.processId(); }
@@ -31,7 +37,8 @@ class PtyProcess final : public QObject {
     void failure(const QString& message);
 
   private:
-    void readReady();
+    [[nodiscard]] bool readReady();
+    void finishWhenDrained(int exit_code);
     void writeReady();
     UniqueFd master_;
     UniqueFd slave_;
