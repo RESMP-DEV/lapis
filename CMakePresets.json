@@ -10,6 +10,7 @@
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "BUILD_TESTING": "ON",
+        "LAPIS_SANITIZER": "none",
         "LAPIS_WARNINGS_AS_ERRORS": "ON"
       }
     },

@@ -1,0 +1,34 @@
+include_guard(GLOBAL)
+
+option(LAPIS_WARNINGS_AS_ERRORS "Fail builds on compiler warnings" ON)
+set(LAPIS_SANITIZER "none" CACHE STRING "Runtime instrumentation: none, address, thread")
+set_property(CACHE LAPIS_SANITIZER PROPERTY STRINGS none address thread)
+
+if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(AppleClang|Clang|GNU)$")
+    message(FATAL_ERROR "lapis currently requires Clang or GCC on macOS or Linux")
+endif()
+
+# Apply only to lapis targets, not future third-party dependencies.
+add_library(lapis_project_options INTERFACE)
+target_compile_options(lapis_project_options INTERFACE
+    -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow
+    -Wnon-virtual-dtor -Wold-style-cast -Woverloaded-virtual
+    -fno-omit-frame-pointer)
+if(LAPIS_WARNINGS_AS_ERRORS)
+    target_compile_options(lapis_project_options INTERFACE -Werror)
+endif()
+
+# Standalone probes also apply these flags to their upstream dependency graph.
+# Keep the exported value explicitly empty when instrumentation is disabled.
+set(lapis_sanitizer_flags "")
+if(NOT LAPIS_SANITIZER STREQUAL "none")
+    if(LAPIS_SANITIZER STREQUAL "address")
+        set(lapis_sanitizer_flags -fsanitize=address,undefined -fno-sanitize-recover=all)
+    elseif(LAPIS_SANITIZER STREQUAL "thread")
+        set(lapis_sanitizer_flags -fsanitize=thread)
+    else()
+        message(FATAL_ERROR "Unknown LAPIS_SANITIZER: ${LAPIS_SANITIZER}")
+    endif()
+    target_compile_options(lapis_project_options INTERFACE ${lapis_sanitizer_flags})
+    target_link_options(lapis_project_options INTERFACE ${lapis_sanitizer_flags})
+endif()

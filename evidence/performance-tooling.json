@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "observed_at_utc": "2026-09-18T03:15:25.208078+00:00",
+  "scope": "Local hardware/tool inventory and an owned sleep-process recording smoke; no lapis rendering benchmark",
+  "reference_machine": {
+    "chip": "Apple M4 Max",
+    "cpu_cores": 16,
+    "gpu_cores": 40,
+    "unified_memory_gb": 128,
+    "display_pixels": [
+      3456,
+      2234
+    ],
+    "display_nominal_refresh_hz": 120.0,
+    "display_refresh_source": "CGDisplayModeGetRefreshRate; nominal mode, not measured frame cadence",
+    "macos_version": "26.7"
+  },
+  "tools": {
+    "xcode": {
+      "version": "26.6",
+      "build": "17F113"
+    },
+    "xctrace": {
+      "version": "16.0 (17F113)",
+      "templates_observed": [
+        "Game Performance",
+        "Game Performance Overview",
+        "Metal System Trace",
+        "Time Profiler",
+        "Animation Hitches",
+        "Allocations",
+        "Leaks"
+      ]
+    },
+    "metalperftrace": {
+      "status": "unavailable through selected xcrun or PATH",
+      "probe": "xcrun --find metalperftrace"
+    },
+    "qmlprofiler": {
+      "status": "not found on PATH"
+    },
+    "tracy-capture": {
+      "status": "not found on PATH"
+    },
+    "renderdoccmd": {
+      "status": "not found on PATH"
+    }
+  },
+  "capture_smoke": {
+    "template": "Game Performance",
+    "target": "owned /bin/sleep 5",
+    "time_limit_seconds": 3,
+    "exit_code": 0,
+    "trace_created": true,
+    "toc_export_exit_code": 0,
+    "runs_exported": 1,
+    "log_sha256": "f9116d4e65567e46f8d898cefbbed1524fdc66c44eb541e2eda60465641864f4",
+    "elapsed_seconds": 34.363
+  },
+  "limitations": [
+    "The smoke only proves bounded recording and trace export work.",
+    "No graphical workload or Vulkan/Metal frame was rendered by the fixture.",
+    "No lapis responsiveness, performance target or cache budget has been measured.",
+    "Linux profiling has not been exercised."
+  ],
+  "sources": [
+    "https://developer.apple.com/metal/tools/",
+    "https://doc.qt.io/qtcreator/creator-qml-performance-monitor.html",
+    "https://github.com/wolfpld/tracy",
+    "https://renderdoc.org/"
+  ]
+}

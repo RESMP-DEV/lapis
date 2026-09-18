@@ -41,11 +41,17 @@ def toolchain():
         candidate = (
             Path(llvm_bin) / name if llvm_bin and name.startswith("clang") else None
         )
-        location = (
-            str(candidate) if candidate and candidate.is_file() else shutil.which(name)
-        )
+        if candidate is not None:
+            if not candidate.is_file() or not os.access(candidate, os.X_OK):
+                raise RuntimeError(
+                    f"Selected LLVM installation is missing executable {candidate}; "
+                    "set LAPIS_LLVM_BIN to a complete LLVM bin directory"
+                )
+            location = str(candidate)
+        else:
+            location = shutil.which(name)
         if not location:
-            raise RuntimeError(f"Missing {name}; see docs/verification.md")
+            raise RuntimeError(f"Missing {name}; see CONTRIBUTING.md")
         tools[name] = location
     return tools
 
@@ -235,7 +241,7 @@ def main():
         log_dir / "receipt.json",
         tools,
         results,
-        f"{args.mode}: compiled targets only; currently a toolchain smoke program, not a GUI benchmark.",
+        f"{args.mode}: compiled targets and registered CTest cases only; not GUI or performance acceptance.",
     )
     return 0 if passed else 1
 
