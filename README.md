@@ -55,7 +55,8 @@ records native GPU regression checks for cell positioning, fallback glyphs,
 decorations, resize and cursor repaint. Milestone 1 now includes bounded disk history,
 input-context lifecycle checks and an opt-in correlated timing probe. The
 [milestone qualification receipt](evidence/milestone-one.json) records the assembled
-checks, including automated Option-key, paste and real Japanese IME acceptance.
+checks, including automated Option-key, paste and native text-composition
+acceptance using the built-in Japanese input method as a test fixture.
 The [ordered plan](docs/architecture.md#persistent-terminal-acceptance) records
 the completed scope and later work.
 The [Codex route comparison](adapters/codex/README.md#integration-route-comparison)

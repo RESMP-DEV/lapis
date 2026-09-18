@@ -23,7 +23,8 @@ enum class Kind : quint8 {
     history_request,
     history_page
 };
-// v3 uses fixed-size identities: two nonzero 16-byte UUIDs and a BE u64 generation.
+// Identities introduced in v3 and retained in v4: two nonzero 16-byte UUIDs and a BE u64
+// generation.
 struct SessionIdentity {
     QByteArray session_id;
     QByteArray epoch;

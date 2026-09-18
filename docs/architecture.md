@@ -393,36 +393,7 @@ cursor color; a filled block redraws its covered grapheme for readability.
 See the [review repair receipt](../evidence/pr2-review.json) and
 [merge preparation receipt](../evidence/pr2-merge.json) for exercised cases.
 
-#### Remaining terminal acceptance
-
-Close the macOS gaps below before expanding the live
-workspace; the Linux port is deferred. Parallelize independent investigation, with one integration/build owner.
-
-1. **Identity and recovery — implemented checkpoint.** Wire v3 binds input to
-   session ID, service epoch and attachment generation. The
-   [reconnect receipt](../evidence/session-reconnect.json) covers restored-screen
-   input readiness, stale controls, slow clients and bounded queues. Retain these
-   regressions while completing the remaining work. Service loss/reboot does not
-   preserve the old child; automatic process recovery is outside this milestone.
-2. **Terminal fidelity and timing — desktop and verification.** Cell positioning,
-   fallback fonts, Qt input ownership and correlated service/frame instrumentation
-   are implemented. Automated native IME/key/paste acceptance passes; retain it
-   alongside the interactive-TUI regressions. Keep submission proxies separate from pixel
-   presentation. Rebindable cross-session navigation belongs to the later workspace.
-3. **History — implemented and exercised on macOS.** Bounded disk pages,
-   quotas, read-only paging, backpressure, corruption and real ENOSPC recovery
-   preserve the live process. Keep these service and desktop regression checks.
-4. **Deferred Linux port — platform and verification.** Carry the same
-   PTY/service/Qt view to a named Linux host and exercise Vulkan, native input,
-   resize and detach/reattach when that port is scheduled; it is not current
-   milestone 1 acceptance.
-
-Keep real attention integration, automatic carousel behavior, multiple live
-sessions and the 32-session benchmark in the following milestones. Protocol and
-hook research may run independently; advertised methods are not integration
-acceptance. The static cards remain review fixtures.
-
-### Implementation queue after PR #2
+### Milestone 1 implementation and acceptance
 
 Planning baseline: merged `99567cb` (September 18, 2026), followed by the verified
 session checkpoint `31cabfe`. Slice A is implemented with qualification recorded
@@ -440,59 +411,37 @@ with the scope and measurement limits in the [receipt](../evidence/milestone-one
 | C: exercised | Bounded older history | Recent screen stays warm while older history is stored under per-session/global quotas; scrollback retrieval, eviction, disk-full and interrupted-write recovery remain bounded and preserve the live screen |
 | D: deferred Linux port | Integrate A through C and native input fixes when scheduling the port | Named Linux host, display stack and driver exercise PTY lifecycle, real Vulkan rendering, input, resize and detach/reattach; a headless or software-only result does not qualify the GPU desktop |
 
-B1 retains the owned `TerminalSnapshot` value contract and wire v3 unchanged.
-History API investigation can run alongside it. The Linux port has no current
-host requirement or acceptance date; when scheduled, a remote compute host or
-headless container cannot supply native desktop input evidence. Record the
-actual host/display prerequisites first.
+The renderer places runs at engine cell coordinates. Printable ASCII batches
+only when styled advances match the grid, with kerning and optional ligatures
+disabled. Other graphemes shape locally at a common baseline. Backgrounds precede
+glyphs, decorations follow, and unchanged rows retain their nodes. Native Vulkan
+regressions cover wide/combining characters, emoji, Hebrew/Arabic fallback,
+styles, resize and cursor movement. Cross-cell contextual shaping and curly
+underlines remain gaps; see the [fidelity receipt](../evidence/terminal-fidelity.json).
 
-#### Work packages and remaining acceptance
+Native input acceptance uses OS-generated keys through AppKit, an actual macOS
+input method editor (IME), Qt and a controlled PTY. The built-in Japanese IME is
+one reproducible composition fixture: a Roman key produces provisional text
+(such as `a` → `あ`) that can be committed or cancelled. This exercises behavior
+that ordinary direct English typing does not. It does not set the application's
+language or qualify every IME. Control/Option keys and paste are tested with the
+US layout. No physical typing gate is required. The
+[contribution guide](../CONTRIBUTING.md#history-and-input-qualification) owns the
+commands, prerequisites and restoration procedure.
 
-These packages describe acceptance, not permanent contributor assignments.
-Contributors share the feature; temporary edit and build scopes prevent collisions.
-
-1. **B1: cell grid checkpoint implemented.** Runs begin at engine cell coordinates;
-   printable ASCII batches only when styled advances match the grid, with kerning
-   and optional ligatures disabled. Other graphemes shape locally at a common
-   baseline. Backgrounds precede glyphs, decorations follow, and unchanged rows
-   retain their nodes. The native Vulkan regression fails on the previous layout
-   and passes with wide/combining characters, emoji, Hebrew/Arabic fallback,
-   decoration gaps, inverse/invisible text, real engine resize, clearing and cursor
-   movement. This does not implement contextual shaping across cells; curly
-   underlines retain the previous single-line fallback. Detailed results and
-   sanitizer limits are in the [fidelity receipt](../evidence/terminal-fidelity.json).
-2. **B2: native input and measurement exercised.** CoreGraphics keys pass through
-   AppKit, the real Apple Japanese IME, Qt and a dedicated service-owned PTY.
-   Automated cases cover Control/Option, bracketed paste, preedit/commit/cancel,
-   focus ownership, history, detach, actual reconnect and resize. Qt-injected
-   events remain separate evidence. Physical key switches are outside software
-   acceptance; no human-input gate is required. Correlated input/service/frame
-   timestamps report p50/p95/p99, idle CPU/memory and display rate. Keep latency
-   targets provisional and submission proxies distinct from pixel visibility.
-   Selection/copy and accessibility remain explicit gaps.
-3. **C: older history implemented.** The pinned engine exposes primary-screen
-   row windows; extraction restores the live viewport and retains pending replies.
-   Service tests exercise a 1,500-row burst through a one-row viewport, paging in
-   both directions, quotas, resize, same-PID reattach, corrupt pages and real
-   disk-full recovery. Unit checks cover styles/Unicode, abandoned temporary writes
-   and truncated records. Archived pages retain recorded cell geometry, including
-   soft-wrap layout; they do not reconstruct logical lines for later reflow.
-4. **D: deferred Linux port.** When scheduled, identify a host with a real
-   graphics session, a Vulkan driver and native-input access. Record
-   tool/dependency versions, build the minimal terminal there, and repeat PTY
-   lifecycle, rendering, native input, resize and reconnect checks. Keep headless
-   build evidence separate from desktop qualification; this package is not a
-   current milestone 1 gate.
-
-B1 integration runs the C++ checks, the renderer regression suite, desktop-enabled
-ASan and TSan, preview captures and the live CLI harness. GUI runs are serial even
-when independent worker builds run concurrently. Record results in the existing
-README status table and a sanitized receipt; do not create another roadmap.
+The assembled macOS qualification covers service identity, native Vulkan
+rendering, Qt and native input, history quotas/backpressure/corruption/real ENOSPC,
+preview captures and live CLI fixtures. ASan/UBSan and TSan run separately;
+GUI runs stay serial even when independent builds run concurrently. Timing
+receipts distinguish frame submission from pixel visibility and keep latency
+targets provisional. The Linux desktop port has no current host requirement or
+acceptance date; qualify an actual graphical host when that port is scheduled.
+Real attention integration, multiple live sessions, automatic carousel behavior
+and the 32-session benchmark remain in the following milestones.
 
 #### Milestone 1 completion contract
 
-The active implementation stays on a feature branch until the complete milestone
-has been exercised; PR creation is deferred at the maintainer's request.
+The completed macOS slice is consolidated on a feature branch for PR review.
 Wire v4 adds attachment-bound, request-correlated history paging independently of
 live snapshot sequence. Snapshot envelopes carry monotonic nanosecond timestamps
 for the most recent PTY read, parse completion and publication; zero means no PTY
@@ -512,11 +461,11 @@ geometry. Live-process recovery after service failure/reboot remains outside thi
 milestone. Automated native-input evidence and frame-submission proxies are labeled
 separately from Qt-injected tests and actual on-screen presentation.
 
-#### First implementation PR: session identity and input readiness
+#### Session identity and input readiness
 
-Wire v3 extends the one-session path with identity and readiness; there is no
-session registry or additional live card. The v2 launch fingerprint alone could
-not distinguish the original child from a replacement at the same endpoint.
+Wire v4 retains the identity and readiness contract introduced in v3; there is
+no session registry or additional live card. The v2 launch fingerprint alone
+could not distinguish the original child from a replacement at the same endpoint.
 
 Implemented contract:
 
@@ -544,10 +493,10 @@ Implemented contract:
   intentional display coalescing may skip terminal revisions. Do not confuse
   those skipped display revisions with loss of input or control events. Reconnect
   starts with an authoritative screen, not replay of an unbounded byte backlog.
-- Introduce wire v3 for the incompatible identity envelope. Leave running v2
-  endpoints untouched and use a separate default endpoint. Test both version
-  mismatch directions. Shared serialization and client/server behavior land
-  together. Encoding is specified below.
+- Version incompatible envelopes. The current wire v4 adds history paging and
+  timing to the v3 identity contract. Leave older endpoints untouched and use
+  `runtime/desktop-v4.sock` by default. Shared serialization and client/server
+  behavior must change together; test rejection of mismatched versions.
 
 The wire uses big-endian integers and nonzero raw 16-byte UUIDs. Attach contains
 u32 version, fingerprint[32], u8 mode (discover/reconnect/create), expected
@@ -555,7 +504,8 @@ session[16] and epoch[16]. Missing expected fields are zeros on the wire. Discov
 requires both missing; reconnect requires both; create requires only session.
 An attachment tuple is session[16], epoch[16], u64 nonzero generation. Hello is
 u32 version, tuple, u64 child PID. Snapshot is tuple, u64 publication sequence,
-then the existing terminal snapshot encoding. Text, paste, key and resize carry
+then three u64 monotonic timestamps (PTY read, parse end, publish), followed by
+the terminal snapshot encoding. Its fixed envelope is 72 bytes. Text, paste, key and resize carry
 the tuple before their existing payload (maximum 64 KiB). Ready acknowledges the
 tuple and first applied sequence. Typed status distinguishes rejection, ended,
 replaced and overload. Full frames remain bounded to 8 MiB. Publication sequences
@@ -604,7 +554,7 @@ for each active build directory. GUI checks remain serial across worktrees.
 
 #### Following product checkpoints
 
-After the macOS A through C acceptance, implement the attention
+With macOS A through C qualified, the next product milestone is the attention
 state machine and qualify a real Codex route. Preserve the ordinary CLI view;
 choose hooks or shared-server attachment only from live observation, explicit
 response and reconnect evidence. A notification-only hook must leave the answer

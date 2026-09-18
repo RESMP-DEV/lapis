@@ -552,6 +552,12 @@ not registered in CTest because headless CI lacks these desktop prerequisites.
 Run it on the qualified Mac for changes to native input or composition handling.
 Avoid interacting with the keyboard/clipboard during this short exclusive test.
 
+The built-in Japanese input method editor (IME) provides a reproducible test of
+provisional composition and explicit commit/cancel: for example, Roman `a`
+produces provisional `あ`. Ordinary English typing does not exercise that path.
+This fixture does not change lapis's UI language or imply all input methods have
+been qualified. Printable/Control/Option keys and paste use the US layout.
+
 CoreGraphics posts keys to the probe's own process. AppKit, the actual Apple
 Japanese IME, Qt and the real service-owned PTY handle them. The probe checks exact
 received bytes for printable/Control/Option keys and Command-V multiline Unicode
