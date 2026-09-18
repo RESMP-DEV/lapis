@@ -77,6 +77,7 @@ struct TerminalHistory {
     std::size_t total_rows{}; // Includes current screen; not an allocated-byte count.
     std::size_t viewport_offset{};
     std::size_t viewport_rows{};
+    bool primary_available{};
 };
 
 struct TerminalSnapshot {
@@ -144,6 +145,12 @@ class Terminal {
     void feed(std::string_view bytes);
     void resize(TerminalSize size);
     void clear_history();
+    // Owned viewport extraction at an absolute history row. The live viewport,
+    // including its screen and scroll position, is restored even on failure.
+    // Offset is rejected unless it leaves a complete viewport in primary-screen
+    // history. history_metadata performs no render extraction.
+    [[nodiscard]] TerminalHistory history_metadata();
+    [[nodiscard]] TerminalSnapshot history_snapshot(std::size_t offset);
     [[nodiscard]] TerminalSnapshot snapshot();
     [[nodiscard]] std::string encode_key(TerminalKey key, KeyModifiers modifiers = {});
     // Pure text encoding: sanitizes unsafe control bytes and uses current mode.

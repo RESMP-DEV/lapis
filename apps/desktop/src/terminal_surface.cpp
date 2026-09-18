@@ -4,6 +4,7 @@
 #include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QGuiApplication>
+#include <QInputMethod>
 #include <QKeySequence>
 #include <QMatrix4x4>
 #include <QQuickWindow>
@@ -439,13 +440,56 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
     update();
 }
 
+void TerminalSurface::updateInputContext(Qt::InputMethodQueries queries) {
+    if (hasActiveFocus())
+        if (auto* method = qApp ? qApp->inputMethod() : nullptr)
+            method->update(queries);
+}
+
+void TerminalSurface::resetInputContext() {
+    if (resetting_input_)
+        return;
+    resetting_input_ = true;
+    composition_armed_ = false;
+    preedit_.clear();
+    if (qApp && qApp->focusObject() == this)
+        qApp->inputMethod()->reset();
+    resetting_input_ = false;
+    publishFrame(false);
+    updateInputContext(Qt::ImEnabled | Qt::ImCursorRectangle);
+}
+
+bool TerminalSurface::acceptsTerminalInput() const {
+    return !resetting_input_ && interactive_ && document_ && document_->live() &&
+           document_->inputReady() && hasActiveFocus() && window() && window()->isActive();
+}
+
 TerminalSurface::TerminalSurface(QQuickItem* parent) : QQuickItem(parent) {
     setFlag(ItemHasContents);
     setClip(true);
+    window_changed_connection_ =
+        connect(this, &QQuickItem::windowChanged, this, &TerminalSurface::bindWindow);
+    bindWindow(window());
     publishFrame(true);
 }
 
+void TerminalSurface::bindWindow(QQuickWindow* current) {
+    if (window_active_connection_)
+        disconnect(window_active_connection_);
+    if (current)
+        window_active_connection_ = connect(current, &QWindow::activeChanged, this, [this] {
+            if (!window() || !window()->isActive()) {
+                ++ime_epoch_;
+                resetInputContext();
+            } else {
+                updateInputContext(Qt::ImEnabled | Qt::ImCursorRectangle);
+            }
+        });
+}
+
 TerminalSurface::~TerminalSurface() {
+    disconnect(window_changed_connection_);
+    disconnect(window_active_connection_);
     const std::lock_guard lock(render_mutex_);
     render_state_.reset();
 }
@@ -457,15 +501,28 @@ void TerminalSurface::setDocument(SessionPreview* document) {
         disconnect(document_, nullptr, this, nullptr);
     document_ = document;
     if (document_) {
-        connect(document_, &SessionPreview::snapshotChanged, this, [this] { publishFrame(true); });
+        connect(document_, &SessionPreview::snapshotChanged, this, [this] {
+            publishFrame(true);
+            updateInputContext(Qt::ImCursorRectangle);
+        });
+        connect(document_, &SessionPreview::connectionChanged, this, [this] {
+            if (!document_ || !document_->inputReady()) {
+                ++ime_epoch_;
+                resetInputContext();
+            } else {
+                updateInputContext(Qt::ImEnabled | Qt::ImCursorRectangle);
+            }
+        });
         connect(document_, &QObject::destroyed, this, [this] {
             document_ = nullptr;
-            preedit_.clear();
+            ++ime_epoch_;
+            resetInputContext();
             publishFrame(true);
             emit documentChanged();
         });
     }
-    preedit_.clear();
+    ++ime_epoch_;
+    resetInputContext();
     requestResize();
     publishFrame(true);
     emit documentChanged();
@@ -476,6 +533,7 @@ void TerminalSurface::geometryChange(const QRectF& new_geometry, const QRectF& o
     if (new_geometry.size() != old_geometry.size()) {
         requestResize();
         publishFrame(false);
+        updateInputContext(Qt::ImCursorRectangle);
     }
 }
 
@@ -537,7 +595,8 @@ void TerminalSurface::setInteractive(bool enabled) {
         return;
     interactive_ = enabled;
     if (!enabled) {
-        preedit_.clear();
+        ++ime_epoch_;
+        resetInputContext();
         publishFrame(false);
     }
     setFlag(ItemAcceptsInputMethod, enabled);
@@ -545,6 +604,21 @@ void TerminalSurface::setInteractive(bool enabled) {
     setActiveFocusOnTab(enabled);
     requestResize();
     emit interactiveChanged();
+}
+
+void TerminalSurface::focusInEvent(QFocusEvent* event) {
+    QQuickItem::focusInEvent(event);
+    if (!hasActiveFocus())
+        return;
+    updateInputContext(Qt::ImEnabled | Qt::ImCursorRectangle);
+}
+
+void TerminalSurface::focusOutEvent(QFocusEvent* event) {
+    QQuickItem::focusOutEvent(event);
+    if (hasActiveFocus())
+        return;
+    ++ime_epoch_;
+    resetInputContext();
 }
 void TerminalSurface::requestResize() {
     if (!interactive_ || !document_ || !document_->live() || width() <= 0 || height() <= 0)
@@ -599,12 +673,26 @@ QByteArray terminal_text_key(const QKeyEvent& event) {
 }
 
 void TerminalSurface::keyPressEvent(QKeyEvent* event) {
-    if (!interactive_ || !document_ || !document_->live()) {
+    if (!acceptsTerminalInput()) {
         event->ignore();
         return;
     }
+    composition_armed_ = true;
     if (event->matches(QKeySequence::Paste)) {
-        document_->sendText(QGuiApplication::clipboard()->text().toUtf8(), true);
+        const auto owner = document_;
+        const QString text = QGuiApplication::clipboard()->text();
+        ++ime_epoch_;
+        resetInputContext();
+        if (document_ == owner && acceptsTerminalInput())
+            document_->sendText(text.toUtf8(), true);
+        event->accept();
+        return;
+    }
+    if (!preedit_.isEmpty()) {
+        if (event->key() == Qt::Key_Escape) {
+            ++ime_epoch_;
+            resetInputContext();
+        }
         event->accept();
         return;
     }
@@ -674,19 +762,43 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
     event->accept();
 }
 void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
-    if (!interactive_ || !document_ || !document_->live()) {
+    const quint64 composition_epoch = ime_epoch_;
+    if (!acceptsTerminalInput()) {
+        ++ime_epoch_;
+        resetInputContext();
         event->ignore();
         return;
     }
-    if (!event->commitString().isEmpty())
+    const bool valid_replacement =
+        event->replacementStart() == 0 && event->replacementLength() == 0;
+    if (!valid_replacement) {
+        ++ime_epoch_;
+        resetInputContext();
+        event->accept();
+        return;
+    }
+    if (!event->preeditString().isEmpty())
+        composition_armed_ = true;
+    if (!event->commitString().isEmpty()) {
+        if (!composition_armed_) {
+            event->ignore();
+            return;
+        }
         document_->sendText(event->commitString().toUtf8());
+    }
+    if (composition_epoch != ime_epoch_) {
+        event->accept();
+        return;
+    }
     preedit_ = event->preeditString();
+    composition_armed_ = !preedit_.isEmpty();
     publishFrame(false);
+    updateInputContext(Qt::ImCursorRectangle);
     event->accept();
 }
 QVariant TerminalSurface::inputMethodQuery(Qt::InputMethodQuery query) const {
     if (query == Qt::ImEnabled)
-        return interactive_ && document_ && document_->live();
+        return acceptsTerminalInput();
     if (query == Qt::ImCursorRectangle && document_) {
         const QFontMetricsF metrics(terminal_font());
         const auto& snapshot = document_->snapshot();

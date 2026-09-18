@@ -20,6 +20,7 @@ using lapis::session::CursorShape;
 using lapis::session::Terminal;
 using lapis::session::TerminalCell;
 using lapis::session::TerminalColor;
+using lapis::session::TerminalHistory;
 using lapis::session::TerminalLimits;
 using lapis::session::TerminalSize;
 using lapis::session::TerminalSnapshot;
@@ -274,6 +275,92 @@ void history_eviction_and_clear() {
     require(terminal.snapshot().history.total_rows > 4, "history budget was not restored");
 }
 
+std::u32string visible_text(const TerminalSnapshot& snapshot) {
+    std::u32string text;
+    for (std::size_t index = 0; index < snapshot.cells.size(); ++index)
+        text += snapshot.text(index);
+    return text;
+}
+void history_snapshot_extraction() {
+    Terminal terminal({20, 4});
+    for (int line = 0; line < 1000; ++line) {
+        auto number = std::to_string(line);
+        terminal.feed("line" + std::string(4 - number.size(), '0') + number + "\r\n");
+    }
+    terminal.feed("\x1b[5n");
+    const auto live = terminal.snapshot();
+    const auto metadata = terminal.history_metadata();
+    require(metadata.total_rows == 1001 && metadata.primary_available, "history row count");
+    for (std::size_t offset : {0U, 17U, 500U, 996U}) {
+        const auto page = terminal.history_snapshot(offset);
+        for (std::size_t row = 0; row < page.size.rows; ++row) {
+            const auto number = std::to_string(offset + row);
+            const auto expected = "line" + std::string(4 - number.size(), '0') + number;
+            const std::u32string unicode(expected.begin(), expected.end());
+            expect_text(page, row, unicode);
+        }
+        const auto restored = terminal.snapshot();
+        require(visible_text(restored) == visible_text(live) &&
+                    restored.cursor.row == live.cursor.row &&
+                    restored.cursor.column == live.cursor.column &&
+                    restored.revision == live.revision &&
+                    restored.history.viewport_offset == live.history.viewport_offset,
+                "history extraction changed live screen or cursor");
+    }
+    require(terminal.take_replies() == "\x1b[0n", "history extraction changed queued replies");
+    bool rejected{};
+    try {
+        static_cast<void>(terminal.history_snapshot(metadata.total_rows));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected, "out of range history accepted");
+    terminal.clear_history();
+    require(visible_text(terminal.snapshot()) == visible_text(live), "drain changed live screen");
+    require(terminal.history_metadata().total_rows == 4, "drain retained archived rows");
+    terminal.feed("\r\nmore");
+    require(terminal.history_metadata().total_rows == 5, "drain did not restore history budget");
+}
+void history_snapshot_resize_and_alternate() {
+    Terminal terminal({20, 4});
+    terminal.feed("\x1b[1;3;38;2;18;52;86m界é\x1b[0m\r\n");
+    terminal.feed("1234567890\r\nnext\r\nend\r\n");
+    const auto styled = terminal.history_snapshot(0);
+    require(styled.cells.front().kind == CellKind::wide &&
+                styled.cells[1].kind == CellKind::wide_tail && styled.text(0) == U"界" &&
+                styled.text(2) == U"é",
+            "archived Unicode changed");
+    require(styled.cells.front().style.bold && styled.cells.front().style.italic &&
+                styled.cells.front().style.foreground == rgb(0x123456),
+            "archived style changed");
+    terminal.resize({5, 3});
+    const auto live = terminal.snapshot();
+    const auto count = terminal.history_metadata().total_rows;
+    std::u32string all;
+    for (std::size_t offset = 0; offset < count; ++offset) {
+        const auto start = std::min(offset, count - live.size.rows);
+        const auto page = terminal.history_snapshot(start);
+        const auto row = offset - start;
+        for (std::size_t column = 0; column < page.size.columns; ++column)
+            all += page.text(row * page.size.columns + column);
+    }
+    require(all.find(U"1234567890") != std::u32string::npos, "reflow lost ordered text");
+    require(visible_text(terminal.snapshot()) == visible_text(live),
+            "reflow browsing changed live screen");
+    terminal.feed("\x1b[?1049halt");
+    require(!terminal.history_metadata().primary_available, "alternate history marked primary");
+    bool rejected{};
+    try {
+        static_cast<void>(terminal.history_snapshot(0));
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    require(rejected, "alternate history browsing accepted");
+    terminal.feed("\x1b[?1049l");
+    require(visible_text(terminal.snapshot()) == visible_text(live),
+            "alternate roundtrip changed primary");
+}
+
 void invalid_geometry_and_rejected_mutations() {
     const auto expect_invalid = [](TerminalSize size) {
         try {
@@ -384,6 +471,8 @@ constexpr std::array cases{
     Case{"dsr_reply_order", dsr_reply_order},
     Case{"output_burst", output_burst},
     Case{"history_eviction_and_clear", history_eviction_and_clear},
+    Case{"history_snapshot_extraction", history_snapshot_extraction},
+    Case{"history_snapshot_resize_and_alternate", history_snapshot_resize_and_alternate},
     Case{"invalid_geometry_and_rejected_mutations", invalid_geometry_and_rejected_mutations},
     Case{"reply_overflow_faults_terminal", reply_overflow_faults_terminal},
     Case{"grapheme_cap", grapheme_cap},

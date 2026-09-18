@@ -24,6 +24,7 @@ class PtyProcess final : public QObject {
     void start(const PtyLaunch& launch);
     [[nodiscard]] bool writeBytes(const QByteArray& bytes);
     [[nodiscard]] bool resize(TerminalSize size);
+    void pauseOutput(bool paused);
     [[nodiscard]] qint64 processId() const { return process_.processId(); }
   signals:
     void output(const QByteArray& bytes);
@@ -46,6 +47,7 @@ class PtyProcess final : public QObject {
     std::unique_ptr<QSocketNotifier> writer_;
     QByteArray pending_write_;
     qsizetype write_offset_{};
+    bool output_paused_{};
 };
 
 } // namespace lapis::session::posix

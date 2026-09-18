@@ -372,7 +372,7 @@ TerminalSnapshot decode_snapshot(const QByteArray& bytes) {
     if (cursor_color)
         s.cursor_rgb = cursor_rgb;
     s.history = {static_cast<std::size_t>(total), static_cast<std::size_t>(offset),
-                 static_cast<std::size_t>(rows)};
+                 static_cast<std::size_t>(rows), !s.alternate_screen};
     for (auto& rgb : s.palette)
         in >> rgb;
     quint32 count{};

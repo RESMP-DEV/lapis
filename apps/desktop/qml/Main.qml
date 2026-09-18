@@ -285,11 +285,52 @@ ApplicationWindow {
             border.color: window.focusedBorderColor
             border.width: 1
 
+            RowLayout {
+                id: historyBar
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 10
+                height: 32
+                spacing: 8
+                property var session: workspace.focusedSession
+                visible: session && session.live
+                Button {
+                    text: qsTr("Older")
+                    enabled: historyBar.session && !historyBar.session.historyRequestPending
+                    onClicked: historyBar.session.olderHistory()
+                }
+                Button {
+                    text: qsTr("Newer")
+                    enabled: historyBar.session && historyBar.session.historyActive &&
+                             !historyBar.session.historyRequestPending
+                    onClicked: historyBar.session.newerHistory()
+                }
+                Button {
+                    text: qsTr("Live")
+                    enabled: historyBar.session && historyBar.session.historyActive
+                    onClicked: {
+                        historyBar.session.returnToLive()
+                        liveTerminal.forceActiveFocus()
+                    }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                    color: "#a8b3c5"
+                    text: !historyBar.session ? "" :
+                          historyBar.session.historyRequestPending ? qsTr("Loading history…") :
+                          historyBar.session.historyActive ?
+                          qsTr("Read only · ") + historyBar.session.historyMessage : qsTr("Live")
+                }
+            }
+
             TerminalSurface {
                 anchors.fill: parent
                 id: liveTerminal
                 objectName: "liveTerminal"
                 anchors.margins: 18
+                anchors.topMargin: historyBar.visible ? 54 : 18
                 document: workspace.focusedSession
                 interactive: preview.active || (document && document.inputReady)
                 focus: true

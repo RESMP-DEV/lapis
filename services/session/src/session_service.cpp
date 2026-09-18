@@ -1,3 +1,4 @@
+#include "history_worker.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "platform/posix/pty_process.hpp"
 #include "transport/local_protocol.hpp"
@@ -5,6 +6,7 @@
 #include <QCoreApplication>
 #include <QDataStream>
 #include <QDebug>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QLocalServer>
@@ -14,6 +16,8 @@
 #include <QSet>
 #include <QTimer>
 
+#include <algorithm>
+#include <chrono>
 #include <exception>
 #include <limits>
 #include <memory>
@@ -23,6 +27,11 @@
 
 namespace {
 using namespace lapis::session;
+quint64 monotonic_ns() {
+    return static_cast<quint64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch())
+                                    .count());
+}
 int hex_nibble(char16_t value) {
     if (value >= u'0' && value <= u'9')
         return value - u'0';
@@ -53,8 +62,12 @@ class SessionService final : public QObject {
     SessionService(const QString& endpoint, const QByteArray& requested_session_id,
                    const LaunchSpec& launch)
         : lock_(endpoint + QStringLiteral(".lock")), terminal_(launch.size, limits()),
-          fingerprint_(launch_fingerprint(launch)),
-          identity_{requested_session_id, wire::new_id()} {
+          fingerprint_(launch_fingerprint(launch)), identity_{requested_session_id, wire::new_id()},
+          history_(qEnvironmentVariable("LAPIS_HISTORY_ROOT",
+                                        QStringLiteral(LAPIS_DEFAULT_HISTORY_ROOT)),
+                   QString::fromLatin1(requested_session_id.toHex()), history_limits()) {
+        configure_history();
+        current_size_ = launch.size;
         terminal_.feed("\x1b]10;rgb:d9/de/e8\x1b\\\x1b]11;rgb:0d/13/1d\x1b\\");
         lock_.setStaleLockTime(0);
         if (!lock_.tryLock(0))
@@ -99,29 +112,25 @@ class SessionService final : public QObject {
             hello();
         });
         connect(&pty_, &posix::PtyProcess::output, this, [this](const QByteArray& bytes) {
-            try {
-                terminal_.feed(
-                    std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())));
-                const auto replies = terminal_.take_replies();
-                if (!replies.empty() && pty_.processId() != 0 &&
-                    !pty_.writeBytes(
-                        QByteArray(replies.data(), static_cast<qsizetype>(replies.size()))))
-                    throw std::runtime_error("PTY reply queue overflow");
-                dirty_ = true;
-                schedule();
-            } catch (const std::exception& error) {
-                stop(QString::fromUtf8(error.what()));
+            timing_.pty_read_ns = monotonic_ns();
+            if (pending_output_.size() + bytes.size() > qsizetype{64} * 1024) {
+                stop(QStringLiteral("PTY output queue overflow"));
+                return;
             }
+            pending_output_ += bytes;
+            pty_.pauseOutput(true);
+            process_output();
         });
         connect(&pty_, &posix::PtyProcess::failure, this,
                 [this](const QString& message) { stop(message); });
         connect(&pty_, &posix::PtyProcess::finished, this,
                 [this](int code, QProcess::ExitStatus status) {
                     if (status == QProcess::CrashExit)
-                        stop(QStringLiteral("Process terminated by signal (%1)").arg(code),
-                             128 + code);
+                        finish_session(
+                            QStringLiteral("Process terminated by signal (%1)").arg(code),
+                            128 + code);
                     else
-                        stop(QStringLiteral("Process exited (%1)").arg(code), code);
+                        finish_session(QStringLiteral("Process exited (%1)").arg(code), code);
                 });
         pty_.start(launch);
     }
@@ -139,12 +148,201 @@ class SessionService final : public QObject {
     }
 
   private:
+    void configure_history() {
+        history_.failure = [this](const QString& error) {
+            history_error_ = QStringLiteral("History recording paused: ") + error;
+            history_failed_ = true;
+            qWarning().noquote() << history_error_;
+        };
+        history_.progress = [this] {
+            try_pending_history();
+            if (output_waiting_) {
+                output_waiting_ = false;
+                process_output();
+            }
+        };
+        history_.received = [this](wire::HistoryReply reply) {
+            if (!client_ || !ready_ || reply.attachment != attachment_)
+                return;
+            if (!history_error_.isEmpty())
+                reply.message = history_error_ + QStringLiteral(". ") + reply.message;
+            send_history(reply);
+        };
+    }
     static TerminalLimits limits() {
         TerminalLimits result;
         result.max_cells = wire::max_cells;
         result.max_grapheme_codepoints = wire::max_codepoints;
         result.max_input_bytes = std::size_t{64} * 1024U;
         return result;
+    }
+    static HistoryLimits history_limits() {
+        HistoryLimits result;
+        const auto read_limit = [](const char* name, quint64 fallback) {
+            const auto value = qEnvironmentVariable(name);
+            if (value.isEmpty())
+                return fallback;
+            bool valid{};
+            const auto bytes = value.toULongLong(&valid);
+            if (!valid || bytes == 0 || bytes > quint64{4} * 1024 * 1024 * 1024)
+                throw std::invalid_argument("Invalid history byte budget");
+            return bytes;
+        };
+        result.session_bytes = read_limit("LAPIS_HISTORY_SESSION_BYTES", result.session_bytes);
+        result.global_bytes = read_limit("LAPIS_HISTORY_GLOBAL_BYTES", result.global_bytes);
+        return result;
+    }
+    static TerminalSnapshot archive_page(TerminalSnapshot page, std::size_t rows) {
+        page.size.rows = static_cast<std::uint16_t>(rows);
+        page.cells.resize(rows * page.size.columns);
+        std::size_t codepoints{};
+        for (const auto& cell : page.cells)
+            codepoints =
+                std::max(codepoints, static_cast<std::size_t>(cell.text_offset) + cell.text_length);
+        page.graphemes.resize(codepoints);
+        page.cursor = {};
+        page.history = {rows, 0, rows, true};
+        return page;
+    }
+    bool archive_history(bool force) {
+        if (history_failed_) {
+            if (harvest_offset_) {
+                terminal_.clear_history();
+                harvest_offset_.reset();
+            }
+            return true;
+        }
+        // // Live memory remains bounded; the archive gap is explicit.
+        const auto metadata = terminal_.history_metadata();
+        if (!metadata.primary_available || metadata.total_rows <= metadata.viewport_rows)
+            return true;
+        const auto rows = metadata.total_rows - metadata.viewport_rows;
+        const auto threshold =
+            std::min(std::size_t{256}, std::size_t{32768} / current_size_.columns);
+        if (!force && !harvest_offset_ && rows < threshold)
+            return true;
+        if (!harvest_offset_)
+            harvest_offset_ = 0;
+        // Keep the terminal frozen while enqueueing a large harvest in bounded
+        // pieces. This also handles a one-row viewport and resize reflow.
+        while (*harvest_offset_ < rows) {
+            const auto count = std::min(metadata.viewport_rows, rows - *harvest_offset_);
+            auto page = archive_page(terminal_.history_snapshot(*harvest_offset_), count);
+            if (!history_.append({std::move(page)})) {
+                pty_.pauseOutput(true);
+                output_waiting_ = true;
+                return false;
+            }
+            *harvest_offset_ += count;
+        }
+        harvest_offset_.reset();
+        terminal_.clear_history();
+        return true;
+    }
+    void process_output() {
+        if (stopping_ || processing_output_)
+            return;
+        processing_output_ = true;
+        try {
+            if (harvest_offset_ && !archive_history(true)) {
+                processing_output_ = false;
+                return;
+            }
+            if (pending_resize_) {
+                const auto size = *pending_resize_;
+                pending_resize_.reset();
+                apply_resize(size);
+            }
+            int budget = 16;
+            while (!pending_output_.isEmpty() && budget-- > 0) {
+                if (!archive_history(false)) {
+                    output_waiting_ = true;
+                    break;
+                }
+                const auto chunk = static_cast<qsizetype>(std::max(
+                    std::size_t{1},
+                    std::min(std::size_t{256},
+                             std::size_t{32768} / (std::size_t{4} * current_size_.columns))));
+                const auto size = std::min(pending_output_.size(), chunk);
+                terminal_.feed(
+                    std::string_view(pending_output_.constData(), static_cast<std::size_t>(size)));
+                pending_output_.remove(0, size);
+                dirty_ = true;
+                timing_.parse_end_ns = monotonic_ns();
+            }
+            const auto replies = terminal_.take_replies();
+            if (!replies.empty() && pty_.processId() != 0 &&
+                !pty_.writeBytes(
+                    QByteArray(replies.data(), static_cast<qsizetype>(replies.size()))))
+                throw std::runtime_error("PTY reply queue overflow");
+            schedule();
+            if (!output_waiting_) {
+                if (pending_output_.isEmpty())
+                    pty_.pauseOutput(false);
+                else
+                    QTimer::singleShot(0, this, [this] { process_output(); });
+            }
+        } catch (const std::exception& error) {
+            stop(QString::fromUtf8(error.what()));
+        }
+        processing_output_ = false;
+    }
+    void send_history(const wire::HistoryReply& reply) {
+        if (!client_ || !ready_ || reply.attachment != attachment_)
+            return;
+        try {
+            auto bytes = wire::frame(wire::Kind::history_page, wire::encode_history_reply(reply));
+            if (client_->bytesToWrite() + bytes.size() > wire::max_frame_bytes)
+                throw std::runtime_error("History response queue full");
+            if (client_->write(bytes) != bytes.size())
+                throw std::runtime_error("History response write failed");
+        } catch (const std::exception& error) {
+            send_status(client_, wire::StatusCode::overloaded, QString::fromUtf8(error.what()));
+            detach_client();
+        }
+    }
+    void try_pending_history() {
+        if (!pending_history_)
+            return;
+        const auto pending = *pending_history_;
+        if (archive_history(true) && history_.read(pending.first, pending.second))
+            pending_history_.reset();
+    }
+    void request_history(const QByteArray& payload) {
+        const auto request = wire::decode_history_request(payload);
+        if (pending_history_) {
+            send_history({attachment_,
+                          request.request_id,
+                          0,
+                          QStringLiteral("History is busy; try again"),
+                          {}});
+            return;
+        }
+        // Browsing retries storage after a recoverable filesystem failure.
+        history_failed_ = false;
+        pending_history_ = std::pair{attachment_, request};
+        try_pending_history();
+    }
+    void finish_session(const QString& message, int exit_code, int remaining = 120) {
+        if (stopping_)
+            return;
+        bool archived = false;
+        try {
+            archived = archive_history(true);
+        } catch (const std::exception& error) {
+            history_error_ = QString::fromUtf8(error.what());
+            history_failed_ = true;
+            archived = true;
+        }
+        if (remaining > 0 && (!archived || !history_.idle())) {
+            QTimer::singleShot(25, this, [this, message, exit_code, remaining] {
+                finish_session(message, exit_code, remaining - 1);
+            });
+            return;
+        }
+        if (!history_.idle())
+            qWarning("History flush deadline reached; queued tail pages may be unavailable");
+        stop(message, exit_code);
     }
     void stop(const QString& message, int exit_code = 1) {
         if (stopping_)
@@ -272,11 +470,13 @@ class SessionService final : public QObject {
             if (snapshot_sequence_ == std::numeric_limits<quint64>::max())
                 throw std::overflow_error("Snapshot sequence overflow");
             const quint64 sequence = ++snapshot_sequence_;
+            timing_.publish_ns = monotonic_ns();
             const auto bytes =
                 wire::frame(wire::Kind::snapshot,
                             wire::encode_snapshot_message({.attachment = attachment_,
                                                            .sequence = sequence,
-                                                           .snapshot = terminal_.snapshot()}));
+                                                           .snapshot = terminal_.snapshot(),
+                                                           .timing = timing_}));
             if (client_->write(bytes) < 0)
                 throw std::runtime_error("Session socket write failed");
             dirty_ = false;
@@ -351,6 +551,9 @@ class SessionService final : public QObject {
             throw std::runtime_error("Input message too large");
         QByteArray bytes;
         switch (frame.kind) {
+        case wire::Kind::history_request:
+            request_history(control.payload);
+            return;
         case wire::Kind::text:
             bytes = control.payload;
             break;
@@ -382,20 +585,10 @@ class SessionService final : public QObject {
             TerminalSize size{columns, rows};
             if (columns == 0 || rows == 0 || quint32(columns) * rows > wire::max_cells)
                 throw std::runtime_error("Invalid terminal geometry");
-            if (!pty_.resize(size))
-                throw std::runtime_error("PTY resize failed");
-            try {
-                terminal_.resize(size);
-            } catch (const std::exception& error) {
-                stop(QString::fromUtf8(error.what()));
-                return; // A failed engine resize cannot be presented as synchronized.
-            }
-            const auto replies = terminal_.take_replies();
-            if (!replies.empty() && !pty_.writeBytes(QByteArray(
-                                        replies.data(), static_cast<qsizetype>(replies.size()))))
-                throw std::runtime_error("PTY reply queue overflow");
-            dirty_ = true;
-            schedule();
+            if (harvest_offset_)
+                pending_resize_ = size;
+            else
+                apply_resize(size);
             return;
         }
         default:
@@ -403,6 +596,23 @@ class SessionService final : public QObject {
         }
         if (!pty_.writeBytes(bytes))
             throw std::runtime_error("PTY input queue full");
+    }
+    void apply_resize(TerminalSize size) {
+        if (!pty_.resize(size))
+            throw std::runtime_error("PTY resize failed");
+        try {
+            terminal_.resize(size);
+            current_size_ = size;
+        } catch (const std::exception& error) {
+            stop(QString::fromUtf8(error.what()));
+            return; // A failed engine resize cannot be presented as synchronized.
+        }
+        const auto replies = terminal_.take_replies();
+        if (!replies.empty() &&
+            !pty_.writeBytes(QByteArray(replies.data(), static_cast<qsizetype>(replies.size()))))
+            throw std::runtime_error("PTY reply queue overflow");
+        dirty_ = true;
+        schedule();
     }
     void send_status(QLocalSocket* socket, wire::StatusCode code, const QString& message) const {
         socket->write(wire::frame(wire::Kind::status,
@@ -435,6 +645,7 @@ class SessionService final : public QObject {
         disconnect(client_, nullptr, this, nullptr);
         retire(client_);
         client_ = nullptr;
+        pending_history_.reset();
         buffer_.clear();
         ready_ = false;
         snapshot_in_flight_ = false;
@@ -461,6 +672,17 @@ class SessionService final : public QObject {
     bool snapshot_in_flight_{};
     bool process_started_{};
     bool stopping_{};
+    HistoryWorker history_;
+    QByteArray pending_output_;
+    QString history_error_;
+    bool processing_output_{};
+    bool output_waiting_{};
+    bool history_failed_{};
+    std::optional<std::pair<wire::Attachment, wire::HistoryRequest>> pending_history_;
+    std::optional<std::size_t> harvest_offset_;
+    std::optional<TerminalSize> pending_resize_;
+    TerminalSize current_size_;
+    wire::SnapshotTiming timing_;
 };
 } // namespace
 int main(int argc, char** argv) {

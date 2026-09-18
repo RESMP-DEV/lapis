@@ -35,20 +35,31 @@ class TerminalSurface : public QQuickItem {
   protected:
     QSGNode* updatePaintNode(QSGNode* old_node, UpdatePaintNodeData* data) override;
     void geometryChange(const QRectF& new_geometry, const QRectF& old_geometry) override;
+    void focusInEvent(QFocusEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void inputMethodEvent(QInputMethodEvent* event) override;
 
   private:
+    [[nodiscard]] bool acceptsTerminalInput() const;
     void requestResize();
+    void bindWindow(QQuickWindow* current);
     void publishFrame(bool snapshot_changed);
+    void updateInputContext(Qt::InputMethodQueries queries);
+    void resetInputContext();
     struct RenderState;
     std::mutex render_mutex_;
     std::shared_ptr<const RenderState> render_state_;
     QPointer<SessionPreview> document_;
+    QMetaObject::Connection window_active_connection_;
+    QMetaObject::Connection window_changed_connection_;
 
     bool interactive_{};
     QString preedit_;
+    quint64 ime_epoch_{};
+    bool resetting_input_{};
+    bool composition_armed_{};
 };
 
 } // namespace lapis::desktop

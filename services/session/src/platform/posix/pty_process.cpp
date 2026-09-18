@@ -80,7 +80,7 @@ PtyProcess::PtyProcess(QObject* parent) : QObject(parent) {
     connect(&process_, &QProcess::started, this, [this] {
         slave_.reset();
         guard_read_.reset();
-        reader_->setEnabled(true);
+        reader_->setEnabled(!output_paused_);
         emit started();
         writeReady();
     });
@@ -277,12 +277,17 @@ void PtyProcess::writeReady() {
     write_offset_ = 0;
     writer_->setEnabled(false);
 }
+void PtyProcess::pauseOutput(bool paused) {
+    output_paused_ = paused;
+    if (reader_)
+        reader_->setEnabled(!paused);
+}
 bool PtyProcess::readReady() {
     if (!master_)
         return true;
     std::array<char, 16384> bytes{};
     std::size_t consumed{};
-    while (consumed < 65536U) {
+    while (consumed < 65536U && !output_paused_) {
         const auto count = ::read(master_.get(), bytes.data(), bytes.size());
         if (count > 0) {
             consumed += static_cast<std::size_t>(count);
@@ -302,6 +307,12 @@ bool PtyProcess::readReady() {
 }
 void PtyProcess::finishWhenDrained(int exit_code, QProcess::ExitStatus exit_status,
                                    int drain_budget) {
+    if (output_paused_) {
+        QTimer::singleShot(10, this, [this, exit_code, exit_status, drain_budget] {
+            finishWhenDrained(exit_code, exit_status, drain_budget);
+        });
+        return;
+    }
     if (!readReady()) {
         if (drain_budget > 1) {
             QTimer::singleShot(0, this, [this, exit_code, exit_status, drain_budget] {

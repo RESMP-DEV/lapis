@@ -209,7 +209,17 @@ def wait_socket(endpoint, process):
 
 
 class Service:
-    def __init__(self, binary, runtime, artifacts, name, program, arguments, directory):
+    def __init__(
+        self,
+        binary,
+        runtime,
+        artifacts,
+        name,
+        program,
+        arguments,
+        directory,
+        env_overrides=None,
+    ):
         self.endpoint = runtime / (name + ".sock")
         self.program, self.arguments, self.directory = program, arguments, directory
         self.child_pid = None
@@ -221,6 +231,11 @@ class Service:
             stdout=self.log,
             stderr=self.log,
             start_new_session=True,
+            env={
+                **os.environ,
+                "LAPIS_HISTORY_ROOT": str(runtime / "history"),
+                **(env_overrides or {}),
+            },
         )
 
     def connect(self):

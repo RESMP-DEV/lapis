@@ -26,9 +26,10 @@ incomplete.**
 | Component | Exercised | Remaining |
 | --- | --- | --- |
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
-| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS | Recovery after service loss, disk-backed history and later Linux qualification |
-| Local transport | Version 3 identity/epoch/generation attachment, restored-screen input gating, bounded queues and explicit reconnect | Automatic recovery policy and multi-session registry |
-| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK | Cross-cell contextual shaping, IME, selection, accessibility and latency/frame qualification; Linux GUI port is deferred |
+| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS | Recovery after service loss and later Linux qualification |
+| Local transport | Version 4 identity/epoch/generation attachment and correlated history paging, restored-screen input gating, bounded queues and explicit reconnect | Automatic recovery policy and multi-session registry |
+| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK | Physical keyboard/IME qualification, cross-cell contextual shaping, selection and accessibility; Linux GUI port is deferred |
+| History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt composition/paste/focus ownership tests | Physical IME acceptance; archived pages retain their original geometry |
 | UI iteration and attention fixture | Isolated source-QML reload, PNG captures, LLDB launch/attach, compact header and finite red cue replay | Maintainer visual review, rebindable navigation and real attention integration |
 | Codex integration | Direct TUI launch, no-prompt editing/navigation/paste/resize, normal/compact GPU captures and same-child reattachment; separate schema/init/list probe | Real model-turn attention requests, responses and source reconnect handling |
 
@@ -51,8 +52,10 @@ the renderer TSan reports and records subsequent review fixes. The
 descendant cleanup and contributor/test procedures. The [session reconnect receipt](evidence/session-reconnect.json) records identity binding,
 input readiness and failure-boundary checks. The [terminal fidelity receipt](evidence/terminal-fidelity.json)
 records native GPU regression checks for cell positioning, fallback glyphs,
-decorations, resize and cursor repaint. Native input/IME, responsiveness measurements
-and disk history remain in the
+decorations, resize and cursor repaint. Milestone 1 now includes bounded disk history,
+input-context lifecycle checks and an opt-in correlated timing probe. The
+[milestone qualification receipt](evidence/milestone-one.json) records the assembled checks. Physical
+keyboard/IME acceptance remains open in the
 [ordered plan](docs/architecture.md#next-complete-persistent-terminal-acceptance).
 The [Codex route comparison](adapters/codex/README.md#integration-route-comparison)
 separates terminal operation from attention delivery.
@@ -82,11 +85,19 @@ unsent input. If the old service ended or the endpoint now belongs to another
 session, choose an explicit action. Builds stay under `build/`; private sockets,
 logs and the bounded `.session` identity hint stay under `runtime/`.
 
+Use **Older**, **Newer**, and **Live** above the terminal to browse archived
+output. History is read only: keys, paste and terminal resize resume only after
+returning to Live. Output continues to update the retained live screen while you
+browse. Archives use private files under `runtime/history`, with 64 MiB per
+session and 256 MiB shared-root page budgets by default. See the
+[history and input procedure](CONTRIBUTING.md#history-and-input-qualification) for
+limits, recovery, checks and the remaining native-input acceptance.
+
 To launch Codex directly in its own persistent terminal:
 
 ```sh
 build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop \
-  --new-session --socket "$PWD/runtime/codex-v3.sock" --cwd "$PWD" -- codex --no-daemon
+  --new-session --socket "$PWD/runtime/codex-v4.sock" --cwd "$PWD" -- codex --no-daemon
 ```
 
 Repeat without `--new-session` to reconnect. Use `--discover` only to explicitly
@@ -97,7 +108,7 @@ Other executables and literal arguments work after `--`. Explicit programs or
 existing window. No hooks or approval settings are changed. There is still one
 live pane per window; its other cards remain fixtures.
 
-The default socket is `runtime/desktop-v3.sock`. Older v1/v2 sessions are not
+The default socket is `runtime/desktop-v4.sock`. Older v1/v2/v3 sessions are not
 migrated or terminated by this build. See the
 [qualification procedure](CONTRIBUTING.md#cli-integration-qualification) for the
 optional no-prompt Codex check and current limits.

@@ -257,8 +257,8 @@ Arguments are literal; use `--` to separate lapis options from the child's optio
 Repeat the same launch without `--new-session` to reattach; changing executable/argv/cwd on an occupied
 endpoint is rejected. A socket parent must be owned by you and private (0700).
 Existing directories/files are not repurposed. Logs are written beside each
-socket as `<socket>.log`. The default endpoint is `runtime/desktop-v3.sock`;
-old v1/v2 sessions stay untouched. The `<socket>.session` hint is a private 0600
+socket as `<socket>.log`. The default endpoint is `runtime/desktop-v4.sock`;
+old v1/v2/v3 sessions stay untouched. The `<socket>.session` hint is a private 0600
 regular file containing session ID, epoch and launch fingerprint. A missing or
 corrupt hint disables implicit attachment. Explicit discovery can replace corrupt
 contents in a safe file; unsafe modes, symlinks or hardlinks require repair first.
@@ -428,6 +428,7 @@ Required checks accumulate when a change touches multiple areas:
 | PTY, local transport or CLI launch | `just desktop`, `just cli-check`, and desktop-enabled ASan/TSan as applicable below |
 | QML, rendering or desktop input | `just desktop` and `just ui-check`; live input changes also need `just cli-check` |
 | Build/test tooling | `just verify-tools` plus affected positive check/build paths |
+| Disk history | `python3 scripts/check_history.py --disk-full` on macOS, plus desktop-enabled ASan/TSan; the disk-full fixture creates and removes its own 32 MiB disk image |
 | Python tooling | `ruff check --isolated scripts` and `ruff format --isolated --check scripts`, plus relevant runtime probes |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; no unrelated C++ rebuild |
 
@@ -464,14 +465,16 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `session-platform-ownership` | Headless and desktop | POSIX descriptor ownership and moves |
 | `terminal-behavior` | Headless and desktop | Ghostty parsing, snapshots, history, resize and mode-aware input |
 | `launch-spec` | Desktop-enabled | Literal launch validation and private endpoint rules |
-| `local-protocol` | Desktop-enabled | v3 identity envelopes, framing, bounds, snapshots and invalid messages |
+| `local-protocol` | Desktop-enabled | v4 identity/timing/history envelopes, framing, bounds, snapshots and invalid messages |
 | `session-descriptor` | Desktop-enabled | Private identity hint, atomic replacement, corruption and unsafe-file rejection |
 | `live-connection` | Desktop-enabled | Screen-before-input, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
 | `ui-preview` | Desktop-enabled | Qt reload, attention, input and render lifecycle |
+| `history-store` | Desktop-enabled | Styled page round trips, per-session/global quotas, corruption, interrupted-write cleanup and file-size write failure recovery |
+| `terminal-input` | Desktop-enabled, native GUI | Qt composition commit/cancel, replacement rejection, paste and focus/document/history/disconnect ownership |
 | `terminal-render` | Desktop-enabled | Real Qt Vulkan pixel regressions for cell background grids, wide/combining characters, fallback/RTL text, styles/decorations, actual Ghostty resize, cursor placement and clearing |
 
-`just desktop` runs these ten suites plus static checks. The separate Python
+`just desktop` runs these twelve suites plus static checks. The separate Python
 GUI harness checks five preview captures and three expected failures. The CLI
 harness checks detached service behavior, attachment generations, fragmented
 handshakes, synchronization timeout, stale controls, bounded queue failure and
@@ -494,6 +497,84 @@ probe as a pass unless its expected diagnostic was observed. Raw CMake/CTest
 commands below do not run format, clang-tidy or Cppcheck; `just desktop` supplies
 those checks. Save custom build/test output under `build/` and include exact
 commands with any sanitized receipt committed to `evidence/`.
+
+### History and input qualification
+
+Build the current desktop first. Run these checks serially with other GUI work:
+
+```sh
+python3 scripts/check_history.py --disk-full
+ctest --test-dir build/desktop -R 'terminal-input|live-connection' --output-on-failure
+build/desktop/apps/desktop/lapis_terminal_latency_probe \
+  --native --samples 100 --output build/terminal-latency.json
+```
+
+`check_history.py` runs a controlled Python child under the real service. It covers
+1,500 output rows with a one-row viewport, quota eviction, older/newer paging,
+resize, same-child reattachment and corrupt-record recovery. `--disk-full` is
+macOS-only and fills a newly created 32 MiB HFS+ image until the OS returns ENOSPC;
+it checks that live input survives and browsing recovers after freeing space. It
+never formats an existing device. Omit the flag for the portable service cases.
+For sanitizer binaries, pass `--build-dir build/desktop-asan` or
+`build/desktop-tsan`; keep address and thread instrumentation separate.
+
+The native timing command requires a logged-in desktop and `cliclick` with
+Accessibility permission. It briefly activates its own controlled window and
+sends Return through macOS. It starts and cleans up its own service/child. Run it
+without competing GUI checks or builds for a measurement receipt; omit `--native`
+for a separately labeled synthetic Qt baseline. Five warmups precede the requested
+samples. Record revision, binary hashes, host, tool versions, observed refresh rate
+and workload alongside JSON. Results include p50/p95/p99 stage timings, samples
+over one refresh interval, separate desktop/service idle CPU, resident memory and
+idle submitted frames and 20 retained history-to-live returns (with at least 30 input
+samples). The JSON `transport` interval starts before service snapshot extraction, so it
+includes snapshot building/encoding, IPC and GUI decoding; it is not pure socket
+latency. Frame submission is not pixel presentation, and idle frame
+count is not a hardware GPU-utilization counter. These timings remain observations,
+not pass/fail performance thresholds. This probe does not measure cross-session
+switches or real agent turns.
+
+Physical keyboard/IME acceptance is separate. The controlled fixture displays steps
+and records received bytes in a private local JSONL file. Use a new socket and
+output filename for each run:
+
+```sh
+build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop \
+  --new-session --socket "$PWD/runtime/native-check-v4.sock" --cwd "$PWD" -- \
+  python3 "$PWD/scripts/native_input_fixture.py" \
+  --output "$PWD/runtime/native-check.jsonl"
+```
+
+Closing/reopening this same command without `--new-session` exercises reattachment;
+Control-D ends the fixture. The file starts with `physical_input_verified: false`
+because collected bytes still require human confirmation of the input source,
+composition/cancellation and candidate placement. Do not commit the raw input log;
+retain a sanitized case/result receipt. In this dedicated endpoint, verify ordinary/Control/Option keys, multiline paste, native IME preedit,
+commit and cancellation. Change focus, enter history and disconnect while composing;
+no stale text may reach another context. Check candidate placement after cursor
+movement and resizing. Record macOS/input-source versions, typed test text,
+expected bytes and actual output in a sanitized receipt. A Qt `QInputMethodEvent`
+test or OS-injected Return does not satisfy this physical-input check. Terminal
+selection/copy and a screen-reader terminal tree are currently unsupported.
+
+History is under `runtime/history` by default. Before starting a service, set
+`LAPIS_HISTORY_ROOT` to an absolute private directory and optionally set
+`LAPIS_HISTORY_SESSION_BYTES` / `LAPIS_HISTORY_GLOBAL_BYTES` (positive bytes,
+session <= global <= 4 GiB). Defaults are 64 MiB / 256 MiB, with a 4,096-page global
+cap. The global quota is shared by services using that root, not every arbitrary
+root on the machine. Pages preserve their recorded geometry; only in-memory
+engine history reflows on resize. History controls never resize or send input to
+the child. Return to Live restores its newest retained screen and requested size.
+
+A storage failure pauses recording and reports a gap when history is requested;
+live I/O continues within its memory bound. Free space or repair the configured
+storage, then use Older to retry. A damaged page is rejected, never rendered as
+valid history. Retire a damaged archive directory only after its owning service
+has ended; archiving is terminal content, so retain it only as long as needed.
+The store removes only its known abandoned `.pending` write under its root lock;
+it leaves unknown files alone. Page-byte quotas exclude fixed metadata and bounded
+atomic-write overhead. A normal exit attempts to drain queued pages; a forced
+service kill can lose its queued tail. Stored pages are not process recovery.
 
 ### Desktop sanitizers
 
@@ -519,7 +600,7 @@ python3 scripts/check_cli_launch.py --build-dir build/desktop-asan \
 Repeat those configure/build/test/harness commands with preset `tsan` and all
 `desktop-asan` paths changed to `desktop-tsan`. Do not combine instrumentation or
 use `ctest --preset asan` for the custom directory: that preset targets
-`build/asan`. Each desktop-enabled directory must list all ten suites above.
+`build/asan`. Each desktop-enabled directory must list all twelve suites above.
 Use the same LLVM installation for normal and instrumented builds. Ccache is
 optional (`-DCMAKE_CXX_COMPILER_LAUNCHER=...`); raw CMake does not discover it.
 Reduce `--parallel` for host resource limits. The CLI command above runs service

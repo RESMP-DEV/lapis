@@ -166,7 +166,7 @@ needs them. Every first-party target uses `lapis_project_options`.
 | `services/session/src/platform/posix/` | Native descriptor ownership, then PTY launch/I/O/resize/reaping | `UniqueFd` on macOS/Linux; Qt-owned PTY launch/I/O/resize/reaping exercised on macOS |
 | `tools/terminal_probe/` | Shared headless workloads and independent Ghostty/Contour consumers | Implemented; pinned builds and eight-case replay on macOS/Linux |
 | `services/session/src/terminal/` | Wrap the selected engine's parsing, mode-aware input and screen extraction | Implemented as `lapis_terminal`; 14 behavioral cases on macOS/Linux ARM64 |
-| `services/session/include/lapis/session/` | Owned commands, session identity and snapshots for clients | Owned terminal values implemented; internal version 3 attachment/snapshot framing under `src/transport/` |
+| `services/session/include/lapis/session/` | Owned commands, session identity and snapshots for clients | Owned terminal values implemented; internal version 4 attachment/snapshot/history framing under `src/transport/` |
 | `services/session/src/` | Service event loop and session lifecycle, then local IPC | Separate one-terminal service with explicit argv/cwd and bounded local transport on macOS |
 | `apps/desktop/` | Minimal Qt view, input routing and terminal surface | Live enlarged shell and static carousel composition; macOS Vulkan capture |
 | `adapters/codex/` | Codex protocol mapping and attention delivery | Ordinary Codex TUI launch exercised; structured attention remains investigation |
@@ -187,26 +187,26 @@ the GUI only detaches the local socket: the service continues draining output.
 The enlarged pane is a live terminal; the remaining cards are labeled placeholders.
 One GUI may attach per endpoint. A matching attachment replaces the previous
 connection; a mismatched launch is rejected first. The default socket identifies
-this checkout's shell, and explicit launches choose their own endpoint. Stable session IDs,
-service epochs and authenticated attachment generations are still required before
-multiple sessions or robust recovery. This wire format is internal and provisional.
+this checkout's shell, and explicit launches choose their own endpoint. Stable session IDs, service epochs and attachment generations bind each
+connection; a multi-session registry and automatic recovery remain later work. This wire format is internal and provisional.
 
 Qt event loops own their respective objects. PTY reads yield after 64 KiB and
 input dispatch after 64 frames. Writes have a 1 MiB queue; text messages are at
 most 64 KiB. Snapshot frames are limited to 8 MiB, 32,768 cells and 65,536 codepoints.
 The service coalesces updates on a 16 ms timer with one snapshot in flight; a slow
 GUI does not block PTY parsing. That timer needs measurement against the 120 Hz
-reference before any latency claim. Current history uses the adapter's bounded
-memory budget; disk-backed history is not implemented.
+reference before any latency claim. Recent history uses the adapter's bounded memory budget. Older primary-screen
+rows move to the bounded disk archive described in the completion contract below.
 
 The GUI decodes owned snapshots and routes text, navigation, Control-letter input,
 paste and resize. The focused pane chooses the PTY dimensions; scaled previews do
-not resize it. Basic IME commit/preedit plumbing exists, but actual composition,
-font fallback, strict wide-cell alignment, selection and accessibility are not
-qualified. The renderer keeps static scene nodes and lets Qt schedule frames for
-updates and brief hover transitions. A repeatable synthetic cue workload now records GUI frame observations. Actual
-input-to-presentation timing remains an acceptance gap. The visual checkpoint
-does not complete milestone 1.
+not resize it. Cell-grid/font fallback has native Vulkan regression coverage.
+Qt composition/paste/focus ownership is tested; physical keyboard/IME acceptance,
+selection/copy and a terminal accessibility tree remain open. The renderer retains
+static scene nodes and lets Qt schedule updates and brief hover transitions.
+The controlled latency probe now correlates received input, service processing,
+snapshot application and frame submission. Pixel-visible presentation is not
+measured. The visual checkpoint alone does not complete milestone 1.
 
 ### UI refinement checkpoint
 
@@ -303,7 +303,8 @@ Ghostty integration under `src/terminal/`, and behavioral cases under
 - History uses Ghostty's page-granular byte budget. Exercised eviction and clearing
   preserve the current viewport; this budget is not a strict allocation or RSS
   ceiling. Snapshot payload limits also do not account for allocator overhead.
-  Global service budgets and disk-backed history still belong to later work.
+  The service adds per-session/shared-root disk quotas and a bounded I/O queue;
+  these remain separate from allocator and process RSS accounting.
 - The verified input subset is navigation key presses with modifiers and pure text
   paste encoding. Clipboard access, full text/key protocols, mouse, IME, selection,
   hyperlinks and image presentation are not exposed. Image storage and external
@@ -348,7 +349,7 @@ programs or cwd overrides require `--socket`; all child arguments follow `--`.
 Fixture mode rejects launch/endpoint options and does not inspect the user's
 shell. Shell smoke injection rejects explicit launch/cwd overrides.
 
-Service IPC is **version 3**. The launch fingerprint remains SHA-256 of a
+Service IPC is **version 4**. The launch fingerprint remains SHA-256 of a
 Qt_6_0 big-endian stream of executable path, arguments and canonical cwd; terminal
 size is excluded. It checks launch matching, while the session ID, service epoch
 and attachment generation establish continuity. Neither is a secret token;
@@ -360,7 +361,7 @@ five seconds. Only an explicit new-session action starts a service.
 
 Socket parents must be private and owned by the current user. Ordinary files,
 symlinks and live foreign listeners are rejected; existing directories are not
-chmodded. The default `runtime/desktop-v3.sock` leaves old v1/v2 sessions alone.
+chmodded. The default `runtime/desktop-v4.sock` leaves old v1/v2/v3 sessions alone.
 No state migration, multi-session manager or automatic service recovery is implied.
 Launch profiles, hooks and approval policies remain owned by the selected CLI.
 
@@ -401,14 +402,14 @@ workspace; the Linux port is deferred. Parallelize independent investigation, wi
    input readiness, stale controls, slow clients and bounded queues. Retain these
    regressions while completing the remaining work. Service loss/reboot does not
    preserve the old child; automatic process recovery is outside this milestone.
-2. **Terminal fidelity and timing — desktop and verification.** Qualify cell
-   positioning, fallback fonts, real IME/key/paste behavior, interactive TUIs and
-   foreground jobs. Add correlated input/service/frame markers and measure the
-   first-view baseline; label presentation proxies. Rebindable navigation can
-   then be tested in the isolated fixture after visual review.
-3. **History — session service.** Add bounded disk-backed older history, quotas,
-   pressure handling and disk-full recovery while preserving the current screen.
-   A passing viewport-eviction test is not disk-history acceptance.
+2. **Terminal fidelity and timing — desktop and verification.** Cell positioning,
+   fallback fonts, Qt input ownership and correlated service/frame instrumentation
+   are implemented. Complete physical IME/key/paste acceptance and retain the
+   interactive-TUI regressions. Keep submission proxies separate from pixel
+   presentation. Rebindable cross-session navigation belongs to the later workspace.
+3. **History — implemented and exercised on macOS.** Bounded disk pages,
+   quotas, read-only paging, backpressure, corruption and real ENOSPC recovery
+   preserve the live process. Keep these service and desktop regression checks.
 4. **Deferred Linux port — platform and verification.** Carry the same
    PTY/service/Qt view to a named Linux host and exercise Vulkan, native input,
    resize and detach/reattach when that port is scheduled; it is not current
@@ -425,7 +426,7 @@ Planning baseline: merged `99567cb` (September 18, 2026), followed by the verifi
 session checkpoint `31cabfe`. Slice A is implemented with qualification recorded
 in [its receipt](../evidence/session-reconnect.json). B1 now has a verified macOS
 cell-grid checkpoint for fallback fonts, wide characters, decorations and resize.
-Native input and history follow.
+Disk history and Qt input-context lifecycle are implemented; physical input acceptance remains open.
 Keep milestone 1 open until its acceptance below is exercised.
 
 | Order | Reviewable slice | Acceptance result |
@@ -463,11 +464,13 @@ Contributors share the feature; temporary edit and build scopes prevent collisio
    service and frame timestamps; report p50/p95/p99 with the observed endpoints,
    idle CPU/memory and display rate. Keep latency targets provisional. Selection,
    clipboard and accessibility each need an explicit supported behavior or open gap.
-3. **C: older history.** First verify how the pinned engine exposes history and
-   soft-wrap information. Agree on bounded row retrieval and disk-record contracts
-   before implementation. Then exercise quotas, eviction, truncated records,
-   disk-full handling and resize/reflow while output and the current screen remain
-   responsive. A transcript recorder alone does not satisfy scrollback acceptance.
+3. **C: older history implemented.** The pinned engine exposes primary-screen
+   row windows; extraction restores the live viewport and retains pending replies.
+   Service tests exercise a 1,500-row burst through a one-row viewport, paging in
+   both directions, quotas, resize, same-PID reattach, corrupt pages and real
+   disk-full recovery. Unit checks cover styles/Unicode, abandoned temporary writes
+   and truncated records. Archived pages retain recorded cell geometry, including
+   soft-wrap layout; they do not reconstruct logical lines for later reflow.
 4. **D: deferred Linux port.** When scheduled, identify a host with a real
    graphics session, a Vulkan driver and native-input access. Record
    tool/dependency versions, build the minimal terminal there, and repeat PTY
@@ -480,7 +483,7 @@ ASan and TSan, preview captures and the live CLI harness. GUI runs are serial ev
 when independent worker builds run concurrently. Record results in the existing
 README status table and a sanitized receipt; do not create another roadmap.
 
-#### Milestone 1 completion contract in progress
+#### Milestone 1 completion contract
 
 The active implementation stays on a feature branch until the complete milestone
 has been exercised; PR creation is deferred at the maintainer's request.
@@ -610,6 +613,37 @@ and second independent adapter qualify scale and tool independence. The
 [following milestones](#following-milestones) retain their acceptance gates;
 packaging/notices/SBOM work can proceed independently and must finish before
 binary distribution.
+
+The history store defaults to 64 MiB of committed pages per session, 256 MiB
+across its configured root, and 4,096 pages globally. Limits count page files;
+there is at most one 8 MiB temporary write plus one replacement page while the
+root lock is held. The scan recovers the store's known `.pending` artifact before
+another write. Unknown files are not deleted or charged as lapis pages; directory
+and scan-count bounds stop accumulation from turning into unbounded work. Session
+counters and directories are metadata, capped by the 1,024-directory scan limit.
+Eviction preserves monotonic page IDs; the oldest committed pages go first.
+The service queue is capped at 128 operations / 16 MiB of page data (plus one
+active operation). It pauses PTY reads while a harvest waits for queue capacity;
+resize waits until that harvest releases the engine viewport. Filesystem work
+runs on one dedicated worker thread. Root-lock contention waits up to 500 ms on
+that worker; concurrent-writer tests enforce the shared quota. A failed archive write leaves older committed
+pages intact, records a visible gap message when browsing, and keeps live I/O
+usable. Browsing retries storage after repair. Normal child exit attempts a bounded
+queue drain; forced service termination may lose the queued tail. Archive storage
+does not restore a live process after service death or reboot.
+
+Qt input tests exercise committed Unicode, cancellation (including empty native
+preedit cancellation), unsupported replacement rejection, atomic clipboard paste,
+focus/document/history/disconnect transitions, and recovery with a fresh
+composition. The native context resets when the window becomes inactive.
+Replacement of already-sent text is intentionally unsupported: lapis cannot erase
+bytes already consumed by a CLI. Selection/copy from terminal cells and a terminal
+accessibility tree are open gaps. OS-injected Return measurements exercise the
+AppKit/Qt path but do not establish physical keyboard or real IME qualification.
+The latency probe correlates service sequence/revision to `afterSynchronizing`
+and `frameSwapped`; the latter is a submission proxy, not measured pixel visibility.
+Cross-session switching remains a later milestone because this slice owns one
+live terminal; history-to-live restoration is a retained-screen operation.
 
 ### Engine experiment decision
 

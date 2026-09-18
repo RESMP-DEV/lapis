@@ -9,6 +9,7 @@
 #include <QPromise>
 #include <QThreadPool>
 #include <exception>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -20,8 +21,73 @@ void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpe
     live_ = std::make_unique<LiveConnection>(*this, endpoint, launch, mode);
 }
 void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
-    snapshot_ = std::move(snapshot);
+    live_snapshot_ = std::move(snapshot);
+    live_snapshot_received_ = true;
     live_snapshot_ready_ = live();
+    if (!history_active_) {
+        snapshot_ = live_snapshot_;
+        emit snapshotChanged();
+    }
+}
+void SessionPreview::beginHistoryRequest() {
+    history_active_ = true;
+    history_request_pending_ = true;
+    emit historyChanged();
+    emit connectionChanged();
+}
+void SessionPreview::completeHistoryRequest(quint64 page_id, session::TerminalSnapshot snapshot,
+                                            const QString& message) {
+    history_active_ = true;
+    history_request_pending_ = false;
+    history_page_id_ = page_id;
+    history_message_ = message;
+    snapshot_ = std::move(snapshot);
+    emit historyChanged();
+    emit connectionChanged();
+    emit snapshotChanged();
+}
+void SessionPreview::failHistoryRequest(const QString& message) {
+    if (history_request_pending_) {
+        history_active_ = true;
+        history_request_pending_ = false;
+        history_message_ = message;
+        emit historyChanged();
+        emit connectionChanged();
+    }
+}
+void SessionPreview::cancelHistoryRequests() {
+    history_request_pending_ = false;
+    emit historyChanged();
+    emit connectionChanged();
+}
+void SessionPreview::setHistoryRequestId(quint64 request_id) {
+    if (request_id != 0)
+        beginHistoryRequest();
+}
+void SessionPreview::olderHistory() {
+    if (!live_ || history_request_pending_)
+        return;
+    live_->requestHistory(wire::HistoryDirection::older, history_active_ ? history_page_id_ : 0);
+}
+void SessionPreview::newerHistory() {
+    if (!live_ || history_request_pending_ || history_page_id_ == 0)
+        return;
+    live_->requestHistory(wire::HistoryDirection::newer, history_page_id_);
+}
+void SessionPreview::returnToLive() {
+    if (live_)
+        live_->cancelHistoryRequest();
+    history_active_ = false;
+    history_request_pending_ = false;
+    history_page_id_ = 0;
+    history_message_.clear();
+    if (live_snapshot_received_) {
+        snapshot_ = live_snapshot_;
+        if (live_)
+            live_->applyWantedSize();
+    }
+    emit historyChanged();
+    emit connectionChanged();
     emit snapshotChanged();
 }
 void SessionPreview::setActivity(const QString& activity) {
@@ -29,10 +95,14 @@ void SessionPreview::setActivity(const QString& activity) {
     emit snapshotChanged();
 }
 void SessionPreview::sendText(const QByteArray& bytes, bool paste) {
+    if (history_active_ || history_request_pending_)
+        return;
     if (live_)
         live_->send(paste ? wire::Kind::paste : wire::Kind::text, bytes);
 }
 void SessionPreview::sendKey(session::TerminalKey key, session::KeyModifiers modifiers) {
+    if (history_active_ || history_request_pending_)
+        return;
     const unsigned int mods = (modifiers.shift ? 1U : 0U) | (modifiers.control ? 2U : 0U) |
                               (modifiers.alt ? 4U : 0U) | (modifiers.super ? 8U : 0U);
     QByteArray bytes;
@@ -42,8 +112,13 @@ void SessionPreview::sendKey(session::TerminalKey key, session::KeyModifiers mod
         live_->send(wire::Kind::key, bytes);
 }
 void SessionPreview::resizeTerminal(session::TerminalSize size) {
-    if (live_)
-        live_->resize(size);
+    if (!live_)
+        return;
+    if (history_active_ || history_request_pending_) {
+        live_->setWantedSize(size);
+        return;
+    }
+    live_->resize(size);
 }
 
 void SessionPreview::reconnect() {
@@ -82,6 +157,17 @@ LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
     connect(&handshake_, &QTimer::timeout, this,
             [this] { fail(QStringLiteral("Session synchronization timed out")); });
     connect(&retry_, &QTimer::timeout, this, [this] { connectSocket(); });
+    history_timeout_.setSingleShot(true);
+    history_timeout_.setInterval(5000);
+    connect(&history_timeout_, &QTimer::timeout, this, [this] {
+        if (!outstanding_history_request_)
+            return;
+        const auto request_id = *outstanding_history_request_;
+        outstanding_history_request_.reset();
+        document_.setHistoryRequestId(0);
+        document_.failHistoryRequest(QStringLiteral("History request timed out."));
+        rememberCanceledHistoryRequest(request_id);
+    });
     QTimer::singleShot(0, this, [this, mode] { begin(mode); });
 }
 LiveConnection::~LiveConnection() {
@@ -102,6 +188,7 @@ void LiveConnection::begin(wire::AttachMode mode) {
     last_sequence_ = 0;
     attachment_.reset();
     buffer_.clear();
+    invalidateHistory();
     retry_.stop();
     handshake_.stop();
     document_.setConnection(QStringLiteral("connecting"), false);
@@ -135,6 +222,29 @@ void LiveConnection::begin(wire::AttachMode mode) {
     } catch (const std::exception& error) {
         fail(QString::fromUtf8(error.what()));
     }
+}
+
+void LiveConnection::invalidateHistory() {
+    if (outstanding_history_request_)
+        rememberCanceledHistoryRequest(*outstanding_history_request_);
+    history_timeout_.stop();
+    outstanding_history_request_.reset();
+    document_.cancelHistoryRequests();
+}
+
+void LiveConnection::rememberCanceledHistoryRequest(quint64 request_id) {
+    canceled_history_requests_.insert(request_id);
+    while (canceled_history_requests_.size() > 128)
+        canceled_history_requests_.remove(*canceled_history_requests_.begin());
+}
+
+void LiveConnection::cancelHistoryRequest() {
+    if (outstanding_history_request_) {
+        rememberCanceledHistoryRequest(*outstanding_history_request_);
+        outstanding_history_request_.reset();
+    }
+    history_timeout_.stop();
+    document_.cancelHistoryRequests();
 }
 void LiveConnection::resetSocket() {
     if (socket_) {
@@ -182,6 +292,7 @@ void LiveConnection::fail(const QString& message, wire::StatusCode code) {
     connected_ = false;
     retry_.stop();
     handshake_.stop();
+    invalidateHistory();
     const auto state = code == wire::StatusCode::ended      ? QStringLiteral("ended")
                        : code == wire::StatusCode::replaced ? QStringLiteral("replaced")
                                                             : QStringLiteral("disconnected");
@@ -223,6 +334,35 @@ void LiveConnection::resize(session::TerminalSize size) {
     out << quint16(size.columns) << quint16(size.rows);
     send(wire::Kind::resize, bytes);
 }
+
+void LiveConnection::setWantedSize(session::TerminalSize size) { wanted_size_ = size; }
+
+void LiveConnection::applyWantedSize() {
+    const auto wanted = wanted_size_;
+    wanted_size_ = {1, 1};
+    resize(wanted);
+}
+
+void LiveConnection::requestHistory(wire::HistoryDirection direction, quint64 reference) {
+    if (!ready_ || failed_ || !attachment_ || outstanding_history_request_)
+        return;
+    if (direction == wire::HistoryDirection::newer && reference == 0)
+        throw std::runtime_error("Newer history requires a page");
+    if (history_request_ids_exhausted_) {
+        document_.failHistoryRequest(QStringLiteral("History browsing is unavailable."));
+        return;
+    }
+    const auto request_id = next_history_request_id_;
+    if (request_id == std::numeric_limits<quint64>::max())
+        history_request_ids_exhausted_ = true;
+    else
+        ++next_history_request_id_;
+    outstanding_history_request_ = request_id;
+    document_.setHistoryRequestId(request_id);
+    history_timeout_.start();
+    send(wire::Kind::history_request,
+         wire::encode_history_request({request_id, reference, direction}));
+}
 void LiveConnection::acceptHello(const wire::Hello& hello) {
     if (attachment_)
         throw std::runtime_error("Duplicate session hello");
@@ -245,9 +385,39 @@ void LiveConnection::acceptSnapshot(wire::SnapshotMessage message) {
         throw std::runtime_error("Stale or mismatched terminal snapshot");
     const bool initial = last_sequence_ == 0;
     last_sequence_ = message.sequence;
+    document_.setSnapshotTiming(
+        {{QStringLiteral("sequence"), QVariant::fromValue(message.sequence)},
+         {QStringLiteral("pty_read_ns"), QVariant::fromValue(message.timing.pty_read_ns)},
+         {QStringLiteral("parse_end_ns"), QVariant::fromValue(message.timing.parse_end_ns)},
+         {QStringLiteral("publish_ns"), QVariant::fromValue(message.timing.publish_ns)}});
     document_.applySnapshot(std::move(message.snapshot));
     if (initial)
         persistIdentity();
+}
+
+void LiveConnection::acceptHistoryReply(wire::HistoryReply reply) {
+    if (!attachment_ || reply.attachment != *attachment_) {
+        if (outstanding_history_request_ == reply.request_id)
+            cancelHistoryRequest();
+        throw std::runtime_error("Mismatched history reply");
+    }
+    if (canceled_history_requests_.contains(reply.request_id))
+        return;
+    if (!outstanding_history_request_ || *outstanding_history_request_ != reply.request_id)
+        throw std::runtime_error("Unexpected history reply");
+    history_timeout_.stop();
+    outstanding_history_request_.reset();
+    document_.setHistoryRequestId(0);
+    rememberCanceledHistoryRequest(reply.request_id);
+    if (reply.page_id == 0) {
+        document_.failHistoryRequest(reply.message.isEmpty()
+                                         ? QStringLiteral("No history page is available.")
+                                         : reply.message);
+        return;
+    }
+    if (!reply.snapshot)
+        throw std::runtime_error("History reply omitted a page snapshot");
+    document_.completeHistoryRequest(reply.page_id, std::move(*reply.snapshot), reply.message);
 }
 void LiveConnection::persistIdentity() {
     if (!attachment_)
@@ -309,6 +479,9 @@ void LiveConnection::handle(const wire::Frame& frame) {
         return;
     case wire::Kind::snapshot:
         acceptSnapshot(wire::decode_snapshot_message(frame.payload));
+        return;
+    case wire::Kind::history_page:
+        acceptHistoryReply(wire::decode_history_reply(frame.payload));
         return;
     case wire::Kind::status: {
         const auto status = wire::decode_status(frame.payload);
