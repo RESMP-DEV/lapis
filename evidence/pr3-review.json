@@ -1,0 +1,162 @@
+{
+  "schema": "lapis.pr-review/1",
+  "recorded_at": "2026-09-18T19:19:02.568952+00:00",
+  "pr": "https://github.com/RESMP-DEV/lapis/pull/3",
+  "reviewed_source": "6726c6a49766c50e4dd601003ea65547eddf2c72",
+  "repair_source": "2a1165a2b4769035a2499c9e2753f18a6d6ef2b4",
+  "platform": {
+    "macos": "26.7",
+    "machine": "Apple M4 Max",
+    "qt": "6.11.2",
+    "renderer": "Vulkan/MoltenVK"
+  },
+  "fixes": [
+    {
+      "thread": "PRRT_kwDOUfkyeM6j25Bu",
+      "resolution": "Commit-only text is now accepted in an idle, ready, focused terminal without requiring a key event or preedit. Active and stale compositions remain distinct: cancellation, replacement and ownership invalidation still reject stale commits until fresh input re-arms the context. Tests cover initial/repeated commit-only text and commit-only text after recovery, alongside all existing cancellation/focus/history/disconnect guards. Ordinary typing no longer marks a composition active; a new regression verifies commit-only text after ordinary typing and a focus round trip."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j25Bz",
+      "resolution": "Added the existing free settle() helper before the negative history-input/resize assertion so queued local-socket traffic is observed. The live-connection suite passes in normal, ASan/UBSan and TSan builds."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j25B_",
+      "resolution": "Updated the remaining active transport description to v4 and replaced the stale lifecycle-identity gap with the actual remaining registry/recovery work. Documentation file/heading links were checked."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j25CA",
+      "resolution": "Sanitized the historical receipt command to use <repo> instead of the local account path. The JSON parses and no /Users/ or /home/ path remains in this receipt."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j25CH",
+      "resolution": "Added an explicit nonempty-page assertion before max(), raising the existing CheckError caught by main. A controlled run with empty page discovery now exits 1 and writes passed:false plus \"No history pages were written\" to its JSON receipt; normal and real-ENOSPC runs still pass."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j25CY",
+      "resolution": "Direct service error shutdown now stops new input/output work and uses HistoryWorker::drain before exiting, allowing up to three seconds for the queued operations. Normal exit retains its existing bounded harvest/drain without adding another three-second window. Worker tests verify all 128 queued pages are persisted, new operations are rejected during drain, and a zero-budget deadline completes while work remains. The history-progress callback also catches exceptions and routes them through shutdown."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j25Ce",
+      "resolution": "Cleared history_error_ together with history_failed_ at the start of an accepted retry. Corruption repair and real disk-full recovery now assert both a recovered page and an empty error message. Both scenarios pass; the service history fixture also passes under ASan/UBSan and TSan."
+    }
+  ],
+  "checks": [
+    {
+      "check": "desktop",
+      "passed": true,
+      "suites": 12,
+      "log": "build/pr3-desktop-acceptance.log"
+    },
+    {
+      "check": "asan",
+      "passed": true,
+      "suites": 12,
+      "log": "build/pr3-asan-acceptance.log"
+    },
+    {
+      "check": "tsan",
+      "passed": true,
+      "suites": 12,
+      "log": "build/pr3-tsan-acceptance.log"
+    },
+    {
+      "check": "pr3-native-diagnostic.json",
+      "passed": true,
+      "cases": 18,
+      "input_source_and_clipboard_restored": true,
+      "receipt": "build/pr3-native-diagnostic.json"
+    },
+    {
+      "check": "pr3-native-asan-acceptance.json",
+      "passed": true,
+      "cases": 18,
+      "input_source_and_clipboard_restored": true,
+      "receipt": "build/pr3-native-asan-acceptance.json"
+    },
+    {
+      "check": "pr3-native-tsan-acceptance.json",
+      "passed": true,
+      "cases": 18,
+      "input_source_and_clipboard_restored": true,
+      "receipt": "build/pr3-native-tsan-acceptance.json"
+    },
+    {
+      "check": "pr3-cli-acceptance/receipt.json",
+      "passed": true,
+      "receipt": "build/pr3-cli-acceptance/receipt.json",
+      "cases": 11
+    },
+    {
+      "check": "ui-preview-check/receipt.json",
+      "passed": true,
+      "receipt": "build/ui-preview-check/receipt.json",
+      "cases": 8
+    },
+    {
+      "check": "pr3-history-acceptance/receipt.json",
+      "passed": true,
+      "receipt": "build/pr3-history-acceptance/receipt.json"
+    },
+    {
+      "check": "pr3-history-asan/receipt.json",
+      "passed": true,
+      "receipt": "build/pr3-history-asan/receipt.json"
+    },
+    {
+      "check": "pr3-history-tsan/receipt.json",
+      "passed": true,
+      "receipt": "build/pr3-history-tsan/receipt.json"
+    },
+    {
+      "check": "empty history page discovery",
+      "passed": true,
+      "expected_failure_receipt": {
+        "schema": "lapis.history-check/1",
+        "passed": false,
+        "error": "No history pages were written"
+      }
+    },
+    {
+      "check": "format, clang-tidy, Cppcheck, Python lint/format, tool detector fixtures, documentation links",
+      "passed": true
+    }
+  ],
+  "additional_hardening": "Catch exceptions from history-progress callbacks and route them through bounded error shutdown. Native probe deadlines now report the call site.",
+  "reviewers": {
+    "CodeRabbit": "completed with seven findings on reviewed_source; included review allowance exhausted after that review",
+    "Kimi": "completed with no findings; receipt/source inspection, no reviewer-executed runtime checks",
+    "Codex": "skipped/unavailable: review usage limit",
+    "Gemini": "skipped/unavailable: silent after initial trigger, more than ten minutes, one retry and final acknowledgement window",
+    "Claude": "skipped/unavailable: same bounded silent-review procedure",
+    "Kilo": "skipped/unavailable: same bounded silent-review procedure"
+  },
+  "retry_not_before": {
+    "Codex": "2026-09-19T07:00:00Z",
+    "CodeRabbit_manual_review": "2026-09-18T19:51:29Z"
+  },
+  "qualification_incidents": [
+    {
+      "case": "native focus transition",
+      "initial_result": "One deadline expiration during the native focus case.",
+      "follow_up": "Isolated run with call-site diagnostics passed without changing input behavior or relaxing assertions; subsequent native runs passed under ASan/UBSan and TSan. Cause not established.",
+      "initial_log": "build/pr3-native-final.log"
+    },
+    {
+      "case": "new commit-only focus regression",
+      "initial_result": "ASan run rejected commit before the test explicitly awaited input readiness.",
+      "follow_up": "Fixture now requests window activation and awaits ImEnabled before asserting commit behavior. Final normal, ASan/UBSan and TSan suites pass."
+    }
+  ],
+  "limits": [
+    "Cancelled composition still rejects an unarmed late commit until fresh key/preedit input; commit-only idle input does not require preedit.",
+    "Draining allows queued operations up to three seconds; forced termination or timeout may lose the queued tail.",
+    "No Character Viewer popup automation is claimed; commit-only QInputMethodEvent routing is tested separately from real Japanese IME automation.",
+    "No new latency measurement: the milestone receipt retains its original source and submission-proxy limits.",
+    "Vendor libraries remain uninstrumented; Linux desktop is deferred."
+  ],
+  "binaries": {
+    "build/desktop/services/session/lapis_session_service": "82a8b498ca3d4be9def8230ad5ee58888ed549c22eacbb1f4f702830dedf6426",
+    "build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop": "c0f7be038bd297637b99b29cb57434da094f620afc2283b93049a267af2d51da",
+    "build/desktop/apps/desktop/lapis_native_input_probe": "2818c8a6495a1d9d796c9512e112642f4f2691200dbd2e29f1ad4b024c5a3331"
+  }
+}

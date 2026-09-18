@@ -33,7 +33,7 @@ QString Workspace::rootDirectory() {
 }
 
 QString Workspace::defaultEndpoint() {
-    return QDir{rootDirectory()}.filePath(QStringLiteral("runtime/desktop-v2.sock"));
+    return QDir{rootDirectory()}.filePath(QStringLiteral("runtime/desktop-v4.sock"));
 }
 
 Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
@@ -55,7 +55,7 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
     if (!preview_mode_) {
         const QString endpoint = session::posix::prepare_endpoint(
             options.endpoint.isEmpty() ? defaultEndpoint() : options.endpoint);
-        sessions_.front()->startLive(endpoint, *launch);
+        sessions_.front()->startLive(endpoint, *launch, options.mode);
     } else {
         session::Terminal terminal({100, 30});
         terminal.feed(kPreviewPalette);

@@ -1,0 +1,263 @@
+{
+  "schema": "lapis.session-reconnect/1",
+  "recorded_at": "2026-09-18T14:30:15.442141+00:00",
+  "source_base": "99567cb56d6f2b8cdd9312e50f22e693cdd6d558",
+  "source_state": "Validated working tree before commit; source hashes identify the implementation and documentation. No merge is claimed.",
+  "source_sha256": {
+    "CONTRIBUTING.md": "9cb395a73458d826a6aee0b6e055d0beb27705214216f72ba202f4a66ef4b2bd",
+    "README.md": "0259f3edb1d372d669e61d45ebd7ac6d2fea2b365d9fceee4b2653f68b429a1b",
+    "adapters/codex/README.md": "42082923af1ce4f4faa401eaaeabf2870f5bb70aac1e6c10cfc0cb180dd697c3",
+    "apps/desktop/CMakeLists.txt": "1502b4e786a4da378385a885dde14ffb5a80861e5028f37b1d2853cecb78c17e",
+    "apps/desktop/qml/Main.qml": "80778987c110754512f0da748939785326841398bd149e2349cd166401aeffd7",
+    "apps/desktop/src/live_connection.cpp": "5cdd85c53de9b89a80ee95a33d2d57e41ea8eb79e59dfad117853b51519abcc2",
+    "apps/desktop/src/live_connection.hpp": "78640974e4dba6831184957d69ff47c1c309aef57ed39f09b1717eaffd66479e",
+    "apps/desktop/src/main.cpp": "fc17fa377644900c5e4600ffcf7c3b71ebb3bfb5dc3cc893afa5f2e65fc3b2af",
+    "apps/desktop/src/terminal_surface.cpp": "0dd0f6403598dd06620d5ee5d44e927d6b2f179ff83b56f563617e81b1718cae",
+    "apps/desktop/src/workspace.cpp": "4513505f7732e01f5b789877ecedf06317f5b1d552a6d01d0f390b49b9c7bf7b",
+    "apps/desktop/src/workspace.hpp": "2a56e21fc6f0e59ed391c452c83473b412d35c8e8ffe9a1ee89c8a667f527cb2",
+    "apps/desktop/tests/live_connection_test.cpp": "cebfcfc40ef934a12ad8451b54f2dd0ee87896c9b5ccd835dacfc081f74bed7d",
+    "docs/architecture.md": "839902c016d1bd8f6043e0e143819d3b15f86ba4de55043dba3b9a30fe1342dc",
+    "scripts/check_cli_launch.py": "745f98336db9ac1c73d21d144104e0bbb0a34917520bde1f8f785e032ef4ec08",
+    "services/session/CMakeLists.txt": "377323300e5095f13eff5aee0eb8c0cfaedd191c4e68a77695409f2876483edb",
+    "services/session/src/session_descriptor.cpp": "4b8af12267aa09bb6be6626c18e49c0072c2ab6ef4220856e2d98b55e8fd5ff7",
+    "services/session/src/session_descriptor.hpp": "3ac88cb4dbbb4cf6f671600b7b2134e500a09900c1f26a57fa5fa6034467eeaf",
+    "services/session/src/session_service.cpp": "6654b2a977f6d25590ca919bafbddb6d9aad09b9c77b4cf7b770960ddbf3bff7",
+    "services/session/src/transport/local_protocol.cpp": "cc56e2548d2cdede738ed5603a59c9619d03a0dfc15eba52026d6b5c1b0bd98d",
+    "services/session/src/transport/local_protocol.hpp": "1a2232c385c6171d1ff11a9abdea3e1ec088bb42796b86032687ded8f05a0ded",
+    "services/session/tests/local_protocol_test.cpp": "2b042b97c4fc034acded869dee8593f9402ab56581cffe4b5d4613d59053718c",
+    "services/session/tests/pty_process_test.cpp": "3ea8f8dc9b2e22fd856feb7ef48705274afda4d6f9fc2409e4e9a1ca7b3ca3b7",
+    "services/session/tests/session_descriptor_test.cpp": "c6dfb9a6cc70f4bd1e108cfdcd46c73f25239c20fd7304d47c78322b7e2c9764"
+  },
+  "platform": {
+    "os": "macOS",
+    "version": "26.7",
+    "architecture": "arm64",
+    "hardware": "Apple M4 Max",
+    "qt": "6.11.2",
+    "renderer": "Vulkan through MoltenVK",
+    "render_loop": "threaded"
+  },
+  "tools": {
+    "clang++": "Homebrew clang version 23.1.1",
+    "clang-tidy": "Homebrew LLVM version 23.1.1",
+    "clang-format": "Homebrew clang-format version 23.1.1",
+    "clangd": "Homebrew clangd version 23.1.1",
+    "cppcheck": "Cppcheck 2.21.0",
+    "cmake": "cmake version 4.4.3",
+    "ctest": "ctest version 4.4.3"
+  },
+  "contract": {
+    "wire_version": 3,
+    "default_endpoint": "runtime/desktop-v3.sock",
+    "identity": "UUID16 session, UUID16 service epoch, u64 attachment generation",
+    "input_readiness": "Full matching screen applied, descriptor persisted off GUI thread, ready acknowledgement queued before control messages. Service requires the matching acknowledgement.",
+    "session_actions": [
+      "default: reconnect saved identity",
+      "--new-session: explicit creation",
+      "--discover: explicit adoption of existing matching service"
+    ],
+    "descriptor_bytes": 73,
+    "descriptor_mode": "0600, owned regular file, one link, no symlink",
+    "synchronization_timeout_ms": {
+      "service_from_attachment": 3000,
+      "desktop_from_connection": 5000
+    },
+    "retired_socket_bounds": {
+      "count": 8,
+      "drain_ms": 1000
+    },
+    "automatic_respawn": false,
+    "buffered_input_replay": false
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/check_cpp.py dev",
+      "passed": true,
+      "ctest_suites": 3,
+      "receipt": "build/reports/dev/receipt.json"
+    },
+    {
+      "command": "python3 scripts/check_cpp.py desktop",
+      "passed": true,
+      "ctest_suites": 9,
+      "receipt": "build/reports/desktop/receipt.json"
+    },
+    {
+      "command": "python3 scripts/verify_cpp_tools.py",
+      "passed": true,
+      "receipt": "build/reports/tool-verification/receipt.json"
+    },
+    {
+      "command": "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-asan --output-on-failure --no-tests=error",
+      "passed": true,
+      "ctest_suites": 9,
+      "log": "build/session-v3/asan-ctest.log"
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop-asan --output build/session-v3/asan-cli.json",
+      "passed": true,
+      "groups": 10
+    },
+    {
+      "command": "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-tsan --output-on-failure --no-tests=error",
+      "passed": true,
+      "ctest_suites": 9,
+      "log": "build/session-v3/tsan-ctest.log"
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop-tsan --output build/session-v3/tsan-cli.json",
+      "passed": true,
+      "groups": 10
+    },
+    {
+      "command": "ctest --test-dir build/desktop-asan -R ^pty-process$ --repeat until-fail:10 --output-on-failure",
+      "passed": true,
+      "consecutive_runs": 10,
+      "log": "build/session-v3/asan-pty-repeat.log"
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --desktop --codex --output build/session-v3/cli.json",
+      "passed": true,
+      "groups": 12
+    },
+    {
+      "command": "python3 scripts/check_ui_preview.py --artifacts build/session-v3/ui-final",
+      "passed": true,
+      "groups": 8
+    },
+    {
+      "command": "ruff check --isolated scripts",
+      "passed": true
+    },
+    {
+      "command": "ruff format --isolated --check scripts",
+      "passed": true
+    },
+    {
+      "command": "git diff --check",
+      "passed": true
+    }
+  ],
+  "service_and_cli_cases": [
+    {
+      "name": "invalid resize preserves geometry and signal exit status",
+      "passed": true,
+      "seconds": 0.156
+    },
+    {
+      "name": "identity generations reject stale input and preserve active clients",
+      "passed": true,
+      "observed": {
+        "session_id": "1be5ee1f31ab4ee99d5623a746efb1de",
+        "epoch": "be9b671c874f4d8ca7bbbc292497a04e",
+        "initial_generation": 1,
+        "final_generation": 6,
+        "same_child_pid": 47691
+      },
+      "seconds": 0.288
+    },
+    {
+      "name": "initial screen acknowledgement, fragmentation and protocol version boundaries",
+      "passed": true,
+      "seconds": 3.413
+    },
+    {
+      "name": "PTY queue overflow and non-reading attachment",
+      "passed": true,
+      "seconds": 4.47
+    },
+    {
+      "name": "replacement service rejects remembered identity",
+      "passed": true,
+      "seconds": 0.288
+    },
+    {
+      "name": "snapshot limit preserves child and permits recovery",
+      "passed": true,
+      "seconds": 0.309
+    },
+    {
+      "name": "literal argv, cwd, resize, paste and exit",
+      "passed": true,
+      "seconds": 0.195
+    },
+    {
+      "name": "detached output and same-PID reattachment",
+      "passed": true,
+      "seconds": 0.665
+    },
+    {
+      "name": "mismatch and malformed attachment preserve active client",
+      "passed": true,
+      "seconds": 3.052
+    },
+    {
+      "name": "failed executable and cwd",
+      "passed": true,
+      "seconds": 0.086
+    },
+    {
+      "name": "desktop capture, reattachment, shell default and option rejection",
+      "passed": true,
+      "seconds": 3.847
+    },
+    {
+      "name": "installed Codex TUI input, navigation, paste, resize, reattach and interrupt",
+      "passed": true,
+      "seconds": 2.296
+    }
+  ],
+  "codex": {
+    "version": "codex-cli 0.0.0",
+    "sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+    "arguments": [
+      "--no-daemon"
+    ],
+    "prompt_submitted": false,
+    "qualification": "No model turn; source attention/approval delivery remains unqualified."
+  },
+  "failures_and_resolution": [
+    {
+      "finding": "Immediate socket deletion discarded final rejection status.",
+      "resolution": "Retire input authority immediately, drain final status with a one-second/eight-socket bound; malformed, stale and overload cases pass."
+    },
+    {
+      "finding": "Tiny receive buffer could block hello before the old synchronization deadline started.",
+      "resolution": "Start the deadline at attachment acceptance. Non-reading peer closure and subsequent reconnect pass."
+    },
+    {
+      "finding": "Process cleanup polling stopped at temporary EPERM before the macOS process group disappeared.",
+      "evidence": "build/session-v3/asan-pty-before-fix.log",
+      "observed": {
+        "group_status": -1,
+        "errno": 1,
+        "elapsed_ms": 18
+      },
+      "resolution": "Wait for ESRCH while preserving the two-second bound and detailed diagnostics. Ten ASan repetitions and final ASan/TSan suites pass."
+    },
+    {
+      "finding": "One compact fixture capture timed out waiting for a frame.",
+      "evidence": "build/ui-preview-check/compact.log",
+      "resolution": "Compact case passed alone and the final eight-group UI harness passed. Exact cause was not established; original failure retained."
+    }
+  ],
+  "review": {
+    "independent_ccr_review": "timed_out without a final report at 300 seconds and a bounded 120-second resume; not approval",
+    "integration": "Parent reviewed wire layouts, service/client state transitions, asynchronous descriptor completion, bounds and failure tests."
+  },
+  "documentation": [
+    "README status and launch choices",
+    "Architecture v3 contract and shared feature ownership",
+    "CONTRIBUTING nine-suite inventory, sanitizer procedures and failure triage",
+    "Codex transport versus source-protocol identities"
+  ],
+  "limitations": [
+    "Milestone 1 remains incomplete: terminal fidelity, older disk history and Linux desktop qualification are later slices.",
+    "One service/session and one attached window per endpoint; other cards remain fixtures.",
+    "No automatic recovery after service loss/reboot; descriptors cannot recover dead processes.",
+    "Physical keyboard/IME and attention/approval routing remain unqualified.",
+    "Vendor Qt, MoltenVK and Ghostty libraries are not sanitizer-instrumented.",
+    "No latency, frame-time or 32-session performance claim."
+  ],
+  "raw_artifacts": "build/session-v3/"
+}

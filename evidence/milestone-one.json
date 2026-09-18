@@ -1,0 +1,877 @@
+{
+  "schema": "lapis.milestone-one/1",
+  "recorded_at": "2026-09-18T16:34:22.426538+00:00",
+  "source_revision": "45ffc9d49b7695a408210fe0f1384115fc1b979a",
+  "branch": "feature/milestone-one-completion",
+  "milestone_complete": true,
+  "automated_qualification_passed": true,
+  "platform": {
+    "host": [
+      "hw.model: Mac16,5",
+      "hw.memsize: 137438953472",
+      "machdep.cpu.brand_string: Apple M4 Max"
+    ],
+    "macos": "26.7",
+    "timing_baseline_binaries": {
+      "build/desktop/services/session/lapis_session_service": "f95df3c5fd3f6bc55d4fc704fc666fee558b7a740cbafcdd2e3e29796bd18882",
+      "build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop": "bf779051591ef83dd433c5af1c9d1146ae4b5c0488818d478699042caf16024a",
+      "build/desktop/apps/desktop/lapis_terminal_latency_probe": "9dd0b86f155e49627e5b847f4af059c2d1f9df7579c31980fd2bef85347610fd"
+    },
+    "qualification_binaries": {
+      "build/desktop/services/session/lapis_session_service": "f95df3c5fd3f6bc55d4fc704fc666fee558b7a740cbafcdd2e3e29796bd18882",
+      "build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop": "c949d2311dee3d8536eb349471186b2a5c76624a25fb2bfdebea1482e63e3da0",
+      "build/desktop/apps/desktop/lapis_terminal_latency_probe": "b4ffdc03a84b5a7c2929022428af3b8f660a715a1c842058475a56b81d78c19b",
+      "build/desktop/apps/desktop/lapis_native_input_probe": "f671038a2a43ee68c55a333222bca5319e680dfe97e0e00af7fdbb4203c10a2f"
+    }
+  },
+  "wire_version": 4,
+  "default_endpoint": "runtime/desktop-v4.sock",
+  "checks": [
+    {
+      "command": "python3 scripts/check_cpp.py dev",
+      "passed": true,
+      "scope": "headless behavior and static checks; 16 terminal cases"
+    },
+    {
+      "command": "python3 scripts/check_cpp.py desktop",
+      "passed": true,
+      "suites": 12,
+      "log": "build/m1-completion/native-desktop-final.log"
+    },
+    {
+      "command": "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-asan --output-on-failure --no-tests=error",
+      "passed": true,
+      "suites": 12,
+      "log": "build/m1-completion/asan-verified.log"
+    },
+    {
+      "command": "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-tsan --output-on-failure --no-tests=error",
+      "passed": true,
+      "suites": 12,
+      "log": "build/m1-completion/tsan-verified.log"
+    },
+    {
+      "command": "python3 scripts/check_ui_preview.py",
+      "passed": true,
+      "cases": 8
+    },
+    {
+      "command": "python3 scripts/check_history.py --disk-full",
+      "passed": true,
+      "result": {
+        "schema": "lapis.history-check/1",
+        "passed": true,
+        "service": {
+          "paging_rows": 1500,
+          "one_row_backpressure": true,
+          "quota_bytes": 1048576,
+          "resize_and_same_pid_reattach": true,
+          "corruption_and_live_recovery": true
+        },
+        "disk_full": {
+          "real_enospc": true,
+          "live_input_during_failure": true,
+          "retry_after_freeing_space": true
+        }
+      }
+    },
+    {
+      "command": "python3 scripts/check_history.py --build-dir build/desktop-asan",
+      "passed": true,
+      "result": {
+        "schema": "lapis.history-check/1",
+        "passed": true,
+        "service": {
+          "paging_rows": 1500,
+          "one_row_backpressure": true,
+          "quota_bytes": 1048576,
+          "resize_and_same_pid_reattach": true,
+          "corruption_and_live_recovery": true
+        }
+      }
+    },
+    {
+      "command": "python3 scripts/check_history.py --build-dir build/desktop-tsan",
+      "passed": true,
+      "result": {
+        "schema": "lapis.history-check/1",
+        "passed": true,
+        "service": {
+          "paging_rows": 1500,
+          "one_row_backpressure": true,
+          "quota_bytes": 1048576,
+          "resize_and_same_pid_reattach": true,
+          "corruption_and_live_recovery": true
+        }
+      }
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop-asan",
+      "passed": true,
+      "cases": 10
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop-tsan",
+      "passed": true,
+      "cases": 10
+    },
+    {
+      "command": "python3 scripts/verify_cpp_tools.py",
+      "passed": true
+    },
+    {
+      "command": "ruff check --isolated scripts; ruff format --isolated --check scripts",
+      "passed": true
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --desktop",
+      "passed": true,
+      "cases": 11,
+      "log": "build/m1-completion/cli-verified.log"
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_native_input_probe --output build/m1-completion/native-input-qualified.json",
+      "passed": true,
+      "cases": 18,
+      "input_source_and_clipboard_restored": true,
+      "log": "build/m1-completion/native-input-qualified.log"
+    },
+    {
+      "command": "build/desktop-asan/apps/desktop/lapis_native_input_probe --output build/m1-completion/native-input-asan.json",
+      "passed": true,
+      "cases": 18,
+      "input_source_and_clipboard_restored": true,
+      "log": "build/m1-completion/native-input-asan.log"
+    },
+    {
+      "command": "build/desktop-tsan/apps/desktop/lapis_native_input_probe --output build/m1-completion/native-input-tsan.json",
+      "passed": true,
+      "cases": 18,
+      "input_source_and_clipboard_restored": true,
+      "log": "build/m1-completion/native-input-tsan.log"
+    }
+  ],
+  "latency": {
+    "desktop_idle_cpu_percent_one_core": 1.1659600489196853,
+    "desktop_peak_rss_native_units": 112967680,
+    "desktop_resident_after_idle_bytes": 112967680,
+    "desktop_resident_before_bytes": 108183552,
+    "desktop_resident_warm_bytes": 112181248,
+    "desktop_warm_footprint_bytes": 547095488,
+    "endpoint": "frameSwapped after the matching snapshot revision synchronized; submission proxy, not pixel presentation",
+    "history_to_live_frame": {
+      "max_ms": 9.539209,
+      "p50_ms": 2.514708,
+      "p95_ms": 7.258375,
+      "p99_ms": 9.539209,
+      "samples": 20,
+      "scope": "Retained history-to-live screen return; not cross-session switching"
+    },
+    "idle_frames_submitted": 1,
+    "idle_seconds": 4.906,
+    "input": "OS-injected Return through AppKit/Qt; not physical keyboard",
+    "input_to_frame": {
+      "max_ms": 66.419125,
+      "p50_ms": 60.381583,
+      "p95_ms": 65.571291,
+      "p99_ms": 66.411625
+    },
+    "input_to_pty_read": {
+      "max_ms": 6.579334,
+      "p50_ms": 5.228875,
+      "p95_ms": 6.473916,
+      "p99_ms": 6.511167
+    },
+    "over_one_refresh_interval": 100,
+    "parse": {
+      "max_ms": 0.02275,
+      "p50_ms": 0.00925,
+      "p95_ms": 0.01475,
+      "p99_ms": 0.02225
+    },
+    "publication_wait": {
+      "max_ms": 17.052708,
+      "p50_ms": 17.032375,
+      "p95_ms": 17.042375,
+      "p99_ms": 17.050125
+    },
+    "qt": "6.11.2",
+    "raw": [
+      {
+        "input_to_frame_ms": 51.567916,
+        "revision": 10,
+        "sequence": 8
+      },
+      {
+        "input_to_frame_ms": 55.265667,
+        "revision": 11,
+        "sequence": 9
+      },
+      {
+        "input_to_frame_ms": 52.758708,
+        "revision": 12,
+        "sequence": 10
+      },
+      {
+        "input_to_frame_ms": 55.990584,
+        "revision": 13,
+        "sequence": 11
+      },
+      {
+        "input_to_frame_ms": 50.417625,
+        "revision": 14,
+        "sequence": 12
+      },
+      {
+        "input_to_frame_ms": 47.701084,
+        "revision": 15,
+        "sequence": 13
+      },
+      {
+        "input_to_frame_ms": 51.301958,
+        "revision": 16,
+        "sequence": 14
+      },
+      {
+        "input_to_frame_ms": 51.447,
+        "revision": 17,
+        "sequence": 15
+      },
+      {
+        "input_to_frame_ms": 49.15825,
+        "revision": 18,
+        "sequence": 16
+      },
+      {
+        "input_to_frame_ms": 54.328458,
+        "revision": 19,
+        "sequence": 17
+      },
+      {
+        "input_to_frame_ms": 52.107583,
+        "revision": 20,
+        "sequence": 18
+      },
+      {
+        "input_to_frame_ms": 58.865334,
+        "revision": 21,
+        "sequence": 19
+      },
+      {
+        "input_to_frame_ms": 57.171125,
+        "revision": 22,
+        "sequence": 20
+      },
+      {
+        "input_to_frame_ms": 51.103583,
+        "revision": 23,
+        "sequence": 21
+      },
+      {
+        "input_to_frame_ms": 53.770958,
+        "revision": 24,
+        "sequence": 22
+      },
+      {
+        "input_to_frame_ms": 49.283958,
+        "revision": 25,
+        "sequence": 23
+      },
+      {
+        "input_to_frame_ms": 50.398,
+        "revision": 26,
+        "sequence": 24
+      },
+      {
+        "input_to_frame_ms": 56.740958,
+        "revision": 27,
+        "sequence": 25
+      },
+      {
+        "input_to_frame_ms": 57.277583,
+        "revision": 28,
+        "sequence": 26
+      },
+      {
+        "input_to_frame_ms": 53.876333,
+        "revision": 29,
+        "sequence": 27
+      },
+      {
+        "input_to_frame_ms": 56.458375,
+        "revision": 30,
+        "sequence": 28
+      },
+      {
+        "input_to_frame_ms": 55.039833,
+        "revision": 31,
+        "sequence": 29
+      },
+      {
+        "input_to_frame_ms": 54.934916,
+        "revision": 32,
+        "sequence": 30
+      },
+      {
+        "input_to_frame_ms": 65.336833,
+        "revision": 33,
+        "sequence": 31
+      },
+      {
+        "input_to_frame_ms": 56.112375,
+        "revision": 34,
+        "sequence": 32
+      },
+      {
+        "input_to_frame_ms": 56.074417,
+        "revision": 35,
+        "sequence": 33
+      },
+      {
+        "input_to_frame_ms": 65.214833,
+        "revision": 36,
+        "sequence": 34
+      },
+      {
+        "input_to_frame_ms": 60.8335,
+        "revision": 37,
+        "sequence": 35
+      },
+      {
+        "input_to_frame_ms": 63.438875,
+        "revision": 38,
+        "sequence": 36
+      },
+      {
+        "input_to_frame_ms": 61.521167,
+        "revision": 39,
+        "sequence": 37
+      },
+      {
+        "input_to_frame_ms": 58.335375,
+        "revision": 40,
+        "sequence": 38
+      },
+      {
+        "input_to_frame_ms": 63.747291,
+        "revision": 41,
+        "sequence": 39
+      },
+      {
+        "input_to_frame_ms": 56.742375,
+        "revision": 42,
+        "sequence": 40
+      },
+      {
+        "input_to_frame_ms": 64.02875,
+        "revision": 43,
+        "sequence": 41
+      },
+      {
+        "input_to_frame_ms": 64.209042,
+        "revision": 44,
+        "sequence": 42
+      },
+      {
+        "input_to_frame_ms": 61.259708,
+        "revision": 45,
+        "sequence": 43
+      },
+      {
+        "input_to_frame_ms": 57.525625,
+        "revision": 46,
+        "sequence": 44
+      },
+      {
+        "input_to_frame_ms": 61.420458,
+        "revision": 47,
+        "sequence": 45
+      },
+      {
+        "input_to_frame_ms": 65.598166,
+        "revision": 48,
+        "sequence": 46
+      },
+      {
+        "input_to_frame_ms": 56.734375,
+        "revision": 49,
+        "sequence": 47
+      },
+      {
+        "input_to_frame_ms": 61.885292,
+        "revision": 50,
+        "sequence": 48
+      },
+      {
+        "input_to_frame_ms": 55.966542,
+        "revision": 51,
+        "sequence": 49
+      },
+      {
+        "input_to_frame_ms": 66.411625,
+        "revision": 52,
+        "sequence": 50
+      },
+      {
+        "input_to_frame_ms": 58.897458,
+        "revision": 53,
+        "sequence": 51
+      },
+      {
+        "input_to_frame_ms": 62.83475,
+        "revision": 54,
+        "sequence": 52
+      },
+      {
+        "input_to_frame_ms": 58.118125,
+        "revision": 55,
+        "sequence": 53
+      },
+      {
+        "input_to_frame_ms": 65.571291,
+        "revision": 56,
+        "sequence": 54
+      },
+      {
+        "input_to_frame_ms": 57.548625,
+        "revision": 57,
+        "sequence": 55
+      },
+      {
+        "input_to_frame_ms": 60.658,
+        "revision": 58,
+        "sequence": 56
+      },
+      {
+        "input_to_frame_ms": 60.381583,
+        "revision": 59,
+        "sequence": 57
+      },
+      {
+        "input_to_frame_ms": 57.75175,
+        "revision": 60,
+        "sequence": 58
+      },
+      {
+        "input_to_frame_ms": 61.329083,
+        "revision": 61,
+        "sequence": 59
+      },
+      {
+        "input_to_frame_ms": 61.874375,
+        "revision": 62,
+        "sequence": 60
+      },
+      {
+        "input_to_frame_ms": 62.499292,
+        "revision": 63,
+        "sequence": 61
+      },
+      {
+        "input_to_frame_ms": 59.8305,
+        "revision": 64,
+        "sequence": 62
+      },
+      {
+        "input_to_frame_ms": 65.751792,
+        "revision": 65,
+        "sequence": 63
+      },
+      {
+        "input_to_frame_ms": 62.445208,
+        "revision": 66,
+        "sequence": 64
+      },
+      {
+        "input_to_frame_ms": 60.394542,
+        "revision": 67,
+        "sequence": 65
+      },
+      {
+        "input_to_frame_ms": 62.835792,
+        "revision": 68,
+        "sequence": 66
+      },
+      {
+        "input_to_frame_ms": 61.321083,
+        "revision": 69,
+        "sequence": 67
+      },
+      {
+        "input_to_frame_ms": 63.786167,
+        "revision": 70,
+        "sequence": 68
+      },
+      {
+        "input_to_frame_ms": 64.187333,
+        "revision": 71,
+        "sequence": 69
+      },
+      {
+        "input_to_frame_ms": 63.832041,
+        "revision": 72,
+        "sequence": 70
+      },
+      {
+        "input_to_frame_ms": 63.081708,
+        "revision": 73,
+        "sequence": 71
+      },
+      {
+        "input_to_frame_ms": 62.519292,
+        "revision": 74,
+        "sequence": 72
+      },
+      {
+        "input_to_frame_ms": 63.635292,
+        "revision": 75,
+        "sequence": 73
+      },
+      {
+        "input_to_frame_ms": 60.020375,
+        "revision": 76,
+        "sequence": 74
+      },
+      {
+        "input_to_frame_ms": 58.117833,
+        "revision": 77,
+        "sequence": 75
+      },
+      {
+        "input_to_frame_ms": 56.861292,
+        "revision": 78,
+        "sequence": 76
+      },
+      {
+        "input_to_frame_ms": 53.103,
+        "revision": 79,
+        "sequence": 77
+      },
+      {
+        "input_to_frame_ms": 61.914583,
+        "revision": 80,
+        "sequence": 78
+      },
+      {
+        "input_to_frame_ms": 61.967833,
+        "revision": 81,
+        "sequence": 79
+      },
+      {
+        "input_to_frame_ms": 61.7605,
+        "revision": 82,
+        "sequence": 80
+      },
+      {
+        "input_to_frame_ms": 61.78175,
+        "revision": 83,
+        "sequence": 81
+      },
+      {
+        "input_to_frame_ms": 66.419125,
+        "revision": 84,
+        "sequence": 82
+      },
+      {
+        "input_to_frame_ms": 64.685458,
+        "revision": 85,
+        "sequence": 83
+      },
+      {
+        "input_to_frame_ms": 57.927375,
+        "revision": 86,
+        "sequence": 84
+      },
+      {
+        "input_to_frame_ms": 63.155209,
+        "revision": 87,
+        "sequence": 85
+      },
+      {
+        "input_to_frame_ms": 63.8345,
+        "revision": 88,
+        "sequence": 86
+      },
+      {
+        "input_to_frame_ms": 58.061834,
+        "revision": 89,
+        "sequence": 87
+      },
+      {
+        "input_to_frame_ms": 63.554042,
+        "revision": 90,
+        "sequence": 88
+      },
+      {
+        "input_to_frame_ms": 60.383,
+        "revision": 91,
+        "sequence": 89
+      },
+      {
+        "input_to_frame_ms": 56.3005,
+        "revision": 92,
+        "sequence": 90
+      },
+      {
+        "input_to_frame_ms": 61.387125,
+        "revision": 93,
+        "sequence": 91
+      },
+      {
+        "input_to_frame_ms": 58.825291,
+        "revision": 94,
+        "sequence": 92
+      },
+      {
+        "input_to_frame_ms": 62.735875,
+        "revision": 95,
+        "sequence": 93
+      },
+      {
+        "input_to_frame_ms": 64.718208,
+        "revision": 96,
+        "sequence": 94
+      },
+      {
+        "input_to_frame_ms": 66.145208,
+        "revision": 97,
+        "sequence": 95
+      },
+      {
+        "input_to_frame_ms": 60.091,
+        "revision": 98,
+        "sequence": 96
+      },
+      {
+        "input_to_frame_ms": 61.606459,
+        "revision": 99,
+        "sequence": 97
+      },
+      {
+        "input_to_frame_ms": 60.899625,
+        "revision": 100,
+        "sequence": 98
+      },
+      {
+        "input_to_frame_ms": 54.467583,
+        "revision": 101,
+        "sequence": 99
+      },
+      {
+        "input_to_frame_ms": 63.934166,
+        "revision": 102,
+        "sequence": 100
+      },
+      {
+        "input_to_frame_ms": 56.907167,
+        "revision": 103,
+        "sequence": 101
+      },
+      {
+        "input_to_frame_ms": 61.918833,
+        "revision": 104,
+        "sequence": 102
+      },
+      {
+        "input_to_frame_ms": 61.947625,
+        "revision": 105,
+        "sequence": 103
+      },
+      {
+        "input_to_frame_ms": 57.008709,
+        "revision": 106,
+        "sequence": 104
+      },
+      {
+        "input_to_frame_ms": 56.22975,
+        "revision": 107,
+        "sequence": 105
+      },
+      {
+        "input_to_frame_ms": 63.49425,
+        "revision": 108,
+        "sequence": 106
+      },
+      {
+        "input_to_frame_ms": 59.47575,
+        "revision": 109,
+        "sequence": 107
+      }
+    ],
+    "refresh_hz": 120,
+    "renderer": "Vulkan",
+    "rss_units": "bytes on macOS; KiB on Linux",
+    "samples": 100,
+    "schema": "lapis.terminal-latency/1",
+    "service_idle_cpu_percent_one_core": 6.0701182225845904e-05,
+    "service_resident_after_idle_bytes": 21118976,
+    "service_resident_before_bytes": 19464192,
+    "service_resident_warm_bytes": 21118976,
+    "snapshot_to_frame": {
+      "max_ms": 19.017291,
+      "p50_ms": 12.703792,
+      "p95_ms": 17.879708,
+      "p99_ms": 18.655583
+    },
+    "transport": {
+      "max_ms": 26.279875,
+      "p50_ms": 25.508958,
+      "p95_ms": 25.734542,
+      "p99_ms": 25.963917
+    },
+    "warmup": 5
+  },
+  "measurement_notes": [
+    "Controlled Python child under the real session service; echo disabled; each ACK follows consumed Return input.",
+    "Timing run uses OS-injected Return through cliclick, AppKit and Qt. Separate native_input evidence qualifies real Japanese IME behavior; physical key-to-photon latency is not measured.",
+    "Final measurement ran after builds, workers and other GUI/CLI checks stopped.",
+    "Service publish_ns is recorded before snapshot extraction. The transport interval includes extraction, serialization, IPC and GUI decoding.",
+    "afterSynchronizing and frameSwapped are correlated to the matching snapshot revision. frameSwapped is a submission proxy, not measured pixel visibility.",
+    "Idle period begins after history-to-live trials and includes one trailing submitted frame; frame count is not hardware GPU utilization.",
+    "Latency targets remain provisional. Every measured input exceeded one 120 Hz refresh interval.",
+    "History-to-live is retained-screen restoration, not cross-session switching.",
+    "Timing baseline hashes are retained separately from the rebuilt qualification binaries. Production desktop/session sources are unchanged between production_source_revision and source_revision; the added native probe and its CMake target are test tooling."
+  ],
+  "remaining_acceptance": [],
+  "limitations": [
+    "Selection/copy from terminal cells and a terminal accessibility tree remain unsupported.",
+    "Cross-cell contextual shaping and curly underline fidelity retain previously documented limits.",
+    "Queued archive tail can be lost on forced service termination; disk pages do not restore live processes.",
+    "Unknown files are preserved and not charged as archive pages; page quotas exclude bounded temporary writes and fixed metadata.",
+    "Qt, MoltenVK and Ghostty dependencies are not instrumented by first-party sanitizer builds.",
+    "Linux UI is deferred; no new Linux desktop support is claimed.",
+    "The new CCR review worker timed out without a final verdict; no independent-review pass is claimed."
+  ],
+  "regressions_fixed_during_qualification": [
+    "One-row archive backpressure could exceed the queue capacity. Harvesting now proceeds in bounded pieces.",
+    "Qt windowChanged could call the derived terminal surface after destruction. Focus hooks now disconnect before base teardown.",
+    "Native test focus restoration was asynchronous. Fresh-input checks now reacquire input ownership.",
+    "Known abandoned pending files are recovered under the root lock; concurrent writers wait briefly for the shared lock."
+  ],
+  "workflow": {
+    "pr_created": false,
+    "pushed": false,
+    "merged": false
+  },
+  "evidence_image": "evidence/milestone-one-terminal.png",
+  "production_source_revision": "bee3e9aae5c1e5aac8acea91683537236535edb9",
+  "acceptance_scope": "macOS persistent-terminal software acceptance; physical keyboard hardware is outside this milestone",
+  "native_input": {
+    "cases": [
+      {
+        "case": "native printable and Return",
+        "passed": true,
+        "received_hex": "610d"
+      },
+      {
+        "case": "native Control-C",
+        "passed": true,
+        "received_hex": "03"
+      },
+      {
+        "case": "native Option-B",
+        "passed": true,
+        "received_hex": "1b62"
+      },
+      {
+        "case": "native Command-V bracketed paste",
+        "passed": true,
+        "received_hex": "1b5b3230307e7061737465e7958c0a7365636f6e641b5b3230317e"
+      },
+      {
+        "case": "real Japanese IME preedit emits no PTY bytes",
+        "passed": true,
+        "received_hex": ""
+      },
+      {
+        "case": "real Japanese IME commit",
+        "passed": true,
+        "received_hex": "e38182"
+      },
+      {
+        "case": "real Japanese IME cancellation",
+        "passed": true,
+        "received_hex": ""
+      },
+      {
+        "case": "IME recovers after cancellation",
+        "passed": true,
+        "received_hex": "e38182"
+      },
+      {
+        "case": "IME composition cleared by history mode",
+        "passed": true,
+        "received_hex": ""
+      },
+      {
+        "case": "IME recovers after history return",
+        "passed": true,
+        "received_hex": "e38182"
+      },
+      {
+        "case": "IME composition cleared by document detach",
+        "passed": true,
+        "received_hex": ""
+      },
+      {
+        "case": "IME recovers after document reattach",
+        "passed": true,
+        "received_hex": "e38182"
+      },
+      {
+        "case": "native IME focus commit stays with its original terminal",
+        "passed": true,
+        "received_hex": "e38182"
+      },
+      {
+        "case": "IME recovers after native focus return",
+        "passed": true,
+        "received_hex": "e38182"
+      },
+      {
+        "case": "IME composition cleared by attachment replacement and reconnect",
+        "passed": true,
+        "received_hex": ""
+      },
+      {
+        "case": "IME recovers after service reconnect",
+        "passed": true,
+        "received_hex": "e38182"
+      },
+      {
+        "case": "IME composition survives resize",
+        "passed": true,
+        "received_hex": "e38182"
+      },
+      {
+        "case": "US keyboard restored",
+        "passed": true,
+        "received_hex": "62"
+      }
+    ],
+    "clipboard_restored": true,
+    "commit_events": 8,
+    "enabled_sources_restored": true,
+    "input_path": "CoreGraphics keyboard events through AppKit, Apple Japanese IME, Qt and the real PTY service",
+    "input_source_restored": true,
+    "passed": true,
+    "preedit_events": 15,
+    "schema": "lapis.native-input/1",
+    "sources": [
+      "com.apple.keylayout.US",
+      "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese"
+    ],
+    "frameworks": [
+      "CoreGraphics",
+      "AppKit",
+      "Carbon Text Input Sources",
+      "Qt 6.11.2"
+    ],
+    "limits": [
+      "Events are OS-generated; physical key switches are not tested.",
+      "Japanese IME is exercised; this does not qualify every third-party input method.",
+      "Candidate anchor bounds are verified, not the pixels of the native candidate popup.",
+      "A second fixture verifies focus ownership; the product still has one live pane."
+    ]
+  }
+}

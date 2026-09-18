@@ -77,14 +77,23 @@ def run(
     passed = not timed_out and (
         process.returncode == 0 if expect_success else process.returncode != 0
     )
-    log_path = save_log(artifacts, name, output)
-    expected = "success" if expect_success else "failure"
+    save_log(artifacts, name, output)
+    return CheckResult(name, passed, exit_code, elapsed, output)
+
+
+def report(result: CheckResult, artifacts: Path) -> dict:
+    """Report only after exit, capture and expected-diagnostic checks agree."""
     print(
-        f"{'PASS' if passed else 'FAIL'} {name} ({elapsed:.2f}s, "
-        f"expected {expected}): {log_path}",
+        f"{'PASS' if result.passed else 'FAIL'} {result.name} "
+        f"({result.elapsed_seconds:.2f}s): {artifacts / (result.name + '.log')}",
         flush=True,
     )
-    return CheckResult(name, passed, exit_code, elapsed, output)
+    return {
+        "name": result.name,
+        "passed": result.passed,
+        "exit_code": result.exit_code,
+        "elapsed_seconds": round(result.elapsed_seconds, 3),
+    }
 
 
 def stop_process_group(process: subprocess.Popen[str]) -> None:
@@ -179,14 +188,7 @@ def execute_checks(binary: Path, artifacts: Path) -> list[dict]:
             )
             if not result.passed:
                 print(f"FAIL {name}: capture/focus/geometry/attention assertions")
-        results.append(
-            {
-                "name": name,
-                "passed": result.passed,
-                "exit_code": result.exit_code,
-                "elapsed_seconds": round(result.elapsed_seconds, 3),
-            }
-        )
+        results.append(report(result, artifacts))
     invalid = artifacts / "invalid.qml"
     invalid.write_text("import QtQuick\nWindow { broken syntax ! }\n")
     cases = [
@@ -210,14 +212,7 @@ def execute_checks(binary: Path, artifacts: Path) -> list[dict]:
         result.passed = (
             result.passed and result.exit_code in (1, 2) and diagnostic in result.output
         )
-        results.append(
-            {
-                "name": name,
-                "passed": result.passed,
-                "exit_code": result.exit_code,
-                "elapsed_seconds": round(result.elapsed_seconds, 3),
-            }
-        )
+        results.append(report(result, artifacts))
     return results
 
 

@@ -2,10 +2,9 @@
 
 This is the single implementation plan for lapis. See the
 [current status](../README.md#current-status) for what has been implemented and exercised.
-The target platforms are macOS and Linux. The immediate milestone is **one
-persistent terminal session on macOS**, followed by Linux terminal qualification.
-The headless engine has already been exercised on Linux; the session service and
-desktop have not.
+macOS is the active target. The immediate milestone is **one persistent terminal
+session on macOS**. A Linux desktop port is deferred; the headless engine has
+already been exercised on Linux, but the session service and desktop have not.
 
 ## Product philosophy
 
@@ -28,7 +27,8 @@ initial design choices, not a new animation framework or measured performance cl
 Design for high-end M-series machines (Pro/Max/Ultra class), with this M4 Max,
 128 GB unified memory and 120 Hz display mode as the initial reference. These
 are observed reference-machine properties, not minimum specifications or measured
-lapis performance. Linux will need its own named hardware/workload reference.
+lapis performance. If Linux is ported later, it will need its own named
+hardware/workload reference.
 Aim at 120 Hz on capable displays and follow higher refresh rates where qualified.
 
 Use RAM generously to buy immediate switching: retain every live terminal's
@@ -83,11 +83,11 @@ for ownership, shared contracts and integration checks across large changes.
 
 | Topic | Current position | Decision gate |
 | --- | --- | --- |
-| Platform | macOS first; Linux required next | Check Linux during engine selection; qualify its minimal GUI before expanding the desktop |
-| Desktop | C++20 and Qt 6.11.2 Quick with public QSGTextNode terminal drawing | macOS Vulkan visual checkpoint exercised; Linux and performance qualification remain |
+| Platform | macOS active; Linux desktop deferred | Keep portable platform boundaries; qualify Linux separately if and when the port is scheduled |
+| Desktop | C++20 and Qt 6.11.2 Quick with public QSGTextNode terminal drawing | macOS Vulkan visual checkpoint exercised; macOS performance qualification remains |
 | Engine | Pinned Ghostty `libghostty-vt` selected for the first adapter | Eight-case macOS/Linux replay passes; isolate unstable C API and resolve dependency-notice gaps |
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
-| Transport | Version 2 local framing, launch matching and bounded owned snapshots for one terminal | Add stable service/session identities, attachment generations and failure recovery |
+| Transport | Version 4 local framing with session/epoch/generation identity, readiness and bounded owned snapshots | Automatic recovery policy and multi-session registry remain |
 | Codex mode | Keep the ordinary TUI under a PTY first; evaluate hooks or attachment to its actual server for attention | Installed CLI advertises remote/daemon options; qualify delivery and response ownership before choosing a route |
 
 The [research receipt](../evidence/terminal-research.json) retains pinned upstream
@@ -112,7 +112,7 @@ The preferred common GPU path to qualify is Vulkan:
 | Platform | GPU paths to qualify | Priority |
 | --- | --- | --- |
 | macOS | Vulkan through MoltenVK, which translates to Metal | First implementation |
-| Linux | Vulkan through the GPU driver | Required next platform |
+| Linux | Vulkan through the GPU driver | Deferred port; not claimed or currently scheduled |
 
 macOS has no native Vulkan driver; [MoltenVK](https://github.com/KhronosGroup/MoltenVK)
 supplies a portability implementation over Metal and converts SPIR-V shaders.
@@ -138,9 +138,9 @@ Qt's default macOS transaction layer produced five-second display-lock stalls in
 this Vulkan window. Setting `QT_MTL_NO_TRANSACTION=1` selected the plain
 CAMetalLayer path and removed the warnings in the same threaded-render-loop
 capture. This workaround is isolated to macOS startup and tied to Qt 6.11.2;
-revalidate it on upgrades. Linux rendering, continuous resize, presentation timing
-and packaging still need qualification. Compare native Metal if later matched
-measurements warrant it; no second custom renderer is needed for that comparison.
+revalidate it on upgrades. Continuous resize, presentation timing and packaging
+still need qualification. Linux rendering, if scheduled later, needs its own evidence. Compare native Metal if later matched measurements warrant it; no
+second custom renderer is needed for that comparison.
 
 Avoid OpenGL-only `QQuickFramebufferObject` and upstream private renderer APIs.
 Use [Qt's backend selection](https://doc.qt.io/qt-6/qtquick-visualcanvas-adaptations.html)
@@ -166,7 +166,7 @@ needs them. Every first-party target uses `lapis_project_options`.
 | `services/session/src/platform/posix/` | Native descriptor ownership, then PTY launch/I/O/resize/reaping | `UniqueFd` on macOS/Linux; Qt-owned PTY launch/I/O/resize/reaping exercised on macOS |
 | `tools/terminal_probe/` | Shared headless workloads and independent Ghostty/Contour consumers | Implemented; pinned builds and eight-case replay on macOS/Linux |
 | `services/session/src/terminal/` | Wrap the selected engine's parsing, mode-aware input and screen extraction | Implemented as `lapis_terminal`; 14 behavioral cases on macOS/Linux ARM64 |
-| `services/session/include/lapis/session/` | Owned commands, session identity and snapshots for clients | Owned terminal values implemented; internal version 2 snapshot framing under `src/transport/` |
+| `services/session/include/lapis/session/` | Owned commands, session identity and snapshots for clients | Owned terminal values implemented; internal version 4 attachment/snapshot/history framing under `src/transport/` |
 | `services/session/src/` | Service event loop and session lifecycle, then local IPC | Separate one-terminal service with explicit argv/cwd and bounded local transport on macOS |
 | `apps/desktop/` | Minimal Qt view, input routing and terminal surface | Live enlarged shell and static carousel composition; macOS Vulkan capture |
 | `adapters/codex/` | Codex protocol mapping and attention delivery | Ordinary Codex TUI launch exercised; structured attention remains investigation |
@@ -187,33 +187,35 @@ the GUI only detaches the local socket: the service continues draining output.
 The enlarged pane is a live terminal; the remaining cards are labeled placeholders.
 One GUI may attach per endpoint. A matching attachment replaces the previous
 connection; a mismatched launch is rejected first. The default socket identifies
-this checkout's shell, and explicit launches choose their own endpoint. Stable session IDs,
-service epochs and authenticated attachment generations are still required before
-multiple sessions or robust recovery. This wire format is internal and provisional.
+this checkout's shell, and explicit launches choose their own endpoint. Stable session IDs, service epochs and attachment generations bind each
+connection; a multi-session registry and automatic recovery remain later work. This wire format is internal and provisional.
 
 Qt event loops own their respective objects. PTY reads yield after 64 KiB and
 input dispatch after 64 frames. Writes have a 1 MiB queue; text messages are at
 most 64 KiB. Snapshot frames are limited to 8 MiB, 32,768 cells and 65,536 codepoints.
 The service coalesces updates on a 16 ms timer with one snapshot in flight; a slow
-GUI does not block PTY parsing. That timer needs measurement against the 120 Hz
-reference before any latency claim. Current history uses the adapter's bounded
-memory budget; disk-backed history is not implemented.
+GUI does not block PTY parsing. The measured input-to-frame baseline exceeds one 120 Hz
+interval; it is not a responsiveness-target pass. Recent history uses the adapter's
+bounded memory budget. Older primary-screen
+rows move to the bounded disk archive described in the completion contract below.
 
 The GUI decodes owned snapshots and routes text, navigation, Control-letter input,
 paste and resize. The focused pane chooses the PTY dimensions; scaled previews do
-not resize it. Basic IME commit/preedit plumbing exists, but actual composition,
-font fallback, strict wide-cell alignment, selection and accessibility are not
-qualified. The renderer keeps static scene nodes and lets Qt schedule frames for
-updates and brief hover transitions. A repeatable synthetic cue workload now records GUI frame observations. Actual
-input-to-presentation timing remains an acceptance gap. The visual checkpoint
-does not complete milestone 1.
+not resize it. Cell-grid/font fallback has native Vulkan regression coverage.
+Qt and automated macOS keyboard/paste/Japanese IME ownership are tested;
+selection/copy and a terminal accessibility tree remain open. The renderer retains
+static scene nodes and lets Qt schedule updates and brief hover transitions.
+The controlled latency probe now correlates received input, service processing,
+snapshot application and frame submission. Pixel-visible presentation is not
+measured. The visual checkpoint alone does not complete milestone 1.
 
 ### UI refinement checkpoint
 
 Both scoped UI changes are implemented and exercised on macOS; maintainer visual
 review remains before connecting real requests. They reuse Qt Quick, owned terminal
 snapshots and the Vulkan surface, with no new runtime dependency. Milestone 1
-remains incomplete. The [UI receipt](../evidence/ui-preview.json) records checks and
+is qualified on macOS; see the [assembled receipt](../evidence/milestone-one.json).
+The [UI receipt](../evidence/ui-preview.json) records checks and
 measurement limits; commands live in [Contributing](../CONTRIBUTING.md#ui-tuning-and-debugging).
 
 #### Isolated iteration and debugging
@@ -269,7 +271,7 @@ split paste/IME operations. Selecting a session never sends a response.
 
 Keep real attention adapters, automatic carousel movement, multiple live sessions
 and prompt/approval routing out of this fixture. Complete persistent-terminal
-acceptance and qualify the minimal Linux view before expanding the live workspace.
+acceptance before expanding the live macOS workspace.
 
 For parallel changes, commit the shared contract first and assign disjoint files
 with one coordinator/build owner. Preview hosting lives in `ui_preview.*`, layout
@@ -303,7 +305,8 @@ Ghostty integration under `src/terminal/`, and behavioral cases under
 - History uses Ghostty's page-granular byte budget. Exercised eviction and clearing
   preserve the current viewport; this budget is not a strict allocation or RSS
   ceiling. Snapshot payload limits also do not account for allocator overhead.
-  Global service budgets and disk-backed history still belong to later work.
+  The service adds per-session/shared-root disk quotas and a bounded I/O queue;
+  these remain separate from allocator and process RSS accounting.
 - The verified input subset is navigation key presses with modifiers and pure text
   paste encoding. Clipboard access, full text/key protocols, mouse, IME, selection,
   hyperlinks and image presentation are not exposed. Image storage and external
@@ -323,12 +326,12 @@ build owner, and use bounded worker runs. Integrate and test worker output befor
 calling it complete. Preserve partial work after timeouts and avoid repeated
 optional checks once the affected behavior passes.
 
-### Next: complete persistent-terminal acceptance
+### Persistent terminal acceptance
 
 The explicit launch slice is implemented. Current exercise status is in the
 [README](../README.md#current-status), with a
-[sanitized receipt](../evidence/cli-launch.json). Continue with the remaining
-terminal acceptance below before adding live workspace sessions or attention.
+[sanitized receipt](../evidence/cli-launch.json). The macOS acceptance below is
+complete; the [assembled receipt](../evidence/milestone-one.json) records its scope.
 Visual review of the earlier UI refinements remains pending.
 
 #### First wiring slice: explicit CLI launch
@@ -348,24 +351,24 @@ programs or cwd overrides require `--socket`; all child arguments follow `--`.
 Fixture mode rejects launch/endpoint options and does not inspect the user's
 shell. Shell smoke injection rejects explicit launch/cwd overrides.
 
-Service IPC is now **version 2**. Before hello or input, a client sends an attach
-frame containing the protocol version and SHA-256 of a Qt_6_0 big-endian stream
-of executable path, argument list and canonical cwd. Initial/current terminal size
-is excluded so resize does not invalidate reattachment. This is launch matching,
-not a secret authentication token or a stable session identity; owner-only socket
-directory permissions provide the local access boundary. A mismatch never
-replaces the active client. At most eight handshakes wait for up to three seconds,
-with bounded input. The desktop also bounds its handshake wait and only starts a
-service for a missing/refused endpoint, not a permission error or rejected match.
+Service IPC is **version 4**. The launch fingerprint remains SHA-256 of a
+Qt_6_0 big-endian stream of executable path, arguments and canonical cwd; terminal
+size is excluded. It checks launch matching, while the session ID, service epoch
+and attachment generation establish continuity. Neither is a secret token;
+owner-only socket directory permissions provide the local access boundary.
+Mismatched candidates never replace the active client. At most eight initial
+handshakes wait three seconds, and each accepted client must acknowledge its
+first full snapshot within three seconds of attachment, including a blocked hello. The desktop bounds synchronization to
+five seconds. Only an explicit new-session action starts a service.
 
 Socket parents must be private and owned by the current user. Ordinary files,
 symlinks and live foreign listeners are rejected; existing directories are not
-chmodded. The default `runtime/desktop-v2.sock` leaves old v1 sessions alone.
+chmodded. The default `runtime/desktop-v4.sock` leaves old v1/v2/v3 sessions alone.
 No state migration, multi-session manager or automatic service recovery is implied.
 Launch profiles, hooks and approval policies remain owned by the selected CLI.
 
 Ownership stays separated: the PTY owns the child; the service owns parsing and
-attachment; the desktop routes input after hello. `scripts/check_cli_launch.py`
+attachment; the desktop routes input after applying and acknowledging the initial screen. `scripts/check_cli_launch.py`
 exercises literal argv/cwd, resize, paste, exit, detached output, mismatches and
 malformed handshakes against real service processes. Its optional GUI and Codex
 modes add GPU captures and no-prompt TUI interaction. Actual Codex attention and
@@ -390,33 +393,216 @@ cursor color; a filled block redraws its covered grapheme for readability.
 See the [review repair receipt](../evidence/pr2-review.json) and
 [merge preparation receipt](../evidence/pr2-merge.json) for exercised cases.
 
-#### Remaining terminal acceptance
+### Milestone 1 implementation and acceptance
 
-Close these dependent gaps before expanding the live
-workspace. Parallelize independent investigation, with one integration/build owner.
+Planning baseline: merged `99567cb` (September 18, 2026), followed by the verified
+session checkpoint `31cabfe`. Slice A is implemented with qualification recorded
+in [its receipt](../evidence/session-reconnect.json). B1 now has a verified macOS
+cell-grid checkpoint for fallback fonts, wide characters, decorations and resize.
+Disk history, Qt input-context lifecycle and automated native input acceptance
+are implemented and exercised. Milestone 1 software acceptance is complete on macOS,
+with the scope and measurement limits in the [receipt](../evidence/milestone-one.json).
 
-1. **Identity and recovery — session service and transport.** Introduce stable
-   session IDs, service epochs and attachment generations before adding sessions
-   or routable attention. Reject stale input; exercise partial paste, slow clients,
-   queue overflow and service failure. GUI reconnection refreshes state before
-   input is enabled. Service failure/reboot must be reported distinctly; do not
-   promise survival of the old child.
-2. **Terminal fidelity and timing — desktop and verification.** Qualify cell
-   positioning, fallback fonts, real IME/key/paste behavior, interactive TUIs and
-   foreground jobs. Add correlated input/service/frame markers and measure the
-   first-view baseline; label presentation proxies. Rebindable navigation can
-   then be tested in the isolated fixture after visual review.
-3. **History — session service.** Add bounded disk-backed older history, quotas,
-   pressure handling and disk-full recovery while preserving the current screen.
-   A passing viewport-eviction test is not disk-history acceptance.
-4. **Minimal Linux qualification — platform and verification.** Carry the same
-   PTY/service/Qt view to a named Linux host and exercise Vulkan, native input,
-   resize and detach/reattach before expanding workspace behavior.
+| Order | Reviewable slice | Acceptance result |
+| --- | --- | --- |
+| A: implemented | Session identity and safe attachment | GUI reconnect preserves session identity and child; a replaced attachment cannot send input; input stays disabled until the initial authoritative screen is applied; service replacement is reported distinctly |
+| B1: exercised checkpoint | Cell layout and font fidelity | Native Vulkan pixel regressions align wide/combining and fallback glyphs, backgrounds, decorations and cursor through resize; shell/Codex captures pass; cross-cell contextual shaping remains open |
+| B2: exercised | Native input and first responsiveness measurements | OS-generated keyboard events, paste and the real Apple Japanese IME work without losing input ownership; selection/clipboard/accessibility gaps are explicitly exercised or remain open; correlated input/service/frame measurements report p50/p95/p99 and their endpoint limits |
+| C: exercised | Bounded older history | Recent screen stays warm while older history is stored under per-session/global quotas; scrollback retrieval, eviction, disk-full and interrupted-write recovery remain bounded and preserve the live screen |
+| D: deferred Linux port | Integrate A through C and native input fixes when scheduling the port | Named Linux host, display stack and driver exercise PTY lifecycle, real Vulkan rendering, input, resize and detach/reattach; a headless or software-only result does not qualify the GPU desktop |
 
-Keep real attention integration, automatic carousel behavior, multiple live
-sessions and the 32-session benchmark in the following milestones. Protocol and
-hook research may run independently; advertised methods are not integration
-acceptance. The static cards remain review fixtures.
+The renderer places runs at engine cell coordinates. Printable ASCII batches
+only when styled advances match the grid, with kerning and optional ligatures
+disabled. Other graphemes shape locally at a common baseline. Backgrounds precede
+glyphs, decorations follow, and unchanged rows retain their nodes. Native Vulkan
+regressions cover wide/combining characters, emoji, Hebrew/Arabic fallback,
+styles, resize and cursor movement. Cross-cell contextual shaping and curly
+underlines remain gaps; see the [fidelity receipt](../evidence/terminal-fidelity.json).
+
+Native input acceptance uses OS-generated keys through AppKit, an actual macOS
+input method editor (IME), Qt and a controlled PTY. The built-in Japanese IME is
+one reproducible composition fixture: a Roman key produces provisional text
+(such as `a` → `あ`) that can be committed or cancelled. This exercises behavior
+that ordinary direct English typing does not. It does not set the application's
+language or qualify every IME. Control/Option keys and paste are tested with the
+US layout. No physical typing gate is required. The
+[contribution guide](../CONTRIBUTING.md#history-and-input-qualification) owns the
+commands, prerequisites and restoration procedure.
+
+The assembled macOS qualification covers service identity, native Vulkan
+rendering, Qt and native input, history quotas/backpressure/corruption/real ENOSPC,
+preview captures and live CLI fixtures. ASan/UBSan and TSan run separately;
+GUI runs stay serial even when independent builds run concurrently. Timing
+receipts distinguish frame submission from pixel visibility and keep latency
+targets provisional. The Linux desktop port has no current host requirement or
+acceptance date; qualify an actual graphical host when that port is scheduled.
+Real attention integration, multiple live sessions, automatic carousel behavior
+and the 32-session benchmark remain in the following milestones.
+
+#### Milestone 1 completion contract
+
+The completed macOS slice is consolidated on a feature branch for PR review.
+Wire v4 adds attachment-bound, request-correlated history paging independently of
+live snapshot sequence. Snapshot envelopes carry monotonic nanosecond timestamps
+for the most recent PTY read, parse completion and publication; zero means no PTY
+output has been observed. Desktop measurement reports native/Qt input receipt,
+snapshot application and the correlated frameSwapped proxy separately. Older v3 endpoints remain running and are rejected by new
+clients rather than adopted silently. Historical pages are read-only and retain
+their original cell geometry; returning to Live restores the latest warm screen.
+History browsing must not resize the child or receive terminal input.
+
+The service extracts primary-screen scrollback into owned pages before clearing
+that engine history. A dedicated I/O worker stores pages atomically under private
+runtime storage with per-session and shared-root global quotas. Queues and record
+sizes are bounded; archive errors are surfaced while the live process and screen
+remain usable. Disk format/version and checksums are independent of the wire.
+Resize reflows current engine history; archived pages preserve their recorded
+geometry. Live-process recovery after service failure/reboot remains outside this
+milestone. Automated native-input evidence and frame-submission proxies are labeled
+separately from Qt-injected tests and actual on-screen presentation.
+
+#### Session identity and input readiness
+
+Wire v4 retains the identity and readiness contract introduced in v3; there is
+no session registry or additional live card. The v2 launch fingerprint alone
+could not distinguish the original child from a replacement at the same endpoint.
+
+Implemented contract:
+
+- A session ID remains stable for the running session across GUI
+  detach/reattach. A fresh service incarnation has a fresh epoch; the PID is
+  diagnostic data, never the authority for identity. Reopening an ended session
+  must not silently present a newly launched child as the old session.
+- Every successful attachment receives a new generation. Input, paste and resize
+  identify the session, service epoch and attachment generation; the service
+  rejects stale tuples. A new attachment retires the previous client's authority.
+- The client distinguishes connecting, synchronizing, ready, disconnected and
+  ended/replaced states. It enables terminal input only after applying a full
+  snapshot for the accepted identity. An explicit reconnect action makes bounded
+  attempts to that same identity; it must not respawn an agent or replay buffered
+  input implicitly. Automatic reconnect policy follows separately.
+- Distinguish first launch from reconnect. Retain the last accepted session/epoch
+  and launch fingerprint in a bounded owner-only local descriptor so a GUI restart
+  can detect endpoint reuse. Treat that descriptor as a hint to verify against
+  the live service, not proof of liveness or authorization. Missing/corrupt state
+  requires explicit discovery/new-session handling, not presumed continuity.
+- GUI loss preserves the service-owned child and parser. Service loss/reboot
+  invalidates the attachment and reports loss of the running session. Durable
+  launch profiles and recovery of old processes are separate later contracts.
+- Keep bounded full snapshots for this slice. Order them within a service epoch;
+  intentional display coalescing may skip terminal revisions. Do not confuse
+  those skipped display revisions with loss of input or control events. Reconnect
+  starts with an authoritative screen, not replay of an unbounded byte backlog.
+- Version incompatible envelopes. The current wire v4 adds history paging and
+  timing to the v3 identity contract. Leave older endpoints untouched and use
+  `runtime/desktop-v4.sock` by default. Shared serialization and client/server
+  behavior must change together; test rejection of mismatched versions.
+
+The wire uses big-endian integers and nonzero raw 16-byte UUIDs. Attach contains
+u32 version, fingerprint[32], u8 mode (discover/reconnect/create), expected
+session[16] and epoch[16]. Missing expected fields are zeros on the wire. Discover
+requires both missing; reconnect requires both; create requires only session.
+An attachment tuple is session[16], epoch[16], u64 nonzero generation. Hello is
+u32 version, tuple, u64 child PID. Snapshot is tuple, u64 publication sequence,
+then three u64 monotonic timestamps (PTY read, parse end, publish), followed by
+the terminal snapshot encoding. Its fixed envelope is 72 bytes. Text, paste, key and resize carry
+the tuple before their existing payload (maximum 64 KiB). Ready acknowledges the
+tuple and first applied sequence. Typed status distinguishes rejection, ended,
+replaced and overload. Full frames remain bounded to 8 MiB. Publication sequences
+can skip coalesced terminal revisions; the client rejects duplicate/regressing
+sequences and mismatched tuples.
+
+`--new-session` generates a creation ID and passes it to the detached service;
+that service creates a fresh epoch. A racing creator cannot adopt or displace a
+service with another ID. Default launch reads `<socket>.session`: a 73-byte hint
+(`LAPIS-S1\n`, session[16], epoch[16], fingerprint[32]), owned by the current user,
+regular, singly linked and mode 0600. Writes sync a temporary file and atomically
+rename it. The desktop performs the synced write on a bounded Qt worker pool;
+its completion is checked against the current attachment before enabling input.
+Retired sockets can drain a final status for up to one second, with at most eight
+retired sockets retained. A non-reading peer may see EOF before the final status.
+This is an identity hint, not durable process recovery. Explicit
+discovery may replace corrupt contents only in a safe file. A GUI reconnect
+makes at most 30 connection attempts, 100 ms apart, with no automatic retry after
+an established connection is lost. Unsynchronized input is rejected, not buffered.
+
+The service harness exercises successive attachments, stale-generation text and
+resize, fragmented handshakes, pre-ready input, missing acknowledgements,
+non-reading clients, bounded PTY input overflow, atomic oversized paste rejection
+and replacement at the same endpoint. A separate real Qt socket fixture exercises
+desktop synchronization, loss before the first screen, explicit discovery,
+descriptor reuse, stale snapshots and old-server rejection. GUI capture fixtures
+close and reopen against the same child. Neither these nor fake-server tests
+qualify physical keyboard or IME behavior.
+
+Acceptance commands are `python3 scripts/check_cpp.py dev`,
+`python3 scripts/check_cpp.py desktop` and
+`python3 scripts/check_cli_launch.py --desktop`, plus the documented
+[desktop-enabled ASan/TSan suites and service harness](../CONTRIBUTING.md#desktop-sanitizers).
+Repeat the installed no-prompt Codex fixture when checking the updated launch and
+attachment path. Retain the source hash, identities observed and failure outcomes
+in sanitized evidence; update README status only after the behavior passes.
+
+#### Shared implementation ownership
+
+Contributors work together on the same feature and share ownership of the project.
+Coordinate overlapping edits and build runs per task; temporary worker file
+assignments prevent collisions, not permanent responsibility boundaries. Agree on
+shared contracts before dependent edits, preserve each other's changes, and review
+the combined behavior together. Use separate worktrees when useful and one owner
+for each active build directory. GUI checks remain serial across worktrees.
+
+#### Following product checkpoints
+
+With macOS A through C qualified, the next product milestone is the attention
+state machine and qualify a real Codex route. Preserve the ordinary CLI view;
+choose hooks or shared-server attachment only from live observation, explicit
+response and reconnect evidence. A notification-only hook must leave the answer
+in the originating terminal. A separately owned app-server remains a distinct
+session type. Use disposable fixtures, a declared provider/model, bounded turns
+and explicit approval settings for that later qualification.
+
+Then replace fixture cards with **two actual retained sessions**, deliver manual
+navigation and keyboard ownership guards, and add pin/snooze and the opt-in
+attention carousel. Only after that behavior works should the 32-session workload
+and second independent adapter qualify scale and tool independence. The
+[following milestones](#following-milestones) retain their acceptance gates;
+packaging/notices/SBOM work can proceed independently and must finish before
+binary distribution.
+
+The history store defaults to 64 MiB of committed pages per session, 256 MiB
+across its configured root, and 4,096 pages globally. Limits count page files;
+there is at most one 8 MiB temporary write plus one replacement page while the
+root lock is held. The scan recovers the store's known `.pending` artifact before
+another write. Unknown files are not deleted or charged as lapis pages; directory
+and scan-count bounds stop accumulation from turning into unbounded work. Session
+counters and directories are metadata, capped by the 1,024-directory scan limit.
+Eviction preserves monotonic page IDs; the oldest committed pages go first.
+The service queue is capped at 128 operations / 16 MiB of page data (plus one
+active operation). It pauses PTY reads while a harvest waits for queue capacity;
+resize waits until that harvest releases the engine viewport. Filesystem work
+runs on one dedicated worker thread. Root-lock contention waits up to 500 ms on
+that worker; concurrent-writer tests enforce the shared quota. A failed archive write leaves older committed
+pages intact, records a visible gap message when browsing, and keeps live I/O
+usable. Browsing retries storage after repair. Normal child exit and direct service
+error shutdown allow up to three seconds for queued pages to drain; forced service termination may lose the queued tail. Archive storage
+does not restore a live process after service death or reboot.
+
+Qt input tests exercise committed Unicode, cancellation (including empty native
+preedit cancellation), unsupported replacement rejection, atomic clipboard paste,
+focus/document/history/disconnect transitions, and recovery with a fresh
+composition. The native context resets when the window becomes inactive.
+Replacement of already-sent text is intentionally unsupported: lapis cannot erase
+bytes already consumed by a CLI. Selection/copy from terminal cells and a terminal
+accessibility tree are open gaps. The separate native-input probe qualifies actual
+Apple Japanese IME commit/cancel, focus ownership, resize and recovery through
+AppKit/Qt and the PTY. It checks the native candidate anchor rectangle, not candidate
+window pixels. It restores the clipboard and selected/enabled input sources.
+Physical keyboard hardware is outside this milestone's software acceptance.
+The latency probe correlates service sequence/revision to `afterSynchronizing`
+and `frameSwapped`; the latter is a submission proxy, not measured pixel visibility.
+Cross-session switching remains a later milestone because this slice owns one
+live terminal; history-to-live restoration is a retained-screen operation.
 
 ### Engine experiment decision
 
@@ -442,7 +628,7 @@ exercise that policy on both platforms; the earlier truecolor-only case did not.
 Snapshots survive parser mutation, resize and engine destruction. Key-up and paste
 encoding follow terminal modes. This was evidence for the snapshot-fed surface now present in the desktop
 checkpoint. The production adapter has since added styles, tagged colors, wrap
-spacers and cursor data; stable service lifecycle identities remain outstanding. The experimental header is
+spacers and cursor data. The experimental header is
 not a serialized service contract. Dirty-row APIs exist in Ghostty but incremental
 damage extraction has not been qualified; begin with bounded full snapshots.
 Measure allocation churn when building the production extraction path; the
@@ -450,6 +636,14 @@ correctness probe uses per-cell scratch buffers and is not a performance baselin
 
 Ghostty's configured 1 MiB history setting is read back through the API; the burst
 case checks viewport size, not a process memory ceiling or disk-backed history.
+A September 18 exploratory C API probe on the selected Ghostty static library
+from build run `aea255c0f528427e8e263ace819e3ea3` (SHA-256
+`ee4e3e23bbd9e9213db66afd80c764ca65f7f505fd9a175fa661cfb602934477`)
+encoded and decoded a 2,186-byte snapshot with unfinished CSI input, restoring
+an 81-row scrollable area containing 79 history rows; absolute viewport requests
+clamped beyond the end back to offset 79. It did not exercise multipage history,
+text/style equality, disk persistence or failure recovery. The service diagnostic
+`.log` is not PTY replay.
 The consumer passes ASan/UBSan; upstream Zig uses ReleaseSafe, which is a distinct
 kind of checking. No latency, shaping, IME, PTY or GUI-persistence claim follows.
 
@@ -494,14 +688,13 @@ Follow [AGENTS.md](../AGENTS.md): **2. attention state and real Codex qualificat
 → 3. full desktop, guarded keyboard ownership and carousel → 4. measured 32-session
 workload → 5. second CLI and platform qualification.** The minimal view in
 milestone 1 proves persistence; milestone 3 assembles the supervising workspace.
-Carry that minimal session to Linux before expanding the full desktop; final
-platform qualification still needs actual input, rendering and lifecycle evidence.
+A later Linux port still needs actual input, rendering and lifecycle evidence.
 The following sequence is planned, not implemented by the launch slice:
 
 | Milestone | Dependency and owner | Exit evidence |
 | --- | --- | --- |
 | 2: attention and Codex | Stable session/source/attachment identities; service policy and adapter owners | Deterministic replay of duplicates, gaps, cancellation and simultaneous requests; real input/approval, explicit response, continuation and reconnect reconciliation against a hashed Codex binary |
-| 3: supervising desktop | Qualified minimal Linux terminal and milestone 2; desktop owner | Two real retained sessions first, rebindable manual navigation, pin/snooze, guarded opt-in carousel, and actual typing/held-key/paste/IME/modal/inactive-window focus cases |
+| 3: supervising desktop | Qualified macOS terminal and milestone 2; desktop owner | Two real retained sessions first, rebindable manual navigation, pin/snooze, guarded opt-in carousel, and actual typing/held-key/paste/IME/modal/inactive-window focus cases |
 | 4: scale and responsiveness | Working multi-session desktop; verification owner | Controlled 32-session output/TUI workload, p50/p95/p99 input/switch/frame results, memory growth and idle CPU/GPU; distinguish synthetic replay from real agents |
 | 5: independent adapter and platform completion | Stable adapter capability contract; separate adapter/platform owners | Second CLI independently exercises observation/response/reconciliation; macOS and named Linux backends have actual lifecycle, native input and rendering evidence |
 

@@ -4,6 +4,7 @@
 #include <lapis/session/terminal.hpp>
 
 #include "launch_spec.hpp"
+#include "transport/local_protocol.hpp"
 
 #include <QColor>
 #include <QMap>
@@ -30,13 +31,42 @@ class SessionPreview final : public QObject {
     Q_PROPERTY(QString directory READ directory CONSTANT)
     Q_PROPERTY(QString activity READ activity NOTIFY snapshotChanged)
     Q_PROPERTY(bool live READ live CONSTANT)
+    Q_PROPERTY(bool inputReady READ inputReady NOTIFY connectionChanged)
+    Q_PROPERTY(QString connectionState READ connectionState NOTIFY connectionChanged)
+    Q_PROPERTY(QString serviceSessionId READ serviceSessionId NOTIFY connectionChanged)
+    Q_PROPERTY(QVariantMap snapshotTiming READ snapshotTiming NOTIFY snapshotChanged)
+    Q_PROPERTY(bool historyActive READ historyActive NOTIFY historyChanged)
+    Q_PROPERTY(bool historyRequestPending READ historyRequestPending NOTIFY historyChanged)
+    Q_PROPERTY(QString historyMessage READ historyMessage NOTIFY historyChanged)
     Q_PROPERTY(QColor accent READ accent CONSTANT)
   public:
     SessionPreview(QString title, QString directory, QString activity, QColor accent,
                    std::string_view content);
     ~SessionPreview() override;
-    void startLive(const QString& endpoint, const session::LaunchSpec& launch);
+    void startLive(const QString& endpoint, const session::LaunchSpec& launch,
+                   session::wire::AttachMode mode = session::wire::AttachMode::reconnect);
+    Q_INVOKABLE void reconnect();
+    Q_INVOKABLE void discoverSession();
+    Q_INVOKABLE void startNewSession();
+    Q_INVOKABLE void olderHistory();
+    Q_INVOKABLE void newerHistory();
+    Q_INVOKABLE void returnToLive();
+    void setConnection(const QString& state, bool input_ready);
+    void setServiceIdentity(const QByteArray& identity);
+    [[nodiscard]] bool inputReady() const {
+        return input_ready_ && !history_active_ && !history_request_pending_;
+    }
+    [[nodiscard]] const QString& connectionState() const { return connection_state_; }
+    [[nodiscard]] const QString& serviceSessionId() const { return service_session_id_; }
     void applySnapshot(session::TerminalSnapshot snapshot);
+    void setSnapshotTiming(const QVariantMap& timing) { snapshot_timing_ = timing; }
+    [[nodiscard]] QVariantMap snapshotTiming() const { return snapshot_timing_; }
+    void beginHistoryRequest();
+    void completeHistoryRequest(quint64 page_id, session::TerminalSnapshot snapshot,
+                                const QString& message);
+    void failHistoryRequest(const QString& message);
+    void cancelHistoryRequests();
+    void setHistoryRequestId(quint64 request_id);
     void setActivity(const QString& activity);
     void sendText(const QByteArray& bytes, bool paste = false);
     void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
@@ -53,6 +83,9 @@ class SessionPreview final : public QObject {
     bool resolvePreviewRequest(const QString& id);
     void clearPreviewRequests();
     [[nodiscard]] bool liveSnapshotReady() const { return live_snapshot_ready_; }
+    [[nodiscard]] bool historyActive() const { return history_active_; }
+    [[nodiscard]] bool historyRequestPending() const { return history_request_pending_; }
+    [[nodiscard]] const QString& historyMessage() const { return history_message_; }
     [[nodiscard]] bool live() const { return live_ != nullptr; }
     [[nodiscard]] const QString& title() const { return title_; }
     [[nodiscard]] const QString& directory() const { return directory_; }
@@ -61,7 +94,9 @@ class SessionPreview final : public QObject {
     [[nodiscard]] const session::TerminalSnapshot& snapshot() const { return snapshot_; }
 
   signals:
+    void connectionChanged();
     void snapshotChanged();
+    void historyChanged();
     void attentionChanged();
     void attentionArrived();
 
@@ -71,10 +106,20 @@ class SessionPreview final : public QObject {
     QMap<QString, QString> requests_;
     quint32 attention_serial_{};
     bool live_snapshot_ready_{};
+    bool live_snapshot_received_{};
+    bool history_active_{};
+    bool history_request_pending_{};
+    quint64 history_page_id_{};
+    bool input_ready_{};
+    QString connection_state_{QStringLiteral("disconnected")};
+    QString service_session_id_;
+    QString history_message_;
+    QVariantMap snapshot_timing_;
     QString title_;
     QString directory_;
     QString activity_;
     QColor accent_;
+    session::TerminalSnapshot live_snapshot_;
     session::TerminalSnapshot snapshot_;
 };
 
@@ -89,6 +134,7 @@ struct PreviewRequest {
 struct WorkspaceOptions {
     QString endpoint;
     std::optional<session::LaunchSpec> launch;
+    session::wire::AttachMode mode{session::wire::AttachMode::reconnect};
 };
 
 class Workspace final : public QObject {

@@ -1,3 +1,4 @@
+#include "history_worker.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "platform/posix/pty_process.hpp"
 #include "transport/local_protocol.hpp"
@@ -5,6 +6,7 @@
 #include <QCoreApplication>
 #include <QDataStream>
 #include <QDebug>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QLocalServer>
@@ -14,7 +16,10 @@
 #include <QSet>
 #include <QTimer>
 
+#include <algorithm>
+#include <chrono>
 #include <exception>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <sys/stat.h>
@@ -22,14 +27,47 @@
 
 namespace {
 using namespace lapis::session;
+quint64 monotonic_ns() {
+    return static_cast<quint64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch())
+                                    .count());
+}
+int hex_nibble(char16_t value) {
+    if (value >= u'0' && value <= u'9')
+        return value - u'0';
+    if (value >= u'a' && value <= u'f')
+        return value - u'a' + 10;
+    if (value >= u'A' && value <= u'F')
+        return value - u'A' + 10;
+    return -1;
+}
+QByteArray parse_session_id(const QString& value) {
+    QByteArray id;
+    if (value.size() != 32)
+        throw std::invalid_argument("Session ID must be exactly 32 hexadecimal characters");
+    for (qsizetype index = 0; index < value.size(); index += 2) {
+        const int high = hex_nibble(value[index].unicode());
+        const int low = hex_nibble(value[index + 1].unicode());
+        if (high < 0 || low < 0)
+            throw std::invalid_argument("Session ID must be exactly 32 hexadecimal characters");
+        id.append(static_cast<char>((static_cast<unsigned int>(high) << 4U) |
+                                    static_cast<unsigned int>(low)));
+    }
+    if (id == QByteArray(16, '\0'))
+        throw std::invalid_argument("Session ID cannot be zero");
+    return id;
+}
 class SessionService final : public QObject {
   public:
-    SessionService(const QString& endpoint, const LaunchSpec& launch)
-        : lock_(endpoint + QStringLiteral(".lock")), terminal_(launch.size, limits()) {
-        QByteArray identity;
-        QDataStream identity_stream(&identity, QIODevice::WriteOnly);
-        identity_stream << wire::version << launch_fingerprint(launch);
-        expected_attachment_ = wire::frame(wire::Kind::attach, identity);
+    SessionService(const QString& endpoint, const QByteArray& requested_session_id,
+                   const LaunchSpec& launch)
+        : lock_(endpoint + QStringLiteral(".lock")), terminal_(launch.size, limits()),
+          fingerprint_(launch_fingerprint(launch)), identity_{requested_session_id, wire::new_id()},
+          history_(qEnvironmentVariable("LAPIS_HISTORY_ROOT",
+                                        QStringLiteral(LAPIS_DEFAULT_HISTORY_ROOT)),
+                   QString::fromLatin1(requested_session_id.toHex()), history_limits()) {
+        configure_history();
+        current_size_ = launch.size;
         terminal_.feed("\x1b]10;rgb:d9/de/e8\x1b\\\x1b]11;rgb:0d/13/1d\x1b\\");
         lock_.setStaleLockTime(0);
         if (!lock_.tryLock(0))
@@ -59,35 +97,40 @@ class SessionService final : public QObject {
         timer_.setSingleShot(true);
         timer_.setInterval(16);
         connect(&timer_, &QTimer::timeout, this, [this] { publish(); });
+        ack_timer_.setSingleShot(true);
+        ack_timer_.setInterval(3000);
+        connect(&ack_timer_, &QTimer::timeout, this, [this] {
+            if (client_ && !ready_) {
+                send_status(client_, wire::StatusCode::rejected,
+                            "Attachment ready acknowledgement timed out");
+                detach_client();
+            }
+        });
         connect(&server_, &QLocalServer::newConnection, this, [this] { attach(); });
         connect(&pty_, &posix::PtyProcess::started, this, [this] {
             process_started_ = true;
             hello();
         });
         connect(&pty_, &posix::PtyProcess::output, this, [this](const QByteArray& bytes) {
-            try {
-                terminal_.feed(
-                    std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())));
-                const auto replies = terminal_.take_replies();
-                if (!replies.empty() && pty_.processId() != 0 &&
-                    !pty_.writeBytes(
-                        QByteArray(replies.data(), static_cast<qsizetype>(replies.size()))))
-                    throw std::runtime_error("PTY reply queue overflow");
-                dirty_ = true;
-                schedule();
-            } catch (const std::exception& error) {
-                stop(QString::fromUtf8(error.what()));
+            timing_.pty_read_ns = monotonic_ns();
+            if (pending_output_.size() + bytes.size() > qsizetype{64} * 1024) {
+                stop(QStringLiteral("PTY output queue overflow"));
+                return;
             }
+            pending_output_ += bytes;
+            pty_.pauseOutput(true);
+            process_output();
         });
         connect(&pty_, &posix::PtyProcess::failure, this,
                 [this](const QString& message) { stop(message); });
         connect(&pty_, &posix::PtyProcess::finished, this,
                 [this](int code, QProcess::ExitStatus status) {
                     if (status == QProcess::CrashExit)
-                        stop(QStringLiteral("Process terminated by signal (%1)").arg(code),
-                             128 + code);
+                        finish_session(
+                            QStringLiteral("Process terminated by signal (%1)").arg(code),
+                            128 + code);
                     else
-                        stop(QStringLiteral("Process exited (%1)").arg(code), code);
+                        finish_session(QStringLiteral("Process exited (%1)").arg(code), code);
                 });
         pty_.start(launch);
     }
@@ -98,11 +141,40 @@ class SessionService final : public QObject {
         disconnect(&timer_, nullptr, this, nullptr);
         if (client_)
             disconnect(client_, nullptr, this, nullptr);
+        for (auto* retired : retired_)
+            disconnect(retired, nullptr, this, nullptr);
         for (auto* pending : pending_)
             disconnect(pending, nullptr, this, nullptr);
     }
 
   private:
+    void configure_history() {
+        history_.failure = [this](const QString& error) {
+            history_error_ = QStringLiteral("History recording paused: ") + error;
+            history_failed_ = true;
+            qWarning().noquote() << history_error_;
+        };
+        history_.progress = [this] {
+            if (stopping_)
+                return;
+            try {
+                try_pending_history();
+                if (output_waiting_) {
+                    output_waiting_ = false;
+                    process_output();
+                }
+            } catch (const std::exception& error) {
+                stop(QString::fromUtf8(error.what()));
+            }
+        };
+        history_.received = [this](wire::HistoryReply reply) {
+            if (!client_ || !ready_ || reply.attachment != attachment_)
+                return;
+            if (!history_error_.isEmpty())
+                reply.message = history_error_ + QStringLiteral(". ") + reply.message;
+            send_history(reply);
+        };
+    }
     static TerminalLimits limits() {
         TerminalLimits result;
         result.max_cells = wire::max_cells;
@@ -110,17 +182,197 @@ class SessionService final : public QObject {
         result.max_input_bytes = std::size_t{64} * 1024U;
         return result;
     }
-    void stop(const QString& message, int exit_code = 1) {
+    static HistoryLimits history_limits() {
+        HistoryLimits result;
+        const auto read_limit = [](const char* name, quint64 fallback) {
+            const auto value = qEnvironmentVariable(name);
+            if (value.isEmpty())
+                return fallback;
+            bool valid{};
+            const auto bytes = value.toULongLong(&valid);
+            if (!valid || bytes == 0 || bytes > quint64{4} * 1024 * 1024 * 1024)
+                throw std::invalid_argument("Invalid history byte budget");
+            return bytes;
+        };
+        result.session_bytes = read_limit("LAPIS_HISTORY_SESSION_BYTES", result.session_bytes);
+        result.global_bytes = read_limit("LAPIS_HISTORY_GLOBAL_BYTES", result.global_bytes);
+        return result;
+    }
+    static TerminalSnapshot archive_page(TerminalSnapshot page, std::size_t rows) {
+        page.size.rows = static_cast<std::uint16_t>(rows);
+        page.cells.resize(rows * page.size.columns);
+        std::size_t codepoints{};
+        for (const auto& cell : page.cells)
+            codepoints =
+                std::max(codepoints, static_cast<std::size_t>(cell.text_offset) + cell.text_length);
+        page.graphemes.resize(codepoints);
+        page.cursor = {};
+        page.history = {rows, 0, rows, true};
+        return page;
+    }
+    bool archive_history(bool force) {
+        if (history_failed_) {
+            if (harvest_offset_) {
+                terminal_.clear_history();
+                harvest_offset_.reset();
+            }
+            return true;
+        }
+        // // Live memory remains bounded; the archive gap is explicit.
+        const auto metadata = terminal_.history_metadata();
+        if (!metadata.primary_available || metadata.total_rows <= metadata.viewport_rows)
+            return true;
+        const auto rows = metadata.total_rows - metadata.viewport_rows;
+        const auto threshold =
+            std::min(std::size_t{256}, std::size_t{32768} / current_size_.columns);
+        if (!force && !harvest_offset_ && rows < threshold)
+            return true;
+        if (!harvest_offset_)
+            harvest_offset_ = 0;
+        // Keep the terminal frozen while enqueueing a large harvest in bounded
+        // pieces. This also handles a one-row viewport and resize reflow.
+        while (*harvest_offset_ < rows) {
+            const auto count = std::min(metadata.viewport_rows, rows - *harvest_offset_);
+            auto page = archive_page(terminal_.history_snapshot(*harvest_offset_), count);
+            if (!history_.append({std::move(page)})) {
+                pty_.pauseOutput(true);
+                output_waiting_ = true;
+                return false;
+            }
+            *harvest_offset_ += count;
+        }
+        harvest_offset_.reset();
+        terminal_.clear_history();
+        return true;
+    }
+    void process_output() {
+        if (stopping_ || processing_output_)
+            return;
+        processing_output_ = true;
+        try {
+            if (harvest_offset_ && !archive_history(true)) {
+                processing_output_ = false;
+                return;
+            }
+            if (pending_resize_) {
+                const auto size = *pending_resize_;
+                pending_resize_.reset();
+                apply_resize(size);
+            }
+            int budget = 16;
+            while (!pending_output_.isEmpty() && budget-- > 0) {
+                if (!archive_history(false)) {
+                    output_waiting_ = true;
+                    break;
+                }
+                const auto chunk = static_cast<qsizetype>(std::max(
+                    std::size_t{1},
+                    std::min(std::size_t{256},
+                             std::size_t{32768} / (std::size_t{4} * current_size_.columns))));
+                const auto size = std::min(pending_output_.size(), chunk);
+                terminal_.feed(
+                    std::string_view(pending_output_.constData(), static_cast<std::size_t>(size)));
+                pending_output_.remove(0, size);
+                dirty_ = true;
+                timing_.parse_end_ns = monotonic_ns();
+            }
+            const auto replies = terminal_.take_replies();
+            if (!replies.empty() && pty_.processId() != 0 &&
+                !pty_.writeBytes(
+                    QByteArray(replies.data(), static_cast<qsizetype>(replies.size()))))
+                throw std::runtime_error("PTY reply queue overflow");
+            schedule();
+            if (!output_waiting_) {
+                if (pending_output_.isEmpty())
+                    pty_.pauseOutput(false);
+                else
+                    QTimer::singleShot(0, this, [this] { process_output(); });
+            }
+        } catch (const std::exception& error) {
+            stop(QString::fromUtf8(error.what()));
+        }
+        processing_output_ = false;
+    }
+    void send_history(const wire::HistoryReply& reply) {
+        if (!client_ || !ready_ || reply.attachment != attachment_)
+            return;
+        try {
+            auto bytes = wire::frame(wire::Kind::history_page, wire::encode_history_reply(reply));
+            if (client_->bytesToWrite() + bytes.size() > wire::max_frame_bytes)
+                throw std::runtime_error("History response queue full");
+            if (client_->write(bytes) != bytes.size())
+                throw std::runtime_error("History response write failed");
+        } catch (const std::exception& error) {
+            send_status(client_, wire::StatusCode::overloaded, QString::fromUtf8(error.what()));
+            detach_client();
+        }
+    }
+    void try_pending_history() {
+        if (!pending_history_)
+            return;
+        const auto pending = *pending_history_;
+        if (archive_history(true) && history_.read(pending.first, pending.second))
+            pending_history_.reset();
+    }
+    void request_history(const QByteArray& payload) {
+        const auto request = wire::decode_history_request(payload);
+        if (pending_history_) {
+            send_history({attachment_,
+                          request.request_id,
+                          0,
+                          QStringLiteral("History is busy; try again"),
+                          {}});
+            return;
+        }
+        // Browsing retries storage after a recoverable filesystem failure.
+        history_failed_ = false;
+        history_error_.clear();
+        pending_history_ = std::pair{attachment_, request};
+        try_pending_history();
+    }
+    void finish_session(const QString& message, int exit_code, int remaining = 120) {
+        if (stopping_)
+            return;
+        bool archived = false;
+        try {
+            archived = archive_history(true);
+        } catch (const std::exception& error) {
+            history_error_ = QString::fromUtf8(error.what());
+            history_failed_ = true;
+            archived = true;
+        }
+        if (remaining > 0 && (!archived || !history_.idle())) {
+            QTimer::singleShot(25, this, [this, message, exit_code, remaining] {
+                finish_session(message, exit_code, remaining - 1);
+            });
+            return;
+        }
+        if (!history_.idle())
+            qWarning("History flush deadline reached; queued tail pages may be unavailable");
+        stop(message, exit_code, std::chrono::milliseconds{0});
+    }
+    void stop(const QString& message, int exit_code = 1,
+              std::chrono::milliseconds drain_timeout = std::chrono::seconds{3}) {
         if (stopping_)
             return;
         stopping_ = true;
+        pty_.pauseOutput(true);
+        timer_.stop();
+        ack_timer_.stop();
+        pending_history_.reset();
         qInfo().noquote() << message;
         if (client_) {
-            client_->write(wire::frame(wire::Kind::status, message.toUtf8()));
+            send_status(client_, wire::StatusCode::ended, message);
             client_->flush();
         }
-        QTimer::singleShot(50, QCoreApplication::instance(),
-                           [exit_code] { QCoreApplication::exit(exit_code); });
+        history_.drain(
+            [this, exit_code] {
+                if (!history_.idle())
+                    qWarning("History shutdown deadline reached; queued tail may be unavailable");
+                QTimer::singleShot(50, QCoreApplication::instance(),
+                                   [exit_code] { QCoreApplication::exit(exit_code); });
+            },
+            static_cast<int>(drain_timeout.count()));
     }
     void attach() {
         auto* incoming = server_.nextPendingConnection();
@@ -128,11 +380,13 @@ class SessionService final : public QObject {
             return;
         connect(incoming, &QLocalSocket::disconnected, incoming, &QObject::deleteLater);
         if (stopping_ || pending_.size() >= 8) {
+            if (!stopping_)
+                send_status(incoming, wire::StatusCode::overloaded, "Too many pending attachments");
             incoming->disconnectFromServer();
             return;
         }
         pending_.insert(incoming);
-        incoming->setReadBufferSize(expected_attachment_.size() + 1);
+        incoming->setReadBufferSize(75); // v3 attach is exactly 74 framed bytes.
         const auto bytes = std::make_shared<QByteArray>();
         connect(incoming, &QLocalSocket::readyRead, this,
                 [this, incoming, bytes] { authenticate(incoming, *bytes); });
@@ -147,24 +401,53 @@ class SessionService final : public QObject {
             authenticate(incoming, *bytes);
     }
     void authenticate(QLocalSocket* incoming, QByteArray& bytes) {
-        bytes += incoming->readAll();
-        if (bytes.size() < expected_attachment_.size() && expected_attachment_.startsWith(bytes))
-            return;
-        if (bytes != expected_attachment_) {
-            incoming->write(wire::frame(wire::Kind::status,
-                                        "Launch mismatch or incompatible attachment protocol"));
+        try {
+            bytes += incoming->readAll();
+            if (bytes.size() < 5)
+                return;
+            QDataStream header(bytes);
+            quint32 frame_size{};
+            quint8 kind{};
+            header >> frame_size >> kind;
+            if (frame_size != 70 || kind != static_cast<quint8>(wire::Kind::attach) ||
+                bytes.size() > 74)
+                throw std::runtime_error("Launch mismatch or incompatible attachment protocol");
+            wire::Frame frame;
+            if (!wire::take_frame(bytes, frame))
+                return;
+            const auto request = wire::decode_attach(frame.payload);
+            if (request.fingerprint != fingerprint_)
+                throw std::runtime_error("Launch mismatch or incompatible attachment protocol");
+            if ((request.mode == wire::AttachMode::reconnect && request.expected != identity_) ||
+                (request.mode == wire::AttachMode::create &&
+                 request.expected.session_id != identity_.session_id)) {
+                send_status(incoming, wire::StatusCode::replaced,
+                            "Session identity mismatch: the endpoint belongs to another session");
+                incoming->disconnectFromServer();
+                return;
+            }
+            pending_.remove(incoming);
+            disconnect(incoming, nullptr, this, nullptr);
+            activate(incoming);
+        } catch (const std::exception& error) {
+            reject_attachment(incoming, QString::fromUtf8(error.what()));
+        }
+    }
+    void activate(QLocalSocket* incoming) {
+        if (generation_ == std::numeric_limits<quint64>::max()) {
+            send_status(incoming, wire::StatusCode::overloaded, "Attachment generation overflow");
             incoming->disconnectFromServer();
             return;
         }
-        pending_.remove(incoming);
-        disconnect(incoming, nullptr, this, nullptr);
-        activate(incoming);
-    }
-    void activate(QLocalSocket* incoming) {
+        ++generation_;
+        attachment_ = {.identity = identity_, .generation = generation_};
+        ready_ = false;
+        snapshot_in_flight_ = false;
+        ack_timer_.start(); // Bound synchronization even if hello cannot drain.
         if (client_) {
+            send_status(client_, wire::StatusCode::replaced, "Session client replaced");
             disconnect(client_, nullptr, this, nullptr);
-            client_->disconnectFromServer();
-            client_->deleteLater();
+            retire(client_);
         }
         client_ = incoming;
         buffer_.clear();
@@ -174,39 +457,60 @@ class SessionService final : public QObject {
                 receive();
         });
         connect(incoming, &QLocalSocket::bytesWritten, this, [this] { schedule(); });
+        connect(incoming, &QLocalSocket::disconnected, this, [this, incoming] {
+            if (client_ == incoming)
+                detach_client();
+        });
         hello();
     }
     void hello() {
         if (!client_ || !process_started_ || stopping_)
             return;
-        QByteArray hello;
-        QDataStream out(&hello, QIODevice::WriteOnly);
-        out << wire::version << quint64(pty_.processId());
-        client_->write(wire::frame(wire::Kind::hello, hello));
+        client_->write(wire::frame(
+            wire::Kind::hello,
+            wire::encode_hello({.attachment = attachment_, .pid = quint64(pty_.processId())})));
         dirty_ = true;
         schedule();
     }
     void schedule() {
-        if (client_ && process_started_ && dirty_ && !timer_.isActive() && !stopping_)
+        if (client_ && process_started_ && (!snapshot_in_flight_ || ready_) && dirty_ &&
+            !timer_.isActive() && !stopping_)
             timer_.start();
     }
     void publish() {
         if (!client_ || client_->state() != QLocalSocket::ConnectedState || !dirty_)
             return;
+        if (!ready_ && snapshot_in_flight_)
+            return;
         if (client_->bytesToWrite() != 0)
             return; // one replaceable snapshot in flight
         try {
+            if (snapshot_sequence_ == std::numeric_limits<quint64>::max())
+                throw std::overflow_error("Snapshot sequence overflow");
+            const quint64 sequence = ++snapshot_sequence_;
+            timing_.publish_ns = monotonic_ns();
             const auto bytes =
-                wire::frame(wire::Kind::snapshot, wire::encode_snapshot(terminal_.snapshot()));
+                wire::frame(wire::Kind::snapshot,
+                            wire::encode_snapshot_message({.attachment = attachment_,
+                                                           .sequence = sequence,
+                                                           .snapshot = terminal_.snapshot(),
+                                                           .timing = timing_}));
             if (client_->write(bytes) < 0)
                 throw std::runtime_error("Session socket write failed");
             dirty_ = false;
+            if (!ready_) {
+                ready_sequence_ = sequence;
+                snapshot_in_flight_ = true;
+            }
         } catch (const std::length_error&) {
             dirty_ = false;
-            client_->write(wire::frame(wire::Kind::status,
-                                       "Snapshot limit exceeded; session is still "
-                                       "running. Reattach after reducing output."));
-            client_->disconnectFromServer();
+            send_status(client_, wire::StatusCode::overloaded,
+                        "Snapshot limit exceeded; session is still running");
+            detach_client();
+        } catch (const std::overflow_error&) {
+            dirty_ = false;
+            send_status(client_, wire::StatusCode::overloaded, "Snapshot sequence overflow");
+            detach_client();
         } catch (const std::exception& error) {
             stop(QString::fromUtf8(error.what()));
         }
@@ -236,62 +540,73 @@ class SessionService final : public QObject {
                     receive();
             });
         } catch (const std::exception& error) {
-            client_->write(wire::frame(wire::Kind::status, QByteArray(error.what())));
-            client_->disconnectFromServer();
+            send_status(client_, wire::StatusCode::rejected, QString::fromUtf8(error.what()));
+            detach_client();
         }
+    }
+    void acknowledge(const QByteArray& payload) {
+        const auto ready = wire::decode_ready(payload);
+        if (ready.attachment != attachment_ || ready.sequence != ready_sequence_)
+            throw std::runtime_error("Stale or mismatched ready acknowledgement");
+        if (!ready_ && !snapshot_in_flight_)
+            throw std::runtime_error("Unexpected ready acknowledgement");
+        ready_ = true;
+        snapshot_in_flight_ = false;
+        ack_timer_.stop();
+        schedule();
     }
     void handle(const wire::Frame& frame) {
         if (!process_started_ || stopping_)
             throw std::runtime_error("Session is not ready for input");
-        if (frame.payload.size() > qsizetype{64} * 1024)
+        if (frame.kind == wire::Kind::ready) {
+            acknowledge(frame.payload);
+            return;
+        }
+        const auto control = wire::decode_control(frame.payload);
+        if (control.attachment != attachment_ || !ready_)
+            throw std::runtime_error("Stale attachment or session is not ready for input");
+        if (control.payload.size() > qsizetype{64} * 1024)
             throw std::runtime_error("Input message too large");
         QByteArray bytes;
         switch (frame.kind) {
+        case wire::Kind::history_request:
+            request_history(control.payload);
+            return;
         case wire::Kind::text:
-            bytes = frame.payload;
+            bytes = control.payload;
             break;
         case wire::Kind::paste: {
             const auto encoded = terminal_.encode_paste(std::string_view(
-                frame.payload.constData(), static_cast<std::size_t>(frame.payload.size())));
+                control.payload.constData(), static_cast<std::size_t>(control.payload.size())));
             bytes = QByteArray(encoded.data(), static_cast<qsizetype>(encoded.size()));
             break;
         }
         case wire::Kind::key: {
-            if (frame.payload.size() != 2)
+            if (control.payload.size() != 2)
                 throw std::runtime_error("Invalid key message");
-            const auto key_value = static_cast<unsigned char>(frame.payload[0]);
+            const auto key_value = static_cast<unsigned char>(control.payload[0]);
             if (key_value > static_cast<unsigned char>(TerminalKey::escape))
                 throw std::runtime_error("Unknown key code");
             const auto key = static_cast<TerminalKey>(key_value);
-            const auto mods = static_cast<unsigned char>(frame.payload[1]);
+            const auto mods = static_cast<unsigned char>(control.payload[1]);
             const auto encoded = terminal_.encode_key(
                 key, {(mods & 1U) != 0, (mods & 2U) != 0, (mods & 4U) != 0, (mods & 8U) != 0});
             bytes = QByteArray(encoded.data(), static_cast<qsizetype>(encoded.size()));
             break;
         }
         case wire::Kind::resize: {
-            if (frame.payload.size() != 4)
+            if (control.payload.size() != 4)
                 throw std::runtime_error("Invalid resize message");
-            QDataStream in(frame.payload);
+            QDataStream in(control.payload);
             quint16 columns{}, rows{};
             in >> columns >> rows;
             TerminalSize size{columns, rows};
             if (columns == 0 || rows == 0 || quint32(columns) * rows > wire::max_cells)
                 throw std::runtime_error("Invalid terminal geometry");
-            if (!pty_.resize(size))
-                throw std::runtime_error("PTY resize failed");
-            try {
-                terminal_.resize(size);
-            } catch (const std::exception& error) {
-                stop(QString::fromUtf8(error.what()));
-                return; // A failed engine resize cannot be presented as synchronized.
-            }
-            const auto replies = terminal_.take_replies();
-            if (!replies.empty() && !pty_.writeBytes(QByteArray(
-                                        replies.data(), static_cast<qsizetype>(replies.size()))))
-                throw std::runtime_error("PTY reply queue overflow");
-            dirty_ = true;
-            schedule();
+            if (harvest_offset_)
+                pending_resize_ = size;
+            else
+                apply_resize(size);
             return;
         }
         default:
@@ -300,18 +615,92 @@ class SessionService final : public QObject {
         if (!pty_.writeBytes(bytes))
             throw std::runtime_error("PTY input queue full");
     }
+    void apply_resize(TerminalSize size) {
+        if (!pty_.resize(size))
+            throw std::runtime_error("PTY resize failed");
+        try {
+            terminal_.resize(size);
+            current_size_ = size;
+        } catch (const std::exception& error) {
+            stop(QString::fromUtf8(error.what()));
+            return; // A failed engine resize cannot be presented as synchronized.
+        }
+        const auto replies = terminal_.take_replies();
+        if (!replies.empty() &&
+            !pty_.writeBytes(QByteArray(replies.data(), static_cast<qsizetype>(replies.size()))))
+            throw std::runtime_error("PTY reply queue overflow");
+        dirty_ = true;
+        schedule();
+    }
+    void send_status(QLocalSocket* socket, wire::StatusCode code, const QString& message) const {
+        socket->write(wire::frame(wire::Kind::status,
+                                  wire::encode_status({.code = code, .message = message})));
+    }
+    void reject_attachment(QLocalSocket* incoming, const QString& message = {}) {
+        send_status(incoming, wire::StatusCode::rejected,
+                    message.isEmpty() ? QStringLiteral("Invalid attachment request") : message);
+        incoming->disconnectFromServer();
+    }
+    void retire(QLocalSocket* socket) {
+        // Let a typed final status drain, but bound both time and retired sockets.
+        if (retired_.size() >= 8) {
+            auto* oldest = *retired_.begin();
+            retired_.remove(oldest);
+            oldest->abort();
+            oldest->deleteLater();
+        }
+        retired_.insert(socket);
+        connect(socket, &QObject::destroyed, this, [this, socket] { retired_.remove(socket); });
+        socket->disconnectFromServer();
+        if (socket->state() == QLocalSocket::UnconnectedState)
+            socket->deleteLater();
+        else
+            QTimer::singleShot(1000, socket, &QObject::deleteLater);
+    }
+    void detach_client() {
+        if (!client_)
+            return;
+        disconnect(client_, nullptr, this, nullptr);
+        retire(client_);
+        client_ = nullptr;
+        pending_history_.reset();
+        buffer_.clear();
+        ready_ = false;
+        snapshot_in_flight_ = false;
+        ack_timer_.stop();
+    }
     QLockFile lock_;
     Terminal terminal_;
     posix::PtyProcess pty_;
     QLocalServer server_;
     QPointer<QLocalSocket> client_;
     QSet<QLocalSocket*> pending_;
-    QByteArray expected_attachment_;
+    QSet<QLocalSocket*> retired_;
+    QByteArray fingerprint_;
+    wire::SessionIdentity identity_;
+    wire::Attachment attachment_;
     QByteArray buffer_;
     QTimer timer_;
+    QTimer ack_timer_;
+    quint64 generation_{};
+    quint64 snapshot_sequence_{};
+    quint64 ready_sequence_{};
     bool dirty_{true};
+    bool ready_{};
+    bool snapshot_in_flight_{};
     bool process_started_{};
     bool stopping_{};
+    HistoryWorker history_;
+    QByteArray pending_output_;
+    QString history_error_;
+    bool processing_output_{};
+    bool output_waiting_{};
+    bool history_failed_{};
+    std::optional<std::pair<wire::Attachment, wire::HistoryRequest>> pending_history_;
+    std::optional<std::size_t> harvest_offset_;
+    std::optional<TerminalSize> pending_resize_;
+    TerminalSize current_size_;
+    wire::SnapshotTiming timing_;
 };
 } // namespace
 int main(int argc, char** argv) {
@@ -320,15 +709,22 @@ int main(int argc, char** argv) {
         arguments.append(QString::fromLocal8Bit(argv[index]));
     int application_argc = 1;
     QCoreApplication app(application_argc, argv);
-    if (arguments.size() < 4) {
-        qCritical() << "Usage: lapis_session_service SOCKET DIRECTORY PROGRAM [ARG ...]";
+    bool has_session_id = arguments.size() > 1 && arguments.at(1) == QStringLiteral("--session-id");
+    const int socket_index = has_session_id ? 3 : 1;
+    const int program_index = has_session_id ? 5 : 3;
+    if ((has_session_id && arguments.size() < 6) || (!has_session_id && arguments.size() < 4)) {
+        qCritical() << "Usage: lapis_session_service [--session-id HEX32] SOCKET DIRECTORY PROGRAM "
+                       "[ARG ...]";
         return 2;
     }
     try {
-        const auto launch = validate_launch({.program = arguments.at(3),
-                                             .arguments = arguments.mid(4),
-                                             .directory = arguments.at(2)});
-        SessionService service(posix::prepare_endpoint(arguments.at(1)), launch);
+        const QByteArray session_id =
+            has_session_id ? parse_session_id(arguments.at(2)) : wire::new_id();
+        const auto launch = validate_launch({.program = arguments.at(program_index),
+                                             .arguments = arguments.mid(program_index + 1),
+                                             .directory = arguments.at(socket_index + 1)});
+        SessionService service(posix::prepare_endpoint(arguments.at(socket_index)), session_id,
+                               launch);
         return app.exec();
     } catch (const std::exception& error) {
         qCritical().noquote() << error.what();

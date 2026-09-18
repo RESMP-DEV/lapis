@@ -12,13 +12,14 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = 2
-HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH = range(1, 9)
+VERSION = 4
+HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
 WAIT = 5
 
 
@@ -46,8 +47,14 @@ def frame(kind, payload=b""):
     return struct.pack(">IB", len(payload) + 1, kind) + payload
 
 
-def attach_payload(program, arguments, directory):
-    return struct.pack(">II", VERSION, 32) + fingerprint(program, arguments, directory)
+def attach_payload(program, arguments, directory, expected=None):
+    identity = expected[:32] if expected is not None else bytes(32)
+    return (
+        struct.pack(">I", VERSION)
+        + fingerprint(program, arguments, directory)
+        + bytes([1 if expected is not None else 0])
+        + identity
+    )
 
 
 def decode_snapshot(payload):
@@ -86,6 +93,9 @@ class WireClient:
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.socket.settimeout(WAIT)
         self.buffer = bytearray()
+        self.attachment = None
+        self.sequence = 0
+        self.cached_snapshot = None
         try:
             self.socket.connect(str(endpoint))
         except BaseException:
@@ -102,6 +112,9 @@ class WireClient:
         self.socket.close()
 
     def send(self, kind, payload=b""):
+        if kind in (TEXT, PASTE, KEY, RESIZE):
+            require(self.attachment is not None, "No accepted attachment")
+            payload = self.attachment + payload
         self.socket.sendall(frame(kind, payload))
 
     def receive(self, timeout=WAIT):
@@ -122,20 +135,52 @@ class WireClient:
                 raise EOFError("Service disconnected")
             self.buffer.extend(chunk)
 
-    def attach(self, program, arguments, directory):
-        self.send(ATTACH, attach_payload(program, arguments, directory))
-        kind, data = self.receive()
-        require(kind == HELLO and len(data) == 12, "Expected hello after attachment")
-        version, pid = struct.unpack(">IQ", data)
-        require(version == VERSION and pid > 0, "Invalid hello identity")
+    def attach(self, program, arguments, directory, expected=None):
+        self.send(ATTACH, attach_payload(program, arguments, directory, expected))
+        pid = self.hello()
+        if expected is not None:
+            require(self.attachment[:32] == expected[:32], "Reconnect identity changed")
+            require(
+                struct.unpack(">Q", self.attachment[32:])[0]
+                > struct.unpack(">Q", expected[32:])[0],
+                "Generation did not advance",
+            )
+        self.cached_snapshot = self.next_snapshot()
+        self.send(READY, self.attachment + struct.pack(">Q", self.sequence))
         return pid
+
+    def hello(self):
+        kind, data = self.receive()
+        require(kind == HELLO and len(data) == 52, "Expected hello after attachment")
+        version = struct.unpack_from(">I", data)[0]
+        self.attachment = data[4:44]
+        pid = struct.unpack_from(">Q", data, 44)[0]
+        require(
+            version == VERSION
+            and pid > 0
+            and data[4:20] != bytes(16)
+            and data[20:36] != bytes(16)
+            and data[36:44] != bytes(8),
+            "Invalid hello identity",
+        )
+        return pid
+
+    def next_snapshot(self, timeout=WAIT):
+        kind, data = self.receive(timeout)
+        require(kind == SNAPSHOT and len(data) > 48, "Expected snapshot envelope")
+        require(data[:40] == self.attachment, "Snapshot attachment mismatch")
+        sequence = struct.unpack_from(">Q", data, 40)[0]
+        require(sequence > self.sequence, "Snapshot sequence did not advance")
+        self.sequence = sequence
+        return decode_snapshot(data[72:])
 
     def snapshot(self, predicate=lambda _: True, timeout=WAIT):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            kind, data = self.receive(max(0.01, deadline - time.monotonic()))
-            require(kind == SNAPSHOT, "Expected terminal snapshot")
-            snapshot = decode_snapshot(data)
+            if self.cached_snapshot is not None:
+                snapshot, self.cached_snapshot = self.cached_snapshot, None
+            else:
+                snapshot = self.next_snapshot(max(0.01, deadline - time.monotonic()))
             if predicate(snapshot):
                 return snapshot
         raise CheckError("Snapshot condition not met")
@@ -145,7 +190,8 @@ class WireClient:
         while time.monotonic() < deadline:
             kind, data = self.receive(max(0.01, deadline - time.monotonic()))
             if kind == STATUS:
-                return data.decode("utf-8")
+                require(len(data) > 1 and 1 <= data[0] <= 4, "Invalid status")
+                return data[1:].decode("utf-8")
             require(kind == SNAPSHOT, "Unexpected frame before status")
         raise CheckError("Status deadline expired")
 
@@ -163,10 +209,21 @@ def wait_socket(endpoint, process):
 
 
 class Service:
-    def __init__(self, binary, runtime, artifacts, name, program, arguments, directory):
+    def __init__(
+        self,
+        binary,
+        runtime,
+        artifacts,
+        name,
+        program,
+        arguments,
+        directory,
+        env_overrides=None,
+    ):
         self.endpoint = runtime / (name + ".sock")
         self.program, self.arguments, self.directory = program, arguments, directory
         self.child_pid = None
+        self.attachment = None
         self.log = (artifacts / (name + ".service.log")).open("wb")
         self.process = subprocess.Popen(
             [str(binary), str(self.endpoint), str(directory), program, *arguments],
@@ -174,13 +231,21 @@ class Service:
             stdout=self.log,
             stderr=self.log,
             start_new_session=True,
+            env={
+                **os.environ,
+                "LAPIS_HISTORY_ROOT": str(runtime / "history"),
+                **(env_overrides or {}),
+            },
         )
 
     def connect(self):
         wait_socket(self.endpoint, self.process)
         client = WireClient(self.endpoint)
         try:
-            pid = client.attach(self.program, self.arguments, self.directory)
+            pid = client.attach(
+                self.program, self.arguments, self.directory, self.attachment
+            )
+            self.attachment = client.attachment
             if self.child_pid is not None:
                 require(pid == self.child_pid, "Reattachment changed the child PID")
             self.child_pid = pid
@@ -214,7 +279,7 @@ class Service:
 
 
 FIXTURE = r"""
-import hashlib,json,os,signal,sys,termios,time
+import hashlib,json,os,signal,sys,termios,time,tty
 attr=termios.tcgetattr(0);attr[3]&=~termios.ECHO;termios.tcsetattr(0,termios.TCSANOW,attr)
 print('ARGV='+hashlib.sha256(json.dumps(sys.argv[1:],ensure_ascii=False).encode()).hexdigest(),flush=True)
 print('CWD='+hashlib.sha256(os.getcwd().encode()).hexdigest(),flush=True)
@@ -222,7 +287,9 @@ print('READY',flush=True)
 for line in sys.stdin:
     command=line.rstrip('\n')
     if command=='quit': sys.exit(7)
-    if command=='burst':
+    if command=='pause':
+        tty.setraw(0); print('PAUSED',flush=True); os.kill(os.getpid(),signal.SIGSTOP)
+    elif command=='burst':
         time.sleep(.3)
         for i in range(12000): print('0123456789abcdef')
         print('DETACHED_DONE',flush=True)
@@ -233,6 +300,16 @@ for line in sys.stdin:
 
 
 def run_capture(desktop, options, artifacts, name, expect_success=True):
+    options = list(options)
+    if (
+        expect_success
+        and "--socket" in options
+        and "--new-session" not in options
+        and "--discover" not in options
+    ):
+        endpoint = Path(options[options.index("--socket") + 1])
+        if not Path(str(endpoint) + ".session").exists():
+            options.insert(0, "--discover")
     with (artifacts / (name + ".log")).open("wb") as log:
         process = subprocess.Popen(
             [str(desktop), *options],
@@ -267,8 +344,10 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
     def record(name, action):
         started = time.monotonic()
         try:
-            action()
+            observed = action()
             result = {"name": name, "passed": True}
+            if observed is not None:
+                result["observed"] = observed
         except (
             CheckError,
             OSError,
@@ -281,6 +360,7 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
                 "name": name,
                 "passed": False,
                 "error": f"{type(error).__name__}: {error}",
+                "traceback": traceback.format_exc(),
             }
         result["seconds"] = round(time.monotonic() - started, 3)
         results.append(result)
@@ -439,11 +519,185 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
         finally:
             service.stop()
 
+    def identity_boundaries():
+        with session("identity") as service:
+            with service.connect() as initial:
+                initial.snapshot(lambda s: "READY" in s["text"])
+                old = initial.attachment
+            with service.connect() as current:
+                require(current.attachment[:32] == old[:32], "Identity changed")
+                current.socket.sendall(frame(TEXT, old + b"STALE_INPUT\n"))
+                require("Stale" in current.status(), "Stale generation accepted")
+            with service.connect() as restored:
+                restored.send(TEXT, b"fresh-input\n")
+                screen = restored.snapshot(lambda s: "ECHO:fresh-input" in s["text"])
+                require(
+                    "STALE_INPUT" not in screen["text"], "Stale bytes reached child"
+                )
+                active = restored.attachment
+                with WireClient(service.endpoint) as wrong:
+                    wrong.send(
+                        ATTACH,
+                        attach_payload(
+                            program, arguments, runtime, bytes([42]) * 32 + bytes(8)
+                        ),
+                    )
+                    require(
+                        "identity" in wrong.status(), "Replacement identity accepted"
+                    )
+                with WireClient(service.endpoint) as racing_creator:
+                    creation = attach_payload(program, arguments, runtime)
+                    creation = creation[:36] + bytes([2]) + bytes([43]) * 16 + bytes(16)
+                    racing_creator.send(ATTACH, creation)
+                    require(
+                        "identity" in racing_creator.status(),
+                        "Racing creation displaced existing session",
+                    )
+                restored.send(TEXT, b"still-active\n")
+                restored.snapshot(lambda s: "ECHO:still-active" in s["text"])
+                require(restored.attachment == active, "Bad attachment replaced client")
+            with service.connect() as stale_resize:
+                stale_resize.socket.sendall(
+                    frame(RESIZE, old + struct.pack(">HH", 40, 10))
+                )
+                require("Stale" in stale_resize.status(), "Stale resize accepted")
+            with service.connect() as restored:
+                restored.send(TEXT, b"size\n")
+                restored.snapshot(lambda s: "SIZE=100x30" in s["text"])
+                restored.send(PASTE, b"x" * (65536 + 1))
+                require(restored.status(), "Oversized paste not rejected")
+            with service.connect() as restored:
+                restored.send(TEXT, b"after-paste\n")
+                screen = restored.snapshot(lambda s: "ECHO:after-paste" in s["text"])
+                require("xxx" not in screen["text"], "Oversized paste reached child")
+        return {
+            "session_id": old[:16].hex(),
+            "epoch": old[16:32].hex(),
+            "initial_generation": struct.unpack(">Q", old[32:])[0],
+            "final_generation": struct.unpack(">Q", service.attachment[32:])[0],
+            "same_child_pid": service.child_pid,
+        }
+
+    def synchronization_boundaries():
+        with session("synchronization") as service:
+            with service.connect() as initial:
+                initial.snapshot(lambda s: "READY" in s["text"])
+            with WireClient(service.endpoint) as early:
+                early.send(ATTACH, attach_payload(program, arguments, runtime))
+                early.hello()
+                early.send(TEXT, b"BEFORE_READY\n")
+                require("ready" in early.status(), "Input before ready accepted")
+            with WireClient(service.endpoint) as fragmented:
+                packet = frame(ATTACH, attach_payload(program, arguments, runtime))
+                for chunk in [packet[:4], packet[4:17], packet[17:-1]]:
+                    fragmented.socket.sendall(chunk)
+                    time.sleep(0.01)
+                fragmented.socket.sendall(packet[-1:])
+                fragmented.hello()
+                screen = fragmented.next_snapshot()
+                require(
+                    "BEFORE_READY" not in screen["text"],
+                    "Pre-ready input reached child",
+                )
+                fragmented.send(
+                    READY,
+                    fragmented.attachment + struct.pack(">Q", fragmented.sequence),
+                )
+                fragmented.send(TEXT, b"fragmented-ok\n")
+                fragmented.snapshot(lambda s: "ECHO:fragmented-ok" in s["text"])
+            with WireClient(service.endpoint) as legacy:
+                legacy.send(
+                    ATTACH,
+                    struct.pack(">II", 2, 32)
+                    + fingerprint(program, arguments, runtime),
+                )
+                require("incompatible" in legacy.status(), "v2 attachment accepted")
+            with WireClient(service.endpoint) as idle:
+                idle.send(ATTACH, attach_payload(program, arguments, runtime))
+                idle.hello()
+                # Do not acknowledge the screen. Bounded timeout retires this client.
+                require(
+                    "acknowledgement timed out" in idle.status(),
+                    "Missing acknowledgement not bounded",
+                )
+            with service.connect() as restored:
+                restored.send(TEXT, b"after-timeout\n")
+                restored.snapshot(lambda s: "ECHO:after-timeout" in s["text"])
+
+    def backpressure():
+        with session("backpressure") as service, service.connect() as client:
+            client.snapshot(lambda screen: "READY" in screen["text"])
+            client.send(TEXT, b"pause\n")
+            client.snapshot(lambda screen: "PAUSED" in screen["text"])
+            try:
+                # Stop the reader, then exceed the bounded PTY queue with whole messages.
+                packet = frame(TEXT, client.attachment + b"q" * 65536)
+                try:
+                    client.socket.sendall(packet * 24)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                require(
+                    "PTY input queue full" in client.status(),
+                    "Queue overflow was silent",
+                )
+                require(service.process.poll() is None, "Queue overflow killed service")
+            finally:
+                os.kill(service.child_pid, signal.SIGCONT)
+        with session("nonreading") as service:
+            wait_socket(service.endpoint, service.process)
+            with WireClient(service.endpoint) as blocked:
+                blocked.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024)
+                blocked.send(ATTACH, attach_payload(program, arguments, runtime))
+                time.sleep(3.3)  # Deliberately do not read hello or the initial screen.
+                # A non-reader may lose a partial screen when the bounded drain
+                # expires; require closure, not delivery of the trailing status.
+                received = 0
+                deadline = time.monotonic() + WAIT
+                while True:
+                    blocked.socket.settimeout(max(0.01, deadline - time.monotonic()))
+                    chunk = blocked.socket.recv(65536)
+                    if not chunk:
+                        break
+                    received += len(chunk)
+                    require(
+                        received <= 8 * 1024 * 1024 + 8192,
+                        "Unbounded non-reader output",
+                    )
+                    require(time.monotonic() < deadline, "Non-reader not disconnected")
+            with service.connect() as restored:
+                restored.send(TEXT, b"after-nonreader\n")
+                restored.snapshot(
+                    lambda screen: "ECHO:after-nonreader" in screen["text"]
+                )
+
+    def replacement_service():
+        with session("replacement") as service, service.connect() as old:
+            identity = old.attachment
+            old.send(TEXT, b"quit\n")
+            require("Process exited" in old.status(), "Old service did not exit")
+            service.process.wait(timeout=WAIT)
+        with session("replacement") as replacement, replacement.connect() as current:
+            require(
+                current.attachment[:32] != identity[:32],
+                "Replacement reused identity",
+            )
+            with WireClient(replacement.endpoint) as stale:
+                stale.send(
+                    ATTACH, attach_payload(program, arguments, runtime, identity)
+                )
+                require(
+                    "identity" in stale.status(),
+                    "Saved identity attached to replacement",
+                )
+            current.send(TEXT, b"replacement-alive\n")
+            current.snapshot(lambda s: "ECHO:replacement-alive" in s["text"])
+
     def gui():
         with session("gui") as service:
             with service.connect() as initial:
                 initial.snapshot(lambda s: "READY" in s["text"])
             options = [
+                "--discover",
                 "--socket",
                 str(service.endpoint),
                 "--cwd",
@@ -474,6 +728,7 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
                 [
                     "--socket",
                     str(endpoint),
+                    "--new-session",
                     "--smoke-input",
                     "--capture",
                     str(artifacts / "shell.png"),
@@ -596,6 +851,16 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
         "invalid resize preserves geometry and signal exit status",
         invalid_resize_and_signal,
     )
+    record(
+        "identity generations reject stale input and preserve active clients",
+        identity_boundaries,
+    )
+    record(
+        "initial screen acknowledgement, fragmentation and protocol version boundaries",
+        synchronization_boundaries,
+    )
+    record("PTY queue overflow and non-reading attachment", backpressure)
+    record("replacement service rejects remembered identity", replacement_service)
     record("snapshot limit preserves child and permits recovery", snapshot_limit)
     record("literal argv, cwd, resize, paste and exit", literal_resize_exit)
     record("detached output and same-PID reattachment", detach)

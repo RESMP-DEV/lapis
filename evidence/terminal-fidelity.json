@@ -1,0 +1,173 @@
+{
+  "schema": "lapis.terminal-fidelity/1",
+  "recorded_at": "2026-09-18T15:08:15.192580+00:00",
+  "scope": "Milestone 1 B1 macOS cell-grid checkpoint; milestone remains incomplete.",
+  "baseline": "31cabfe",
+  "planning_commit": "13c5cb7",
+  "source_sha256": {
+    "apps/desktop/src/terminal_surface.cpp": "17771206403eb40ef7501c866acfd24f5fbec6cfd4010ea683d93abfdc5cc212",
+    "apps/desktop/tests/terminal_render_test.cpp": "73ed4255c8bb066467304c696195c46f1fb4eb24aaabd4e6ede846564c8f6e4f",
+    "apps/desktop/CMakeLists.txt": "162cc7b17c65bf5b8dce944cfabd8648c242c1e2b3e2ca8b104f164718e4c51a",
+    "scripts/check_ui_preview.py": "251b4f693678bbf647b769b3738eb1d9b2c3bea10c17a4958d7118e55b1fb17f"
+  },
+  "platform": {
+    "os": "26.7",
+    "architecture": "arm64",
+    "hardware": "Apple M4 Max",
+    "qt": "6.11.2",
+    "renderer": "Qt Quick Vulkan through MoltenVK; native macOS windows, threaded render loop",
+    "retina": "Pixel assertions derive physical-image/logical-window scale; font-derived grid is independent of styled marker bounds."
+  },
+  "changes": [
+    "Cell-aligned ASCII runs and locally shaped non-ASCII graphemes share a baseline; optional ASCII ligatures and kerning are disabled.",
+    "Cell backgrounds precede glyphs; underline, strike and overline spans follow them. Wide tails retain background occupancy.",
+    "Unchanged rows remain cached; TerminalSnapshot and wire v3 are unchanged.",
+    "New terminal-render suite shares a CTest GUI resource lock with ui-preview.",
+    "Preview harness prints PASS only after capture or expected-diagnostic checks finish.",
+    "Linux UI explicitly deferred; macOS is the active target with portable platform boundaries."
+  ],
+  "regression": {
+    "test": "terminal-render",
+    "old_renderer_commit": "31cabfe",
+    "same_final_test_on_baseline": true,
+    "baseline_command": "QSG_RENDER_LOOP=threaded ctest --test-dir <repo>-worktrees/m1-verification/build/terminal-render-worker -R ^terminal-render$ --output-on-failure",
+    "baseline_log": "build/milestone1/native-baseline-red-final.log",
+    "baseline_result": "Expected failure after valid native window/snapshot geometry: styled background region expected [0,79], actual [0,66].",
+    "changed_renderer": "Passed, including in full normal/ASan/TSan suites.",
+    "cases": [
+      "CJK wide cell and following Latin",
+      "combining grapheme",
+      "emoji fallback",
+      "Hebrew and Arabic cell anchors",
+      "bold and italic",
+      "double/single underline with disabled gap and color transitions",
+      "strike and overline positioning",
+      "inverse default underline color",
+      "invisible decoration suppression",
+      "actual Ghostty resize",
+      "clearing stale colors",
+      "cursor repaint and movement"
+    ]
+  },
+  "checks": [
+    {
+      "command": "python3 scripts/check_cpp.py dev",
+      "passed": true,
+      "ctest_suites": 3,
+      "receipt": "build/reports/dev/receipt.json"
+    },
+    {
+      "command": "QSG_RENDER_LOOP=threaded python3 scripts/check_cpp.py desktop",
+      "passed": true,
+      "ctest_suites": 10,
+      "static_checks": [
+        "clang-format",
+        "clang-tidy",
+        "Cppcheck"
+      ],
+      "receipt": "build/reports/desktop/receipt.json"
+    },
+    {
+      "command": "cmake --build build/desktop-asan --parallel 6; QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-asan --output-on-failure --no-tests=error",
+      "passed": true,
+      "ctest_suites": 10,
+      "log": "build/milestone1/asan-ctest.log"
+    },
+    {
+      "command": "cmake --build build/desktop-tsan --parallel 6; QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-tsan --output-on-failure --no-tests=error",
+      "passed": true,
+      "ctest_suites": 10,
+      "log": "build/milestone1/tsan-ctest.log"
+    },
+    {
+      "command": "python3 scripts/verify_cpp_tools.py",
+      "passed": true,
+      "receipt": "build/reports/tool-verification/receipt.json"
+    },
+    {
+      "command": "python3 -m unittest discover -s scripts/tests -v",
+      "passed": true,
+      "tests": 23,
+      "log": "build/milestone1/python-tests.log"
+    },
+    {
+      "command": "ruff check --isolated scripts; ruff format --isolated --check scripts",
+      "passed": true
+    },
+    {
+      "command": "python3 scripts/check_ui_preview.py --artifacts build/milestone1/ui-preview-verified",
+      "passed": true,
+      "cases": 8,
+      "receipt": "build/milestone1/ui-preview-verified/receipt.json"
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --desktop --codex --output build/milestone1/cli-final.json",
+      "passed": true,
+      "cases": 12,
+      "receipt": "build/milestone1/cli-final.json",
+      "codex": {
+        "sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+        "arguments": [
+          "--no-daemon"
+        ],
+        "prompt_submitted": false
+      }
+    }
+  ],
+  "preserved_failures": [
+    {
+      "kind": "test fixture",
+      "detail": "Initial worker test omitted Retina scaling; corrected before accepting red/green evidence."
+    },
+    {
+      "kind": "test fixture",
+      "detail": "Decoration ANSI fixtures, physical scanline grouping and cell-edge sampling corrected after native execution."
+    },
+    {
+      "kind": "static analysis",
+      "detail": "Renderer enum size and float loop counter fixed; test coordinate parameters changed to QPoint. Final checks pass."
+    },
+    {
+      "kind": "capture timeout",
+      "log": "build/milestone1/ui-preview-final/reject-destination.log",
+      "detail": "Invalid-destination capture timed out instead of producing the required diagnostic. Receipt correctly failed; console previously printed premature PASS. Reporting fixed. Isolated rerun produced Window capture failed, then all eight cases passed. Intermittent initial-frame timeout cause remains unproven."
+    }
+  ],
+  "delegation": {
+    "provider_evidence": "CCR runtime logs showed Direct routing: zai,glm-5.3 and Trying zai,glm-5.3 (zai).",
+    "work": [
+      "renderer implementation",
+      "independently authored regression tests",
+      "history source and live API research",
+      "initial Linux readiness probe",
+      "platform and test documentation"
+    ],
+    "integration": "Parent reviewed and corrected drafts, integrated file-scoped changes and ran native GUI acceptance; worker build completion alone was not acceptance.",
+    "independent_review": "Timed out after 300 seconds; same-session synthesis retry timed out after120 seconds. No final review or approval claimed. Parent integration review completed."
+  },
+  "history_probe": {
+    "kind": "exploratory local C API observation, not product implementation",
+    "source_sha256": "eb4d6d05e61897399486c7ddec5b5ff06f432ed29effb57df7b685530cc87b8f",
+    "source": "build/milestone1/history-probe/history_probe.c",
+    "log": "build/milestone1/history-probe/selected-prefix-output.txt",
+    "library_sha256": "ee4e3e23bbd9e9213db66afd80c764ca65f7f505fd9a175fa661cfb602934477",
+    "observed": "2186-byte snapshot restored 81 total rows including79 history; absolute viewport clamps to offset79. Undersized encoding rejected.",
+    "not_proven": [
+      "multi-page history decode",
+      "row text/style equality",
+      "disk persistence",
+      "reflow and quotas",
+      "disk-full/interrupted-write recovery"
+    ],
+    "diagnostic_log_is_pty_replay": false
+  },
+  "limits": [
+    "Contextual shaping across terminal cells remains open; curly underline retains the old single-line fallback.",
+    "No physical keyboard/IME, accessibility, selection or input-to-presentation performance qualification in this slice.",
+    "No older disk-backed history implemented.",
+    "No new Linux UI qualification; initial host probes did not return an inventory and were stopped when macOS priority was clarified.",
+    "Vendor Qt/MoltenVK/Ghostty are not instrumented by first-party sanitizer builds; passing exercised paths does not prove complete safety.",
+    "Native GUI regression/capture evidence is functional, not a latency benchmark.",
+    "No dependency manifests or pins changed; no new dependency audit was required."
+  ]
+}

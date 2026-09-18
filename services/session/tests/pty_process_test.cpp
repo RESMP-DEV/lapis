@@ -226,11 +226,21 @@ void cleanup_after_leader_exit(const QString& directory) {
     QElapsedTimer elapsed;
     elapsed.start();
     const auto leader = static_cast<pid_t>(result.pid);
-    while ((::kill(child, 0) == 0 || ::kill(-leader, 0) == 0) && elapsed.elapsed() < 2000)
+    const auto absent = [](pid_t target) { return ::kill(target, 0) == -1 && errno == ESRCH; };
+    // macOS can return EPERM while the dying group is still being reaped.
+    // Only ESRCH proves disappearance; other results must keep waiting.
+    while ((!absent(child) || !absent(-leader)) && elapsed.elapsed() < 2000)
         QThread::msleep(5);
     require(::kill(child, 0) == -1 && errno == ESRCH,
             "Quiet SIGHUP-resistant child survived normal leader exit");
-    require(::kill(-leader, 0) == -1 && errno == ESRCH, "Process-group guard survived cleanup");
+    const int group_status = ::kill(-leader, 0);
+    const int group_error = errno;
+    if (group_status != -1 || group_error != ESRCH)
+        throw std::runtime_error(
+            "Process-group guard survived cleanup: leader=" + std::to_string(leader) +
+            " child=" + std::to_string(child) + " status=" + std::to_string(group_status) +
+            " errno=" + std::to_string(group_error) +
+            " elapsed_ms=" + std::to_string(elapsed.elapsed()));
 }
 int descendant_fixture(bool busy, bool exit_leader = false) {
     std::array<int, 2> ready{};

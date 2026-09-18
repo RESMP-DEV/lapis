@@ -22,6 +22,12 @@ turn was started. The same executable's help advertises `--remote`, `--no-daemon
 `hooks` and `daemon_auto_start` enabled. These observations establish available
 options, not hook delivery or shared-thread observation.
 
+The [session reconnect receipt](../../evidence/session-reconnect.json) extends the
+no-prompt TUI check through wire v3: the desktop restores a verified session and
+enables input only after the first screen. Use `--new-session` for initial launch,
+then omit it to reconnect; `--discover` explicitly adopts an existing matching
+service. These transport identities are separate from Codex thread/turn/request IDs.
+
 ## Integration route comparison
 
 The first wiring slice preserves the ordinary CLI terminal interface. The

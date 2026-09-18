@@ -40,18 +40,20 @@ The desktop steps require a logged-in graphical session and the exact dependenci
 below. Run GUI checks serially, including across worktrees, so windows do not steal
 focus from another test. The baseline is not a substitute for the scope-specific
 sanitizer, tooling or dependency checks in the [required matrix](#checks).
-On Linux, record a headless baseline and its platform limits; do not claim desktop
+For the deferred Linux port, record a headless baseline and its platform limits; do not claim desktop
 acceptance from a headless pass. Report a pre-existing failure with its command,
 SHA and log before mixing repairs into a large change.
 
 ### Large changes and parallel contributors
 
-Agree on a compact task brief before implementation: objective and milestone,
-owner, allowed files, dependencies, shared interface/version, acceptance commands
-and integration owner. Use the [ownership boundaries](docs/architecture.md#component-ownership)
-to divide work. Root CMake files, shared headers, architecture and status docs need
-one coordinating owner; reserve overlapping edits explicitly. Independent work
-can proceed in separate worktrees from the same committed baseline.
+Contributors share ownership and work together on the same feature. Agree on a
+compact task brief: objective, milestone, current editing scope, dependencies,
+shared interface/version and acceptance commands. Use the
+[component boundaries](docs/architecture.md#component-ownership) to preserve
+interfaces, not to assign permanent contributor roles. Coordinate overlapping
+edits to root CMake files, shared headers, architecture and status docs. Temporary
+worker scopes prevent collisions; separate worktrees are useful when independent
+changes need isolated builds.
 
 For sweeping changes, open reviewable checkpoints that keep `main` buildable.
 Separate mechanical moves from behavior changes where practical. Settle the
@@ -208,16 +210,23 @@ For a repeatable visual/input check:
 
 ```sh
 build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop \
-  --smoke-input --capture "$PWD/build/window.png"
+  --new-session --smoke-input --capture "$PWD/build/window.png"
 ```
 
 This opens a real window, clears a harmless partial command with Control-U, sends
 a unique `printf` marker and `stty size` through Qt key routing (including
 Alt-B/Alt-D shell word editing), waits for the
 service snapshot, captures the window, and exits. `--compact` tests 980×700 logical
-pixels. The shell survives the capture process. Keep captures private under
-`build/` unless reviewed for terminal content. This is functional acceptance, not
-an input-latency benchmark.
+pixels. Record the capture device pixel ratio and distinguish physical image
+coordinates from Qt logical coordinates. The shell survives the capture process.
+Keep captures private under `build/` unless reviewed for terminal content. This
+is functional acceptance, not an input-latency benchmark. Serialize every GUI
+check across worktrees; an offscreen or headless result never counts as
+native-display qualification. The two CTest GUI suites share `qt_gui` as a
+resource lock within one invocation; separate invocations still need explicit
+coordination. For renderer changes, run `terminal-render` against the previous
+renderer and the proposed change: a valid baseline failure must identify a
+pixel/layout assertion after window and snapshot preconditions pass.
 
 The macOS app sets `QT_MTL_NO_TRANSACTION=1` before Qt initialization. On this
 Qt/MoltenVK combination, the default transaction layer emitted five-second display
@@ -238,14 +247,23 @@ by these C++ presets; a passing test is not coverage of those implementations.
 
 ### CLI integration qualification
 
-The default desktop launches `$SHELL -i` (or `/bin/sh -i`) in the checkout.
+The shell launch specification is `$SHELL -i` (or `/bin/sh -i`) in the checkout.
+First use requires **Session → Start new session** or `--new-session`.
+Subsequent launches without that flag reconnect using the saved identity; they
+never create a replacement process. `--discover` explicitly adopts an existing
+matching service. Both flags are mutually exclusive and unavailable in fixture mode.
 Use `--socket PATH --cwd DIRECTORY -- PROGRAM ARG...` for an explicit launch.
 Arguments are literal; use `--` to separate lapis options from the child's options.
-Repeat the same launch to reattach; changing executable/argv/cwd on an occupied
+Repeat the same launch without `--new-session` to reattach; changing executable/argv/cwd on an occupied
 endpoint is rejected. A socket parent must be owned by you and private (0700).
 Existing directories/files are not repurposed. Logs are written beside each
-socket as `<socket>.log`. The default endpoint is `runtime/desktop-v2.sock`;
-old v1 sessions stay untouched.
+socket as `<socket>.log`. The default endpoint is `runtime/desktop-v4.sock`;
+old v1/v2/v3 sessions stay untouched. The `<socket>.session` hint is a private 0600
+regular file containing session ID, epoch and launch fingerprint. A missing or
+corrupt hint disables implicit attachment. Explicit discovery can replace corrupt
+contents in a safe file; unsafe modes, symlinks or hardlinks require repair first.
+The service identity is always checked live. After the service ends, choose Start
+new session explicitly; an occupied endpoint will be rejected, preserving its child.
 
 Run `just cli-check` for isolated service and GUI fixtures. For the optional
 installed Codex test:
@@ -262,8 +280,8 @@ and quits from the empty composer with Ctrl-D.
 It does not send Enter or start a model turn. Service IPC drives those Codex inputs;
 the separate shell smoke drives Qt key events. No physical-key, IME or attention
 claim follows. Logs/captures stay in a unique directory beside the receipt; runtime
-sockets use a fresh private directory. The [saved receipt](evidence/cli-launch.json)
-delimits this checkpoint.
+sockets use a fresh private directory. The [launch receipt](evidence/cli-launch.json) and
+[reconnect receipt](evidence/session-reconnect.json) delimit the exercised scope.
 
 Read-only Codex inventory can be repeated now, without starting a model turn:
 
@@ -399,6 +417,7 @@ Run from the repository root:
 | `just ui` / `just ui-debug` | Isolated source-QML fixture, directly or in LLDB |
 | `just ui-check` | Bounded isolated captures, attention state and expected failures |
 | `just cli-check` | Isolated live service/CLI and shell GUI acceptance |
+| `just native-input` | Automated macOS keyboard/clipboard and real Japanese IME through the PTY |
 
 Required checks accumulate when a change touches multiple areas:
 
@@ -408,8 +427,9 @@ Required checks accumulate when a change touches multiple areas:
 | Memory/lifetime, parsing or process resources | Relevant cases through `just asan` |
 | Threading, queues or session lifecycle | Relevant cases through `just tsan`, separately from ASan |
 | PTY, local transport or CLI launch | `just desktop`, `just cli-check`, and desktop-enabled ASan/TSan as applicable below |
-| QML, rendering or desktop input | `just desktop` and `just ui-check`; live input changes also need `just cli-check` |
+| QML, rendering or desktop input | `just desktop` and `just ui-check`; live input changes also need `just cli-check` and `just native-input` on the qualified Mac |
 | Build/test tooling | `just verify-tools` plus affected positive check/build paths |
+| Disk history | `python3 scripts/check_history.py --disk-full` on macOS, plus desktop-enabled ASan/TSan; the disk-full fixture creates and removes its own 32 MiB disk image |
 | Python tooling | `ruff check --isolated scripts` and `ruff format --isolated --check scripts`, plus relevant runtime probes |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; no unrelated C++ rebuild |
 
@@ -446,13 +466,20 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `session-platform-ownership` | Headless and desktop | POSIX descriptor ownership and moves |
 | `terminal-behavior` | Headless and desktop | Ghostty parsing, snapshots, history, resize and mode-aware input |
 | `launch-spec` | Desktop-enabled | Literal launch validation and private endpoint rules |
-| `local-protocol` | Desktop-enabled | Framing, bounds, snapshots and invalid messages |
+| `local-protocol` | Desktop-enabled | v4 identity/timing/history envelopes, framing, bounds, snapshots and invalid messages |
+| `session-descriptor` | Desktop-enabled | Private identity hint, atomic replacement, corruption and unsafe-file rejection |
+| `live-connection` | Desktop-enabled | Screen-before-input, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
 | `ui-preview` | Desktop-enabled | Qt reload, attention, input and render lifecycle |
+| `history-store` | Desktop-enabled | Styled page round trips, per-session/global quotas, corruption, interrupted-write cleanup and file-size write failure recovery |
+| `terminal-input` | Desktop-enabled, native GUI | Qt composition commit/cancel, replacement rejection, paste and focus/document/history/disconnect ownership |
+| `terminal-render` | Desktop-enabled | Real Qt Vulkan pixel regressions for cell background grids, wide/combining characters, fallback/RTL text, styles/decorations, actual Ghostty resize, cursor placement and clearing |
 
-`just desktop` runs these seven suites plus static checks. The separate Python
+`just desktop` runs these twelve suites plus static checks. The separate Python
 GUI harness checks five preview captures and three expected failures. The CLI
-harness checks detached service behavior; `--desktop` adds Qt-to-shell input and
+harness checks detached service behavior, attachment generations, fragmented
+handshakes, synchronization timeout, stale controls, bounded queue failure and
+replacement identities; `--desktop` adds Qt-to-shell input and
 captures, and optional `--codex` adds the installed no-prompt TUI acceptance.
 A screenshot, a headless suite and a real agent approval round trip prove different
 things. See [CLI qualification](#cli-integration-qualification) for the latter gap.
@@ -463,11 +490,113 @@ rerun the failing suite, then rerun the relevant complete check on the final dif
 For a capture watchdog failure, inspect its log and window activation/frame
 prerequisites; stop competing GUI checks and reproduce that case in isolation.
 Preserve the original failure even if a clean run subsequently passes.
+For process-group cleanup, poll for `ESRCH`; a temporary macOS `EPERM` is
+not proof that the group disappeared. The test retains PID, errno and elapsed
+time in its failure diagnostic.
 Do not weaken assertions, add broad suppressions or count an expected-failure
 probe as a pass unless its expected diagnostic was observed. Raw CMake/CTest
 commands below do not run format, clang-tidy or Cppcheck; `just desktop` supplies
 those checks. Save custom build/test output under `build/` and include exact
 commands with any sanitized receipt committed to `evidence/`.
+
+### History and input qualification
+
+Build the current desktop first. Run these checks serially with other GUI work:
+
+```sh
+python3 scripts/check_history.py --disk-full
+ctest --test-dir build/desktop -R 'terminal-input|live-connection' --output-on-failure
+build/desktop/apps/desktop/lapis_terminal_latency_probe \
+  --native --samples 100 --output build/terminal-latency.json
+```
+
+`check_history.py` runs a controlled Python child under the real service. It covers
+1,500 output rows with a one-row viewport, quota eviction, older/newer paging,
+resize, same-child reattachment and corrupt-record recovery. `--disk-full` is
+macOS-only and fills a newly created 32 MiB HFS+ image until the OS returns ENOSPC;
+it checks that live input survives and browsing recovers after freeing space. It
+never formats an existing device. Omit the flag for the portable service cases.
+For sanitizer binaries, pass `--build-dir build/desktop-asan` or
+`build/desktop-tsan`; keep address and thread instrumentation separate.
+
+The native timing command requires a logged-in desktop and `cliclick` with
+Accessibility permission. It briefly activates its own controlled window and
+sends Return through macOS. It starts and cleans up its own service/child. Run it
+without competing GUI checks or builds for a measurement receipt; omit `--native`
+for a separately labeled synthetic Qt baseline. Five warmups precede the requested
+samples. Record revision, binary hashes, host, tool versions, observed refresh rate
+and workload alongside JSON. Results include p50/p95/p99 stage timings, samples
+over one refresh interval, separate desktop/service idle CPU, resident memory and
+idle submitted frames and 20 retained history-to-live returns (with at least 30 input
+samples). The JSON `transport` interval starts before service snapshot extraction, so it
+includes snapshot building/encoding, IPC and GUI decoding; it is not pure socket
+latency. Frame submission is not pixel presentation, and idle frame
+count is not a hardware GPU-utilization counter. These timings remain observations,
+not pass/fail performance thresholds. This probe does not measure cross-session
+switches or real agent turns.
+
+Native software input acceptance is automated on macOS; no physical typing is
+required. After `just desktop`, run this separately from every other GUI test:
+
+```sh
+just native-input
+# Equivalent command, also usable with desktop-asan or desktop-tsan builds:
+build/desktop/apps/desktop/lapis_native_input_probe --output build/native-input.json
+```
+
+The opt-in probe needs macOS 14 or later, a logged-in graphical session, installed
+Apple US/Japanese input sources, and macOS Accessibility event-posting permission
+for the invoking test environment. It fails with a diagnostic if permission is
+absent; it does not prompt or change that permission. It is built on macOS but is
+not registered in CTest because headless CI lacks these desktop prerequisites.
+Run it on the qualified Mac for changes to native input or composition handling.
+Avoid interacting with the keyboard/clipboard during this short exclusive test.
+
+The built-in Japanese input method editor (IME) provides a reproducible test of
+provisional composition and explicit commit/cancel: for example, Roman `a`
+produces provisional `あ`. Ordinary English typing does not exercise that path.
+This fixture does not change lapis's UI language or imply all input methods have
+been qualified. Printable/Control/Option keys and paste use the US layout.
+
+CoreGraphics posts keys to the probe's own process. AppKit, the actual Apple
+Japanese IME, Qt and the real service-owned PTY handle them. The probe checks exact
+received bytes for printable/Control/Option keys and Command-V multiline Unicode
+bracketed paste; observes native preedit and commit; checks cancellation and fresh
+composition after history, document detach, window focus and actual attachment
+replacement/reconnect; and verifies commit plus the candidate anchor after resize.
+On native focus loss, Apple's IME may commit to the original terminal; the probe
+asserts that the new terminal receives no composition bytes. This does not add a
+multi-session product UI. The candidate anchor check verifies the rectangle
+provided to the IME, not the visual pixels of Apple's candidate window.
+
+It temporarily enables US and Japanese input sources, then restores and verifies
+the selected source, enabled-source inventory and clipboard MIME data. Only
+controlled fixture bytes enter the JSON receipt; user clipboard contents are not
+logged. Private temporary services and files are cleaned up. Preserve the JSON
+and stderr log on failure. Qt-injected composition tests remain useful separate
+coverage. Physical keyboard hardware and key-to-photon measurements are outside
+Milestone 1 software acceptance. Selection/copy from terminal cells and a
+screen-reader terminal tree remain unsupported.
+
+History is under `runtime/history` by default. Before starting a service, set
+`LAPIS_HISTORY_ROOT` to an absolute private directory and optionally set
+`LAPIS_HISTORY_SESSION_BYTES` / `LAPIS_HISTORY_GLOBAL_BYTES` (positive bytes,
+session <= global <= 4 GiB). Defaults are 64 MiB / 256 MiB, with a 4,096-page global
+cap. The global quota is shared by services using that root, not every arbitrary
+root on the machine. Pages preserve their recorded geometry; only in-memory
+engine history reflows on resize. History controls never resize or send input to
+the child. Return to Live restores its newest retained screen and requested size.
+
+A storage failure pauses recording and reports a gap when history is requested;
+live I/O continues within its memory bound. Free space or repair the configured
+storage, then use Older to retry. A damaged page is rejected, never rendered as
+valid history. Retire a damaged archive directory only after its owning service
+has ended; archiving is terminal content, so retain it only as long as needed.
+The store removes only its known abandoned `.pending` write under its root lock;
+it leaves unknown files alone. Page-byte quotas exclude fixed metadata and bounded
+atomic-write overhead. Normal exit and direct service error shutdown allow up to three seconds to drain
+queued pages; a forced
+service kill can lose its queued tail. Stored pages are not process recovery.
 
 ### Desktop sanitizers
 
@@ -493,7 +622,7 @@ python3 scripts/check_cli_launch.py --build-dir build/desktop-asan \
 Repeat those configure/build/test/harness commands with preset `tsan` and all
 `desktop-asan` paths changed to `desktop-tsan`. Do not combine instrumentation or
 use `ctest --preset asan` for the custom directory: that preset targets
-`build/asan`. Each desktop-enabled directory must list all seven suites above.
+`build/asan`. Each desktop-enabled directory must list all twelve suites above.
 Use the same LLVM installation for normal and instrumented builds. Ccache is
 optional (`-DCMAKE_CXX_COMPILER_LAUNCHER=...`); raw CMake does not discover it.
 Reduce `--parallel` for host resource limits. The CLI command above runs service
@@ -638,7 +767,8 @@ key-to-photon claims additionally need an external camera/photodiode measurement
 
 1. Build the app with `just desktop` (optimized, symbols, sanitizers off).
    `just profile` covers the headless targets. UI frame observations are available;
-   correlated native-input, service and presentation markers still need work.
+   the latency probe correlates native-input, service and frame-submission markers;
+   actual pixel-presentation timestamps remain unmeasured.
 2. Warm the declared caches, then record a repeatable sequence: local typing,
    scroll/resize, session switches and output bursts. First qualify one terminal,
    then switching with two. Extend the same procedure to 32 sessions later.

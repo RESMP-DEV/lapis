@@ -53,3 +53,15 @@ ui-check:
 # Dedicated service/desktop launch cases; no model turn or live-shell reuse.
 cli-check:
     python3 scripts/check_cli_launch.py --desktop
+
+# Real service history, quotas and controlled macOS disk exhaustion.
+history-check:
+    python3 scripts/check_history.py --disk-full
+
+# Correlated native-input/frame-submission measurement; run without competing GUI work.
+latency:
+    build/desktop/apps/desktop/lapis_terminal_latency_probe --native --samples 100 --output build/terminal-latency.json
+
+# Automated AppKit keyboard, clipboard and real Japanese IME; run GUI checks serially.
+native-input:
+    build/desktop/apps/desktop/lapis_native_input_probe --output build/native-input.json

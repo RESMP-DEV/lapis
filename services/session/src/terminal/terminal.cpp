@@ -275,6 +275,37 @@ struct Terminal::Impl {
         return config.value;
     }
 
+    [[nodiscard]] TerminalHistory scrollbar_history() const {
+        GhosttyTerminalScrollbar scrollbar{};
+        terminal_get(GHOSTTY_TERMINAL_DATA_SCROLLBAR, scrollbar);
+        GhosttyTerminalScreen screen{};
+        terminal_get(GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, screen);
+        return {scrollbar.total, scrollbar.offset, scrollbar.len,
+                screen == GHOSTTY_TERMINAL_SCREEN_PRIMARY};
+    }
+
+    void scroll_to_row(std::size_t offset) const {
+        const GhosttyTerminalScrollViewport behavior{
+            GHOSTTY_SCROLL_VIEWPORT_ROW, GhosttyTerminalScrollViewportValue{.row = offset}};
+        ghostty_terminal_scroll_viewport(terminal.get(), behavior);
+    }
+
+    void require_restored_history(const TerminalHistory& expected) const {
+        const TerminalHistory observed = scrollbar_history();
+        if (observed.primary_available != expected.primary_available ||
+            observed.total_rows != expected.total_rows ||
+            observed.viewport_offset != expected.viewport_offset ||
+            observed.viewport_rows != expected.viewport_rows) {
+            throw std::runtime_error("Ghostty did not restore terminal viewport: expected " +
+                                     std::to_string(expected.total_rows) + "/" +
+                                     std::to_string(expected.viewport_offset) + "/" +
+                                     std::to_string(expected.viewport_rows) + ", observed " +
+                                     std::to_string(observed.total_rows) + "/" +
+                                     std::to_string(observed.viewport_offset) + "/" +
+                                     std::to_string(observed.viewport_rows));
+        }
+    }
+
     void require_healthy() const {
         if (poisoned)
             throw std::overflow_error("Terminal reply queue overflowed");
@@ -327,6 +358,11 @@ struct Terminal::Impl {
         ++revision;
     }
 
+    [[nodiscard]] TerminalHistory history_metadata() {
+        require_healthy();
+        return scrollbar_history();
+    }
+
     [[nodiscard]] TerminalSnapshot make_snapshot();
     [[nodiscard]] TerminalCell extract_cell(TerminalSnapshot& snapshot);
     [[nodiscard]] std::string encode_key(TerminalKey key_value, KeyModifiers modifiers);
@@ -336,6 +372,36 @@ struct Terminal::Impl {
 Terminal::Terminal(TerminalSize size, TerminalLimits limits)
     : impl_(std::make_unique<Impl>(size, limits)) {}
 Terminal::~Terminal() = default;
+
+TerminalHistory Terminal::history_metadata() { return impl_->history_metadata(); }
+
+TerminalSnapshot Terminal::history_snapshot(std::size_t offset) {
+    const TerminalHistory before = impl_->history_metadata();
+    if (!before.primary_available)
+        throw std::runtime_error("Terminal primary history is unavailable");
+    if (before.viewport_rows == 0U || before.viewport_rows > before.total_rows ||
+        offset > before.total_rows || before.total_rows - offset < before.viewport_rows) {
+        throw std::invalid_argument("Terminal history offset does not contain a full viewport");
+    }
+
+    impl_->scroll_to_row(offset);
+    try {
+        TerminalSnapshot snapshot = impl_->make_snapshot();
+        snapshot.history = impl_->history_metadata();
+        snapshot.history.primary_available = true;
+        impl_->scroll_to_row(before.viewport_offset);
+        impl_->require_restored_history(before);
+        return snapshot;
+    } catch (...) {
+        try {
+            impl_->require_restored_history(before);
+        } catch (const std::exception&) {
+            impl_->scroll_to_row(before.viewport_offset);
+        }
+        impl_->require_restored_history(before);
+        throw;
+    }
+}
 
 void Terminal::feed(std::string_view bytes) { impl_->feed(bytes); }
 void Terminal::resize(TerminalSize size) { impl_->resize(size); }
@@ -478,7 +544,8 @@ TerminalSnapshot Terminal::Impl::make_snapshot() {
     snapshot.application_cursor_keys = mode(GHOSTTY_MODE_DECCKM);
     GhosttyTerminalScrollbar scrollbar{};
     terminal_get(GHOSTTY_TERMINAL_DATA_SCROLLBAR, scrollbar);
-    snapshot.history = {scrollbar.total, scrollbar.offset, scrollbar.len};
+    snapshot.history = {scrollbar.total, scrollbar.offset, scrollbar.len,
+                        !snapshot.alternate_screen};
 
     auto row_handle = row_iterator.get();
     require_success(ghostty_render_state_get(render.get(), GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR,

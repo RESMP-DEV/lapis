@@ -43,10 +43,10 @@ architecture document instead of creating another status or roadmap file.
   policy, and rendering separate. The session service owns running agents; a GUI
   restart must not kill service-owned processes. Service failure and machine
   reboot require their own recovery behavior.
-- Target macOS and Linux. Start on macOS, check Linux during engine selection,
-  and qualify the minimal Linux terminal before expanding the desktop. Put GPU
-  integration, POSIX PTYs, native input, credential storage and OS integration
-  behind platform boundaries. Claim support only on platforms actually exercised.
+- macOS is the active target. Keep GPU integration, POSIX PTYs, native input,
+  credential storage and OS integration behind sensible platform boundaries so
+  Linux can be ported and qualified later. Claim support only on platforms
+  actually exercised.
 - C++20 is the compiled baseline and service direction; pinned Ghostty VT is the
   selected candidate for the first production adapter. Keep its unstable C API
   isolated and close the recorded dependency-notice gaps before redistribution.
