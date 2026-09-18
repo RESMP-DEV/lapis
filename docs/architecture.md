@@ -418,6 +418,113 @@ sessions and the 32-session benchmark in the following milestones. Protocol and
 hook research may run independently; advertised methods are not integration
 acceptance. The static cards remain review fixtures.
 
+### Implementation queue after PR #2
+
+Planning baseline: merged `99567cb` (September 18, 2026). These are proposed
+implementation slices, not completed capabilities. The next user-visible result
+is a terminal that can reconnect to the same running session, show whether its
+state is current, and refuse input aimed at an obsolete attachment. The following
+work makes that terminal usable with native input and real TUIs. Keep
+milestone 1 open until its acceptance below is exercised.
+
+| Order | Reviewable slice and owner | Acceptance result |
+| --- | --- | --- |
+| A: start here | Session identity and safe attachment; shared contributors | GUI reconnect preserves session identity and child; a replaced attachment cannot send input; input stays disabled until the initial authoritative screen is applied; service replacement is reported distinctly |
+| B1: parallel with A | Cell layout and font fidelity; shared contributors | Wide/combining characters, fallback fonts, styles and cursor placement match the engine grid through resize; real shell/TUI captures reproduce the cases |
+| B2: after B1 | Native input and first responsiveness measurements; shared contributors | Real keyboard, paste and IME composition/cancellation work without losing input ownership; selection/clipboard/accessibility gaps are explicitly exercised or remain open; correlated input/service/frame measurements report p50/p95/p99 and their endpoint limits |
+| C: after A | Bounded older history; service owner | Recent screen stays warm while older history is stored under per-session/global quotas; scrollback retrieval, eviction, disk-full and interrupted-write recovery remain bounded and preserve the live screen |
+| D: minimal Linux qualification | Platform/verification owner, integrating A through C and native input fixes | Named Linux host, display stack and driver exercise PTY lifecycle, real Vulkan rendering, input, resize and detach/reattach; a headless or software-only result does not qualify the GPU desktop |
+
+B1 can land before A because the owned `TerminalSnapshot` value contract remains
+its boundary. Linux build/dependency investigation and Codex observation-route
+research can also start independently. Final Linux acceptance follows integration;
+a remote compute host or headless container alone cannot supply native desktop
+input evidence. Record the actual host/display prerequisites before scheduling
+that acceptance. No calendar estimate is assigned until the new contributor's
+scope and the qualification host are established.
+
+#### First implementation PR: session identity and input readiness
+
+The current v2 hello carries only protocol version and child PID. The desktop
+marks itself ready on hello, before receiving the initial screen; disconnect ends
+the current connection, and a new launch can create a replacement service. The
+launch fingerprint verifies executable/arguments/cwd, not session continuity.
+Extend this one-session path before building a session registry or more live cards.
+
+Proposed minimum contract for the next PR:
+
+- A service-issued session ID remains stable for the running session across GUI
+  detach/reattach. A fresh service incarnation has a fresh epoch; the PID is
+  diagnostic data, never the authority for identity. Reopening an ended session
+  must not silently present a newly launched child as the old session.
+- Every successful attachment receives a new generation. Input, paste and resize
+  identify the session, service epoch and attachment generation; the service
+  rejects stale tuples. A new attachment retires the previous client's authority.
+- The client distinguishes connecting, synchronizing, ready, disconnected and
+  ended/replaced states. It enables terminal input only after applying a full
+  snapshot for the accepted identity. An explicit reconnect action makes bounded
+  attempts to that same identity; it must not respawn an agent or replay buffered
+  input implicitly. Automatic reconnect policy follows separately.
+- Distinguish first launch from reconnect. Retain the last accepted session/epoch
+  and launch fingerprint in a bounded owner-only local descriptor so a GUI restart
+  can detect endpoint reuse. Treat that descriptor as a hint to verify against
+  the live service, not proof of liveness or authorization. Missing/corrupt state
+  requires explicit discovery/new-session handling, not presumed continuity.
+- GUI loss preserves the service-owned child and parser. Service loss/reboot
+  invalidates the attachment and reports loss of the running session. Durable
+  launch profiles and recovery of old processes are separate later contracts.
+- Keep bounded full snapshots for this slice. Order them within a service epoch;
+  intentional display coalescing may skip terminal revisions. Do not confuse
+  those skipped display revisions with loss of input or control events. Reconnect
+  starts with an authoritative screen, not replay of an unbounded byte backlog.
+- Introduce wire v3 for the incompatible identity envelope. Leave running v2
+  endpoints untouched and use a separate default endpoint. Test both version
+  mismatch directions. Shared serialization and client/server behavior land
+  together; the exact field encoding is settled in the implementation PR.
+
+Extend the existing service harness and protocol cases with two successive GUI
+attachments, stale-generation input/resize, fragmented handshakes, disconnect
+before the first snapshot, slow/non-reading clients, and a service replacement
+at the same endpoint. Assert the original child's identity and continued output
+for GUI loss, and absence of stale input on the replacement. Exercise atomic paste
+rejection and queue overflow without silently dropping control events. These are
+planned additions to existing suites, not claims of current coverage.
+
+Acceptance commands are `python3 scripts/check_cpp.py dev`,
+`python3 scripts/check_cpp.py desktop` and
+`python3 scripts/check_cli_launch.py --desktop`, plus the documented
+[desktop-enabled ASan/TSan suites and service harness](../CONTRIBUTING.md#desktop-sanitizers).
+Repeat the installed no-prompt Codex fixture when checking the updated launch and
+attachment path. Retain the source hash, identities observed and failure outcomes
+in sanitized evidence; update README status only after the behavior passes.
+
+#### Shared implementation ownership
+
+Contributors work together on the same feature and share ownership of the project.
+Coordinate overlapping edits and build runs per task; temporary worker file
+assignments prevent collisions, not permanent responsibility boundaries. Agree on
+shared contracts before dependent edits, preserve each other's changes, and review
+the combined behavior together. Use separate worktrees when useful and one owner
+for each active build directory. GUI checks remain serial across worktrees.
+
+#### Following product checkpoints
+
+After A through D close persistent-terminal acceptance, implement the attention
+state machine and qualify a real Codex route. Preserve the ordinary CLI view;
+choose hooks or shared-server attachment only from live observation, explicit
+response and reconnect evidence. A notification-only hook must leave the answer
+in the originating terminal. A separately owned app-server remains a distinct
+session type. Use disposable fixtures, a declared provider/model, bounded turns
+and explicit approval settings for that later qualification.
+
+Then replace fixture cards with **two actual retained sessions**, deliver manual
+navigation and keyboard ownership guards, and add pin/snooze and the opt-in
+attention carousel. Only after that behavior works should the 32-session workload
+and second independent adapter qualify scale and tool independence. The
+[following milestones](#following-milestones) retain their acceptance gates;
+packaging/notices/SBOM work can proceed independently and must finish before
+binary distribution.
+
 ### Engine experiment decision
 
 Use **Ghostty VT with a C++20 service**; the first adapter now implements this decision. At pinned
