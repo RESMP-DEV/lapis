@@ -31,7 +31,8 @@ implemented and qualified on macOS.**
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK | Cross-cell contextual shaping, selection and accessibility; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
 | UI iteration and attention fixture | Isolated source-QML reload, PNG captures, LLDB launch/attach, compact header and finite red cue replay | Maintainer visual review, rebindable navigation and real attention integration |
-| Codex integration | Direct TUI launch, no-prompt editing/navigation/paste/resize, normal/compact GPU captures and same-child reattachment; separate schema/init/list probe | Real model-turn attention requests, responses and source reconnect handling |
+| Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Adapter/service wiring and workspace-wide aggregation |
+| Codex integration | Direct TUI launch and same-child reattachment; isolated shared-server approval/input requests, observer responses, resume/read reconciliation and TUI display | Production adapter/service integration, cancellation and simultaneous live requests |
 
 [Desktop evidence](evidence/desktop-preview.json),
 [UI refinement evidence](evidence/ui-preview.json) and
@@ -44,6 +45,10 @@ agent attention and automatic carousel behavior remain later work. The next
 product milestone is attention state and verified Codex request handling; the
 [Milestone 2 plan](docs/architecture.md#milestone-2-attention-and-codex-plan)
 defines its route decision, implementation slices and acceptance checks.
+The first checkpoint implements the standalone attention core and exercises real
+Codex request round trips; Milestone 2 is still in progress. The live desktop
+continues to use fixture attention indicators. See the
+[attention test procedure](CONTRIBUTING.md#codex-attention-qualification).
 Latency and warm-switch targets remain provisional.
 
 Explicit CLI launch is now implemented through the existing service-owned PTY.
@@ -140,8 +145,8 @@ just verify-tools  # Prove the tools detect deliberately faulty fixtures
 ```
 
 See the contribution guide for installation and Python commands without `just`.
-Default CTest covers the toolchain, POSIX descriptor ownership and the production
-terminal adapter. Bootstrap its pinned dependency as described in the contribution
+Default CTest covers the toolchain, POSIX descriptor ownership, the production
+terminal adapter and the attention reducer. Bootstrap its pinned dependency as described in the contribution
 guide before the first check. `just desktop` additionally covers PTY, local transport and UI reload/attention
 behavior; isolated captures and the live input probe are described in the
 contribution guide. The engine comparison runs separately below.

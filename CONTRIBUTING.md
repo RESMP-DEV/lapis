@@ -130,6 +130,10 @@ repository protection and unresolved correctness findings still govern merges.
 ### Long-running work
 
 Keep slow work bounded and observable; a silent command is not necessarily stuck.
+Operation timeouts and diagnostic checkpoints are not an overall project time
+limit. Continue authorized implementation and verification through those
+checkpoints; diagnose, resume or replace stalled operations without treating
+elapsed time as a reason to declare incomplete work finished.
 
 1. Before a substantial build, investigation or delegated task, state its scope,
    acceptance command, expected duration when known, and diagnostic checkpoint.
@@ -463,6 +467,7 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | CTest name | Build | Behavior |
 | --- | --- | --- |
 | `toolchain-smoke` | Headless and desktop | Compiled toolchain baseline |
+| `attention-state` | Headless and desktop | Typed requests, exact retirement, stale decisions, reconciliation watermarks, bounds, aging and snooze/cooldown |
 | `session-platform-ownership` | Headless and desktop | POSIX descriptor ownership and moves |
 | `terminal-behavior` | Headless and desktop | Ghostty parsing, snapshots, history, resize and mode-aware input |
 | `launch-spec` | Desktop-enabled | Literal launch validation and private endpoint rules |
@@ -475,14 +480,15 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `terminal-input` | Desktop-enabled, native GUI | Qt composition commit/cancel, replacement rejection, paste and focus/document/history/disconnect ownership |
 | `terminal-render` | Desktop-enabled | Real Qt Vulkan pixel regressions for cell background grids, wide/combining characters, fallback/RTL text, styles/decorations, actual Ghostty resize, cursor placement and clearing |
 
-`just desktop` runs these twelve suites plus static checks. The separate Python
+`just desktop` runs these thirteen suites plus static checks. The separate Python
 GUI harness checks five preview captures and three expected failures. The CLI
 harness checks detached service behavior, attachment generations, fragmented
 handshakes, synchronization timeout, stale controls, bounded queue failure and
 replacement identities; `--desktop` adds Qt-to-shell input and
 captures, and optional `--codex` adds the installed no-prompt TUI acceptance.
 A screenshot, a headless suite and a real agent approval round trip prove different
-things. See [CLI qualification](#cli-integration-qualification) for the latter gap.
+things. See [attention qualification](#codex-attention-qualification) for isolated
+live round trips and the remaining service/desktop integration gap.
 
 After a failure, retain `build/reports/<mode>/receipt.json`, the named check log,
 and CTest's `build/<build-name>/Testing/Temporary/LastTest.log`. Fix the cause,
@@ -498,6 +504,62 @@ probe as a pass unless its expected diagnostic was observed. Raw CMake/CTest
 commands below do not run format, clang-tidy or Cppcheck; `just desktop` supplies
 those checks. Save custom build/test output under `build/` and include exact
 commands with any sanitized receipt committed to `evidence/`.
+
+### Codex attention qualification
+
+The attention core is a standalone C++20 library, not yet wired into the session
+service. Run `just check`, `just asan` and `just tsan` for its normal/static and
+separate sanitizer checks. `attention-state` is registered in all build modes;
+synthetic reducer events do not establish delivery from Codex.
+
+The original `scripts/probe_codex.py` retains its no-turn behavior. The separate
+shared-server probe also sends no model prompt:
+
+```sh
+python3 scripts/probe_codex_attention.py --output build/codex-shared-server.json
+python3 -m unittest discover -s scripts/tests -v
+ruff check --isolated scripts
+ruff format --isolated --check scripts
+```
+
+It uses a private Codex home and server, tests WebSocket-over-Unix transport, and
+reports capability limits independently of transport success. A fresh thread may
+not yet have resumable history; successful initialization or live metadata reads
+are not proof of pending-request reconciliation.
+
+For **opt-in live model turns**, the current fixture requires the local CCR service
+at `127.0.0.1:3456` with the `zai,glm-5.3` route. There is no fallback model:
+
+```sh
+python3 scripts/check_codex_attention.py --live-glm --with-tui \
+  --output build/codex-attention-live.json
+```
+
+This submits one input fixture and one command-approval fixture to a disposable
+server, reconnects an observer, and answers exact pending request IDs. The approval
+fixture permits only `python3 -c 'print(123456789)'`, optionally wrapped by a known
+shell; unexpected commands fail without approval. The input fixture chooses Blue.
+`--case input` or `--case approval` limits a diagnostic run. Each RPC/request has
+a deadline; the runner does not retry model turns automatically. Failure produces
+a nonzero exit and JSON receipt rather than synthetic success.
+
+`--with-tui` starts the ordinary Codex TUI in a private PTY, checks that it displays
+the real question/approval, and keeps it attached while the observer responds.
+The only automated TUI confirmation is trust for the fixture's empty directory,
+stored in its disposable Codex home. No global hooks/configuration, user's daemon,
+clipboard or desktop focus is changed. This is not the lapis GPU/Qt input path;
+use the existing CLI and native-input procedures when integrating that path.
+
+Receipts distinguish configured/provider-reported model identity, request replay,
+explicit response, matching resolution, completed turns and TUI participation.
+Corroborate upstream routing from CCR runtime evidence; configuration alone is not
+provider proof. Raw fixture data stays under `build/` and disposable runtime state
+is removed. The runner additionally tests a pending request and a request resolved
+while a second observer is disconnected, capturing replay/resolution events before
+a subsequent same-thread `thread/read` reply. This boundary depends on the tested
+server's exclusive method serialization, so source inspection plus a new live run
+is required for another binary hash. It qualifies only the two exercised blocking
+request kinds. See the [Milestone 2 plan](docs/architecture.md#milestone-2-attention-and-codex-plan).
 
 ### History and input qualification
 
@@ -622,7 +684,7 @@ python3 scripts/check_cli_launch.py --build-dir build/desktop-asan \
 Repeat those configure/build/test/harness commands with preset `tsan` and all
 `desktop-asan` paths changed to `desktop-tsan`. Do not combine instrumentation or
 use `ctest --preset asan` for the custom directory: that preset targets
-`build/asan`. Each desktop-enabled directory must list all twelve suites above.
+`build/asan`. Each desktop-enabled directory must list all thirteen suites above.
 Use the same LLVM installation for normal and instrumented builds. Ccache is
 optional (`-DCMAKE_CXX_COMPILER_LAUNCHER=...`); raw CMake does not discover it.
 Reduce `--parallel` for host resource limits. The CLI command above runs service
@@ -654,7 +716,8 @@ New CMake targets must link `lapis_project_options` so warning and sanitizer
 settings apply. Add meaningful CTest cases for ownership, parsing, event ordering,
 and input routing as those components arrive. Header-only code needs a compiled
 consumer. Current tests cover the toolchain, POSIX descriptor ownership with real pipes,
-and 14 terminal adapter cases on macOS/Linux ARM64. Desktop-enabled tests additionally cover PTY/transport and UI reload/attention
+and 14 terminal adapter cases on macOS/Linux ARM64. The standalone attention
+reducer is additionally exercised on macOS in normal and sanitizer builds. Desktop-enabled tests additionally cover PTY/transport and UI reload/attention
 behavior; actual captures run through `just ui-check`. The original
 [checkpoint receipt](evidence/cpp-verification.json) records its dated scope;
 new local check receipts are under `build/reports/<mode>/`.

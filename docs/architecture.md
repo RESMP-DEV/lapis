@@ -169,7 +169,7 @@ needs them. Every first-party target uses `lapis_project_options`.
 | `services/session/include/lapis/session/` | Owned commands, session identity and snapshots for clients | Owned terminal values implemented; internal version 4 attachment/snapshot/history framing under `src/transport/` |
 | `services/session/src/` | Service event loop and session lifecycle, then local IPC | Separate one-terminal service with explicit argv/cwd and bounded local transport on macOS |
 | `apps/desktop/` | Minimal Qt view, input routing and terminal surface | Live enlarged shell and static carousel composition; macOS Vulkan capture |
-| `adapters/codex/` | Codex protocol mapping and attention delivery | Ordinary Codex TUI launch exercised; structured attention remains investigation |
+| `adapters/codex/` | Codex protocol mapping and attention delivery | Ordinary TUI plus isolated shared-server request/response/reconnect exercised; production adapter pending |
 
 The first target, `lapis_session_platform`, is an internal C++20 library with no
 Qt, GPU or engine dependency. Its `UniqueFd` owns one native descriptor, closes
@@ -686,11 +686,47 @@ operation to one session. GUI detach and session termination are separate comman
 
 ### Milestone 2: attention and Codex plan
 
-Planning baseline: merged `e53c4fe` (September 18, 2026). This section describes
-proposed work, not additional qualification. The existing desktop attention map
-and replay controls are development fixtures; the service has no production
-attention reducer or Codex request adapter. The current Codex probe establishes
-schema, initialization and listing only.
+Planning baseline: merged `e53c4fe` (September 18, 2026). The first implementation
+checkpoint adds a standalone attention reducer and isolated live Codex probes.
+The existing desktop attention map and replay controls remain development fixtures;
+the reducer is not yet connected to the service or a production Codex adapter.
+The original `probe_codex.py` still establishes schema, initialization and listing
+only; a separate opt-in runner exercises actual model turns.
+
+The core owns one session/adapter source, preserves numeric versus string IDs,
+tracks response-in-flight independently of resolution, and requires authoritative
+reconciliation before enabling actions. Local sequence gaps establish a recovery
+watermark: snapshots older than any observed event cannot re-enable responses.
+Retired IDs remain bounded within an epoch; exhaustion requires a new source epoch
+rather than silently forgetting duplicate history. Queue ordering, aging, snooze
+and acknowledgement cooldown are exercised within that source. Cross-session
+aggregation remains later work. The library has single-thread ownership, no I/O,
+and no focus or GUI-attachment policy; those checks belong in service integration.
+
+Real GLM turns against a dedicated Codex server deliver user-input and command
+approval requests. An observer receives pending requests on resume, receives the
+same typed IDs after reconnect, responds, and observes matching resolution and
+successful turn completion. An ordinary Codex TUI attached to that server displays
+both request kinds. This qualifies the exercised shared-server path, not a lapis
+service-to-desktop adapter. The Unix endpoint uses WebSocket framing; the installed
+`app-server proxy` forwards raw bytes rather than converting newline JSON.
+
+The selected route is a dedicated shared server with the ordinary TUI and a
+service-owned observer. Reconciliation for the two exercised blocking request
+kinds uses `thread/resume` followed by `thread/read` for the same thread. The
+inspected implementation serializes those methods on an exclusive thread key;
+resume waits until pending-request replay is queued before releasing it. The read
+reply therefore marks a replay boundary. The live probe checks pending requests
+at that boundary and requests answered while another observer is disconnected,
+including the subsequent idle state and completed turn. Resolution wins over a
+late replay of the same typed ID.
+
+This is an implementation-specific contract, not a schema guarantee or a quiet
+interval. Requalify changed Codex binaries before enabling responses. Other request
+kinds, cancellation and simultaneous live requests still need adapter qualification.
+Unknown source versions and failed reconciliation keep responses disabled. Native
+hooks remain an unqualified alternative; they are not needed for the selected
+shared-server route. Production service/IPC and desktop wiring follow in 2C/2D.
 
 **Outcome:** a real Codex session can request attention, receive an explicit
 decision through a verified route, and continue. lapis retains the exact request
@@ -736,9 +772,12 @@ Keep private transcripts and credentials out of receipts. Do not modify global
 hooks, ordinary launch policy or the user's running daemon. Provider failure or an
 event that cannot be elicited is an unqualified case, not a simulated live pass.
 
-#### Proposed attention contract v1
+#### Attention contract v1 and integration boundary
 
-This is a logical contract; finalize its types in 2A/2B before dependent edits.
+The logical contract below guides the implemented core and remaining integration.
+`attention.hpp` supplies the single-source C++ types; `Position` keeps the source
+epoch and local sequence together. Decisions use per-request revision tokens so
+unrelated activity cannot invalidate an otherwise current response.
 It is separate from terminal IPC v4. Any incompatible IPC extension gets a new
 wire version and private endpoint, with explicit rejection of older clients;
 existing service processes and sockets are left intact.
@@ -768,8 +807,8 @@ malformed or oversized payloads, queue overflow and unsupported methods.
 Exercise resolution racing with a decision, duplicate GUI submissions, disconnect
 during reply, failed reconciliation, and a stale GUI attaching to a replaced source.
 
-Build a separate opt-in live qualification runner under `scripts/`; its command
-and schema are to be implemented and documented in CONTRIBUTING.md before use.
+The separate opt-in live qualification runner is `scripts/check_codex_attention.py`;
+its commands and isolation procedure are documented in CONTRIBUTING.md.
 Keep `scripts/probe_codex.py`'s default no-turn inspection behavior. The live runner
 must have deadlines, bounded attempts, isolated resources and a nonzero exit for
 failed acceptance. A fixture transport proves failure handling; it cannot replace
@@ -789,8 +828,9 @@ Completion requires the qualified route and the service-to-desktop request/decis
 flow on the same assembled source revision, not just a passing standalone probe.
 Keep sanitized receipts under `evidence/` with commands, source/binary hashes,
 capability results and limitations; raw logs stay under ignored `build/`.
-Planned receipts are `evidence/codex-attention-route.json` for the route decision
-and `evidence/milestone-two.json` for assembled acceptance; neither exists yet.
+The first checkpoint receipt is `evidence/codex-attention-route.json`.
+`evidence/milestone-two.json` remains reserved for assembled acceptance; it does
+not exist yet and this checkpoint does not complete Milestone 2.
 Update README's status table only as those capabilities land. Linux desktop,
 32-session load, second adapters, selection/accessibility/contextual shaping and
 fresh presentation-latency targets are outside this phase. Packaging/notices/SBOM
@@ -826,7 +866,7 @@ the Codex TUI or satisfy terminal acceptance. A separate app-server does not
 observe independently launched CLIs by default. The
 [Codex investigation](../adapters/codex/README.md) retains the route details.
 
-**Attention semantics remain a draft.** Keep connection, activity and a set of
+**Attention core and draft integration semantics.** Keep connection, activity and a set of
 pending requests independent. Events carry a contract version, session/adapter ID,
 source-connection epoch, sequence, receipt time and kind; preserve source
 thread/turn/item IDs and typed request IDs. Kinds cover connection/disconnection,
