@@ -14,6 +14,7 @@ from typing import Any
 WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_HANDSHAKE_BYTES = 16 * 1024
 MAX_MESSAGE_BYTES = 2 * 1024 * 1024
+WRITE_TIMEOUT = 5.0
 OP_CONTINUATION = 0x0
 OP_TEXT = 0x1
 OP_BINARY = 0x2
@@ -150,7 +151,11 @@ class UnixWebSocketTransport:
         masked = bytes(byte ^ mask[index & 3] for index, byte in enumerate(payload))
         try:
             self.writer.write(header + mask + masked)
-            await self.writer.drain()
+            async with asyncio.timeout(WRITE_TIMEOUT):
+                await self.writer.drain()
+        except TimeoutError as error:
+            self.abort()
+            raise TransportError("WebSocket send timed out") from error
         except (BrokenPipeError, ConnectionResetError) as error:
             raise TransportError(
                 f"WebSocket connection closed during send: {error}"
@@ -239,14 +244,17 @@ class UnixWebSocketTransport:
         """Bound close writes/waits; socket teardown must not hang the fixture."""
         if self.closed:
             return
-        # Truncate only at a complete UTF-8 character boundary.
-        reason_bytes = (
-            reason.encode("utf-8")[:123]
-            .decode("utf-8", errors="ignore")
-            .encode("utf-8")
-        )
-        payload = struct.pack(">H", code) + reason_bytes
         try:
+            # Argument errors must still run socket cleanup below.
+            if code < 1000 or code >= 5000 or code in (1004, 1005, 1006, 1015):
+                raise ValueError("Invalid WebSocket close code")
+            # Truncate only at a complete UTF-8 character boundary.
+            reason_bytes = (
+                reason.encode("utf-8")[:123]
+                .decode("utf-8", errors="ignore")
+                .encode("utf-8")
+            )
+            payload = struct.pack(">H", code) + reason_bytes
             async with asyncio.timeout(1):
                 await self.send(payload, opcode=OP_CLOSE)
         except (OSError, TimeoutError, TransportError):

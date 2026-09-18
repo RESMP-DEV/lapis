@@ -5,7 +5,7 @@ import base64
 import hashlib
 import struct
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from scripts import codex_probe_transport as transport
 
@@ -43,6 +43,33 @@ def frame(payload, opcode=1, fin=True):
 
 
 class TransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pong_write_timeout_closes_socket(self):
+        reader, writer = asyncio.StreamReader(), Writer()
+
+        async def blocked():
+            await asyncio.Future()
+
+        writer.drain = AsyncMock(side_effect=blocked)
+        ws = transport.UnixWebSocketTransport(reader, writer)
+        reader.feed_data(frame(b"ping", opcode=9))
+        with (
+            patch.object(transport, "WRITE_TIMEOUT", 0.01),
+            self.assertRaisesRegex(transport.TransportError, "send timed out"),
+        ):
+            await asyncio.wait_for(ws.receive(), 1)
+        self.assertTrue(writer.closed)
+        self.assertTrue(ws.closed)
+
+    async def test_invalid_close_argument_still_closes_socket(self):
+        for code in (-1, 1005, 65536):
+            writer = Writer()
+            ws = transport.UnixWebSocketTransport(asyncio.StreamReader(), writer)
+            with self.assertRaises(ValueError):
+                await ws.close(code)
+            self.assertTrue(writer.closed)
+            self.assertTrue(ws.closed)
+            self.assertFalse(writer.output)
+
     async def test_control_bound_and_unicode_close(self):
         writer = Writer()
         ws = transport.UnixWebSocketTransport(asyncio.StreamReader(), writer)
