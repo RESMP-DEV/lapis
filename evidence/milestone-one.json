@@ -1,9 +1,9 @@
 {
   "schema": "lapis.milestone-one/1",
-  "recorded_at": "2026-09-18T16:14:42.707291+00:00",
-  "source_revision": "bee3e9aae5c1e5aac8acea91683537236535edb9",
+  "recorded_at": "2026-09-18T16:34:22.426538+00:00",
+  "source_revision": "45ffc9d49b7695a408210fe0f1384115fc1b979a",
   "branch": "feature/milestone-one-completion",
-  "milestone_complete": false,
+  "milestone_complete": true,
   "automated_qualification_passed": true,
   "platform": {
     "host": [
@@ -12,10 +12,16 @@
       "machdep.cpu.brand_string: Apple M4 Max"
     ],
     "macos": "26.7",
-    "binaries": {
+    "timing_baseline_binaries": {
       "build/desktop/services/session/lapis_session_service": "f95df3c5fd3f6bc55d4fc704fc666fee558b7a740cbafcdd2e3e29796bd18882",
       "build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop": "bf779051591ef83dd433c5af1c9d1146ae4b5c0488818d478699042caf16024a",
       "build/desktop/apps/desktop/lapis_terminal_latency_probe": "9dd0b86f155e49627e5b847f4af059c2d1f9df7579c31980fd2bef85347610fd"
+    },
+    "qualification_binaries": {
+      "build/desktop/services/session/lapis_session_service": "f95df3c5fd3f6bc55d4fc704fc666fee558b7a740cbafcdd2e3e29796bd18882",
+      "build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop": "c949d2311dee3d8536eb349471186b2a5c76624a25fb2bfdebea1482e63e3da0",
+      "build/desktop/apps/desktop/lapis_terminal_latency_probe": "b4ffdc03a84b5a7c2929022428af3b8f660a715a1c842058475a56b81d78c19b",
+      "build/desktop/apps/desktop/lapis_native_input_probe": "f671038a2a43ee68c55a333222bca5319e680dfe97e0e00af7fdbb4203c10a2f"
     }
   },
   "wire_version": 4,
@@ -30,7 +36,7 @@
       "command": "python3 scripts/check_cpp.py desktop",
       "passed": true,
       "suites": 12,
-      "log": "build/m1-completion/verified-desktop.log"
+      "log": "build/m1-completion/native-desktop-final.log"
     },
     {
       "command": "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-asan --output-on-failure --no-tests=error",
@@ -118,15 +124,31 @@
       "passed": true
     },
     {
-      "command": "controlled PTY smoke for scripts/native_input_fixture.py",
-      "passed": true,
-      "scope": "ASCII byte receipt, private 0600 output, clean exit; no physical-input claim"
-    },
-    {
       "command": "python3 scripts/check_cli_launch.py --desktop",
       "passed": true,
       "cases": 11,
       "log": "build/m1-completion/cli-verified.log"
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_native_input_probe --output build/m1-completion/native-input-qualified.json",
+      "passed": true,
+      "cases": 18,
+      "input_source_and_clipboard_restored": true,
+      "log": "build/m1-completion/native-input-qualified.log"
+    },
+    {
+      "command": "build/desktop-asan/apps/desktop/lapis_native_input_probe --output build/m1-completion/native-input-asan.json",
+      "passed": true,
+      "cases": 18,
+      "input_source_and_clipboard_restored": true,
+      "log": "build/m1-completion/native-input-asan.log"
+    },
+    {
+      "command": "build/desktop-tsan/apps/desktop/lapis_native_input_probe --output build/m1-completion/native-input-tsan.json",
+      "passed": true,
+      "cases": 18,
+      "input_source_and_clipboard_restored": true,
+      "log": "build/m1-completion/native-input-tsan.log"
     }
   ],
   "latency": {
@@ -701,17 +723,16 @@
   },
   "measurement_notes": [
     "Controlled Python child under the real session service; echo disabled; each ACK follows consumed Return input.",
-    "OS-injected native Return through cliclick, AppKit and Qt. No physical keyboard or real IME qualification is claimed.",
+    "Timing run uses OS-injected Return through cliclick, AppKit and Qt. Separate native_input evidence qualifies real Japanese IME behavior; physical key-to-photon latency is not measured.",
     "Final measurement ran after builds, workers and other GUI/CLI checks stopped.",
     "Service publish_ns is recorded before snapshot extraction. The transport interval includes extraction, serialization, IPC and GUI decoding.",
     "afterSynchronizing and frameSwapped are correlated to the matching snapshot revision. frameSwapped is a submission proxy, not measured pixel visibility.",
     "Idle period begins after history-to-live trials and includes one trailing submitted frame; frame count is not hardware GPU utilization.",
     "Latency targets remain provisional. Every measured input exceeded one 120 Hz refresh interval.",
-    "History-to-live is retained-screen restoration, not cross-session switching."
+    "History-to-live is retained-screen restoration, not cross-session switching.",
+    "Timing baseline hashes are retained separately from the rebuilt qualification binaries. Production desktop/session sources are unchanged between production_source_revision and source_revision; the added native probe and its CMake target are test tooling."
   ],
-  "remaining_acceptance": [
-    "Physical keyboard, Control/Option handling, clipboard paste and real native IME commit/cancel/focus/resize/reattach qualification on this Mac."
-  ],
+  "remaining_acceptance": [],
   "limitations": [
     "Selection/copy from terminal cells and a terminal accessibility tree remain unsupported.",
     "Cross-cell contextual shaping and curly underline fidelity retain previously documented limits.",
@@ -733,10 +754,124 @@
     "merged": false
   },
   "evidence_image": "evidence/milestone-one-terminal.png",
-  "manual_input_handoff": {
-    "fixture": "scripts/native_input_fixture.py",
-    "status": "prepared; physical operator confirmation pending",
-    "private_details": "build/m1-completion/native-handoff.json",
-    "raw_inputs_committed": false
+  "production_source_revision": "bee3e9aae5c1e5aac8acea91683537236535edb9",
+  "acceptance_scope": "macOS persistent-terminal software acceptance; physical keyboard hardware is outside this milestone",
+  "native_input": {
+    "cases": [
+      {
+        "case": "native printable and Return",
+        "passed": true,
+        "received_hex": "610d"
+      },
+      {
+        "case": "native Control-C",
+        "passed": true,
+        "received_hex": "03"
+      },
+      {
+        "case": "native Option-B",
+        "passed": true,
+        "received_hex": "1b62"
+      },
+      {
+        "case": "native Command-V bracketed paste",
+        "passed": true,
+        "received_hex": "1b5b3230307e7061737465e7958c0a7365636f6e641b5b3230317e"
+      },
+      {
+        "case": "real Japanese IME preedit emits no PTY bytes",
+        "passed": true,
+        "received_hex": ""
+      },
+      {
+        "case": "real Japanese IME commit",
+        "passed": true,
+        "received_hex": "e38182"
+      },
+      {
+        "case": "real Japanese IME cancellation",
+        "passed": true,
+        "received_hex": ""
+      },
+      {
+        "case": "IME recovers after cancellation",
+        "passed": true,
+        "received_hex": "e38182"
+      },
+      {
+        "case": "IME composition cleared by history mode",
+        "passed": true,
+        "received_hex": ""
+      },
+      {
+        "case": "IME recovers after history return",
+        "passed": true,
+        "received_hex": "e38182"
+      },
+      {
+        "case": "IME composition cleared by document detach",
+        "passed": true,
+        "received_hex": ""
+      },
+      {
+        "case": "IME recovers after document reattach",
+        "passed": true,
+        "received_hex": "e38182"
+      },
+      {
+        "case": "native IME focus commit stays with its original terminal",
+        "passed": true,
+        "received_hex": "e38182"
+      },
+      {
+        "case": "IME recovers after native focus return",
+        "passed": true,
+        "received_hex": "e38182"
+      },
+      {
+        "case": "IME composition cleared by attachment replacement and reconnect",
+        "passed": true,
+        "received_hex": ""
+      },
+      {
+        "case": "IME recovers after service reconnect",
+        "passed": true,
+        "received_hex": "e38182"
+      },
+      {
+        "case": "IME composition survives resize",
+        "passed": true,
+        "received_hex": "e38182"
+      },
+      {
+        "case": "US keyboard restored",
+        "passed": true,
+        "received_hex": "62"
+      }
+    ],
+    "clipboard_restored": true,
+    "commit_events": 8,
+    "enabled_sources_restored": true,
+    "input_path": "CoreGraphics keyboard events through AppKit, Apple Japanese IME, Qt and the real PTY service",
+    "input_source_restored": true,
+    "passed": true,
+    "preedit_events": 15,
+    "schema": "lapis.native-input/1",
+    "sources": [
+      "com.apple.keylayout.US",
+      "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese"
+    ],
+    "frameworks": [
+      "CoreGraphics",
+      "AppKit",
+      "Carbon Text Input Sources",
+      "Qt 6.11.2"
+    ],
+    "limits": [
+      "Events are OS-generated; physical key switches are not tested.",
+      "Japanese IME is exercised; this does not qualify every third-party input method.",
+      "Candidate anchor bounds are verified, not the pixels of the native candidate popup.",
+      "A second fixture verifies focus ownership; the product still has one live pane."
+    ]
   }
 }
