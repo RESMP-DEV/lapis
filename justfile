@@ -32,3 +32,15 @@ desktop:
 # Open the built macOS application; its session service survives window closure.
 run:
     open build/desktop/apps/desktop/lapis_desktop.app
+
+# Isolated visual fixture: edit QML, then use Reload in the preview controls.
+ui:
+    build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop --ui-preview --qml "{{justfile_directory()}}/apps/desktop/qml/Main.qml"
+
+# Launch the isolated fixture under the macOS native debugger.
+ui-debug:
+    xcrun lldb -- build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop --ui-preview --qml "{{justfile_directory()}}/apps/desktop/qml/Main.qml"
+
+# Bounded isolated GUI and capture checks; never sends shell input.
+ui-check:
+    python3 scripts/check_ui_preview.py

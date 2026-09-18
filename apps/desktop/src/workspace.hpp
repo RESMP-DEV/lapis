@@ -49,6 +49,7 @@ class SessionPreview final : public QObject {
     bool addPreviewRequest(const QString& id, const QString& reason);
     bool resolvePreviewRequest(const QString& id);
     void clearPreviewRequests();
+    [[nodiscard]] bool liveSnapshotReady() const { return live_snapshot_ready_; }
     [[nodiscard]] bool live() const { return live_ != nullptr; }
     [[nodiscard]] const QString& title() const { return title_; }
     [[nodiscard]] const QString& directory() const { return directory_; }
@@ -66,6 +67,7 @@ class SessionPreview final : public QObject {
     QString session_id_;
     QMap<QString, QString> requests_;
     quint32 attention_serial_{};
+    bool live_snapshot_ready_{};
     QString title_;
     QString directory_;
     QString activity_;
@@ -73,7 +75,13 @@ class SessionPreview final : public QObject {
     session::TerminalSnapshot snapshot_;
 };
 
-enum class WorkspaceMode { live, preview };
+enum class WorkspaceMode : std::uint8_t { live, preview };
+
+struct PreviewRequest {
+    QString session_id;
+    QString request_id;
+    QString reason;
+};
 
 class Workspace final : public QObject {
     Q_OBJECT
@@ -87,9 +95,8 @@ class Workspace final : public QObject {
     [[nodiscard]] bool previewMode() const { return preview_mode_; }
     [[nodiscard]] SessionPreview* session(const QString& id) const;
     // Development fixture v1 only. No calls are accepted in a live workspace.
-    Q_INVOKABLE bool requestAttention(const QString& session_id, const QString& request_id,
-                                      const QString& reason);
-    Q_INVOKABLE bool resolveAttention(const QString& session_id, const QString& request_id);
+    bool requestAttention(const PreviewRequest& request);
+    bool resolveAttention(const PreviewRequest& request);
     Q_INVOKABLE bool replayAttention(const QString& scenario);
     [[nodiscard]] QVariantList sessions() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }

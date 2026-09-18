@@ -29,15 +29,17 @@ incomplete.**
 | PTY and separate session service | macOS shell I/O, resize, exit, failed exec, output burst, GUI close/reopen with the same child | Linux service qualification, recovery identities, disk-backed history |
 | Local transport | Bounded versioned frames, owned snapshots, fragmented/coalesced input and malformed-message rejection | Attachment generations, hostile/slow-client and failure recovery cases |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact window captures on M4 Max via MoltenVK | Full shaping, IME, selection, accessibility, Linux GUI and latency/frame qualification |
+| UI iteration and attention fixture | Isolated source-QML reload, PNG captures, LLDB launch/attach, compact header and finite red cue replay | Maintainer visual review, rebindable navigation and real attention integration |
 | Codex protocol probe | Schema export, initialization and loaded-thread listing | Real attention requests, responses and reconnect handling |
 
-[Desktop evidence](evidence/desktop-preview.json) and
+[Desktop evidence](evidence/desktop-preview.json),
+[UI refinement evidence](evidence/ui-preview.json) and
 [adapter evidence](evidence/terminal-adapter.json) delimit these observations.
 Dependency packaging remains unfinished; this is a local developer build.
-The [next two implementation steps](docs/architecture.md#planned-ui-refinement)
-are an isolated UI preview/debugging workflow, then a compact header and replayable
-red attention cue. Neither has started. Rebindable navigation follows; real agent
-attention and automatic carousel behavior remain later work. Finish terminal
+The [two UI refinements](docs/architecture.md#ui-refinement-checkpoint) are
+implemented for visual review: an isolated preview/debugging workflow and a compact
+header with replayable red attention cues. Rebindable navigation follows; real
+agent attention and automatic carousel behavior remain later work. Finish terminal
 acceptance and qualify the minimal Linux view before expanding the live workspace.
 Latency and warm-switch targets remain provisional.
 
@@ -47,7 +49,10 @@ After the [dependency setup](CONTRIBUTING.md#desktop-preview):
 
 ```sh
 just desktop      # Build, behavioral cases and static checks
-just run          # Open the compiled app
+just run          # Open the live shell window
+just ui           # Isolated fixture, source-QML reload and attention replay
+just ui-debug     # Launch the isolated fixture in LLDB
+just ui-check     # Bounded preview captures and failure cases
 ```
 
 The shell starts in this checkout. Closing the window detaches it; reopening
@@ -72,9 +77,9 @@ just verify-tools  # Prove the tools detect deliberately faulty fixtures
 See the contribution guide for installation and Python commands without `just`.
 Default CTest covers the toolchain, POSIX descriptor ownership and the production
 terminal adapter. Bootstrap its pinned dependency as described in the contribution
-guide before the first check. `just desktop` additionally covers PTY and local
-transport behavior; the app capture/input probe is described in the contribution
-guide. The engine comparison runs separately below.
+guide before the first check. `just desktop` additionally covers PTY, local transport and UI reload/attention
+behavior; isolated captures and the live input probe are described in the
+contribution guide. The engine comparison runs separately below.
 
 Run the separate engine experiment with `python3 scripts/probe_terminal.py`.
 It verifies pinned source/toolchain archives, builds both consumers and keeps each

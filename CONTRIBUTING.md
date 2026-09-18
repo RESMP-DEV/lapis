@@ -168,33 +168,61 @@ LLVM/SDK settings and Ghostty prefix, then build and run its CTest cases. Keep
 ASan and TSan separate. Vendor Qt/MoltenVK/Ghostty libraries are not instrumented
 by these C++ presets; a passing test is not coverage of those implementations.
 
-### Planned UI tuning and debugging
+### UI tuning and debugging
 
-This workflow is planned, not implemented. The ordered scope, file ownership and
-acceptance criteria live in the [two-step plan](docs/architecture.md#planned-ui-refinement).
-Use the existing Qt Quick/QML boundary for visual iteration and LLDB for native
-code; keep both paths available.
+After `just desktop`, use `just ui` for an isolated synthetic workspace. It never
+constructs a live service connection or sends shell input. Edit
+`apps/desktop/qml/Main.qml`, then select **Preview controls → Reload**; no C++
+rebuild is needed. A load error retains the working view, marks the preview control
+and exposes diagnostics in its tooltip and stderr. Normal launches use bundled
+QML; rebuild with `just desktop` to include edits there.
 
-- Add a separate preview mode with synthetic terminal snapshots and replay controls
-  for request arrival, pending attention and resolution. It must not attach to,
-  replace or send input to the user's live shell. Include reduced-motion preview.
-- Load development QML from source and reload the view after edits without a full
-  C++ build. Keep syntax/runtime diagnostics visible and retain the last working
-  view on reload failure. Default application launches still use bundled resources.
-- Capture deterministic default/compact sizes and animation checkpoints. Replaying
-  a request must prove the pulse ends, a pending marker remains, geometry stays
-  stable and keyboard focus is not stolen. Profile actual animation/frame behavior
-  with Qt's QML profiler and the existing platform tools before making speed claims.
-- Keep a symbol-bearing native build for LLDB launch/attach and service debugging.
-  Capture stack traces and Qt diagnostics separately from terminal content. GUI and
-  service are separate processes: pausing one has a different effect from pausing
-  the other. Qualify debugger launch/attach on this Mac before calling it verified.
+The preview menu replays arrival, duplicate, two requesting cards, matching
+resolution and reset. New requests pulse twice and remain marked until resolved.
+The reduced-motion control forces a steady marker; the macOS accessibility setting
+also enables it, sampled at startup and app activation. Reset before replaying the
+same request if you want another pulse. These are synthetic events, with no agent
+response or approval attached. Carousel navigation and keybinding settings remain
+planned in the [architecture](docs/architecture.md#ui-refinement-checkpoint).
 
-Today, `just desktop` builds with symbols and `--capture` captures the real window.
-The capture path uses the same one-client service as the ordinary GUI, and
-`--smoke-input` types into that shell. It is not an isolated UI sandbox; use it
-only with a dedicated test session. Debugging work should start from a reproducible
-symptom; screenshots alone do not establish an application failure.
+Run `just ui-check` for five captures and three expected-failure cases. Artifacts
+and a receipt go under `build/ui-preview-check/`. For an individual capture:
+
+```sh
+build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop \
+  --ui-preview --scenario two --capture "$PWD/build/two.png" \
+  --trace "$PWD/build/two.json" --capture-delay 2000
+```
+
+Use `--compact` for 980×700 logical pixels, `--reduced-motion` for a steady cue,
+and a shorter capture delay to sample the pulse. The normal requested size is
+1400×960; the window manager may constrain it. Captures wait for a rendered frame
+and fail within 15 seconds. Traces include focus ownership, pane/card geometry,
+request state and bounded GUI-thread `frameSwapped` observations. Signal delivery
+includes scheduling overhead: these are neither physical presentation nor input
+latency measurements. The short post-pulse idle observation is not a CPU/GPU load
+benchmark. Capture timing targets remain provisional.
+
+`just ui-debug` opens LLDB with the isolated source-QML fixture. For example:
+
+```text
+breakpoint set -n lapis::desktop::UiPreview::load
+run
+bt
+continue
+```
+
+Launch/break/inspect/resume and separate `xcrun lldb -p <preview-pid>` attach,
+`bt`, `detach` were exercised on this Mac. Use the actual preview PID; the service
+is a separate process. Capture native stacks and Qt diagnostics separately from
+terminal content. `just desktop` already produces symbols. Preview reload/attention
+cases also run under the desktop-enabled ASan/UBSan preset; vendor libraries remain
+uninstrumented. See the [receipt](evidence/ui-preview.json) for exercised scope.
+
+The older `--smoke-input --capture` command above attaches to the real one-client
+service and types into its shell. Use it only with a dedicated test session;
+`--ui-preview` deliberately rejects that combination. Debugging starts from a
+reproducible symptom; a screenshot alone does not establish an application defect.
 
 ## Checks
 
@@ -208,8 +236,10 @@ Run from the repository root:
 | `just verify-tools` | Known-bad fixtures must produce specific failure diagnostics |
 | `just format` | Apply C++ formatting |
 | `just profile` | Optimized build with debug symbols and CTest |
-| `just desktop` | Optimized desktop/service build, PTY/transport cases and static checks |
-| `just run` | Open the previously built macOS preview |
+| `just desktop` | Optimized desktop/service build, PTY/transport/UI cases and static checks |
+| `just run` | Open the previously built live shell window |
+| `just ui` / `just ui-debug` | Isolated source-QML fixture, directly or in LLDB |
+| `just ui-check` | Bounded isolated captures, attention state and expected failures |
 
 Required checks accumulate when a change touches multiple areas:
 
@@ -262,9 +292,9 @@ New CMake targets must link `lapis_project_options` so warning and sanitizer
 settings apply. Add meaningful CTest cases for ownership, parsing, event ordering,
 and input routing as those components arrive. Header-only code needs a compiled
 consumer. Current tests cover the toolchain, POSIX descriptor ownership with real pipes,
-and 14 terminal adapter cases on macOS/Linux ARM64. They do not cover a persistent
-service or rendering. The
-[checkpoint receipt](evidence/cpp-verification.json) records the published scope;
+and 14 terminal adapter cases on macOS/Linux ARM64. Desktop-enabled tests additionally cover PTY/transport and UI reload/attention
+behavior; actual captures run through `just ui-check`. The original
+[checkpoint receipt](evidence/cpp-verification.json) records its dated scope;
 new local check receipts are under `build/reports/<mode>/`.
 
 ### Headless engine experiment
@@ -373,9 +403,9 @@ key-to-photon claims additionally need an external camera/photodiode measurement
 
 ### Capture procedure
 
-1. Build with `just profile` (optimized, symbols, sanitizers off). There is no
-   desktop target yet; start application traces when the minimal terminal view
-   exists. Put signposts in that first view, not only the later UI.
+1. Build the app with `just desktop` (optimized, symbols, sanitizers off).
+   `just profile` covers the headless targets. UI frame observations are available;
+   correlated native-input, service and presentation markers still need work.
 2. Warm the declared caches, then record a repeatable sequence: local typing,
    scroll/resize, session switches and output bursts. First qualify one terminal,
    then switching with two. Extend the same procedure to 32 sessions later.
@@ -392,7 +422,7 @@ key-to-photon claims additionally need an external camera/photodiode measurement
    run duration, sample counts and warm/cold state. Include a static idle baseline.
 
 ```sh
-# Once the desktop exists: replace 12345 with its actual PID and use a fresh path.
+# Replace 12345 with the actual desktop PID and use a fresh path.
 xcrun xctrace record --template 'Game Performance' --attach 12345 \
   --time-limit 30s --output build/lapis-game-performance.trace
 ```

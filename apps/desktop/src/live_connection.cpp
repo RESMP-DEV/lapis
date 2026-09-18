@@ -14,6 +14,7 @@ void SessionPreview::startLive(const QString& endpoint, const QString& directory
 }
 void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
     snapshot_ = std::move(snapshot);
+    live_snapshot_ready_ = live();
     emit snapshotChanged();
 }
 void SessionPreview::setActivity(const QString& activity) {

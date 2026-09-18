@@ -196,106 +196,77 @@ paste and resize. The focused pane chooses the PTY dimensions; scaled previews d
 not resize it. Basic IME commit/preedit plumbing exists, but actual composition,
 font fallback, strict wide-cell alignment, selection and accessibility are not
 qualified. The renderer keeps static scene nodes and lets Qt schedule frames for
-updates and brief hover transitions. Input-to-presentation timing instrumentation
-and a repeatable animation workload remain acceptance gaps. The visual checkpoint
+updates and brief hover transitions. A repeatable synthetic cue workload now records GUI frame observations. Actual
+input-to-presentation timing remains an acceptance gap. The visual checkpoint
 does not complete milestone 1.
 
-### Planned UI refinement
+### UI refinement checkpoint
 
-The next two changes are scoped below. **Neither has started.** They refine the
-visual checkpoint without completing milestone 1. Reuse Qt Quick, the existing
-terminal snapshot values and the current Vulkan surface; introduce no new runtime
-dependency or general-purpose UI framework.
+Both scoped UI changes are implemented and exercised on macOS; maintainer visual
+review remains before connecting real requests. They reuse Qt Quick, owned terminal
+snapshots and the Vulkan surface, with no new runtime dependency. Milestone 1
+remains incomplete. The [UI receipt](../evidence/ui-preview.json) records checks and
+measurement limits; commands live in [Contributing](../CONTRIBUTING.md#ui-tuning-and-debugging).
 
-#### Step 1: isolated UI iteration and debugging
+#### Isolated iteration and debugging
 
-**Outcome:** tune the interface and inspect C++ behavior without touching the
-running shell. Keep the current appearance while establishing this workflow.
+`--ui-preview` constructs synthetic sessions without a live connection or service.
+It rejects `--smoke-input`. The existing live window stayed attached to its shell
+while the isolated capture suite ran. `just ui` loads source QML; manual reload
+creates a candidate view and preserves the previous view on load failure. Accepted
+reloads preserve geometry and defer destruction of the previous engine so a QML
+caller can finish safely. Normal launches use bundled resources.
 
-- Add an explicit `--ui-preview` mode backed by synthetic snapshots. It must never
-  construct a live connection, launch a service or attach to the checkout socket.
-  Reject combinations that would inject shell input, including `--smoke-input`.
-- Allow development QML to load from a supplied source path and reload on an
-  explicit command. A valid edit replaces the view without recompiling C++; a
-  syntax error reports diagnostics and retains the last working view. Normal
-  launches continue to load bundled resources. Start with manual reload rather
-  than a file watcher or external preview server.
-- Define a small, development-only **preview scenario v1**: stable card IDs, owned
-  terminal snapshots and explicit request-arrived/request-resolved events carrying
-  a request ID and reason. Replay advances only when commanded. Keep this fixture
-  contract separate from service IPC and the future attention policy.
-- Make the existing capture path work with the isolated preview at default and
-  compact sizes. Wait for an actual rendered frame, report save/load failure and
-  exit within a bounded timeout. Do not use shell activity text as readiness.
-- Provide one preview command and one LLDB launch command, with symbols and visible
-  Qt diagnostics. Exercise a breakpoint, stack inspection and resume in the
-  preview process. Check attach separately; report a platform restriction instead
-  of blocking useful preview work on it. GUI and service are distinct debug targets.
+The development-only **preview scenario v1** has stable card IDs, owned terminal
+snapshots and bounded requests keyed by ID. It is separate from service IPC and
+the future attention policy. Arrival, duplicate, two requesting cards, matching
+resolution and reset are explicit replay actions. There are at most eight pending
+requests per fixture session; duplicate IDs do not change the request or cue serial.
 
-**Done when:** the live GUI stays attached to the same child while preview windows
-open/close; valid QML edits reload without a C++ build; invalid edits preserve the
-working view; both capture sizes succeed and a bad destination fails promptly;
-LLDB launch/break/inspect/resume has direct evidence. The developer workflow lives
-in [CONTRIBUTING.md](../CONTRIBUTING.md#planned-ui-tuning-and-debugging).
+Captures wait for actual frames, have a 15-second deadline and report load/save
+failures. LLDB launch, breakpoint, stack inspection, resume and separate attach/
+detach were exercised against the isolated app. The GUI and service remain
+separate debugging targets.
 
-#### Step 2: compact header and attention-cue prototype
+#### Compact header and attention cue
 
-**Dependency:** step 1 and its preview scenario contract are integrated.
-**Outcome:** review the actual animation and recovered terminal space in a window.
+A 28-pixel context row replaces the tall top section. Cards keep their positions
+and dimensions. A new synthetic request produces two red edge pulses over 1.4
+seconds, then a steady rim and readable pending label. The cue occupies the card's
+existing background and never changes the terminal geometry or keyboard owner.
+Duplicate requests and ordinary output do not restart it; resolving one request
+leaves others pending. Focusing a card never approves or resolves a request.
 
-- Reduce the tall top section to essential session context. Remove repeated
-  branding/path/status chrome. Keep the live enlarged pane and current card order.
-- Add a brief red halo or edge pulse around a requesting terminal/card, similar to
-  a restrained game HUD cue. Draw within the existing composition: no banner,
-  reserved row, pane movement, text obstruction or attention-triggered PTY resize.
-  Keep the rest of the interface opaque.
-- Drive the prototype only from preview scenarios. Start with one or two gentle
-  pulses on a new request, followed by a quiet persistent pending marker. Duplicate
-  requests and ordinary output must not restart the pulse. Explicit resolution
-  clears only its matching request; focusing a card does not resolve or approve it.
-- Pair color with a readable request indicator. Support a steady reduced-motion
-  treatment and an explicit preview control; verify the macOS preference where
-  available. Stop completed animations and pause decorative motion when hidden.
-- Add frame/submission timing markers for a repeatable cue replay. Record observed
-  frame intervals and idle behavior with workload/display context. Capture timing
-  is not input latency or proof of physical display presentation; performance
-  targets remain provisional.
+Reduced motion uses a steady marker. The app reads the macOS accessibility
+preference at startup and activation; a preview override can also enable it.
+Linux preference integration is still unqualified. Cue motion pauses while the
+window is hidden or inactive and stops after the finite sequence. Captured default,
+compact, arrival, two-card and reduced-motion states passed focus/geometry checks.
 
-**Done when:** default/compact views reclaim header space; arrival, duplicate,
-resolution, two requesting cards and reduced-motion scenarios work; pulses end
-without losing the pending marker; no keyboard focus or terminal geometry changes
-on attention; the actual Vulkan animation has been viewed and its timing recorded.
-Show the result to the maintainer before connecting it to real agent requests.
+The trace records bounded, GUI-thread observations of `frameSwapped`. Those times
+include signal delivery and scheduling; they are not physical presentation or input
+latency. The receipt includes interval distributions and a short idle observation,
+not a latency guarantee or sustained CPU/GPU benchmark. Targets remain provisional.
 
-#### Ownership and checks
+#### Next steps and ownership
 
-| Owner | Allowed implementation scope | Handoff |
-| --- | --- | --- |
-| Coordinator | Shared desktop contracts, `main.cpp`, `workspace.*`, CMake, `justfile`, existing docs and evidence | Preview v1 contract committed before parallel consumers; sole build/integration owner |
-| Preview/tooling worker, step 1 | `apps/desktop/src/ui_preview.*`, `apps/desktop/tests/ui_preview_test.cpp`, `scripts/check_ui_preview.py` | Isolation, reload/error and capture behavior; commands and limitations |
-| UI worker, step 2 | `apps/desktop/qml/` against the committed preview contract | Compact layout and deterministic cue/reduced-motion states |
-| Review worker | Read-only source review and coordinator-provided artifacts under `build/` | Check focus/geometry observations, captures and timing evidence against acceptance |
-
-Use CCR workers with disjoint files and the existing bounded-work procedure; do
-not run multiple builds into the same directory. The coordinator runs `just desktop`
-once per integrated C++ change and targeted ASan cases for preview/reload lifetime
-changes. Apply `just verify-tools` and Python checks only when their tooling changes;
-run TSan if shared threading changes. Reuse pinned dependency builds. QML-only
-iterations use reload and focused visual checks, not the engine comparison. Keep
-receipts in the existing evidence area and update these documents in place.
-
-**Following these two steps:** introduce rebindable next-session, previous-session
-and next-needing-attention actions with persisted settings and focus/input tests.
+After visual review, introduce rebindable next-session, previous-session and
+next-needing-attention actions with persisted settings and focus/input tests.
 Tab or a Tab chord remains a candidate, not a selected default: plain Tab belongs
-to shell completion/TUIs unless explicitly rebound, and platform shortcuts need
-consideration. Keep preview positions stable and never split paste/IME operations.
-Selecting a session never sends a response; the user explicitly composes and sends
-it through the originating terminal or a verified adapter.
+to shell completion/TUIs unless explicitly rebound. Keep positions stable and never
+split paste/IME operations. Selecting a session never sends a response.
 
-Real attention adapters, automatic carousel movement, multiple live sessions and
-prompt/approval routing remain outside these two changes. Then finish the
-persistent-terminal acceptance gaps and qualify the minimal Linux view before
-expanding the live workspace.
+Keep real attention adapters, automatic carousel movement, multiple live sessions
+and prompt/approval routing out of this fixture. Complete persistent-terminal
+acceptance and qualify the minimal Linux view before expanding the live workspace.
+
+For parallel changes, commit the shared contract first and assign disjoint files
+with one coordinator/build owner. Preview hosting lives in `ui_preview.*`, layout
+in `qml/`, and capture/check tooling in `ui_capture.*`, desktop tests and
+`scripts/check_ui_preview.py`. Review partial worker output before integration.
+Use `just desktop` for integrated C++ changes, targeted ASan for reload lifetimes,
+and `just ui-check` for capture behavior. QML-only iteration uses reload and focused
+visual checks; reuse pinned dependencies and update these documents in place.
 
 ### Terminal adapter v0
 
@@ -343,7 +314,7 @@ optional checks once the affected behavior passes.
 
 ### Next: complete persistent-terminal acceptance
 
-After the two UI refinement steps and the maintainer's visual review, close
+After the maintainer's visual review of the implemented UI refinements, close
 these gaps in small dependent changes:
 
 1. Qualify terminal cell positioning, fallback fonts and real IME/key behavior;

@@ -143,29 +143,28 @@ SessionPreview* Workspace::session(const QString& id) const {
             return item.get();
     return nullptr;
 }
-bool Workspace::requestAttention(const QString& session_id, const QString& request_id,
-                                 const QString& reason) {
-    auto* target = session(session_id);
-    return preview_mode_ && target && target->addPreviewRequest(request_id, reason);
+bool Workspace::requestAttention(const PreviewRequest& request) {
+    auto* target = session(request.session_id);
+    return preview_mode_ && target && target->addPreviewRequest(request.request_id, request.reason);
 }
-bool Workspace::resolveAttention(const QString& session_id, const QString& request_id) {
-    auto* target = session(session_id);
-    return preview_mode_ && target && target->resolvePreviewRequest(request_id);
+bool Workspace::resolveAttention(const PreviewRequest& request) {
+    auto* target = session(request.session_id);
+    return preview_mode_ && target && target->resolvePreviewRequest(request.request_id);
 }
 bool Workspace::replayAttention(const QString& scenario) {
     if (!preview_mode_)
         return false;
     if (scenario == QStringLiteral("arrival") || scenario == QStringLiteral("duplicate"))
-        return requestAttention(QStringLiteral("agent"), QStringLiteral("request-1"),
-                                QStringLiteral("Review the next step"));
+        return requestAttention({QStringLiteral("agent"), QStringLiteral("request-1"),
+                                 QStringLiteral("Review the next step")});
     if (scenario == QStringLiteral("two")) {
-        static_cast<void>(requestAttention(QStringLiteral("agent"), QStringLiteral("request-1"),
-                                           QStringLiteral("Review the next step")));
-        return requestAttention(QStringLiteral("renderer"), QStringLiteral("request-2"),
-                                QStringLiteral("Choose the rendering option"));
+        static_cast<void>(requestAttention({QStringLiteral("agent"), QStringLiteral("request-1"),
+                                            QStringLiteral("Review the next step")}));
+        return requestAttention({QStringLiteral("renderer"), QStringLiteral("request-2"),
+                                 QStringLiteral("Choose the rendering option")});
     }
     if (scenario == QStringLiteral("resolve"))
-        return resolveAttention(QStringLiteral("agent"), QStringLiteral("request-1"));
+        return resolveAttention({QStringLiteral("agent"), QStringLiteral("request-1"), {}});
     if (scenario == QStringLiteral("reset")) {
         for (const auto& item : sessions_)
             item->clearPreviewRequests();
