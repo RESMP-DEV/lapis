@@ -395,12 +395,12 @@ See the [review repair receipt](../evidence/pr2-review.json) and
 Close these dependent gaps before expanding the live
 workspace. Parallelize independent investigation, with one integration/build owner.
 
-1. **Identity and recovery — session service and transport.** Introduce stable
-   session IDs, service epochs and attachment generations before adding sessions
-   or routable attention. Reject stale input; exercise partial paste, slow clients,
-   queue overflow and service failure. GUI reconnection refreshes state before
-   input is enabled. Service failure/reboot must be reported distinctly; do not
-   promise survival of the old child.
+1. **Identity and recovery — implemented checkpoint.** Wire v3 binds input to
+   session ID, service epoch and attachment generation. The
+   [reconnect receipt](../evidence/session-reconnect.json) covers restored-screen
+   input readiness, stale controls, slow clients and bounded queues. Retain these
+   regressions while completing the remaining work. Service loss/reboot does not
+   preserve the old child; automatic process recovery is outside this milestone.
 2. **Terminal fidelity and timing — desktop and verification.** Qualify cell
    positioning, fallback fonts, real IME/key/paste behavior, interactive TUIs and
    foreground jobs. Add correlated input/service/frame markers and measure the
@@ -420,12 +420,12 @@ acceptance. The static cards remain review fixtures.
 
 ### Implementation queue after PR #2
 
-Planning baseline: merged `99567cb` (September 18, 2026). Slice A is implemented with the qualification recorded in
-[its receipt](../evidence/session-reconnect.json); the other slices remain proposed. The next user-visible result
-is a terminal that can reconnect to the same running session, show whether its
-state is current, and refuse input aimed at an obsolete attachment. The following
-work makes that terminal usable with native input and real TUIs. Keep
-milestone 1 open until its acceptance below is exercised.
+Planning baseline: merged `99567cb` (September 18, 2026), followed by the verified
+session checkpoint `31cabfe`. Slice A is implemented with qualification recorded
+in [its receipt](../evidence/session-reconnect.json). The next visible result is a
+terminal whose text and backgrounds stay aligned to the engine's cell grid through
+fallback fonts, wide characters and resize. Native input, history and platform
+qualification follow. Keep milestone 1 open until its acceptance below is exercised.
 
 | Order | Reviewable slice | Acceptance result |
 | --- | --- | --- |
@@ -435,13 +435,46 @@ milestone 1 open until its acceptance below is exercised.
 | C: after A | Bounded older history | Recent screen stays warm while older history is stored under per-session/global quotas; scrollback retrieval, eviction, disk-full and interrupted-write recovery remain bounded and preserve the live screen |
 | D: minimal Linux qualification | Integrate A through C and native input fixes | Named Linux host, display stack and driver exercise PTY lifecycle, real Vulkan rendering, input, resize and detach/reattach; a headless or software-only result does not qualify the GPU desktop |
 
-B1 can land before A because the owned `TerminalSnapshot` value contract remains
-its boundary. Linux build/dependency investigation and Codex observation-route
-research can also start independently. Final Linux acceptance follows integration;
+B1 retains the owned `TerminalSnapshot` value contract and wire v3 unchanged.
+History API investigation and Linux host/dependency probes can run alongside it.
+Final Linux acceptance follows integration;
 a remote compute host or headless container alone cannot supply native desktop
 input evidence. Record the actual host/display prerequisites before scheduling
 that acceptance. No calendar estimate is assigned until the shared implementation scope and
 qualification host are established.
+
+#### Remaining work packages
+
+These packages describe acceptance, not permanent contributor assignments.
+Contributors share the feature; temporary edit and build scopes prevent collisions.
+
+1. **B1: cell grid and font fidelity.** Fix row layout so fallback glyph advances
+   and bidirectional text do not move later terminal cells. Shape each grapheme,
+   preserve wide-cell occupancy, and align backgrounds, decorations and cursor
+   repaint with the engine grid. Independently authored Vulkan pixel tests must
+   fail on the previous layout and pass through resize. Keep row caching and
+   immutable render state; record contextual shaping limitations explicitly.
+2. **B2: native input and measurement.** Exercise physical key/Option handling,
+   IME preedit/commit/cancel, paste and disconnect while composing in a dedicated
+   shell/TUI. Synthetic Qt events remain separate evidence. Add correlated input,
+   service and frame timestamps; report p50/p95/p99 with the observed endpoints,
+   idle CPU/memory and display rate. Keep latency targets provisional. Selection,
+   clipboard and accessibility each need an explicit supported behavior or open gap.
+3. **C: older history.** First verify how the pinned engine exposes history and
+   soft-wrap information. Agree on bounded row retrieval and disk-record contracts
+   before implementation. Then exercise quotas, eviction, truncated records,
+   disk-full handling and resize/reflow while output and the current screen remain
+   responsive. A transcript recorder alone does not satisfy scrollback acceptance.
+4. **D: Linux window.** Identify a reachable host with a real graphics session,
+   a Vulkan driver and native-input access. Record tool/dependency versions, build
+   the minimal terminal there, and repeat PTY lifecycle, rendering, native input,
+   resize and reconnect checks. Keep headless build evidence separate from desktop
+   qualification; host unavailability does not block the macOS work packages.
+
+B1 integration runs the C++ checks, the renderer regression suite, desktop-enabled
+ASan and TSan, preview captures and the live CLI harness. GUI runs are serial even
+when independent worker builds run concurrently. Record results in the existing
+README status table and a sanitized receipt; do not create another roadmap.
 
 #### First implementation PR: session identity and input readiness
 
