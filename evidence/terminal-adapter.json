@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-09-18T07:03:50.825940+00:00",
+  "base_revision": "a6895ef68840eb1ed63622010aaeec9288612ad2",
+  "source_file_sha256": {
+    "services/session/include/lapis/session/terminal.hpp": "b2e5042ccceaa76e80d9bfa477515af6caf786742e38220f4f68ed6e22b1b105",
+    "services/session/src/terminal/terminal.cpp": "d432cddc2108c369ffdeed0fea8a4c181d2cea694146dadd6bc0f8145faeba81",
+    "services/session/tests/terminal/terminal_test.cpp": "3cca1566c41c9ed7d7e97ca6d465423a98c4ae4575b1524a9e22e462c75966bb",
+    "services/session/CMakeLists.txt": "091a078e4e71e6ae6c2a01c73782573be384135fef13089e0f74b181d3d03f98",
+    "cmake/Ghostty.cmake": "270a9632d67cc8d89b070f08de873ab1d7164644b04b01a7848acd22753890cf"
+  },
+  "scope": "Headless production C++20 terminal adapter; not PTY, persistent service, GUI, GPU or latency acceptance",
+  "dependency_manifest": "tools/terminal_probe/ghostty/sources.json",
+  "dependency_revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+  "dependency_reuse": "Previously built and replayed pinned Ghostty ReleaseSafe archives; no dependency pin changes",
+  "checks": {
+    "macos": {
+      "platform": "macOS-26.7-arm64-arm-64bit-Mach-O",
+      "commands": [
+        "just check",
+        "just asan",
+        "just verify-tools"
+      ],
+      "passed": true,
+      "terminal_cases": [
+        "ascii_cursor",
+        "fragmented_utf8",
+        "styles_and_colors",
+        "alternate_screen",
+        "resize_and_wrap_spacer",
+        "input_modes",
+        "snapshot_durability",
+        "cursor_visibility_and_shape",
+        "dsr_reply_order",
+        "output_burst",
+        "history_eviction_and_clear",
+        "invalid_geometry_and_rejected_mutations",
+        "reply_overflow_faults_terminal",
+        "grapheme_cap"
+      ],
+      "ctest": "3/3"
+    },
+    "linux": {
+      "platform": "Ubuntu 24.04 ARM64 in a local native container",
+      "compiler": "Clang/libc++ 18",
+      "commands": [
+        "cmake configure with pinned Ghostty prefix",
+        "cmake --build --parallel 4",
+        "ctest --output-on-failure"
+      ],
+      "passed": true,
+      "ctest": "3/3",
+      "terminal_case_count": 14
+    }
+  },
+  "sanitizer_scope": "ASan/UBSan instruments the C++ adapter and tests; upstream Zig library remains ReleaseSafe, not ASan-instrumented",
+  "resource_contract": {
+    "snapshot": "Owned contiguous cells and graphemes; capped cell/codepoint counts; one reused extraction scratch vector",
+    "replies": "Preallocated bounded storage, no allocation or exceptions in callback; overflow permanently faults the instance",
+    "history": "Eviction, viewport retention, clearing and budget restoration exercised; upstream page granularity is not a strict byte/RSS ceiling",
+    "image_storage": "Disabled; file, temporary-file and shared-memory image media disabled"
+  },
+  "notices": "third_party/ghostty/NOTICES.txt",
+  "skipped": [
+    {
+      "check": "TSan for production adapter",
+      "reason": "No threading or ownership handoff introduced; single-owner contract"
+    },
+    {
+      "check": "Engine comparison rebuild and full dependency rescan",
+      "reason": "Unchanged pinned dependency graph; reused successful checkpoint builds and dated audit scope"
+    },
+    {
+      "check": "Renderer and responsiveness benchmark",
+      "reason": "No renderer or presentation endpoint implemented"
+    }
+  ],
+  "limitations": [
+    "Full keyboard/text/IME, mouse, selection, scrollback navigation and broader compatibility remain unqualified",
+    "A successful adjacent source receipt is provenance, not output binary integrity",
+    "Bundled simdutf modification provenance and a complete SBOM remain open before binary redistribution",
+    "No end-to-end responsiveness or process-memory guarantee is claimed"
+  ]
+}

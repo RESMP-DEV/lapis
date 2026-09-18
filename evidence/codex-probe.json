@@ -1,5 +1,5 @@
 {
-  "recorded_at": "2026-09-18T02:43:03.160972+00:00",
+  "recorded_at": "2026-09-18T09:56:33.397981+00:00",
   "binary_sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
   "reported_version": "codex-cli 0.0.0",
   "schema_includes_experimental": true,
@@ -38,9 +38,39 @@
   },
   "scope": "Schema export and initialization/list only; no model turn or hook exercise.",
   "binary_origin": "Local Codex release build selected from PATH",
+  "cli_inventory": {
+    "commands": [
+      "codex --help",
+      "codex app-server --help",
+      "codex features list"
+    ],
+    "help_options_advertised": [
+      "--remote",
+      "--no-daemon",
+      "--no-alt-screen",
+      "--cd",
+      "--profile",
+      "--ask-for-approval"
+    ],
+    "app_server_subcommands_advertised": [
+      "daemon",
+      "proxy"
+    ],
+    "features": {
+      "daemon_auto_start": {
+        "stage": "experimental",
+        "enabled": true
+      },
+      "hooks": {
+        "stage": "stable",
+        "enabled": true
+      }
+    },
+    "scope": "Installed help and effective feature listing only; no TUI, shared attachment, hook dispatch or model turn exercised."
+  },
   "publication_summary": {
-    "prepared_at": "2026-09-18T04:27:09.881524+00:00",
-    "original_receipt_sha256": "0fdb09bf99f243d47975c6ebd413ea4d7a062ba3b5f7624093a22962f6a1b689",
-    "changes": "Local paths normalized; unrelated operational details omitted. Observation timestamps and test outcomes retained. Original receipt preserved locally outside Git."
+    "prepared_at": "2026-09-18T09:59:17.098219+00:00",
+    "original_receipt_sha256": "8c6b44e921d978536f98389e5173965fdcfede34795281c0425b512190576257",
+    "changes": "Removed local executable path; added bounded CLI help and selected feature observations. No thread content, credentials or prompts retained."
   }
 }

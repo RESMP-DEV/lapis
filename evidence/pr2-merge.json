@@ -1,0 +1,289 @@
+{
+  "schema": "lapis.pr-merge-preparation/1",
+  "recorded_at": "2026-09-18T13:36:17.111208+00:00",
+  "source_base": "d0613155b306790c9201261c0db3fb071bc60bee",
+  "source_state": "Validated working-tree changes; hashes identify tested sources before commit. Merge state is recorded in the PR handoff.",
+  "source_sha256": {
+    ".github/PULL_REQUEST_TEMPLATE.md": "386c66e1125a296ca58d6947067dc5767302a6ba938ce00aa6a300de270ccbfb",
+    "CONTRIBUTING.md": "c47eb45ecb62dc37eb7ba778952afaf4782999901b8fa91ac5ab96b1bd44a943",
+    "README.md": "9d4d16e1fdb9c4f29a0ba393cc2bb68ea78094e3cb41adb4ed4fbcd6e1e22a31",
+    "apps/desktop/qml/Main.qml": "160704ae1defa1fc60dabb0d718d5444e4134d16020947a6053bf8698d2fde73",
+    "apps/desktop/src/terminal_surface.cpp": "898baec4f434003cff20267f8e96626fa0d9d7eb729ee5f40d9a3f8bcb103be9",
+    "apps/desktop/src/ui_preview.cpp": "41525ec2d204a618eb2ca8861abca6bad636b57851ac65e7773d5972b40d6484",
+    "apps/desktop/tests/ui_preview_test.cpp": "7f51888f344c962fbea4f3fd4956b072264725b5a8b5cb7802392710b7d066e3",
+    "docs/architecture.md": "e5d991bc0d18cdf59e52e294af5fe96f861bf890302a59c4f3440279d8b0e79e",
+    "services/session/CMakeLists.txt": "8069eb6c349dd84c333567e9e60a511a81b6c199a3876d33c2ca1b1b9c95a593",
+    "services/session/src/platform/posix/pty_process.cpp": "3edc04e23f4e0632de77d1779fe42e68f986fba44f856b999b9c336678e62e81",
+    "services/session/src/platform/posix/pty_process.hpp": "9b306748f147bd4da212b7bbc1e48f89dee6c090ff0606b468be4f9e54a24106",
+    "services/session/tests/launch_spec_test.cpp": "c185c1078a22dab970a7c667c71aed0f433c7cea227584d8f6039ed1be00265e",
+    "services/session/tests/pty_process_test.cpp": "dbe12c725af3ac90725b4cda67bea611dc748beb5bf335ff70364b90775293d8"
+  },
+  "platform": {
+    "os": "macOS",
+    "version": "26.7",
+    "architecture": "arm64",
+    "hardware": "Apple M4 Max",
+    "qt": "6.11.2",
+    "render_loop": "threaded",
+    "renderer": "Vulkan through MoltenVK"
+  },
+  "tools": {
+    "clang++": "Homebrew clang version 23.1.1",
+    "clang-tidy": "Homebrew LLVM version 23.1.1",
+    "clang-format": "Homebrew clang-format version 23.1.1",
+    "clangd": "Homebrew clangd version 23.1.1",
+    "cppcheck": "Cppcheck 2.21.0",
+    "cmake": "cmake version 4.4.3",
+    "ctest": "ctest version 4.4.3"
+  },
+  "changes": [
+    "Contributor baseline, worktree isolation, ownership/contracts, test inventory, sanitizer commands and failure triage in canonical documentation.",
+    "Cursor shape/color, wide cells and readable covered text, with captured-pixel assertions.",
+    "Detached same-group guard retains signaling capability after leader exit; quiet hangup-resistant descendant and guard cleanup tested.",
+    "Endpoint ancestor test enforces private immediate parent and proves acceptance after restoring safe ancestor permissions.",
+    "Successful QML diagnostics use bounded comparison; reduced motion resets pulses paused while inactive."
+  ],
+  "verification": [
+    {
+      "command": [
+        "python3",
+        "scripts/check_cpp.py",
+        "dev"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/check_cpp.py",
+        "desktop"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/verify_cpp_tools.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "asan-tests",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/desktop-asan",
+        "--output-on-failure",
+        "--no-tests=error"
+      ],
+      "exit_code": 0,
+      "seconds": 4.687
+    },
+    {
+      "name": "tsan-tests",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/desktop-tsan",
+        "--output-on-failure",
+        "--no-tests=error"
+      ],
+      "exit_code": 0,
+      "seconds": 25.116
+    },
+    {
+      "name": "asan-cli",
+      "command": [
+        "python3",
+        "scripts/check_cli_launch.py",
+        "--build-dir",
+        "build/desktop-asan",
+        "--output",
+        "build/contributor-readiness/asan-cli.json"
+      ],
+      "exit_code": 0,
+      "seconds": 5.553
+    },
+    {
+      "name": "tsan-cli",
+      "command": [
+        "python3",
+        "scripts/check_cli_launch.py",
+        "--build-dir",
+        "build/desktop-tsan",
+        "--output",
+        "build/contributor-readiness/tsan-cli.json"
+      ],
+      "exit_code": 0,
+      "seconds": 23.725
+    },
+    {
+      "name": "ui",
+      "command": [
+        "python3",
+        "scripts/check_ui_preview.py"
+      ],
+      "exit_code": 0,
+      "seconds": 12.835
+    },
+    {
+      "name": "cli",
+      "command": [
+        "python3",
+        "scripts/check_cli_launch.py",
+        "--desktop",
+        "--codex",
+        "--output",
+        "build/contributor-readiness/cli.json"
+      ],
+      "exit_code": 0,
+      "seconds": 10.86
+    }
+  ],
+  "cli": {
+    "codex": {
+      "sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+      "arguments": [
+        "--no-daemon"
+      ],
+      "prompt_submitted": false
+    },
+    "checks": [
+      {
+        "name": "invalid resize preserves geometry and signal exit status",
+        "passed": true,
+        "seconds": 0.141
+      },
+      {
+        "name": "snapshot limit preserves child and permits recovery",
+        "passed": true,
+        "seconds": 0.309
+      },
+      {
+        "name": "literal argv, cwd, resize, paste and exit",
+        "passed": true,
+        "seconds": 0.201
+      },
+      {
+        "name": "detached output and same-PID reattachment",
+        "passed": true,
+        "seconds": 0.67
+      },
+      {
+        "name": "mismatch and malformed attachment preserve active client",
+        "passed": true,
+        "seconds": 3.117
+      },
+      {
+        "name": "failed executable and cwd",
+        "passed": true,
+        "seconds": 0.066
+      },
+      {
+        "name": "desktop capture, reattachment, shell default and option rejection",
+        "passed": true,
+        "seconds": 3.807
+      },
+      {
+        "name": "installed Codex TUI input, navigation, paste, resize, reattach and interrupt",
+        "passed": true,
+        "seconds": 2.372
+      }
+    ]
+  },
+  "review_responses": [
+    {
+      "comment_id": 4047078950,
+      "resolution": "Render all four cursor shapes and optional color; pixel checks include wide cells, covered glyph, fallback color and hidden/out-of-viewport cursor."
+    },
+    {
+      "comment_id": 4047078961,
+      "resolution": "Guard signals its own retained group after service pipe EOF; no saved PGID is signaled after Qt reaps the leader. Regression waits for quiet child and guard group disappearance."
+    },
+    {
+      "comment_id": 4047078968,
+      "resolution": "Immediate endpoint parent set to 0700; unsafe ancestor rejects, restoring ancestor permissions accepts the same path."
+    },
+    {
+      "review_summary": "CodeRabbit QML diagnostics nitpick",
+      "resolution": "Successful loads publish through setDiagnostics for bounded comparisons."
+    }
+  ],
+  "captures": [
+    {
+      "name": "codex-compact.png",
+      "width": 1960,
+      "height": 1400,
+      "sha256": "b012c700964fe6d3def36faa56919c82868c713a11cebe8903a9def5f6ac52c5"
+    },
+    {
+      "name": "codex.png",
+      "width": 2800,
+      "height": 1902,
+      "sha256": "91c9b5a18ec291fd79ffd7ca531f503409e7ff2ff842901cb2e259001bb5e295"
+    },
+    {
+      "name": "gui.png",
+      "width": 2800,
+      "height": 1902,
+      "sha256": "814bc3aba3302cf3866b3fa5843ffef742826dcddc9f5a4487dbec4b069a43cb"
+    },
+    {
+      "name": "shell.png",
+      "width": 2800,
+      "height": 1902,
+      "sha256": "edb1b295927656a545e188f0f1c1181b2581f6263a589b26b3a0ca7cb8f81446"
+    },
+    {
+      "name": "arrival.png",
+      "width": 2800,
+      "height": 1902,
+      "sha256": "05f7f82f7a63f451b68f93cf072a5e06bd87edb57bef8bd660eb932c50512389"
+    },
+    {
+      "name": "compact.png",
+      "width": 1960,
+      "height": 1400,
+      "sha256": "19e555e1043751f2fe597a00634fa1dbfb742c8d02d9a7c80884aeaf6ab6a086"
+    },
+    {
+      "name": "default.png",
+      "width": 2800,
+      "height": 1902,
+      "sha256": "270b416b7b6773458f40e1564544ae6fc17d046a58ffcc13c2d184c82ff04d69"
+    },
+    {
+      "name": "reduced.png",
+      "width": 2800,
+      "height": 1902,
+      "sha256": "28b59045d7f5d2e9adff53019f3c05af6db34b3141d4e8e8e0bd9f8580b5f184"
+    },
+    {
+      "name": "two.png",
+      "width": 2800,
+      "height": 1902,
+      "sha256": "706953fca409c3e451a0a262afb0e4b072065a372d6a2e7a4ad3de9da66e9f15"
+    }
+  ],
+  "diagnostics": [
+    {
+      "observation": "Expanded PTY suite exceeded old 10-second CTest deadline under TSan; direct run passed in 13.54 seconds.",
+      "action": "Suite timeout raised to 30 seconds; final complete TSan run passed with PTY suite at 13.90 seconds. Individual event-loop waits remain bounded."
+    },
+    {
+      "observation": "First ASan UI run exposed reduced-motion reset missing when animation was already paused by inactivity.",
+      "action": "Added independent reducedMotionChanged handling and inactive-window regression; final ASan and TSan UI suites pass."
+    },
+    {
+      "observation": "One compact capture timed out waiting for activation/frame; other capture cases passed. Root cause was not isolated.",
+      "action": "Preserved failed log/receipt locally. The isolated compact case and subsequent complete GUI harness passed without a capture-code change."
+    }
+  ],
+  "limits": [
+    "Service and desktop exercised only on macOS; Linux service/desktop remain unqualified.",
+    "Vendor libraries remain uninstrumented; no physical input/presentation performance claim.",
+    "Processes deliberately leaving the owned process group need separate qualification.",
+    "No Codex prompt/model turn/real attention approval was submitted.",
+    "Milestone 1 remains incomplete; README and architecture retain open acceptance items."
+  ]
+}

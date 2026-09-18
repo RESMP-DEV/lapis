@@ -1,0 +1,256 @@
+{
+  "schema_version": 1,
+  "observed_at_utc": "2026-09-18T09:12:26.804368+00:00",
+  "scope": "macOS isolated UI iteration and synthetic attention prototype; maintainer visual acceptance pending",
+  "source": {
+    "base_commit": "61cc24ec091920718e990498b2fbfc614a71adea",
+    "identity": "Base plus source SHA-256 values below; implementation commit contains this receipt",
+    "sha256": {
+      "apps/desktop/CMakeLists.txt": "20f69ebf0a48e2823948aaf3cd3d623b3e86fc19a7d437e77435547c570c3c91",
+      "apps/desktop/qml/Main.qml": "149292bf6fd9de764af09ecfd16681c9cd425ebe7a6b044c41d47969aa8b4d5d",
+      "apps/desktop/src/live_connection.cpp": "6d423c6c0ebda7dbc100de9e078d26c063b2e917042849cc146c76d7d14d5a8e",
+      "apps/desktop/src/live_connection.hpp": "b1f24eb772e9ba3d258997d343582519e93b164da21e3add0a6198fbafb86ce3",
+      "apps/desktop/src/main.cpp": "07af2453d176b931edde79434d15ea631b599e475a61521f35cedefd30f78ae2",
+      "apps/desktop/src/platform_preferences.hpp": "842e77ae009d3a50ddf7e817dfaccf06d0204d87795cbd78ecf43bf978495162",
+      "apps/desktop/src/platform_preferences.mm": "f9e204d3ee588b72dc2e78b49f66d3e8f3e89b6915fa62b6886f6ee59458761e",
+      "apps/desktop/src/terminal_surface.cpp": "88a888a41a931f8d2fab0f510bea65ae93203261988006566135424aa4e64f60",
+      "apps/desktop/src/terminal_surface.hpp": "2efb122c1f237d6d1cf5faa9c399b560ea5cf29192fefcaed696c58c4b7d7c5f",
+      "apps/desktop/src/ui_capture.cpp": "e8e275c7dbc3c0b978448613eae049ed66c752f1bb51245224710389c9cd6f09",
+      "apps/desktop/src/ui_capture.hpp": "318dd1ebfae5a81cd06bdb1f7851498771810535833d47831c8671e4730a9845",
+      "apps/desktop/src/ui_preview.cpp": "1dfa865fa6f7656a71f6457d371b6008299abcded67c773cabc26fc1ef600a4a",
+      "apps/desktop/src/ui_preview.hpp": "6068935f9559ba86744db93c7e8738a8c8fcc63e511b0beb74466f6e65fe0d35",
+      "apps/desktop/src/workspace.cpp": "59908b1c65b2f7237f257e4a84cb5097482c1823d99c693fc66dfe6824c7ff3c",
+      "apps/desktop/src/workspace.hpp": "91f5baa3bc6734c35e036ac19ea64749e827dc099d95ba80e3f95c723321f03a",
+      "apps/desktop/tests/ui_preview_test.cpp": "2597fcde1d88b5b9742b42fc301dd6285e77928562b32184022bdd6cc140e7ff",
+      "justfile": "b0c5b99e2baaebbbd1d26dca95590890cf993c9dc70f1db33a21a4bf59f61b67",
+      "scripts/check_cpp.py": "9838c3a22a3190ca346f6e7e15aac95fd7ac5291af6a0d9e9adc0e3e3f513b30",
+      "scripts/check_ui_preview.py": "0934b8c7ecfd160a7baebdfc24719f2beacce534169b7d5e1f0f32fb227c8192"
+    }
+  },
+  "reference": {
+    "platform": "macOS 26.7",
+    "chip": "Apple M4 Max",
+    "display_nominal_hz": 120,
+    "display_inventory": "evidence/performance-tooling.json",
+    "display_cadence": "Not independently measured",
+    "qt": "6.11.2",
+    "backend": "Vulkan through MoltenVK 1.4.2; runtime API 5",
+    "workload": "Six synthetic snapshots; one or two finite attention cues; no PTY in fixture",
+    "conditions": "Desktop optimized build with symbols; normal desktop processes and an ASan build overlapped this session. Power and thermal conditions were not controlled."
+  },
+  "delegation": {
+    "launcher": "codex-ccr-worker",
+    "provider_runtime_evidence": "CCR router Trying zai,glm-5.3 and Success on zai; sanitized log under build/ui-implementation/workers/provider-evidence.log",
+    "independent_workers": 3,
+    "initial_timeout_seconds": 300,
+    "resumed_timeout_seconds": 180,
+    "resumed_results": {
+      "preview": "completed",
+      "layout": "completed",
+      "tests": "timed_out; coordinator completed partial implementation"
+    },
+    "review": "Coordinator reviewed partial drafts and receipts, fixed QML engine lifetimes, contract mismatches, card layout, focus/capture observations and test implementation, then ran integrated checks. Worker completion was not treated as test success."
+  },
+  "implemented": [
+    "Isolated preview mode constructs no live connection or service; shell-input combination rejected before Workspace creation",
+    "Manual source-QML reload preserves last working view on load error; retired engine deletion deferred beyond QML caller",
+    "Compact header and finite red edge pulse followed by readable persistent marker",
+    "Request deduplication, matching resolution, bounded requests and unchanged terminal focus/geometry",
+    "macOS reduce-motion query at startup/activation and explicit steady preview mode",
+    "Bounded captures and GUI frame observations; LLDB launch and attach commands"
+  ],
+  "validation": {
+    "just desktop": "PASS: compiler, formatting, clang-tidy, Cppcheck and 6/6 CTest cases",
+    "just ui-check": {
+      "passed": true,
+      "checks": [
+        {
+          "name": "default",
+          "passed": true,
+          "exit_code": 0,
+          "elapsed_seconds": 3.082
+        },
+        {
+          "name": "compact",
+          "passed": true,
+          "exit_code": 0,
+          "elapsed_seconds": 2.538
+        },
+        {
+          "name": "arrival",
+          "passed": true,
+          "exit_code": 0,
+          "elapsed_seconds": 2.498
+        },
+        {
+          "name": "two",
+          "passed": true,
+          "exit_code": 0,
+          "elapsed_seconds": 2.506
+        },
+        {
+          "name": "reduced",
+          "passed": true,
+          "exit_code": 0,
+          "elapsed_seconds": 2.507
+        },
+        {
+          "name": "reject-shell-input",
+          "passed": true,
+          "exit_code": 2,
+          "elapsed_seconds": 0.076
+        },
+        {
+          "name": "reject-qml",
+          "passed": true,
+          "exit_code": 1,
+          "elapsed_seconds": 0.081
+        },
+        {
+          "name": "reject-destination",
+          "passed": true,
+          "exit_code": 1,
+          "elapsed_seconds": 0.331
+        }
+      ]
+    },
+    "desktop ASan/UBSan ui-preview": "PASS: actual QML cue replay, reload failure and deferred destruction; 2.65 seconds",
+    "desktop ASan/UBSan capture": "PASS: isolated two-card PNG and trace; exit 0",
+    "Python": "Ruff check/format and 23 existing tooling unit tests passed",
+    "just verify-tools": "PASS",
+    "LLDB launch": "Breakpoint UiPreview::load, stack inspection, resume, Vulkan capture and exit 0",
+    "LLDB attach": "Separate isolated app stopped, stack inspected, detached successfully",
+    "live isolation": "Existing normal GUI remained connected to shell PID 5894 under service PID 5893 throughout isolated preview checks; no Disconnected log; processes remained alive",
+    "not_repeated": "Engine comparison, Linux qualification, TSan service suite and live shell-input smoke. No changed shared-thread mutation or service lifecycle; preview checks sent no shell input.",
+    "instrumentation_limit": "ASan/UBSan covers exercised first-party C++; Qt, MoltenVK and Ghostty binaries are not instrumented. LLDB build optimized, so some variables/stepping may be unavailable."
+  },
+  "frame_observations": [
+    {
+      "case": "default",
+      "logical_size": [
+        1400,
+        951
+      ],
+      "frame_observations": 3,
+      "scenario_observed_ms": 2100.213,
+      "frames_after_1500ms": 0,
+      "terminal_focus_preserved": true,
+      "system_reduced_motion": false,
+      "effective_reduced_motion": false,
+      "trace_sha256": "70beefb64c81e96245f36ef4c624fd52b350a7cd8681fa9155add554bcf5f6a1",
+      "png_sha256": "6440c6725ffe8a0ae2d72e41150456bbd5490f0e07c407143a8577b1cba71cce"
+    },
+    {
+      "case": "compact",
+      "logical_size": [
+        980,
+        700
+      ],
+      "frame_observations": 3,
+      "scenario_observed_ms": 2093.694,
+      "frames_after_1500ms": 0,
+      "terminal_focus_preserved": true,
+      "system_reduced_motion": false,
+      "effective_reduced_motion": false,
+      "trace_sha256": "e86934837f948e4da412f663cb989b4edc10b05035a6a6a13de3cd6f488697b7",
+      "png_sha256": "225f68bff0f538a9ab811edf40e80fbbf22433f64d1c5662207c88443f165897"
+    },
+    {
+      "case": "arrival",
+      "logical_size": [
+        1400,
+        951
+      ],
+      "frame_observations": 172,
+      "scenario_observed_ms": 2095.423,
+      "frames_after_1500ms": 0,
+      "terminal_focus_preserved": true,
+      "system_reduced_motion": false,
+      "effective_reduced_motion": false,
+      "trace_sha256": "75cb7754d59949c71a8b3bc488b63804a98e1cca9eabc738a039db22ad74ca6b",
+      "png_sha256": "15db69e44940522b219c6ecc0dd163957ccd449c1c8bd43a62bebc2ecf4bb24d",
+      "active_interval_ms": {
+        "p50": 8.345,
+        "p95": 15.392,
+        "p99": 16.777
+      }
+    },
+    {
+      "case": "two",
+      "logical_size": [
+        1400,
+        951
+      ],
+      "frame_observations": 171,
+      "scenario_observed_ms": 2096.585,
+      "frames_after_1500ms": 0,
+      "terminal_focus_preserved": true,
+      "system_reduced_motion": false,
+      "effective_reduced_motion": false,
+      "trace_sha256": "54c7fd3d3bbd50f008b20fd0cffa14420342e68ffeed98c49ead7af0f4801f99",
+      "png_sha256": "80e1c6582034aeb85693abfc99eedd71ad77097c9c5633db98a91e933f38616c",
+      "active_interval_ms": {
+        "p50": 8.3,
+        "p95": 13.052,
+        "p99": 16.421
+      }
+    },
+    {
+      "case": "reduced",
+      "logical_size": [
+        1400,
+        951
+      ],
+      "frame_observations": 3,
+      "scenario_observed_ms": 2082.431,
+      "frames_after_1500ms": 0,
+      "terminal_focus_preserved": true,
+      "system_reduced_motion": false,
+      "effective_reduced_motion": true,
+      "trace_sha256": "7ad9dd11ec48541e9e5e8a30bccbf04c4418d2c1c2e8f416ac25def2963a50bf",
+      "png_sha256": "4bf4972c12e82d001ad6df54a8ccbc515dd62d4d8e88029c5db2467df7723e13"
+    }
+  ],
+  "timing_scope": "GUI-thread observations of frameSwapped, including queued signal delivery. Active intervals use the first 1500 ms after scenario start; final approximately 0.5 seconds is a short idle observation. No physical presentation, input latency, warm-switch, sustained CPU/GPU or performance-threshold claim.",
+  "limitations": [
+    "Synthetic attention only; no real CLI adapter, response routing, session switching or keybinding settings",
+    "Linux desktop and its system reduced-motion preference unqualified",
+    "Milestone 1 terminal/input/recovery/history acceptance remains incomplete",
+    "Manual visual review pending; local developer bundle only, distribution packaging unfinished"
+  ],
+  "local_evidence": [
+    "build/ui-preview-check/",
+    "build/reports/desktop/",
+    "build/desktop-asan/Testing/Temporary/LastTest.log",
+    "build/ui-implementation/asan-capture.log",
+    "build/ui-implementation/asan-two.json",
+    "build/ui-implementation/lldb-launch.log",
+    "build/ui-implementation/lldb-attach.log",
+    "build/ui-implementation/live-isolation.log",
+    "build/ui-implementation/workers/",
+    "build/reports/tool-verification/receipt.json"
+  ],
+  "control_layout_refinement": {
+    "observed_at_utc": "2026-09-18T09:35:28.138059+00:00",
+    "source_qml_sha256": "d1640e7554bf3e168fb5d815087d4053d7ec19dc7519607b28e10ca372b95a29",
+    "changes": [
+      "18-pixel control strip with no repeated session name/path",
+      "Carousel titles and repeated preview badges removed; working directory and attention retained",
+      "Plain action labels with inline explanations and a checked Disable animations control",
+      "Seven one-use Action objects removed; QML reduced by 46 lines"
+    ],
+    "checks": [
+      "QML resource rebuild passed",
+      "Existing UI replay/reload CTest passed",
+      "Eight isolated capture/error cases passed",
+      "Actual menu click handlers and both animation toggle directions exercised"
+    ],
+    "check_note": "Initial UI CTest overlapped a separate GUI capture and lost activation; passed when run alone. No C++ or dependency changes; broad sanitizer and engine checks not repeated.",
+    "artifacts": [
+      "build/ui-labels/checks/receipt.json",
+      "build/ui-labels/menu.png",
+      "build/ui-labels/menu.log"
+    ],
+    "menu_capture_sha256": "18c93f5851fa32f2a3fbcb390c32ec50e4c7b93c1bd1cd8591f149d074df5396"
+  }
+}

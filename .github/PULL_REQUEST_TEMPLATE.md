@@ -1,7 +1,9 @@
 ## Change
 
 <!-- Describe the problem and resulting behavior. Link an issue if relevant.
-Explain design choices only where they help review this change. -->
+Explain design choices only where they help review this change. For large or
+parallel changes, record the starting main SHA, owned areas, dependent PRs and
+shared contract/version changes agreed under CONTRIBUTING.md. -->
 
 ## Validation
 

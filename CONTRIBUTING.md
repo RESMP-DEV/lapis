@@ -5,6 +5,73 @@ profiling and pull requests. Start with [README.md](README.md) for implemented
 behavior and [architecture](docs/architecture.md) for the current milestone.
 Agents also follow [AGENTS.md](AGENTS.md).
 
+## First contributor baseline
+
+Start from a committed `main` baseline. Before changing code, read the README
+status table, architecture's component ownership and current acceptance milestone,
+and the checks below. For another checkout alongside an existing one:
+
+```sh
+git fetch origin
+git worktree add -b feature/my-change ../lapis-my-change origin/main
+cd ../lapis-my-change
+git status --short
+git rev-parse HEAD
+```
+
+Choose an unused branch/path; do not overwrite an existing worktree. Record the
+starting SHA in the PR. Worktrees share Git history, not uncommitted files,
+`build/` or `runtime/`. Install the [toolchain](#setup), then bootstrap the
+[terminal dependency](#terminal-dependency) or point `LAPIS_GHOSTTY_PREFIX` at an
+existing verified prefix. Keep its adjacent probe receipt and source manifest;
+reuse this dependency read-only. Configure fresh build directories in each
+checkout; never copy CMake caches or compilation databases between worktrees.
+
+On the currently qualified macOS desktop host, establish the baseline in order:
+
+```sh
+python3 scripts/check_cpp.py dev
+python3 scripts/check_cpp.py desktop
+python3 scripts/check_ui_preview.py
+python3 scripts/check_cli_launch.py --desktop
+```
+
+The desktop steps require a logged-in graphical session and the exact dependencies
+below. Run GUI checks serially, including across worktrees, so windows do not steal
+focus from another test. The baseline is not a substitute for the scope-specific
+sanitizer, tooling or dependency checks in the [required matrix](#checks).
+On Linux, record a headless baseline and its platform limits; do not claim desktop
+acceptance from a headless pass. Report a pre-existing failure with its command,
+SHA and log before mixing repairs into a large change.
+
+### Large changes and parallel contributors
+
+Agree on a compact task brief before implementation: objective and milestone,
+owner, allowed files, dependencies, shared interface/version, acceptance commands
+and integration owner. Use the [ownership boundaries](docs/architecture.md#component-ownership)
+to divide work. Root CMake files, shared headers, architecture and status docs need
+one coordinating owner; reserve overlapping edits explicitly. Independent work
+can proceed in separate worktrees from the same committed baseline.
+
+For sweeping changes, open reviewable checkpoints that keep `main` buildable.
+Separate mechanical moves from behavior changes where practical. Settle the
+smallest shared contract before dependent implementations diverge. Record
+architecture decisions in the existing architecture document and implementation
+handoffs in the PR; do not create another roadmap. A service/transport or terminal
+contract change must state how existing clients, live processes and saved fixtures
+behave across the transition. Version incompatible wire changes, test rejection or
+migration, and use a new private test endpoint rather than attaching a development
+build to someone else's live session. GUI detach must continue to preserve the
+service-owned child; focus and acknowledgement must never imply approval.
+
+Each checkpoint hands off changed files, interface effects, exact commands and
+results, source SHA, platform/tool versions, evidence paths and remaining limits.
+The integration owner reviews the combined diff, reruns the accumulated checks
+on the assembled head, and updates README status and architecture acceptance.
+Individual branches passing tests do not establish integration acceptance. Use
+one build owner per checkout/preset; shared `build/reports/<mode>/` receipts are
+overwritten on rerun, so preserve relevant logs before another run.
+
 ## Contribution and PR procedure
 
 1. Inspect `git status --short` and choose one coherent change within the current
@@ -21,17 +88,17 @@ Agents also follow [AGENTS.md](AGENTS.md).
    an issue, special branch prefix or conventional-commit prefix is not required.
 4. Identify the applicable configured reviewers for the actual PR head; invoke
    comment-triggered services and verify delivery. Installation alone does not
-   establish review coverage. After normal review processing reaches terminal
-   states, collect complete thread-aware feedback and address findings together.
+   establish review coverage. Collect complete thread-aware feedback and address findings together within
+   the review budget; slow optional services must not hold useful work open.
    Fix valid findings, rerun affected checks, reply with evidence and resolve the
    threads. Explain duplicate, stale or inapplicable findings rather than ignoring
    them. Refresh review state after changing the head.
 5. Record each service as completed, completed with findings, pending, or
    skipped/unavailable. Explicit auth, quota or provider failures are unavailable.
    For rate/quota limits, stop calls until reset (next local day if none is supplied),
-   then retry once only if needed. For silence, wait up to ten minutes, retrigger
-   once and check for acknowledgement after sixty seconds before recording
-   unavailability. Optional unavailability is neither approval nor a merge gate.
+   then retry once only if needed. For silence, use a bounded wait of up to ten minutes, one retrigger and a
+   sixty-second acknowledgement check unless the maintainer requests a shorter
+   budget. Record a shortened wait as skipped, without claiming unavailability. Optional unavailability is neither approval nor a merge gate.
 6. Before merge, confirm checks and reviews apply to the current head, resolve
    valid findings and conflicts, and satisfy required CI, repository protection
    and human approvals. Report unavailable reviewers in the handoff. Templates
@@ -48,6 +115,15 @@ Keep reproducible tooling in `scripts/` or `tools/`, sanitized receipts in
 `evidence/`, raw builds/logs in ignored `build/`, and local session state in ignored
 `runtime/`. Never include credentials or private transcripts. Preserve `.sindexer/`
 in `.gitignore` and the relative `CLAUDE.md` symlink to `AGENTS.md`.
+
+### Fast iteration
+
+Start with the changed behavior and reuse verified dependency builds. Once the
+relevant checks pass, move on; rerun broader checks only for a new change, failure
+or unresolved concern. Do not rebuild the engine comparison for adapter-only work.
+Skip optional slow checks or additional reviewer waits when they stop providing
+useful evidence, and name what was skipped and why in the handoff. Required CI,
+repository protection and unresolved correctness findings still govern merges.
 
 ### Long-running work
 
@@ -76,14 +152,15 @@ Keep slow work bounded and observable; a silent command is not necessarily stuck
 6. If required validation remains blocked, report the completed work, missing check,
    cause, evidence path and next action. Preserve a reviewable checkpoint and keep
    its status incomplete. Never describe a timeout, skipped check or unavailable
-   reviewer as a pass. Review-service waits and rate limits follow the PR procedure
-   above; these general checkpoints do not override that policy.
+   reviewer as a pass. Rate limits still stop reviewer calls. A maintainer-directed shorter review
+   budget takes precedence over optional waiting; record it as skipped, not passed.
 
 ## Setup
 
 On macOS, run `brew bundle --file Brewfile`. Xcode or its command-line tools must
 provide an SDK. Python 3.11+ runs the verification scripts without extra packages.
-`just` is an optional command shortcut. Python tooling changes also require Ruff.
+`just` is an optional command shortcut. Python tooling changes also require Ruff;
+install these optional tools with `brew install just ruff` when needed.
 
 The runner locates Homebrew LLVM without editing shell PATH or replacing Apple's
 compiler. Set `LAPIS_LLVM_BIN` to another LLVM installation's `bin` directory to
@@ -97,6 +174,214 @@ build/replay has been exercised in an Ubuntu 24.04 ARM64 container. Session,
 desktop and GPU behavior remain unqualified there. CMake accepts macOS and Linux
 targets; sanitizer presets require a Clang/GCC toolchain.
 
+### Terminal dependency
+
+The normal build includes the production terminal adapter. Bootstrap the pinned
+Ghostty library once with `python3 scripts/probe_terminal.py --engine ghostty`.
+Use the successful run printed by that command:
+
+```sh
+export LAPIS_GHOSTTY_PREFIX="$PWD/build/terminal-probe/reproduce/ghostty/runs/<run-id>/prefix"
+just check
+```
+
+CMake accepts the same setting as `-DLAPIS_GHOSTTY_PREFIX=...` and retains it in
+its cache. It checks the adjacent successful probe receipt against the source
+manifest; this is build provenance, not a cryptographic attestation of the local
+archive. Reuse that prefix across development and sanitizer builds. Ghostty runs
+in Zig ReleaseSafe mode; ASan/UBSan instruments the C++ adapter and tests.
+No network download occurs during CMake configuration. Other bootstrap hosts
+remain unqualified; the existing pins cover macOS and Linux ARM64.
+
+### Desktop preview
+
+Install the macOS Brewfile dependencies and bootstrap Ghostty above. The desktop
+requires **Qt 6.11.2 exactly**, Vulkan headers/loader (exercised at 1.4.357.0), and
+MoltenVK (1.4.2). Homebrew formulae move; a newer Qt installation deliberately
+fails the CMake version check until that version is evaluated. The headless build
+does not depend on Qt. Check the installed version with `qmake -query QT_VERSION`
+(expected: `6.11.2`) before configuring. `just desktop` uses an optimized build with symbols;
+`just run` opens `build/desktop/apps/desktop/lapis_desktop.app`. The app locates its
+service using the build path; copying the bundle alone is not a portable install.
+
+For a repeatable visual/input check:
+
+```sh
+build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop \
+  --smoke-input --capture "$PWD/build/window.png"
+```
+
+This opens a real window, clears a harmless partial command with Control-U, sends
+a unique `printf` marker and `stty size` through Qt key routing (including
+Alt-B/Alt-D shell word editing), waits for the
+service snapshot, captures the window, and exits. `--compact` tests 980×700 logical
+pixels. The shell survives the capture process. Keep captures private under
+`build/` unless reviewed for terminal content. This is functional acceptance, not
+an input-latency benchmark.
+
+The macOS app sets `QT_MTL_NO_TRANSACTION=1` before Qt initialization. On this
+Qt/MoltenVK combination, the default transaction layer emitted five-second display
+lock warnings; the plain CAMetalLayer path passed threaded Vulkan capture without
+them. Recheck this version-specific workaround on Qt upgrades. The app verifies
+Vulkan selection at runtime instead of accepting a silent fallback.
+
+Qt Core/Gui/Network/Qml/Quick/QuickControls2 are dynamically linked under the open
+source LGPLv3 option; commercial licensing is an alternative. Redistribution must
+retain notices, meet the source/relinking requirements and audit the actual bundled
+modules/dependencies. MoltenVK and the Vulkan headers/loader formulae report Apache-2.0;
+verify their complete bundled notices before redistribution. Qt, Vulkan and Ghostty packaging/SBOM provenance are unfinished;
+no distributable binary is published by this checkpoint.
+
+Use the [desktop sanitizer procedure](#desktop-sanitizers) for PTY, transport,
+renderer and UI lifecycle changes. Keep ASan and TSan separate. Vendor Qt/MoltenVK/Ghostty libraries are not instrumented
+by these C++ presets; a passing test is not coverage of those implementations.
+
+### CLI integration qualification
+
+The default desktop launches `$SHELL -i` (or `/bin/sh -i`) in the checkout.
+Use `--socket PATH --cwd DIRECTORY -- PROGRAM ARG...` for an explicit launch.
+Arguments are literal; use `--` to separate lapis options from the child's options.
+Repeat the same launch to reattach; changing executable/argv/cwd on an occupied
+endpoint is rejected. A socket parent must be owned by you and private (0700).
+Existing directories/files are not repurposed. Logs are written beside each
+socket as `<socket>.log`. The default endpoint is `runtime/desktop-v2.sock`;
+old v1 sessions stay untouched.
+
+Run `just cli-check` for isolated service and GUI fixtures. For the optional
+installed Codex test:
+
+```sh
+python3 scripts/check_cli_launch.py --desktop --codex \
+  --output build/cli-launch-check/codex.json
+```
+
+The optional test uses the current Codex configuration with `--no-daemon`, types
+only an unsubmitted test marker, exercises navigation/paste/resize, captures normal
+and compact windows, reattaches to the same child, clears the draft with Ctrl-C,
+and quits from the empty composer with Ctrl-D.
+It does not send Enter or start a model turn. Service IPC drives those Codex inputs;
+the separate shell smoke drives Qt key events. No physical-key, IME or attention
+claim follows. Logs/captures stay in a unique directory beside the receipt; runtime
+sockets use a fresh private directory. The [saved receipt](evidence/cli-launch.json)
+delimits this checkpoint.
+
+Read-only Codex inventory can be repeated now, without starting a model turn:
+
+```sh
+python3 scripts/probe_codex.py --output build/reports/codex-probe.json
+codex --help
+codex app-server --help
+codex features list
+```
+
+The script hashes the executable selected from PATH and records schema and live
+initialization/list results. Help and feature output advertise interfaces; they
+do not verify TUI behavior, hook dispatch, permissions or shared-server delivery.
+Record selected CLI options alongside the receipt when qualifying a route.
+
+For additional CLI acceptance runs, use a dedicated service/socket and test
+directory. Record the lapis revision, Codex
+hash, working directory, launch arguments and whether the backend is local to the
+TUI or shared. Exercise text/navigation, literal paste, alternate-screen behavior,
+resize, interrupt, GUI detach with continuing output, reattach to the same child
+and screen, and explicit exit. Distinguish service death from GUI detachment.
+Keep raw output/captures private under `build/` and socket/state under `runtime/`.
+Do not use `--smoke-input` while Codex is running: that probe sends shell commands.
+
+The no-prompt check clears its draft with Ctrl-C, verifies the cleared screen,
+then uses the empty-composer Ctrl-D quit shortcut. It submits no model prompt.
+
+Start with a no-prompt TUI check. A later real input/approval fixture needs a
+declared provider/model, bounded turn deadline and explicit test approval policy.
+Check the effective runtime route and actual request/response/continuation;
+neither a TUI screenshot nor a schema export passes that acceptance. Keep hooks
+scoped to the fixture and leave the user's shared daemon/configuration intact.
+
+Use `just check` and `just desktop` for changes to the launch path. The existing
+focused cases can also be rerun with:
+
+```sh
+ctest --test-dir build/desktop -R '^(launch-spec|pty-process|local-protocol)$' --output-on-failure
+```
+
+Those CTest cases cover launch validation, the PTY primitive and framing.
+`check_cli_launch.py` covers the full detached service, and `--codex` adds the
+installed TUI.
+Run lifetime/parsing and lifecycle cases in separately configured desktop-enabled
+ASan/UBSan and TSan builds as described above; check `ctest -N` in each build to
+confirm the intended cases exist. A default headless sanitizer pass is insufficient.
+Point `check_cli_launch.py --build-dir` at each instrumented desktop build to test
+its actual service. Run GUI checks one at a time: focus changes from another test
+can pause the attention cue and invalidate a timing assertion.
+
+The PR #2 repair passes all seven desktop CTest cases under ASan/UBSan and
+TSan, with `QSG_RENDER_LOOP=threaded`, plus the instrumented service harness.
+The earlier `TerminalSurface` construction/render reports are resolved by an
+explicit mutex handoff of owned immutable render state. No suppression was added;
+the render callback no longer reads a GUI-owned `QPointer`, snapshot or preedit.
+The [repair receipt](evidence/pr2-review.json) records the tested source and scope.
+Vendor Qt/MoltenVK/Ghostty remain uninstrumented; this does not establish race
+freedom inside those libraries or physical input-to-presentation performance.
+
+### UI tuning and debugging
+
+After `just desktop`, use `just ui` for an isolated synthetic workspace. It never
+constructs a live service connection or sends shell input. Edit
+`apps/desktop/qml/Main.qml`, then select **Preview tools → Reload interface**; no C++
+rebuild is needed. A load error retains the working view, marks the preview control
+and exposes diagnostics in its tooltip and stderr. Normal launches use bundled
+QML; rebuild with `just desktop` to include edits there.
+
+The menu describes each effect beside its action. **Show one alert** highlights
+the third terminal; **Show two alerts** highlights the second and third.
+**Clear one alert** clears the third terminal, while **Clear all alerts** removes
+every alert. New alerts pulse twice and remain marked until cleared. **Repeat the
+same alert** verifies that an existing alert does not pulse again. Clear it first
+to replay the pulse. **Disable animations** uses steady markers; the macOS Reduce
+Motion setting also enables it, sampled at startup and app activation. These are
+synthetic events, with no agent response or approval attached. Carousel navigation
+and keybinding settings remain planned in the
+[architecture](docs/architecture.md#ui-refinement-checkpoint).
+
+Run `just ui-check` for five captures and three expected-failure cases. Artifacts
+and a receipt go under `build/ui-preview-check/`. For an individual capture:
+
+```sh
+build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop \
+  --ui-preview --scenario two --capture "$PWD/build/two.png" \
+  --trace "$PWD/build/two.json" --capture-delay 2000
+```
+
+Use `--compact` for 980×700 logical pixels, `--reduced-motion` for a steady cue,
+and a shorter capture delay to sample the pulse. The normal requested size is
+1400×960; the window manager may constrain it. Captures wait for a rendered frame
+and fail within 15 seconds plus the configured capture delay. Traces include focus ownership, pane/card geometry,
+request state and bounded GUI-thread `frameSwapped` observations. Signal delivery
+includes scheduling overhead: these are neither physical presentation nor input
+latency measurements. The short post-pulse idle observation is not a CPU/GPU load
+benchmark. Capture timing targets remain provisional.
+
+`just ui-debug` opens LLDB with the isolated source-QML fixture. For example:
+
+```text
+breakpoint set -n lapis::desktop::UiPreview::load
+run
+bt
+continue
+```
+
+Launch/break/inspect/resume and separate `xcrun lldb -p <preview-pid>` attach,
+`bt`, `detach` were exercised on this Mac. Use the actual preview PID; the service
+is a separate process. Capture native stacks and Qt diagnostics separately from
+terminal content. `just desktop` already produces symbols. Preview reload/attention
+cases also run under the desktop-enabled ASan/UBSan preset; vendor libraries remain
+uninstrumented. See the [receipt](evidence/ui-preview.json) for exercised scope.
+
+The older `--smoke-input --capture` command above attaches to the real one-client
+service and types into its shell. Use it only with a dedicated test session;
+`--ui-preview` deliberately rejects that combination. Debugging starts from a
+reproducible symptom; a screenshot alone does not establish an application defect.
+
 ## Checks
 
 Run from the repository root:
@@ -109,26 +394,35 @@ Run from the repository root:
 | `just verify-tools` | Known-bad fixtures must produce specific failure diagnostics |
 | `just format` | Apply C++ formatting |
 | `just profile` | Optimized build with debug symbols and CTest |
+| `just desktop` | Optimized desktop/service build, PTY/transport/UI cases and static checks |
+| `just run` | Open the previously built live shell window |
+| `just ui` / `just ui-debug` | Isolated source-QML fixture, directly or in LLDB |
+| `just ui-check` | Bounded isolated captures, attention state and expected failures |
+| `just cli-check` | Isolated live service/CLI and shell GUI acceptance |
 
 Required checks accumulate when a change touches multiple areas:
 
 | Change | Required validation |
 | --- | --- |
-| C++ code | `just check` plus meaningful behavioral cases |
+| C++ code | `just check` plus meaningful behavioral cases; `just desktop` for desktop/service Qt code |
 | Memory/lifetime, parsing or process resources | Relevant cases through `just asan` |
 | Threading, queues or session lifecycle | Relevant cases through `just tsan`, separately from ASan |
+| PTY, local transport or CLI launch | `just desktop`, `just cli-check`, and desktop-enabled ASan/TSan as applicable below |
+| QML, rendering or desktop input | `just desktop` and `just ui-check`; live input changes also need `just cli-check` |
 | Build/test tooling | `just verify-tools` plus affected positive check/build paths |
 | Python tooling | `ruff check --isolated scripts` and `ruff format --isolated --check scripts`, plus relevant runtime probes |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; no unrelated C++ rebuild |
 
 Without `just`, use `python3 scripts/check_cpp.py dev`, replacing `dev` with
-`asan`, `tsan`, `profile`, or `format` as appropriate. The detector check is
+`asan`, `tsan`, `profile`, `desktop`, or `format` as appropriate. The detector check is
 `python3 scripts/verify_cpp_tools.py`.
 
 Builds use Ninja and ccache when available. Analysis runs in parallel, up to
 eight workers by default; use `--jobs N` on `check_cpp.py` to adjust it. Each
 invocation records diagnostics, tool versions, exit codes, and durations under
-`build/reports/<mode>/`. Static analysis runs even when compilation is cached.
+`build/reports/<mode>/`. Static analysis runs even when compilation is cached. Desktop analysis uses the
+Qt Cppcheck library and excludes generated MOC/resource files from source analysis;
+the compiler still builds those files with project warnings enabled.
 
 Use these runner commands to select LLVM, the macOS SDK, and ccache together;
 raw CMake presets do not perform that tool discovery. The `dev` and `profile`
@@ -139,6 +433,78 @@ The development preset generates `build/dev/compile_commands.json`. Point your
 editor's clangd extension at the same LLVM installation. `.clangd` supplies the
 database location and limits interactive analysis to fast checks. The full batch
 checks still run through `just check`.
+
+### Test suites and failure triage
+
+CTest registers the following suites in the current build. Confirm the inventory
+with `ctest --test-dir build/desktop -N`; an empty or accidentally headless build
+is not a desktop test pass. These are suites, not counts of individual assertions.
+
+| CTest name | Build | Behavior |
+| --- | --- | --- |
+| `toolchain-smoke` | Headless and desktop | Compiled toolchain baseline |
+| `session-platform-ownership` | Headless and desktop | POSIX descriptor ownership and moves |
+| `terminal-behavior` | Headless and desktop | Ghostty parsing, snapshots, history, resize and mode-aware input |
+| `launch-spec` | Desktop-enabled | Literal launch validation and private endpoint rules |
+| `local-protocol` | Desktop-enabled | Framing, bounds, snapshots and invalid messages |
+| `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
+| `ui-preview` | Desktop-enabled | Qt reload, attention, input and render lifecycle |
+
+`just desktop` runs these seven suites plus static checks. The separate Python
+GUI harness checks five preview captures and three expected failures. The CLI
+harness checks detached service behavior; `--desktop` adds Qt-to-shell input and
+captures, and optional `--codex` adds the installed no-prompt TUI acceptance.
+A screenshot, a headless suite and a real agent approval round trip prove different
+things. See [CLI qualification](#cli-integration-qualification) for the latter gap.
+
+After a failure, retain `build/reports/<mode>/receipt.json`, the named check log,
+and CTest's `build/<build-name>/Testing/Temporary/LastTest.log`. Fix the cause,
+rerun the failing suite, then rerun the relevant complete check on the final diff.
+For a capture watchdog failure, inspect its log and window activation/frame
+prerequisites; stop competing GUI checks and reproduce that case in isolation.
+Preserve the original failure even if a clean run subsequently passes.
+Do not weaken assertions, add broad suppressions or count an expected-failure
+probe as a pass unless its expected diagnostic was observed. Raw CMake/CTest
+commands below do not run format, clang-tidy or Cppcheck; `just desktop` supplies
+those checks. Save custom build/test output under `build/` and include exact
+commands with any sanitized receipt committed to `evidence/`.
+
+### Desktop sanitizers
+
+The default `just asan` and `just tsan` builds are headless. For Qt/PTY service,
+renderer and desktop lifecycle coverage, use separate desktop-enabled directories.
+On macOS, with the verified `LAPIS_GHOSTTY_PREFIX` exported, configure and run ASan:
+
+```sh
+export LAPIS_LLVM_BIN="${LAPIS_LLVM_BIN:-$(brew --prefix llvm)/bin}"
+cmake --preset asan -B build/desktop-asan \
+  -DLAPIS_BUILD_DESKTOP=ON \
+  -DCMAKE_CXX_COMPILER="$LAPIS_LLVM_BIN/clang++" \
+  -DCMAKE_OSX_SYSROOT="$(xcrun --show-sdk-path)" \
+  -DLAPIS_GHOSTTY_PREFIX="$LAPIS_GHOSTTY_PREFIX"
+cmake --build build/desktop-asan --parallel 8
+ctest --test-dir build/desktop-asan -N
+QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-asan \
+  --output-on-failure --no-tests=error
+python3 scripts/check_cli_launch.py --build-dir build/desktop-asan \
+  --output build/reports/desktop-asan/cli.json
+```
+
+Repeat those configure/build/test/harness commands with preset `tsan` and all
+`desktop-asan` paths changed to `desktop-tsan`. Do not combine instrumentation or
+use `ctest --preset asan` for the custom directory: that preset targets
+`build/asan`. Each desktop-enabled directory must list all seven suites above.
+Use the same LLVM installation for normal and instrumented builds. Ccache is
+optional (`-DCMAKE_CXX_COMPILER_LAUNCHER=...`); raw CMake does not discover it.
+Reduce `--parallel` for host resource limits. The CLI command above runs service
+fixtures against the instrumented executable; the CTest UI suite exercises the
+threaded renderer. Add `--desktop` to the CLI harness when instrumented live GUI
+input is needed. Keep every GUI run serial across all builds.
+
+These commands qualify macOS only. On a Linux qualification host, select its LLVM
+compiler and omit the macOS SDK option, then record actual results and dependencies.
+Vendor Qt/MoltenVK/Ghostty remain uninstrumented. Do not reuse sanitizer timings
+as release performance measurements.
 
 ### What the checks cover
 
@@ -158,9 +524,10 @@ Allocations/Leaks for retention and leak investigation.
 New CMake targets must link `lapis_project_options` so warning and sanitizer
 settings apply. Add meaningful CTest cases for ownership, parsing, event ordering,
 and input routing as those components arrive. Header-only code needs a compiled
-consumer. Current tests cover the toolchain and POSIX descriptor ownership with
-real pipes; they do not cover terminal sessions or rendering. The
-[checkpoint receipt](evidence/cpp-verification.json) records the published scope;
+consumer. Current tests cover the toolchain, POSIX descriptor ownership with real pipes,
+and 14 terminal adapter cases on macOS/Linux ARM64. Desktop-enabled tests additionally cover PTY/transport and UI reload/attention
+behavior; actual captures run through `just ui-check`. The original
+[checkpoint receipt](evidence/cpp-verification.json) records its dated scope;
 new local check receipts are under `build/reports/<mode>/`.
 
 ### Headless engine experiment
@@ -269,9 +636,9 @@ key-to-photon claims additionally need an external camera/photodiode measurement
 
 ### Capture procedure
 
-1. Build with `just profile` (optimized, symbols, sanitizers off). There is no
-   desktop target yet; start application traces when the minimal terminal view
-   exists. Put signposts in that first view, not only the later UI.
+1. Build the app with `just desktop` (optimized, symbols, sanitizers off).
+   `just profile` covers the headless targets. UI frame observations are available;
+   correlated native-input, service and presentation markers still need work.
 2. Warm the declared caches, then record a repeatable sequence: local typing,
    scroll/resize, session switches and output bursts. First qualify one terminal,
    then switching with two. Extend the same procedure to 32 sessions later.
@@ -288,7 +655,7 @@ key-to-photon claims additionally need an external camera/photodiode measurement
    run duration, sample counts and warm/cold state. Include a static idle baseline.
 
 ```sh
-# Once the desktop exists: replace 12345 with its actual PID and use a fresh path.
+# Replace 12345 with the actual desktop PID and use a fresh path.
 xcrun xctrace record --template 'Game Performance' --attach 12345 \
   --time-limit 30s --output build/lapis-game-performance.trace
 ```

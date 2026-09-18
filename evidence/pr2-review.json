@@ -1,0 +1,537 @@
+{
+  "schema": "lapis.pr-review-repair/1",
+  "recorded_at": "2026-09-18T13:07:45.596043+00:00",
+  "source_base": "495d8f4a478569031cc0246f701ba0acfb9f368d",
+  "source_state": "Checked working-tree repair; source hashes identify the tested implementation before commit.",
+  "source_sha256": {
+    "Brewfile": "ebdab7d304e0533af877f9eb9238f621e076a2e9384153febaa2ae6bf2a07851",
+    "apps/desktop/src/live_connection.cpp": "b33322ce453fe8e2d4a875ce16096b8359e084016a632f1aea796e3d7ef3e3c3",
+    "apps/desktop/src/terminal_surface.cpp": "5278a2754a280a326b2c9a54cb3572aa67cc8a0479e6ae02381dbcd4c8670793",
+    "apps/desktop/src/terminal_surface.hpp": "655a1b177635dc5e07fe20041bdce6d308bcffff74d51792e4afc3a48d459f4b",
+    "apps/desktop/src/ui_capture.cpp": "e8fdb0c87717c02812f00bbe2405b2e404eb5d7150bdfa59c9abfe4151fdd7b2",
+    "apps/desktop/src/ui_preview.cpp": "08617a5742d1309af4d322a36de3a8b4aadbdfc36e29655a9ebf8e8813d7c0d7",
+    "apps/desktop/src/workspace.cpp": "a0e34e8ba7bbd1dbffa9950aeafb260d553b152c85eaab2bfca765ae14efdf49",
+    "apps/desktop/tests/ui_preview_test.cpp": "f0d465c1ee8edcee017801bb596ade20857dd41e19ccd64f40d8b5271aa5db0f",
+    "cmake/Ghostty.cmake": "721a2b52224575c762e3d652e51dd6eaf281c58ffe52605a704d19bba0c12ca7",
+    "justfile": "2bbc96ed06b3d85942549bb27b59b659576b7c3c92cc2ee52b26872f51fa913c",
+    "scripts/check_cli_launch.py": "57f14832ecdad1d4470b51715392fd9b3c3dee8204f5f562a8e09a63f1d4d919",
+    "scripts/check_ui_preview.py": "02127241f65fd0980ec81e2f67275019cdc3a94f1e22a99c41131e99a774b340",
+    "services/session/src/launch_spec.cpp": "3761527138720c9557e91540dbac9aae284b59e648b1fa352355e8a72b752121",
+    "services/session/src/platform/posix/local_endpoint.cpp": "601980a296137a848f0dddc09591be9174415dfe8d5b8e088249477d8a56ef01",
+    "services/session/src/platform/posix/pty_process.cpp": "da3d69b4732d18c971754ba5082f8a704ea7a14068b31e668f0f34175b7301a3",
+    "services/session/src/platform/posix/pty_process.hpp": "172e5bd8cbcc432744dc08d5f2c277d40ac0f01c812f0e7643aa5f9d9456cafd",
+    "services/session/src/session_service.cpp": "e6091956dca3d0fa147b20bb5cddb05926edf32f5f38ab19bb7d21a5dadbd394",
+    "services/session/src/terminal/terminal.cpp": "1142f0c9b92300ae0dd212b70345923e6e472526bc688bea0629bb6ad9804832",
+    "services/session/src/transport/local_protocol.cpp": "391a1db3956c922abd1cd26cbfb2a74f785d092fcc984f051094652878981409",
+    "services/session/src/transport/local_protocol.hpp": "1422c496960301c1320897aabf36a4abd3544e7eddb73efdcd5b614131671a23",
+    "services/session/tests/launch_spec_test.cpp": "535a5d876124bd021aa1c29ce77b4adf24429a2e9ba6bd28fd8176fdbf811938",
+    "services/session/tests/local_protocol_test.cpp": "1164d659700b8ca98515415739b867c269dab3f59acede8bb50e280486992db4",
+    "services/session/tests/pty_process_test.cpp": "6f369c5c6bd2ffde3b68a30f4cc2a0017dc7798826cfd2477234aaba8cb12b94"
+  },
+  "platform": {
+    "os": "macOS",
+    "version": "26.7",
+    "architecture": "arm64",
+    "hardware": "Apple M4 Max",
+    "qt": "6.11.2",
+    "renderer": "Vulkan through MoltenVK; threaded scene graph"
+  },
+  "renderer": {
+    "prior_reports": "QPointer constructor writes versus updatePaintNode reads through uninstrumented Qt",
+    "repair": "GUI publishes immutable owned snapshot/preedit/geometry through std::mutex; render callback never dereferences GUI document. Unchanged row text nodes are retained.",
+    "tsan": "All seven desktop CTest cases pass; no suppressions added.",
+    "new_cases": [
+      "empty surface",
+      "snapshot replacement",
+      "resize",
+      "document detach/reattach",
+      "scaled IME rectangle",
+      "control and Meta text-key bytes",
+      "warning-bearing and nested QML reload"
+    ]
+  },
+  "verification": [
+    {
+      "command": [
+        "python3",
+        "scripts/check_cpp.py",
+        "desktop"
+      ],
+      "exit_code": 0,
+      "seconds": 5.608
+    },
+    {
+      "command": [
+        "cmake",
+        "--build",
+        "build/desktop-asan",
+        "--parallel",
+        "4"
+      ],
+      "exit_code": 0,
+      "seconds": 0.882
+    },
+    {
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/desktop-asan",
+        "--output-on-failure"
+      ],
+      "exit_code": 0,
+      "seconds": 3.573
+    },
+    {
+      "command": [
+        "cmake",
+        "--build",
+        "build/desktop-tsan",
+        "--parallel",
+        "4"
+      ],
+      "exit_code": 0,
+      "seconds": 0.901
+    },
+    {
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/desktop-tsan",
+        "-R",
+        "^(launch-spec|local-protocol)$",
+        "--output-on-failure"
+      ],
+      "exit_code": 0,
+      "seconds": 4.592
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/check_cli_launch.py",
+        "--build-dir",
+        "build/desktop-asan",
+        "--output",
+        "build/pr-review/repair/asan-cli.json"
+      ],
+      "exit_code": 0,
+      "seconds": 5.09
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/check_cli_launch.py",
+        "--build-dir",
+        "build/desktop-tsan",
+        "--output",
+        "build/pr-review/repair/tsan-cli.json"
+      ],
+      "exit_code": 0,
+      "seconds": 21.663
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/check_cpp.py",
+        "dev"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/verify_cpp_tools.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/desktop-tsan",
+        "--output-on-failure"
+      ],
+      "exit_code": 0,
+      "environment": {
+        "QSG_RENDER_LOOP": "threaded"
+      },
+      "scope": "All seven cases; newer endpoint/framing tests and final drain change additionally rerun under TSan."
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/check_cpp.py",
+        "desktop"
+      ],
+      "exit_code": 0,
+      "scope": "Final source after bounded-drain correction"
+    },
+    {
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/desktop-asan",
+        "-R",
+        "^pty-process$",
+        "--output-on-failure"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/desktop-tsan",
+        "-R",
+        "^pty-process$",
+        "--output-on-failure"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/check_cli_launch.py",
+        "--desktop",
+        "--codex"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/check_ui_preview.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "ruff",
+        "check",
+        "--isolated",
+        "scripts"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "ruff",
+        "format",
+        "--isolated",
+        "--check",
+        "scripts"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cmake",
+        "-P",
+        "build/pr-review/repair/cmake-receipt-check/check.cmake"
+      ],
+      "exit_code": 1,
+      "expected_failure": "Mismatched Ghostty receipt rejected; matching receipt passed normal configure."
+    }
+  ],
+  "cli_acceptance": {
+    "schema": "lapis.cli-launch-check/1",
+    "recorded_at": "2026-09-18T13:08:19.331289+00:00",
+    "artifacts": "build/pr-review/repair/run-tefwqcrz",
+    "build": "build/desktop",
+    "passed": true,
+    "scope": "Controlled fixture, optional Qt captures and optional no-prompt Codex TUI; no agent attention qualification.",
+    "codex": {
+      "sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+      "arguments": [
+        "--no-daemon"
+      ],
+      "prompt_submitted": false
+    },
+    "checks": [
+      {
+        "name": "invalid resize preserves geometry and signal exit status",
+        "passed": true,
+        "seconds": 0.141
+      },
+      {
+        "name": "snapshot limit preserves child and permits recovery",
+        "passed": true,
+        "seconds": 0.319
+      },
+      {
+        "name": "literal argv, cwd, resize, paste and exit",
+        "passed": true,
+        "seconds": 0.204
+      },
+      {
+        "name": "detached output and same-PID reattachment",
+        "passed": true,
+        "seconds": 0.682
+      },
+      {
+        "name": "mismatch and malformed attachment preserve active client",
+        "passed": true,
+        "seconds": 3.168
+      },
+      {
+        "name": "failed executable and cwd",
+        "passed": true,
+        "seconds": 0.066
+      },
+      {
+        "name": "desktop capture, reattachment, shell default and option rejection",
+        "passed": true,
+        "seconds": 3.816
+      },
+      {
+        "name": "installed Codex TUI input, navigation, paste, resize, reattach and interrupt",
+        "passed": true,
+        "seconds": 2.433
+      }
+    ]
+  },
+  "captures": [
+    {
+      "path": "build/pr-review/repair/run-tefwqcrz/shell.png",
+      "sha256": "a734086720bbbef0f29e752d53dfd8021c8875ad5bf4dec73bfefc4824c3e42f",
+      "width": 2800,
+      "height": 1902
+    },
+    {
+      "path": "build/pr-review/repair/run-tefwqcrz/gui.png",
+      "sha256": "dd4775fba3e1d7de1a78a7c4b049c6cfc8ba48b4751048ecd470f983c2e79f1f",
+      "width": 2800,
+      "height": 1902
+    },
+    {
+      "path": "build/pr-review/repair/run-tefwqcrz/codex-compact.png",
+      "sha256": "94acebef28d02759d7aa9742f8ab3ff6a452fb3221c0e027790d5697b84b91f4",
+      "width": 1960,
+      "height": 1400
+    },
+    {
+      "path": "build/pr-review/repair/run-tefwqcrz/codex.png",
+      "sha256": "c6434fcced1a3a524890b2e31fd8dd04c0c8fa2ec5c10dc6a3ff1001fdab5030",
+      "width": 2800,
+      "height": 1902
+    }
+  ],
+  "review_thread_count": 40,
+  "review_resolutions": [
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvYKx",
+      "path": "apps/desktop/src/ui_preview.cpp",
+      "resolution": "Accepted. A candidate with nonfatal QML warnings now loads when it has a valid window, while retaining bounded diagnostics. Invalid roots still preserve the old view. Added a warning-bearing QML reload case."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvYK9",
+      "path": "cmake/Ghostty.cmake",
+      "resolution": "Fixed the receipt comparison with CMake string(JSON ... EQUAL). The real matching receipt configures successfully, and a deliberately mismatched receipt is rejected with the pinned-source diagnostic."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZT3",
+      "path": "services/session/src/platform/posix/pty_process.cpp",
+      "resolution": "PtyProcess now preserves QProcess::ExitStatus. The service distinguishes normal exit from signal termination and uses 128 + signal for a signal exit. The service harness verifies SIGTERM is reported as signal 15 with exit code 143."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ7Q",
+      "path": "apps/desktop/src/live_connection.cpp",
+      "resolution": "The service trims a log over 1 MiB when it acquires endpoint ownership. GUI launch attempts do not truncate an existing service log. This bounds accumulation across repeated launches while preserving the current run diagnostics."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ7V",
+      "path": "apps/desktop/src/live_connection.cpp",
+      "resolution": "Keeping the bounded atomic rejection. The client explicitly reports \"Input queue full; input was not sent\"; the paste is not silently accepted. Splitting bracketed paste into independent frames would change its atomicity and can mix typing or terminal-mode changes into it. Larger transactional paste needs a separate protocol contract; this PR retains the documented 64 KiB input limit."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ7p",
+      "path": "apps/desktop/src/live_connection.cpp",
+      "resolution": "Fixed: the desktop parses complete frames before checking the remaining incomplete-frame bound. The service reads only available buffer capacity and keeps its per-pass frame budget. Fragmented/coalesced frame tests and the live detach/reattach harness pass."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ7u",
+      "path": "apps/desktop/src/terminal_surface.cpp",
+      "resolution": "Changed the renderer to retain individual row text nodes and rebuild only rows whose content, styles or resolved palette changed. Resizing updates the transform. The render thread consumes owned immutable state under a mutex. No frame-time improvement is claimed without measurement; preview throttling remains in the existing plan."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ7y",
+      "path": "apps/desktop/src/terminal_surface.cpp",
+      "resolution": "Preedit rendering now requires cursor.in_viewport. It no longer uses an off-viewport cursor position; the IME cursor rectangle is empty in that state. Cursor visibility itself is not required for composition text, since an application can hide the caret while composing."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ71",
+      "path": "apps/desktop/src/terminal_surface.cpp",
+      "resolution": "Added legacy control-byte encoding for Ctrl+Space/@/2, brackets, backslash, caret/6 and underscore/minus, alongside letters. Focused cases verify the expected bytes. The same helper fixes Alt/Option printable Meta keys."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ8B",
+      "path": "apps/desktop/src/terminal_surface.cpp",
+      "resolution": "The GUI-side IME rectangle now uses the same fit scale as the render transform. The surface test halves its size and verifies both cursor coordinates scale accordingly."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ8N",
+      "path": "apps/desktop/src/ui_capture.cpp",
+      "resolution": "The watchdog budget is now 15 seconds plus the requested capture delay. Documentation reflects that bound."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ8Y",
+      "path": "apps/desktop/src/ui_capture.cpp",
+      "resolution": "Each window admits one capture observer. On successful reload, the old observer stops its watchdog and disconnects; frame/finish callbacks also reject a window that is no longer current. This handles replacement windows as well as duplicate installation."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ8b",
+      "path": "apps/desktop/src/ui_preview.cpp",
+      "resolution": "Consolidated diagnostic assignment. After accepting valid roots with nonfatal warnings, the empty-diagnostic checks in the invalid-root branches are meaningful and retained."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ8g",
+      "path": "apps/desktop/src/ui_preview.cpp",
+      "resolution": "Retained the existing ownership transfer. release() removes unique_ptr ownership, QObject parenting owns the retired engine, and deleteLater schedules its deletion after QML returns. These are not competing owners. Clearing a retired vector at the next reload can delete an engine whose QML method calls reload twice. Added that exact double-reload case; it passes with deferred deletion and the old window is deleted after posted events drain."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ8p",
+      "path": "apps/desktop/src/workspace.cpp",
+      "resolution": "Extracted a single preview palette constant and use it for both placeholder and focused preview terminal construction."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ84",
+      "path": "apps/desktop/src/workspace.cpp",
+      "resolution": "Added an explicit session-card/ID count check before indexing the fixed ID table."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ8_",
+      "path": "apps/desktop/tests/ui_preview_test.cpp",
+      "resolution": "The initial cue assertion now accounts for actual native active/visible state, like the later assertion. Finite cue, duplicate, resolve and reduced-motion checks remain exercised."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ9N",
+      "path": "Brewfile",
+      "resolution": "Documented the rolling Homebrew formula beside its declaration and the exact-version preflight in CONTRIBUTING. qmake -query QT_VERSION returns 6.11.2 on this host; CMake still rejects unqualified versions."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ9V",
+      "path": "justfile",
+      "resolution": "Added a lightweight executable preflight with an actionable \"run: just desktop\" message to run/ui/ui-debug. These hot-iteration commands intentionally do not rerun the entire compiler/analyzer suite."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ9k",
+      "path": "scripts/check_cli_launch.py",
+      "resolution": "Shell cleanup now normalizes an empty SHELL, handles unresolved lookup without a TypeError, preserves an original exception with an added cleanup note, and still fails the check when cleanup alone fails."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ90",
+      "path": "scripts/check_ui_preview.py",
+      "resolution": "Removed unused CheckResult.expected and log_path state. Runtime output computes its wording once."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ9-",
+      "path": "services/session/src/launch_spec.cpp",
+      "resolution": "Removed the unused utility include."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ-L",
+      "path": "services/session/src/launch_spec.cpp",
+      "resolution": "Launch validation now uses the shared wire::max_cells constant."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ-c",
+      "path": "services/session/src/platform/posix/local_endpoint.cpp",
+      "resolution": "Added the direct QFile include while retaining QDir."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ-u",
+      "path": "services/session/src/platform/posix/local_endpoint.cpp",
+      "resolution": "Added trusted-ancestor validation and post-bind path ownership checks. Root/current-user ancestors must not be shared writable unless sticky; the immediate parent must be current-user-owned mode 0700. A trusted sticky /tmp cannot let another user rename our owned child. Tests reject a non-sticky writable ancestor and accept a private directory under /tmp."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ-1",
+      "path": "services/session/src/platform/posix/local_endpoint.cpp",
+      "resolution": "Immediate socket parents now require mode 0700 including full owner access and no special bits. Existing directories are never chmodded."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ--",
+      "path": "services/session/src/platform/posix/pty_process.cpp",
+      "resolution": "Failed exec now clears queued bytes/write offset and resets notifiers and PTY descriptors. A real executable with a missing shebang interpreter queues input during Starting, fails exec, then reuses the object with /bin/cat; only fresh input is observed."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ_E",
+      "path": "services/session/src/platform/posix/pty_process.cpp",
+      "resolution": "Explicit teardown now kills the verified still-owned session-leader process group before reaping, then closes the PTY and bounds child wait time. A fork fixture verifies a same-group descendant survives neither SIGTERM/SIGHUP resistance nor teardown. We do not signal saved PIDs after reaping; independently regrouped/detached descendants still need separate platform qualification."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ_O",
+      "path": "services/session/src/platform/posix/pty_process.cpp",
+      "resolution": "PTY write EIO now drops the remaining queue and allows the actual child exit path to finish, matching read-side EOF handling. Final terminal replies are discarded once the child has exited, so they cannot replace the true exit status with an input-queue error."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ_U",
+      "path": "services/session/src/platform/posix/pty_process.cpp",
+      "resolution": "Final drain is bounded to 256 total 64 KiB batches, then logs truncation and closes the terminal. A continuously writing descendant fixture verifies bounded completion. QProcess has already reaped the leader here, so the code deliberately does not signal its reusable numeric PID."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ_f",
+      "path": "services/session/src/session_service.cpp",
+      "resolution": "Removed the unused QDir include from the service."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ_m",
+      "path": "services/session/src/session_service.cpp",
+      "resolution": "Snapshot length limits now detach the display with an explicit status while preserving the child and service. New output can recover. The harness fills a 300x100 viewport with combining graphemes, observes the limit, verifies the service remains alive, clears output through its controlled fixture, then reattaches to the same child and receives a valid screen."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ_q",
+      "path": "services/session/src/session_service.cpp",
+      "resolution": "Malformed key messages remain fail-closed. Added explicit enum-range validation for a precise diagnostic. Silently ignoring protocol skew would conceal loss of input synchronization; the offending connection is rejected while the session remains alive."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvZ_5",
+      "path": "services/session/src/session_service.cpp",
+      "resolution": "Resize validates geometry before touching either side, applies the PTY resize first, then changes the engine. An unexpected engine-resize failure stops the service instead of leaving a falsely synchronized session. A malformed-size service test verifies both child winsize and snapshots stay at 100x30 after reattachment."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvaAE",
+      "path": "services/session/src/session_service.cpp",
+      "resolution": "Successful resize now drains terminal replies immediately and writes them to the PTY."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvaAP",
+      "path": "services/session/src/terminal/terminal.cpp",
+      "resolution": "The null-value claim does not match pinned Ghostty 5de703a. Its C API maps a null storage limit to zero and a null temporary-file directory to disabled; file/shared-memory options already receive explicit false. These options remain unchanged. This is not a finding that justifies altering the pinned API contract."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvaAb",
+      "path": "services/session/src/terminal/terminal.cpp",
+      "resolution": "Removed the redundant nonempty guard after the existing early return."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvaAd",
+      "path": "services/session/src/transport/local_protocol.cpp",
+      "resolution": "Pinned QDataStream versions in framing and snapshot encode/decode paths to Qt_6_0."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvaAl",
+      "path": "services/session/src/transport/local_protocol.cpp",
+      "resolution": "Added a consumed-offset framing overload with lazy compaction. Both receive loops use it; the legacy one-frame helper remains compatible. A thousand coalesced frames followed by a split tail verifies ordered parsing across compactions."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6jvaAs",
+      "path": "services/session/src/transport/local_protocol.cpp",
+      "resolution": "Snapshot encoding now rejects a cell count that differs from columns times rows; the malformed producer case is covered."
+    }
+  ],
+  "limitations": [
+    "Qt, MoltenVK and Ghostty vendor binaries remain uninstrumented.",
+    "Physical input latency, frame pacing, full shaping/native IME and Linux desktop qualification remain open.",
+    "Explicit shutdown kills only the verified still-owned leader process group; independently regrouped/detached descendants need separate qualification.",
+    "Snapshot limit detaches display while child continues; reattach after screen fits. Oversized paste remains an atomic rejection.",
+    "Codex no-prompt editing/reattach captures passed. Initial fixed two-Ctrl-C exit attempts timed out; clear-draft then empty-composer Ctrl-D quit passed. No model prompt submitted.",
+    "Milestone 1 and redistribution packaging remain incomplete."
+  ]
+}
