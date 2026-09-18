@@ -194,14 +194,15 @@ Qt event loops own their respective objects. PTY reads yield after 64 KiB and
 input dispatch after 64 frames. Writes have a 1 MiB queue; text messages are at
 most 64 KiB. Snapshot frames are limited to 8 MiB, 32,768 cells and 65,536 codepoints.
 The service coalesces updates on a 16 ms timer with one snapshot in flight; a slow
-GUI does not block PTY parsing. That timer needs measurement against the 120 Hz
-reference before any latency claim. Recent history uses the adapter's bounded memory budget. Older primary-screen
+GUI does not block PTY parsing. The measured input-to-frame baseline exceeds one 120 Hz
+interval; it is not a responsiveness-target pass. Recent history uses the adapter's
+bounded memory budget. Older primary-screen
 rows move to the bounded disk archive described in the completion contract below.
 
 The GUI decodes owned snapshots and routes text, navigation, Control-letter input,
 paste and resize. The focused pane chooses the PTY dimensions; scaled previews do
 not resize it. Cell-grid/font fallback has native Vulkan regression coverage.
-Qt composition/paste/focus ownership is tested; physical keyboard/IME acceptance,
+Qt and automated macOS keyboard/paste/Japanese IME ownership are tested;
 selection/copy and a terminal accessibility tree remain open. The renderer retains
 static scene nodes and lets Qt schedule updates and brief hover transitions.
 The controlled latency probe now correlates received input, service processing,
@@ -213,7 +214,8 @@ measured. The visual checkpoint alone does not complete milestone 1.
 Both scoped UI changes are implemented and exercised on macOS; maintainer visual
 review remains before connecting real requests. They reuse Qt Quick, owned terminal
 snapshots and the Vulkan surface, with no new runtime dependency. Milestone 1
-remains incomplete. The [UI receipt](../evidence/ui-preview.json) records checks and
+is qualified on macOS; see the [assembled receipt](../evidence/milestone-one.json).
+The [UI receipt](../evidence/ui-preview.json) records checks and
 measurement limits; commands live in [Contributing](../CONTRIBUTING.md#ui-tuning-and-debugging).
 
 #### Isolated iteration and debugging
@@ -324,12 +326,12 @@ build owner, and use bounded worker runs. Integrate and test worker output befor
 calling it complete. Preserve partial work after timeouts and avoid repeated
 optional checks once the affected behavior passes.
 
-### Next: complete persistent-terminal acceptance
+### Persistent terminal acceptance
 
 The explicit launch slice is implemented. Current exercise status is in the
 [README](../README.md#current-status), with a
-[sanitized receipt](../evidence/cli-launch.json). Continue with the remaining
-terminal acceptance below before adding live workspace sessions or attention.
+[sanitized receipt](../evidence/cli-launch.json). The macOS acceptance below is
+complete; the [assembled receipt](../evidence/milestone-one.json) records its scope.
 Visual review of the earlier UI refinements remains pending.
 
 #### First wiring slice: explicit CLI launch
@@ -404,8 +406,8 @@ workspace; the Linux port is deferred. Parallelize independent investigation, wi
    preserve the old child; automatic process recovery is outside this milestone.
 2. **Terminal fidelity and timing — desktop and verification.** Cell positioning,
    fallback fonts, Qt input ownership and correlated service/frame instrumentation
-   are implemented. Complete physical IME/key/paste acceptance and retain the
-   interactive-TUI regressions. Keep submission proxies separate from pixel
+   are implemented. Automated native IME/key/paste acceptance passes; retain it
+   alongside the interactive-TUI regressions. Keep submission proxies separate from pixel
    presentation. Rebindable cross-session navigation belongs to the later workspace.
 3. **History — implemented and exercised on macOS.** Bounded disk pages,
    quotas, read-only paging, backpressure, corruption and real ENOSPC recovery
@@ -426,15 +428,16 @@ Planning baseline: merged `99567cb` (September 18, 2026), followed by the verifi
 session checkpoint `31cabfe`. Slice A is implemented with qualification recorded
 in [its receipt](../evidence/session-reconnect.json). B1 now has a verified macOS
 cell-grid checkpoint for fallback fonts, wide characters, decorations and resize.
-Disk history and Qt input-context lifecycle are implemented; physical input acceptance remains open.
-Keep milestone 1 open until its acceptance below is exercised.
+Disk history, Qt input-context lifecycle and automated native input acceptance
+are implemented and exercised. Milestone 1 software acceptance is complete on macOS,
+with the scope and measurement limits in the [receipt](../evidence/milestone-one.json).
 
 | Order | Reviewable slice | Acceptance result |
 | --- | --- | --- |
 | A: implemented | Session identity and safe attachment | GUI reconnect preserves session identity and child; a replaced attachment cannot send input; input stays disabled until the initial authoritative screen is applied; service replacement is reported distinctly |
 | B1: exercised checkpoint | Cell layout and font fidelity | Native Vulkan pixel regressions align wide/combining and fallback glyphs, backgrounds, decorations and cursor through resize; shell/Codex captures pass; cross-cell contextual shaping remains open |
-| B2: after B1 | Native input and first responsiveness measurements | Real keyboard, paste and IME composition/cancellation work without losing input ownership; selection/clipboard/accessibility gaps are explicitly exercised or remain open; correlated input/service/frame measurements report p50/p95/p99 and their endpoint limits |
-| C: after A | Bounded older history | Recent screen stays warm while older history is stored under per-session/global quotas; scrollback retrieval, eviction, disk-full and interrupted-write recovery remain bounded and preserve the live screen |
+| B2: exercised | Native input and first responsiveness measurements | OS-generated keyboard events, paste and the real Apple Japanese IME work without losing input ownership; selection/clipboard/accessibility gaps are explicitly exercised or remain open; correlated input/service/frame measurements report p50/p95/p99 and their endpoint limits |
+| C: exercised | Bounded older history | Recent screen stays warm while older history is stored under per-session/global quotas; scrollback retrieval, eviction, disk-full and interrupted-write recovery remain bounded and preserve the live screen |
 | D: deferred Linux port | Integrate A through C and native input fixes when scheduling the port | Named Linux host, display stack and driver exercise PTY lifecycle, real Vulkan rendering, input, resize and detach/reattach; a headless or software-only result does not qualify the GPU desktop |
 
 B1 retains the owned `TerminalSnapshot` value contract and wire v3 unchanged.
@@ -458,12 +461,15 @@ Contributors share the feature; temporary edit and build scopes prevent collisio
    movement. This does not implement contextual shaping across cells; curly
    underlines retain the previous single-line fallback. Detailed results and
    sanitizer limits are in the [fidelity receipt](../evidence/terminal-fidelity.json).
-2. **B2: native input and measurement.** Exercise physical key/Option handling,
-   IME preedit/commit/cancel, paste and disconnect while composing in a dedicated
-   shell/TUI. Synthetic Qt events remain separate evidence. Add correlated input,
-   service and frame timestamps; report p50/p95/p99 with the observed endpoints,
-   idle CPU/memory and display rate. Keep latency targets provisional. Selection,
-   clipboard and accessibility each need an explicit supported behavior or open gap.
+2. **B2: native input and measurement exercised.** CoreGraphics keys pass through
+   AppKit, the real Apple Japanese IME, Qt and a dedicated service-owned PTY.
+   Automated cases cover Control/Option, bracketed paste, preedit/commit/cancel,
+   focus ownership, history, detach, actual reconnect and resize. Qt-injected
+   events remain separate evidence. Physical key switches are outside software
+   acceptance; no human-input gate is required. Correlated input/service/frame
+   timestamps report p50/p95/p99, idle CPU/memory and display rate. Keep latency
+   targets provisional and submission proxies distinct from pixel visibility.
+   Selection/copy and accessibility remain explicit gaps.
 3. **C: older history implemented.** The pinned engine exposes primary-screen
    row windows; extraction restores the live viewport and retains pending replies.
    Service tests exercise a 1,500-row burst through a one-row viewport, paging in
@@ -503,8 +509,8 @@ sizes are bounded; archive errors are surfaced while the live process and screen
 remain usable. Disk format/version and checksums are independent of the wire.
 Resize reflows current engine history; archived pages preserve their recorded
 geometry. Live-process recovery after service failure/reboot remains outside this
-milestone. Physical input evidence and frame-submission proxies will be labeled
-separately from synthetic Qt tests and actual on-screen presentation.
+milestone. Automated native-input evidence and frame-submission proxies are labeled
+separately from Qt-injected tests and actual on-screen presentation.
 
 #### First implementation PR: session identity and input readiness
 
@@ -598,7 +604,7 @@ for each active build directory. GUI checks remain serial across worktrees.
 
 #### Following product checkpoints
 
-After A through D close persistent-terminal acceptance, implement the attention
+After the macOS A through C acceptance, implement the attention
 state machine and qualify a real Codex route. Preserve the ordinary CLI view;
 choose hooks or shared-server attachment only from live observation, explicit
 response and reconnect evidence. A notification-only hook must leave the answer
@@ -638,8 +644,11 @@ focus/document/history/disconnect transitions, and recovery with a fresh
 composition. The native context resets when the window becomes inactive.
 Replacement of already-sent text is intentionally unsupported: lapis cannot erase
 bytes already consumed by a CLI. Selection/copy from terminal cells and a terminal
-accessibility tree are open gaps. OS-injected Return measurements exercise the
-AppKit/Qt path but do not establish physical keyboard or real IME qualification.
+accessibility tree are open gaps. The separate native-input probe qualifies actual
+Apple Japanese IME commit/cancel, focus ownership, resize and recovery through
+AppKit/Qt and the PTY. It checks the native candidate anchor rectangle, not candidate
+window pixels. It restores the clipboard and selected/enabled input sources.
+Physical keyboard hardware is outside this milestone's software acceptance.
 The latency probe correlates service sequence/revision to `afterSynchronizing`
 and `frameSwapped`; the latter is a submission proxy, not measured pixel visibility.
 Cross-session switching remains a later milestone because this slice owns one

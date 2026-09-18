@@ -54,3 +54,16 @@ target_compile_definitions(lapis_terminal_latency_probe PRIVATE
     LAPIS_SESSION_SERVICE_PATH="$<TARGET_FILE:lapis_session_service>"
     LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
 add_dependencies(lapis_terminal_latency_probe lapis_session_service)
+
+# OS-generated keyboard events through the real macOS IME and PTY service.
+# Opt-in because posting events requires macOS Accessibility permission.
+if(APPLE)
+    add_executable(lapis_native_input_probe tests/native_input_probe.cpp
+        tests/platform/native_input_driver.mm)
+    target_link_libraries(lapis_native_input_probe PRIVATE lapis_project_options lapis_desktop_view
+        "-framework AppKit" "-framework Carbon" "-framework CoreGraphics")
+    target_compile_definitions(lapis_native_input_probe PRIVATE
+        LAPIS_SESSION_SERVICE_PATH="$<TARGET_FILE:lapis_session_service>"
+        LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
+    add_dependencies(lapis_native_input_probe lapis_session_service)
+endif()

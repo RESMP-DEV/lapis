@@ -417,6 +417,7 @@ Run from the repository root:
 | `just ui` / `just ui-debug` | Isolated source-QML fixture, directly or in LLDB |
 | `just ui-check` | Bounded isolated captures, attention state and expected failures |
 | `just cli-check` | Isolated live service/CLI and shell GUI acceptance |
+| `just native-input` | Automated macOS keyboard/clipboard and real Japanese IME through the PTY |
 
 Required checks accumulate when a change touches multiple areas:
 
@@ -426,7 +427,7 @@ Required checks accumulate when a change touches multiple areas:
 | Memory/lifetime, parsing or process resources | Relevant cases through `just asan` |
 | Threading, queues or session lifecycle | Relevant cases through `just tsan`, separately from ASan |
 | PTY, local transport or CLI launch | `just desktop`, `just cli-check`, and desktop-enabled ASan/TSan as applicable below |
-| QML, rendering or desktop input | `just desktop` and `just ui-check`; live input changes also need `just cli-check` |
+| QML, rendering or desktop input | `just desktop` and `just ui-check`; live input changes also need `just cli-check` and `just native-input` on the qualified Mac |
 | Build/test tooling | `just verify-tools` plus affected positive check/build paths |
 | Disk history | `python3 scripts/check_history.py --disk-full` on macOS, plus desktop-enabled ASan/TSan; the disk-full fixture creates and removes its own 32 MiB disk image |
 | Python tooling | `ruff check --isolated scripts` and `ruff format --isolated --check scripts`, plus relevant runtime probes |
@@ -534,28 +535,42 @@ count is not a hardware GPU-utilization counter. These timings remain observatio
 not pass/fail performance thresholds. This probe does not measure cross-session
 switches or real agent turns.
 
-Physical keyboard/IME acceptance is separate. The controlled fixture displays steps
-and records received bytes in a private local JSONL file. Use a new socket and
-output filename for each run:
+Native software input acceptance is automated on macOS; no physical typing is
+required. After `just desktop`, run this separately from every other GUI test:
 
 ```sh
-build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop \
-  --new-session --socket "$PWD/runtime/native-check-v4.sock" --cwd "$PWD" -- \
-  python3 "$PWD/scripts/native_input_fixture.py" \
-  --output "$PWD/runtime/native-check.jsonl"
+just native-input
+# Equivalent command, also usable with desktop-asan or desktop-tsan builds:
+build/desktop/apps/desktop/lapis_native_input_probe --output build/native-input.json
 ```
 
-Closing/reopening this same command without `--new-session` exercises reattachment;
-Control-D ends the fixture. The file starts with `physical_input_verified: false`
-because collected bytes still require human confirmation of the input source,
-composition/cancellation and candidate placement. Do not commit the raw input log;
-retain a sanitized case/result receipt. In this dedicated endpoint, verify ordinary/Control/Option keys, multiline paste, native IME preedit,
-commit and cancellation. Change focus, enter history and disconnect while composing;
-no stale text may reach another context. Check candidate placement after cursor
-movement and resizing. Record macOS/input-source versions, typed test text,
-expected bytes and actual output in a sanitized receipt. A Qt `QInputMethodEvent`
-test or OS-injected Return does not satisfy this physical-input check. Terminal
-selection/copy and a screen-reader terminal tree are currently unsupported.
+The opt-in probe needs macOS 14 or later, a logged-in graphical session, installed
+Apple US/Japanese input sources, and macOS Accessibility event-posting permission
+for the invoking test environment. It fails with a diagnostic if permission is
+absent; it does not prompt or change that permission. It is built on macOS but is
+not registered in CTest because headless CI lacks these desktop prerequisites.
+Run it on the qualified Mac for changes to native input or composition handling.
+Avoid interacting with the keyboard/clipboard during this short exclusive test.
+
+CoreGraphics posts keys to the probe's own process. AppKit, the actual Apple
+Japanese IME, Qt and the real service-owned PTY handle them. The probe checks exact
+received bytes for printable/Control/Option keys and Command-V multiline Unicode
+bracketed paste; observes native preedit and commit; checks cancellation and fresh
+composition after history, document detach, window focus and actual attachment
+replacement/reconnect; and verifies commit plus the candidate anchor after resize.
+On native focus loss, Apple's IME may commit to the original terminal; the probe
+asserts that the new terminal receives no composition bytes. This does not add a
+multi-session product UI. The candidate anchor check verifies the rectangle
+provided to the IME, not the visual pixels of Apple's candidate window.
+
+It temporarily enables US and Japanese input sources, then restores and verifies
+the selected source, enabled-source inventory and clipboard MIME data. Only
+controlled fixture bytes enter the JSON receipt; user clipboard contents are not
+logged. Private temporary services and files are cleaned up. Preserve the JSON
+and stderr log on failure. Qt-injected composition tests remain useful separate
+coverage. Physical keyboard hardware and key-to-photon measurements are outside
+Milestone 1 software acceptance. Selection/copy from terminal cells and a
+screen-reader terminal tree remain unsupported.
 
 History is under `runtime/history` by default. Before starting a service, set
 `LAPIS_HISTORY_ROOT` to an absolute private directory and optionally set
@@ -745,7 +760,8 @@ key-to-photon claims additionally need an external camera/photodiode measurement
 
 1. Build the app with `just desktop` (optimized, symbols, sanitizers off).
    `just profile` covers the headless targets. UI frame observations are available;
-   correlated native-input, service and presentation markers still need work.
+   the latency probe correlates native-input, service and frame-submission markers;
+   actual pixel-presentation timestamps remain unmeasured.
 2. Warm the declared caches, then record a repeatable sequence: local typing,
    scroll/resize, session switches and output bursts. First qualify one terminal,
    then switching with two. Extend the same procedure to 32 sessions later.

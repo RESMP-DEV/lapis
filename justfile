@@ -61,3 +61,7 @@ history-check:
 # Correlated native-input/frame-submission measurement; run without competing GUI work.
 latency:
     build/desktop/apps/desktop/lapis_terminal_latency_probe --native --samples 100 --output build/terminal-latency.json
+
+# Automated AppKit keyboard, clipboard and real Japanese IME; run GUI checks serially.
+native-input:
+    build/desktop/apps/desktop/lapis_native_input_probe --output build/native-input.json

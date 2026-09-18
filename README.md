@@ -20,16 +20,16 @@ to that same file so Codex and Claude Code share one set of project instructions
 
 The macOS preview has a **live terminal in the enlarged pane** (shell by default) and a horizontal
 strip of five placeholder sessions plus the live preview below it. The cards show
-the carousel composition; they do not switch sessions yet. **Milestone 1 is still
-incomplete.**
+the carousel composition; they do not switch sessions yet. **Milestone 1 is
+implemented and qualified on macOS.**
 
 | Component | Exercised | Remaining |
 | --- | --- | --- |
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
 | PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS | Recovery after service loss and later Linux qualification |
 | Local transport | Version 4 identity/epoch/generation attachment and correlated history paging, restored-screen input gating, bounded queues and explicit reconnect | Automatic recovery policy and multi-session registry |
-| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK | Physical keyboard/IME qualification, cross-cell contextual shaping, selection and accessibility; Linux GUI port is deferred |
-| History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt composition/paste/focus ownership tests | Physical IME acceptance; archived pages retain their original geometry |
+| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK | Cross-cell contextual shaping, selection and accessibility; Linux GUI port is deferred |
+| History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
 | UI iteration and attention fixture | Isolated source-QML reload, PNG captures, LLDB launch/attach, compact header and finite red cue replay | Maintainer visual review, rebindable navigation and real attention integration |
 | Codex integration | Direct TUI launch, no-prompt editing/navigation/paste/resize, normal/compact GPU captures and same-child reattachment; separate schema/init/list probe | Real model-turn attention requests, responses and source reconnect handling |
 
@@ -40,8 +40,8 @@ Dependency packaging remains unfinished; this is a local developer build.
 The [two UI refinements](docs/architecture.md#ui-refinement-checkpoint) are
 implemented for visual review: an isolated preview/debugging workflow and a compact
 header with replayable red attention cues. Rebindable navigation follows; real
-agent attention and automatic carousel behavior remain later work. Finish terminal
-acceptance before expanding the live macOS workspace.
+agent attention and automatic carousel behavior remain later work. The next
+product milestone is attention state and verified Codex request handling.
 Latency and warm-switch targets remain provisional.
 
 Explicit CLI launch is now implemented through the existing service-owned PTY.
@@ -54,9 +54,10 @@ input readiness and failure-boundary checks. The [terminal fidelity receipt](evi
 records native GPU regression checks for cell positioning, fallback glyphs,
 decorations, resize and cursor repaint. Milestone 1 now includes bounded disk history,
 input-context lifecycle checks and an opt-in correlated timing probe. The
-[milestone qualification receipt](evidence/milestone-one.json) records the assembled checks. Physical
-keyboard/IME acceptance remains open in the
-[ordered plan](docs/architecture.md#next-complete-persistent-terminal-acceptance).
+[milestone qualification receipt](evidence/milestone-one.json) records the assembled
+checks, including automated Option-key, paste and real Japanese IME acceptance.
+The [ordered plan](docs/architecture.md#persistent-terminal-acceptance) records
+the completed scope and later work.
 The [Codex route comparison](adapters/codex/README.md#integration-route-comparison)
 separates terminal operation from attention delivery.
 
@@ -71,6 +72,7 @@ just ui           # Isolated fixture, source-QML reload and attention replay
 just ui-debug     # Launch the isolated fixture in LLDB
 just ui-check     # Bounded preview captures and failure cases
 just cli-check    # Dedicated CLI/service/GUI acceptance fixtures
+just native-input # Automated macOS keyboard, clipboard and Japanese IME checks
 ```
 
 On first use, choose **Session → Start new session**. The shell starts in this
@@ -91,7 +93,7 @@ returning to Live. Output continues to update the retained live screen while you
 browse. Archives use private files under `runtime/history`, with 64 MiB per
 session and 256 MiB shared-root page budgets by default. See the
 [history and input procedure](CONTRIBUTING.md#history-and-input-qualification) for
-limits, recovery, checks and the remaining native-input acceptance.
+limits, recovery and automated native-input acceptance.
 
 To launch Codex directly in its own persistent terminal:
 
