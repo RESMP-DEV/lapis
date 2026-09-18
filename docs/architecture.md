@@ -230,10 +230,13 @@ separate debugging targets.
 
 #### Compact header and attention cue
 
-A 28-pixel context row replaces the tall top section. Cards keep their positions
-and dimensions. A new synthetic request produces two red edge pulses over 1.4
-seconds, then a steady rim and readable pending label. The cue occupies the card's
-existing background and never changes the terminal geometry or keyboard owner.
+An 18-pixel strip holds connection status and preview tools; it omits repeated
+session names and paths. Carousel cards have no title or repeated preview badge:
+terminal content, working directory and attention state identify them. No user
+naming is required. Cards keep their positions and dimensions. A new synthetic
+request produces two red edge pulses over 1.4 seconds, then a steady rim and
+readable pending label. The cue occupies the card's existing background and never
+changes the terminal geometry or keyboard owner.
 Duplicate requests and ordinary output do not restart it; resolving one request
 leaves others pending. Focusing a card never approves or resolves a request.
 

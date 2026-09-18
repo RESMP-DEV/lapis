@@ -229,5 +229,28 @@
     "build/ui-implementation/live-isolation.log",
     "build/ui-implementation/workers/",
     "build/reports/tool-verification/receipt.json"
-  ]
+  ],
+  "control_layout_refinement": {
+    "observed_at_utc": "2026-09-18T09:35:28.138059+00:00",
+    "source_qml_sha256": "d1640e7554bf3e168fb5d815087d4053d7ec19dc7519607b28e10ca372b95a29",
+    "changes": [
+      "18-pixel control strip with no repeated session name/path",
+      "Carousel titles and repeated preview badges removed; working directory and attention retained",
+      "Plain action labels with inline explanations and a checked Disable animations control",
+      "Seven one-use Action objects removed; QML reduced by 46 lines"
+    ],
+    "checks": [
+      "QML resource rebuild passed",
+      "Existing UI replay/reload CTest passed",
+      "Eight isolated capture/error cases passed",
+      "Actual menu click handlers and both animation toggle directions exercised"
+    ],
+    "check_note": "Initial UI CTest overlapped a separate GUI capture and lost activation; passed when run alone. No C++ or dependency changes; broad sanitizer and engine checks not repeated.",
+    "artifacts": [
+      "build/ui-labels/checks/receipt.json",
+      "build/ui-labels/menu.png",
+      "build/ui-labels/menu.log"
+    ],
+    "menu_capture_sha256": "18c93f5851fa32f2a3fbcb390c32ec50e4c7b93c1bd1cd8591f149d074df5396"
+  }
 }

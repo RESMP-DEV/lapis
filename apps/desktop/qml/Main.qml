@@ -14,7 +14,38 @@ ApplicationWindow {
     }
 
     component PreviewMenuItem: MenuItem {
+        id: menuItem
+        required property string explanation
         focusPolicy: Qt.NoFocus
+        leftPadding: 26
+        Accessible.description: explanation
+        indicator: Label {
+            x: 8
+            y: (menuItem.height - height) / 2
+            text: "✓"
+            color: window.textColor
+            visible: menuItem.checked
+        }
+        contentItem: Column {
+            spacing: 3
+            Label {
+                width: parent.width
+                text: menuItem.text
+                color: window.textColor
+                font.pixelSize: 12
+            }
+            Label {
+                width: parent.width
+                text: menuItem.explanation
+                color: window.mutedTextColor
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
+            }
+        }
+        background: Rectangle {
+            color: menuItem.highlighted ? window.hoveredCardColor : "transparent"
+            radius: 4
+        }
     }
 
     width: 1400
@@ -101,147 +132,99 @@ ApplicationWindow {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 20
-        spacing: 14
+        anchors.margins: 12
+        anchors.topMargin: 6
+        spacing: 8
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 28
-            spacing: 10
+            Layout.minimumHeight: 18
+            Layout.maximumHeight: 18
+            spacing: 6
 
             PreviewLabel {
                 Layout.fillWidth: true
-                Layout.maximumWidth: 460
-                text: workspace.focusedSession ? workspace.focusedSession.title : "No focused session"
-                color: window.textColor
-                font.pixelSize: 12
-                font.weight: Font.Medium
-                elide: Text.ElideMiddle
-            }
-
-            PreviewLabel {
-                Layout.fillWidth: true
-                Layout.maximumWidth: 430
-                text: workspace.focusedSession ? workspace.focusedSession.directory : ""
-                font.pixelSize: 11
-                elide: Text.ElideMiddle
-            }
-
-            PreviewLabel {
-                Layout.alignment: Qt.AlignVCenter
-                Layout.maximumWidth: 155
-                text: workspace.focusedSession ? workspace.focusedSession.activity : "Idle"
-                font.pixelSize: 11
+                text: preview.active ? qsTr("Sample sessions") :
+                      workspace.focusedSession ? workspace.focusedSession.activity : qsTr("Disconnected")
+                font.pixelSize: 10
                 elide: Text.ElideRight
             }
 
-            Rectangle {
-                Layout.alignment: Qt.AlignVCenter
-                implicitWidth: 8
-                implicitHeight: 8
-                radius: 4
-                color: workspace.focusedSession ? workspace.focusedSession.accent : window.borderColor
-            }
+            Button {
+                id: previewTools
+                visible: preview.active
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                font.pixelSize: 10
+                topPadding: 0
+                bottomPadding: 0
+                text: preview.diagnostics.length ? qsTr("Preview tools · error") : qsTr("Preview tools")
+                background: Rectangle {
+                    radius: 4
+                    color: parent.hovered ? window.hoveredCardColor : window.cardColor
+                    border.color: window.borderColor
+                }
+                ToolTip.visible: hovered
+                ToolTip.text: preview.diagnostics.length ? preview.diagnostics :
+                              qsTr("Try sample alerts and apply interface edits.")
+                Accessible.description: ToolTip.text
+                onClicked: previewMenu.open()
 
-            Item { Layout.fillWidth: true }
+                Menu {
+                    id: previewMenu
+                    x: previewTools.width - width
+                    y: previewTools.height + 4
+                    width: 310
+                    padding: 6
+                    background: Rectangle {
+                        radius: 7
+                        color: window.cardColor
+                        border.color: window.borderColor
+                    }
 
-            Loader {
-                Layout.alignment: Qt.AlignVCenter
-                active: preview.active
-                sourceComponent: RowLayout {
-                    spacing: 6
-
-                    Button {
-                        focusPolicy: Qt.NoFocus
-                        implicitHeight: 24
-                        text: preview.diagnostics.length ? qsTr("Preview · error") : qsTr("Preview controls")
-                        background: Rectangle {
-                            radius: 5
-                            color: window.cardColor
-                            border.color: window.borderColor
-                        }
-                        ToolTip.visible: hovered && preview.diagnostics.length > 0
-                        ToolTip.text: preview.diagnostics
-                        Accessible.description: preview.diagnostics
-
-                        onClicked: previewMenu.popup()
-
-                        Menu {
-                            id: previewMenu
-
-                            PreviewMenuItem { action: replayArrival }
-                            PreviewMenuItem { action: replayDuplicate }
-                            PreviewMenuItem { action: replayTwo }
-                            PreviewMenuItem { action: replayResolve }
-                            PreviewMenuItem { action: replayReset }
-                            MenuSeparator {}
-                            PreviewMenuItem { action: previewReload }
-                            PreviewMenuItem {
-                                action: toggleReducedMotion
-                            }
-                        }
+                    PreviewMenuItem {
+                        text: qsTr("Show one alert")
+                        explanation: qsTr("Highlight the third terminal. Clear it to replay.")
+                        onTriggered: window.replayAttention("arrival")
+                    }
+                    PreviewMenuItem {
+                        text: qsTr("Show two alerts")
+                        explanation: qsTr("Highlight the second and third terminals.")
+                        onTriggered: window.replayAttention("two")
+                    }
+                    PreviewMenuItem {
+                        text: qsTr("Clear one alert")
+                        explanation: qsTr("Clear the third terminal; leave other alerts.")
+                        onTriggered: window.replayAttention("resolve")
+                    }
+                    PreviewMenuItem {
+                        text: qsTr("Clear all alerts")
+                        explanation: qsTr("Remove every alert so you can try again.")
+                        onTriggered: window.replayAttention("reset")
+                    }
+                    MenuSeparator {}
+                    PreviewMenuItem {
+                        text: qsTr("Repeat the same alert")
+                        explanation: qsTr("Show the third terminal's alert again. An existing alert won't pulse again.")
+                        onTriggered: window.replayAttention("duplicate")
+                    }
+                    PreviewMenuItem {
+                        text: qsTr("Disable animations")
+                        explanation: preview.systemReducedMotion ?
+                                     qsTr("Enabled by your macOS Reduce Motion setting.") :
+                                     qsTr("Keep alert outlines steady instead of pulsing.")
+                        checkable: true
+                        checked: preview.reducedMotion
+                        enabled: !preview.systemReducedMotion
+                        onTriggered: preview.reducedMotion = checked
+                    }
+                    MenuSeparator {}
+                    PreviewMenuItem {
+                        text: qsTr("Reload interface")
+                        explanation: qsTr("Apply saved layout edits to this preview.")
+                        onTriggered: preview.reload()
                     }
                 }
-            }
-        }
-
-        Action {
-            id: replayArrival
-
-            text: qsTr("Arrival")
-            enabled: preview.active
-            onTriggered: window.replayAttention("arrival")
-        }
-
-        Action {
-            id: replayDuplicate
-
-            text: qsTr("Duplicate")
-            enabled: preview.active
-            onTriggered: window.replayAttention("duplicate")
-        }
-
-        Action {
-            id: replayTwo
-
-            text: qsTr("Two")
-            enabled: preview.active
-            onTriggered: window.replayAttention("two")
-        }
-
-        Action {
-            id: replayResolve
-
-            text: qsTr("Resolve")
-            enabled: preview.active
-            onTriggered: window.replayAttention("resolve")
-        }
-
-        Action {
-            id: replayReset
-
-            text: qsTr("Reset")
-            enabled: preview.active
-            onTriggered: window.replayAttention("reset")
-        }
-
-        Action {
-            id: previewReload
-
-            text: qsTr("Reload")
-            enabled: preview.active
-            onTriggered: preview.reload()
-        }
-
-        Action {
-            id: toggleReducedMotion
-
-            text: qsTr("Reduced Motion")
-            checkable: true
-            checked: preview.reducedMotion
-            enabled: preview.active && !preview.systemReducedMotion
-            onTriggered: {
-                preview.reducedMotion = !preview.reducedMotion;
             }
         }
 
@@ -305,8 +288,8 @@ ApplicationWindow {
                 focusPolicy: Qt.NoFocus
                 hoverEnabled: true
                 Accessible.role: Accessible.Button
-                Accessible.name: sessionCard.modelData.title + ", " + sessionCard.modelData.activity
-                Accessible.description: sessionCard.index === 0 ? "Live shell preview" : "Placeholder session"
+                Accessible.name: qsTr("Terminal %1").arg(sessionCard.index + 1)
+                Accessible.description: sessionCard.modelData.live ? qsTr("Live shell") : qsTr("Sample session")
                 readonly property bool pending: sessionCard.modelData.attentionPending
                 readonly property real cueLevel: cue.level
                 readonly property bool cueRunning: cue.running && !cue.paused
@@ -427,39 +410,10 @@ ApplicationWindow {
                 contentItem: ColumnLayout {
                     spacing: 7
 
-                    RowLayout {
-                        Layout.leftMargin: 11
-                        Layout.rightMargin: 11
-                        Layout.topMargin: 9
-                        spacing: 7
-
-                        Rectangle {
-                            Layout.alignment: Qt.AlignVCenter
-                            implicitWidth: 3
-                            implicitHeight: 16
-                            radius: 1.5
-                            color: sessionCard.modelData.accent
-                        }
-
-                        PreviewLabel {
-                            Layout.fillWidth: true
-                            text: sessionCard.modelData.title
-                            color: window.textColor
-                            font.pixelSize: 12
-                            font.weight: Font.Medium
-                            elide: Text.ElideMiddle
-                        }
-
-                        PreviewLabel {
-                            text: sessionCard.modelData.live ? "Live" : "Preview"
-                            font.pixelSize: 10
-                            elide: Text.ElideRight
-                        }
-                    }
-
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        Layout.topMargin: 9
                         Layout.leftMargin: 9
                         Layout.rightMargin: 9
                         color: "#0d1421"

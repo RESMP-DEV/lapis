@@ -172,18 +172,21 @@ by these C++ presets; a passing test is not coverage of those implementations.
 
 After `just desktop`, use `just ui` for an isolated synthetic workspace. It never
 constructs a live service connection or sends shell input. Edit
-`apps/desktop/qml/Main.qml`, then select **Preview controls → Reload**; no C++
+`apps/desktop/qml/Main.qml`, then select **Preview tools → Reload interface**; no C++
 rebuild is needed. A load error retains the working view, marks the preview control
 and exposes diagnostics in its tooltip and stderr. Normal launches use bundled
 QML; rebuild with `just desktop` to include edits there.
 
-The preview menu replays arrival, duplicate, two requesting cards, matching
-resolution and reset. New requests pulse twice and remain marked until resolved.
-The reduced-motion control forces a steady marker; the macOS accessibility setting
-also enables it, sampled at startup and app activation. Reset before replaying the
-same request if you want another pulse. These are synthetic events, with no agent
-response or approval attached. Carousel navigation and keybinding settings remain
-planned in the [architecture](docs/architecture.md#ui-refinement-checkpoint).
+The menu describes each effect beside its action. **Show one alert** highlights
+the third terminal; **Show two alerts** highlights the second and third.
+**Clear one alert** clears the third terminal, while **Clear all alerts** removes
+every alert. New alerts pulse twice and remain marked until cleared. **Repeat the
+same alert** verifies that an existing alert does not pulse again. Clear it first
+to replay the pulse. **Disable animations** uses steady markers; the macOS Reduce
+Motion setting also enables it, sampled at startup and app activation. These are
+synthetic events, with no agent response or approval attached. Carousel navigation
+and keybinding settings remain planned in the
+[architecture](docs/architecture.md#ui-refinement-checkpoint).
 
 Run `just ui-check` for five captures and three expected-failure cases. Artifacts
 and a receipt go under `build/ui-preview-check/`. For an individual capture:
