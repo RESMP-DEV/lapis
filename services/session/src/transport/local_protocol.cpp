@@ -169,6 +169,58 @@ SnapshotMessage decode_snapshot_message(const QByteArray& payload) {
     result.snapshot = decode_snapshot(payload.sliced(48));
     return result;
 }
+QByteArray encode_history_request(const HistoryRequest& request) {
+    check(request.request_id != 0 && request.direction <= HistoryDirection::newer);
+    check(request.direction != HistoryDirection::newer || request.reference != 0);
+    QByteArray bytes;
+    append_quint64(bytes, request.request_id);
+    append_quint64(bytes, request.reference);
+    bytes.append(static_cast<char>(request.direction));
+    return bytes;
+}
+HistoryRequest decode_history_request(const QByteArray& payload) {
+    check(payload.size() == 17);
+    const auto* cursor = reinterpret_cast<const unsigned char*>(payload.constData());
+    HistoryRequest result;
+    result.request_id = read_quint64(cursor);
+    result.reference = read_quint64(cursor);
+    result.direction = static_cast<HistoryDirection>(*cursor);
+    static_cast<void>(encode_history_request(result));
+    return result;
+}
+QByteArray encode_history_reply(const HistoryReply& reply) {
+    check(reply.request_id != 0 && (reply.snapshot.has_value() == (reply.page_id != 0)));
+    const auto message = reply.message.toUtf8();
+    check(message.size() <= 4096);
+    auto bytes = encode_attachment(reply.attachment);
+    append_quint64(bytes, reply.request_id);
+    append_quint64(bytes, reply.page_id);
+    append_quint32(bytes, static_cast<quint32>(message.size()));
+    bytes += message;
+    if (reply.snapshot)
+        bytes += encode_snapshot(*reply.snapshot);
+    check(bytes.size() + 1 <= max_frame_bytes);
+    return bytes;
+}
+HistoryReply decode_history_reply(const QByteArray& payload) {
+    check(payload.size() >= 60 && payload.size() + 1 <= max_frame_bytes);
+    const auto* cursor = reinterpret_cast<const unsigned char*>(payload.constData());
+    HistoryReply result;
+    result.attachment = decode_attachment(cursor);
+    result.request_id = read_quint64(cursor);
+    result.page_id = read_quint64(cursor);
+    const auto length = read_quint32(cursor);
+    check(result.request_id != 0 && length <= 4096 && payload.size() >= 60 + length);
+    const auto message = raw_bytes(cursor, length);
+    result.message = QString::fromUtf8(message);
+    check(result.message.toUtf8() == message);
+    const auto tail = payload.sliced(60 + length);
+    if (result.page_id != 0)
+        result.snapshot = decode_snapshot(tail);
+    else
+        check(tail.isEmpty());
+    return result;
+}
 QByteArray encode_control(const ControlMessage& message) {
     check(message.payload.size() <= max_codepoints);
     QByteArray result = encode_attachment(message.attachment);
@@ -221,7 +273,7 @@ Status decode_status(const QByteArray& payload) {
     return {static_cast<StatusCode>(code), std::move(text)};
 }
 QByteArray frame(Kind kind, const QByteArray& payload) {
-    check(kind >= Kind::hello && kind <= Kind::ready);
+    check(kind >= Kind::hello && kind <= Kind::history_page);
     check(payload.size() + 1 <= max_frame_bytes);
     QByteArray result;
     QDataStream out(&result, QIODevice::WriteOnly);
@@ -250,7 +302,8 @@ bool take_frame(QByteArray& buffer, qsizetype& consumed, Frame& result) {
     if (available < static_cast<qsizetype>(size) + 4)
         return false;
     const auto kind = static_cast<quint8>(header[4]);
-    check(kind >= static_cast<quint8>(Kind::hello) && kind <= static_cast<quint8>(Kind::ready));
+    check(kind >= static_cast<quint8>(Kind::hello) &&
+          kind <= static_cast<quint8>(Kind::history_page));
     result = {static_cast<Kind>(kind), buffer.mid(consumed + 5, static_cast<qsizetype>(size) - 1)};
     consumed += static_cast<qsizetype>(size) + 4;
     if (consumed > buffer.size() / 2) {

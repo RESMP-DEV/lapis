@@ -31,7 +31,7 @@ void identity_messages() {
 
     const QByteArray attach = wire::encode_attach(
         {.mode = wire::AttachMode::reconnect, .fingerprint = fingerprint, .expected = identity});
-    require(attach.size() == 69 && attach.left(4) == QByteArrayLiteral("\0\0\0\3"));
+    require(attach.size() == 69 && attach.left(4) == QByteArrayLiteral("\0\0\0\4"));
     const auto decoded_attach = wire::decode_attach(attach);
     require(decoded_attach.mode == wire::AttachMode::reconnect &&
             decoded_attach.fingerprint == fingerprint && decoded_attach.expected == identity);
@@ -82,6 +82,45 @@ void identity_messages() {
     rejects([&] { static_cast<void>(wire::encode_ready({attachment, 0})); });
     rejects([&] { static_cast<void>(wire::decode_ready(encoded_ready + 'x')); });
 }
+void history_messages() {
+    using namespace lapis::session;
+    const wire::Attachment attachment{{wire::new_id(), wire::new_id()}, 12};
+    const wire::HistoryRequest request{17, 23, wire::HistoryDirection::newer};
+    const auto bytes = wire::encode_history_request(request);
+    const auto decoded = wire::decode_history_request(bytes);
+    require(decoded.request_id == 17 && decoded.reference == 23 &&
+            decoded.direction == wire::HistoryDirection::newer);
+    rejects([&] { static_cast<void>(wire::decode_history_request(bytes.chopped(1))); });
+    rejects([&] { static_cast<void>(wire::decode_history_request(bytes + 'x')); });
+    auto malformed = bytes;
+    malformed[16] = 2;
+    rejects([&] { static_cast<void>(wire::decode_history_request(malformed)); });
+    rejects([&] { static_cast<void>(wire::encode_history_request({0, 0})); });
+    rejects([&] {
+        static_cast<void>(wire::encode_history_request({1, 0, wire::HistoryDirection::newer}));
+    });
+    Terminal terminal({20, 4});
+    terminal.feed("old \x1b[31m界é\x1b[0m");
+    const wire::HistoryReply reply{attachment, 17, 99, QStringLiteral("Archived page"),
+                                   terminal.snapshot()};
+    const auto encoded = wire::encode_history_reply(reply);
+    const auto restored = wire::decode_history_reply(encoded);
+    require(restored.attachment == attachment && restored.request_id == 17 &&
+            restored.page_id == 99);
+    require(restored.snapshot &&
+            wire::encode_snapshot(*restored.snapshot) == wire::encode_snapshot(*reply.snapshot));
+    for (qsizetype size = 0; size < encoded.size(); ++size)
+        rejects([&] { static_cast<void>(wire::decode_history_reply(encoded.first(size))); });
+    rejects([&] { static_cast<void>(wire::decode_history_reply(encoded + 'x')); });
+    const auto empty =
+        wire::encode_history_reply({attachment, 18, 0, QStringLiteral("No older history"), {}});
+    require(!wire::decode_history_reply(empty).snapshot);
+    rejects([&] { static_cast<void>(wire::decode_history_reply(empty + 'x')); });
+    rejects([&] { static_cast<void>(wire::encode_history_reply({attachment, 18, 1, {}, {}})); });
+    auto oversized = encoded;
+    oversized[56] = static_cast<char>(0xff);
+    rejects([&] { static_cast<void>(wire::decode_history_reply(oversized)); });
+}
 void envelope_messages() {
     using namespace lapis::session;
     const wire::Attachment attachment{{wire::new_id(), wire::new_id()}, 1};
@@ -131,6 +170,7 @@ int main() {
     try {
         identity_messages();
         envelope_messages();
+        history_messages();
         Terminal terminal({20, 4});
         terminal.feed("A界é\x1b[1;31mZ\x1b[0m\x1b[?2004h");
         const auto expected = terminal.snapshot();

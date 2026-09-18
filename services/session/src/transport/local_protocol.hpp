@@ -6,11 +6,23 @@
 #include <lapis/session/terminal.hpp>
 
 namespace lapis::session::wire {
-constexpr quint32 version = 3;
+constexpr quint32 version = 4;
 constexpr qsizetype max_frame_bytes = qsizetype{8} * 1024 * 1024;
 constexpr quint32 max_cells = 32768;
 constexpr quint32 max_codepoints = 65536;
-enum class Kind : quint8 { hello = 1, snapshot, text, paste, key, resize, status, attach, ready };
+enum class Kind : quint8 {
+    hello = 1,
+    snapshot,
+    text,
+    paste,
+    key,
+    resize,
+    status,
+    attach,
+    ready,
+    history_request,
+    history_page
+};
 // v3 uses fixed-size identities: two nonzero 16-byte UUIDs and a BE u64 generation.
 struct SessionIdentity {
     QByteArray session_id;
@@ -37,6 +49,25 @@ struct SnapshotMessage {
     quint64 sequence{};
     TerminalSnapshot snapshot;
 };
+enum class HistoryDirection : quint8 { older = 0, newer = 1 };
+struct HistoryRequest {
+    quint64 request_id{};
+    quint64 reference{}; // Zero means newest for older; newer requires a page ID.
+    HistoryDirection direction{HistoryDirection::older};
+};
+struct HistoryReply {
+    Attachment attachment;
+    quint64 request_id{};
+    quint64 page_id{}; // Zero only when no page is returned.
+    QString message;
+    std::optional<TerminalSnapshot> snapshot;
+};
+// Requests use the normal attachment-bound control envelope. Replies carry
+// their own attachment and request ID, independent of live snapshot sequence.
+[[nodiscard]] QByteArray encode_history_request(const HistoryRequest& request);
+[[nodiscard]] HistoryRequest decode_history_request(const QByteArray& payload);
+[[nodiscard]] QByteArray encode_history_reply(const HistoryReply& reply);
+[[nodiscard]] HistoryReply decode_history_reply(const QByteArray& payload);
 struct ControlMessage {
     Attachment attachment;
     QByteArray payload;

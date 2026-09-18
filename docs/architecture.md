@@ -480,6 +480,26 @@ ASan and TSan, preview captures and the live CLI harness. GUI runs are serial ev
 when independent worker builds run concurrently. Record results in the existing
 README status table and a sanitized receipt; do not create another roadmap.
 
+#### Milestone 1 completion contract in progress
+
+The active implementation stays on a feature branch until the complete milestone
+has been exercised; PR creation is deferred at the maintainer's request.
+Wire v4 adds attachment-bound, request-correlated history paging independently of
+live snapshot sequence. Older v3 endpoints remain running and are rejected by new
+clients rather than adopted silently. Historical pages are read-only and retain
+their original cell geometry; returning to Live restores the latest warm screen.
+History browsing must not resize the child or receive terminal input.
+
+The service extracts primary-screen scrollback into owned pages before clearing
+that engine history. A dedicated I/O worker stores pages atomically under private
+runtime storage with per-session and shared-root global quotas. Queues and record
+sizes are bounded; archive errors are surfaced while the live process and screen
+remain usable. Disk format/version and checksums are independent of the wire.
+Resize reflows current engine history; archived pages preserve their recorded
+geometry. Live-process recovery after service failure/reboot remains outside this
+milestone. Physical input evidence and frame-submission proxies will be labeled
+separately from synthetic Qt tests and actual on-screen presentation.
+
 #### First implementation PR: session identity and input readiness
 
 Wire v3 extends the one-session path with identity and readiness; there is no
