@@ -41,7 +41,9 @@ The [two UI refinements](docs/architecture.md#ui-refinement-checkpoint) are
 implemented for visual review: an isolated preview/debugging workflow and a compact
 header with replayable red attention cues. Rebindable navigation follows; real
 agent attention and automatic carousel behavior remain later work. The next
-product milestone is attention state and verified Codex request handling.
+product milestone is attention state and verified Codex request handling; the
+[Milestone 2 plan](docs/architecture.md#milestone-2-attention-and-codex-plan)
+defines its route decision, implementation slices and acceptance checks.
 Latency and warm-switch targets remain provisional.
 
 Explicit CLI launch is now implemented through the existing service-owned PTY.

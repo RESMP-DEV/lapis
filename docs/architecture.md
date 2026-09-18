@@ -2,8 +2,8 @@
 
 This is the single implementation plan for lapis. See the
 [current status](../README.md#current-status) for what has been implemented and exercised.
-macOS is the active target. The immediate milestone is **one persistent terminal
-session on macOS**. A Linux desktop port is deferred; the headless engine has
+macOS is the active target. Milestone 1 is qualified; the next milestone is
+**attention state and verified Codex request handling**. A Linux desktop port is deferred; the headless engine has
 already been exercised on Linux, but the session service and desktop have not.
 
 ## Product philosophy
@@ -554,8 +554,10 @@ for each active build directory. GUI checks remain serial across worktrees.
 
 #### Following product checkpoints
 
-With macOS A through C qualified, the next product milestone is the attention
-state machine and qualify a real Codex route. Preserve the ordinary CLI view;
+With macOS A through C qualified, the next product milestone is to implement the
+attention state machine and qualify a real Codex route. The
+[Milestone 2 plan](#milestone-2-attention-and-codex-plan) defines the work packages.
+Preserve the ordinary CLI view;
 choose hooks or shared-server attachment only from live observation, explicit
 response and reconnect evidence. A notification-only hook must leave the answer
 in the originating terminal. A separately owned app-server remains a distinct
@@ -681,6 +683,118 @@ Acceptance requires:
 Keep process I/O and parsing off the GUI thread. Bound queues and processing
 work, coalesce display updates and preserve input/lifecycle events. Pin each input
 operation to one session. GUI detach and session termination are separate commands.
+
+### Milestone 2: attention and Codex plan
+
+Planning baseline: merged `e53c4fe` (September 18, 2026). This section describes
+proposed work, not additional qualification. The existing desktop attention map
+and replay controls are development fixtures; the service has no production
+attention reducer or Codex request adapter. The current Codex probe establishes
+schema, initialization and listing only.
+
+**Outcome:** a real Codex session can request attention, receive an explicit
+decision through a verified route, and continue. lapis retains the exact request
+identity, distinguishes disconnection from completion, and prevents stale replies.
+Start with one live terminal and a minimal attention view. Two retained live
+panes, workspace navigation and the automatic carousel remain Milestone 3.
+
+#### Ordered implementation slices
+
+| Slice | Work and dependency | Acceptance before moving on |
+| --- | --- | --- |
+| 2A: route qualification | Extend the disposable Codex investigation; in parallel, draft the normalized contract below. Probe an ordinary TUI and observer connected to the same dedicated server first; evaluate isolated native hooks independently. | A hashed binary and declared provider/model produce actual approval and user-input events. Record which client receives each event, which can answer, how resolution is observed, and what survives reconnect. Select the route from those results. |
+| 2B: attention core | Add a small C++20 library under `services/session/`, independent of Qt rendering and Codex payload types. Implement the versioned event/request contract, reducer and deterministic queue policy. It can begin alongside 2A using explicitly synthetic fixtures. | Replay proves typed identity, independent activity/connection/request state, deduplication, cancellation, aging, cooldown/snooze and recovery. An injected clock makes ordering reproducible; limits and overflow have tested outcomes. |
+| 2C: Codex adapter and service | After the route gate and common contract settle, implement mapping, explicit replies and reconciliation under `adapters/codex/`; connect it to the persistent service. Add versioned IPC for authoritative attention snapshots and targeted decisions. | A real request reaches the service, a validated decision reaches its source once, and resolution/continuation are observed. GUI detach preserves source ownership; source loss disables replies. Compatibility tests reject mismatched clients safely. |
+| 2D: minimal desktop integration | Bind the existing live pane to service attention state; display pending reason/count, stale state and supported response controls. Keep preview replay isolated. Depends on 2C. | A live request appears without moving focus; an explicit decision resolves only its request. Reattachment restores pending state before enabling actions. Unsupported response capabilities direct the user to the originating terminal. |
+| 2E: assembled qualification | Exercise the combined head with replay, live Codex, service recovery and macOS input regression. Update status and operational procedures from the result. | Every exit condition below passes with sanitized receipts, or the remaining capability is explicitly incomplete. Separate adapter/replay success from end-to-end success. |
+
+The first implementation checkpoint is **2A plus the 2B contract/replay scaffold**.
+Do not make UI or transport implementation depend on an unverified Codex route.
+Use reviewable checkpoints on feature branches; the slices are work packages for
+shared contributors, not permanent ownership assignments.
+
+#### Codex route decision
+
+Preserving the ordinary CLI interface is the product preference. A shared-server
+route is eligible only if live evidence establishes event delivery, response
+ownership and reconciliation for that same TUI session. A method in an exported
+schema or an empty list from another server cannot establish those capabilities.
+The [Codex investigation](../adapters/codex/README.md#next-qualification) owns the
+probe details and capability matrix.
+
+Hooks that only notify are useful partial integration. Keep answers in the
+originating terminal and report response/reconciliation capabilities as unavailable
+until exercised. Do not call notification-only support full Milestone 2 acceptance.
+If neither route qualifies, preserve the completed core work and record the
+specific gap before choosing a different product route. A standalone lapis-owned
+app-server is a distinct session mode, not a transparent substitute for the TUI.
+
+Use bounded, disposable turns and explicit fixture approval settings. Record the
+effective inference provider/model from runtime evidence, binary hash, backend
+ownership, prompts/fixtures safe to reproduce, deadlines and cleanup results.
+Keep private transcripts and credentials out of receipts. Do not modify global
+hooks, ordinary launch policy or the user's running daemon. Provider failure or an
+event that cannot be elicited is an unqualified case, not a simulated live pass.
+
+#### Proposed attention contract v1
+
+This is a logical contract; finalize its types in 2A/2B before dependent edits.
+It is separate from terminal IPC v4. Any incompatible IPC extension gets a new
+wire version and private endpoint, with explicit rejection of older clients;
+existing service processes and sockets are left intact.
+
+| Contract element | Required semantics |
+| --- | --- |
+| Identity | Stable lapis session and adapter IDs; source connection epoch; original typed request ID and available thread/turn/item IDs. Numeric `1` and string `"1"` are distinct. Preserve IDs losslessly or reject unsupported representations. |
+| Event envelope | Contract version, kind, local sequence and monotonic receipt time; retain source sequence only when supplied. Local ordering cannot prove no upstream event loss. Declare gap-detection/reconciliation limits per adapter. |
+| Session state | Connection health, activity, pending requests and reconciliation readiness are independent. Silence is unknown; a completed turn is not task completion or process exit. |
+| Request state | Preserve pending, response-in-flight, uncertain/stale and terminal outcomes. Conflicting payloads for the same identity require reconciliation, not silent replacement. Matching source resolution or authoritative reconciliation retires a request; sending, viewing, acknowledging or focusing does not. |
+| Decisions | Bind an explicit choice to session, source epoch, request identity and current service revision/GUI attachment. Validate supported choices and payloads in the service; reject duplicates and stale or mismatched decisions. |
+| Recovery | GUI detach refreshes from the healthy service; source disconnect invalidates response eligibility. Never replay an ambiguously delivered response automatically. Reconcile first, or expose the unresolved state and require action in the source terminal. |
+| Capabilities | Advertise observation, response and reconciliation separately, including supported request kinds and evidence level. Bells and prompt heuristics remain advisory. |
+| Bounds and queue | Set explicit limits for frames, request count/payloads, event queues and retired-ID bookkeeping. Preserve identities; do not silently truncate or drop control events. Overflow marks loss of synchronization and disables replies until recovery. Order eligible attention deterministically with aging and cooldowns; snooze/acknowledgement never resolve it. |
+
+Service policy produces an attention ordering, never a keyboard-focus command.
+Use multiple synthetic session IDs to prove ordering and non-starvation now;
+workspace-wide aggregation across live service processes belongs to Milestone 3.
+
+#### Verification and exit conditions
+
+Register the new reducer/replay cases in normal CTest so they run through existing
+`just check`, `just asan` and `just tsan` workflows as applicable. Cover duplicate
+requests/resolutions, typed-ID collisions, unknown or late resolutions, ID reuse
+across epochs, cancellation, simultaneous requests, deterministic aging/snooze,
+malformed or oversized payloads, queue overflow and unsupported methods.
+Exercise resolution racing with a decision, duplicate GUI submissions, disconnect
+during reply, failed reconciliation, and a stale GUI attaching to a replaced source.
+
+Build a separate opt-in live qualification runner under `scripts/`; its command
+and schema are to be implemented and documented in CONTRIBUTING.md before use.
+Keep `scripts/probe_codex.py`'s default no-turn inspection behavior. The live runner
+must have deadlines, bounded attempts, isolated resources and a nonzero exit for
+failed acceptance. A fixture transport proves failure handling; it cannot replace
+real model-turn evidence. Required live cases are an approval and a user-input
+request, explicit responses, matching resolution and continuation, plus source
+reconnect reconciliation. Add denial/cancellation and simultaneous requests to
+the adapter replay corpus; exercise them live where the selected route permits.
+
+Integration uses `just desktop`, `just cli-check`, `just ui-check`,
+`just native-input`, and desktop-enabled ASan/TSan according to the existing
+[required-check matrix](../CONTRIBUTING.md#checks). New Python tooling also needs
+the documented lint/format checks and success/failure cases. Run GUI checks
+serially; no physical typing gate is introduced. Re-run unrelated suites only when
+the change or a failure warrants it. Audit any new dependency before adoption.
+
+Completion requires the qualified route and the service-to-desktop request/decision
+flow on the same assembled source revision, not just a passing standalone probe.
+Keep sanitized receipts under `evidence/` with commands, source/binary hashes,
+capability results and limitations; raw logs stay under ignored `build/`.
+Planned receipts are `evidence/codex-attention-route.json` for the route decision
+and `evidence/milestone-two.json` for assembled acceptance; neither exists yet.
+Update README's status table only as those capabilities land. Linux desktop,
+32-session load, second adapters, selection/accessibility/contextual shaping and
+fresh presentation-latency targets are outside this phase. Packaging/notices/SBOM
+remain an independent prerequisite for binary distribution.
 
 ### Following milestones
 
