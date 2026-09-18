@@ -21,17 +21,17 @@ Agents also follow [AGENTS.md](AGENTS.md).
    an issue, special branch prefix or conventional-commit prefix is not required.
 4. Identify the applicable configured reviewers for the actual PR head; invoke
    comment-triggered services and verify delivery. Installation alone does not
-   establish review coverage. After normal review processing reaches terminal
-   states, collect complete thread-aware feedback and address findings together.
+   establish review coverage. Collect complete thread-aware feedback and address findings together within
+   the review budget; slow optional services must not hold useful work open.
    Fix valid findings, rerun affected checks, reply with evidence and resolve the
    threads. Explain duplicate, stale or inapplicable findings rather than ignoring
    them. Refresh review state after changing the head.
 5. Record each service as completed, completed with findings, pending, or
    skipped/unavailable. Explicit auth, quota or provider failures are unavailable.
    For rate/quota limits, stop calls until reset (next local day if none is supplied),
-   then retry once only if needed. For silence, wait up to ten minutes, retrigger
-   once and check for acknowledgement after sixty seconds before recording
-   unavailability. Optional unavailability is neither approval nor a merge gate.
+   then retry once only if needed. For silence, use a bounded wait of up to ten minutes, one retrigger and a
+   sixty-second acknowledgement check unless the maintainer requests a shorter
+   budget. Record a shortened wait as skipped, without claiming unavailability. Optional unavailability is neither approval nor a merge gate.
 6. Before merge, confirm checks and reviews apply to the current head, resolve
    valid findings and conflicts, and satisfy required CI, repository protection
    and human approvals. Report unavailable reviewers in the handoff. Templates
@@ -48,6 +48,15 @@ Keep reproducible tooling in `scripts/` or `tools/`, sanitized receipts in
 `evidence/`, raw builds/logs in ignored `build/`, and local session state in ignored
 `runtime/`. Never include credentials or private transcripts. Preserve `.sindexer/`
 in `.gitignore` and the relative `CLAUDE.md` symlink to `AGENTS.md`.
+
+### Fast iteration
+
+Start with the changed behavior and reuse verified dependency builds. Once the
+relevant checks pass, move on; rerun broader checks only for a new change, failure
+or unresolved concern. Do not rebuild the engine comparison for adapter-only work.
+Skip optional slow checks or additional reviewer waits when they stop providing
+useful evidence, and name what was skipped and why in the handoff. Required CI,
+repository protection and unresolved correctness findings still govern merges.
 
 ### Long-running work
 
@@ -76,8 +85,8 @@ Keep slow work bounded and observable; a silent command is not necessarily stuck
 6. If required validation remains blocked, report the completed work, missing check,
    cause, evidence path and next action. Preserve a reviewable checkpoint and keep
    its status incomplete. Never describe a timeout, skipped check or unavailable
-   reviewer as a pass. Review-service waits and rate limits follow the PR procedure
-   above; these general checkpoints do not override that policy.
+   reviewer as a pass. Rate limits still stop reviewer calls. A maintainer-directed shorter review
+   budget takes precedence over optional waiting; record it as skipped, not passed.
 
 ## Setup
 
@@ -96,6 +105,25 @@ through the platform's package manager; optionally install ccache. Headless engi
 build/replay has been exercised in an Ubuntu 24.04 ARM64 container. Session,
 desktop and GPU behavior remain unqualified there. CMake accepts macOS and Linux
 targets; sanitizer presets require a Clang/GCC toolchain.
+
+### Terminal dependency
+
+The normal build includes the production terminal adapter. Bootstrap the pinned
+Ghostty library once with `python3 scripts/probe_terminal.py --engine ghostty`.
+Use the successful run printed by that command:
+
+```sh
+export LAPIS_GHOSTTY_PREFIX="$PWD/build/terminal-probe/reproduce/ghostty/runs/<run-id>/prefix"
+just check
+```
+
+CMake accepts the same setting as `-DLAPIS_GHOSTTY_PREFIX=...` and retains it in
+its cache. It checks the adjacent successful probe receipt against the source
+manifest; this is build provenance, not a cryptographic attestation of the local
+archive. Reuse that prefix across development and sanitizer builds. Ghostty runs
+in Zig ReleaseSafe mode; ASan/UBSan instruments the C++ adapter and tests.
+No network download occurs during CMake configuration. Other bootstrap hosts
+remain unqualified; the existing pins cover macOS and Linux ARM64.
 
 ## Checks
 
@@ -158,8 +186,9 @@ Allocations/Leaks for retention and leak investigation.
 New CMake targets must link `lapis_project_options` so warning and sanitizer
 settings apply. Add meaningful CTest cases for ownership, parsing, event ordering,
 and input routing as those components arrive. Header-only code needs a compiled
-consumer. Current tests cover the toolchain and POSIX descriptor ownership with
-real pipes; they do not cover terminal sessions or rendering. The
+consumer. Current tests cover the toolchain, POSIX descriptor ownership with real pipes,
+and 14 terminal adapter cases on macOS/Linux ARM64. They do not cover a persistent
+service or rendering. The
 [checkpoint receipt](evidence/cpp-verification.json) records the published scope;
 new local check receipts are under `build/reports/<mode>/`.
 

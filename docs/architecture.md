@@ -141,7 +141,7 @@ needs them. Every first-party target uses `lapis_project_options`.
 | --- | --- | --- |
 | `services/session/src/platform/posix/` | Native descriptor ownership, then PTY launch/I/O/resize/reaping | `UniqueFd` and real pipe ownership tests implemented; PTY work pending |
 | `tools/terminal_probe/` | Shared headless workloads and independent Ghostty/Contour consumers | Implemented; pinned builds and eight-case replay on macOS/Linux |
-| `services/session/src/terminal/` | Wrap the selected engine's parsing, mode-aware input and screen extraction | Ghostty selected; production adapter next |
+| `services/session/src/terminal/` | Wrap the selected engine's parsing, mode-aware input and screen extraction | Implemented as `lapis_terminal`; 14 behavioral cases on macOS/Linux ARM64 |
 | `services/session/include/lapis/session/` | Owned commands, session identity and snapshots for clients | Draft contract below; no public headers or wire format yet |
 | `services/session/src/` | Service event loop and session lifecycle, then local IPC | Not implemented |
 | `apps/desktop/` | Minimal Qt view, input routing and terminal surface | Pending production adapter and snapshot contract |
@@ -176,64 +176,51 @@ descriptor primitive and headless consumers provide the starting code.
 Keep control events reliable and display updates replaceable; the GUI must never
 be the owner of the shell process or block the service's output draining.
 
-### Dispatch plan: production adapter first
+### Terminal adapter v0
 
-The checkpoint repair is merged in PR #1. The next implementation is one
-production terminal library, exercised without a PTY or GUI. Keep the existing
-engine comparison as dated evidence. The public header defines contract v0;
-this is an in-process boundary, not an IPC schema.
+The checkpoint repair is merged in PR #1. The first production adapter lives in
+`services/session/`: public values under `include/lapis/session/terminal.hpp`,
+Ghostty integration under `src/terminal/`, and behavioral cases under
+`tests/terminal/`. It is one C++20 library, with no PTY, threads or GUI. The
+[adapter receipt](../evidence/terminal-adapter.json) records the exercised scope.
 
-The coordinator owns `services/session/include/lapis/session/`, root and session
-CMake files, shared verification scripts, README and this plan. Before parallel
-coding, commit a small **terminal contract v0** and its pinned dependency inputs:
+- One owner thread operates each terminal. Clients receive owned snapshots that
+  survive later input, resize and terminal destruction. Ghostty types remain
+  private. Snapshots use a contiguous grapheme pool and row-major cells, avoiding
+  per-cell heap allocation; the adapter reuses extraction scratch storage.
+- Preserve graphemes, wide tails and wrap spacers, all exposed style flags and
+  underline styles, default/indexed/RGB color identity, the current palette,
+  cursor visibility/shape and the initial client's input modes. Effective colors
+  apply inverse once; bold alone does not brighten indexed colors.
+- Input and snapshot payloads have configurable byte/cell/codepoint limits.
+  Invalid geometry and oversized input fail before engine mutation; extraction
+  overflow leaves parsing usable. Generated terminal replies use preallocated
+  storage. A reply overflow permanently faults the instance so a service cannot
+  send a partial response; recreate and resynchronize it.
+- History uses Ghostty's page-granular byte budget. Exercised eviction and clearing
+  preserve the current viewport; this budget is not a strict allocation or RSS
+  ceiling. Snapshot payload limits also do not account for allocator overhead.
+  Global service budgets and disk-backed history still belong to later work.
+- The verified input subset is navigation key presses with modifiers and pure text
+  paste encoding. Clipboard access, full text/key protocols, mouse, IME, selection,
+  hyperlinks and image presentation are not exposed. Image storage and external
+  image media are disabled. A terminal reply never writes directly to a PTY.
 
-- One owner thread mutates the engine; clients receive owned snapshots that remain
-  valid after further input, resize and engine destruction. No upstream handles
-  or pointers cross the boundary. Give snapshots a terminal revision and explicit
-  dimensions; service/attachment identity belongs in a later service envelope.
-- Preserve graphemes, wide-cell continuation and wrap-spacer distinctions, style
-  flags, default/indexed/RGB color identity, palette/default colors, cursor
-  visibility/shape and the input modes needed by the first client. Define inverse
-  and bold-color interpretation once; validate indexed colors as well as truecolor.
-  Unsupported fields must be explicit rather than silently reporting defaults.
-- Accept bounded byte input, resize, key and paste operations; return encoded
-  input and terminal-generated replies to the owning service. Qualify device/status
-  replies before interactive TUI acceptance. Parsing never writes to a PTY itself.
-- Validate dimensions and bound input, grapheme storage, owned snapshot bytes,
-  history and reply queues. Specify overflow/error behavior. Ghostty prunes history
-  at page granularity, so its configured byte limit is not a strict allocation or
-  process-memory ceiling. Enforce Lapis-owned buffer limits separately, exercise
-  eviction and retained history, and report process memory separately.
+This is an in-process boundary, not an IPC schema. The normal CMake build always
+includes the adapter and requires a successful pinned Ghostty build prefix;
+missing dependencies cannot silently omit its tests. The existing archive runner
+owns downloads and source verification, while `cmake/Ghostty.cmake` checks build
+provenance and imports the library. Reuse the build across C++ check modes.
+[Dependency notices](../third_party/ghostty/NOTICES.txt) collect the upstream texts;
+remaining source-provenance/SBOM limits are explicit. No binary is packaged yet.
 
-These are in-process requirements, not a frozen wire format. The coordinator
-verifies missing capabilities against the pinned C API before promising them to
-workers; a bounded probe or a narrower explicit contract closes each gap.
+The coordinator owns shared headers, build files and these documents. For future
+parallel work, commit the shared contract first, assign disjoint files and one
+build owner, and use bounded worker runs. Integrate and test worker output before
+calling it complete. Preserve partial work after timeouts and avoid repeated
+optional checks once the affected behavior passes.
 
-After that common baseline exists, dispatch at most three independent workers:
-
-| Worker | Exclusive files | Deliverable and acceptance |
-| --- | --- | --- |
-| Engine adapter | `services/session/src/terminal/` | Production C++20 wrapper, explicit handle/error ownership, bounded extraction and mode-aware input; passes the independent terminal cases |
-| Behavioral cases | `services/session/tests/terminal/` | Port the eight shared cases to the public contract; add snapshot lifetime, full style/color identity, cursor/wrap, terminal replies, malformed input, dimension limits and history eviction cases; exercise success and failure recovery |
-| Dependency integration | `cmake/Ghostty.cmake`, `third_party/ghostty/` | Reuse the existing Ghostty/Zig pins and verified archives; define a reproducible imported target and complete source/license inventory, including the known notice gaps; audit the production dependency graph and report scanner limits |
-
-Workers propose shared-header or build changes to the coordinator. They do not
-edit another worker's files or widen the public contract independently. The
-coordinator connects the targets and tests, runs `just check` and `just asan`, and
-repeats headless production-adapter qualification on native Linux ARM64. Run
-`just tsan` for ownership handoff/threading cases when those exist; keep the
-upstream Zig checking mode distinct from C++ sanitizer coverage. Apply the
-dependency and tooling checks in CONTRIBUTING for any affected manifests/scripts.
-Record snapshot allocation/memory observations without inventing latency gates.
-
-Use a common committed baseline and disjoint file ownership; the coordinator
-owns the shared checkout build and report directories. Each dispatch names its base SHA, contract version, owned files,
-acceptance commands and finite timeout. Start with a ten-minute diagnostic
-checkpoint unless a shorter task estimate applies; revise a progressing cold-build
-estimate explicitly. Read the worker completion receipt and inspect its diff and
-tests before integration. A completed worker turn does not establish acceptance.
-
-### After adapter acceptance
+### Next: persistent terminal
 
 Deliver the rest of milestone 1 as small dependent changes:
 
@@ -263,7 +250,7 @@ milestones. Adapter acceptance alone does not complete milestone 1.
 
 ### Engine experiment decision
 
-Use **Ghostty VT with a C++20 service** for the next implementation. At pinned
+Use **Ghostty VT with a C++20 service**; the first adapter now implements this decision. At pinned
 revision `5de703a1b6ca0b91fcebe932b44be1df2de0a683`, the unpatched headless library
 builds with Zig 0.16.0 and its public C API supports a C++20 consumer. All eight
 shared cases pass on this macOS ARM64 host and native Ubuntu 24.04 ARM64. No Qt,

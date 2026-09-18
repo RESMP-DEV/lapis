@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LAPIS_SESSION_TERMINAL_HPP
+#define LAPIS_SESSION_TERMINAL_HPP
 
 #include <array>
 #include <cstddef>
@@ -19,12 +20,12 @@ struct TerminalSize {
 };
 
 struct TerminalLimits {
-    std::size_t max_cells{512U * 256U};
-    std::size_t max_input_bytes{1024U * 1024U};
-    std::size_t max_grapheme_codepoints{1024U * 1024U};
-    std::size_t max_reply_bytes{64U * 1024U};
+    std::size_t max_cells{std::size_t{512} * 256U};
+    std::size_t max_input_bytes{std::size_t{1024} * 1024U};
+    std::size_t max_grapheme_codepoints{std::size_t{1024} * 1024U};
+    std::size_t max_reply_bytes{std::size_t{64} * 1024U};
     // Upstream page-granular history budget, not an allocation/RSS ceiling.
-    std::size_t history_bytes{16U * 1024U * 1024U};
+    std::size_t history_bytes{std::size_t{16} * 1024U * 1024U};
 };
 
 enum class ColorKind : std::uint8_t { default_color, indexed, rgb };
@@ -157,3 +158,5 @@ class Terminal {
 };
 
 } // namespace lapis::session
+
+#endif // LAPIS_SESSION_TERMINAL_HPP

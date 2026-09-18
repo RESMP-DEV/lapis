@@ -17,21 +17,24 @@ to that same file so Codex and Claude Code share one set of project instructions
 
 ## Current status
 
-This checkpoint establishes the engine choice, resource-ownership foundation and
-contributor workflow. **Milestone 1, one persistent terminal, is incomplete.**
+The engine choice, resource ownership and first production terminal adapter are
+implemented. **Milestone 1, one persistent terminal, is incomplete.**
 
 | Component | Exercised | Remaining |
 | --- | --- | --- |
-| C++20 platform foundation | Move-only descriptor ownership and real pipe I/O/cleanup tests on macOS | PTY launch, resize, process lifecycle and persistent service |
-| Headless engine comparison | Ghostty 8/8; Contour 7/8 on macOS ARM64 and Ubuntu 24.04 ARM64 in a local container | Production adapter and broader terminal compatibility |
+| C++20 platform foundation | Move-only descriptor ownership and real pipe I/O/cleanup tests on macOS and Linux ARM64 | PTY launch, resize, process lifecycle and persistent service |
+| Production terminal adapter | Owned snapshots, styles/colors/cursor, mode-aware navigation/paste, bounded replies and history eviction; 14 cases on macOS and Linux ARM64 | Full keyboard/IME, selection, scrollback navigation and broader compatibility |
+| Headless engine comparison | Ghostty 8/8; Contour 7/8 on macOS ARM64 and Ubuntu 24.04 ARM64 in a local container | Broader terminal compatibility |
 | Codex protocol probe | Schema export, initialization and loaded-thread listing | Real attention requests, responses and reconnect handling |
 | GPU and profiling tools | Vulkan device discovery through MoltenVK; Instruments capture smoke | Terminal rendering, presentation and responsiveness measurements |
 | Desktop workspace | Architecture only | Input/IME, previews, carousel and accessibility |
 
-**Next code change: the production Ghostty adapter.** Keep its pinned C API
-isolated, extend the tested snapshot subset and verify bounded terminal history.
-The PTY service and minimal GUI follow adapter acceptance. Dependency notices must
-be completed before redistribution; latency targets remain provisional.
+**Next code change: the POSIX PTY backend.** Connect process launch, input/output,
+resize and exit handling to the tested adapter, then build persistence and the
+minimal GUI. [Adapter evidence](evidence/terminal-adapter.json) records the current
+scope. Dependency notices are collected in [NOTICES.txt](third_party/ghostty/NOTICES.txt);
+complete redistribution provenance still needs review. Latency targets remain
+provisional.
 
 - [Architecture and near-term plan](docs/architecture.md): component ownership,
   open decisions and acceptance criteria. This is the single implementation plan.
@@ -48,8 +51,9 @@ just verify-tools  # Prove the tools detect deliberately faulty fixtures
 ```
 
 See the contribution guide for installation and Python commands without `just`.
-Default CTest covers the toolchain and POSIX descriptor ownership; terminal replay
-runs separately below. There is no desktop test coverage yet.
+Default CTest covers the toolchain, POSIX descriptor ownership and the production
+terminal adapter. Bootstrap its pinned dependency as described in the contribution
+guide before the first check. The engine comparison runs separately below. There is no desktop test coverage yet.
 
 Run the separate engine experiment with `python3 scripts/probe_terminal.py`.
 It verifies pinned source/toolchain archives, builds both consumers and keeps each
