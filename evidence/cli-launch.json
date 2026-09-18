@@ -1,0 +1,308 @@
+{
+  "schema": "lapis.cli-launch/1",
+  "recorded_at": "2026-09-18T11:50:25.598003+00:00",
+  "source_head": "85ec6f39a8c93e589a05573e6c667e66c90ff096",
+  "source_state": "Uncommitted explicit-launch implementation; source hashes identify the checked files.",
+  "source_sha256": {
+    "apps/desktop/CMakeLists.txt": "33ddc1faff292a744e945d7054a6156874c4818e75e140fde11abb4f33360817",
+    "apps/desktop/src/live_connection.cpp": "3f5b4c9ba2c2f248e610ed97ae87b60168125aedf9195fd61602220dc7f5e64c",
+    "apps/desktop/src/live_connection.hpp": "8abce279bbdf3a4673ced66ac56959a126a5aa062d8648a42562d9c9c95f443c",
+    "apps/desktop/src/main.cpp": "fd144c4f961697944728df71dac5ce5d38261bb8af256c08f6804741d4fc84ef",
+    "apps/desktop/src/ui_capture.cpp": "8dab275b421218e561cef848b4a9a74e4e7ea281a0dc715ac01770987e83d2b6",
+    "apps/desktop/src/workspace.cpp": "80e086aff83d8fb74e3fb58e1840485a2982d563ce7ee383d220d1a01edd659d",
+    "apps/desktop/src/workspace.hpp": "137e605c69389501267a92b2f1e71014a016b81cc58c2afe2f0a9028c200894c",
+    "apps/desktop/tests/ui_preview_test.cpp": "5f05fb77162b679b0570a8271f19278b16e51a5990f12c1e1db3fe82a14c9417",
+    "justfile": "faf8de92f3efdfcd849116677090eb82c652dc755fa3112ebed9803a8b71289c",
+    "scripts/check_cli_launch.py": "5c8d9085a79a60a9e94088d70a5424c26169f49bbcbce65680fc3c49b0522e82",
+    "services/session/CMakeLists.txt": "ecb183e98d9b268cc1d9aee9bfbb3278e6054eae1eddeb992b1b117e58a3ba67",
+    "services/session/src/launch_spec.cpp": "e0d3f176cd5eda6aa8e2e1d390d6181e2123d8f7958bb042051fb84bb6c74786",
+    "services/session/src/launch_spec.hpp": "35fcd921ea9e8ee44ddda3e8a3da0b925c88d2b5b218f86464fc10eeffb26154",
+    "services/session/src/platform/posix/local_endpoint.cpp": "8de38ee0de568f4c4fef8690e7cfb056ae6def58ff351ff6bb9becc2bb65429b",
+    "services/session/src/platform/posix/local_endpoint.hpp": "f1b2af01921868320d9b976800c8ce9ce89e8245b966f1f1e2916b3daec2322d",
+    "services/session/src/platform/posix/pty_process.cpp": "a8675d2b38b3bde41df3616d19e146bea62f99760675e2a9f608b8f3ffd49c35",
+    "services/session/src/platform/posix/pty_process.hpp": "be9e3c76a0a2ac26b3a75c5b24ccd176327e48015b5924dd45415244cf47aedf",
+    "services/session/src/session_service.cpp": "c5ba508f3778188dc415e093d8ac2195bd4a56f6e6cd0326c71f6a4eb7833dea",
+    "services/session/src/transport/local_protocol.cpp": "c46f9bc1f98930a400629ff535e00446a7bda9523d4eba07dc848f83456ab77d",
+    "services/session/src/transport/local_protocol.hpp": "e906787006370122cb28d01945c7c5291c664622c2622320aae4f9deeffe093c",
+    "services/session/tests/launch_spec_test.cpp": "326ab50850ca6af4702310cde4f9174c79d9b3fd2150e0673bb31367b18cafa6",
+    "services/session/tests/pty_process_test.cpp": "ac8e0706a0c0048a079737f6705ee11449ee5555827bbeb206c8f3f0901bde60"
+  },
+  "platform": {
+    "os": "macOS",
+    "version": "26.7",
+    "architecture": "arm64",
+    "cpu": "Apple M4 Max"
+  },
+  "scope": "One persistent terminal per socket endpoint. No attention adapter, model turn, multi-session workspace or performance qualification.",
+  "contracts": {
+    "launch": 1,
+    "wire": 2,
+    "attachment": "Match executable path, literal argv and canonical cwd before replacing the active client; filesystem permissions are the local access boundary."
+  },
+  "acceptance": {
+    "recorded_at": "2026-09-18T11:46:00.560398+00:00",
+    "passed": true,
+    "checks": [
+      {
+        "name": "literal argv, cwd, resize, paste and exit",
+        "passed": true,
+        "seconds": 0.175
+      },
+      {
+        "name": "detached output and same-PID reattachment",
+        "passed": true,
+        "seconds": 0.691
+      },
+      {
+        "name": "mismatch and malformed attachment preserve active client",
+        "passed": true,
+        "seconds": 3.042
+      },
+      {
+        "name": "failed executable and cwd",
+        "passed": true,
+        "seconds": 0.084
+      },
+      {
+        "name": "desktop capture, reattachment, shell default and option rejection",
+        "passed": true,
+        "seconds": 3.834
+      },
+      {
+        "name": "installed Codex TUI input, navigation, paste, resize, reattach and interrupt",
+        "passed": true,
+        "seconds": 2.535
+      }
+    ],
+    "codex": {
+      "sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+      "arguments": [
+        "--no-daemon"
+      ],
+      "prompt_submitted": false
+    },
+    "input_scope": "Codex keys/paste driven over service IPC; default-shell smoke separately uses Qt key routing. No Enter submitted to Codex."
+  },
+  "verification": {
+    "desktop": {
+      "command": "just desktop",
+      "passed": true,
+      "ctest_cases": 7,
+      "scope": "Compile, CTest, clang-format, clang-tidy and Cppcheck"
+    },
+    "headless": {
+      "command": "just check",
+      "passed": true
+    },
+    "tool_detectors": {
+      "command": "just verify-tools",
+      "passed": true
+    },
+    "final_commands": [
+      {
+        "command": [
+          "python3",
+          "scripts/check_cpp.py",
+          "desktop"
+        ],
+        "exit_code": 0,
+        "seconds": 6.204
+      },
+      {
+        "command": [
+          "cmake",
+          "--build",
+          "build/desktop-asan",
+          "--parallel",
+          "4"
+        ],
+        "exit_code": 0,
+        "seconds": 2.264
+      },
+      {
+        "command": [
+          "ctest",
+          "--test-dir",
+          "build/desktop-asan",
+          "--output-on-failure"
+        ],
+        "exit_code": 0,
+        "seconds": 2.87
+      },
+      {
+        "command": [
+          "python3",
+          "scripts/check_cli_launch.py",
+          "--build-dir",
+          "build/desktop-asan",
+          "--output",
+          "build/cli-launch/asan-service-receipt.json"
+        ],
+        "exit_code": 0,
+        "seconds": 4.476
+      },
+      {
+        "command": [
+          "cmake",
+          "--build",
+          "build/desktop-tsan",
+          "--parallel",
+          "4"
+        ],
+        "exit_code": 0,
+        "seconds": 2.107
+      },
+      {
+        "command": [
+          "ctest",
+          "--test-dir",
+          "build/desktop-tsan",
+          "-E",
+          "^ui-preview$",
+          "--output-on-failure"
+        ],
+        "exit_code": 0,
+        "seconds": 8.696
+      },
+      {
+        "command": [
+          "python3",
+          "scripts/check_cli_launch.py",
+          "--build-dir",
+          "build/desktop-tsan",
+          "--output",
+          "build/cli-launch/tsan-service-receipt.json"
+        ],
+        "exit_code": 0,
+        "seconds": 16.256
+      },
+      {
+        "command": [
+          "ruff",
+          "check",
+          "--isolated",
+          "scripts"
+        ],
+        "exit_code": 0,
+        "seconds": 0.02
+      },
+      {
+        "command": [
+          "ruff",
+          "format",
+          "--isolated",
+          "--check",
+          "scripts"
+        ],
+        "exit_code": 0,
+        "seconds": 0.01
+      },
+      {
+        "command": [
+          "git",
+          "diff",
+          "--check"
+        ],
+        "exit_code": 0,
+        "seconds": 0.01
+      }
+    ],
+    "asan_ubsan": {
+      "ctest_cases": 7,
+      "passed": true,
+      "service_cases": [
+        {
+          "name": "literal argv, cwd, resize, paste and exit",
+          "passed": true,
+          "seconds": 0.284
+        },
+        {
+          "name": "detached output and same-PID reattachment",
+          "passed": true,
+          "seconds": 0.788
+        },
+        {
+          "name": "mismatch and malformed attachment preserve active client",
+          "passed": true,
+          "seconds": 3.153
+        },
+        {
+          "name": "failed executable and cwd",
+          "passed": true,
+          "seconds": 0.153
+        }
+      ]
+    },
+    "tsan_service": {
+      "ctest_cases": 6,
+      "passed": true,
+      "excluded_ctest": "ui-preview",
+      "service_cases": [
+        {
+          "name": "literal argv, cwd, resize, paste and exit",
+          "passed": true,
+          "seconds": 2.644
+        },
+        {
+          "name": "detached output and same-PID reattachment",
+          "passed": true,
+          "seconds": 3.184
+        },
+        {
+          "name": "mismatch and malformed attachment preserve active client",
+          "passed": true,
+          "seconds": 5.699
+        },
+        {
+          "name": "failed executable and cwd",
+          "passed": true,
+          "seconds": 4.656
+        }
+      ]
+    },
+    "threaded_renderer_tsan": {
+      "passed": false,
+      "status": "unresolved",
+      "observation": "Race reports between TerminalSurface construction/QPointer initialization and updatePaintNode through uninstrumented Qt Quick. No suppression added.",
+      "local_log": "build/cli-launch/tsan-check.log"
+    }
+  },
+  "graphics": {
+    "backend": "Qt Quick Vulkan, runtime API 5; macOS MoltenVK path",
+    "captures": {
+      "gui": {
+        "local_artifact": "build/cli-launch/run-qcd5f5t1/gui.png",
+        "sha256": "aaa8a608e55f81f0d693fc6ef37e47ce56fb51ed90d2be07bbca0073594bae8c",
+        "pixel_width": 2800,
+        "pixel_height": 1902
+      },
+      "shell": {
+        "local_artifact": "build/cli-launch/run-qcd5f5t1/shell.png",
+        "sha256": "a6aef815d1ee3396c78bd399924a4665bdada37aea0b00ee546ce8289dd520e6",
+        "pixel_width": 2800,
+        "pixel_height": 1902
+      },
+      "codex": {
+        "local_artifact": "build/cli-launch/run-qcd5f5t1/codex.png",
+        "sha256": "288f8991a8b1e72e519471317df03999211c5b6d36141eaac9a3a7438e6bdc68",
+        "pixel_width": 2800,
+        "pixel_height": 1902
+      },
+      "codex-compact": {
+        "local_artifact": "build/cli-launch/run-qcd5f5t1/codex-compact.png",
+        "sha256": "36566e1e7d49089550dea08a46b1118f172023b226247d9017684dfded1487b9",
+        "pixel_width": 1960,
+        "pixel_height": 1400
+      }
+    },
+    "timing_claim": false
+  },
+  "remaining": [
+    "Stable session/service identities, attachment generations and service-failure recovery",
+    "Full native Codex input/IME, foreground-job behavior and terminal fidelity",
+    "Real agent attention, response and reconciliation",
+    "Disk-backed history and Linux service/GUI qualification",
+    "Threaded-renderer sanitizer qualification, latency and packaging"
+  ],
+  "publication": "Only synthetic fixture outcomes, source hashes and artifact metadata retained. Raw logs/captures remain in ignored local build directories."
+}

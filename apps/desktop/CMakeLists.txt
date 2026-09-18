@@ -18,7 +18,8 @@ if(APPLE)
     target_sources(lapis_desktop PRIVATE src/platform_preferences.mm)
 endif()
 target_link_libraries(lapis_desktop PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
-target_compile_definitions(lapis_desktop PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
+target_compile_definitions(lapis_desktop PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}"
+    LAPIS_PROJECT_ROOT="${PROJECT_SOURCE_DIR}")
 qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml)
 set_target_properties(lapis_desktop PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME "lapis"

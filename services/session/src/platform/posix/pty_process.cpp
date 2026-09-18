@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <fcntl.h>
+#include <stdexcept>
 #include <sys/ioctl.h>
 #include <system_error>
 #include <unistd.h>
@@ -60,6 +61,13 @@ void PtyProcess::start(const PtyLaunch& launch) {
         emit failure(QStringLiteral("PTY already started"));
         return;
     }
+    PtyLaunch validated_launch;
+    try {
+        validated_launch = validate_launch(launch);
+    } catch (const std::invalid_argument& error) {
+        emit failure(QString::fromUtf8(error.what()));
+        return;
+    }
     master_.reset(::posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC));
     if (!master_ || ::grantpt(master_.get()) != 0 || ::unlockpt(master_.get()) != 0) {
         emit failure(system_error("Open PTY"));
@@ -85,7 +93,7 @@ void PtyProcess::start(const PtyLaunch& launch) {
         ::fcntl(master_.get(), F_SETFL,
                 static_cast<int>(static_cast<unsigned int>(flags) |
                                  static_cast<unsigned int>(O_NONBLOCK))) < 0 ||
-        !resize(launch.size)) {
+        !resize(validated_launch.size)) {
         emit failure(system_error("Configure PTY"));
         slave_.reset();
         master_.reset();
@@ -102,9 +110,9 @@ void PtyProcess::start(const PtyLaunch& launch) {
     environment.insert(QStringLiteral("TERM"), QStringLiteral("xterm-256color"));
     environment.insert(QStringLiteral("COLORTERM"), QStringLiteral("truecolor"));
     process_.setProcessEnvironment(environment);
-    process_.setWorkingDirectory(launch.directory);
-    process_.setProgram(launch.shell);
-    process_.setArguments({QStringLiteral("-i")});
+    process_.setWorkingDirectory(validated_launch.directory);
+    process_.setProgram(validated_launch.program);
+    process_.setArguments(validated_launch.arguments);
     const int master = master_.get();
     const int slave = slave_.get();
     process_.setChildProcessModifier([this, master, slave] {

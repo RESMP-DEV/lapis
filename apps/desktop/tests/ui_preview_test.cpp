@@ -265,8 +265,11 @@ int run_attention_ui_tests() {
     CHECK(workspace.replayAttention(QStringLiteral("reset")));
     CHECK(workspace.replayAttention(QStringLiteral("two")));
     pump(100);
-    CHECK(card->property("cueRunning").toBool());
-    CHECK(renderer->property("cueRunning").toBool());
+    // Native focus can change while pumping events. The product intentionally
+    // pauses cues in an inactive window; that is correct behavior, not a failure.
+    const bool visual_active = window->isActive() && window->isVisible();
+    CHECK(card->property("cueRunning").toBool() == visual_active);
+    CHECK(renderer->property("cueRunning").toBool() == visual_active);
     CHECK(workspace.replayAttention(QStringLiteral("resolve")));
     CHECK(!card->property("pending").toBool());
     CHECK(renderer->property("pending").toBool());

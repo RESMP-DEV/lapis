@@ -1,6 +1,7 @@
 #ifndef LAPIS_SESSION_POSIX_PTY_PROCESS_HPP
 #define LAPIS_SESSION_POSIX_PTY_PROCESS_HPP
 
+#include "launch_spec.hpp"
 #include "unique_fd.hpp"
 #include <lapis/session/terminal.hpp>
 
@@ -8,17 +9,11 @@
 #include <QObject>
 #include <QProcess>
 #include <QSocketNotifier>
-#include <QString>
-
 #include <memory>
 
 namespace lapis::session::posix {
 
-struct PtyLaunch {
-    QString shell;
-    QString directory;
-    TerminalSize size;
-};
+using PtyLaunch = LaunchSpec;
 
 // Owned by the separate service event loop, never by the desktop window.
 class PtyProcess final : public QObject {

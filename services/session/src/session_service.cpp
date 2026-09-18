@@ -1,3 +1,4 @@
+#include "platform/posix/local_endpoint.hpp"
 #include "platform/posix/pty_process.hpp"
 #include "transport/local_protocol.hpp"
 
@@ -10,21 +11,35 @@
 #include <QLocalSocket>
 #include <QLockFile>
 #include <QPointer>
+#include <QSet>
 #include <QTimer>
 
 #include <exception>
+#include <memory>
 #include <stdexcept>
 
 namespace {
 using namespace lapis::session;
 class SessionService final : public QObject {
   public:
-    SessionService(const QString& endpoint, const QDir& directory)
-        : lock_(endpoint + QStringLiteral(".lock")), terminal_({100, 30}, limits()) {
+    SessionService(const QString& endpoint, const LaunchSpec& launch)
+        : lock_(endpoint + QStringLiteral(".lock")), terminal_(launch.size, limits()) {
+        QByteArray identity;
+        QDataStream identity_stream(&identity, QIODevice::WriteOnly);
+        identity_stream << wire::version << launch_fingerprint(launch);
+        expected_attachment_ = wire::frame(wire::Kind::attach, identity);
         terminal_.feed("\x1b]10;rgb:d9/de/e8\x1b\\\x1b]11;rgb:0d/13/1d\x1b\\");
         lock_.setStaleLockTime(0);
         if (!lock_.tryLock(0))
             throw std::runtime_error("Session service already owns endpoint");
+        if (QFileInfo::exists(endpoint)) {
+            QLocalSocket existing;
+            existing.connectToServer(endpoint);
+            if (existing.waitForConnected(100) ||
+                (existing.error() != QLocalSocket::ConnectionRefusedError &&
+                 existing.error() != QLocalSocket::ServerNotFoundError))
+                throw std::runtime_error("Socket endpoint is already in use or inaccessible");
+        }
         QLocalServer::removeServer(endpoint);
         server_.setSocketOptions(QLocalServer::UserAccessOption);
         if (!server_.listen(endpoint))
@@ -33,6 +48,10 @@ class SessionService final : public QObject {
         timer_.setInterval(16);
         connect(&timer_, &QTimer::timeout, this, [this] { publish(); });
         connect(&server_, &QLocalServer::newConnection, this, [this] { attach(); });
+        connect(&pty_, &posix::PtyProcess::started, this, [this] {
+            process_started_ = true;
+            hello();
+        });
         connect(&pty_, &posix::PtyProcess::output, this, [this](const QByteArray& bytes) {
             try {
                 terminal_.feed(
@@ -51,11 +70,8 @@ class SessionService final : public QObject {
         connect(&pty_, &posix::PtyProcess::failure, this,
                 [this](const QString& message) { stop(message); });
         connect(&pty_, &posix::PtyProcess::finished, this,
-                [this](int code) { stop(QStringLiteral("Shell exited (%1)").arg(code)); });
-        QString shell = qEnvironmentVariable("SHELL");
-        if (shell.isEmpty())
-            shell = QStringLiteral("/bin/sh");
-        pty_.start({.shell = shell, .directory = directory.absolutePath(), .size = {100, 30}});
+                [this](int code) { stop(QStringLiteral("Process exited (%1)").arg(code), code); });
+        pty_.start(launch);
     }
 
     ~SessionService() override {
@@ -64,6 +80,8 @@ class SessionService final : public QObject {
         disconnect(&timer_, nullptr, this, nullptr);
         if (client_)
             disconnect(client_, nullptr, this, nullptr);
+        for (auto* pending : pending_)
+            disconnect(pending, nullptr, this, nullptr);
     }
 
   private:
@@ -74,19 +92,59 @@ class SessionService final : public QObject {
         result.max_input_bytes = std::size_t{64} * 1024U;
         return result;
     }
-    void stop(const QString& message) {
+    void stop(const QString& message, int exit_code = 1) {
+        if (stopping_)
+            return;
+        stopping_ = true;
         qInfo().noquote() << message;
         if (client_) {
             client_->write(wire::frame(wire::Kind::status, message.toUtf8()));
             client_->flush();
         }
-        QTimer::singleShot(50, QCoreApplication::instance(), &QCoreApplication::quit);
+        QTimer::singleShot(50, QCoreApplication::instance(),
+                           [exit_code] { QCoreApplication::exit(exit_code); });
     }
     void attach() {
         auto* incoming = server_.nextPendingConnection();
         if (!incoming)
             return;
+        connect(incoming, &QLocalSocket::disconnected, incoming, &QObject::deleteLater);
+        if (stopping_ || pending_.size() >= 8) {
+            incoming->disconnectFromServer();
+            return;
+        }
+        pending_.insert(incoming);
+        incoming->setReadBufferSize(expected_attachment_.size() + 1);
+        const auto bytes = std::make_shared<QByteArray>();
+        connect(incoming, &QLocalSocket::readyRead, this,
+                [this, incoming, bytes] { authenticate(incoming, *bytes); });
+        connect(incoming, &QLocalSocket::disconnected, this,
+                [this, incoming] { pending_.remove(incoming); });
+        const QPointer<QLocalSocket> guarded(incoming);
+        QTimer::singleShot(3000, this, [this, guarded] {
+            if (guarded && pending_.contains(guarded))
+                guarded->disconnectFromServer();
+        });
+        if (incoming->bytesAvailable())
+            authenticate(incoming, *bytes);
+    }
+    void authenticate(QLocalSocket* incoming, QByteArray& bytes) {
+        bytes += incoming->readAll();
+        if (bytes.size() < expected_attachment_.size() && expected_attachment_.startsWith(bytes))
+            return;
+        if (bytes != expected_attachment_) {
+            incoming->write(wire::frame(wire::Kind::status,
+                                        "Launch mismatch or incompatible attachment protocol"));
+            incoming->disconnectFromServer();
+            return;
+        }
+        pending_.remove(incoming);
+        disconnect(incoming, nullptr, this, nullptr);
+        activate(incoming);
+    }
+    void activate(QLocalSocket* incoming) {
         if (client_) {
+            disconnect(client_, nullptr, this, nullptr);
             client_->disconnectFromServer();
             client_->deleteLater();
         }
@@ -98,16 +156,20 @@ class SessionService final : public QObject {
                 receive();
         });
         connect(incoming, &QLocalSocket::bytesWritten, this, [this] { schedule(); });
-        connect(incoming, &QLocalSocket::disconnected, incoming, &QObject::deleteLater);
+        hello();
+    }
+    void hello() {
+        if (!client_ || !process_started_ || stopping_)
+            return;
         QByteArray hello;
         QDataStream out(&hello, QIODevice::WriteOnly);
         out << wire::version << quint64(pty_.processId());
-        incoming->write(wire::frame(wire::Kind::hello, hello));
+        client_->write(wire::frame(wire::Kind::hello, hello));
         dirty_ = true;
         schedule();
     }
     void schedule() {
-        if (client_ && dirty_ && !timer_.isActive())
+        if (client_ && process_started_ && dirty_ && !timer_.isActive() && !stopping_)
             timer_.start();
     }
     void publish() {
@@ -149,6 +211,8 @@ class SessionService final : public QObject {
         }
     }
     void handle(const wire::Frame& frame) {
+        if (!process_started_ || stopping_)
+            throw std::runtime_error("Session is not ready for input");
         if (frame.payload.size() > qsizetype{64} * 1024)
             throw std::runtime_error("Input message too large");
         QByteArray bytes;
@@ -197,19 +261,30 @@ class SessionService final : public QObject {
     posix::PtyProcess pty_;
     QLocalServer server_;
     QPointer<QLocalSocket> client_;
+    QSet<QLocalSocket*> pending_;
+    QByteArray expected_attachment_;
     QByteArray buffer_;
     QTimer timer_;
     bool dirty_{true};
+    bool process_started_{};
+    bool stopping_{};
 };
 } // namespace
 int main(int argc, char** argv) {
-    QCoreApplication app(argc, argv);
-    if (app.arguments().size() != 3) {
-        qCritical() << "Usage: lapis_session_service SOCKET DIRECTORY";
+    QStringList arguments;
+    for (int index = 0; index < argc; ++index)
+        arguments.append(QString::fromLocal8Bit(argv[index]));
+    int application_argc = 1;
+    QCoreApplication app(application_argc, argv);
+    if (arguments.size() < 4) {
+        qCritical() << "Usage: lapis_session_service SOCKET DIRECTORY PROGRAM [ARG ...]";
         return 2;
     }
     try {
-        SessionService service(app.arguments().at(1), QDir(app.arguments().at(2)));
+        const auto launch = validate_launch({.program = arguments.at(3),
+                                             .arguments = arguments.mid(4),
+                                             .directory = arguments.at(2)});
+        SessionService service(posix::prepare_endpoint(arguments.at(1)), launch);
         return app.exec();
     } catch (const std::exception& error) {
         qCritical().noquote() << error.what();

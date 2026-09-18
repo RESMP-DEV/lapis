@@ -88,6 +88,9 @@ class Capture final : public QObject {
         frames_.reserve(512);
         connect(
             &window_, &QQuickWindow::frameSwapped, this, [this] { frame(); }, Qt::QueuedConnection);
+        // A retained scene can finish its first frame before macOS activates the
+        // window. Request a frame on activation so capture can observe readiness.
+        connect(&window_, &QWindow::activeChanged, this, [this] { window_.update(); });
         timeout_.setSingleShot(true);
         timeout_.setInterval(15000);
         connect(&timeout_, &QTimer::timeout, this, [] {

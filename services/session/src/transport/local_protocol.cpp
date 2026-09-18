@@ -47,7 +47,7 @@ bool take_frame(QByteArray& buffer, Frame& result) {
         return false;
     quint8 kind{};
     in >> kind;
-    check(kind >= static_cast<quint8>(Kind::hello) && kind <= static_cast<quint8>(Kind::status));
+    check(kind >= static_cast<quint8>(Kind::hello) && kind <= static_cast<quint8>(Kind::attach));
     result = {static_cast<Kind>(kind), buffer.mid(5, static_cast<qsizetype>(size) - 1)};
     buffer.remove(0, static_cast<qsizetype>(size) + 4);
     return true;

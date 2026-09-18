@@ -85,8 +85,8 @@ subdirectories when implementation needs them.
 | Desktop | C++20 and Qt 6.11.2 Quick with public QSGTextNode terminal drawing | macOS Vulkan visual checkpoint exercised; Linux and performance qualification remain |
 | Engine | Pinned Ghostty `libghostty-vt` selected for the first adapter | Eight-case macOS/Linux replay passes; isolate unstable C API and resolve dependency-notice gaps |
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
-| Transport | Version 1 local framing and bounded owned snapshots for one shell | Add stable service/session identities, attachment generations and failure recovery |
-| Codex mode | Ordinary PTY CLI and lapis-owned app-server are distinct routes | Qualify the chosen attention route against the installed binary |
+| Transport | Version 2 local framing, launch matching and bounded owned snapshots for one terminal | Add stable service/session identities, attachment generations and failure recovery |
+| Codex mode | Keep the ordinary TUI under a PTY first; evaluate hooks or attachment to its actual server for attention | Installed CLI advertises remote/daemon options; qualify delivery and response ownership before choosing a route |
 
 The [research receipt](../evidence/terminal-research.json) retains pinned upstream
 sources. Contour is the closest structural reference; WezTerm supplies service/GUI
@@ -159,10 +159,10 @@ needs them. Every first-party target uses `lapis_project_options`.
 | `services/session/src/platform/posix/` | Native descriptor ownership, then PTY launch/I/O/resize/reaping | `UniqueFd` on macOS/Linux; Qt-owned PTY launch/I/O/resize/reaping exercised on macOS |
 | `tools/terminal_probe/` | Shared headless workloads and independent Ghostty/Contour consumers | Implemented; pinned builds and eight-case replay on macOS/Linux |
 | `services/session/src/terminal/` | Wrap the selected engine's parsing, mode-aware input and screen extraction | Implemented as `lapis_terminal`; 14 behavioral cases on macOS/Linux ARM64 |
-| `services/session/include/lapis/session/` | Owned commands, session identity and snapshots for clients | Owned terminal values implemented; internal version 1 snapshot framing under `src/transport/` |
-| `services/session/src/` | Service event loop and session lifecycle, then local IPC | Separate one-shell service with bounded local transport on macOS |
+| `services/session/include/lapis/session/` | Owned commands, session identity and snapshots for clients | Owned terminal values implemented; internal version 2 snapshot framing under `src/transport/` |
+| `services/session/src/` | Service event loop and session lifecycle, then local IPC | Separate one-terminal service with explicit argv/cwd and bounded local transport on macOS |
 | `apps/desktop/` | Minimal Qt view, input routing and terminal surface | Live enlarged shell and static carousel composition; macOS Vulkan capture |
-| `adapters/codex/` | Codex protocol mapping and attention delivery | Existing investigation only; follows terminal persistence |
+| `adapters/codex/` | Codex protocol mapping and attention delivery | Ordinary Codex TUI launch exercised; structured attention remains investigation |
 
 The first target, `lapis_session_platform`, is an internal C++20 library with no
 Qt, GPU or engine dependency. Its `UniqueFd` owns one native descriptor, closes
@@ -177,9 +177,10 @@ desktop executable is advertised as an application.
 The desktop starts a separate Qt Core service on a private local socket. That
 service owns QProcess, a nonblocking POSIX PTY, and the Ghostty terminal. Closing
 the GUI only detaches the local socket: the service continues draining output.
-The enlarged pane is a live shell; the remaining cards are labeled placeholders.
-One GUI may attach at a time. A new attachment replaces the previous connection.
-The socket location identifies this checkout's one session; stable session IDs,
+The enlarged pane is a live terminal; the remaining cards are labeled placeholders.
+One GUI may attach per endpoint. A matching attachment replaces the previous
+connection; a mismatched launch is rejected first. The default socket identifies
+this checkout's shell, and explicit launches choose their own endpoint. Stable session IDs,
 service epochs and authenticated attachment generations are still required before
 multiple sessions or robust recovery. This wire format is internal and provisional.
 
@@ -317,21 +318,80 @@ optional checks once the affected behavior passes.
 
 ### Next: complete persistent-terminal acceptance
 
-After the maintainer's visual review of the implemented UI refinements, close
-these gaps in small dependent changes:
+The explicit launch slice is implemented. Current exercise status is in the
+[README](../README.md#current-status), with a
+[sanitized receipt](../evidence/cli-launch.json). Continue with the remaining
+terminal acceptance below before adding live workspace sessions or attention.
+Visual review of the earlier UI refinements remains pending.
 
-1. Qualify terminal cell positioning, fallback fonts and real IME/key behavior;
-   add meaningful input-to-presentation and frame timing markers. Validate the
-   existing macOS resize/exit path with interactive TUIs and foreground jobs.
-2. Add stable session/service identities, attachment generations and recovery
-   behavior. Exercise stale input, partial paste, slow clients, queue overflow and
-   service failure. Add disk-backed history with quotas and disk-full handling.
-3. Carry the existing minimal PTY/service/Qt view to Linux and qualify Vulkan and
-   native input there before expanding workspace behavior.
+#### First wiring slice: explicit CLI launch
 
-Keep Codex attention, automatic carousel behavior, multiple live sessions and the
-32-session benchmark in later milestones. The static cards let the maintainer
-review composition now without implying those components are implemented.
+Internal **launch contract v1**, in `services/session/src/launch_spec.hpp`, carries
+an executable, literal argument vector, working directory and initial terminal
+size. `validate_launch` resolves PATH/relative executable names, preserves
+executable symlinks and argv[0] semantics, canonicalizes the working directory,
+and rejects invalid geometry, missing executables/directories, embedded NULs,
+more than 256 arguments or more than 64 KiB of supplied launch text. The default
+shell still receives `-i`; other programs receive only their requested arguments.
+Both entry points preserve argv before initializing Qt and let only lapis parse
+it: Qt otherwise consumes child options such as `-platform` even after `--`.
+
+`WorkspaceOptions` supplies the launch and endpoint to the desktop. Explicit
+programs or cwd overrides require `--socket`; all child arguments follow `--`.
+Fixture mode rejects launch/endpoint options and does not inspect the user's
+shell. Shell smoke injection rejects explicit launch/cwd overrides.
+
+Service IPC is now **version 2**. Before hello or input, a client sends an attach
+frame containing the protocol version and SHA-256 of a Qt_6_0 big-endian stream
+of executable path, argument list and canonical cwd. Initial/current terminal size
+is excluded so resize does not invalidate reattachment. This is launch matching,
+not a secret authentication token or a stable session identity; owner-only socket
+directory permissions provide the local access boundary. A mismatch never
+replaces the active client. At most eight handshakes wait for up to three seconds,
+with bounded input. The desktop also bounds its handshake wait and only starts a
+service for a missing/refused endpoint, not a permission error or rejected match.
+
+Socket parents must be private and owned by the current user. Ordinary files,
+symlinks and live foreign listeners are rejected; existing directories are not
+chmodded. The default `runtime/desktop-v2.sock` leaves old v1 sessions alone.
+No state migration, multi-session manager or automatic service recovery is implied.
+Launch profiles, hooks and approval policies remain owned by the selected CLI.
+
+Ownership stays separated: the PTY owns the child; the service owns parsing and
+attachment; the desktop routes input after hello. `scripts/check_cli_launch.py`
+exercises literal argv/cwd, resize, paste, exit, detached output, mismatches and
+malformed handshakes against real service processes. Its optional GUI and Codex
+modes add GPU captures and no-prompt TUI interaction. Actual Codex attention and
+model-turn continuation remain unqualified. Commands live in
+[Contributing](../CONTRIBUTING.md#cli-integration-qualification).
+
+#### Remaining terminal acceptance
+
+Close these dependent gaps before expanding the live
+workspace. Parallelize independent investigation, with one integration/build owner.
+
+1. **Identity and recovery — session service and transport.** Introduce stable
+   session IDs, service epochs and attachment generations before adding sessions
+   or routable attention. Reject stale input; exercise partial paste, slow clients,
+   queue overflow and service failure. GUI reconnection refreshes state before
+   input is enabled. Service failure/reboot must be reported distinctly; do not
+   promise survival of the old child.
+2. **Terminal fidelity and timing — desktop and verification.** Qualify cell
+   positioning, fallback fonts, real IME/key/paste behavior, interactive TUIs and
+   foreground jobs. Add correlated input/service/frame markers and measure the
+   first-view baseline; label presentation proxies. Rebindable navigation can
+   then be tested in the isolated fixture after visual review.
+3. **History — session service.** Add bounded disk-backed older history, quotas,
+   pressure handling and disk-full recovery while preserving the current screen.
+   A passing viewport-eviction test is not disk-history acceptance.
+4. **Minimal Linux qualification — platform and verification.** Carry the same
+   PTY/service/Qt view to a named Linux host and exercise Vulkan, native input,
+   resize and detach/reattach before expanding workspace behavior.
+
+Keep real attention integration, automatic carousel behavior, multiple live
+sessions and the 32-session benchmark in the following milestones. Protocol and
+hook research may run independently; advertised methods are not integration
+acceptance. The static cards remain review fixtures.
 
 ### Engine experiment decision
 
@@ -411,7 +471,19 @@ workload → 5. second CLI and platform qualification.** The minimal view in
 milestone 1 proves persistence; milestone 3 assembles the supervising workspace.
 Carry that minimal session to Linux before expanding the full desktop; final
 platform qualification still needs actual input, rendering and lifecycle evidence.
-These later phases are outside the immediate implementation scope.
+The following sequence is planned, not implemented by the launch slice:
+
+| Milestone | Dependency and owner | Exit evidence |
+| --- | --- | --- |
+| 2: attention and Codex | Stable session/source/attachment identities; service policy and adapter owners | Deterministic replay of duplicates, gaps, cancellation and simultaneous requests; real input/approval, explicit response, continuation and reconnect reconciliation against a hashed Codex binary |
+| 3: supervising desktop | Qualified minimal Linux terminal and milestone 2; desktop owner | Two real retained sessions first, rebindable manual navigation, pin/snooze, guarded opt-in carousel, and actual typing/held-key/paste/IME/modal/inactive-window focus cases |
+| 4: scale and responsiveness | Working multi-session desktop; verification owner | Controlled 32-session output/TUI workload, p50/p95/p99 input/switch/frame results, memory growth and idle CPU/GPU; distinguish synthetic replay from real agents |
+| 5: independent adapter and platform completion | Stable adapter capability contract; separate adapter/platform owners | Second CLI independently exercises observation/response/reconciliation; macOS and named Linux backends have actual lifecycle, native input and rendering evidence |
+
+Dependency notices, a complete bundled inventory/SBOM and redistribution obligations
+must be closed before publishing binaries. This release requirement is independent
+of a local milestone passing. Keep current implementation status in the README;
+the tables here define work order and acceptance only.
 
 ## Contracts to preserve
 

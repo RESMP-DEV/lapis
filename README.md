@@ -18,7 +18,7 @@ to that same file so Codex and Claude Code share one set of project instructions
 
 ## Current status
 
-The macOS preview has a **live local shell in the enlarged pane** and a horizontal
+The macOS preview has a **live terminal in the enlarged pane** (shell by default) and a horizontal
 strip of five placeholder sessions plus the live preview below it. The cards show
 the carousel composition; they do not switch sessions yet. **Milestone 1 is still
 incomplete.**
@@ -26,11 +26,11 @@ incomplete.**
 | Component | Exercised | Remaining |
 | --- | --- | --- |
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
-| PTY and separate session service | macOS shell I/O, resize, exit, failed exec, output burst, GUI close/reopen with the same child | Linux service qualification, recovery identities, disk-backed history |
-| Local transport | Bounded versioned frames, owned snapshots, fragmented/coalesced input and malformed-message rejection | Attachment generations, hostile/slow-client and failure recovery cases |
+| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS | Linux service qualification, recovery identities, disk-backed history |
+| Local transport | Version 2 launch-matching attachment, bounded frames/snapshots and malformed-message rejection without displacing the active client | Attachment generations, hostile/slow-client and failure recovery cases |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact window captures on M4 Max via MoltenVK | Full shaping, IME, selection, accessibility, Linux GUI and latency/frame qualification |
 | UI iteration and attention fixture | Isolated source-QML reload, PNG captures, LLDB launch/attach, compact header and finite red cue replay | Maintainer visual review, rebindable navigation and real attention integration |
-| Codex protocol probe | Schema export, initialization and loaded-thread listing | Real attention requests, responses and reconnect handling |
+| Codex integration | Direct TUI launch, no-prompt editing/navigation/paste/resize, normal/compact GPU captures and same-child reattachment; separate schema/init/list probe | Real model-turn attention requests, responses and source reconnect handling |
 
 [Desktop evidence](evidence/desktop-preview.json),
 [UI refinement evidence](evidence/ui-preview.json) and
@@ -43,6 +43,14 @@ agent attention and automatic carousel behavior remain later work. Finish termin
 acceptance and qualify the minimal Linux view before expanding the live workspace.
 Latency and warm-switch targets remain provisional.
 
+Explicit CLI launch is now implemented through the existing service-owned PTY.
+The [launch receipt](evidence/cli-launch.json) records the exercised macOS scope and
+sanitizer limitations. Session identity/recovery, terminal fidelity, disk history
+and Linux qualification remain in the
+[ordered plan](docs/architecture.md#next-complete-persistent-terminal-acceptance).
+The [Codex route comparison](adapters/codex/README.md#integration-route-comparison)
+separates terminal operation from attention delivery.
+
 ## Run the window on macOS
 
 After the [dependency setup](CONTRIBUTING.md#desktop-preview):
@@ -53,12 +61,35 @@ just run          # Open the live shell window
 just ui           # Isolated fixture, source-QML reload and attention replay
 just ui-debug     # Launch the isolated fixture in LLDB
 just ui-check     # Bounded preview captures and failure cases
+just cli-check    # Dedicated CLI/service/GUI acceptance fixtures
 ```
 
 The shell starts in this checkout. Closing the window detaches it; reopening
 reattaches to the same service-owned shell. Type `exit` to end the shell. The
-current preview allows one attached window per checkout. Builds stay under
+current preview allows one attached window per socket endpoint. Builds stay under
 `build/`; its owner-only local socket and service log stay under `runtime/`.
+An additional window replaces the previous attachment. A service failure is not
+GUI detachment: the current client reports disconnection and does not automatically
+recover the session. Reopening after the service has exited starts a new shell.
+
+To launch Codex directly in its own persistent terminal:
+
+```sh
+build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop \
+  --socket "$PWD/runtime/codex.sock" --cwd "$PWD" -- codex --no-daemon
+```
+
+Repeat the same command to reattach. `--no-daemon` selects a Codex backend owned
+by that TUI; it is an explicit choice for this example, not a lapis default.
+Other executables and literal arguments work after `--`. Explicit programs or
+`--cwd` require `--socket`; a launch mismatch is rejected before replacing the
+existing window. No hooks or approval settings are changed. There is still one
+live pane per window; its other cards remain fixtures.
+
+The new default socket is `runtime/desktop-v2.sock`. Older v1 sessions are not
+migrated or terminated by this build. See the
+[qualification procedure](CONTRIBUTING.md#cli-integration-qualification) for the
+optional no-prompt Codex check and current limits.
 
 - [Architecture and near-term plan](docs/architecture.md): component ownership,
   open decisions and acceptance criteria. This is the single implementation plan.

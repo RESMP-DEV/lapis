@@ -44,3 +44,7 @@ ui-debug:
 # Bounded isolated GUI and capture checks; never sends shell input.
 ui-check:
     python3 scripts/check_ui_preview.py
+
+# Dedicated service/desktop launch cases; no model turn or live-shell reuse.
+cli-check:
+    python3 scripts/check_cli_launch.py --desktop

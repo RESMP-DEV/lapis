@@ -168,6 +168,87 @@ LLVM/SDK settings and Ghostty prefix, then build and run its CTest cases. Keep
 ASan and TSan separate. Vendor Qt/MoltenVK/Ghostty libraries are not instrumented
 by these C++ presets; a passing test is not coverage of those implementations.
 
+### CLI integration qualification
+
+The default desktop launches `$SHELL -i` (or `/bin/sh -i`) in the checkout.
+Use `--socket PATH --cwd DIRECTORY -- PROGRAM ARG...` for an explicit launch.
+Arguments are literal; use `--` to separate lapis options from the child's options.
+Repeat the same launch to reattach; changing executable/argv/cwd on an occupied
+endpoint is rejected. A socket parent must be owned by you and private (0700).
+Existing directories/files are not repurposed. Logs are written beside each
+socket as `<socket>.log`. The default endpoint is `runtime/desktop-v2.sock`;
+old v1 sessions stay untouched.
+
+Run `just cli-check` for isolated service and GUI fixtures. For the optional
+installed Codex test:
+
+```sh
+python3 scripts/check_cli_launch.py --desktop --codex \
+  --output build/cli-launch-check/codex.json
+```
+
+The optional test uses the current Codex configuration with `--no-daemon`, types
+only an unsubmitted test marker, exercises navigation/paste/resize, captures normal
+and compact windows, reattaches to the same child, and exits with Control-C.
+It does not send Enter or start a model turn. Service IPC drives those Codex inputs;
+the separate shell smoke drives Qt key events. No physical-key, IME or attention
+claim follows. Logs/captures stay in a unique directory beside the receipt; runtime
+sockets use a fresh private directory. The [saved receipt](evidence/cli-launch.json)
+delimits this checkpoint.
+
+Read-only Codex inventory can be repeated now, without starting a model turn:
+
+```sh
+python3 scripts/probe_codex.py --output build/reports/codex-probe.json
+codex --help
+codex app-server --help
+codex features list
+```
+
+The script hashes the executable selected from PATH and records schema and live
+initialization/list results. Help and feature output advertise interfaces; they
+do not verify TUI behavior, hook dispatch, permissions or shared-server delivery.
+Record selected CLI options alongside the receipt when qualifying a route.
+
+For additional CLI acceptance runs, use a dedicated service/socket and test
+directory. Record the lapis revision, Codex
+hash, working directory, launch arguments and whether the backend is local to the
+TUI or shared. Exercise text/navigation, literal paste, alternate-screen behavior,
+resize, interrupt, GUI detach with continuing output, reattach to the same child
+and screen, and explicit exit. Distinguish service death from GUI detachment.
+Keep raw output/captures private under `build/` and socket/state under `runtime/`.
+Do not use `--smoke-input` while Codex is running: that probe sends shell commands.
+
+Start with a no-prompt TUI check. A later real input/approval fixture needs a
+declared provider/model, bounded turn deadline and explicit test approval policy.
+Check the effective runtime route and actual request/response/continuation;
+neither a TUI screenshot nor a schema export passes that acceptance. Keep hooks
+scoped to the fixture and leave the user's shared daemon/configuration intact.
+
+Use `just check` and `just desktop` for changes to the launch path. The existing
+focused cases can also be rerun with:
+
+```sh
+ctest --test-dir build/desktop -R '^(launch-spec|pty-process|local-protocol)$' --output-on-failure
+```
+
+Those CTest cases cover launch validation, the PTY primitive and framing.
+`check_cli_launch.py` covers the full detached service, and `--codex` adds the
+installed TUI.
+Run lifetime/parsing and lifecycle cases in separately configured desktop-enabled
+ASan/UBSan and TSan builds as described above; check `ctest -N` in each build to
+confirm the intended cases exist. A default headless sanitizer pass is insufficient.
+Point `check_cli_launch.py --build-dir` at each instrumented desktop build to test
+its actual service. Run GUI checks one at a time: focus changes from another test
+can pause the attention cue and invalidate a timing assertion.
+
+At this checkpoint, ASan/UBSan passes the desktop CTest suite and service harness;
+TSan passes the non-GUI CTest cases and service harness. The threaded Qt scene
+runner reports races between `TerminalSurface` construction and `updatePaintNode`
+through uninstrumented Qt libraries. Keep that report open; it is not a passing
+threaded-renderer result. No sanitizer suppression was added. Vendor
+instrumentation and renderer qualification remain outside this launch acceptance.
+
 ### UI tuning and debugging
 
 After `just desktop`, use `just ui` for an isolated synthetic workspace. It never

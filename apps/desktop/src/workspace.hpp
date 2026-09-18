@@ -3,6 +3,8 @@
 
 #include <lapis/session/terminal.hpp>
 
+#include "launch_spec.hpp"
+
 #include <QColor>
 #include <QMap>
 #include <QObject>
@@ -10,6 +12,7 @@
 #include <QVariantList>
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace lapis::desktop {
@@ -32,7 +35,7 @@ class SessionPreview final : public QObject {
     SessionPreview(QString title, QString directory, QString activity, QColor accent,
                    std::string_view content);
     ~SessionPreview() override;
-    void startLive(const QString& endpoint, const QString& directory);
+    void startLive(const QString& endpoint, const session::LaunchSpec& launch);
     void applySnapshot(session::TerminalSnapshot snapshot);
     void setActivity(const QString& activity);
     void sendText(const QByteArray& bytes, bool paste = false);
@@ -83,6 +86,11 @@ struct PreviewRequest {
     QString reason;
 };
 
+struct WorkspaceOptions {
+    QString endpoint;
+    std::optional<session::LaunchSpec> launch;
+};
+
 class Workspace final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList sessions READ sessions CONSTANT)
@@ -91,7 +99,7 @@ class Workspace final : public QObject {
     Q_PROPERTY(
         lapis::desktop::SessionPreview* focusedSession READ focusedSession NOTIFY focusChanged)
   public:
-    explicit Workspace(WorkspaceMode mode = WorkspaceMode::live);
+    explicit Workspace(WorkspaceMode mode = WorkspaceMode::live, WorkspaceOptions options = {});
     [[nodiscard]] bool previewMode() const { return preview_mode_; }
     [[nodiscard]] SessionPreview* session(const QString& id) const;
     // Development fixture v1 only. No calls are accepted in a live workspace.
@@ -106,6 +114,8 @@ class Workspace final : public QObject {
     void focusChanged();
 
   private:
+    [[nodiscard]] static QString rootDirectory();
+    [[nodiscard]] static QString defaultEndpoint();
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
     int focused_index_{};
     bool preview_mode_{};

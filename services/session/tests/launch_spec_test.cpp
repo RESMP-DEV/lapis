@@ -1,0 +1,78 @@
+#include "launch_spec.hpp"
+#include "platform/posix/local_endpoint.hpp"
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QTemporaryDir>
+#include <iostream>
+#include <stdexcept>
+
+namespace {
+void require(bool value) {
+    if (!value)
+        throw std::runtime_error("Launch contract expectation failed");
+}
+template <typename Operation> void rejects(Operation operation) {
+    try {
+        operation();
+    } catch (const std::exception&) {
+        return;
+    }
+    throw std::runtime_error("Invalid launch was accepted");
+}
+} // namespace
+
+int main(int argc, char** argv) {
+    QCoreApplication application(argc, argv);
+    using namespace lapis::session;
+    try {
+        QTemporaryDir temporary(QDir::current().filePath(QStringLiteral("launch-XXXXXX")));
+        require(temporary.isValid());
+        const auto launch = validate_launch({.program = QStringLiteral("/bin/sh"),
+                                             .arguments = {QStringLiteral("-i")},
+                                             .directory = temporary.path()});
+        const auto fingerprint = launch_fingerprint(launch);
+        auto other = launch;
+        other.size = {80, 24};
+        require(launch_fingerprint(other) == fingerprint);
+        other.arguments = {QStringLiteral("-c"), QStringLiteral("a b")};
+        const auto literal = launch_fingerprint(other);
+        other.arguments = {QStringLiteral("-c"), QStringLiteral("a"), QStringLiteral("b")};
+        require(launch_fingerprint(other) != literal);
+        other = launch;
+        other.arguments.append(QString{});
+        require(launch_fingerprint(other) != fingerprint);
+        other.arguments = {QStringLiteral("bad") + QChar::Null};
+        rejects([&] { static_cast<void>(validate_launch(other)); });
+        other = launch;
+        other.arguments = {QString(65537, QLatin1Char('x'))};
+        rejects([&] { static_cast<void>(validate_launch(other)); });
+        other = launch;
+        other.size = {0, 24};
+        rejects([&] { static_cast<void>(validate_launch(other)); });
+
+        const auto endpoint = temporary.filePath(QStringLiteral("private/session.sock"));
+        require(posix::prepare_endpoint(endpoint) == endpoint);
+        const auto shared = temporary.filePath(QStringLiteral("shared"));
+        require(QDir().mkdir(shared));
+        require(QFile::setPermissions(shared, QFile::ReadOwner | QFile::WriteOwner |
+                                                  QFile::ExeOwner | QFile::ReadOther));
+        rejects([&] {
+            static_cast<void>(posix::prepare_endpoint(shared + QStringLiteral("/session.sock")));
+        });
+        require(QFile::permissions(shared).testFlag(QFile::ReadOther));
+        const auto occupied = temporary.filePath(QStringLiteral("ordinary-file"));
+        QFile ordinary(occupied);
+        require(ordinary.open(QIODevice::WriteOnly));
+        ordinary.close();
+        rejects([&] { static_cast<void>(posix::prepare_endpoint(occupied)); });
+        require(QFile::exists(occupied));
+        const auto link = temporary.filePath(QStringLiteral("linked.sock"));
+        require(QFile::link(endpoint, link));
+        rejects([&] { static_cast<void>(posix::prepare_endpoint(link)); });
+        std::cout << "Launch identities, bounds and private endpoints passed\n";
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}

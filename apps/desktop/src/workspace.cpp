@@ -1,11 +1,13 @@
 #include "workspace.hpp"
 #include "live_connection.hpp"
-#include <QDir>
-#include <QFile>
+#include "platform/posix/local_endpoint.hpp"
 
 #include <array>
 #include <stdexcept>
 #include <utility>
+
+#include <QDir>
+#include <QFileInfo>
 
 namespace lapis::desktop {
 
@@ -22,21 +24,34 @@ SessionPreview::SessionPreview(QString title, QString directory, QString activit
     snapshot_ = terminal.snapshot();
 }
 
-Workspace::Workspace(WorkspaceMode mode) : preview_mode_(mode == WorkspaceMode::preview) {
+QString Workspace::rootDirectory() {
+    return QFileInfo{QStringLiteral(LAPIS_PROJECT_ROOT)}.absoluteFilePath();
+}
+
+QString Workspace::defaultEndpoint() {
+    return QDir{rootDirectory()}.filePath(QStringLiteral("runtime/desktop-v2.sock"));
+}
+
+Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
+    : preview_mode_(mode == WorkspaceMode::preview) {
     const auto add = [this](const char* title, const char* directory, const char* activity,
                             const char* accent, std::string_view content) {
         sessions_.push_back(std::make_unique<SessionPreview>(
             QString::fromUtf8(title), QString::fromUtf8(directory), QString::fromUtf8(activity),
             QColor(QString::fromLatin1(accent)), content));
     };
-    const QString directory = QStringLiteral(LAPIS_PROJECT_ROOT);
+    if (preview_mode_ && (options.launch || !options.endpoint.isEmpty()))
+        throw std::invalid_argument("UI preview cannot launch or attach to a process");
+    std::optional<session::LaunchSpec> launch;
+    if (!preview_mode_)
+        launch = options.launch ? session::validate_launch(std::move(*options.launch))
+                                : session::shell_launch(rootDirectory());
+    const QString directory = launch ? launch->directory : rootDirectory();
     add("Shell", directory.toUtf8().constData(), "Connecting", "#87cbac", "");
     if (!preview_mode_) {
-        const QString runtime = directory + QStringLiteral("/runtime");
-        if (!QDir().mkpath(runtime))
-            throw std::runtime_error("Cannot create session runtime directory");
-        QFile::setPermissions(runtime, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
-        sessions_.front()->startLive(runtime + QStringLiteral("/desktop-v1.sock"), directory);
+        const QString endpoint = session::posix::prepare_endpoint(
+            options.endpoint.isEmpty() ? defaultEndpoint() : options.endpoint);
+        sessions_.front()->startLive(endpoint, *launch);
     } else {
         session::Terminal terminal({100, 30});
         terminal.feed("\x1b]10;rgb:d9/de/e8\x1b\\\x1b]11;rgb:0d/13/1d\x1b\\"
