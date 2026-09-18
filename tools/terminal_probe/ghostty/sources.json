@@ -1,0 +1,29 @@
+{
+  "archives": [
+    {
+      "name": "ghostty-source",
+      "url": "https://codeload.github.com/ghostty-org/ghostty/tar.gz/5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "sha256": "41f9d0d1e48718e9a2c827c9fececffd3a3448b7bd01d60fa4fa6e5b5b0d7bfc",
+      "destination": "ghostty-source",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "license": "MIT"
+    }
+  ],
+  "zig": {
+    "version": "0.16.0",
+    "Darwin-arm64": {
+      "url": "https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz",
+      "sha256": "b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489"
+    },
+    "Linux-aarch64": {
+      "url": "https://ziglang.org/download/0.16.0/zig-aarch64-linux-0.16.0.tar.xz",
+      "sha256": "ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a48b38e1534f17"
+    }
+  },
+  "build_args": [
+    "-Demit-lib-vt=true",
+    "-Demit-xcframework=false",
+    "-Doptimize=ReleaseSafe",
+    "-j4"
+  ]
+}

@@ -1,0 +1,1173 @@
+{
+  "schema_version": 1,
+  "research_date": "2026-09-17",
+  "research_timezone": "America/Los_Angeles",
+  "retrieved_at_utc": "2026-09-18T02:47:43.340163+00:00",
+  "scope": "Source and documentation comparison for maintainable Lapis terminal architecture",
+  "method": "Resolve GitHub default-branch revisions through API; retrieve raw files at those revisions; inspect source, build manifests and tests; record hashes. Fetch official toolkit documentation separately.",
+  "evidence_level": "source inspection; no upstream build or runtime qualification",
+  "limitations": [
+    "Default-branch revisions are not release selections or dependency pins for Lapis.",
+    "Retrieved tests were inspected, not executed.",
+    "No GUI, GPU, latency, platform compatibility or session persistence was measured.",
+    "Project license observations are not a transitive dependency audit.",
+    "Lapis terminal engine, service language and rendering implementation remain unselected."
+  ],
+  "repositories": [
+    {
+      "repository": "alacritty/alacritty",
+      "revision": "d692748d3f61253ebe9f5094320120d22f6a046f",
+      "branch": "master",
+      "commit_date": "2026-08-31T21:11:11Z"
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "branch": "master",
+      "commit_date": "2026-09-11T15:55:38Z",
+      "archived": false
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "branch": "main",
+      "commit_date": "2026-09-17T19:39:31Z",
+      "archived": false
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "branch": "master",
+      "commit_date": "2026-09-18T01:57:49Z",
+      "archived": false
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "branch": "master",
+      "commit_date": "2026-09-17T14:26:56Z"
+    },
+    {
+      "repository": "lxqt/qtermwidget",
+      "revision": "8b4a6103bbb827871ae608e5c707af5171845d3a",
+      "branch": "master",
+      "commit_date": "2026-09-15T16:04:03Z",
+      "archived": false
+    },
+    {
+      "repository": "migueldeicaza/SwiftTerm",
+      "revision": "d709dd7fc81cf3c0097ebd736423013492e03cc5",
+      "branch": "main",
+      "commit_date": "2026-09-17T15:47:26Z",
+      "archived": false
+    },
+    {
+      "repository": "neovim/libvterm",
+      "revision": "934bc2fbf21800ac3458a499df8820ca5fb45fd3",
+      "branch": "nvim",
+      "commit_date": "2025-11-21T05:22:27Z",
+      "archived": true
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "branch": "main",
+      "commit_date": "2026-09-17T09:44:57Z"
+    }
+  ],
+  "source_files": [
+    {
+      "repository": "alacritty/alacritty",
+      "revision": "d692748d3f61253ebe9f5094320120d22f6a046f",
+      "path": "Cargo.toml",
+      "url": "https://raw.githubusercontent.com/alacritty/alacritty/d692748d3f61253ebe9f5094320120d22f6a046f/Cargo.toml",
+      "sha256": "fa566c67ab8d03c129238f1eb6f2644c41a2fc4f3e959d328f4bc4c121e4a9ff",
+      "bytes": 567
+    },
+    {
+      "repository": "alacritty/alacritty",
+      "revision": "d692748d3f61253ebe9f5094320120d22f6a046f",
+      "path": "README.md",
+      "url": "https://raw.githubusercontent.com/alacritty/alacritty/d692748d3f61253ebe9f5094320120d22f6a046f/README.md",
+      "sha256": "0dd7c6ea42dc74f2d1949ec0217e15ecf348d6194757bf3d97af22834aeea1ae",
+      "bytes": 4365
+    },
+    {
+      "repository": "alacritty/alacritty",
+      "revision": "d692748d3f61253ebe9f5094320120d22f6a046f",
+      "path": "alacritty/Cargo.toml",
+      "url": "https://raw.githubusercontent.com/alacritty/alacritty/d692748d3f61253ebe9f5094320120d22f6a046f/alacritty/Cargo.toml",
+      "sha256": "0ca308ce8bb5407206b4cd0c6f4ecd429755e9f433ea598afc4970684ec0d7e4",
+      "bytes": 2690
+    },
+    {
+      "repository": "alacritty/alacritty",
+      "revision": "d692748d3f61253ebe9f5094320120d22f6a046f",
+      "path": "alacritty/src/display/window.rs",
+      "url": "https://raw.githubusercontent.com/alacritty/alacritty/d692748d3f61253ebe9f5094320120d22f6a046f/alacritty/src/display/window.rs",
+      "sha256": "6c38067ee4b6a7ded8e6d6a9ec190dd67ba4ea07b9d4d6bddd9ddf274e61dda7",
+      "bytes": 17237
+    },
+    {
+      "repository": "alacritty/alacritty",
+      "revision": "d692748d3f61253ebe9f5094320120d22f6a046f",
+      "path": "alacritty/src/renderer/mod.rs",
+      "url": "https://raw.githubusercontent.com/alacritty/alacritty/d692748d3f61253ebe9f5094320120d22f6a046f/alacritty/src/renderer/mod.rs",
+      "sha256": "a4203b0c5b7d53d6ebecc0d78be805d8ba4e64f666089c8469abc2842406646c",
+      "bytes": 12825
+    },
+    {
+      "repository": "alacritty/alacritty",
+      "revision": "d692748d3f61253ebe9f5094320120d22f6a046f",
+      "path": "alacritty/src/window_context.rs",
+      "url": "https://raw.githubusercontent.com/alacritty/alacritty/d692748d3f61253ebe9f5094320120d22f6a046f/alacritty/src/window_context.rs",
+      "sha256": "501de3c9e3e4cf08884a07e90770d16e4e4e289f64e7aea9b64da6bc0197da8c",
+      "bytes": 20602
+    },
+    {
+      "repository": "alacritty/alacritty",
+      "revision": "d692748d3f61253ebe9f5094320120d22f6a046f",
+      "path": "alacritty_terminal/CHANGELOG.md",
+      "url": "https://raw.githubusercontent.com/alacritty/alacritty/d692748d3f61253ebe9f5094320120d22f6a046f/alacritty_terminal/CHANGELOG.md",
+      "sha256": "97231d9beda30b536650c566169c692fa846be3f7b0405add3c9741f95f3af62",
+      "bytes": 1469
+    },
+    {
+      "repository": "alacritty/alacritty",
+      "revision": "d692748d3f61253ebe9f5094320120d22f6a046f",
+      "path": "alacritty_terminal/Cargo.toml",
+      "url": "https://raw.githubusercontent.com/alacritty/alacritty/d692748d3f61253ebe9f5094320120d22f6a046f/alacritty_terminal/Cargo.toml",
+      "sha256": "c5b5731a2956e5eda4d277221dbd12d5913c547710440bb6243b22b396e5ac93",
+      "bytes": 1370
+    },
+    {
+      "repository": "alacritty/alacritty",
+      "revision": "d692748d3f61253ebe9f5094320120d22f6a046f",
+      "path": "alacritty_terminal/LICENSE-APACHE",
+      "url": "https://raw.githubusercontent.com/alacritty/alacritty/d692748d3f61253ebe9f5094320120d22f6a046f/alacritty_terminal/LICENSE-APACHE",
+      "sha256": "154397a08d0cb342110281129971868cd562542d0780b0d10722788cd11a1399",
+      "bytes": 17
+    },
+    {
+      "repository": "alacritty/alacritty",
+      "revision": "d692748d3f61253ebe9f5094320120d22f6a046f",
+      "path": "alacritty_terminal/src/event_loop.rs",
+      "url": "https://raw.githubusercontent.com/alacritty/alacritty/d692748d3f61253ebe9f5094320120d22f6a046f/alacritty_terminal/src/event_loop.rs",
+      "sha256": "6da2897b76d8c0e7f989daa1463fd6fdeb3469a0a63e0c6ba703a9562663163c",
+      "bytes": 15426
+    },
+    {
+      "repository": "alacritty/alacritty",
+      "revision": "d692748d3f61253ebe9f5094320120d22f6a046f",
+      "path": "alacritty_terminal/src/lib.rs",
+      "url": "https://raw.githubusercontent.com/alacritty/alacritty/d692748d3f61253ebe9f5094320120d22f6a046f/alacritty_terminal/src/lib.rs",
+      "sha256": "b9cae8ed53a4be8f738111f8727dd86218e66c88df38f32f4904e56651a2bee1",
+      "bytes": 421
+    },
+    {
+      "repository": "alacritty/alacritty",
+      "revision": "d692748d3f61253ebe9f5094320120d22f6a046f",
+      "path": "alacritty_terminal/src/term/mod.rs",
+      "url": "https://raw.githubusercontent.com/alacritty/alacritty/d692748d3f61253ebe9f5094320120d22f6a046f/alacritty_terminal/src/term/mod.rs",
+      "sha256": "94be91817bec509ddb229fc83093fcbc044bd0929fb8758b236c939cb21df647",
+      "bytes": 112720
+    },
+    {
+      "repository": "alacritty/alacritty",
+      "revision": "d692748d3f61253ebe9f5094320120d22f6a046f",
+      "path": "alacritty_terminal/src/tty/unix.rs",
+      "url": "https://raw.githubusercontent.com/alacritty/alacritty/d692748d3f61253ebe9f5094320120d22f6a046f/alacritty_terminal/src/tty/unix.rs",
+      "sha256": "2e8d0edf1aea816ac95c1e442d60025ebdd20dacaa99d0fd4f7c7cf78ac369e4",
+      "bytes": 13626
+    },
+    {
+      "repository": "alacritty/alacritty",
+      "revision": "d692748d3f61253ebe9f5094320120d22f6a046f",
+      "path": "alacritty_terminal/tests/ref.rs",
+      "url": "https://raw.githubusercontent.com/alacritty/alacritty/d692748d3f61253ebe9f5094320120d22f6a046f/alacritty_terminal/tests/ref.rs",
+      "sha256": "e539b785113628cd76d03cc156e3b0b48eb624c255dcd9f49abe3a61eaa0dae1",
+      "bytes": 3548
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "CMakeLists.txt",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/CMakeLists.txt",
+      "sha256": "6a23ec4f922a392da47ac86d6cb09c34c1db84de8f35880ce83296a25d05cf56",
+      "bytes": 18552
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/LICENSE.txt",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "bytes": 11357
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "README.md",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/README.md",
+      "sha256": "5c2c8997cb93552073771e22ad8252792f37a37df9020d63e011467be4b7c01c",
+      "bytes": 12659
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "docs/internals/software-architecture/index.md",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/docs/internals/software-architecture/index.md",
+      "sha256": "a94ba73531a9afa9a3a4e9adde3c5ec53bfd187c65e375ec94f8f7b67fbe5597",
+      "bytes": 14402
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "src/CMakeLists.txt",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/src/CMakeLists.txt",
+      "sha256": "3451d9548851d78f3251e60a2179610e10f8ef7104ec65c4d804bb98d37042c7",
+      "bytes": 529
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "src/contour/display/CMakeLists.txt",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/src/contour/display/CMakeLists.txt",
+      "sha256": "10998ec82dcfd032fdfd479e542adb33754a198fc1da38fa93834cdddf8ac612",
+      "bytes": 3135
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "src/contour/display/RenderingBackendSelection.hpp",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/src/contour/display/RenderingBackendSelection.hpp",
+      "sha256": "7ad857ea1350f14268ab6442f80fa257d12abd7cc209194fdd9888cea6435eac",
+      "bytes": 3818
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "src/contour/display/RhiRenderer.hpp",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/src/contour/display/RhiRenderer.hpp",
+      "sha256": "90f53a7894e9012923d2340f7824bc3ade7179bfc9b8db552d6e4c9e5e02f67a",
+      "bytes": 39103
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "src/contour/display/TerminalDisplay.cpp",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/src/contour/display/TerminalDisplay.cpp",
+      "sha256": "58835134048db4568935a19189bd0acdfc86b88ddf6e644dbbda08b346b222b4",
+      "bytes": 103508
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "src/contour/display/TerminalDisplay.hpp",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/src/contour/display/TerminalDisplay.hpp",
+      "sha256": "bc596746f814f334b4211573cb20cfe19108c6aab65bd4cddff77ea2f8722334",
+      "bytes": 30512
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "src/contour/display/TerminalRenderNode.cpp",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/src/contour/display/TerminalRenderNode.cpp",
+      "sha256": "cb6976f4fb546c298633933be11355e7375dbd9f518ce9f518d089f66871cb4e",
+      "bytes": 10644
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "src/contour/display/TerminalRenderNode.hpp",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/src/contour/display/TerminalRenderNode.hpp",
+      "sha256": "b17518843478435706a413af398d5276e28c90dea55502b830e0fb32af2be9db",
+      "bytes": 8674
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "src/contour/test/e2e/daemon-lifecycle.sh",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/src/contour/test/e2e/daemon-lifecycle.sh",
+      "sha256": "69a8cb1b1ac545eb01ca5668e76981e65b0022e84aa19c500a1b24bbee9fb815",
+      "bytes": 5330
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "src/vtbackend/CMakeLists.txt",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/src/vtbackend/CMakeLists.txt",
+      "sha256": "1b055cc81b98a32e7057b5b4d33a10898b5cb824869295b26ae4074ff524dd68",
+      "bytes": 10336
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "src/vthost/Daemon.cpp",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/src/vthost/Daemon.cpp",
+      "sha256": "f369b7b698dce1189d368e7616a4c2d9a232f008c71d435ac8c3bde6fc6a84f1",
+      "bytes": 38284
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "src/vthost/Daemon.hpp",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/src/vthost/Daemon.hpp",
+      "sha256": "25915dbeb23e9e90ab41fd2195b818230821715b2b4080473b147fbad27196b1",
+      "bytes": 15998
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "src/vthost/SessionHost.cpp",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/src/vthost/SessionHost.cpp",
+      "sha256": "9b77b0a23a8d364159913dd4002323fa6d0a5ac1dcdb6c1f09c819500e47da6e",
+      "bytes": 25548
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "src/vthost/SessionHost.hpp",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/src/vthost/SessionHost.hpp",
+      "sha256": "04338daa9eaa24b609935b644dae43001fbe6d8c4a0049c82e8a95e061e882ac",
+      "bytes": 29812
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "src/vthost/client/ScreenMirror.hpp",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/src/vthost/client/ScreenMirror.hpp",
+      "sha256": "a1f601151c2018ac9d20abad8eda1c84c3d992c10702821c503da984c88cc2a5",
+      "bytes": 13999
+    },
+    {
+      "repository": "contour-terminal/contour",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "path": "src/vthost/proto/Wire.hpp",
+      "url": "https://raw.githubusercontent.com/contour-terminal/contour/6777ff05014f8ff163b071e8b0e942830119db80/src/vthost/proto/Wire.hpp",
+      "sha256": "3685e02309fa9483130568a3a8fe12f0416b56da6af9918418b0059b50ea593b",
+      "bytes": 13127
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "CMakeLists.txt",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/CMakeLists.txt",
+      "sha256": "569967dc711f42b441ef7ef5dbaa206b9a5b4459562a7a0af1daaa7b0f409b99",
+      "bytes": 13931
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "HACKING.md",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/HACKING.md",
+      "sha256": "c714801326a8088308f6c1f7c0a5b3dbae42f77d8a13da02a38b2aff6bc3bd08",
+      "bytes": 19153
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/LICENSE",
+      "sha256": "386211873e5b7a02f663ae4d7adf96285999f91608f8f9f31fecfd0f4095e6f1",
+      "bytes": 1097
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "README.md",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/README.md",
+      "sha256": "5308d2f58b44262eae03c228278edbf8f97dccb04137f169c41b40a73e7e1ec0",
+      "bytes": 10501
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "build.zig.zon",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/build.zig.zon",
+      "sha256": "5da6e032a4dc927ace49c4b5d65b3c770f1e279a290b41a6f11872b7fdd5c232",
+      "bytes": 5798
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "example/README.md",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/example/README.md",
+      "sha256": "6e126492bfd2db92df141c66ddb38f1a06b42af8905b0e7999738033e8021854",
+      "bytes": 465
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "include/ghostty.h",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/include/ghostty.h",
+      "sha256": "de852e83da67af1bd6b1ebcfab1b3ac3fd7d0fddacc85d95d1d0d9d2c6a72b29",
+      "bytes": 38283
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "include/ghostty/vt.h",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/include/ghostty/vt.h",
+      "sha256": "014813d7dba136ae6faecb515d23e7d7dc675672094174f91e2d84ab2bb55732",
+      "bytes": 6967
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "include/ghostty/vt/render.h",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/include/ghostty/vt/render.h",
+      "sha256": "33db708310fe10fb35d1a3cdd54461a773b6f3f781934aa41a277e69397fada5",
+      "bytes": 33375
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "include/ghostty/vt/terminal.h",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/include/ghostty/vt/terminal.h",
+      "sha256": "118487c13ef962585611954165856aa55720105e99a998502d506b95417ee905",
+      "bytes": 87130
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "src/apprt/embedded.zig",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/src/apprt/embedded.zig",
+      "sha256": "ef81876a947af32b401649e444948c4baa9e909e4cc038330bf3ad7c90e06eb0",
+      "bytes": 86924
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "src/lib_vt.zig",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/src/lib_vt.zig",
+      "sha256": "edf90d65166ae9fccd2c80f99e4d8868a5f57e28daf08d6e878789f7cf73bfde",
+      "bytes": 32770
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "src/renderer.zig",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/src/renderer.zig",
+      "sha256": "f9142ce9eaa7170925d605d6830fadb8ef647b5fcdba9d5fb48e189b119425e2",
+      "bytes": 2380
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "src/renderer/Metal.zig",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/src/renderer/Metal.zig",
+      "sha256": "8d175382f5184f6565f4b5afa42fe8247fbfec6e7d68257165f676fd3d28bedb",
+      "bytes": 16680
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "src/termio/Exec.zig",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/src/termio/Exec.zig",
+      "sha256": "8e6a135bb4b592eb11b99068ff9956731e1c35d073eb4d3d5f75948b6a195515",
+      "bytes": 89188
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "src/termio/Thread.zig",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/src/termio/Thread.zig",
+      "sha256": "e49ed4f996f37ee5dc64ab6f14b49e93d19488795ffb7febb049382bd1d7b593",
+      "bytes": 18182
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "test/README.md",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/test/README.md",
+      "sha256": "7a3db47fdb8d1806668d0153374c735796cab2605bace0f8859daf59728d98af",
+      "bytes": 159
+    },
+    {
+      "repository": "ghostty-org/ghostty",
+      "revision": "5de703a1b6ca0b91fcebe932b44be1df2de0a683",
+      "path": "test/fuzz-libghostty/README.md",
+      "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/5de703a1b6ca0b91fcebe932b44be1df2de0a683/test/fuzz-libghostty/README.md",
+      "sha256": "70a8f638802bbe1f11e56d927b2e877888465b77adc983369088a5dfdd169f11",
+      "bytes": 4812
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": ".github/workflows/test.yml",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/.github/workflows/test.yml",
+      "sha256": "f12e297a5ae1b1695bbe0eb3456b3ab0a7a89ee37834181fd14a8e7951f4a8e6",
+      "bytes": 5533
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": "COPYING",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/COPYING",
+      "sha256": "e8623589e5af3639c9725d7b3307c726c0e4428684d3c5a3c0f5fbdd98be8efd",
+      "bytes": 222
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/LICENSE",
+      "sha256": "990f1da86e9f58355fc82b5cd486b70aaeb53ae0ba9722424a0270ff0d458de9",
+      "bytes": 14818
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": "ModernTests/iTermMTKViewEnergyTests.swift",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/ModernTests/iTermMTKViewEnergyTests.swift",
+      "sha256": "5ff65bd6d35443d4c9cdd98dd7eb967c4872bd4281639f29771078ec777d1186",
+      "bytes": 1887
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": "README.license",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/README.license",
+      "sha256": "990f1da86e9f58355fc82b5cd486b70aaeb53ae0ba9722424a0270ff0d458de9",
+      "bytes": 14818
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": "README.md",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/README.md",
+      "sha256": "18c926fc1a17490c46cb8695ab4e14aaaf2a56fc224bdeaa99543b6194c507c7",
+      "bytes": 8996
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": "sources/MetalRenderer/Infrastructure/iTermMetalRenderer.h",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/sources/MetalRenderer/Infrastructure/iTermMetalRenderer.h",
+      "sha256": "8269a2cf4913acc2225880189334d3d8d01fdfe98e6a2f4fde48f590ac780067",
+      "bytes": 9998
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": "sources/MetalRenderer/iTermMetalDriver.m",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/sources/MetalRenderer/iTermMetalDriver.m",
+      "sha256": "5a018a2a0729fc72e89ba7572401d18bcaf07409fb272af43eb987e1c13467fe",
+      "bytes": 133507
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": "sources/Tasks/PTYTask+MRR.m",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/sources/Tasks/PTYTask+MRR.m",
+      "sha256": "a91ebe1e2fd18b77a375d09d8d6ddc5b18229ed6c0a50b231d595450645217f9",
+      "bytes": 4574
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": "sources/Tasks/PTYTask.h",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/sources/Tasks/PTYTask.h",
+      "sha256": "89988659d23dbe69dea9299c640c34fef71bda46b0ef2c7b781cec2a8ea74ac3",
+      "bytes": 10217
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": "sources/Tasks/PTYTask.m",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/sources/Tasks/PTYTask.m",
+      "sha256": "6eba701f58df3d781bfe8500a237df6493b36ad969c7edd8ede45069bcf0ca3e",
+      "bytes": 34235
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": "sources/Tasks/iTermFileDescriptorMultiServer.c",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/sources/Tasks/iTermFileDescriptorMultiServer.c",
+      "sha256": "1fd02085786e865a11a9cdf56066ad8781c239a9858e7278113f7c3c606a98ce",
+      "bytes": 37674
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": "sources/Tasks/iTermMultiServerJobManager.m",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/sources/Tasks/iTermMultiServerJobManager.m",
+      "sha256": "e7829c068d9965dd0c941081d2983bf15ab0a3a2d44af1a85cdc33e1c55b7e2c",
+      "bytes": 24881
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": "sources/Tasks/iTermMultiServerProtocol.h",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/sources/Tasks/iTermMultiServerProtocol.h",
+      "sha256": "b92c986741354875d4b01432f13c857fbf7018caf27009ef12cac69e9d2c8f46",
+      "bytes": 10208
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": "sources/VT100Screen/VT100Screen.h",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/sources/VT100Screen/VT100Screen.h",
+      "sha256": "15385a1fe7f6dafb6d2564ad1fe0b707114968e7a56deb1b9586ab55df81eecc",
+      "bytes": 16120
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": "sources/tmux/TmuxController.h",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/sources/tmux/TmuxController.h",
+      "sha256": "7b9cadae94e43a1319bec1b408daa60d6d5624ff829dc6bc524146d0d2478b28",
+      "bytes": 12063
+    },
+    {
+      "repository": "gnachman/iTerm2",
+      "revision": "2e78c185a82a303b90fc9b92af430b0aa654e4d9",
+      "path": "sources/tmux/TmuxGateway.m",
+      "url": "https://raw.githubusercontent.com/gnachman/iTerm2/2e78c185a82a303b90fc9b92af430b0aa654e4d9/sources/tmux/TmuxGateway.m",
+      "sha256": "ac606d3651c8f9b07d06eedb127849bf256b961aefa0e87fc6e46bc31688dfb8",
+      "bytes": 59556
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/LICENSE",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "bytes": 35149
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "README.asciidoc",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/README.asciidoc",
+      "sha256": "9e49562f4e0410ab36aca4812eaad0c807faa867b2c7a8ed3f153efd2cee0ceb",
+      "bytes": 818
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "docs/build.rst",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/docs/build.rst",
+      "sha256": "73401e5d03df029016778e2b4142037fdbdf01ebf6a6dd89b8c97cb9e0e42e68",
+      "bytes": 7775
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "docs/faq.rst",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/docs/faq.rst",
+      "sha256": "300a283929cd2c5620afc27cffe9af28f39e1af8a295ff76c587369db6cd982e",
+      "bytes": 26886
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "docs/overview.rst",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/docs/overview.rst",
+      "sha256": "1bb184bd36e8f8b5ab25a46c1076a2f81e568de57ec34fd9574b83a9923865dc",
+      "bytes": 11079
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "docs/remote-control.rst",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/docs/remote-control.rst",
+      "sha256": "00588af2ed95d7bb2ea468e65d3a607f00964800d7880fc1a8abde5841d993c8",
+      "bytes": 14173
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "docs/sessions.rst",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/docs/sessions.rst",
+      "sha256": "9416e399e379233bc90b45f89b40c4aa63c0d02690577f83fb50cb838a31c7bc",
+      "bytes": 15404
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "glfw/nsgl_context.m",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/glfw/nsgl_context.m",
+      "sha256": "d68b11dfc8be7d2ed24c1e9599d8b8ff64c16bc7b5261f846603ded20b15de98",
+      "bytes": 12277
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "kitty/boss.py",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/kitty/boss.py",
+      "sha256": "4527de05d941d1d236a9d3871d7782036ef61ed2f95c821a52ca6c8540eaa796",
+      "bytes": 173850
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "kitty/child-monitor.c",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/kitty/child-monitor.c",
+      "sha256": "ec799422531577cdd3195a2f5a45f77d8d5dcd27cfbcdf291d75f6ee1c5c8c4d",
+      "bytes": 98870
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "kitty/child.py",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/kitty/child.py",
+      "sha256": "13831808b1b38b8a01737ab0c4025221f98b61bafc38660d57deddfe177b6b41",
+      "bytes": 26536
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "kitty/rc/detach_tab.py",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/kitty/rc/detach_tab.py",
+      "sha256": "be24fffbe4b31bdb1363441c801216d979460ed2cba30b8c35f4e9cb20393b32",
+      "bytes": 1991
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "kitty/rc/detach_window.py",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/kitty/rc/detach_window.py",
+      "sha256": "0dc99b2faa3900453856e045884db966a8a1dc78d67f42efb0f33cea3e4c1b6f",
+      "bytes": 2831
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "kitty/screen.c",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/kitty/screen.c",
+      "sha256": "b498df00cc7b539491e631dd2568f80acadf8921580684575d29f47cd0ff3b95",
+      "bytes": 296113
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "kitty/shaders.c",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/kitty/shaders.c",
+      "sha256": "dbde9f8db0ca67c68011c5f4cc8969c3d8ed9541cd4579ff3e637fac55de0e8e",
+      "bytes": 161876
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "kitty_tests/parser.py",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/kitty_tests/parser.py",
+      "sha256": "2520597fdc7672586a67a59f585d14d883ee17c5075551ebb7ef270de4365996",
+      "bytes": 56434
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "kitty_tests/screen.py",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/kitty_tests/screen.py",
+      "sha256": "8c34894ea760b7833fa23c7fd18815cb34185ce4fa3be1e8ec48670915d37a95",
+      "bytes": 81230
+    },
+    {
+      "repository": "kovidgoyal/kitty",
+      "revision": "dcedd186ded3f4eb2dbb1af83801d8a5933852fd",
+      "path": "setup.py",
+      "url": "https://raw.githubusercontent.com/kovidgoyal/kitty/dcedd186ded3f4eb2dbb1af83801d8a5933852fd/setup.py",
+      "sha256": "ee299c41f39bc9460fcdf7be0fde766e88d9a8f57880272f4199ee965ea5f2d2",
+      "bytes": 99946
+    },
+    {
+      "repository": "lxqt/qtermwidget",
+      "revision": "8b4a6103bbb827871ae608e5c707af5171845d3a",
+      "path": "CMakeLists.txt",
+      "url": "https://raw.githubusercontent.com/lxqt/qtermwidget/8b4a6103bbb827871ae608e5c707af5171845d3a/CMakeLists.txt",
+      "sha256": "23ab59002118a7bae4e79f161bef6714a1e1bcedcdfa0c793b1c335f64dda727",
+      "bytes": 9695
+    },
+    {
+      "repository": "lxqt/qtermwidget",
+      "revision": "8b4a6103bbb827871ae608e5c707af5171845d3a",
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/lxqt/qtermwidget/8b4a6103bbb827871ae608e5c707af5171845d3a/LICENSE",
+      "sha256": "ead02ff1f91603ff84965fe76e86976a3587dc7faf45fb48affe02536b744b86",
+      "bytes": 15180
+    },
+    {
+      "repository": "lxqt/qtermwidget",
+      "revision": "8b4a6103bbb827871ae608e5c707af5171845d3a",
+      "path": "README.md",
+      "url": "https://raw.githubusercontent.com/lxqt/qtermwidget/8b4a6103bbb827871ae608e5c707af5171845d3a/README.md",
+      "sha256": "a88e25d9e2d31add6aa09d3a33b95c32582d874a4388618d1d44650174d5aad8",
+      "bytes": 12577
+    },
+    {
+      "repository": "lxqt/qtermwidget",
+      "revision": "8b4a6103bbb827871ae608e5c707af5171845d3a",
+      "path": "lib/Session.h",
+      "url": "https://raw.githubusercontent.com/lxqt/qtermwidget/8b4a6103bbb827871ae608e5c707af5171845d3a/lib/Session.h",
+      "sha256": "6c69d6e23cf3505243b6838732503028d58928adba3a1f622b706ee0c0cde615",
+      "bytes": 20918
+    },
+    {
+      "repository": "lxqt/qtermwidget",
+      "revision": "8b4a6103bbb827871ae608e5c707af5171845d3a",
+      "path": "lib/qtermwidget.h",
+      "url": "https://raw.githubusercontent.com/lxqt/qtermwidget/8b4a6103bbb827871ae608e5c707af5171845d3a/lib/qtermwidget.h",
+      "sha256": "4d12e2fadcd6a4f21267fadc225d8aeafc807e75128735043cbf84e0ee87a179",
+      "bytes": 11756
+    },
+    {
+      "repository": "migueldeicaza/SwiftTerm",
+      "revision": "d709dd7fc81cf3c0097ebd736423013492e03cc5",
+      "path": "Docs/fuzzing.md",
+      "url": "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/d709dd7fc81cf3c0097ebd736423013492e03cc5/Docs/fuzzing.md",
+      "sha256": "45ed58e9a82c669718869295138b9c4eff56ef163090bb743346fce3a2826838",
+      "bytes": 3713
+    },
+    {
+      "repository": "migueldeicaza/SwiftTerm",
+      "revision": "d709dd7fc81cf3c0097ebd736423013492e03cc5",
+      "path": "Docs/io-cpu-profile.md",
+      "url": "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/d709dd7fc81cf3c0097ebd736423013492e03cc5/Docs/io-cpu-profile.md",
+      "sha256": "193d2eb0cdb793f7c60f9d44d84ddc8bfbe19824893fb1fe81cff8f68ff96282",
+      "bytes": 34907
+    },
+    {
+      "repository": "migueldeicaza/SwiftTerm",
+      "revision": "d709dd7fc81cf3c0097ebd736423013492e03cc5",
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/d709dd7fc81cf3c0097ebd736423013492e03cc5/LICENSE",
+      "sha256": "0dc6bdd99b652c675586854efcacd59de21e2679d64fcaa20424aeb951df6856",
+      "bytes": 1336
+    },
+    {
+      "repository": "migueldeicaza/SwiftTerm",
+      "revision": "d709dd7fc81cf3c0097ebd736423013492e03cc5",
+      "path": "Package.swift",
+      "url": "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/d709dd7fc81cf3c0097ebd736423013492e03cc5/Package.swift",
+      "sha256": "bac83606e121efc55d4af8ade3df0f36022b941be9a5bd6c70376ef64c39d3c2",
+      "bytes": 8760
+    },
+    {
+      "repository": "migueldeicaza/SwiftTerm",
+      "revision": "d709dd7fc81cf3c0097ebd736423013492e03cc5",
+      "path": "README.md",
+      "url": "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/d709dd7fc81cf3c0097ebd736423013492e03cc5/README.md",
+      "sha256": "437669925808b702d77b30caf14a7d7877990e66d2ca1b8e71bc008387a732fe",
+      "bytes": 18685
+    },
+    {
+      "repository": "migueldeicaza/SwiftTerm",
+      "revision": "d709dd7fc81cf3c0097ebd736423013492e03cc5",
+      "path": "Sources/SwiftTerm/Apple/AppleTerminalView.swift",
+      "url": "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/d709dd7fc81cf3c0097ebd736423013492e03cc5/Sources/SwiftTerm/Apple/AppleTerminalView.swift",
+      "sha256": "06341e18b9c6807f7111927aaddc1d0af4dc37145111c2788dfb0eedd195cae2",
+      "bytes": 205676
+    },
+    {
+      "repository": "migueldeicaza/SwiftTerm",
+      "revision": "d709dd7fc81cf3c0097ebd736423013492e03cc5",
+      "path": "Sources/SwiftTerm/Apple/Metal/MetalTerminalRenderer.swift",
+      "url": "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/d709dd7fc81cf3c0097ebd736423013492e03cc5/Sources/SwiftTerm/Apple/Metal/MetalTerminalRenderer.swift",
+      "sha256": "2368845f57c4eb3e37f094ee28fba2716b9b1d1e2252a4a85e33ccb2c60b8479",
+      "bytes": 188201
+    },
+    {
+      "repository": "migueldeicaza/SwiftTerm",
+      "revision": "d709dd7fc81cf3c0097ebd736423013492e03cc5",
+      "path": "Sources/SwiftTerm/LocalProcess.swift",
+      "url": "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/d709dd7fc81cf3c0097ebd736423013492e03cc5/Sources/SwiftTerm/LocalProcess.swift",
+      "sha256": "b67058cd9b5262618fc4fc37599e0520246e8e60dd97365a880d5ec4e7637aa6",
+      "bytes": 34117
+    },
+    {
+      "repository": "migueldeicaza/SwiftTerm",
+      "revision": "d709dd7fc81cf3c0097ebd736423013492e03cc5",
+      "path": "Sources/SwiftTerm/Mac/MacLocalTerminalView.swift",
+      "url": "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/d709dd7fc81cf3c0097ebd736423013492e03cc5/Sources/SwiftTerm/Mac/MacLocalTerminalView.swift",
+      "sha256": "8d7524198f68c1b698ba67213238ec8715a9a0b14a556e2475561653d051a5b6",
+      "bytes": 18845
+    },
+    {
+      "repository": "migueldeicaza/SwiftTerm",
+      "revision": "d709dd7fc81cf3c0097ebd736423013492e03cc5",
+      "path": "Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "url": "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/d709dd7fc81cf3c0097ebd736423013492e03cc5/Sources/SwiftTerm/Mac/MacTerminalView.swift",
+      "sha256": "f5d73a25731d74bbbf177df2570cf6ecd0931a6bc7b882ba33ca530857cd7d34",
+      "bytes": 188334
+    },
+    {
+      "repository": "migueldeicaza/SwiftTerm",
+      "revision": "d709dd7fc81cf3c0097ebd736423013492e03cc5",
+      "path": "Sources/SwiftTerm/Portable/TerminalRenderSnapshot.swift",
+      "url": "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/d709dd7fc81cf3c0097ebd736423013492e03cc5/Sources/SwiftTerm/Portable/TerminalRenderSnapshot.swift",
+      "sha256": "94378d976cfb288a08027488cc7dc632bb4cedc35daf92e1eef292ff9bd12fc8",
+      "bytes": 3673
+    },
+    {
+      "repository": "migueldeicaza/SwiftTerm",
+      "revision": "d709dd7fc81cf3c0097ebd736423013492e03cc5",
+      "path": "Sources/SwiftTerm/Terminal.swift",
+      "url": "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/d709dd7fc81cf3c0097ebd736423013492e03cc5/Sources/SwiftTerm/Terminal.swift",
+      "sha256": "38a5ead1c0d6a5a26083fd94d1517d3ff5fd40e4de27212d358fa4aaee538dea",
+      "bytes": 394515
+    },
+    {
+      "repository": "migueldeicaza/SwiftTerm",
+      "revision": "d709dd7fc81cf3c0097ebd736423013492e03cc5",
+      "path": "Tests/SwiftTermTests/LocalProcessLifecycleTests.swift",
+      "url": "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/d709dd7fc81cf3c0097ebd736423013492e03cc5/Tests/SwiftTermTests/LocalProcessLifecycleTests.swift",
+      "sha256": "1c1f16cc3b4dd19a5a7ca5353bd1f58006246dd01c980b64e62267723ab97562",
+      "bytes": 32320
+    },
+    {
+      "repository": "migueldeicaza/SwiftTerm",
+      "revision": "d709dd7fc81cf3c0097ebd736423013492e03cc5",
+      "path": "Tests/SwiftTermTests/MetalRendererConcurrencyTests.swift",
+      "url": "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/d709dd7fc81cf3c0097ebd736423013492e03cc5/Tests/SwiftTermTests/MetalRendererConcurrencyTests.swift",
+      "sha256": "9488c861cccc218b36c2d3f195e52c870394d3e430008c9d55d7772f7f229813",
+      "bytes": 2729
+    },
+    {
+      "repository": "neovim/libvterm",
+      "revision": "934bc2fbf21800ac3458a499df8820ca5fb45fd3",
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/neovim/libvterm/934bc2fbf21800ac3458a499df8820ca5fb45fd3/LICENSE",
+      "sha256": "66c627cf44f0c59daf81ba442e62e9b3d3cd1091a41e116de5ea9058a57bbba7",
+      "bytes": 1098
+    },
+    {
+      "repository": "neovim/libvterm",
+      "revision": "934bc2fbf21800ac3458a499df8820ca5fb45fd3",
+      "path": "README.md",
+      "url": "https://raw.githubusercontent.com/neovim/libvterm/934bc2fbf21800ac3458a499df8820ca5fb45fd3/README.md",
+      "sha256": "be6bc63a62336fdc0fe6b0c39e439522ae7eb5ac116b26ba39d4a95ce514baf5",
+      "bytes": 359
+    },
+    {
+      "repository": "neovim/libvterm",
+      "revision": "934bc2fbf21800ac3458a499df8820ca5fb45fd3",
+      "path": "include/vterm.h",
+      "url": "https://raw.githubusercontent.com/neovim/libvterm/934bc2fbf21800ac3458a499df8820ca5fb45fd3/include/vterm.h",
+      "sha256": "1af8c24980339c235a101612fcd4a0d188ac6aea22bf7bb481e958b2ae757795",
+      "bytes": 21584
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "Cargo.toml",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/Cargo.toml",
+      "sha256": "1702daad3512ee49b221310867bcff858da0d20064767a5df4cb99bac365fabd",
+      "bytes": 8320
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "LICENSE.md",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/LICENSE.md",
+      "sha256": "37db33bbbd7348969eda397b89a16f252d56c1ca7481b6ccaf56ccdcbab5dcca",
+      "bytes": 1529
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "README.md",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/README.md",
+      "sha256": "90e3f8bc5e19bbf74ec2bb65bcc45292df430817dfd370edf95c45ebf839b7b5",
+      "bytes": 1871
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "codec/src/lib.rs",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/codec/src/lib.rs",
+      "sha256": "35bfd92e75a228fdded0888b69f15a125bf258c934a950d0f5011a3ad6744c89",
+      "bytes": 40894
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "config/src/frontend.rs",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/config/src/frontend.rs",
+      "sha256": "1b0cd9cb04c5661745859a676e0f90fe06ebd32611ec2966104473a203c813c1",
+      "bytes": 1604
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "docs/config/lua/config/front_end.md",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/docs/config/lua/config/front_end.md",
+      "sha256": "b5953e12ed9104a65f64fcd35e76d8ee54cdc07cc0828b7ad265fd3583e4d382",
+      "bytes": 1252
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "docs/multiplexing.md",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/docs/multiplexing.md",
+      "sha256": "ad2368c5b94d1ead8c763bd8a953abb3a9e3dfe5a0d299474f3d46ba2a16cb7b",
+      "bytes": 9412
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "mux/src/domain.rs",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/mux/src/domain.rs",
+      "sha256": "5324fdee6cb9b898b7586e86d87ddd487ddc1796333eac1e52ed5d34750ffa5a",
+      "bytes": 24161
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "mux/src/localpane.rs",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/mux/src/localpane.rs",
+      "sha256": "99da17fcaf3350b1fe38ce93fc50c0320935c72f3c12e196dc13d07ae4ba6a0e",
+      "bytes": 40381
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "pty/Cargo.toml",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/pty/Cargo.toml",
+      "sha256": "61669bdd040320fddf328af8443d509c4aa796a6782bdbc74cc01ce55c6c21be",
+      "bytes": 990
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "pty/src/lib.rs",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/pty/src/lib.rs",
+      "sha256": "75f5c92e7236450e6faa4ae6df70ae8cdcce03710e45c454b311f53581f7e42b",
+      "bytes": 13399
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "term/Cargo.toml",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/term/Cargo.toml",
+      "sha256": "d46035e906f210a1e6aa2f34201b6a9d3b4d9ba4a73525ef70ceccd65cd85953",
+      "bytes": 1490
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "term/README.md",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/term/README.md",
+      "sha256": "afe2b259251745a3152b2150ce511654cc45fe87285c5bcac0e0329cfbc39609",
+      "bytes": 816
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "term/src/lib.rs",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/term/src/lib.rs",
+      "sha256": "08006e337bee1023de6b5692353bbea8904a3dde515dff507c3768c57eb3ac33",
+      "bytes": 5178
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "term/src/terminal.rs",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/term/src/terminal.rs",
+      "sha256": "b777a247e03903d8056e7951285c8cd742dd7b0eec103871474c28cdc4c9400d",
+      "bytes": 5434
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "term/src/test/mod.rs",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/term/src/test/mod.rs",
+      "sha256": "2bd04daa1bbd2c68df7d104c4ae708582a13955f10ce956a72aba3e3fa027ea6",
+      "bytes": 38371
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "wezterm-client/src/client.rs",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/wezterm-client/src/client.rs",
+      "sha256": "6070977dcbd24efa6d128232823dfde3995160034b397088f842ec404fcf5256",
+      "bytes": 51647
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "wezterm-gui/Cargo.toml",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/wezterm-gui/Cargo.toml",
+      "sha256": "7551432d0c347350964265bd08009de6510c3362eb2df97cb94cf4f0e18d3985",
+      "bytes": 3554
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "wezterm-gui/src/termwindow/webgpu.rs",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/wezterm-gui/src/termwindow/webgpu.rs",
+      "sha256": "dc872f75141eea1cdd064d306b46ce7422025760aa6dc1b98091fe53f96d05b9",
+      "bytes": 20066
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "wezterm-mux-server-impl/src/sessionhandler.rs",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/wezterm-mux-server-impl/src/sessionhandler.rs",
+      "sha256": "4078708b1f566eae44f7ed7f10c35cbd62b10b91d43d3a811ab085353a0417ad",
+      "bytes": 44157
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "wezterm-mux-server/src/main.rs",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/wezterm-mux-server/src/main.rs",
+      "sha256": "b894cc61d1d42addc46b8a4bd4b7e5267d12ae4bb66277f251544f13587ec173",
+      "bytes": 9368
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "window/Cargo.toml",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/window/Cargo.toml",
+      "sha256": "a25ea6147b16dd8214646c82516f7e8751f0130f5f945019e125af00aa130c6a",
+      "bytes": 2950
+    },
+    {
+      "repository": "wezterm/wezterm",
+      "revision": "b09b56c29c1e367e598b60ca266e2cc9038751e0",
+      "path": "window/src/os/macos/window.rs",
+      "url": "https://raw.githubusercontent.com/wezterm/wezterm/b09b56c29c1e367e598b60ca266e2cc9038751e0/window/src/os/macos/window.rs",
+      "sha256": "fb862c5afdabf5f962927678445636c1718c7f84178f0e33319bab289a3508a0",
+      "bytes": 127860
+    }
+  ],
+  "web_documents": [
+    {
+      "url": "https://doc.qt.io/qt-6/qtquick-visualcanvas-scenegraph.html",
+      "resolved_url": "https://doc.qt.io/qt-6/qtquick-visualcanvas-scenegraph.html",
+      "sha256": "2e8c1a69699be3567f44af22c185eacd6f80f6d266b91db8e79018bd6caefe6b",
+      "bytes": 65226,
+      "evidence_level": "documentation, unpinned webpage"
+    },
+    {
+      "url": "https://doc.qt.io/qt-6/qsgmaterialshader.html",
+      "resolved_url": "https://doc.qt.io/qt-6/qsgmaterialshader.html",
+      "sha256": "97dda063fc6ce3734ea78d78f012a1edd6e60a1322200ab782710883e1344d3e",
+      "bytes": 49499,
+      "evidence_level": "documentation, unpinned webpage"
+    },
+    {
+      "url": "https://doc.qt.io/qt-6/qquickframebufferobject.html",
+      "resolved_url": "https://doc.qt.io/qt-6/qquickframebufferobject.html",
+      "sha256": "71fbf9ece6779a54d76dbe217a541d6e5c7508b3204059c5c9d00e05d8659cac",
+      "bytes": 31978,
+      "evidence_level": "documentation, unpinned webpage"
+    },
+    {
+      "url": "https://doc.qt.io/qt-6/licensing.html",
+      "resolved_url": "https://doc.qt.io/qt-6/licensing.html",
+      "sha256": "a18411b58d96f15ded33e93032bb0b65b92ca334eefbaabd2e50374425938b5e",
+      "bytes": 24113,
+      "evidence_level": "documentation, unpinned webpage"
+    },
+    {
+      "url": "https://www.leonerd.org.uk/code/libvterm/",
+      "resolved_url": "https://www.leonerd.org.uk/code/libvterm/",
+      "sha256": "14acb57be3d1dc5cd5c9283f5a86e0e140bf06b34f2807c34ac05b55cc9a335b",
+      "bytes": 2837,
+      "evidence_level": "documentation, unpinned webpage"
+    }
+  ]
+}

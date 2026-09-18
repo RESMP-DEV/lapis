@@ -1,0 +1,44 @@
+{
+  "archives": [
+    {
+      "name": "contour-source",
+      "url": "https://api.github.com/repos/contour-terminal/contour/tarball/6777ff05014f8ff163b071e8b0e942830119db80",
+      "sha256": "4e3dad4cc4955fdffb0f1fec82c7f41733f1c4e1f6c36e2c13a55fd455acc00c",
+      "destination": "contour-source",
+      "revision": "6777ff05014f8ff163b071e8b0e942830119db80",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "gsl",
+      "url": "https://api.github.com/repos/microsoft/GSL/tarball/0f6dbc9e2915ef5c16830f3fa3565738de2a9230",
+      "sha256": "14921e167255df069da158c924fe9be390b544562d1e9dde8cdbb80744e86973",
+      "destination": "contour-deps/gsl",
+      "revision": "0f6dbc9e2915ef5c16830f3fa3565738de2a9230",
+      "license": "MIT"
+    },
+    {
+      "name": "unicode",
+      "url": "https://api.github.com/repos/contour-terminal/libunicode/tarball/cd38b0fcaca398d471f106f67923f18c0f16d4d3",
+      "sha256": "8b39e40966eb52314fafb8e73ca6f6874b9144e0548ec7c31c96b2c37a94b29c",
+      "destination": "contour-deps/unicode",
+      "revision": "cd38b0fcaca398d471f106f67923f18c0f16d4d3",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "boxed",
+      "url": "https://api.github.com/repos/contour-terminal/boxed-cpp/tarball/82b362155c4e80d274282b51f1e4750af27e471a",
+      "sha256": "12bbd776e0d2e680f50ceeb264ffe9a40bc622d6b0e11cc3020ca4bb936b3491",
+      "destination": "contour-deps/boxed",
+      "revision": "82b362155c4e80d274282b51f1e4750af27e471a",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "reflection",
+      "url": "https://api.github.com/repos/contour-terminal/reflection-cpp/tarball/8a83b3259f1be01098f942d525bcead0cfd14a74",
+      "sha256": "4ecef30bc0aea7c4e87220e4872b599b7a5fc63e3e658002590a03a8a206be42",
+      "destination": "contour-deps/reflection",
+      "revision": "8a83b3259f1be01098f942d525bcead0cfd14a74",
+      "license": "Apache-2.0"
+    }
+  ]
+}

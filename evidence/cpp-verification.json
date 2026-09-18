@@ -1,59 +1,65 @@
 {
-  "recorded_at": "2026-09-18T02:43:51.098364+00:00",
-  "scope": "Verification tool bootstrap on macOS ARM64. Only the standard-library toolchain smoke is application-like code. No renderer, CLI attention handling, frame-time measurements, or cross-platform qualification.",
-  "tools": {
-    "clang++": {
-      "path": "/opt/homebrew/opt/llvm/bin/clang++",
-      "version": "Homebrew clang version 23.1.1"
-    },
-    "clang-tidy": {
-      "path": "/opt/homebrew/opt/llvm/bin/clang-tidy",
-      "version": "Homebrew LLVM version 23.1.1"
-    },
-    "clang-format": {
-      "path": "/opt/homebrew/opt/llvm/bin/clang-format",
-      "version": "Homebrew clang-format version 23.1.1"
-    },
-    "clangd": {
-      "path": "/opt/homebrew/opt/llvm/bin/clangd",
-      "version": "Homebrew clangd version 23.1.1"
-    },
-    "cppcheck": {
-      "path": "/opt/homebrew/bin/cppcheck",
-      "version": "Cppcheck 2.21.0"
-    },
-    "cmake": {
-      "path": "/opt/homebrew/bin/cmake",
-      "version": "cmake version 4.4.3"
-    },
-    "ctest": {
-      "path": "/opt/homebrew/bin/ctest",
-      "version": "ctest version 4.4.3"
-    }
+  "schema_version": 1,
+  "recorded_at": "2026-09-18T04:33:05.187724+00:00",
+  "scope": "macOS ARM64 checkpoint checks for C++20 resource ownership, the shared replay contract and build tooling. No PTY, service, GUI or performance acceptance.",
+  "source_state": {
+    "base_revision": "d7451b689b6d08bc6ae410592e16ccff1f9717d2",
+    "description": "Checkpoint working tree; file hashes identify the tested source."
   },
   "source_sha256": {
     ".clang-format": "54528b79c5c28588104746267d83ec10d7dfcd5705a980b33bc68356a0d9eaa9",
     ".clang-tidy": "243bb1e6eb4dffccf5465d213d4bfda9dc977e012f12b59a3889bea0cc07f76a",
     ".clangd": "6d93e81ed4ed222e847e80306dff49f2f4f7b4d57e6f828c6b6aec1d9f1ebd1e",
-    "CMakeLists.txt": "7a4579a647d7b94b13c17bf9d0d091504f5f00facc00200c1af75de5a710db34",
-    "CMakePresets.json": "2d7145e48334b322e4fbe7147a15bbafa9cc13de4d36f2f9933f40a5742ea823",
+    "CMakeLists.txt": "2f5cd386471461b0ff04a7e3fa19a06c759d7285fdd0bb981d8ccac6a230081a",
+    "CMakePresets.json": "e8d04ec43b73534d595bba888cd51abb15548dfdd8913e8928039c0ba9445945",
     "Brewfile": "61f55016408798b27d47fa5a7be888c32b93eb39ea338113ba36848f1d9b3d8a",
     "justfile": "fd76ccfaceec15062eb4b1021a7441b8de4ad9ddc53bab561cabfa9e422d44e2",
+    "cmake/ProjectOptions.cmake": "701e660c3e1d4bc5d9df3ce45ad446e3eb9493c4edef3c8182fbceb8c37ca783",
+    "scripts/check_cpp.py": "555cd39f4cb47c8105db4c7d52106b1784862033a2eaad4e66ee9c97d81a1cea",
+    "scripts/verify_cpp_tools.py": "3b507f186365ef0b1dc43995337c7118d478f8160ae4851b311a11d0fbca8f53",
     "tools/verification/smoke.cpp": "ed8776012a5a15bbe390da8b243e34a921703a1dd6a1c66b00eb6a0614c868e2",
-    "scripts/check_cpp.py": "d8f23819c06189f8d412c93da6772fb391efaf6b774a6cc10321e968e885bedc",
-    "scripts/verify_cpp_tools.py": "3b507f186365ef0b1dc43995337c7118d478f8160ae4851b311a11d0fbca8f53"
+    "tools/terminal_probe/probe.hpp": "d9b146294eee074247ae321bc8df0707535faaed38f8b1b42f4aaa307083691d",
+    "tools/terminal_probe/replay.cpp": "4725d894b84408d02497cb2e6115acd7d32528772312d7c5000660988279814f",
+    "services/session/CMakeLists.txt": "2a8f6da7184657eb93caffbb31fa3031638844920726b3589ea8743892baac16",
+    "services/session/src/platform/posix/unique_fd.hpp": "599c58ab530dac5f70327f70f07c325552cce833e1c35d71a2dc3dd79c9211ec",
+    "services/session/src/platform/posix/unique_fd.cpp": "92efde7730f6ec07d350593d295915118f9a8bb4edc1bcd7c86a8a46d0196a78",
+    "services/session/tests/unique_fd_test.cpp": "c50a4757f7d255e80ae8b58e1f567d7cc6a54ab195d6f360f5f711b42983d0a9"
+  },
+  "tools": {
+    "clang++": {
+      "version": "Homebrew clang version 23.1.1"
+    },
+    "clang-tidy": {
+      "version": "Homebrew LLVM version 23.1.1"
+    },
+    "clang-format": {
+      "version": "Homebrew clang-format version 23.1.1"
+    },
+    "clangd": {
+      "version": "Homebrew clangd version 23.1.1"
+    },
+    "cppcheck": {
+      "version": "Cppcheck 2.21.0"
+    },
+    "cmake": {
+      "version": "cmake version 4.4.3"
+    },
+    "ctest": {
+      "version": "ctest version 4.4.3"
+    }
   },
   "checks": {
     "dev": {
-      "recorded_at": "2026-09-18T02:43:03.135187+00:00",
+      "recorded_at": "2026-09-18T04:28:27.103141+00:00",
       "passed": true,
+      "scope": "dev: compiled targets and registered CTest cases only; not GUI or performance acceptance.",
       "results": [
         {
           "check": "configure",
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.759,
+          "elapsed_seconds": 0.072,
           "log": "build/reports/dev/configure.log"
         },
         {
@@ -61,7 +67,7 @@
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.393,
+          "elapsed_seconds": 0.01,
           "log": "build/reports/dev/build.log"
         },
         {
@@ -69,7 +75,7 @@
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.01,
+          "elapsed_seconds": 0.037,
           "log": "build/reports/dev/ctest.log"
         },
         {
@@ -77,7 +83,7 @@
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.019,
+          "elapsed_seconds": 0.028,
           "log": "build/reports/dev/clang-format.log"
         },
         {
@@ -85,7 +91,7 @@
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.009,
+          "elapsed_seconds": 0.025,
           "log": "build/reports/dev/cppcheck.log"
         },
         {
@@ -93,21 +99,46 @@
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.275,
+          "elapsed_seconds": 0.059,
           "log": "build/reports/dev/clang-tidy-0.log"
+        },
+        {
+          "check": "clang-tidy-1",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.523,
+          "log": "build/reports/dev/clang-tidy-1.log"
+        },
+        {
+          "check": "clang-tidy-2",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.331,
+          "log": "build/reports/dev/clang-tidy-2.log"
+        },
+        {
+          "check": "clang-tidy-3",
+          "passed": true,
+          "exit_code": 0,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.281,
+          "log": "build/reports/dev/clang-tidy-3.log"
         }
       ]
     },
     "asan": {
-      "recorded_at": "2026-09-18T02:43:02.925883+00:00",
+      "recorded_at": "2026-09-18T04:28:25.827701+00:00",
       "passed": true,
+      "scope": "asan: compiled targets and registered CTest cases only; not GUI or performance acceptance.",
       "results": [
         {
           "check": "configure",
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.705,
+          "elapsed_seconds": 0.068,
           "log": "build/reports/asan/configure.log"
         },
         {
@@ -115,7 +146,7 @@
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.468,
+          "elapsed_seconds": 0.01,
           "log": "build/reports/asan/build.log"
         },
         {
@@ -123,21 +154,22 @@
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.052,
+          "elapsed_seconds": 0.055,
           "log": "build/reports/asan/ctest.log"
         }
       ]
     },
     "tsan": {
-      "recorded_at": "2026-09-18T02:43:03.081540+00:00",
+      "recorded_at": "2026-09-18T04:28:26.375185+00:00",
       "passed": true,
+      "scope": "tsan: compiled targets and registered CTest cases only; not GUI or performance acceptance.",
       "results": [
         {
           "check": "configure",
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.752,
+          "elapsed_seconds": 0.074,
           "log": "build/reports/tsan/configure.log"
         },
         {
@@ -145,7 +177,7 @@
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.4,
+          "elapsed_seconds": 0.388,
           "log": "build/reports/tsan/build.log"
         },
         {
@@ -153,21 +185,22 @@
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.231,
+          "elapsed_seconds": 0.261,
           "log": "build/reports/tsan/ctest.log"
         }
       ]
     },
     "profile": {
-      "recorded_at": "2026-09-18T02:43:02.915371+00:00",
+      "recorded_at": "2026-09-18T04:28:26.174701+00:00",
       "passed": true,
+      "scope": "profile: compiled targets and registered CTest cases only; not GUI or performance acceptance.",
       "results": [
         {
           "check": "configure",
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.761,
+          "elapsed_seconds": 0.07,
           "log": "build/reports/profile/configure.log"
         },
         {
@@ -175,7 +208,7 @@
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.443,
+          "elapsed_seconds": 0.394,
           "log": "build/reports/profile/build.log"
         },
         {
@@ -183,21 +216,22 @@
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.009,
+          "elapsed_seconds": 0.01,
           "log": "build/reports/profile/ctest.log"
         }
       ]
     },
     "tool-verification": {
-      "recorded_at": "2026-09-18T02:43:02.757842+00:00",
+      "recorded_at": "2026-09-18T04:28:26.579612+00:00",
       "passed": true,
+      "scope": "Deliberately faulty disposable fixtures verify detector activation; not application tests.",
       "results": [
         {
           "check": "compiler-warning",
           "passed": true,
           "exit_code": 1,
           "expected_diagnostic": "unused-variable",
-          "elapsed_seconds": 0.144,
+          "elapsed_seconds": 0.023,
           "log": "build/reports/tool-verification/compiler-warning.log"
         },
         {
@@ -205,7 +239,7 @@
           "passed": true,
           "exit_code": 1,
           "expected_diagnostic": "clang-format-violations",
-          "elapsed_seconds": 0.123,
+          "elapsed_seconds": 0.019,
           "log": "build/reports/tool-verification/formatting.log"
         },
         {
@@ -213,7 +247,7 @@
           "passed": true,
           "exit_code": 1,
           "expected_diagnostic": "clang-analyzer-core.NullDereference",
-          "elapsed_seconds": 0.157,
+          "elapsed_seconds": 0.028,
           "log": "build/reports/tool-verification/static-null.log"
         },
         {
@@ -221,7 +255,7 @@
           "passed": true,
           "exit_code": 1,
           "expected_diagnostic": "nullPointer",
-          "elapsed_seconds": 0.022,
+          "elapsed_seconds": 0.007,
           "log": "build/reports/tool-verification/cppcheck-null.log"
         },
         {
@@ -229,7 +263,7 @@
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.276,
+          "elapsed_seconds": 0.161,
           "log": "build/reports/tool-verification/address-compile.log"
         },
         {
@@ -237,7 +271,7 @@
           "passed": true,
           "exit_code": -6,
           "expected_diagnostic": "AddressSanitizer: heap-buffer-overflow",
-          "elapsed_seconds": 0.156,
+          "elapsed_seconds": 0.199,
           "log": "build/reports/tool-verification/address-detection-0.log"
         },
         {
@@ -245,7 +279,7 @@
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.126,
+          "elapsed_seconds": 0.149,
           "log": "build/reports/tool-verification/undefined-compile.log"
         },
         {
@@ -253,7 +287,7 @@
           "passed": true,
           "exit_code": -6,
           "expected_diagnostic": "runtime error: signed integer overflow",
-          "elapsed_seconds": 0.009,
+          "elapsed_seconds": 0.005,
           "log": "build/reports/tool-verification/undefined-detection-0.log"
         },
         {
@@ -261,7 +295,7 @@
           "passed": true,
           "exit_code": 0,
           "expected_diagnostic": null,
-          "elapsed_seconds": 0.276,
+          "elapsed_seconds": 0.256,
           "log": "build/reports/tool-verification/thread-compile.log"
         },
         {
@@ -269,7 +303,7 @@
           "passed": true,
           "exit_code": -6,
           "expected_diagnostic": "ThreadSanitizer: data race",
-          "elapsed_seconds": 0.204,
+          "elapsed_seconds": 0.196,
           "log": "build/reports/tool-verification/thread-detection-0.log"
         },
         {
@@ -277,7 +311,7 @@
           "passed": true,
           "exit_code": -6,
           "expected_diagnostic": "ThreadSanitizer: data race",
-          "elapsed_seconds": 0.192,
+          "elapsed_seconds": 0.213,
           "log": "build/reports/tool-verification/thread-detection-1.log"
         },
         {
@@ -285,32 +319,68 @@
           "passed": true,
           "exit_code": -6,
           "expected_diagnostic": "ThreadSanitizer: data race",
-          "elapsed_seconds": 0.195,
+          "elapsed_seconds": 0.182,
           "log": "build/reports/tool-verification/thread-detection-2.log"
         }
       ]
     }
   },
-  "clangd": {
-    "passed": true,
-    "errors": 0,
-    "log": "build/reports/clangd.log"
-  },
-  "profiling": {
-    "available_instruments_templates": [
-      "Time Profiler",
-      "Animation Hitches",
-      "Allocations",
-      "Leaks",
-      "Game Performance",
-      "Metal System Trace"
+  "behavioral_coverage": {
+    "ctest_cases": [
+      "toolchain-smoke",
+      "session-platform-ownership"
     ],
-    "workload_traced": false
+    "session_platform": "Real POSIX pipes exercise descriptor I/O, EOF, move ownership, release, reset and cleanup.",
+    "shared_replay": "Compiled and statically analyzed as C++20; engine runtime replay is separate in evidence/terminal-engine-probe.json.",
+    "detector_activation": "Known-bad disposable compiler, formatter, static-analysis, ASan, UBSan and TSan fixtures produced expected diagnostics."
   },
-  "dependency_audit": {
-    "runner": "/Users/kearm/AlphaHENG/scripts/audit-dependencies.sh",
-    "exit_code": 0,
-    "package_sources_found": 0,
-    "scope": "No supported project lockfiles. No vulnerability clearance for Homebrew development tools."
-  }
+  "historical_configuration_regressions": {
+    "recorded_at": "2026-09-18T03:07:28.281095+00:00",
+    "scope": "Earlier bootstrap observations; not rerun for this consolidation. Source hashes below identify the original inputs. Root targets and receipt wording have since changed.",
+    "inputs": {
+      "CMakePresets.json": "e8d04ec43b73534d595bba888cd51abb15548dfdd8913e8928039c0ba9445945",
+      "scripts/check_cpp.py": "076664454dc5706133ba0180ec4fd3d8267dcd27cd555efab0a6ac030c4b7013",
+      "CMakeLists.txt": "7fa56e51c80b844940207419ac7b5304e68adc1750eaf4460b939fa4533efbf3"
+    },
+    "checks": [
+      {
+        "check": "reject-missing-clang++",
+        "passed": true
+      },
+      {
+        "check": "reject-missing-clang-tidy",
+        "passed": true
+      },
+      {
+        "check": "reject-missing-clang-format",
+        "passed": true
+      },
+      {
+        "check": "reject-missing-clangd",
+        "passed": true
+      },
+      {
+        "check": "dev-clears-cached-sanitizer",
+        "passed": true,
+        "effective_setting": "LAPIS_SANITIZER:STRING=none"
+      },
+      {
+        "check": "profile-clears-cached-sanitizer",
+        "passed": true,
+        "effective_setting": "LAPIS_SANITIZER:STRING=none"
+      }
+    ],
+    "clangd": {
+      "errors": 0,
+      "checked_source": "tools/verification/smoke.cpp"
+    },
+    "original_receipt_sha256": "534c4463ae83290e7a4e428685b34fe9174064e4a57fc50d6bf6754c397b94f7"
+  },
+  "limitations": [
+    "Root C++ checks ran on macOS ARM64; Linux evidence covers standalone headless engine consumers only.",
+    "Sanitizer coverage is limited to executed paths. TSan passing is not proof of race freedom.",
+    "Durations in check logs are tool runtime, not application latency. No terminal rendering or memory-residency measurement exists.",
+    "Dependency inventory and incomplete scanner coverage are recorded in evidence/terminal-engine-probe.json."
+  ],
+  "publication_summary": "Machine-specific tool paths omitted; diagnostic logs stay under ignored build/reports. The original bootstrap receipt is preserved locally outside Git."
 }

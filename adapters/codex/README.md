@@ -2,11 +2,11 @@
 
 ## Evidence boundary
 
-Source inspected on 2026-09-17 at `/Users/kearm/codex`, revision
-`256a74f942a2fae1d4c198797d6d5246063f06e3`. The checkout had an unrelated modified
-build script. The active command resolved to
-`/Users/kearm/codex/codex-rs/target/release/codex` and reported `codex-cli 0.0.0`.
-Neither the symlink nor that version string proves it was built from this HEAD.
+This component remains an investigation; the current checkpoint adds no Codex
+adapter, hooks or approval routing. Source was inspected on 2026-09-17 at revision
+`256a74f942a2fae1d4c198797d6d5246063f06e3` of a local Codex checkout. The checkout
+had an unrelated modified build script. Its locally built binary reported
+`codex-cli 0.0.0`; that string does not prove it was built from the inspected HEAD.
 
 The [runtime receipt](../../evidence/codex-probe.json) records the actual binary
 hash, exported schema methods, and live initialization/list result. Schema

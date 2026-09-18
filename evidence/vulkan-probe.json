@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "observed_at_utc": "2026-09-18T03:06:52.422788+00:00",
+  "scope": "Vulkan instance and physical-device enumeration on the development Mac",
+  "command": [
+    "vulkaninfo",
+    "--summary"
+  ],
+  "exit_code": 0,
+  "tool": {
+    "path": "/opt/homebrew/Cellar/vulkan-tools/1.4.357.0/bin/vulkaninfo",
+    "sha256": "de9329540c8587778b71e3295cdc40695bd76e005968b4f98e6faa9ad4b2951a"
+  },
+  "device": {
+    "apiVersion": "1.4.357",
+    "deviceName": "Apple M4 Max",
+    "driverName": "MoltenVK",
+    "driverInfo": "1.4.2"
+  },
+  "instance_extensions_observed": [
+    "VK_EXT_metal_surface",
+    "VK_KHR_portability_enumeration"
+  ],
+  "raw_log_sha256": "e1551f56b38341307ffc5d08f86f4f77853d21d6a8878576be3c42f1fbaf8c04",
+  "qt_source": {
+    "tag": "v6.11.2",
+    "revision": "ef55f427f2c8b410d34f8a7681020a3000cf6866",
+    "surface_implementation": "https://github.com/qt/qtbase/blob/ef55f427f2c8b410d34f8a7681020a3000cf6866/src/plugins/platforms/cocoa/qcocoavulkaninstance.mm"
+  },
+  "limitations": [
+    "No Qt Quick surface or lapis renderer was executed.",
+    "No frame presentation, rendering correctness or performance measurement was performed.",
+    "No Linux runtime was exercised."
+  ]
+}
