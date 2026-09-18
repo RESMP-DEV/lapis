@@ -177,10 +177,7 @@ bool UiPreview::loadCandidate() {
                      });
 
     const QPointer<QQuickWindow> acceptedWindow = candidateWindow;
-    if (diagnostics_ != candidateDiagnostics) {
-        diagnostics_ = boundedDiagnostics(candidateDiagnostics);
-        emit diagnosticsChanged();
-    }
+    setDiagnostics(candidateDiagnostics);
 
     std::swap(engine_, candidate);
     window_ = acceptedWindow;

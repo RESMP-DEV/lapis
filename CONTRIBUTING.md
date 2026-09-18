@@ -5,6 +5,73 @@ profiling and pull requests. Start with [README.md](README.md) for implemented
 behavior and [architecture](docs/architecture.md) for the current milestone.
 Agents also follow [AGENTS.md](AGENTS.md).
 
+## First contributor baseline
+
+Start from a committed `main` baseline. Before changing code, read the README
+status table, architecture's component ownership and current acceptance milestone,
+and the checks below. For another checkout alongside an existing one:
+
+```sh
+git fetch origin
+git worktree add -b feature/my-change ../lapis-my-change origin/main
+cd ../lapis-my-change
+git status --short
+git rev-parse HEAD
+```
+
+Choose an unused branch/path; do not overwrite an existing worktree. Record the
+starting SHA in the PR. Worktrees share Git history, not uncommitted files,
+`build/` or `runtime/`. Install the [toolchain](#setup), then bootstrap the
+[terminal dependency](#terminal-dependency) or point `LAPIS_GHOSTTY_PREFIX` at an
+existing verified prefix. Keep its adjacent probe receipt and source manifest;
+reuse this dependency read-only. Configure fresh build directories in each
+checkout; never copy CMake caches or compilation databases between worktrees.
+
+On the currently qualified macOS desktop host, establish the baseline in order:
+
+```sh
+python3 scripts/check_cpp.py dev
+python3 scripts/check_cpp.py desktop
+python3 scripts/check_ui_preview.py
+python3 scripts/check_cli_launch.py --desktop
+```
+
+The desktop steps require a logged-in graphical session and the exact dependencies
+below. Run GUI checks serially, including across worktrees, so windows do not steal
+focus from another test. The baseline is not a substitute for the scope-specific
+sanitizer, tooling or dependency checks in the [required matrix](#checks).
+On Linux, record a headless baseline and its platform limits; do not claim desktop
+acceptance from a headless pass. Report a pre-existing failure with its command,
+SHA and log before mixing repairs into a large change.
+
+### Large changes and parallel contributors
+
+Agree on a compact task brief before implementation: objective and milestone,
+owner, allowed files, dependencies, shared interface/version, acceptance commands
+and integration owner. Use the [ownership boundaries](docs/architecture.md#component-ownership)
+to divide work. Root CMake files, shared headers, architecture and status docs need
+one coordinating owner; reserve overlapping edits explicitly. Independent work
+can proceed in separate worktrees from the same committed baseline.
+
+For sweeping changes, open reviewable checkpoints that keep `main` buildable.
+Separate mechanical moves from behavior changes where practical. Settle the
+smallest shared contract before dependent implementations diverge. Record
+architecture decisions in the existing architecture document and implementation
+handoffs in the PR; do not create another roadmap. A service/transport or terminal
+contract change must state how existing clients, live processes and saved fixtures
+behave across the transition. Version incompatible wire changes, test rejection or
+migration, and use a new private test endpoint rather than attaching a development
+build to someone else's live session. GUI detach must continue to preserve the
+service-owned child; focus and acknowledgement must never imply approval.
+
+Each checkpoint hands off changed files, interface effects, exact commands and
+results, source SHA, platform/tool versions, evidence paths and remaining limits.
+The integration owner reviews the combined diff, reruns the accumulated checks
+on the assembled head, and updates README status and architecture acceptance.
+Individual branches passing tests do not establish integration acceptance. Use
+one build owner per checkout/preset; shared `build/reports/<mode>/` receipts are
+overwritten on rerun, so preserve relevant logs before another run.
+
 ## Contribution and PR procedure
 
 1. Inspect `git status --short` and choose one coherent change within the current
@@ -92,7 +159,8 @@ Keep slow work bounded and observable; a silent command is not necessarily stuck
 
 On macOS, run `brew bundle --file Brewfile`. Xcode or its command-line tools must
 provide an SDK. Python 3.11+ runs the verification scripts without extra packages.
-`just` is an optional command shortcut. Python tooling changes also require Ruff.
+`just` is an optional command shortcut. Python tooling changes also require Ruff;
+install these optional tools with `brew install just ruff` when needed.
 
 The runner locates Homebrew LLVM without editing shell PATH or replacing Apple's
 compiler. Set `LAPIS_LLVM_BIN` to another LLVM installation's `bin` directory to
@@ -164,10 +232,8 @@ modules/dependencies. MoltenVK and the Vulkan headers/loader formulae report Apa
 verify their complete bundled notices before redistribution. Qt, Vulkan and Ghostty packaging/SBOM provenance are unfinished;
 no distributable binary is published by this checkpoint.
 
-To exercise the new PTY/transport code with sanitizers, configure the `asan` or
-`tsan` preset into a separate directory with `-DLAPIS_BUILD_DESKTOP=ON`, the same
-LLVM/SDK settings and Ghostty prefix, then build and run its CTest cases. Keep
-ASan and TSan separate. Vendor Qt/MoltenVK/Ghostty libraries are not instrumented
+Use the [desktop sanitizer procedure](#desktop-sanitizers) for PTY, transport,
+renderer and UI lifecycle changes. Keep ASan and TSan separate. Vendor Qt/MoltenVK/Ghostty libraries are not instrumented
 by these C++ presets; a passing test is not coverage of those implementations.
 
 ### CLI integration qualification
@@ -191,7 +257,8 @@ python3 scripts/check_cli_launch.py --desktop --codex \
 
 The optional test uses the current Codex configuration with `--no-daemon`, types
 only an unsubmitted test marker, exercises navigation/paste/resize, captures normal
-and compact windows, reattaches to the same child, and exits with Control-C.
+and compact windows, reattaches to the same child, clears the draft with Ctrl-C,
+and quits from the empty composer with Ctrl-D.
 It does not send Enter or start a model turn. Service IPC drives those Codex inputs;
 the separate shell smoke drives Qt key events. No physical-key, IME or attention
 claim follows. Logs/captures stay in a unique directory beside the receipt; runtime
@@ -331,14 +398,17 @@ Run from the repository root:
 | `just run` | Open the previously built live shell window |
 | `just ui` / `just ui-debug` | Isolated source-QML fixture, directly or in LLDB |
 | `just ui-check` | Bounded isolated captures, attention state and expected failures |
+| `just cli-check` | Isolated live service/CLI and shell GUI acceptance |
 
 Required checks accumulate when a change touches multiple areas:
 
 | Change | Required validation |
 | --- | --- |
-| C++ code | `just check` plus meaningful behavioral cases |
+| C++ code | `just check` plus meaningful behavioral cases; `just desktop` for desktop/service Qt code |
 | Memory/lifetime, parsing or process resources | Relevant cases through `just asan` |
 | Threading, queues or session lifecycle | Relevant cases through `just tsan`, separately from ASan |
+| PTY, local transport or CLI launch | `just desktop`, `just cli-check`, and desktop-enabled ASan/TSan as applicable below |
+| QML, rendering or desktop input | `just desktop` and `just ui-check`; live input changes also need `just cli-check` |
 | Build/test tooling | `just verify-tools` plus affected positive check/build paths |
 | Python tooling | `ruff check --isolated scripts` and `ruff format --isolated --check scripts`, plus relevant runtime probes |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; no unrelated C++ rebuild |
@@ -363,6 +433,78 @@ The development preset generates `build/dev/compile_commands.json`. Point your
 editor's clangd extension at the same LLVM installation. `.clangd` supplies the
 database location and limits interactive analysis to fast checks. The full batch
 checks still run through `just check`.
+
+### Test suites and failure triage
+
+CTest registers the following suites in the current build. Confirm the inventory
+with `ctest --test-dir build/desktop -N`; an empty or accidentally headless build
+is not a desktop test pass. These are suites, not counts of individual assertions.
+
+| CTest name | Build | Behavior |
+| --- | --- | --- |
+| `toolchain-smoke` | Headless and desktop | Compiled toolchain baseline |
+| `session-platform-ownership` | Headless and desktop | POSIX descriptor ownership and moves |
+| `terminal-behavior` | Headless and desktop | Ghostty parsing, snapshots, history, resize and mode-aware input |
+| `launch-spec` | Desktop-enabled | Literal launch validation and private endpoint rules |
+| `local-protocol` | Desktop-enabled | Framing, bounds, snapshots and invalid messages |
+| `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
+| `ui-preview` | Desktop-enabled | Qt reload, attention, input and render lifecycle |
+
+`just desktop` runs these seven suites plus static checks. The separate Python
+GUI harness checks five preview captures and three expected failures. The CLI
+harness checks detached service behavior; `--desktop` adds Qt-to-shell input and
+captures, and optional `--codex` adds the installed no-prompt TUI acceptance.
+A screenshot, a headless suite and a real agent approval round trip prove different
+things. See [CLI qualification](#cli-integration-qualification) for the latter gap.
+
+After a failure, retain `build/reports/<mode>/receipt.json`, the named check log,
+and CTest's `build/<build-name>/Testing/Temporary/LastTest.log`. Fix the cause,
+rerun the failing suite, then rerun the relevant complete check on the final diff.
+For a capture watchdog failure, inspect its log and window activation/frame
+prerequisites; stop competing GUI checks and reproduce that case in isolation.
+Preserve the original failure even if a clean run subsequently passes.
+Do not weaken assertions, add broad suppressions or count an expected-failure
+probe as a pass unless its expected diagnostic was observed. Raw CMake/CTest
+commands below do not run format, clang-tidy or Cppcheck; `just desktop` supplies
+those checks. Save custom build/test output under `build/` and include exact
+commands with any sanitized receipt committed to `evidence/`.
+
+### Desktop sanitizers
+
+The default `just asan` and `just tsan` builds are headless. For Qt/PTY service,
+renderer and desktop lifecycle coverage, use separate desktop-enabled directories.
+On macOS, with the verified `LAPIS_GHOSTTY_PREFIX` exported, configure and run ASan:
+
+```sh
+export LAPIS_LLVM_BIN="${LAPIS_LLVM_BIN:-$(brew --prefix llvm)/bin}"
+cmake --preset asan -B build/desktop-asan \
+  -DLAPIS_BUILD_DESKTOP=ON \
+  -DCMAKE_CXX_COMPILER="$LAPIS_LLVM_BIN/clang++" \
+  -DCMAKE_OSX_SYSROOT="$(xcrun --show-sdk-path)" \
+  -DLAPIS_GHOSTTY_PREFIX="$LAPIS_GHOSTTY_PREFIX"
+cmake --build build/desktop-asan --parallel 8
+ctest --test-dir build/desktop-asan -N
+QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-asan \
+  --output-on-failure --no-tests=error
+python3 scripts/check_cli_launch.py --build-dir build/desktop-asan \
+  --output build/reports/desktop-asan/cli.json
+```
+
+Repeat those configure/build/test/harness commands with preset `tsan` and all
+`desktop-asan` paths changed to `desktop-tsan`. Do not combine instrumentation or
+use `ctest --preset asan` for the custom directory: that preset targets
+`build/asan`. Each desktop-enabled directory must list all seven suites above.
+Use the same LLVM installation for normal and instrumented builds. Ccache is
+optional (`-DCMAKE_CXX_COMPILER_LAUNCHER=...`); raw CMake does not discover it.
+Reduce `--parallel` for host resource limits. The CLI command above runs service
+fixtures against the instrumented executable; the CTest UI suite exercises the
+threaded renderer. Add `--desktop` to the CLI harness when instrumented live GUI
+input is needed. Keep every GUI run serial across all builds.
+
+These commands qualify macOS only. On a Linux qualification host, select its LLVM
+compiler and omit the macOS SDK option, then record actual results and dependencies.
+Vendor Qt/MoltenVK/Ghostty remain uninstrumented. Do not reuse sanitizer timings
+as release performance measurements.
 
 ### What the checks cover
 

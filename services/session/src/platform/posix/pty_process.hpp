@@ -39,6 +39,8 @@ class PtyProcess final : public QObject {
     void writeReady();
     UniqueFd master_;
     UniqueFd slave_;
+    UniqueFd guard_read_;
+    UniqueFd guard_control_;
     QProcess process_;
     std::unique_ptr<QSocketNotifier> reader_;
     std::unique_ptr<QSocketNotifier> writer_;

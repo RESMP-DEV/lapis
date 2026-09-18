@@ -246,6 +246,65 @@ void pump(int milliseconds) {
         QThread::msleep(1);
     }
 }
+struct ColoredArea {
+    QRect bounds;
+    int pixels{};
+};
+ColoredArea colored_area(const QImage& image, QRgb color) {
+    ColoredArea area;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            if (image.pixel(x, y) != color)
+                continue;
+            area.bounds = area.bounds.united(QRect(x, y, 1, 1));
+            ++area.pixels;
+        }
+    }
+    return area;
+}
+void check_cursor_rendering(lapis::desktop::SessionPreview& document, QQuickWindow& window) {
+    using namespace lapis::session;
+    TerminalSnapshot snapshot;
+    snapshot.size = {4, 2};
+    snapshot.cells.resize(8);
+    snapshot.background_rgb = 0x112233U;
+    snapshot.foreground_rgb = 0x445566U;
+    snapshot.cursor_rgb = 0xff0000U;
+    snapshot.cursor = {.column = 1, .row = 0, .in_viewport = true, .visible = true};
+    const auto capture = [&](CursorShape shape, QRgb expected = qRgb(255, 0, 0)) {
+        snapshot.cursor.shape = shape;
+        ++snapshot.revision;
+        document.applySnapshot(snapshot);
+        pump(30);
+        const auto image = window.grabWindow();
+        CHECK(!image.isNull());
+        return colored_area(image, expected);
+    };
+    const auto block = capture(CursorShape::block);
+    const auto bar = capture(CursorShape::bar);
+    const auto underline = capture(CursorShape::underline);
+    const auto hollow = capture(CursorShape::hollow_block);
+    CHECK(block.pixels > 0 && bar.pixels > 0 && underline.pixels > 0 && hollow.pixels > 0);
+    CHECK(bar.bounds.width() < block.bounds.width() / 2);
+    CHECK(underline.bounds.height() < block.bounds.height() / 2);
+    CHECK(hollow.bounds == block.bounds && hollow.pixels < block.pixels);
+    snapshot.graphemes = U"X";
+    snapshot.cells[1].text_length = 1;
+    const auto with_glyph = capture(CursorShape::block);
+    CHECK(with_glyph.bounds == block.bounds && with_glyph.pixels < block.pixels);
+    snapshot.cells[1].text_length = 0;
+    snapshot.cells[1].kind = CellKind::wide;
+    snapshot.cells[2].kind = CellKind::wide_tail;
+    const auto wide = capture(CursorShape::block);
+    CHECK(wide.bounds.width() >= 2 * block.bounds.width() - 1);
+    snapshot.cursor_rgb.reset();
+    CHECK(capture(CursorShape::block, qRgb(0x44, 0x55, 0x66)).pixels > 0);
+    snapshot.cursor.visible = false;
+    CHECK(capture(CursorShape::block, qRgb(0x44, 0x55, 0x66)).pixels == 0);
+    snapshot.cursor.visible = true;
+    snapshot.cursor.in_viewport = false;
+    CHECK(capture(CursorShape::block, qRgb(0x44, 0x55, 0x66)).pixels == 0);
+}
 int run_surface_tests() {
     using namespace lapis::desktop;
     struct KeyCase {
@@ -293,6 +352,10 @@ int run_surface_tests() {
     auto* document = workspace.focusedSession();
     surface->setDocument(document);
     pump(50);
+    const auto original = document->snapshot();
+    check_cursor_rendering(*document, window);
+    document->applySnapshot(original);
+    pump(30);
     const QImage before = window.grabWindow();
     CHECK(!before.isNull());
     auto snapshot = document->snapshot();
@@ -366,6 +429,8 @@ int run_attention_ui_tests() {
     CHECK(workspace.replayAttention(QStringLiteral("resolve")));
     CHECK(!card->property("pending").toBool());
     CHECK(renderer->property("pending").toBool());
+    window->hide();
+    pump(20); // Reduced motion must also clear a pulse paused by inactivity.
     preview.setReducedMotion(true);
     CHECK(!renderer->property("cueRunning").toBool());
     CHECK(renderer->property("cueLevel").toDouble() == 0);

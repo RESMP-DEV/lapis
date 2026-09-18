@@ -23,6 +23,7 @@ using lapis::session::posix::PtyProcess;
 struct Result {
     QByteArray output;
     QString failure;
+    qint64 pid{};
     int code{-1};
     QProcess::ExitStatus status{QProcess::NormalExit};
     bool exited{};
@@ -32,6 +33,8 @@ void require(bool value, const char* message) {
         throw std::runtime_error(message);
 }
 void observe(PtyProcess& process, QEventLoop& loop, Result& result) {
+    QObject::connect(&process, &PtyProcess::started, &loop,
+                     [&] { result.pid = process.processId(); });
     QObject::connect(&process, &PtyProcess::output, &loop,
                      [&result](const QByteArray& bytes) { result.output += bytes; });
     QObject::connect(&process, &PtyProcess::failure, &loop, [&](const QString& error) {
@@ -213,7 +216,26 @@ void cleanup_group(const QString& directory) {
     require(::kill(leader, 0) == -1 && errno == ESRCH, "Leader not reaped");
     require(::kill(child, 0) == -1 && errno == ESRCH, "Resistant same-group child survived");
 }
-int descendant_fixture(bool busy) {
+void cleanup_after_leader_exit(const QString& directory) {
+    const auto result = run({.program = QCoreApplication::applicationFilePath(),
+                             .arguments = {QStringLiteral("--quiet-orphan")},
+                             .directory = directory});
+    const auto child = static_cast<pid_t>(result.output.trimmed().toInt());
+    require(result.exited && result.code == 42 && result.failure.isEmpty() && child > 0,
+            "Quiet descendant fixture failed");
+    QElapsedTimer elapsed;
+    elapsed.start();
+    const auto leader = static_cast<pid_t>(result.pid);
+    while ((::kill(child, 0) == 0 || ::kill(-leader, 0) == 0) && elapsed.elapsed() < 2000)
+        QThread::msleep(5);
+    require(::kill(child, 0) == -1 && errno == ESRCH,
+            "Quiet SIGHUP-resistant child survived normal leader exit");
+    require(::kill(-leader, 0) == -1 && errno == ESRCH, "Process-group guard survived cleanup");
+}
+int descendant_fixture(bool busy, bool exit_leader = false) {
+    std::array<int, 2> ready{};
+    if (::pipe(ready.data()) != 0)
+        return 1;
     const pid_t child = ::fork();
     if (child < 0)
         return 1;
@@ -221,6 +243,10 @@ int descendant_fixture(bool busy) {
         ::signal(SIGHUP, SIG_IGN);
         ::signal(SIGTERM, SIG_IGN);
         ::signal(SIGPIPE, SIG_IGN);
+        ::close(ready[0]);
+        if (::write(ready[1], "r", 1) != 1)
+            ::_exit(1);
+        ::close(ready[1]);
         if (busy) {
             std::array<char, 16384> bytes{};
             bytes.fill('x');
@@ -231,11 +257,18 @@ int descendant_fixture(bool busy) {
         for (;;)
             ::pause();
     }
+    ::close(ready[1]);
+    char ready_byte{};
+    if (::read(ready[0], &ready_byte, 1) != 1)
+        return 1;
+    ::close(ready[0]);
     if (busy) {
         ::usleep(50000);
         return 42;
     }
     std::cout << child << '\n' << std::flush;
+    if (exit_leader)
+        return 42;
     for (;;)
         ::pause();
 }
@@ -246,6 +279,8 @@ int main(int argc, char** argv) {
         return descendant_fixture(true);
     if (argc == 2 && std::strcmp(argv[1], "--group-child") == 0)
         return descendant_fixture(false);
+    if (argc == 2 && std::strcmp(argv[1], "--quiet-orphan") == 0)
+        return descendant_fixture(false, true);
     QCoreApplication application(argc, argv);
     try {
         QTemporaryDir directory;
@@ -271,6 +306,7 @@ int main(int argc, char** argv) {
         failed_start_reuse(directory.path());
         bounded_descendant_drain(directory.path());
         cleanup_group(directory.path());
+        cleanup_after_leader_exit(directory.path());
         std::cout << "Literal argv, cwd, output drain, resize, exit, signal status, "
                      "restart, bounded drain and process-group cleanup passed\n";
     } catch (const std::exception& error) {

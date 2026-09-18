@@ -51,6 +51,8 @@ if(LAPIS_BUILD_DESKTOP)
         add_executable(lapis_pty_process_tests tests/pty_process_test.cpp)
         target_link_libraries(lapis_pty_process_tests PRIVATE lapis_project_options lapis_pty_process)
         add_test(NAME pty-process COMMAND lapis_pty_process_tests)
-        set_tests_properties(pty-process PROPERTIES TIMEOUT 10)
+        # The expanded process/guard fixtures take about 14 seconds under TSan
+        # on the reference Mac; individual event-loop waits remain bounded.
+        set_tests_properties(pty-process PROPERTIES TIMEOUT 30)
     endif()
 endif()

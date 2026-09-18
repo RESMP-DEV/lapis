@@ -73,6 +73,62 @@ void add_row(QSGTextNode& node, const session::TerminalSnapshot& snapshot, std::
     node.addTextLayout(QPointF(0, static_cast<qreal>(row) * row_height), &layout);
 }
 
+void add_cursor(QSGNode& overlays, QQuickWindow& window, const session::TerminalSnapshot& snapshot,
+                const QFont& font, qreal cell_width, qreal row_height) {
+    if (!snapshot.cursor.visible || !snapshot.cursor.in_viewport ||
+        snapshot.cursor.column >= snapshot.size.columns ||
+        snapshot.cursor.row >= snapshot.size.rows)
+        return;
+    const auto index = static_cast<std::size_t>(snapshot.cursor.row) * snapshot.size.columns +
+                       snapshot.cursor.column;
+    const auto& cell = snapshot.cells.at(index);
+    const qreal width = cell.kind == session::CellKind::wide ? 2 * cell_width : cell_width;
+    const QRectF rectangle(snapshot.cursor.column * cell_width, snapshot.cursor.row * row_height,
+                           width, row_height);
+    const QColor cursor_color = color(snapshot.cursor_rgb.value_or(snapshot.foreground_rgb));
+    const auto add_rectangle = [&](const QRectF& bounds) {
+        auto node = std::make_unique<QSGSimpleRectNode>(bounds, cursor_color);
+        overlays.appendChildNode(node.release());
+    };
+    using session::CursorShape;
+    switch (snapshot.cursor.shape) {
+    case CursorShape::bar:
+        add_rectangle(QRectF(rectangle.topLeft(), QSizeF(2, row_height)));
+        return;
+    case CursorShape::underline:
+        add_rectangle(QRectF(rectangle.left(), rectangle.bottom() - 2, width, 2));
+        return;
+    case CursorShape::hollow_block:
+        add_rectangle(QRectF(rectangle.topLeft(), QSizeF(width, 2)));
+        add_rectangle(QRectF(rectangle.left(), rectangle.bottom() - 2, width, 2));
+        add_rectangle(QRectF(rectangle.topLeft(), QSizeF(2, row_height)));
+        add_rectangle(QRectF(rectangle.right() - 2, rectangle.top(), 2, row_height));
+        return;
+    case CursorShape::block:
+        add_rectangle(rectangle);
+        break;
+    }
+    // Repaint the covered grapheme in the cell background color so a block
+    // cursor does not obscure the character beneath it.
+    const auto grapheme = snapshot.text(index);
+    if (grapheme.empty() || cell.style.invisible || cell.kind == session::CellKind::wide_tail)
+        return;
+    QFont cursor_font = font;
+    cursor_font.setBold(cell.style.bold);
+    cursor_font.setItalic(cell.style.italic);
+    QTextLayout layout(QString::fromUcs4(grapheme.data(), static_cast<qsizetype>(grapheme.size())),
+                       cursor_font);
+    layout.beginLayout();
+    auto line = layout.createLine();
+    if (line.isValid())
+        line.setLineWidth(width);
+    layout.endLayout();
+    auto glyph = std::unique_ptr<QSGTextNode>(window.createTextNode());
+    glyph->setColor(color(snapshot.cell_background(index)));
+    glyph->addTextLayout(rectangle.topLeft(), &layout);
+    overlays.appendChildNode(glyph.release());
+}
+
 bool same_row(const session::TerminalSnapshot& left, const session::TerminalSnapshot& right,
               std::size_t row) {
     if (left.size != right.size || left.foreground_rgb != right.foreground_rgb ||
@@ -233,13 +289,7 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
         root->overlays->removeChildNode(child);
         delete child;
     }
-    if (snapshot.cursor.visible && snapshot.cursor.in_viewport) {
-        auto cursor = std::make_unique<QSGSimpleRectNode>(
-            QRectF(snapshot.cursor.column * cell_width, snapshot.cursor.row * row_height, 2,
-                   metrics.height()),
-            color(snapshot.foreground_rgb));
-        root->overlays->appendChildNode(cursor.release());
-    }
+    add_cursor(*root->overlays, *window(), snapshot, font, cell_width, row_height);
     if (!frame->preedit.isEmpty() && snapshot.cursor.in_viewport) {
         auto composition = std::unique_ptr<QSGTextNode>(window()->createTextNode());
         composition->setColor(color(snapshot.foreground_rgb));

@@ -46,7 +46,10 @@ Latency and warm-switch targets remain provisional.
 Explicit CLI launch is now implemented through the existing service-owned PTY.
 The [launch receipt](evidence/cli-launch.json) records the exercised macOS scope and
 dated sanitizer limitations. The [PR #2 repair](evidence/pr2-review.json) resolves
-the renderer TSan reports and records subsequent review fixes. Session identity/recovery, terminal fidelity, disk history
+the renderer TSan reports and records subsequent review fixes. The
+[merge preparation receipt](evidence/pr2-merge.json) covers cursor presentation,
+descendant cleanup and contributor/test procedures. Session identity/recovery,
+terminal fidelity, disk history
 and Linux qualification remain in the
 [ordered plan](docs/architecture.md#next-complete-persistent-terminal-acceptance).
 The [Codex route comparison](adapters/codex/README.md#integration-route-comparison)
@@ -96,6 +99,11 @@ optional no-prompt Codex check and current limits.
   open decisions and acceptance criteria. This is the single implementation plan.
 - [Codex investigation](adapters/codex/README.md): protocol routes and evidence.
 - [Contributing](CONTRIBUTING.md): setup, checks, profiling and the PR procedure.
+- [First contributor baseline](CONTRIBUTING.md#first-contributor-baseline): isolated
+  worktrees, test sequence and coordination for large changes.
+- [Test suites](CONTRIBUTING.md#test-suites-and-failure-triage) and
+  [desktop sanitizers](CONTRIBUTING.md#desktop-sanitizers): coverage, commands and
+  failure evidence.
 
 ## Check the C++ baseline
 

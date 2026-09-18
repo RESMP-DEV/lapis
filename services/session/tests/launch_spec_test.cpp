@@ -65,6 +65,8 @@ int main(int argc, char** argv) {
         require(QDir().mkdir(existing));
         const auto nested = existing + QStringLiteral("/nested");
         require(QDir().mkdir(nested));
+        require(
+            QFile::setPermissions(nested, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
         const auto original = QFile::permissions(existing);
         require(QFile::setPermissions(existing, QFile::ReadOwner | QFile::WriteOwner |
                                                     QFile::ExeOwner | QFile::WriteGroup));
@@ -72,6 +74,7 @@ int main(int argc, char** argv) {
             static_cast<void>(posix::prepare_endpoint(nested + QStringLiteral("/session.sock")));
         });
         require(QFile::setPermissions(existing, original));
+        require(!posix::prepare_endpoint(nested + QStringLiteral("/session.sock")).isEmpty());
         QTemporaryDir sticky_parent(QStringLiteral("/tmp/lapis-endpoint-XXXXXX"));
         require(sticky_parent.isValid());
         require(!posix::prepare_endpoint(sticky_parent.filePath(QStringLiteral("session.sock")))

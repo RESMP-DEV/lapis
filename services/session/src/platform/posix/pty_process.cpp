@@ -8,14 +8,69 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <limits>
+#include <pthread.h>
 #include <stdexcept>
 #include <sys/ioctl.h>
+#include <sys/wait.h>
 #include <system_error>
 #include <unistd.h>
 
 namespace lapis::session::posix {
 namespace {
 constexpr qsizetype queue_limit = qsizetype{1024} * 1024;
+// The detached guard holds group membership until the service closes its pipe.
+// It signals its own group, so no saved/recycled PID is used after QProcess reaps
+// the CLI leader. Double-fork and reap the intermediate before exec: the CLI must
+// not inherit a hidden child that could interfere with wait()/SIGCHLD handling.
+// Called only in QProcess's fork child; use async-signal-safe operations here.
+bool start_group_guard(std::array<int, 2> control, int descriptor_limit) {
+    sigset_t blocked{};
+    sigset_t previous{};
+    static_cast<void>(sigfillset(&blocked));
+    if (::pthread_sigmask(SIG_SETMASK, &blocked, &previous) != 0)
+        return false;
+    const pid_t intermediate = ::fork();
+    if (intermediate == 0) {
+        const pid_t guard = ::fork();
+        if (guard != 0)
+            ::_exit(guard < 0 ? 1 : 0);
+        for (int descriptor = 0; descriptor < descriptor_limit; ++descriptor)
+            if (descriptor != control[0])
+                ::close(descriptor);
+        char command{};
+        for (;;) {
+            const auto count = ::read(control[0], &command, 1);
+            if (count > 0 || (count < 0 && errno == EINTR))
+                continue;
+            break;
+        }
+        ::kill(0, SIGKILL);
+        ::_exit(1);
+    }
+    int status{};
+    pid_t waited = -1;
+    if (intermediate > 0) {
+        do {
+            waited = ::waitpid(intermediate, &status, 0);
+        } while (waited < 0 && errno == EINTR);
+    }
+    const int saved_errno = errno;
+    const bool restored = ::pthread_sigmask(SIG_SETMASK, &previous, nullptr) == 0;
+    ::close(control[0]);
+    ::close(control[1]);
+    errno = saved_errno != 0 ? saved_errno : EIO;
+    return restored && waited == intermediate && intermediate > 0 && WIFEXITED(status) &&
+           WEXITSTATUS(status) == 0;
+}
+bool open_guard_pipe(UniqueFd& read, UniqueFd& write) {
+    std::array<int, 2> control{};
+    if (::pipe(control.data()) != 0)
+        return false;
+    read.reset(control[0]);
+    write.reset(control[1]);
+    return ::fcntl(read.get(), F_SETFD, FD_CLOEXEC) == 0 &&
+           ::fcntl(write.get(), F_SETFD, FD_CLOEXEC) == 0;
+}
 QString system_error(const char* operation) {
     return QString::fromLatin1(operation) + QStringLiteral(": ") +
            QString::fromStdString(std::error_code(errno, std::generic_category()).message());
@@ -24,11 +79,13 @@ QString system_error(const char* operation) {
 PtyProcess::PtyProcess(QObject* parent) : QObject(parent) {
     connect(&process_, &QProcess::started, this, [this] {
         slave_.reset();
+        guard_read_.reset();
         reader_->setEnabled(true);
         emit started();
         writeReady();
     });
     connect(&process_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
+        guard_control_.reset();
         if (reader_)
             reader_->setEnabled(false);
         finishWhenDrained(code, status, 256);
@@ -41,6 +98,8 @@ PtyProcess::PtyProcess(QObject* parent) : QObject(parent) {
         if (writer_)
             writer_->setEnabled(false);
         clearPendingWrite();
+        guard_control_.reset();
+        guard_read_.reset();
         reader_.reset();
         writer_.reset();
         master_.reset();
@@ -52,6 +111,8 @@ PtyProcess::~PtyProcess() {
     disconnect(&process_, nullptr, this, nullptr);
     reader_.reset();
     writer_.reset();
+    guard_control_.reset();
+    guard_read_.reset();
     // This is explicit service teardown. Signal the verified, still-owned
     // process group before reaping its leader; never reuse a saved PID afterward.
     if (process_.state() != QProcess::NotRunning && !terminateProcessGroup())
@@ -106,6 +167,15 @@ void PtyProcess::start(const PtyLaunch& launch) {
         master_.reset();
         return;
     }
+    const int descriptor_limit = ::getdtablesize();
+    if (descriptor_limit <= 0 || !open_guard_pipe(guard_read_, guard_control_)) {
+        emit failure(system_error("Create process-group guard pipe"));
+        guard_read_.reset();
+        guard_control_.reset();
+        slave_.reset();
+        master_.reset();
+        return;
+    }
     reader_ = std::make_unique<QSocketNotifier>(master_.get(), QSocketNotifier::Read);
     writer_ = std::make_unique<QSocketNotifier>(master_.get(), QSocketNotifier::Write);
     reader_->setEnabled(false);
@@ -122,19 +192,26 @@ void PtyProcess::start(const PtyLaunch& launch) {
     process_.setArguments(validated_launch.arguments);
     const int master = master_.get();
     const int slave = slave_.get();
-    process_.setChildProcessModifier([this, master, slave] {
-        if (::setsid() < 0)
-            process_.failChildProcessModifier("setsid", errno);
-        if (::ioctl(slave, TIOCSCTTY, 0) < 0)
-            process_.failChildProcessModifier("TIOCSCTTY", errno);
-        for (int target = 0; target < 3; ++target)
-            if (::dup2(slave, target) < 0)
-                process_.failChildProcessModifier("dup2", errno);
-        if (master > 2)
-            ::close(master);
-        if (slave > 2)
-            ::close(slave);
-    });
+    const int guard_read = guard_read_.get();
+    const int guard_control = guard_control_.get();
+    // No UseVFork: the modifier forks a guard and must have its own address space.
+    process_.setUnixProcessParameters(QProcess::UnixProcessParameters{});
+    process_.setChildProcessModifier(
+        [this, master, slave, guard_read, guard_control, descriptor_limit] {
+            if (::setsid() < 0)
+                process_.failChildProcessModifier("setsid", errno);
+            if (!start_group_guard({guard_read, guard_control}, descriptor_limit))
+                process_.failChildProcessModifier("process-group guard", errno);
+            if (::ioctl(slave, TIOCSCTTY, 0) < 0)
+                process_.failChildProcessModifier("TIOCSCTTY", errno);
+            for (int target = 0; target < 3; ++target)
+                if (::dup2(slave, target) < 0)
+                    process_.failChildProcessModifier("dup2", errno);
+            if (master > 2)
+                ::close(master);
+            if (slave > 2)
+                ::close(slave);
+        });
     process_.start();
 }
 bool PtyProcess::resize(TerminalSize size) {

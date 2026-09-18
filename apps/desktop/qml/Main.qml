@@ -93,6 +93,17 @@ ApplicationWindow {
         }
     }
 
+    Connections {
+        target: preview
+
+        function onReducedMotionChanged() {
+            // An inactive window already has animationEnabled == false, so its
+            // change handler cannot reset a previously paused pulse.
+            if (preview.reducedMotion)
+                window.resetDecorativeAnimation();
+        }
+    }
+
     function pauseDecorativeAnimation() {
         if (!carousel)
             return;

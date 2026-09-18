@@ -75,7 +75,9 @@ flowchart LR
 Desktop messages cross service IPC and are validated there; the GUI never owns
 PTY handles. Input encoding uses the engine's current terminal modes. Keep code
 in `services/session/`, `adapters/` and `apps/desktop/`; introduce libraries or
-subdirectories when implementation needs them.
+subdirectories when implementation needs them. Use the
+[contributor handoff procedure](../CONTRIBUTING.md#large-changes-and-parallel-contributors)
+for ownership, shared contracts and integration checks across large changes.
 
 ## Direction and open choices
 
@@ -372,14 +374,21 @@ model-turn continuation remain unqualified. Commands live in
 
 The PR #2 repair adds explicit render-state synchronization, retained row nodes,
 control/Meta text-key handling, bounded final PTY output drain, and signal-exit
-reporting. Explicit service destruction kills the still-owned leader process group
-before reaping; processes that deliberately regroup or detach need separate
-platform qualification. A final output tail is bounded to 16 MiB after child exit.
+reporting. A detached process-group guard retains group membership until the
+service closes a private pipe on leader exit or teardown, then kills its own group.
+This also removes quiet same-group descendants that ignore hangup, without
+signaling a saved PID after Qt reaps the leader. The guard closes inherited file
+descriptors and is detached before CLI exec, so the CLI does not inherit a hidden
+child. Processes that deliberately regroup or detach need separate platform
+qualification. A final output tail is bounded to 16 MiB after child exit.
 Snapshot-size limits detach the display with an explicit status while keeping the
 child alive; reattachment succeeds once its screen fits again. Socket ancestors
 must be trusted and not shared writable unless sticky, with an owner-only 0700
 immediate parent. Oversized paste remains an atomic rejection at 64 KiB.
-See the [review repair receipt](../evidence/pr2-review.json) for exercised cases.
+Cursor rendering honors block, bar, underline and hollow-block shapes and optional
+cursor color; a filled block redraws its covered grapheme for readability.
+See the [review repair receipt](../evidence/pr2-review.json) and
+[merge preparation receipt](../evidence/pr2-merge.json) for exercised cases.
 
 #### Remaining terminal acceptance
 
