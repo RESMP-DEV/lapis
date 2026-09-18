@@ -15,6 +15,10 @@ namespace lapis::desktop {
 struct UiPreviewOptions {
     QUrl source;
     bool compact{};
+    // Case-insensitive substring of the target QScreen name, for example
+    // "built-in" for the MacBook panel and "ultrawide" for an external one.
+    // Empty keeps the platform's default placement.
+    QString screen;
 };
 
 // View host shared by normal launch and the isolated development fixture.

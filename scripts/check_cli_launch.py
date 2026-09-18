@@ -781,7 +781,8 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
 
     def codex_terminal():
         executable = str(Path(shutil.which(codex) or codex).resolve(strict=True))
-        cli_arguments = ["--no-daemon"]
+        # Codex 0.154.0 removed `--no-daemon`; the plain TUI is the owned backend.
+        cli_arguments = []
         service = Service(
             binary, runtime, artifacts, "codex", executable, cli_arguments, ROOT
         )
@@ -910,7 +911,7 @@ def main():
             with executable.open("rb") as stream:
                 receipt["codex"] = {
                     "sha256": hashlib.file_digest(stream, "sha256").hexdigest(),
-                    "arguments": ["--no-daemon"],
+                    "arguments": [],
                     "prompt_submitted": False,
                 }
         with tempfile.TemporaryDirectory(prefix="cli-", dir=runtime_root) as directory:

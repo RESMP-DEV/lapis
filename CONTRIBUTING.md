@@ -30,11 +30,20 @@ checkout; never copy CMake caches or compilation databases between worktrees.
 On the currently qualified macOS desktop host, establish the baseline in order:
 
 ```sh
-python3 scripts/check_cpp.py dev
-python3 scripts/check_cpp.py desktop
-python3 scripts/check_ui_preview.py
-python3 scripts/check_cli_launch.py --desktop
+python3 scripts/lapis.py doctor    # report which dependencies are ready
+python3 scripts/lapis.py check
+python3 scripts/lapis.py build
+python3 scripts/lapis.py ui-check
+python3 scripts/lapis.py cli-check
 ```
+
+`scripts/lapis.py` resolves the build environment itself, so no `LAPIS_*`
+variable needs exporting. It finds the bootstrapped Ghostty prefix, supplies the
+socket path, and opens windows on the laptop panel. Equivalent `just` recipes
+(`just check`, `just desktop`, `just ui-check`, `just cli-check`) call the same
+launcher; run `python3 scripts/lapis.py` with no arguments for the full list.
+The underlying scripts still accept the documented variables directly when a
+specific prefix or display is required.
 
 The desktop steps require a logged-in graphical session and the exact dependencies
 below. Run GUI checks serially, including across worktrees, so windows do not steal
@@ -179,13 +188,17 @@ targets; sanitizer presets require a Clang/GCC toolchain.
 ### Terminal dependency
 
 The normal build includes the production terminal adapter. Bootstrap the pinned
-Ghostty library once with `python3 scripts/probe_terminal.py --engine ghostty`.
-Use the successful run printed by that command:
+Ghostty library once, then run the checks; the launcher finds the resulting
+prefix by itself, so nothing needs exporting:
 
 ```sh
-export LAPIS_GHOSTTY_PREFIX="$PWD/build/terminal-probe/reproduce/ghostty/runs/<run-id>/prefix"
-just check
+python3 scripts/lapis.py bootstrap   # builds Ghostty and reports readiness
+python3 scripts/lapis.py check
 ```
+
+`bootstrap` runs the same probe and prints the prefix it produced. To select a
+different prefix explicitly, set `LAPIS_GHOSTTY_PREFIX` before running any
+launcher command, or pass `-DLAPIS_GHOSTTY_PREFIX=...` to CMake directly.
 
 CMake accepts the same setting as `-DLAPIS_GHOSTTY_PREFIX=...` and retains it in
 its cache. It checks the adjacent successful probe receipt against the source
@@ -209,8 +222,11 @@ service using the build path; copying the bundle alone is not a portable install
 For a repeatable visual/input check:
 
 ```sh
-build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop \
-  --new-session --smoke-input --capture "$PWD/build/window.png"
+python3 scripts/lapis.py smoke    # writes build/window.png
+
+# Equivalent direct invocation, including an explicit new session:
+# build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop \
+#   --new-session --smoke-input --capture "$PWD/build/window.png"
 ```
 
 This opens a real window, clears a harmless partial command with Control-U, sends
@@ -227,6 +243,12 @@ resource lock within one invocation; separate invocations still need explicit
 coordination. For renderer changes, run `terminal-render` against the previous
 renderer and the proposed change: a valid baseline failure must identify a
 pixel/layout assertion after window and snapshot preconditions pass.
+
+Window tests open on the laptop panel by default. `--screen <text>` selects the
+QScreen whose Qt name contains that text, and `LAPIS_SCREEN` supplies a default
+for direct app invocations. The launcher sets `LAPIS_SCREEN=built-in` and prints
+the chosen screen and geometry, so a capture cannot silently land on an external
+display. Pass `--screen ""` or `LAPIS_SCREEN=` to keep platform placement.
 
 The macOS app sets `QT_MTL_NO_TRANSACTION=1` before Qt initialization. On this
 Qt/MoltenVK combination, the default transaction layer emitted five-second display
@@ -273,7 +295,8 @@ python3 scripts/check_cli_launch.py --desktop --codex \
   --output build/cli-launch-check/codex.json
 ```
 
-The optional test uses the current Codex configuration with `--no-daemon`, types
+The optional test uses the current Codex configuration with no extra launch
+flags (Codex 0.154.0 removed the older `--no-daemon`), types
 only an unsubmitted test marker, exercises navigation/paste/resize, captures normal
 and compact windows, reattaches to the same child, clears the draft with Ctrl-C,
 and quits from the empty composer with Ctrl-D.

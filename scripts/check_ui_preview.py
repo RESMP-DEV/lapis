@@ -60,6 +60,7 @@ def run(
         stderr=subprocess.STDOUT,
         text=True,
         start_new_session=True,
+        env=os.environ.copy(),
     )
     timed_out = False
     try:
