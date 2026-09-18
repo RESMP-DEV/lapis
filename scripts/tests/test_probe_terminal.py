@@ -11,7 +11,7 @@ import tarfile
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -307,6 +307,81 @@ class ProbeTests(unittest.TestCase):
                 )
                 self.assertEqual(receipt["sanitizer_scope"], label)
                 self.assertFalse(receipt["passed"])
+
+
+class CompilerDiscoveryTests(unittest.TestCase):
+    def test_homebrew_failures_are_bounded_and_actionable(self):
+        cases = [
+            (subprocess.TimeoutExpired(["brew"], 15), "timed out after 15 seconds"),
+            (
+                subprocess.CalledProcessError(1, ["brew"], stderr="LLVM is missing"),
+                "Homebrew LLVM discovery failed: LLVM is missing",
+            ),
+            (OSError("cannot execute"), "Cannot run Homebrew LLVM discovery"),
+        ]
+        for error, message in cases:
+            with (
+                self.subTest(error=type(error).__name__),
+                patch.dict(os.environ, {"LAPIS_LLVM_BIN": ""}),
+                patch.object(probe.platform, "system", return_value="Darwin"),
+                patch.object(probe.shutil, "which", return_value="/tools/brew"),
+                patch.object(probe, "run_process", side_effect=error) as run,
+            ):
+                with self.assertRaisesRegex(RuntimeError, message):
+                    probe.default_llvm()
+                self.assertEqual(run.call_args.kwargs["timeout"], 15)
+
+    def test_explicit_compilers_bypass_discovery(self):
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "probe",
+                    "--engine",
+                    "ghostty",
+                    "--cxx",
+                    "/tools/c++",
+                    "--cc",
+                    "/tools/cc",
+                ],
+            ),
+            patch.object(
+                probe, "default_llvm", side_effect=AssertionError("discovery")
+            ),
+            patch.object(probe, "probe", return_value=True) as run,
+        ):
+            self.assertEqual(probe.main(), 0)
+        args = run.call_args.args[1]
+        self.assertEqual((args.cxx, args.cc), ("/tools/c++", "/tools/cc"))
+
+    def test_partial_compiler_override_is_preserved(self):
+        with (
+            patch.object(
+                sys, "argv", ["probe", "--engine", "ghostty", "--cxx", "/tools/c++"]
+            ),
+            patch.object(probe, "default_llvm", return_value=Path("/defaults/bin")),
+            patch.object(probe, "probe", return_value=True) as run,
+        ):
+            self.assertEqual(probe.main(), 0)
+        args = run.call_args.args[1]
+        self.assertEqual((args.cxx, args.cc), ("/tools/c++", "/defaults/bin/clang"))
+
+    def test_discovery_failure_exits_before_engine_work(self):
+        diagnostic = io.StringIO()
+        with (
+            patch.object(sys, "argv", ["probe"]),
+            patch.object(
+                probe, "default_llvm", side_effect=RuntimeError("discovery failed")
+            ),
+            patch.object(probe, "probe") as run,
+            redirect_stderr(diagnostic),
+            self.assertRaises(SystemExit) as result,
+        ):
+            probe.main()
+        self.assertEqual(result.exception.code, 2)
+        self.assertIn("discovery failed", diagnostic.getvalue())
+        run.assert_not_called()
 
 
 if __name__ == "__main__":

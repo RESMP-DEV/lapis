@@ -2,9 +2,9 @@
   "schema_version": 1,
   "recorded_at": "2026-09-18T05:03:54.766830+00:00",
   "scope": "Bounded headless terminal-engine comparison. No PTY, service persistence, renderer, GUI or latency acceptance.",
-  "source_revision": "d7451b689b6d08bc6ae410592e16ccff1f9717d2",
+  "source_revision": "0ccddfeba619b2060b2e40fbd767f1f0caefcd10",
   "source_branch": "scaffold/session-platform",
-  "source_state": "Checkpoint working tree: top-level file hashes identify the final macOS runner and consumers. Linux retains its earlier observation times and source hashes; all eight Linux engine/manifest/contract hashes still match, but final runner changes were exercised only on macOS.",
+  "source_state": "Top-level source hashes identify checkpoint 0ccddfe and its macOS engine comparison. Linux retains earlier dates and its unchanged consumer hashes. The later compiler-discovery-only runner correction and current tests are recorded separately under validation.compiler_discovery_followup.",
   "source_files_sha256": {
     "CMakeLists.txt": "2f5cd386471461b0ff04a7e3fa19a06c759d7285fdd0bb981d8ccac6a230081a",
     "cmake/ProjectOptions.cmake": "701e660c3e1d4bc5d9df3ce45ad446e3eb9493c4edef3c8182fbceb8c37ca783",
@@ -973,6 +973,72 @@
       "cache_reuse": "The ASan run reused fully verified pristine archive trees from the preceding dev run and built fresh derived copies. No source-cache rejection or sanitizer diagnostic occurred.",
       "isolation": "Upstream generated source files and fetched packages stay in per-invocation copies; pristine archive trees remain unchanged.",
       "test_log_sha256": "59de236df1b5a54833ed7c482ad4075420961bfdca6d40ec971dde0b2c68e524"
+    },
+    "python_checks_scope": "Original checkpoint: 14 tests. The current compiler-discovery follow-up below has 18 tests.",
+    "compiler_discovery_followup": {
+      "recorded_at": "2026-09-18T05:32:23.429653+00:00",
+      "scope": "Bound Homebrew discovery to 15 seconds with process-group cleanup and clear errors; bypass discovery when both compilers are explicit. No C++ engine or ownership changes.",
+      "source_sha256": {
+        "scripts/probe_terminal.py": "1474054fe68c34716d809b1fa4e0b4d14b5cb3d8bddf048dbd2d8311ea7c14f7",
+        "scripts/tests/test_probe_terminal.py": "6816dd5dbd3d9259cd1b750c83838302c5d61c3d96c2e8ba8e3e39cb652b745a"
+      },
+      "python_checks": [
+        "ruff check --isolated scripts: passed",
+        "ruff format --isolated --check scripts: passed",
+        "python3 -m unittest discover -s scripts/tests -v: 18 tests passed"
+      ],
+      "live_homebrew_discovery": "passed on macOS using the resolved Homebrew executable with a 15-second timeout",
+      "verify_tools": {
+        "passed": true,
+        "receipt_sha256": "e1eb91a717d64d7b3134d1edbf5ea44e8f43ab997b5996d0f798eb381ccf93e1"
+      },
+      "explicit_compilers_probe": {
+        "command": "python3 scripts/probe_terminal.py --engine ghostty --jobs 8 --cxx /opt/homebrew/opt/llvm/bin/clang++ --cc /opt/homebrew/opt/llvm/bin/clang",
+        "recorded_at": "2026-09-18T05:30:33.009497+00:00",
+        "receipt_sha256": "dd36abce30c695b3649da913dcbc280f22a7630a5d6276c3469dbf086cfde32e",
+        "passed": true,
+        "binary_sha256": "ba73919f852325f0418826b75a1e0fbb3d8812ede2f1a5e817bc9208facf0adc",
+        "replay": {
+          "schema_version": 1,
+          "engine": "ghostty",
+          "cases": [
+            {
+              "name": "ascii_cursor",
+              "passed": true
+            },
+            {
+              "name": "fragmented_unicode",
+              "passed": true
+            },
+            {
+              "name": "alternate_screen",
+              "passed": true
+            },
+            {
+              "name": "wrap_and_resize",
+              "passed": true
+            },
+            {
+              "name": "styles",
+              "passed": true
+            },
+            {
+              "name": "input_modes",
+              "passed": true
+            },
+            {
+              "name": "snapshot_lifetime",
+              "passed": true
+            },
+            {
+              "name": "output_burst",
+              "passed": true
+            }
+          ],
+          "passed": true
+        }
+      },
+      "limits": "Earlier ASan/UBSan, Contour and Linux engine results remain dated checkpoint evidence. They were not rerun for this preflight-only correction."
     }
   },
   "limitations": [

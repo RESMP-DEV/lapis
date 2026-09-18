@@ -282,11 +282,32 @@ def sanitizer_scope(engine, mode):
 def default_llvm():
     if os.environ.get("LAPIS_LLVM_BIN"):
         return Path(os.environ["LAPIS_LLVM_BIN"])
-    if platform.system() == "Darwin" and shutil.which("brew"):
-        result = subprocess.run(
-            ["brew", "--prefix", "llvm"], capture_output=True, text=True, check=True
-        )
-        return Path(result.stdout.strip()) / "bin"
+    if platform.system() == "Darwin":
+        brew = shutil.which("brew")
+        if brew:
+            try:
+                result = run_process(
+                    [brew, "--prefix", "llvm"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=15,
+                )
+                result.check_returncode()
+            except subprocess.TimeoutExpired as error:
+                raise RuntimeError(
+                    "Homebrew LLVM discovery timed out after 15 seconds"
+                ) from error
+            except subprocess.CalledProcessError as error:
+                detail = (error.stderr or "").strip()
+                raise RuntimeError(
+                    f"Homebrew LLVM discovery failed: {detail or error.returncode}"
+                ) from error
+            except OSError as error:
+                raise RuntimeError(
+                    f"Cannot run Homebrew LLVM discovery: {error}"
+                ) from error
+            return Path(result.stdout.strip()) / "bin"
     return Path("/usr/bin")
 
 
@@ -451,9 +472,13 @@ def main():
     args = parser.parse_args()
     if args.jobs < 1:
         parser.error("--jobs must be positive")
-    llvm = default_llvm()
-    args.cxx = args.cxx or str(llvm / "clang++")
-    args.cc = args.cc or str(llvm / "clang")
+    if not args.cxx or not args.cc:
+        try:
+            llvm = default_llvm()
+        except RuntimeError as error:
+            parser.error(str(error))
+        args.cxx = args.cxx or str(llvm / "clang++")
+        args.cc = args.cc or str(llvm / "clang")
     engines = ("ghostty", "contour") if args.engine == "all" else (args.engine,)
 
     # Separate trees, with one shared CPU budget. Failure does not cancel the peer.

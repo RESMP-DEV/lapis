@@ -11,7 +11,7 @@
     "Retrieved tests were inspected, not executed.",
     "No GUI, GPU, latency, platform compatibility or session persistence was measured.",
     "Project license observations are not a transitive dependency audit.",
-    "Lapis terminal engine, service language and rendering implementation remain unselected."
+    "This source-only research did not select a terminal engine, service language or rendering implementation."
   ],
   "repositories": [
     {
