@@ -176,6 +176,91 @@ descriptor primitive and headless consumers provide the starting code.
 Keep control events reliable and display updates replaceable; the GUI must never
 be the owner of the shell process or block the service's output draining.
 
+### Dispatch plan: production adapter first
+
+The checkpoint repair is merged in PR #1. The next implementation is one
+production terminal library, exercised without a PTY or GUI. Keep the existing
+engine comparison as dated evidence. The public header defines contract v0;
+this is an in-process boundary, not an IPC schema.
+
+The coordinator owns `services/session/include/lapis/session/`, root and session
+CMake files, shared verification scripts, README and this plan. Before parallel
+coding, commit a small **terminal contract v0** and its pinned dependency inputs:
+
+- One owner thread mutates the engine; clients receive owned snapshots that remain
+  valid after further input, resize and engine destruction. No upstream handles
+  or pointers cross the boundary. Give snapshots a terminal revision and explicit
+  dimensions; service/attachment identity belongs in a later service envelope.
+- Preserve graphemes, wide-cell continuation and wrap-spacer distinctions, style
+  flags, default/indexed/RGB color identity, palette/default colors, cursor
+  visibility/shape and the input modes needed by the first client. Define inverse
+  and bold-color interpretation once; validate indexed colors as well as truecolor.
+  Unsupported fields must be explicit rather than silently reporting defaults.
+- Accept bounded byte input, resize, key and paste operations; return encoded
+  input and terminal-generated replies to the owning service. Qualify device/status
+  replies before interactive TUI acceptance. Parsing never writes to a PTY itself.
+- Validate dimensions and bound input, grapheme storage, owned snapshot bytes,
+  history and reply queues. Specify overflow/error behavior. Ghostty prunes history
+  at page granularity, so its configured byte limit is not a strict allocation or
+  process-memory ceiling. Enforce Lapis-owned buffer limits separately, exercise
+  eviction and retained history, and report process memory separately.
+
+These are in-process requirements, not a frozen wire format. The coordinator
+verifies missing capabilities against the pinned C API before promising them to
+workers; a bounded probe or a narrower explicit contract closes each gap.
+
+After that common baseline exists, dispatch at most three independent workers:
+
+| Worker | Exclusive files | Deliverable and acceptance |
+| --- | --- | --- |
+| Engine adapter | `services/session/src/terminal/` | Production C++20 wrapper, explicit handle/error ownership, bounded extraction and mode-aware input; passes the independent terminal cases |
+| Behavioral cases | `services/session/tests/terminal/` | Port the eight shared cases to the public contract; add snapshot lifetime, full style/color identity, cursor/wrap, terminal replies, malformed input, dimension limits and history eviction cases; exercise success and failure recovery |
+| Dependency integration | `cmake/Ghostty.cmake`, `third_party/ghostty/` | Reuse the existing Ghostty/Zig pins and verified archives; define a reproducible imported target and complete source/license inventory, including the known notice gaps; audit the production dependency graph and report scanner limits |
+
+Workers propose shared-header or build changes to the coordinator. They do not
+edit another worker's files or widen the public contract independently. The
+coordinator connects the targets and tests, runs `just check` and `just asan`, and
+repeats headless production-adapter qualification on native Linux ARM64. Run
+`just tsan` for ownership handoff/threading cases when those exist; keep the
+upstream Zig checking mode distinct from C++ sanitizer coverage. Apply the
+dependency and tooling checks in CONTRIBUTING for any affected manifests/scripts.
+Record snapshot allocation/memory observations without inventing latency gates.
+
+Use a common committed baseline and disjoint file ownership; the coordinator
+owns the shared checkout build and report directories. Each dispatch names its base SHA, contract version, owned files,
+acceptance commands and finite timeout. Start with a ten-minute diagnostic
+checkpoint unless a shorter task estimate applies; revise a progressing cold-build
+estimate explicitly. Read the worker completion receipt and inspect its diff and
+tests before integration. A completed worker turn does not establish acceptance.
+
+### After adapter acceptance
+
+Deliver the rest of milestone 1 as small dependent changes:
+
+1. **PTY backend:** extend `services/session/src/platform/posix/` and its tests to
+   launch a real child, route I/O, resize, signal and reap it. Prove exec failure,
+   EOF, partial writes, foreground process-group behavior and descriptor cleanup
+   on macOS, then Linux. Keep native handles out of public session messages.
+2. **Headless persistent service:** integrate PTY and engine under one owner loop;
+   add stable session/service identities, bounded queues and disk-backed history
+   with quotas and disk-full behavior. An independent service must keep draining
+   output during client detachment. A headless client must reconnect to the same
+   child PID and current state; service failure must produce a distinct outcome.
+3. **Local IPC:** define framing/version negotiation, message limits, endpoint
+   ownership, attachment generations, targeted input and full-snapshot resync.
+   Test stale input, malformed messages, disconnect during paste, slow clients and
+   queue overflow. Coalesce snapshots while preserving control/lifecycle events.
+4. **Minimal desktop:** after the service contract passes, dispatch
+   `apps/desktop/` for one Qt terminal surface and a separate GUI acceptance owner.
+   Qualify actual Vulkan/MoltenVK presentation, Unicode/font fallback, input/IME,
+   resize and close/reopen persistence. Include input-to-presentation timing from
+   this first view. Carry the minimal terminal to Linux before workspace expansion.
+
+The service and IPC steps share lifecycle semantics and may be reviewed together
+if splitting them would produce a nonfunctional handoff. Keep Codex attention,
+carousel behavior, multiple-session UX and the 32-session benchmark in later
+milestones. Adapter acceptance alone does not complete milestone 1.
+
 ### Engine experiment decision
 
 Use **Ghostty VT with a C++20 service** for the next implementation. At pinned
