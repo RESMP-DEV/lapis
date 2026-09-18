@@ -168,6 +168,32 @@ LLVM/SDK settings and Ghostty prefix, then build and run its CTest cases. Keep
 ASan and TSan separate. Vendor Qt/MoltenVK/Ghostty libraries are not instrumented
 by these C++ presets; a passing test is not coverage of those implementations.
 
+### Planned UI tuning and debugging
+
+This workflow is planned, not implemented. Use the existing Qt Quick/QML boundary
+for visual iteration and LLDB for native code; keep both paths available.
+
+- Add a separate preview mode with synthetic terminal snapshots and replay controls
+  for request arrival, pending attention and resolution. It must not attach to,
+  replace or send input to the user's live shell. Include reduced-motion preview.
+- Load development QML from source and reload the view after edits without a full
+  C++ build. Keep syntax/runtime diagnostics visible and retain the last working
+  view on reload failure. Default application launches still use bundled resources.
+- Capture deterministic default/compact sizes and animation checkpoints. Replaying
+  a request must prove the pulse ends, a pending marker remains, geometry stays
+  stable and keyboard focus is not stolen. Profile actual animation/frame behavior
+  with Qt's QML profiler and the existing platform tools before making speed claims.
+- Keep a symbol-bearing native build for LLDB launch/attach and service debugging.
+  Capture stack traces and Qt diagnostics separately from terminal content. GUI and
+  service are separate processes: pausing one has a different effect from pausing
+  the other. Qualify debugger launch/attach on this Mac before calling it verified.
+
+Today, `just desktop` builds with symbols and `--capture` captures the real window.
+The capture path uses the same one-client service as the ordinary GUI, and
+`--smoke-input` types into that shell. It is not an isolated UI sandbox; use it
+only with a dedicated test session. Debugging work should start from a reproducible
+symptom; screenshots alone do not establish an application failure.
+
 ## Checks
 
 Run from the repository root:

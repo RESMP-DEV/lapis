@@ -34,7 +34,9 @@ incomplete.**
 [Desktop evidence](evidence/desktop-preview.json) and
 [adapter evidence](evidence/terminal-adapter.json) delimit these observations.
 Dependency packaging remains unfinished; this is a local developer build.
-Next, review the window's ergonomics, then close service/terminal acceptance gaps
+The [planned UI refinement](docs/architecture.md#planned-ui-refinement)
+records a smaller top bar, overlay attention pulses and rebindable carousel
+navigation; these are documentation only. Next, close service/terminal acceptance gaps
 and qualify the minimal Linux view before adding carousel behavior. Latency and
 warm-switch targets remain provisional.
 

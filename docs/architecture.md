@@ -200,6 +200,43 @@ updates and brief hover transitions. Input-to-presentation timing instrumentatio
 and a repeatable animation workload remain acceptance gaps. The visual checkpoint
 does not complete milestone 1.
 
+### Planned UI refinement
+
+The current window is the visual checkpoint, not the final workspace layout.
+The next refinement should reduce the tall top section to essential session
+context, removing repeated branding, paths and status chrome. Preserve terminal
+space; attention cues must not add a banner, permanent row or move neighboring
+panes.
+
+Use a brief red halo or edge pulse around the requesting terminal/card to catch
+the eye, similar to a restrained game HUD cue. Draw it as an overlay within the
+existing composition; it must not change geometry, resize a PTY or obscure text.
+Keep the rest of the interface opaque. Start with one or two gentle pulses, then
+a quiet persistent edge/marker while the request remains pending. Avoid flashing,
+endless pulsing and restarting the animation on every output update. Pair color
+with a readable request indicator; reduced-motion mode should use a steady marker.
+The exact intensity and timing are for visual review, not fixed acceptance values.
+
+Keyboard navigation should expose rebindable actions for next session, previous
+session and next session needing attention. Store bindings in settings independently
+of the actions. Tab or a Tab chord is a candidate, not a selected default: plain Tab
+normally belongs to shell completion/TUIs, and platform shortcuts must be considered.
+Only the configured workspace shortcut should consume input; other keys continue
+to the focused terminal. Preview order stays stable. Navigation is deliberate and
+must respect the typing, held-key, paste and IME ownership rules below.
+
+Attention identifies where a response is needed; viewing or focusing the terminal
+does not resolve the request or send a prompt. A user explicitly composes and sends
+the response through the originating terminal/verified adapter. Real request
+routing and the functional carousel remain later work. The halo, bindings/settings
+and top-bar changes described here are **not implemented**.
+
+Both a visual tuning sandbox and native debugging are wanted. The planned workflow
+in [CONTRIBUTING.md](../CONTRIBUTING.md#planned-ui-tuning-and-debugging) keeps replayed
+attention events separate from live shells, supports quick QML iteration and
+repeatable captures, and retains an LLDB path for C++ problems. No new debugger or
+animation framework is needed for this documentation checkpoint.
+
 ### Terminal adapter v0
 
 The checkpoint repair is merged in PR #1. The first production adapter lives in
