@@ -101,6 +101,7 @@ def exercise(binary, runtime, artifacts, history_root):
             newest, _, _ = history(client, 31)
             require(newest >= ids[0], "Reattachment lost archive")
             pages = list(history_root.glob("*/*.page"))
+            require(pages, "No history pages were written")
             require(
                 sum(p.stat().st_size for p in pages) <= 1024 * 1024,
                 "Session quota exceeded",
@@ -117,7 +118,11 @@ def exercise(binary, runtime, artifacts, history_root):
             client.send(TEXT, b"AFTER_CORRUPTION\n")
             client.snapshot(lambda s: "ECHO:AFTER_CORRUPTION" in s["text"])
             latest.write_bytes(original)
-            require(history(client, 33)[0], "Storage retry did not recover")
+            recovered_id, _, recovered_message = history(client, 33)
+            require(recovered_id, "Storage retry did not recover")
+            require(
+                not recovered_message, "Recovered archive retained stale failure status"
+            )
         return {
             "paging_rows": 1500,
             "one_row_backpressure": True,
@@ -196,8 +201,10 @@ def disk_full(binary, runtime, artifacts):
             client.send(TEXT, b"AFTER_FULL\n")
             client.snapshot(lambda s: "ECHO:AFTER_FULL" in s["text"])
             filler.unlink()
+            recovered_id, _, recovered_message = history(client, 3)
+            require(recovered_id, "Archive could not recover after space returned")
             require(
-                history(client, 3)[0], "Archive could not recover after space returned"
+                not recovered_message, "Recovered disk retained stale failure status"
             )
         return {
             "real_enospc": True,

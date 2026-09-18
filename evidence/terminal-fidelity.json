@@ -30,7 +30,7 @@
     "test": "terminal-render",
     "old_renderer_commit": "31cabfe",
     "same_final_test_on_baseline": true,
-    "baseline_command": "QSG_RENDER_LOOP=threaded ctest --test-dir /Users/kearm/lapis-worktrees/m1-verification/build/terminal-render-worker -R ^terminal-render$ --output-on-failure",
+    "baseline_command": "QSG_RENDER_LOOP=threaded ctest --test-dir <repo>-worktrees/m1-verification/build/terminal-render-worker -R ^terminal-render$ --output-on-failure",
     "baseline_log": "build/milestone1/native-baseline-red-final.log",
     "baseline_result": "Expected failure after valid native window/snapshot geometry: styled background region expected [0,79], actual [0,66].",
     "changed_renderer": "Passed, including in full normal/ASan/TSan suites.",

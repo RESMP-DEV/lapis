@@ -155,10 +155,16 @@ class SessionService final : public QObject {
             qWarning().noquote() << history_error_;
         };
         history_.progress = [this] {
-            try_pending_history();
-            if (output_waiting_) {
-                output_waiting_ = false;
-                process_output();
+            if (stopping_)
+                return;
+            try {
+                try_pending_history();
+                if (output_waiting_) {
+                    output_waiting_ = false;
+                    process_output();
+                }
+            } catch (const std::exception& error) {
+                stop(QString::fromUtf8(error.what()));
             }
         };
         history_.received = [this](wire::HistoryReply reply) {
@@ -320,6 +326,7 @@ class SessionService final : public QObject {
         }
         // Browsing retries storage after a recoverable filesystem failure.
         history_failed_ = false;
+        history_error_.clear();
         pending_history_ = std::pair{attachment_, request};
         try_pending_history();
     }
@@ -342,19 +349,30 @@ class SessionService final : public QObject {
         }
         if (!history_.idle())
             qWarning("History flush deadline reached; queued tail pages may be unavailable");
-        stop(message, exit_code);
+        stop(message, exit_code, std::chrono::milliseconds{0});
     }
-    void stop(const QString& message, int exit_code = 1) {
+    void stop(const QString& message, int exit_code = 1,
+              std::chrono::milliseconds drain_timeout = std::chrono::seconds{3}) {
         if (stopping_)
             return;
         stopping_ = true;
+        pty_.pauseOutput(true);
+        timer_.stop();
+        ack_timer_.stop();
+        pending_history_.reset();
         qInfo().noquote() << message;
         if (client_) {
             send_status(client_, wire::StatusCode::ended, message);
             client_->flush();
         }
-        QTimer::singleShot(50, QCoreApplication::instance(),
-                           [exit_code] { QCoreApplication::exit(exit_code); });
+        history_.drain(
+            [this, exit_code] {
+                if (!history_.idle())
+                    qWarning("History shutdown deadline reached; queued tail may be unavailable");
+                QTimer::singleShot(50, QCoreApplication::instance(),
+                                   [exit_code] { QCoreApplication::exit(exit_code); });
+            },
+            static_cast<int>(drain_timeout.count()));
     }
     void attach() {
         auto* incoming = server_.nextPendingConnection();

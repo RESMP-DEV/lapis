@@ -594,7 +594,8 @@ valid history. Retire a damaged archive directory only after its owning service
 has ended; archiving is terminal content, so retain it only as long as needed.
 The store removes only its known abandoned `.pending` write under its root lock;
 it leaves unknown files alone. Page-byte quotas exclude fixed metadata and bounded
-atomic-write overhead. A normal exit attempts to drain queued pages; a forced
+atomic-write overhead. Normal exit and direct service error shutdown allow up to three seconds to drain
+queued pages; a forced
 service kill can lose its queued tail. Stored pages are not process recovery.
 
 ### Desktop sanitizers

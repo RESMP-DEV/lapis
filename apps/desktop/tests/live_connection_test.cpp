@@ -151,6 +151,7 @@ void history_browsing_and_input_gating() {
     f.document.sendText("no-history-text", true);
     f.document.sendKey(lapis::session::TerminalKey::enter, {});
     f.document.resizeTerminal({7, 3});
+    settle();
     require(peer.socket->bytesAvailable() == 0, "History mode sent input or resize");
 
     lapis::session::Terminal historical{{4, 2}};

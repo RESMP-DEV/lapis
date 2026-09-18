@@ -450,7 +450,8 @@ void TerminalSurface::resetInputContext() {
     if (resetting_input_)
         return;
     resetting_input_ = true;
-    composition_armed_ = false;
+    if (composition_state_ == CompositionState::active)
+        composition_state_ = CompositionState::stale;
     preedit_.clear();
     if (qApp && qApp->focusObject() == this)
         qApp->inputMethod()->reset();
@@ -677,7 +678,8 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
         event->ignore();
         return;
     }
-    composition_armed_ = true;
+    if (composition_state_ == CompositionState::stale)
+        composition_state_ = CompositionState::idle;
     if (event->matches(QKeySequence::Paste)) {
         const auto owner = document_;
         const QString text = QGuiApplication::clipboard()->text();
@@ -778,9 +780,9 @@ void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
         return;
     }
     if (!event->preeditString().isEmpty())
-        composition_armed_ = true;
+        composition_state_ = CompositionState::active;
     if (!event->commitString().isEmpty()) {
-        if (!composition_armed_) {
+        if (composition_state_ == CompositionState::stale) {
             event->ignore();
             return;
         }
@@ -791,7 +793,12 @@ void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
         return;
     }
     preedit_ = event->preeditString();
-    composition_armed_ = !preedit_.isEmpty();
+    if (!preedit_.isEmpty())
+        composition_state_ = CompositionState::active;
+    else if (!event->commitString().isEmpty())
+        composition_state_ = CompositionState::idle;
+    else if (composition_state_ == CompositionState::active)
+        composition_state_ = CompositionState::stale;
     publishFrame(false);
     updateInputContext(Qt::ImCursorRectangle);
     event->accept();

@@ -5,6 +5,7 @@
 #include <QFutureWatcher>
 #include <QObject>
 #include <QThreadPool>
+#include <QTimer>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -19,6 +20,8 @@ class HistoryWorker final : public QObject {
     [[nodiscard]] bool append(std::vector<TerminalSnapshot> pages);
     [[nodiscard]] bool read(wire::Attachment attachment, wire::HistoryRequest request);
     [[nodiscard]] bool idle() const { return queue_.empty() && !active_; }
+    // Stop accepting work and keep the event loop alive until drained or timed out.
+    void drain(std::function<void()> complete, int timeout_ms = 3000);
     std::function<void()> progress;
     std::function<void(const QString&)> failure;
     std::function<void(wire::HistoryReply)> received;
@@ -36,12 +39,16 @@ class HistoryWorker final : public QObject {
         std::optional<HistoryPage> page;
     };
     void startNext();
+    void finishDrain();
     std::shared_ptr<State> state_;
     QThreadPool pool_;
     QFutureWatcher<Result> watcher_;
     std::deque<Operation> queue_;
     std::size_t queued_bytes_{};
     bool active_{};
+    bool draining_{};
+    QTimer drain_timer_;
+    std::function<void()> drain_complete_;
 };
 } // namespace lapis::session
 #endif

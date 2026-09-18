@@ -1,10 +1,13 @@
 #include "history_store.hpp"
+#include "history_worker.hpp"
 #include "transport/local_protocol.hpp"
 #include <QCoreApplication>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QProcess>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <csignal>
 #include <iostream>
 #include <source_location>
@@ -37,6 +40,54 @@ TerminalSnapshot page() {
     auto result = terminal.snapshot();
     result.cursor = {};
     return result;
+}
+void check_worker_drain() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-history-drain-XXXXXX"));
+    require(directory.isValid());
+    const auto root = directory.filePath(QStringLiteral("archive"));
+    const QString session_id(32, QLatin1Char('d'));
+    HistoryWorker worker(root, session_id, {});
+    std::vector<TerminalSnapshot> pages(128, page());
+    require(worker.append(std::move(pages)));
+    QEventLoop loop;
+    bool drained{};
+    bool failed{};
+    worker.failure = [&](const QString&) { failed = true; };
+    worker.drain([&] {
+        drained = worker.idle();
+        loop.quit();
+    });
+    require(!worker.append({page()}));
+    require(!worker.read({}, {}));
+    QTimer::singleShot(5000, &loop, &QEventLoop::quit);
+    loop.exec();
+    require(drained && !failed);
+    HistoryStore store(root, session_id);
+    std::size_t count{};
+    for (auto item = store.older(); item; item = store.older(item->id))
+        ++count;
+    require(count == 128);
+}
+void check_worker_drain_deadline() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-history-deadline-XXXXXX"));
+    require(directory.isValid());
+    HistoryWorker worker(directory.filePath(QStringLiteral("archive")),
+                         QString(32, QLatin1Char('e')), {});
+    require(worker.append(std::vector<TerminalSnapshot>(128, page())));
+    QEventLoop loop;
+    int completions{};
+    bool pending_at_deadline{};
+    worker.drain(
+        [&] {
+            ++completions;
+            pending_at_deadline = !worker.idle();
+            loop.quit();
+        },
+        0);
+    QTimer::singleShot(5000, &loop, &QEventLoop::quit);
+    loop.exec();
+    require(completions == 1 && pending_at_deadline);
+    require(!worker.append({page()}));
 }
 void check_store() {
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-history-XXXXXX"));
@@ -148,6 +199,8 @@ int main(int argc, char** argv) {
             return 0;
         }
         check_store();
+        check_worker_drain();
+        check_worker_drain_deadline();
         std::cout << "History roundtrip, quotas, corruption and write recovery passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

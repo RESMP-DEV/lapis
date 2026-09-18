@@ -21,6 +21,8 @@ struct HistoryWorker::State {
 HistoryWorker::HistoryWorker(QString root, QString session_id, HistoryLimits limits)
     : state_(std::make_shared<State>(std::move(root), std::move(session_id), limits, nullptr)) {
     pool_.setMaxThreadCount(1);
+    drain_timer_.setSingleShot(true);
+    connect(&drain_timer_, &QTimer::timeout, this, [this] { finishDrain(); });
     connect(&watcher_, &QFutureWatcher<Result>::finished, this, [this] {
         auto result = watcher_.result();
         auto operation = std::move(queue_.front());
@@ -42,6 +44,8 @@ HistoryWorker::HistoryWorker(QString root, QString session_id, HistoryLimits lim
         if (progress)
             progress();
         startNext();
+        if (draining_ && idle())
+            finishDrain();
     });
 }
 HistoryWorker::~HistoryWorker() {
@@ -49,6 +53,8 @@ HistoryWorker::~HistoryWorker() {
     pool_.waitForDone();
 }
 bool HistoryWorker::append(std::vector<TerminalSnapshot> pages) {
+    if (draining_)
+        return false;
     std::size_t bytes{};
     for (const auto& page : pages)
         bytes += page_bytes(page);
@@ -63,11 +69,28 @@ bool HistoryWorker::append(std::vector<TerminalSnapshot> pages) {
     return true;
 }
 bool HistoryWorker::read(wire::Attachment attachment, wire::HistoryRequest request) {
-    if (queue_.size() >= max_queue_pages)
+    if (draining_ || queue_.size() >= max_queue_pages)
         return false;
     queue_.push_back({{}, std::move(attachment), request, 0});
     startNext();
     return true;
+}
+void HistoryWorker::drain(std::function<void()> complete, int timeout_ms) {
+    if (draining_)
+        return;
+    draining_ = true;
+    drain_complete_ = std::move(complete);
+    if (idle())
+        finishDrain();
+    else
+        drain_timer_.start(timeout_ms);
+}
+void HistoryWorker::finishDrain() {
+    drain_timer_.stop();
+    if (drain_complete_) {
+        auto complete = std::move(drain_complete_);
+        complete();
+    }
 }
 void HistoryWorker::startNext() {
     if (active_ || queue_.empty())

@@ -180,6 +180,25 @@ void input_contract() {
     require(surface.inputMethodQuery(Qt::ImEnabled).toBool(), "Ready terminal disabled IME");
     const auto original = surface.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
     require(!original.isEmpty(), "IME candidate rectangle missing");
+    composition(surface, {}, QStringLiteral("✓"));
+    require(text_frames(peer) == QStringLiteral("✓").toUtf8(),
+            "Idle terminal rejected commit-only input");
+    composition(surface, {}, QStringLiteral("★"));
+    require(text_frames(peer) == QStringLiteral("★").toUtf8(),
+            "Repeated commit-only input was rejected");
+    QKeyEvent printable(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QCoreApplication::sendEvent(&surface, &printable);
+    require(text_frames(peer) == QByteArray("x"), "Printable key fixture did not reach PTY");
+    {
+        QQuickItem other_focus(window.contentItem());
+        other_focus.forceActiveFocus();
+        window.requestActivate();
+        surface.forceActiveFocus();
+        until([&] { return surface.inputMethodQuery(Qt::ImEnabled).toBool(); });
+        composition(surface, {}, QStringLiteral("✓"));
+        require(text_frames(peer) == QStringLiteral("✓").toUtf8(),
+                "Ordinary typing and focus return incorrectly invalidated commit-only input");
+    }
     composition(surface, QStringLiteral("にほん"));
     require(text_frames(peer).isEmpty(), "Preedit leaked into PTY");
     composition(surface, {}, QStringLiteral("日本"));
@@ -242,6 +261,9 @@ void input_contract() {
                   << " ready=" << f.document.inputReady() << '\n';
         throw std::runtime_error("Fresh composition did not recover");
     }
+    composition(surface, {}, QStringLiteral("✓"));
+    require(text_frames(peer) == QStringLiteral("✓").toUtf8(),
+            "Recovered terminal rejected commit-only input");
     composition(surface, QStringLiteral("disconnect"));
     peer.socket->abort();
     until([&] { return !f.document.inputReady(); });

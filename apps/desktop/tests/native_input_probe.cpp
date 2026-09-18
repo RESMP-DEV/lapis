@@ -22,6 +22,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <source_location>
 #include <stdexcept>
 
 namespace {
@@ -42,11 +43,14 @@ void pump(int milliseconds) {
         QThread::msleep(1);
     }
 }
-void until(const std::function<bool()>& condition) {
+void until(const std::function<bool()>& condition,
+           const std::source_location where = std::source_location::current()) {
     QElapsedTimer timer;
     timer.start();
     while (!condition()) {
-        require(timer.elapsed() < 10000, "Native event deadline expired");
+        if (timer.elapsed() >= 10000)
+            throw std::runtime_error("Native event deadline expired at line " +
+                                     std::to_string(where.line()));
         pump(5);
     }
 }

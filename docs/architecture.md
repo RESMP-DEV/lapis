@@ -87,7 +87,7 @@ for ownership, shared contracts and integration checks across large changes.
 | Desktop | C++20 and Qt 6.11.2 Quick with public QSGTextNode terminal drawing | macOS Vulkan visual checkpoint exercised; macOS performance qualification remains |
 | Engine | Pinned Ghostty `libghostty-vt` selected for the first adapter | Eight-case macOS/Linux replay passes; isolate unstable C API and resolve dependency-notice gaps |
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
-| Transport | Version 3 local framing with session/epoch/generation identity, readiness and bounded owned snapshots | Automatic recovery policy and multi-session registry remain |
+| Transport | Version 4 local framing with session/epoch/generation identity, readiness and bounded owned snapshots | Automatic recovery policy and multi-session registry remain |
 | Codex mode | Keep the ordinary TUI under a PTY first; evaluate hooks or attachment to its actual server for attention | Installed CLI advertises remote/daemon options; qualify delivery and response ownership before choosing a route |
 
 The [research receipt](../evidence/terminal-research.json) retains pinned upstream
@@ -584,8 +584,8 @@ resize waits until that harvest releases the engine viewport. Filesystem work
 runs on one dedicated worker thread. Root-lock contention waits up to 500 ms on
 that worker; concurrent-writer tests enforce the shared quota. A failed archive write leaves older committed
 pages intact, records a visible gap message when browsing, and keeps live I/O
-usable. Browsing retries storage after repair. Normal child exit attempts a bounded
-queue drain; forced service termination may lose the queued tail. Archive storage
+usable. Browsing retries storage after repair. Normal child exit and direct service
+error shutdown allow up to three seconds for queued pages to drain; forced service termination may lose the queued tail. Archive storage
 does not restore a live process after service death or reboot.
 
 Qt input tests exercise committed Unicode, cancellation (including empty native
@@ -628,7 +628,7 @@ exercise that policy on both platforms; the earlier truecolor-only case did not.
 Snapshots survive parser mutation, resize and engine destruction. Key-up and paste
 encoding follow terminal modes. This was evidence for the snapshot-fed surface now present in the desktop
 checkpoint. The production adapter has since added styles, tagged colors, wrap
-spacers and cursor data; stable service lifecycle identities remain outstanding. The experimental header is
+spacers and cursor data. The experimental header is
 not a serialized service contract. Dirty-row APIs exist in Ghostty but incremental
 damage extraction has not been qualified; begin with bounded full snapshots.
 Measure allocation churn when building the production extraction path; the

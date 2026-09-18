@@ -7,6 +7,7 @@
 #include <QKeyEvent>
 #include <QPointer>
 #include <QQuickItem>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 
@@ -59,7 +60,8 @@ class TerminalSurface : public QQuickItem {
     QString preedit_;
     quint64 ime_epoch_{};
     bool resetting_input_{};
-    bool composition_armed_{};
+    enum class CompositionState : std::uint8_t { idle, active, stale };
+    CompositionState composition_state_{CompositionState::idle};
 };
 
 } // namespace lapis::desktop
