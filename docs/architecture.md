@@ -200,6 +200,8 @@ full style set, default/indexed color identity, wide-wrap spacer distinctions,
 cursor visibility and lifecycle/revision metadata. The experimental header is
 not a serialized service contract. Dirty-row APIs exist in Ghostty but incremental
 damage extraction has not been qualified; begin with bounded full snapshots.
+Measure allocation churn when building the production extraction path; the
+correctness probe uses per-cell scratch buffers and is not a performance baseline.
 
 Ghostty's configured 1 MiB history setting is read back through the API; the burst
 case checks viewport size, not a process memory ceiling or disk-backed history.

@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-09-18T05:03:54.766830+00:00",
+  "recorded_at": "2026-09-18T05:50:46.961553+00:00",
   "scope": "Bounded headless terminal-engine comparison. No PTY, service persistence, renderer, GUI or latency acceptance.",
-  "source_revision": "0ccddfeba619b2060b2e40fbd767f1f0caefcd10",
+  "source_revision": "6cad6439775f97c1faa29b2e25fcc56f73a1d96b",
   "source_branch": "scaffold/session-platform",
-  "source_state": "Top-level source hashes identify checkpoint 0ccddfe and its macOS engine comparison. Linux retains earlier dates and its unchanged consumer hashes. The later compiler-discovery-only runner correction and current tests are recorded separately under validation.compiler_discovery_followup.",
+  "source_state": "Review follow-up working tree: top-level hashes identify current macOS runner/build inputs. Linux retains earlier timestamps and unchanged consumer hashes; current runner/build-tooling changes were exercised on macOS only.",
   "source_files_sha256": {
     "CMakeLists.txt": "2f5cd386471461b0ff04a7e3fa19a06c759d7285fdd0bb981d8ccac6a230081a",
-    "cmake/ProjectOptions.cmake": "701e660c3e1d4bc5d9df3ce45ad446e3eb9493c4edef3c8182fbceb8c37ca783",
-    "scripts/probe_terminal.py": "89f8b197f50e7c30509ebf2d832242637630206ff189f9e1ee29fd4be68e8be0",
-    "scripts/tests/test_probe_terminal.py": "133b2dd19c80ce4c5be2ac7c46f002733dfed92bf76d07171c781a17df7f4b26",
+    "cmake/ProjectOptions.cmake": "c7686c6a036352e393d93b1eadd6aef36bf6abdba789fbcbd9e1268727df7273",
+    "scripts/probe_terminal.py": "aeb9ad538e970a74f65bf6067de52f9b80a8df4c34ead1105e835e11f0d6569d",
+    "scripts/tests/test_probe_terminal.py": "e76fcf817639542b495f149e375b0764808dd94c94addcca42179ace26050853",
     "tools/terminal_probe/contour/CMakeLists.txt": "0a33c0b029e231edc992ad381a8ab7628fcf6df6bf1b214d540b60d5ced68cc0",
     "tools/terminal_probe/contour/engine.cpp": "348249d8fa7dee3e45e44d13096389626aa926b8898dfdad253cbea1ea8b1161",
     "tools/terminal_probe/contour/sources.json": "04bd02c0a352255f73af2ffa3e16c616878138568fc4a73eaacb765b57e2764e",
@@ -113,8 +113,8 @@
   "macos": {
     "ghostty": {
       "dev": {
-        "receipt_sha256": "1898650738b42888e18c5f8503764e6a2a69ccfd86c638c8374cc5a4289074a2",
-        "recorded_at": "2026-09-18T04:40:32.861725+00:00",
+        "receipt_sha256": "6099cd34453ebd0e70eb6ddc1ab45f9b9b42c92cb9ece9684ab7d16c7fb61fdb",
+        "recorded_at": "2026-09-18T05:46:40.452250+00:00",
         "platform": "macOS-26.7-arm64-arm-64bit-Mach-O",
         "compiler": "Homebrew clang version 23.1.1\nTarget: arm64-apple-darwin25.6.0",
         "mode": "dev",
@@ -122,22 +122,22 @@
           {
             "name": "zig-build",
             "exit_code": 0,
-            "elapsed_seconds": 34.185
+            "elapsed_seconds": 35.884
           },
           {
             "name": "configure",
             "exit_code": 0,
-            "elapsed_seconds": 0.343
+            "elapsed_seconds": 0.353
           },
           {
             "name": "build",
             "exit_code": 0,
-            "elapsed_seconds": 0.296
+            "elapsed_seconds": 0.295
           },
           {
             "name": "ctest",
             "exit_code": 0,
-            "elapsed_seconds": 0.011
+            "elapsed_seconds": 0.02
           }
         ],
         "derived_sources": [
@@ -146,7 +146,7 @@
             "archive_sha256": "41f9d0d1e48718e9a2c827c9fececffd3a3448b7bd01d60fa4fa6e5b5b0d7bfc"
           }
         ],
-        "binary_sha256": "7a1775eeafe10dc9a1fe4e437f19e887f2d40afd3057aa8235ca9df4f7f8a2bf",
+        "binary_sha256": "0dd7aa1bd6478d2f6d1f81fc3580f1d82210392e37fd15133018f0ab7ffdf251",
         "replay": {
           "schema_version": 1,
           "engine": "ghostty",
@@ -192,8 +192,8 @@
         "passed": true
       },
       "asan": {
-        "receipt_sha256": "46cdfaa052918da5419d9d7504ee0b3f96c68ae3fce847115def736086d112e3",
-        "recorded_at": "2026-09-18T04:41:54.612623+00:00",
+        "receipt_sha256": "10bb73b0587ef14cf652cf812baf8339a6ee648bce160fe81f45bdd5a2706daf",
+        "recorded_at": "2026-09-18T05:48:13.431510+00:00",
         "platform": "macOS-26.7-arm64-arm-64bit-Mach-O",
         "compiler": "Homebrew clang version 23.1.1\nTarget: arm64-apple-darwin25.6.0",
         "mode": "asan",
@@ -201,22 +201,22 @@
           {
             "name": "zig-build",
             "exit_code": 0,
-            "elapsed_seconds": 33.777
+            "elapsed_seconds": 35.585
           },
           {
             "name": "configure",
             "exit_code": 0,
-            "elapsed_seconds": 0.348
+            "elapsed_seconds": 0.344
           },
           {
             "name": "build",
             "exit_code": 0,
-            "elapsed_seconds": 0.297
+            "elapsed_seconds": 0.293
           },
           {
             "name": "ctest",
             "exit_code": 0,
-            "elapsed_seconds": 0.077
+            "elapsed_seconds": 0.076
           }
         ],
         "derived_sources": [
@@ -225,7 +225,7 @@
             "archive_sha256": "41f9d0d1e48718e9a2c827c9fececffd3a3448b7bd01d60fa4fa6e5b5b0d7bfc"
           }
         ],
-        "binary_sha256": "ce4aca8914cecb656ec12625c2521f989326b95583a6eb257bd59927e6c861b5",
+        "binary_sha256": "c6ee946491dc3be7b6ae1291868231aee4ae7a355a18266ab1015080232a8d7b",
         "replay": {
           "schema_version": 1,
           "engine": "ghostty",
@@ -273,8 +273,8 @@
     },
     "contour": {
       "dev": {
-        "receipt_sha256": "29b593f81bb80ef46833bec0bb7f956e66e267758755189be0673f1254ad58be",
-        "recorded_at": "2026-09-18T04:40:32.861925+00:00",
+        "receipt_sha256": "d5aea3fcbcbabf777012a2771672d6b65b02fd50e9ca088ed5b0c7afa4f018a7",
+        "recorded_at": "2026-09-18T05:46:40.450889+00:00",
         "platform": "macOS-26.7-arm64-arm-64bit-Mach-O",
         "compiler": "Homebrew clang version 23.1.1\nTarget: arm64-apple-darwin25.6.0",
         "mode": "dev",
@@ -282,17 +282,17 @@
           {
             "name": "configure",
             "exit_code": 0,
-            "elapsed_seconds": 7.126
+            "elapsed_seconds": 6.08
           },
           {
             "name": "build",
             "exit_code": 0,
-            "elapsed_seconds": 18.111
+            "elapsed_seconds": 18.831
           },
           {
             "name": "ctest",
             "exit_code": 8,
-            "elapsed_seconds": 0.076
+            "elapsed_seconds": 0.074
           }
         ],
         "derived_sources": [
@@ -317,7 +317,7 @@
             "archive_sha256": "4ecef30bc0aea7c4e87220e4872b599b7a5fc63e3e658002590a03a8a206be42"
           }
         ],
-        "binary_sha256": "76768cd60227505db994122ebeb7315ee5cf878e62aa5f074a8fc3725ead9ecd",
+        "binary_sha256": "a945c0e0abdc941035a71403d5a236589ce8a9f924b501ba5a0848959b42ce49",
         "replay": {
           "schema_version": 1,
           "engine": "contour",
@@ -363,8 +363,8 @@
         "passed": false
       },
       "asan": {
-        "receipt_sha256": "b35824fcb2f56b657c0f72b6b277abbe801a85f0d7fcdb26f6c0295545b94b2a",
-        "recorded_at": "2026-09-18T04:41:54.613816+00:00",
+        "receipt_sha256": "151f31aca3eff768183b9355713c0b165b24ce2db02b076236c35f0abd6137c3",
+        "recorded_at": "2026-09-18T05:48:13.431312+00:00",
         "platform": "macOS-26.7-arm64-arm-64bit-Mach-O",
         "compiler": "Homebrew clang version 23.1.1\nTarget: arm64-apple-darwin25.6.0",
         "mode": "asan",
@@ -372,17 +372,17 @@
           {
             "name": "configure",
             "exit_code": 0,
-            "elapsed_seconds": 6.02
+            "elapsed_seconds": 6.13
           },
           {
             "name": "build",
             "exit_code": 0,
-            "elapsed_seconds": 23.064
+            "elapsed_seconds": 24.006
           },
           {
             "name": "ctest",
             "exit_code": 8,
-            "elapsed_seconds": 0.187
+            "elapsed_seconds": 0.183
           }
         ],
         "derived_sources": [
@@ -407,7 +407,7 @@
             "archive_sha256": "4ecef30bc0aea7c4e87220e4872b599b7a5fc63e3e658002590a03a8a206be42"
           }
         ],
-        "binary_sha256": "5143cc90718565bf962c20283383b79944cafda4292e804589dea6116da7d3b2",
+        "binary_sha256": "cf17496f7f19b9f58821c2c356145309ceb1450c0dc47478c60bb9798742535c",
         "replay": {
           "schema_version": 1,
           "engine": "contour",
@@ -958,7 +958,7 @@
     "python_checks": [
       "ruff check --isolated scripts: passed",
       "ruff format --isolated --check scripts: passed",
-      "python3 -m unittest discover -s scripts/tests -v: 14 tests passed"
+      "python3 -m unittest discover -s scripts/tests -v: 23 tests passed, no skips"
     ],
     "runner_reproduction": {
       "commands": [
@@ -972,9 +972,11 @@
       "outcome": "Both engines build and replay in each mode. Ghostty passes 8/8; Contour retains only the fragmented_unicode semantic failure. Combined commands intentionally report nonzero.",
       "cache_reuse": "The ASan run reused fully verified pristine archive trees from the preceding dev run and built fresh derived copies. No source-cache rejection or sanitizer diagnostic occurred.",
       "isolation": "Upstream generated source files and fetched packages stay in per-invocation copies; pristine archive trees remain unchanged.",
-      "test_log_sha256": "59de236df1b5a54833ed7c482ad4075420961bfdca6d40ec971dde0b2c68e524"
+      "test_log_sha256": "461ec52c114b5d1fea9434e665c9ed0ceca8087bf646acee357e388fd1e3f486",
+      "reports_layout": "<engine>/runs/<invocation>/reports; every invocation retains its own logs, replay outputs and receipt",
+      "failure_coverage": "Crash and malformed-output classification continues metadata and CTest collection; tests cover cleanup failures preserving original exceptions, receipt/log retention on rerun, and unsupported-host diagnostics."
     },
-    "python_checks_scope": "Original checkpoint: 14 tests. The current compiler-discovery follow-up below has 18 tests.",
+    "python_checks_scope": "Current OCR review follow-up; the earlier compiler-discovery follow-up below retains its dated 18-test observation.",
     "compiler_discovery_followup": {
       "recorded_at": "2026-09-18T05:32:23.429653+00:00",
       "scope": "Bound Homebrew discovery to 15 seconds with process-group cleanup and clear errors; bypass discovery when both compilers are explicit. No C++ engine or ownership changes.",
@@ -1050,8 +1052,8 @@
     "Final runner hardening and cache-copy behavior were exercised on macOS; the earlier Linux headless consumer evidence remains separately dated."
   ],
   "publication_summary": {
-    "prepared_at": "2026-09-18T05:03:54.766830+00:00",
+    "prepared_at": "2026-09-18T05:50:46.961553+00:00",
     "original_receipt_sha256": "dd75aa1c969f2361f0bfd52e6aad463fcdd8d73de2b1a6a1a3a1024cdbab2ee6",
-    "changes": "Local user paths and unrelated infrastructure details removed. macOS and Python checks refreshed for the checkpoint; Linux and dependency observations retain their original evidence and dates. Raw receipts and earlier runs preserved locally outside Git."
+    "changes": "Local user paths and unrelated infrastructure details removed. macOS dev/ASan and Python checks refreshed after review; Linux and dependency observations retain original evidence and dates. Raw invocation receipts are retained under ignored build/."
   }
 }

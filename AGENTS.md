@@ -143,7 +143,7 @@ files from another checkout. The coordinator must include the intended scaffold
 in the baseline before creating worktrees.
 Do not reset, clean, overwrite, or indiscriminately stage unrelated work.
 
-When sharing a checkout, assign disjoint file scopes and one build owner. Current
+When sharing a checkout, assign disjoint file scopes and one build owner. C++ check
 scripts share `build/<preset>` and `build/reports/<mode>`; concurrent runs of the
 same mode can overwrite each other's evidence. Use isolated worktrees for those
 runs. Share caches where safe and bound concurrency by available CPU/RAM.

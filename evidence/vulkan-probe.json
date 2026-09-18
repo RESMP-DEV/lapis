@@ -11,6 +11,7 @@
     "path": "/opt/homebrew/Cellar/vulkan-tools/1.4.357.0/bin/vulkaninfo",
     "sha256": "de9329540c8587778b71e3295cdc40695bd76e005968b4f98e6faa9ad4b2951a"
   },
+  "device_field_names": "Keys inside device preserve the Vulkan/vulkaninfo field names verbatim.",
   "device": {
     "apiVersion": "1.4.357",
     "deviceName": "Apple M4 Max",

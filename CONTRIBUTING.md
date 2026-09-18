@@ -175,9 +175,12 @@ out of the normal C++ build, and no runtime package is installed system-wide.
 Each invocation builds from a fresh verified source copy under `<engine>/runs/`.
 Upstream code generation can modify that copy while the reusable archive tree
 stays pristine. Copies and build outputs are retained for inspection.
+Manifest destination names form part of each experiment's build layout; change
+the manifest and its wrapper together and repeat the relevant replay.
 
-Per-engine logs and JSON receipts live in `<engine>/reports/<mode>/` under that
-build root. `--mode asan` checks the C++ consumers; Ghostty's Zig library remains
+Per-engine logs and JSON receipts live in `<engine>/runs/<invocation>/reports/`
+under that build root; the runner prints the receipt path. Reruns retain earlier
+evidence. `--mode asan` checks the C++ consumers; Ghostty's Zig library remains
 ReleaseSafe, while Contour's compiled C++ graph is instrumented. A failed case
 must keep a nonzero exit status and its receipt. Contour currently fails the
 fragmented-UTF-8 case; the combined comparison therefore returns nonzero.

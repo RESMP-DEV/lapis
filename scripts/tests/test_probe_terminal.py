@@ -13,7 +13,8 @@ import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from scripts import probe_terminal as probe
 
@@ -173,13 +174,18 @@ class ProbeTests(unittest.TestCase):
 
         def running():
             # An orphan can briefly remain a zombie awaiting init; it cannot run.
-            result = subprocess.run(
-                ["ps", "-p", str(child_pid), "-o", "stat="],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
+            try:
+                result = subprocess.run(
+                    ["ps", "-p", str(child_pid), "-o", "stat="],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except PermissionError:
+                self.skipTest("sandbox denies process-status inspection via ps")
+            if result.returncode and "Operation not permitted" in result.stderr:
+                self.skipTest("sandbox denies process-status inspection via ps")
             return result.returncode == 0 and not result.stdout.strip().startswith("Z")
 
         try:
@@ -193,9 +199,44 @@ class ProbeTests(unittest.TestCase):
         self.assertTrue(steps[0]["timed_out"])
         self.assertIsNone(steps[0]["exit_code"])
 
+    def test_cleanup_failure_preserves_original_timeout(self):
+        for original_error, original_type in (
+            (subprocess.TimeoutExpired(["build"], 1800), subprocess.TimeoutExpired),
+            (KeyboardInterrupt(), KeyboardInterrupt),
+        ):
+            with self.subTest(original_error=type(original_error).__name__):
+                process = SimpleNamespace(
+                    pid=123,
+                    wait=Mock(
+                        side_effect=[
+                            None,
+                            subprocess.TimeoutExpired(cmd=["sleep"], timeout=5),
+                        ]
+                    ),
+                )
+                with (
+                    patch.object(probe.os, "killpg"),
+                    self.assertRaises(original_type) as raised,
+                ):
+                    probe.stop_process_group(process, original_error)
+                self.assertIs(raised.exception, original_error)
+                self.assertIsNotNone(raised.exception.__cause__)
+                self.assertIn("Could not reap", raised.exception.cleanup_failure)
+
+    def test_cleanup_failure_without_original_exception_is_actionable(self):
+        process = SimpleNamespace(
+            pid=123,
+            wait=Mock(side_effect=subprocess.TimeoutExpired(cmd=["sleep"], timeout=5)),
+        )
+        with (
+            patch.object(probe.os, "killpg"),
+            self.assertRaisesRegex(RuntimeError, "Could not reap process group"),
+        ):
+            probe.stop_process_group(process)
+
     def configure_probe_fixture(self, engine="contour", mode="dev"):
         sources = self.root / "probes" / engine
-        sources.mkdir(parents=True)
+        sources.mkdir(parents=True, exist_ok=True)
         (sources / "sources.json").write_text('{"archives": []}')
         args = argparse.Namespace(
             build_root=self.cache,
@@ -214,13 +255,15 @@ class ProbeTests(unittest.TestCase):
             / "build"
             / f"lapis_{engine}_probe"
         )
-        binary.parent.mkdir(parents=True)
+        binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_bytes(b"fixture")
         return sources, binary, args
 
     def read_probe_receipt(self, engine, mode):
         return json.loads(
-            (self.cache / engine / "reports" / mode / "receipt.json").read_text()
+            (
+                self.cache / engine / "runs" / "fixture" / "reports" / "receipt.json"
+            ).read_text()
         )
 
     def test_crash_preserves_status_without_json(self):
@@ -236,13 +279,46 @@ class ProbeTests(unittest.TestCase):
         with (
             redirect_stdout(io.StringIO()),
             patch.object(probe, "PROBES", sources.parent),
-            patch.object(probe, "run_step", return_value=0),
+            patch.object(probe, "run_step", return_value=0) as run_step,
             patch.object(probe, "run_process", side_effect=crash),
         ):
             self.assertFalse(probe.probe("contour", args))
         receipt = self.read_probe_receipt("contour", "dev")
         self.assertEqual(receipt["replay_exit_code"], -11)
         self.assertEqual(Path(receipt["replay_stderr"]).read_text(), "crash diagnostic")
+        self.assertTrue(receipt["replay_invalid_json"])
+        self.assertEqual(receipt["replay_failure_kind"], "nonzero_exit_invalid_output")
+        self.assertIn("exited with -11", receipt["replay_failure"])
+        relative_sources = str(sources.relative_to(probe.ROOT))
+        self.assertEqual(
+            receipt["source_file_sha256"][f"{relative_sources}/sources.json"],
+            probe.digest(sources / "sources.json"),
+        )
+        self.assertIsInstance(receipt["compiler"], str)
+        self.assertEqual(run_step.call_args_list[-1].args[0], "ctest")
+        self.assertFalse(receipt["passed"])
+
+    def test_zero_exit_malformed_replay_fails(self):
+        sources, binary, args = self.configure_probe_fixture()
+        binary.write_text("#!/bin/sh\nprintf 'not json\\n'")
+        binary.chmod(0o700)
+        with (
+            redirect_stdout(io.StringIO()),
+            patch.object(probe, "PROBES", sources.parent),
+            patch.object(probe, "run_step", return_value=0) as run_step,
+        ):
+            self.assertFalse(probe.probe("contour", args))
+        receipt = self.read_probe_receipt("contour", "dev")
+        self.assertEqual(receipt["replay_exit_code"], 0)
+        self.assertTrue(receipt["replay_invalid_json"])
+        self.assertIsNone(receipt["replay"])
+        self.assertEqual(receipt["replay_failure_kind"], "zero_exit_invalid_output")
+        self.assertIn(
+            "successfully but produced invalid JSON", receipt["replay_failure"]
+        )
+        self.assertGreater(len(receipt["source_file_sha256"]), 0)
+        self.assertIsInstance(receipt["compiler"], str)
+        self.assertEqual(run_step.call_args_list[-1].args[0], "ctest")
         self.assertFalse(receipt["passed"])
 
     def test_replay_timeout_keeps_partial_output_and_failure_receipt(self):
@@ -302,11 +378,82 @@ class ProbeTests(unittest.TestCase):
                     self.assertFalse(probe.probe(engine, args))
                 receipt = json.loads(
                     (
-                        self.cache / engine / "reports" / mode / "receipt.json"
+                        self.cache
+                        / engine
+                        / "runs"
+                        / args.invocation
+                        / "reports"
+                        / "receipt.json"
                     ).read_text()
                 )
                 self.assertEqual(receipt["sanitizer_scope"], label)
                 self.assertFalse(receipt["passed"])
+
+    def test_reruns_preserve_failure_receipts_and_logs(self):
+        sources, _, first_args = self.configure_probe_fixture()
+        _, _, second_args = self.configure_probe_fixture()
+        second_args.invocation = "fixture-2"
+
+        def fail_configure(name, command, reports, steps, **kwargs):
+            log = reports / f"{name}.log"
+            log.write_text(reports.parent.name)
+            steps.append({"name": name, "log": str(log)})
+            raise RuntimeError("controlled configure failure")
+
+        with (
+            redirect_stdout(io.StringIO()),
+            patch.object(probe, "PROBES", sources.parent),
+            patch.object(probe, "run_step", side_effect=fail_configure),
+        ):
+            self.assertFalse(probe.probe("contour", first_args))
+            first_path = self.cache / "contour/runs/fixture/reports/receipt.json"
+            first_bytes = first_path.read_bytes()
+            first_log = first_path.parent / "configure.log"
+            self.assertEqual(first_log.read_text(), "fixture")
+            self.assertFalse(probe.probe("contour", second_args))
+        self.assertEqual(first_path.read_bytes(), first_bytes)
+        self.assertEqual(first_log.read_text(), "fixture")
+        second_path = self.cache / "contour/runs/fixture-2/reports/receipt.json"
+        second_receipt = json.loads(second_path.read_text())
+        self.assertFalse(second_receipt["passed"])
+        self.assertEqual(
+            (second_path.parent / "configure.log").read_text(), "fixture-2"
+        )
+
+    def test_unsupported_ghostty_host_reports_pinned_hosts(self):
+        sources = self.root / "probes" / "ghostty"
+        sources.mkdir(parents=True)
+        (sources / "sources.json").write_text(
+            json.dumps(
+                {"archives": [], "zig": {"Darwin-arm64": {}, "Linux-aarch64": {}}}
+            )
+        )
+        args = argparse.Namespace(build_root=self.cache, mode="dev")
+        args.cxx = "clang++"
+        args.cc = "clang"
+        args.cxx_flags = ""
+        with (
+            redirect_stdout(io.StringIO()) as output,
+            patch.object(probe, "PROBES", sources.parent),
+            patch.object(probe.platform, "system", return_value="Linux"),
+            patch.object(probe.platform, "machine", return_value="x86_64"),
+        ):
+            self.assertFalse(probe.probe("ghostty", args))
+        receipt = json.loads(
+            (
+                self.cache
+                / "ghostty"
+                / "runs"
+                / args.invocation
+                / "reports"
+                / "receipt.json"
+            ).read_text()
+        )
+        self.assertEqual(
+            receipt["error"],
+            "Unsupported Ghostty host Linux-x86_64; pinned hosts are: Darwin-arm64, Linux-aarch64",
+        )
+        self.assertIn("Unsupported Ghostty host Linux-x86_64", output.getvalue())
 
 
 class CompilerDiscoveryTests(unittest.TestCase):

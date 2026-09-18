@@ -151,7 +151,7 @@ def prepare_derived_archive(entry, directory, run_directory):
     return pristine, derived
 
 
-def stop_process_group(process):
+def stop_process_group(process, original_error=None):
     """Bound timeout cleanup, including children whose parent already exited."""
     try:
         os.killpg(process.pid, signal.SIGTERM)
@@ -166,7 +166,15 @@ def stop_process_group(process):
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
-    process.wait(timeout=5)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired as cleanup_error:
+        message = f"Could not reap process group {process.pid} after SIGKILL"
+        if original_error is None:
+            raise RuntimeError(message) from cleanup_error
+        original_error.add_note(message)
+        original_error.cleanup_failure = message
+        raise original_error from cleanup_error
 
 
 def run_process(command, *, timeout, **kwargs):
@@ -177,7 +185,7 @@ def run_process(command, *, timeout, **kwargs):
         try:
             stdout, stderr = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired as error:
-            stop_process_group(process)
+            stop_process_group(process, error)
             try:
                 stdout, stderr = process.communicate(timeout=5)
             except subprocess.TimeoutExpired as cleanup_error:
@@ -190,8 +198,8 @@ def run_process(command, *, timeout, **kwargs):
             if stderr is not None:
                 error.stderr = stderr
             raise
-        except BaseException:
-            stop_process_group(process)
+        except BaseException as error:
+            stop_process_group(process, error)
             raise
         return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
     finally:
@@ -231,8 +239,10 @@ def run_step(
                 timeout=timeout,
             )
         step["exit_code"] = result.returncode
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as error:
         step.update(exit_code=None, timed_out=True)
+        if hasattr(error, "cleanup_failure"):
+            step["cleanup_failure"] = error.cleanup_failure
         raise
     finally:
         step["elapsed_seconds"] = round(time.monotonic() - start, 3)
@@ -258,12 +268,37 @@ def run_replay(executable, reports, receipt, *, timeout=60):
                 [executable], stdout=output, stderr=errors, timeout=timeout
             )
         receipt["replay_exit_code"] = result.returncode
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as error:
         receipt.update(replay_exit_code=None, replay_timed_out=True)
+        if hasattr(error, "cleanup_failure"):
+            receipt["cleanup_failure"] = error.cleanup_failure
         raise
     finally:
         receipt["replay_elapsed_seconds"] = round(time.monotonic() - start, 3)
-    receipt["replay"] = json.loads(stdout.read_text())
+    try:
+        parsed = json.loads(stdout.read_text())
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("passed"), bool):
+            raise TypeError("Replay must be a JSON object with a boolean passed field")
+        receipt["replay"] = parsed
+    except (ValueError, TypeError) as error:
+        receipt["replay"] = None
+        receipt.update(
+            replay_invalid_json=True,
+            replay_json_error=str(error),
+            replay_stdout_bytes=stdout.stat().st_size,
+        )
+        if result.returncode != 0:
+            receipt.update(
+                replay_failure_kind="nonzero_exit_invalid_output",
+                replay_failure=(
+                    f"replay exited with {result.returncode} and produced invalid JSON"
+                ),
+            )
+        else:
+            receipt.update(
+                replay_failure_kind="zero_exit_invalid_output",
+                replay_failure="replay exited successfully but produced invalid JSON",
+            )
     return result.returncode
 
 
@@ -317,7 +352,7 @@ def probe(engine, args):
     args.invocation = invocation
     run_directory = directory / "runs" / invocation
     directory.mkdir(parents=True, exist_ok=True)
-    reports = directory / "reports" / args.mode
+    reports = run_directory / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     manifest = json.loads((PROBES / engine / "sources.json").read_text())
     receipt = {
@@ -364,6 +399,11 @@ def probe(engine, args):
         environment = dict(os.environ)
         if engine == "ghostty":
             host = f"{platform.system()}-{platform.machine()}"
+            if host not in manifest["zig"]:
+                supported = ", ".join(sorted(manifest["zig"]))
+                raise RuntimeError(
+                    f"Unsupported Ghostty host {host}; pinned hosts are: {supported}"
+                )
             compiler = manifest["zig"][host]
             zig_entry = dict(compiler, name="zig", destination="zig")
             zig = prepare_archive(zig_entry, directory) / "zig"
@@ -437,7 +477,10 @@ def probe(engine, args):
             allow_failure=True,
         )
         receipt["passed"] = (
-            replay_exit_code == 0 and receipt["replay"]["passed"] and ctest == 0
+            replay_exit_code == 0
+            and receipt["replay"] is not None
+            and receipt["replay"].get("passed", False)
+            and ctest == 0
         )
     except (
         OSError,
