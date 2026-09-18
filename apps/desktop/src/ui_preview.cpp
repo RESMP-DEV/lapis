@@ -121,23 +121,19 @@ bool UiPreview::loadCandidate() {
     candidate->load(options_.source);
     QObject::disconnect(loadDiagnosticsConnection);
 
-    if (!candidateDiagnostics.isEmpty()) {
-        qWarning().noquote() << candidateDiagnostics;
-        if (diagnostics_ != candidateDiagnostics) {
-            diagnostics_ = std::move(candidateDiagnostics);
-            emit diagnosticsChanged();
-        }
-        return false;
-    }
+    const auto setDiagnostics = [this](const QString& diagnostics) {
+        const QString bounded = boundedDiagnostics(diagnostics);
+        if (diagnostics_ == bounded)
+            return;
+        diagnostics_ = bounded;
+        emit diagnosticsChanged();
+    };
 
     const QList<QObject*> roots = candidate->rootObjects();
     if (roots.isEmpty()) {
         if (candidateDiagnostics.isEmpty())
             candidateDiagnostics = QStringLiteral("QML load produced no root object");
-        if (diagnostics_ != candidateDiagnostics) {
-            diagnostics_ = boundedDiagnostics(candidateDiagnostics);
-            emit diagnosticsChanged();
-        }
+        setDiagnostics(candidateDiagnostics);
         qWarning().noquote() << diagnostics_;
         return false;
     }
@@ -150,10 +146,7 @@ bool UiPreview::loadCandidate() {
         qWarning().noquote() << message;
         if (candidateDiagnostics.isEmpty())
             candidateDiagnostics = message;
-        if (diagnostics_ != candidateDiagnostics) {
-            diagnostics_ = boundedDiagnostics(candidateDiagnostics);
-            emit diagnosticsChanged();
-        }
+        setDiagnostics(candidateDiagnostics);
         qWarning().noquote() << diagnostics_;
         return false;
     }
@@ -192,6 +185,8 @@ bool UiPreview::loadCandidate() {
     std::swap(engine_, candidate);
     window_ = acceptedWindow;
     if (reloading) {
+        // A QML method in this engine may still be on the call stack, including
+        // a second reload in that same method. Retire only through the event loop.
         candidate->setParent(this);
         candidate.release()->deleteLater();
     }

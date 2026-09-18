@@ -2,12 +2,16 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
+#include <array>
 #include <cerrno>
 #include <csignal>
+#include <cstring>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -20,6 +24,7 @@ struct Result {
     QByteArray output;
     QString failure;
     int code{-1};
+    QProcess::ExitStatus status{QProcess::NormalExit};
     bool exited{};
 };
 void require(bool value, const char* message) {
@@ -33,11 +38,13 @@ void observe(PtyProcess& process, QEventLoop& loop, Result& result) {
         result.failure = error;
         loop.quit();
     });
-    QObject::connect(&process, &PtyProcess::finished, &loop, [&](int code) {
-        result.code = code;
-        result.exited = true;
-        loop.quit();
-    });
+    QObject::connect(&process, &PtyProcess::finished, &loop,
+                     [&](int code, QProcess::ExitStatus exit_status) {
+                         result.code = code;
+                         result.status = exit_status;
+                         result.exited = true;
+                         loop.quit();
+                     });
     QTimer::singleShot(5000, &loop, &QEventLoop::quit);
 }
 Result run(const LaunchSpec& launch) {
@@ -122,8 +129,123 @@ void cleanup(const QString& directory) {
     require(::kill(static_cast<pid_t>(pid), 0) == -1 && errno == ESRCH,
             "Destructor did not reap the owned child");
 }
+void signal_exit() {
+    PtyProcess process;
+    QEventLoop loop;
+    Result result;
+    observe(process, loop, result);
+    QObject::connect(&process, &PtyProcess::started, &loop, [&] {
+        QTimer::singleShot(20, &loop, [&] {
+            require(::kill(static_cast<pid_t>(process.processId()), SIGTERM) == 0,
+                    "Could not signal child");
+        });
+    });
+    process.start({.program = QStringLiteral("/bin/sleep"),
+                   .arguments = {QStringLiteral("30")},
+                   .directory = QStringLiteral("/tmp")});
+    loop.exec();
+    require(result.exited && result.status == QProcess::CrashExit && result.failure.isEmpty(),
+            "Signal exit status was not preserved");
+}
+void failed_start_reuse(const QString& directory) {
+    const auto path = QDir(directory).filePath(QStringLiteral("invalid-interpreter"));
+    QFile executable(path);
+    require(executable.open(QIODevice::WriteOnly), "Cannot create invalid executable");
+    executable.write("#!/nonexistent/lapis-interpreter\n");
+    executable.close();
+    require(executable.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "Cannot mark fixture executable");
+    PtyProcess process;
+    QEventLoop loop;
+    Result result;
+    observe(process, loop, result);
+    process.start({.program = path, .arguments = {}, .directory = directory});
+    require(process.writeBytes("stale-input\n"), "Starting queue rejected input");
+    loop.exec();
+    require(!result.failure.isEmpty(), "Failed exec was not reported");
+    result = {};
+    QObject::connect(&process, &PtyProcess::started, &loop, [&] {
+        require(process.writeBytes("fresh-input\n"), "Restart input rejected");
+    });
+    QObject::connect(&process, &PtyProcess::output, &loop, [&](const QByteArray&) {
+        if (result.output.contains("fresh-input"))
+            loop.quit();
+    });
+    process.start({.program = QStringLiteral("/bin/cat"), .arguments = {}, .directory = directory});
+    loop.exec();
+    require(result.failure.isEmpty() && result.output.contains("fresh-input") &&
+                !result.output.contains("stale-input"),
+            "Failed exec leaked queued input");
+}
+void bounded_descendant_drain(const QString& directory) {
+    QElapsedTimer elapsed;
+    elapsed.start();
+    const auto result = run({.program = QCoreApplication::applicationFilePath(),
+                             .arguments = {QStringLiteral("--busy-child")},
+                             .directory = directory});
+    require(result.exited && result.code == 42 && result.failure.isEmpty() &&
+                elapsed.elapsed() < 5000,
+            "Descendant held the final drain open");
+}
+void cleanup_group(const QString& directory) {
+    auto process = std::make_unique<PtyProcess>();
+    QEventLoop loop;
+    QByteArray output;
+    QObject::connect(process.get(), &PtyProcess::output, &loop, [&](const QByteArray& bytes) {
+        output += bytes;
+        if (output.contains('\n'))
+            loop.quit();
+    });
+    QTimer::singleShot(2000, &loop, &QEventLoop::quit);
+    process->start({.program = QCoreApplication::applicationFilePath(),
+                    .arguments = {QStringLiteral("--group-child")},
+                    .directory = directory});
+    loop.exec();
+    const auto leader = static_cast<pid_t>(process->processId());
+    const auto child = static_cast<pid_t>(output.trimmed().toInt());
+    require(leader > 0 && child > 0 && ::getsid(child) == leader && ::getpgid(child) == leader,
+            "Fixture child not in owned group");
+    process.reset();
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (::kill(child, 0) == 0 && elapsed.elapsed() < 2000)
+        QThread::msleep(5);
+    require(::kill(leader, 0) == -1 && errno == ESRCH, "Leader not reaped");
+    require(::kill(child, 0) == -1 && errno == ESRCH, "Resistant same-group child survived");
+}
+int descendant_fixture(bool busy) {
+    const pid_t child = ::fork();
+    if (child < 0)
+        return 1;
+    if (child == 0) {
+        ::signal(SIGHUP, SIG_IGN);
+        ::signal(SIGTERM, SIG_IGN);
+        ::signal(SIGPIPE, SIG_IGN);
+        if (busy) {
+            std::array<char, 16384> bytes{};
+            bytes.fill('x');
+            while (::write(STDOUT_FILENO, bytes.data(), bytes.size()) > 0) {
+            }
+            ::_exit(0);
+        }
+        for (;;)
+            ::pause();
+    }
+    if (busy) {
+        ::usleep(50000);
+        return 42;
+    }
+    std::cout << child << '\n' << std::flush;
+    for (;;)
+        ::pause();
+}
+
 } // namespace
 int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--busy-child") == 0)
+        return descendant_fixture(true);
+    if (argc == 2 && std::strcmp(argv[1], "--group-child") == 0)
+        return descendant_fixture(false);
     QCoreApplication application(argc, argv);
     try {
         QTemporaryDir directory;
@@ -145,8 +267,12 @@ int main(int argc, char** argv) {
                      .failure.isEmpty(),
                 "Missing cwd accepted");
         cleanup(directory.path());
-        std::cout
-            << "Literal argv, cwd, output drain, resize, exit, failures and child cleanup passed\n";
+        signal_exit();
+        failed_start_reuse(directory.path());
+        bounded_descendant_drain(directory.path());
+        cleanup_group(directory.path());
+        std::cout << "Literal argv, cwd, output drain, resize, exit, signal status, "
+                     "restart, bounded drain and process-group cleanup passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

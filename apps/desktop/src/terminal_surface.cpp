@@ -73,11 +73,105 @@ void add_row(QSGTextNode& node, const session::TerminalSnapshot& snapshot, std::
     node.addTextLayout(QPointF(0, static_cast<qreal>(row) * row_height), &layout);
 }
 
+bool same_row(const session::TerminalSnapshot& left, const session::TerminalSnapshot& right,
+              std::size_t row) {
+    if (left.size != right.size || left.foreground_rgb != right.foreground_rgb ||
+        left.background_rgb != right.background_rgb || left.palette != right.palette)
+        return false;
+    for (std::size_t column = 0; column < left.size.columns; ++column) {
+        const auto index = row * left.size.columns + column;
+        const auto& a = left.cells[index];
+        const auto& b = right.cells[index];
+        if (a.kind != b.kind || a.style != b.style || left.text(index) != right.text(index))
+            return false;
+    }
+    return true;
+}
+
+class TerminalNode final : public QSGTransformNode {
+  public:
+    std::shared_ptr<const session::TerminalSnapshot> snapshot;
+    // Scene graph ownership stays with each parent; these are observers only.
+    QSGSimpleRectNode* background{};
+    QSGNode* rows{};
+    QSGNode* overlays{};
+
+    TerminalNode() {
+        auto background_node = std::make_unique<QSGSimpleRectNode>();
+        background = background_node.get();
+        appendChildNode(background_node.release());
+        auto row_nodes = std::make_unique<QSGNode>();
+        rows = row_nodes.get();
+        appendChildNode(row_nodes.release());
+        auto overlay_nodes = std::make_unique<QSGNode>();
+        overlays = overlay_nodes.get();
+        appendChildNode(overlay_nodes.release());
+    }
+    void updateRows(QQuickWindow& window, const session::TerminalSnapshot& next, const QFont& font,
+                    qreal row_height) {
+        if (!snapshot || snapshot->size != next.size) {
+            while (auto* child = rows->firstChild()) {
+                rows->removeChildNode(child);
+                delete child;
+            }
+        }
+        auto* previous = rows->firstChild();
+        for (std::size_t row = 0; row < next.size.rows; ++row) {
+            auto* following = previous ? previous->nextSibling() : nullptr;
+            if (!previous || !same_row(*snapshot, next, row)) {
+                auto text = std::unique_ptr<QSGTextNode>(window.createTextNode());
+                text->setColor(color(next.foreground_rgb));
+                text->setRenderType(QSGTextNode::QtRendering);
+                add_row(*text, next, row, font, row_height);
+                if (previous) {
+                    rows->insertChildNodeBefore(text.release(), previous);
+                    rows->removeChildNode(previous);
+                    delete previous;
+                } else
+                    rows->appendChildNode(text.release());
+            }
+            previous = following;
+        }
+    }
+};
+
 } // namespace
+
+struct TerminalSurface::RenderState {
+    std::shared_ptr<const session::TerminalSnapshot> snapshot;
+    QString preedit;
+    QSizeF viewport;
+};
+
+void TerminalSurface::publishFrame(bool snapshot_changed) {
+    // Only the GUI thread touches document_, preedit_, or item geometry. The
+    // render thread gets owned immutable values through an explicit C++ handoff.
+    auto frame = std::make_shared<RenderState>();
+    frame->preedit = preedit_;
+    frame->viewport = size();
+    {
+        const std::lock_guard lock(render_mutex_);
+        if (!snapshot_changed && render_state_)
+            frame->snapshot = render_state_->snapshot;
+    }
+    if (snapshot_changed && document_)
+        frame->snapshot = std::make_shared<const session::TerminalSnapshot>(document_->snapshot());
+    {
+        const std::lock_guard lock(render_mutex_);
+        render_state_ = std::move(frame);
+    }
+    update();
+}
 
 TerminalSurface::TerminalSurface(QQuickItem* parent) : QQuickItem(parent) {
     setFlag(ItemHasContents);
     setClip(true);
+    publishFrame(true);
+}
+
+TerminalSurface::~TerminalSurface() {
+    const std::lock_guard lock(render_mutex_);
+    render_state_.reset();
 }
 
 void TerminalSurface::setDocument(SessionPreview* document) {
@@ -86,77 +180,82 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     if (document_)
         disconnect(document_, nullptr, this, nullptr);
     document_ = document;
-    if (document_)
-        connect(document_, &SessionPreview::snapshotChanged, this, [this] {
-            content_dirty_ = true;
-            update();
+    if (document_) {
+        connect(document_, &SessionPreview::snapshotChanged, this, [this] { publishFrame(true); });
+        connect(document_, &QObject::destroyed, this, [this] {
+            document_ = nullptr;
+            preedit_.clear();
+            publishFrame(true);
+            emit documentChanged();
         });
+    }
+    preedit_.clear();
     requestResize();
-    content_dirty_ = true;
+    publishFrame(true);
     emit documentChanged();
-    update();
 }
 
 void TerminalSurface::geometryChange(const QRectF& new_geometry, const QRectF& old_geometry) {
     QQuickItem::geometryChange(new_geometry, old_geometry);
     if (new_geometry.size() != old_geometry.size()) {
         requestResize();
-        update();
+        publishFrame(false);
     }
 }
 
 QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData*) {
-    // Qt owns the returned scene graph. updatePaintNode runs during scene-graph
-    // synchronization while the GUI thread is blocked; snapshots are immutable.
-    if (!document_ || width() <= 0 || height() <= 0) {
+    // Qt owns the returned nodes. No GUI-owned document or mutable text is
+    // dereferenced here, including on an empty/reloaded surface.
+    std::shared_ptr<const RenderState> frame;
+    {
+        const std::lock_guard lock(render_mutex_);
+        frame = render_state_;
+    }
+    if (!frame || !frame->snapshot || frame->viewport.isEmpty()) {
         delete old_node;
         return nullptr;
     }
-    const auto& snapshot = document_->snapshot();
+    const auto& snapshot = *frame->snapshot;
     const QFont font = terminal_font();
     const QFontMetricsF metrics(font);
     const qreal cell_width = metrics.horizontalAdvance(QLatin1Char('M'));
     const qreal row_height = metrics.height() + 3;
-    auto* root = static_cast<QSGTransformNode*>(old_node);
-    if (content_dirty_ || root == nullptr) {
-        delete root;
-        auto owned = std::make_unique<QSGTransformNode>();
-        auto background = std::make_unique<QSGSimpleRectNode>(
-            QRectF(0, 0, snapshot.size.columns * cell_width, snapshot.size.rows * row_height),
-            color(snapshot.background_rgb));
-        owned->appendChildNode(background.release());
-        auto text = std::unique_ptr<QSGTextNode>(window()->createTextNode());
-        text->setColor(color(snapshot.foreground_rgb));
-        text->setRenderType(QSGTextNode::QtRendering);
-        for (std::size_t row = 0; row < snapshot.size.rows; ++row)
-            add_row(*text, snapshot, row, font, row_height);
-        owned->appendChildNode(text.release());
-        if (snapshot.cursor.visible && snapshot.cursor.in_viewport) {
-            auto cursor = std::make_unique<QSGSimpleRectNode>(
-                QRectF(snapshot.cursor.column * cell_width, snapshot.cursor.row * row_height, 2,
-                       metrics.height()),
-                color(snapshot.foreground_rgb));
-            owned->appendChildNode(cursor.release());
-        }
-        if (!preedit_.isEmpty()) {
-            auto composition = std::unique_ptr<QSGTextNode>(window()->createTextNode());
-            composition->setColor(color(snapshot.foreground_rgb));
-            QTextLayout layout(preedit_, font);
-            layout.beginLayout();
-            auto line = layout.createLine();
-            if (line.isValid())
-                line.setLineWidth(10000);
-            layout.endLayout();
-            composition->addTextLayout(
-                QPointF(snapshot.cursor.column * cell_width, snapshot.cursor.row * row_height),
-                &layout);
-            owned->appendChildNode(composition.release());
-        }
-        root = owned.release();
-        content_dirty_ = false;
+    auto* root = static_cast<TerminalNode*>(old_node);
+    if (!root)
+        root = new TerminalNode(); // Qt takes ownership of the returned root.
+    root->background->setRect(
+        QRectF(0, 0, snapshot.size.columns * cell_width, snapshot.size.rows * row_height));
+    root->background->setColor(color(snapshot.background_rgb));
+    if (root->snapshot != frame->snapshot)
+        root->updateRows(*window(), snapshot, font, row_height);
+    root->snapshot = frame->snapshot;
+    while (auto* child = root->overlays->firstChild()) {
+        root->overlays->removeChildNode(child);
+        delete child;
     }
-    const qreal scale = std::min(width() / (snapshot.size.columns * cell_width),
-                                 height() / (snapshot.size.rows * row_height));
+    if (snapshot.cursor.visible && snapshot.cursor.in_viewport) {
+        auto cursor = std::make_unique<QSGSimpleRectNode>(
+            QRectF(snapshot.cursor.column * cell_width, snapshot.cursor.row * row_height, 2,
+                   metrics.height()),
+            color(snapshot.foreground_rgb));
+        root->overlays->appendChildNode(cursor.release());
+    }
+    if (!frame->preedit.isEmpty() && snapshot.cursor.in_viewport) {
+        auto composition = std::unique_ptr<QSGTextNode>(window()->createTextNode());
+        composition->setColor(color(snapshot.foreground_rgb));
+        QTextLayout layout(frame->preedit, font);
+        layout.beginLayout();
+        auto line = layout.createLine();
+        if (line.isValid())
+            line.setLineWidth(10000);
+        layout.endLayout();
+        composition->addTextLayout(
+            QPointF(snapshot.cursor.column * cell_width, snapshot.cursor.row * row_height),
+            &layout);
+        root->overlays->appendChildNode(composition.release());
+    }
+    const qreal scale = std::min(frame->viewport.width() / (snapshot.size.columns * cell_width),
+                                 frame->viewport.height() / (snapshot.size.rows * row_height));
     QMatrix4x4 matrix;
     matrix.scale(static_cast<float>(scale));
     root->setMatrix(matrix);
@@ -190,6 +289,41 @@ void TerminalSurface::mousePressEvent(QMouseEvent* event) {
     } else
         event->ignore();
 }
+QByteArray terminal_text_key(const QKeyEvent& event) {
+    const auto mods = event.modifiers();
+    if (mods.testFlag(Qt::MetaModifier))
+        return {};
+    if (mods.testFlag(Qt::GroupSwitchModifier))
+        return event.text().toUtf8();
+    QByteArray text;
+    if (mods.testFlag(Qt::ControlModifier)) {
+        const int key = event.key();
+        int control = -1;
+        if (key >= Qt::Key_A && key <= Qt::Key_Underscore)
+            control = static_cast<int>(static_cast<unsigned int>(key) & 0x1fU);
+        else if (key == Qt::Key_Space || key == Qt::Key_At || key == Qt::Key_2)
+            control = 0;
+        else if (key == Qt::Key_6)
+            control = 30;
+        else if (key == Qt::Key_Minus)
+            control = 31;
+        if (control >= 0)
+            text.append(static_cast<char>(control));
+    } else if (mods.testFlag(Qt::AltModifier) && event.key() >= Qt::Key_Space &&
+               event.key() <= Qt::Key_AsciiTilde) {
+        // Option's composed text (for example Option+B -> integral sign) is
+        // replaced with the base letter for conventional terminal Meta keys.
+        const bool lower = event.key() >= Qt::Key_A && event.key() <= Qt::Key_Z &&
+                           !mods.testFlag(Qt::ShiftModifier);
+        const int letter = event.key() + (lower ? 32 : 0);
+        text.append(static_cast<char>(letter));
+    } else
+        text = event.text().toUtf8();
+    if (mods.testFlag(Qt::AltModifier) && !text.isEmpty())
+        text.prepend('\x1b');
+    return text;
+}
+
 void TerminalSurface::keyPressEvent(QKeyEvent* event) {
     if (!interactive_ || !document_ || !document_->live()) {
         event->ignore();
@@ -258,11 +392,11 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
         document_->sendKey(*key,
                            {mods.testFlag(Qt::ShiftModifier), mods.testFlag(Qt::ControlModifier),
                             mods.testFlag(Qt::AltModifier), false});
-    } else if (event->modifiers().testFlag(Qt::ControlModifier) && event->key() >= Qt::Key_A &&
-               event->key() <= Qt::Key_Z) {
-        document_->sendText(QByteArray(1, static_cast<char>(event->key() - Qt::Key_A + 1)));
-    } else if (!event->text().isEmpty())
-        document_->sendText(event->text().toUtf8());
+    } else {
+        const auto text = terminal_text_key(*event);
+        if (!text.isEmpty())
+            document_->sendText(text);
+    }
     event->accept();
 }
 void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
@@ -273,8 +407,7 @@ void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
     if (!event->commitString().isEmpty())
         document_->sendText(event->commitString().toUtf8());
     preedit_ = event->preeditString();
-    content_dirty_ = true;
-    update();
+    publishFrame(false);
     event->accept();
 }
 QVariant TerminalSurface::inputMethodQuery(Qt::InputMethodQuery query) const {
@@ -282,9 +415,16 @@ QVariant TerminalSurface::inputMethodQuery(Qt::InputMethodQuery query) const {
         return interactive_ && document_ && document_->live();
     if (query == Qt::ImCursorRectangle && document_) {
         const QFontMetricsF metrics(terminal_font());
-        const auto& cursor = document_->snapshot().cursor;
-        return QRectF(cursor.column * metrics.horizontalAdvance(QLatin1Char('M')),
-                      cursor.row * (metrics.height() + 3), 2, metrics.height());
+        const auto& snapshot = document_->snapshot();
+        if (!snapshot.cursor.in_viewport)
+            return QRectF();
+        const qreal cell_width = metrics.horizontalAdvance(QLatin1Char('M'));
+        const qreal row_height = metrics.height() + 3;
+        const qreal scale = std::min(width() / (snapshot.size.columns * cell_width),
+                                     height() / (snapshot.size.rows * row_height));
+        return QRectF(snapshot.cursor.column * cell_width * scale,
+                      snapshot.cursor.row * row_height * scale, 2 * scale,
+                      metrics.height() * scale);
     }
     return QQuickItem::inputMethodQuery(query);
 }

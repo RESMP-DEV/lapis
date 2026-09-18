@@ -38,10 +38,11 @@ file(READ "${CMAKE_CURRENT_LIST_DIR}/../tools/terminal_probe/ghostty/sources.jso
 string(JSON lapis_ghostty_engine GET "${lapis_ghostty_receipt}" engine)
 string(JSON lapis_ghostty_passed GET "${lapis_ghostty_receipt}" passed)
 string(JSON lapis_ghostty_sources GET "${lapis_ghostty_receipt}" sources)
-string(JSON lapis_ghostty_pins GET "${lapis_ghostty_manifest}")
+string(JSON lapis_ghostty_sources_equal EQUAL
+    "${lapis_ghostty_sources}" "${lapis_ghostty_manifest}")
 if(NOT lapis_ghostty_engine STREQUAL "ghostty" OR
    NOT lapis_ghostty_passed STREQUAL "ON" OR
-   NOT lapis_ghostty_sources STREQUAL lapis_ghostty_pins)
+   NOT lapis_ghostty_sources_equal)
     message(FATAL_ERROR "Ghostty prefix receipt is unsuccessful or differs from pinned sources. "
         "Rebuild with: python3 scripts/probe_terminal.py --engine ghostty")
 endif()

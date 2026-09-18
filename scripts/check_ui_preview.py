@@ -24,19 +24,15 @@ class CheckResult:
     def __init__(
         self,
         name: str,
-        expected: str,
         passed: bool,
         exit_code: int | None,
         elapsed_seconds: float,
-        log_path: Path,
         output: str,
     ) -> None:
         self.name = name
-        self.expected = expected
         self.passed = passed
         self.exit_code = exit_code
         self.elapsed_seconds = elapsed_seconds
-        self.log_path = log_path
         self.output = output
 
 
@@ -82,20 +78,13 @@ def run(
         process.returncode == 0 if expect_success else process.returncode != 0
     )
     log_path = save_log(artifacts, name, output)
+    expected = "success" if expect_success else "failure"
     print(
         f"{'PASS' if passed else 'FAIL'} {name} ({elapsed:.2f}s, "
-        f"expected {'success' if expect_success else 'failure'}): {log_path}",
+        f"expected {expected}): {log_path}",
         flush=True,
     )
-    return CheckResult(
-        name,
-        "success" if expect_success else "failure",
-        passed,
-        exit_code,
-        elapsed,
-        log_path,
-        output,
-    )
+    return CheckResult(name, passed, exit_code, elapsed, output)
 
 
 def stop_process_group(process: subprocess.Popen[str]) -> None:

@@ -1,12 +1,12 @@
 #include "launch_spec.hpp"
 
+#include "transport/local_protocol.hpp"
 #include <QCryptographicHash>
 #include <QDataStream>
 #include <QDir>
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <stdexcept>
-#include <utility>
 
 namespace lapis::session {
 LaunchSpec validate_launch(LaunchSpec launch) {
@@ -27,7 +27,8 @@ LaunchSpec validate_launch(LaunchSpec launch) {
     if (launch.program.isEmpty() || launch.directory.isEmpty())
         throw std::invalid_argument("Program and working directory are required");
     if (launch.size.columns == 0 || launch.size.rows == 0 ||
-        static_cast<std::size_t>(launch.size.columns) * launch.size.rows > 32768U)
+        static_cast<std::size_t>(launch.size.columns) * launch.size.rows >
+            static_cast<std::size_t>(wire::max_cells))
         throw std::invalid_argument("Invalid initial terminal size");
     const QFileInfo directory(launch.directory);
     if (!directory.isDir())

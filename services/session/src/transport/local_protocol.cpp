@@ -32,30 +32,46 @@ QByteArray frame(Kind kind, const QByteArray& payload) {
     check(payload.size() < max_frame_bytes);
     QByteArray result;
     QDataStream out(&result, QIODevice::WriteOnly);
+    out.setVersion(QDataStream::Qt_6_0);
     out << static_cast<quint32>(payload.size() + 1) << static_cast<quint8>(kind);
     result += payload;
     return result;
 }
 bool take_frame(QByteArray& buffer, Frame& result) {
-    if (buffer.size() < 4)
+    qsizetype consumed{};
+    const bool taken = take_frame(buffer, consumed, result);
+    if (taken)
+        buffer.remove(0, consumed);
+    return taken;
+}
+bool take_frame(QByteArray& buffer, qsizetype& consumed, Frame& result) {
+    if (consumed < 0 || consumed > buffer.size())
+        throw std::runtime_error("Invalid local session read offset");
+    const auto available = buffer.size() - consumed;
+    if (available < 4)
         return false;
-    QDataStream in(buffer);
-    quint32 size{};
-    in >> size;
+    const auto* header = reinterpret_cast<const unsigned char*>(buffer.constData()) + consumed;
+    const quint32 size = (quint32{header[0]} << 24U) | (quint32{header[1]} << 16U) |
+                         (quint32{header[2]} << 8U) | quint32{header[3]};
     check(size >= 1 && size <= max_frame_bytes);
-    if (buffer.size() < static_cast<qsizetype>(size) + 4)
+    if (available < static_cast<qsizetype>(size) + 4)
         return false;
-    quint8 kind{};
-    in >> kind;
+    const auto kind = static_cast<quint8>(header[4]);
     check(kind >= static_cast<quint8>(Kind::hello) && kind <= static_cast<quint8>(Kind::attach));
-    result = {static_cast<Kind>(kind), buffer.mid(5, static_cast<qsizetype>(size) - 1)};
-    buffer.remove(0, static_cast<qsizetype>(size) + 4);
+    result = {static_cast<Kind>(kind), buffer.mid(consumed + 5, static_cast<qsizetype>(size) - 1)};
+    consumed += static_cast<qsizetype>(size) + 4;
+    if (consumed > buffer.size() / 2) {
+        buffer.remove(0, consumed);
+        consumed = 0;
+    }
     return true;
 }
 QByteArray encode_snapshot(const TerminalSnapshot& s) {
     check(s.cells.size() <= max_cells && s.graphemes.size() <= max_codepoints);
+    check(static_cast<std::size_t>(s.size.columns) * s.size.rows == s.cells.size());
     QByteArray bytes;
     QDataStream out(&bytes, QIODevice::WriteOnly);
+    out.setVersion(QDataStream::Qt_6_0);
     out << quint64(s.revision) << quint16(s.size.columns) << quint16(s.size.rows)
         << quint16(s.cursor.column) << quint16(s.cursor.row) << s.cursor.in_viewport
         << s.cursor.visible << s.cursor.blinking << s.cursor.wide_tail << quint8(s.cursor.shape)
@@ -81,6 +97,7 @@ QByteArray encode_snapshot(const TerminalSnapshot& s) {
 }
 TerminalSnapshot decode_snapshot(const QByteArray& bytes) {
     QDataStream in(bytes);
+    in.setVersion(QDataStream::Qt_6_0);
     TerminalSnapshot s;
     quint64 revision{}, total{}, offset{}, rows{};
     quint16 columns{}, height{}, x{}, y{};

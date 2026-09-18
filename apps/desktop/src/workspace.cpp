@@ -10,16 +10,20 @@
 #include <QFileInfo>
 
 namespace lapis::desktop {
+namespace {
+constexpr std::string_view kPreviewPalette =
+    "\x1b]10;rgb:d9/de/e8\x1b\\\x1b]11;rgb:0d/13/1d\x1b\\"
+    "\x1b]4;2;rgb:87/cb/ac\x1b\\\x1b]4;4;rgb:9c/b4/ee\x1b\\"
+    "\x1b]4;3;rgb:df/bb/7b\x1b\\\x1b]4;5;rgb:ba/a4/e8\x1b\\"
+    "\x1b]4;8;rgb:75/83/98\x1b\\";
+}
 
 SessionPreview::SessionPreview(QString title, QString directory, QString activity, QColor accent,
                                std::string_view content)
     : title_(std::move(title)), directory_(std::move(directory)), activity_(std::move(activity)),
       accent_(accent) {
     session::Terminal terminal({100, 30});
-    terminal.feed("\x1b]10;rgb:d9/de/e8\x1b\\\x1b]11;rgb:0d/13/1d\x1b\\"
-                  "\x1b]4;2;rgb:87/cb/ac\x1b\\\x1b]4;4;rgb:9c/b4/ee\x1b\\"
-                  "\x1b]4;3;rgb:df/bb/7b\x1b\\\x1b]4;5;rgb:ba/a4/e8\x1b\\"
-                  "\x1b]4;8;rgb:75/83/98\x1b\\");
+    terminal.feed(kPreviewPalette);
     terminal.feed(content);
     snapshot_ = terminal.snapshot();
 }
@@ -54,8 +58,8 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
         sessions_.front()->startLive(endpoint, *launch);
     } else {
         session::Terminal terminal({100, 30});
-        terminal.feed("\x1b]10;rgb:d9/de/e8\x1b\\\x1b]11;rgb:0d/13/1d\x1b\\"
-                      "~/lapis\r\n\r\n> Ready for the next step.\r\n\r\n"
+        terminal.feed(kPreviewPalette);
+        terminal.feed("~/lapis\r\n\r\n> Ready for the next step.\r\n\r\n"
                       "  The focused terminal stays readable.\r\n"
                       "  Neighboring sessions surface requests below.\r\n"
                       "  Attention never takes keyboard ownership.\r\n");
@@ -107,6 +111,8 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
         "  Leave enough quiet space to think.\r\n\r\n"
         "\x1b[90m  Preview cards show the planned layout.\x1b[0m\r\n");
     const std::array ids{"shell", "renderer", "agent", "service", "checks", "notes"};
+    if (sessions_.size() != ids.size())
+        throw std::logic_error("session card count does not match the id table");
     for (std::size_t i = 0; i < sessions_.size(); ++i)
         sessions_[i]->setSessionId(QString::fromLatin1(ids[i]));
 }

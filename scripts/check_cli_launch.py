@@ -382,6 +382,63 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
                 "Invalid launch left a listener",
             )
 
+    def invalid_resize_and_signal():
+        with session("resize-failure") as service:
+            with service.connect() as client:
+                client.snapshot(lambda s: "READY" in s["text"])
+                client.send(RESIZE, struct.pack(">HH", 65535, 65535))
+                require("geometry" in client.status(), "Invalid resize not rejected")
+            with service.connect() as client:
+                client.send(TEXT, b"size\n")
+                client.snapshot(lambda s: "SIZE=100x30" in s["text"])
+                os.kill(service.child_pid, signal.SIGTERM)
+                require(
+                    "signal (15)" in client.status(),
+                    "Signal termination was mislabeled",
+                )
+                require(
+                    service.process.wait(timeout=WAIT) == 143,
+                    "Signal exit policy was lost",
+                )
+
+    def snapshot_limit():
+        source = (
+            "import signal,sys\n"
+            "def clear(*args): print('\\x1b[2J\\x1b[HRECOVERED',flush=True)\n"
+            "signal.signal(signal.SIGUSR1,clear)\n"
+            "print('READY',flush=True)\n"
+            "for line in sys.stdin:\n"
+            " if line.strip()=='grow': print(('a'+'\\u0301'*8)*20000,flush=True)\n"
+        )
+        service = Service(
+            binary,
+            runtime,
+            artifacts,
+            "snapshot-limit",
+            program,
+            ["-u", "-c", source],
+            runtime,
+        )
+        try:
+            with service.connect() as client:
+                client.snapshot(lambda s: "READY" in s["text"])
+                client.send(RESIZE, struct.pack(">HH", 300, 100))
+                client.snapshot(lambda s: s["columns"] == 300)
+                client.send(TEXT, b"grow\n")
+                require(
+                    "Snapshot limit exceeded" in client.status(),
+                    "Snapshot cap not reported",
+                )
+                require(
+                    service.process.poll() is None, "Snapshot cap killed the session"
+                )
+            os.kill(service.child_pid, signal.SIGUSR1)
+            time.sleep(0.1)
+            with service.connect() as client:
+                client.snapshot(lambda s: "RECOVERED" in s["text"])
+        finally:
+            service.stop()
+
     def gui():
         with session("gui") as service:
             with service.connect() as initial:
@@ -425,17 +482,30 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
                 "shell",
             )
         finally:
+            original_error = sys.exc_info()[1]
             if endpoint.exists():
+                configured_shell = os.environ.get("SHELL") or "/bin/sh"
                 shell = os.path.abspath(
-                    shutil.which(os.environ.get("SHELL", "/bin/sh"))
+                    shutil.which(configured_shell) or configured_shell
                 )
-                with WireClient(endpoint) as client:
-                    client.attach(shell, ["-i"], ROOT)
-                    client.send(TEXT, b"exit\n")
-                    require(
-                        "Process exited (0)" in client.status(),
-                        "Default shell did not exit",
-                    )
+                try:
+                    with WireClient(endpoint) as client:
+                        client.attach(shell, ["-i"], ROOT)
+                        client.send(TEXT, b"exit\n")
+                        require(
+                            "Process exited (0)" in client.status(),
+                            "Default shell did not exit",
+                        )
+                except (
+                    CheckError,
+                    OSError,
+                    ValueError,
+                    EOFError,
+                    struct.error,
+                ) as error:
+                    if original_error is None:
+                        raise
+                    original_error.add_note(f"shell cleanup also failed: {error}")
         for index, options in enumerate(
             [
                 ["--ui-preview", "--socket", str(runtime / "rejected.sock")],
@@ -510,21 +580,23 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
             with service.connect() as restored:
                 restored.snapshot(lambda s: edited in s["text"])
                 # No Enter is sent: this clears the unsubmitted text and exits.
-                for _ in range(2):
-                    if service.process.poll() is not None:
-                        break
-                    try:
-                        restored.send(TEXT, b"\x03")
-                    except (BrokenPipeError, ConnectionResetError):
-                        break
-                    time.sleep(0.2)
+                restored.send(TEXT, b"\x03")
+                restored.snapshot(lambda s: edited not in s["text"])
+                # Empty-composer Ctrl-D uses the CLI quit shortcut; unlike an
+                # extra Ctrl-C it cannot become SIGINT after terminal restoration.
+                restored.send(TEXT, b"\x04\x04")
                 require(
-                    service.process.wait(timeout=WAIT) == 0,
+                    service.process.wait(timeout=15) == 0,
                     "Codex did not exit cleanly",
                 )
         finally:
             service.stop()
 
+    record(
+        "invalid resize preserves geometry and signal exit status",
+        invalid_resize_and_signal,
+    )
+    record("snapshot limit preserves child and permits recovery", snapshot_limit)
     record("literal argv, cwd, resize, paste and exit", literal_resize_exit)
     record("detached output and same-PID reattachment", detach)
     record("mismatch and malformed attachment preserve active client", mismatch)

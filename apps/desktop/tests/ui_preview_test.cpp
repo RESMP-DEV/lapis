@@ -10,6 +10,7 @@
 #include <QEvent>
 #include <QFile>
 #include <QGuiApplication>
+#include <QImage>
 #include <QObject>
 #include <QPointer>
 #include <QQuickWindow>
@@ -213,6 +214,18 @@ int run_ui_tests() {
     CHECK(!old_window);
     CHECK(preview.window()->objectName() == QStringLiteral("preview-root"));
     CHECK(preview.window()->geometry() == preserved_geometry);
+    write_qml(directory, QStringLiteral("valid.qml"),
+              QStringLiteral(
+                  "import QtQuick\nWindow { visible: false; "
+                  "property int invalidBinding: missingValue; "
+                  "function reloadTwice() { preview.reload(); preview.reload(); return 7; } }"));
+    CHECK(preview.reload());
+    CHECK(!preview.diagnostics().isEmpty());
+    QPointer<QQuickWindow> twice = preview.window();
+    CHECK(QMetaObject::invokeMethod(twice, "reloadTwice"));
+    CHECK(twice); // Its QML call stack survives both reloads.
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    CHECK(!twice);
     QObject::disconnect(reduced_connection);
     return EXIT_SUCCESS;
 }
@@ -233,6 +246,86 @@ void pump(int milliseconds) {
         QThread::msleep(1);
     }
 }
+int run_surface_tests() {
+    using namespace lapis::desktop;
+    struct KeyCase {
+        int key{};
+        Qt::KeyboardModifiers modifiers{};
+        QString text;
+        QByteArray expected;
+    };
+    const std::array cases{
+        KeyCase{Qt::Key_B, Qt::AltModifier, QString::fromUtf8("∫"),
+                QByteArray("\x1b"
+                           "b")},
+        KeyCase{Qt::Key_2, Qt::AltModifier, QString::fromUtf8("™"),
+                QByteArray("\x1b"
+                           "2")},
+        KeyCase{Qt::Key_F, Qt::AltModifier, QStringLiteral("f"),
+                QByteArray("\x1b"
+                           "f")},
+        KeyCase{Qt::Key_B,
+                Qt::AltModifier | Qt::ShiftModifier,
+                {},
+                QByteArray("\x1b"
+                           "B")},
+        KeyCase{Qt::Key_Space, Qt::ControlModifier, {}, QByteArray(1, '\0')},
+        KeyCase{Qt::Key_BracketLeft, Qt::ControlModifier, {}, QByteArray(1, '\x1b')},
+        KeyCase{Qt::Key_Backslash, Qt::ControlModifier, {}, QByteArray(1, '\x1c')},
+        KeyCase{Qt::Key_BracketRight, Qt::ControlModifier, {}, QByteArray(1, '\x1d')},
+        KeyCase{Qt::Key_AsciiCircum, Qt::ControlModifier, {}, QByteArray(1, '\x1e')},
+        KeyCase{Qt::Key_Underscore, Qt::ControlModifier, {}, QByteArray(1, '\x1f')},
+        KeyCase{Qt::Key_C, Qt::AltModifier | Qt::ControlModifier, {}, QByteArray("\x1b\x03")},
+        KeyCase{Qt::Key_E, Qt::NoModifier, QString::fromUtf8("é"), QByteArray("é")},
+        KeyCase{Qt::Key_B, Qt::MetaModifier, QStringLiteral("b"), {}}};
+    for (const auto& item : cases) {
+        const QKeyEvent event(QEvent::KeyPress, item.key, item.modifiers, item.text);
+        CHECK(terminal_text_key(event) == item.expected);
+    }
+
+    Workspace workspace(WorkspaceMode::preview);
+    QQuickWindow window;
+    window.resize(420, 220);
+    auto* surface = new TerminalSurface(window.contentItem()); // parent owns it
+    surface->setSize(window.size());
+    window.show();
+    pump(50); // An empty surface also crosses the render boundary.
+    auto* document = workspace.focusedSession();
+    surface->setDocument(document);
+    pump(50);
+    const QImage before = window.grabWindow();
+    CHECK(!before.isNull());
+    auto snapshot = document->snapshot();
+    snapshot.cursor = {.column = 10, .row = 5, .in_viewport = true, .visible = true};
+    document->applySnapshot(snapshot);
+    const QRectF cursor = surface->inputMethodQuery(Qt::ImCursorRectangle).toRectF();
+    CHECK(cursor.left() > 0 && cursor.top() > 0);
+    surface->setSize(QSizeF(210, 110));
+    const QRectF smaller = surface->inputMethodQuery(Qt::ImCursorRectangle).toRectF();
+    CHECK(qAbs(smaller.left() * 2 - cursor.left()) < 0.01);
+    CHECK(qAbs(smaller.top() * 2 - cursor.top()) < 0.01);
+    for (int i = 0; i < 24; ++i) {
+        snapshot.background_rgb = (i % 2 == 0) ? 0x123456U : 0x654321U;
+        ++snapshot.revision;
+        document->applySnapshot(snapshot);
+        surface->setSize(QSizeF(420 - i, 220 - i));
+        pump(2);
+    }
+    pump(30);
+    CHECK(window.grabWindow() != before);
+    snapshot.cursor.in_viewport = false;
+    document->applySnapshot(snapshot);
+    CHECK(surface->inputMethodQuery(Qt::ImCursorRectangle).toRectF().isEmpty());
+    surface->setDocument(nullptr);
+    pump(30);
+    const auto empty = window.grabWindow();
+    surface->setDocument(document);
+    pump(30);
+    CHECK(window.grabWindow() != empty);
+    surface->setDocument(nullptr);
+    return EXIT_SUCCESS;
+}
+
 int run_attention_ui_tests() {
     using namespace lapis::desktop;
     Workspace workspace(WorkspaceMode::preview);
@@ -250,7 +343,7 @@ int run_attention_ui_tests() {
     const auto pane_size = pane->size();
     const auto card_size = card->size();
     CHECK(workspace.replayAttention(QStringLiteral("arrival")));
-    CHECK(card->property("cueRunning").toBool());
+    CHECK(card->property("cueRunning").toBool() == (window->isActive() && window->isVisible()));
     pump(1000);
     const auto serial = workspace.session(QStringLiteral("agent"))->attentionSerial();
     CHECK(!workspace.replayAttention(QStringLiteral("duplicate")));
@@ -299,7 +392,7 @@ int main(int argc, char** argv) {
     qmlRegisterType<lapis::desktop::TerminalSurface>("Lapis", 1, 0, "TerminalSurface");
     try {
         if (run_workspace_tests() != EXIT_SUCCESS || run_ui_tests() != EXIT_SUCCESS ||
-            run_attention_ui_tests() != EXIT_SUCCESS)
+            run_surface_tests() != EXIT_SUCCESS || run_attention_ui_tests() != EXIT_SUCCESS)
             return EXIT_FAILURE;
         std::cout << "ui_preview_test: PASS\n";
         return EXIT_SUCCESS;

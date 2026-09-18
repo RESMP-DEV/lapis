@@ -39,18 +39,46 @@ int main() {
         }
         buffer += packet.back();
         buffer += wire::frame(wire::Kind::text, "next");
+        qsizetype consumed{};
         require(wire::take_frame(buffer, frame) && frame.kind == wire::Kind::snapshot &&
                 frame.payload == encoded);
+        require(consumed == 0);
         require(wire::take_frame(buffer, frame) && frame.kind == wire::Kind::text &&
                 frame.payload == "next" && buffer.isEmpty());
+        buffer = wire::frame(wire::Kind::text, "a") + wire::frame(wire::Kind::text, "b");
+        require(wire::take_frame(buffer, consumed, frame) && frame.payload == "a" &&
+                consumed == 6 && buffer.size() == 12);
+        require(wire::take_frame(buffer, consumed, frame) && frame.payload == "b" &&
+                consumed == 0 && buffer.isEmpty());
         rejects([&] { static_cast<void>(wire::decode_snapshot(encoded.chopped(1))); });
         rejects([&] { static_cast<void>(wire::decode_snapshot(encoded + 'x')); });
+        QByteArray batch;
+        for (int index = 0; index < 1000; ++index)
+            batch += wire::frame(wire::Kind::text, QByteArray::number(index));
+        const auto tail = wire::frame(wire::Kind::text, QByteArrayLiteral("tail"));
+        batch += tail.first(3);
+        consumed = 0;
+        for (int index = 0; index < 1000; ++index) {
+            require(wire::take_frame(batch, consumed, frame));
+            require(frame.kind == wire::Kind::text && frame.payload == QByteArray::number(index));
+        }
+        require(!wire::take_frame(batch, consumed, frame));
+        batch += tail.sliced(3);
+        require(wire::take_frame(batch, consumed, frame));
+        require(frame.payload == "tail");
+        require(!wire::take_frame(batch, consumed, frame));
+
         auto invalid = expected;
         invalid.cells.front().text_offset = 100000;
         rejects([&] { static_cast<void>(wire::decode_snapshot(wire::encode_snapshot(invalid))); });
         invalid = expected;
         invalid.graphemes.front() = char32_t{0xd800};
         rejects([&] { static_cast<void>(wire::decode_snapshot(wire::encode_snapshot(invalid))); });
+        invalid = expected;
+        invalid.cells.pop_back();
+        rejects([&] { static_cast<void>(wire::encode_snapshot(invalid)); });
+        const QByteArray framed = wire::frame(wire::Kind::text, QByteArrayLiteral("x"));
+        require(framed.size() == 6);
         for (const auto* hex : {"00000000", "00800001", "0000000100"}) {
             auto malformed = QByteArray::fromHex(hex);
             rejects([&] { static_cast<void>(wire::take_frame(malformed, frame)); });

@@ -290,8 +290,7 @@ struct Terminal::Impl {
         ghostty_terminal_vt_write(
             terminal.get(), reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
         require_healthy();
-        if (!bytes.empty())
-            ++revision;
+        ++revision;
     }
 
     void resize_terminal(TerminalSize size) {

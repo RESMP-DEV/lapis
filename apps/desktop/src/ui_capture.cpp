@@ -60,6 +60,13 @@ QJsonObject view_state(QQuickWindow& window, Workspace& workspace) {
         {"pane_height", focused ? focused->height() : 0},
         {"pane_width", focused ? focused->width() : 0}};
 }
+void type_smoke_text(QQuickWindow& window, const QString& text) {
+    for (const QChar character : text) {
+        QKeyEvent event(QEvent::KeyPress, character.toUpper().unicode(), Qt::NoModifier,
+                        QString(character));
+        QCoreApplication::sendEvent(&window, &event);
+    }
+}
 void send_smoke_input(QQuickWindow& window) {
     auto* terminal = window.findChild<TerminalSurface*>(QStringLiteral("liveTerminal"));
     if (!terminal)
@@ -69,13 +76,14 @@ void send_smoke_input(QQuickWindow& window) {
     QCoreApplication::sendEvent(&window, &discard);
     QKeyEvent clear_line(QEvent::KeyPress, Qt::Key_U, Qt::ControlModifier, QStringLiteral("u"));
     QCoreApplication::sendEvent(&window, &clear_line);
-    const QString command = QStringLiteral("printf '\\nLAPIS_INPUT_%s_OK\\n' %1; stty size")
-                                .arg(QCoreApplication::applicationPid());
-    for (const QChar character : command) {
-        QKeyEvent event(QEvent::KeyPress, character.toUpper().unicode(), Qt::NoModifier,
-                        QString(character));
-        QCoreApplication::sendEvent(&window, &event);
-    }
+    type_smoke_text(window, QStringLiteral("printf '\\nLAPIS_INPUT_%s_OK\\n' WRONG"));
+    // Exercise real shell Meta word motion/deletion, including macOS Option text.
+    QKeyEvent back_word(QEvent::KeyPress, Qt::Key_B, Qt::AltModifier, QString::fromUtf8("∫"));
+    QCoreApplication::sendEvent(&window, &back_word);
+    QKeyEvent delete_word(QEvent::KeyPress, Qt::Key_D, Qt::AltModifier, QString::fromUtf8("∂"));
+    QCoreApplication::sendEvent(&window, &delete_word);
+    type_smoke_text(window,
+                    QStringLiteral("%1; stty size").arg(QCoreApplication::applicationPid()));
     QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
     QCoreApplication::sendEvent(&window, &enter);
 }
@@ -84,6 +92,14 @@ class Capture final : public QObject {
     Capture(QQuickWindow& window, Workspace& workspace, UiPreview& preview, CaptureOptions options)
         : QObject(&window), window_(window), workspace_(workspace), preview_(preview),
           options_(std::move(options)) {
+        setObjectName(QStringLiteral("lapisWindowCapture"));
+        connect(&preview_, &UiPreview::windowChanged, this, [this](QQuickWindow* current) {
+            if (current != &window_) {
+                timeout_.stop();
+                disconnect(&window_, nullptr, this, nullptr);
+                deleteLater();
+            }
+        });
         clock_.start();
         frames_.reserve(512);
         connect(
@@ -92,7 +108,7 @@ class Capture final : public QObject {
         // window. Request a frame on activation so capture can observe readiness.
         connect(&window_, &QWindow::activeChanged, this, [this] { window_.update(); });
         timeout_.setSingleShot(true);
-        timeout_.setInterval(15000);
+        timeout_.setInterval(15000 + options_.delay_ms);
         connect(&timeout_, &QTimer::timeout, this, [] {
             qCritical("Window capture timed out waiting for a rendered frame or shell response");
             QCoreApplication::exit(1);
@@ -102,6 +118,8 @@ class Capture final : public QObject {
 
   private:
     void frame() {
+        if (preview_.window() != &window_)
+            return;
         if (frames_.size() < 4096)
             frames_.push_back(static_cast<double>(clock_.nsecsElapsed()) / 1000000.0);
         if (started_)
@@ -186,6 +204,8 @@ class Capture final : public QObject {
                file.write(bytes) == bytes.size();
     }
     void finish() {
+        if (preview_.window() != &window_)
+            return;
         timeout_.stop();
         // Record before grabWindow(), which itself can request an additional frame.
         const bool traced = save_trace();
@@ -214,6 +234,9 @@ class Capture final : public QObject {
 void capture_window(QQuickWindow& window, Workspace& workspace, UiPreview& preview,
                     CaptureOptions options) {
     // QObject window parent owns this one-shot observer and cancels its timers on destruction.
+    if (window.findChild<QObject*>(QStringLiteral("lapisWindowCapture"),
+                                   Qt::FindDirectChildrenOnly) != nullptr)
+        return;
     new Capture(window, workspace, preview, std::move(options));
 }
 } // namespace lapis::desktop

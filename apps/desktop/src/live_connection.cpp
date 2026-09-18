@@ -1,6 +1,7 @@
 #include "live_connection.hpp"
 #include <QDataStream>
 #include <QDebug>
+#include <QFile>
 #include <QProcess>
 #include <exception>
 #include <utility>
@@ -159,10 +160,9 @@ void LiveConnection::resize(session::TerminalSize size) {
 void LiveConnection::receive() {
     try {
         buffer_ += socket_.readAll();
-        if (buffer_.size() > wire::max_frame_bytes + 4)
-            throw std::runtime_error("Session receive overflow");
         wire::Frame frame;
-        while (wire::take_frame(buffer_, frame)) {
+        qsizetype consumed{};
+        while (wire::take_frame(buffer_, consumed, frame)) {
             if (frame.kind == wire::Kind::hello) {
                 QDataStream in(frame.payload);
                 quint32 version{};
@@ -190,6 +190,10 @@ void LiveConnection::receive() {
             } else
                 throw std::runtime_error("Unexpected service message");
         }
+        if (consumed != 0)
+            buffer_.remove(0, consumed);
+        if (buffer_.size() > wire::max_frame_bytes + 4)
+            throw std::runtime_error("Session receive overflow");
     } catch (const std::exception& error) {
         fail(QString::fromUtf8(error.what()));
     }

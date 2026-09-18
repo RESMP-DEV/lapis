@@ -125,7 +125,12 @@ terminal drawing on the Apple M4 Max, using Vulkan through MoltenVK 1.4.2 and
 Qt 6.11.2. The application verifies the selected API at runtime. Its maintained
 surface uses public QSGTextNode/QTextLayout interfaces and Qt's glyph cache, not
 upstream private rendering code. Static scenes keep their retained nodes; new
-snapshots rebuild the text nodes. Dirty-row rendering remains a measured follow-up.
+snapshots replace only changed row text nodes. Each surface retains the current
+owned snapshot and the previous rendered snapshot for comparison. GUI-owned
+objects, preedit text and geometry are copied into an immutable render state and
+handed to the render thread under a standard mutex. The render callback never
+dereferences a GUI-owned session. Allocation and frame-time gains still need
+measurement; preview throttling and full shaping remain follow-up work.
 
 Qt's default macOS transaction layer produced five-second display-lock stalls in
 this Vulkan window. Setting `QT_MTL_NO_TRANSACTION=1` selected the plain
@@ -364,6 +369,17 @@ malformed handshakes against real service processes. Its optional GUI and Codex
 modes add GPU captures and no-prompt TUI interaction. Actual Codex attention and
 model-turn continuation remain unqualified. Commands live in
 [Contributing](../CONTRIBUTING.md#cli-integration-qualification).
+
+The PR #2 repair adds explicit render-state synchronization, retained row nodes,
+control/Meta text-key handling, bounded final PTY output drain, and signal-exit
+reporting. Explicit service destruction kills the still-owned leader process group
+before reaping; processes that deliberately regroup or detach need separate
+platform qualification. A final output tail is bounded to 16 MiB after child exit.
+Snapshot-size limits detach the display with an explicit status while keeping the
+child alive; reattachment succeeds once its screen fits again. Socket ancestors
+must be trusted and not shared writable unless sticky, with an owner-only 0700
+immediate parent. Oversized paste remains an atomic rejection at 64 KiB.
+See the [review repair receipt](../evidence/pr2-review.json) for exercised cases.
 
 #### Remaining terminal acceptance
 

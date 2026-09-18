@@ -7,8 +7,13 @@
 #include <QKeyEvent>
 #include <QPointer>
 #include <QQuickItem>
+#include <memory>
+#include <mutex>
 
 namespace lapis::desktop {
+
+// Legacy printable-key encoding; native text/IME remains Unicode.
+[[nodiscard]] QByteArray terminal_text_key(const QKeyEvent& event);
 
 class TerminalSurface : public QQuickItem {
     Q_OBJECT
@@ -17,6 +22,7 @@ class TerminalSurface : public QQuickItem {
     Q_PROPERTY(bool interactive READ interactive WRITE setInteractive NOTIFY interactiveChanged)
   public:
     explicit TerminalSurface(QQuickItem* parent = nullptr);
+    ~TerminalSurface() override;
     [[nodiscard]] SessionPreview* document() const { return document_.data(); }
     void setDocument(SessionPreview* document);
     [[nodiscard]] bool interactive() const { return interactive_; }
@@ -35,8 +41,12 @@ class TerminalSurface : public QQuickItem {
 
   private:
     void requestResize();
+    void publishFrame(bool snapshot_changed);
+    struct RenderState;
+    std::mutex render_mutex_;
+    std::shared_ptr<const RenderState> render_state_;
     QPointer<SessionPreview> document_;
-    bool content_dirty_{true};
+
     bool interactive_{};
     QString preedit_;
 };

@@ -28,12 +28,14 @@ class PtyProcess final : public QObject {
   signals:
     void output(const QByteArray& bytes);
     void started();
-    void finished(int exit_code);
+    void finished(int exit_code, QProcess::ExitStatus exit_status);
     void failure(const QString& message);
 
   private:
     [[nodiscard]] bool readReady();
-    void finishWhenDrained(int exit_code);
+    void finishWhenDrained(int exit_code, QProcess::ExitStatus exit_status, int drain_budget);
+    [[nodiscard]] bool terminateProcessGroup();
+    void clearPendingWrite();
     void writeReady();
     UniqueFd master_;
     UniqueFd slave_;

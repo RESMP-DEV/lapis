@@ -4,8 +4,10 @@
 #include <QTimer>
 #include <array>
 #include <cerrno>
+#include <csignal>
 #include <cstdlib>
 #include <fcntl.h>
+#include <limits>
 #include <stdexcept>
 #include <sys/ioctl.h>
 #include <system_error>
@@ -26,8 +28,11 @@ PtyProcess::PtyProcess(QObject* parent) : QObject(parent) {
         emit started();
         writeReady();
     });
-    connect(&process_, &QProcess::finished, this,
-            [this](int code, QProcess::ExitStatus) { finishWhenDrained(code); });
+    connect(&process_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
+        if (reader_)
+            reader_->setEnabled(false);
+        finishWhenDrained(code, status, 256);
+    });
     connect(&process_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
         if (error != QProcess::FailedToStart)
             return;
@@ -35,6 +40,9 @@ PtyProcess::PtyProcess(QObject* parent) : QObject(parent) {
             reader_->setEnabled(false);
         if (writer_)
             writer_->setEnabled(false);
+        clearPendingWrite();
+        reader_.reset();
+        writer_.reset();
         master_.reset();
         slave_.reset();
         emit failure(process_.errorString());
@@ -44,16 +52,15 @@ PtyProcess::~PtyProcess() {
     disconnect(&process_, nullptr, this, nullptr);
     reader_.reset();
     writer_.reset();
+    // This is explicit service teardown. Signal the verified, still-owned
+    // process group before reaping its leader; never reuse a saved PID afterward.
+    if (process_.state() != QProcess::NotRunning && !terminateProcessGroup())
+        process_.kill();
     master_.reset();
     slave_.reset();
-    // Only explicit service shutdown owns this cleanup; desktop detachment never
-    // destroys the service. Keep child reaping bounded even for a resistant shell.
-    if (process_.state() != QProcess::NotRunning) {
-        process_.terminate();
-        if (!process_.waitForFinished(200)) {
-            process_.kill();
-            static_cast<void>(process_.waitForFinished(200));
-        }
+    if (process_.state() != QProcess::NotRunning && !process_.waitForFinished(200)) {
+        process_.kill();
+        static_cast<void>(process_.waitForFinished(200));
     }
 }
 void PtyProcess::start(const PtyLaunch& launch) {
@@ -152,6 +159,19 @@ bool PtyProcess::writeBytes(const QByteArray& bytes) {
         writeReady();
     return true;
 }
+bool PtyProcess::terminateProcessGroup() {
+    const qint64 process_id = process_.processId();
+    if (process_id <= 0 || process_id > std::numeric_limits<pid_t>::max())
+        return false;
+    const pid_t child = static_cast<pid_t>(process_id);
+    if (::getsid(child) != child)
+        return false;
+    return ::kill(-child, SIGKILL) == 0;
+}
+void PtyProcess::clearPendingWrite() {
+    pending_write_.clear();
+    write_offset_ = 0;
+}
 void PtyProcess::writeReady() {
     if (!master_)
         return;
@@ -169,6 +189,10 @@ void PtyProcess::writeReady() {
             return;
         }
         writer_->setEnabled(false);
+        if (count < 0 && errno == EIO) {
+            clearPendingWrite();
+            return;
+        }
         emit failure(system_error("PTY write"));
         return;
     }
@@ -199,10 +223,18 @@ bool PtyProcess::readReady() {
     }
     return false;
 }
-void PtyProcess::finishWhenDrained(int exit_code) {
+void PtyProcess::finishWhenDrained(int exit_code, QProcess::ExitStatus exit_status,
+                                   int drain_budget) {
     if (!readReady()) {
-        QTimer::singleShot(0, this, [this, exit_code] { finishWhenDrained(exit_code); });
-        return;
+        if (drain_budget > 1) {
+            QTimer::singleShot(0, this, [this, exit_code, exit_status, drain_budget] {
+                finishWhenDrained(exit_code, exit_status, drain_budget - 1);
+            });
+            return;
+        }
+        // QProcess has already reaped the leader. Its numeric PID is no longer
+        // an owned signaling target; bound the tail and close the terminal.
+        qWarning("PTY final output exceeded the 16 MiB drain budget; closing the terminal");
     }
     if (reader_)
         reader_->setEnabled(false);
@@ -210,8 +242,7 @@ void PtyProcess::finishWhenDrained(int exit_code) {
         writer_->setEnabled(false);
     master_.reset();
     slave_.reset();
-    pending_write_.clear();
-    write_offset_ = 0;
-    emit finished(exit_code);
+    clearPendingWrite();
+    emit finished(exit_code, exit_status);
 }
 } // namespace lapis::session::posix

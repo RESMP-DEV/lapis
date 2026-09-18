@@ -1,6 +1,8 @@
 default:
     @just --list
 
+desktop-binary := "build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop"
+
 # Compiler warnings, clang-format, clang-tidy, Cppcheck, and CTest.
 check:
     python3 scripts/check_cpp.py dev
@@ -31,15 +33,18 @@ desktop:
 
 # Open the built macOS application; its session service survives window closure.
 run:
-    open build/desktop/apps/desktop/lapis_desktop.app
+    @test -x "{{desktop-binary}}" || { echo 'Desktop binary is not built; run: just desktop'; exit 2; }
+    open "$(dirname "{{desktop-binary}}")/../.."
 
 # Isolated visual fixture: edit QML, then use Reload in the preview controls.
 ui:
-    build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop --ui-preview --qml "{{justfile_directory()}}/apps/desktop/qml/Main.qml"
+    @test -x "{{desktop-binary}}" || { echo 'Desktop binary is not built; run: just desktop'; exit 2; }
+    exec "{{desktop-binary}}" --ui-preview --qml "{{justfile_directory()}}/apps/desktop/qml/Main.qml"
 
 # Launch the isolated fixture under the macOS native debugger.
 ui-debug:
-    xcrun lldb -- build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop --ui-preview --qml "{{justfile_directory()}}/apps/desktop/qml/Main.qml"
+    @test -x "{{desktop-binary}}" || { echo 'Desktop binary is not built; run: just desktop'; exit 2; }
+    exec xcrun lldb -- "{{desktop-binary}}" --ui-preview --qml "{{justfile_directory()}}/apps/desktop/qml/Main.qml"
 
 # Bounded isolated GUI and capture checks; never sends shell input.
 ui-check:

@@ -17,6 +17,8 @@ struct Frame {
 [[nodiscard]] QByteArray frame(Kind kind, const QByteArray& payload);
 // Incomplete input returns false; malformed or oversized frames throw.
 [[nodiscard]] bool take_frame(QByteArray& buffer, Frame& result);
+// consumed tracks the parsed prefix and is compacted lazily.
+[[nodiscard]] bool take_frame(QByteArray& buffer, qsizetype& consumed, Frame& result);
 [[nodiscard]] QByteArray encode_snapshot(const TerminalSnapshot& snapshot);
 [[nodiscard]] TerminalSnapshot decode_snapshot(const QByteArray& bytes);
 } // namespace lapis::session::wire

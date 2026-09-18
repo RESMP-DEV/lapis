@@ -5,7 +5,7 @@
 #include <QCoreApplication>
 #include <QDataStream>
 #include <QDebug>
-#include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QLocalServer>
 #include <QLocalSocket>
@@ -17,6 +17,8 @@
 #include <exception>
 #include <memory>
 #include <stdexcept>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace {
 using namespace lapis::session;
@@ -32,6 +34,11 @@ class SessionService final : public QObject {
         lock_.setStaleLockTime(0);
         if (!lock_.tryLock(0))
             throw std::runtime_error("Session service already owns endpoint");
+        // Only the endpoint owner may trim its append log; racing GUI launches
+        // must not truncate the log of an already-running service.
+        QFile log(endpoint + QStringLiteral(".log"));
+        if (log.size() > qint64{1024} * 1024 && log.open(QIODevice::ReadWrite))
+            static_cast<void>(log.resize(0));
         if (QFileInfo::exists(endpoint)) {
             QLocalSocket existing;
             existing.connectToServer(endpoint);
@@ -44,6 +51,11 @@ class SessionService final : public QObject {
         server_.setSocketOptions(QLocalServer::UserAccessOption);
         if (!server_.listen(endpoint))
             throw std::runtime_error(server_.errorString().toStdString());
+        struct stat bound_socket{};
+        if (::lstat(QFile::encodeName(endpoint).constData(), &bound_socket) != 0 ||
+            !S_ISSOCK(bound_socket.st_mode) || bound_socket.st_uid != ::getuid() ||
+            (static_cast<unsigned int>(bound_socket.st_mode) & 0077U) != 0U)
+            throw std::runtime_error("Bound socket is not private to the current user");
         timer_.setSingleShot(true);
         timer_.setInterval(16);
         connect(&timer_, &QTimer::timeout, this, [this] { publish(); });
@@ -57,7 +69,7 @@ class SessionService final : public QObject {
                 terminal_.feed(
                     std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())));
                 const auto replies = terminal_.take_replies();
-                if (!replies.empty() &&
+                if (!replies.empty() && pty_.processId() != 0 &&
                     !pty_.writeBytes(
                         QByteArray(replies.data(), static_cast<qsizetype>(replies.size()))))
                     throw std::runtime_error("PTY reply queue overflow");
@@ -70,7 +82,13 @@ class SessionService final : public QObject {
         connect(&pty_, &posix::PtyProcess::failure, this,
                 [this](const QString& message) { stop(message); });
         connect(&pty_, &posix::PtyProcess::finished, this,
-                [this](int code) { stop(QStringLiteral("Process exited (%1)").arg(code), code); });
+                [this](int code, QProcess::ExitStatus status) {
+                    if (status == QProcess::CrashExit)
+                        stop(QStringLiteral("Process terminated by signal (%1)").arg(code),
+                             128 + code);
+                    else
+                        stop(QStringLiteral("Process exited (%1)").arg(code), code);
+                });
         pty_.start(launch);
     }
 
@@ -183,6 +201,12 @@ class SessionService final : public QObject {
             if (client_->write(bytes) < 0)
                 throw std::runtime_error("Session socket write failed");
             dirty_ = false;
+        } catch (const std::length_error&) {
+            dirty_ = false;
+            client_->write(wire::frame(wire::Kind::status,
+                                       "Snapshot limit exceeded; session is still "
+                                       "running. Reattach after reducing output."));
+            client_->disconnectFromServer();
         } catch (const std::exception& error) {
             stop(QString::fromUtf8(error.what()));
         }
@@ -191,15 +215,21 @@ class SessionService final : public QObject {
         if (!client_ || client_->state() != QLocalSocket::ConnectedState)
             return;
         try {
-            buffer_ += client_->readAll();
-            if (buffer_.size() > wire::max_frame_bytes + 4)
-                throw std::runtime_error("Session input overflow");
+            buffer_ += client_->read(wire::max_frame_bytes + 4 - buffer_.size());
             wire::Frame frame;
+            qsizetype consumed{};
             for (int processed = 0; processed < 64; ++processed) {
-                if (!wire::take_frame(buffer_, frame))
+                if (!wire::take_frame(buffer_, consumed, frame)) {
+                    if (consumed != 0)
+                        buffer_.remove(0, consumed);
                     return;
+                }
                 handle(frame);
             }
+            if (buffer_.size() > wire::max_frame_bytes + 4)
+                throw std::runtime_error("Session input overflow");
+            if (consumed != 0)
+                buffer_.remove(0, consumed);
             const auto attachment = client_;
             QTimer::singleShot(0, this, [this, attachment] {
                 if (attachment && client_ == attachment)
@@ -229,7 +259,10 @@ class SessionService final : public QObject {
         case wire::Kind::key: {
             if (frame.payload.size() != 2)
                 throw std::runtime_error("Invalid key message");
-            const auto key = static_cast<TerminalKey>(static_cast<unsigned char>(frame.payload[0]));
+            const auto key_value = static_cast<unsigned char>(frame.payload[0]);
+            if (key_value > static_cast<unsigned char>(TerminalKey::escape))
+                throw std::runtime_error("Unknown key code");
+            const auto key = static_cast<TerminalKey>(key_value);
             const auto mods = static_cast<unsigned char>(frame.payload[1]);
             const auto encoded = terminal_.encode_key(
                 key, {(mods & 1U) != 0, (mods & 2U) != 0, (mods & 4U) != 0, (mods & 8U) != 0});
@@ -243,9 +276,20 @@ class SessionService final : public QObject {
             quint16 columns{}, rows{};
             in >> columns >> rows;
             TerminalSize size{columns, rows};
-            terminal_.resize(size);
+            if (columns == 0 || rows == 0 || quint32(columns) * rows > wire::max_cells)
+                throw std::runtime_error("Invalid terminal geometry");
             if (!pty_.resize(size))
                 throw std::runtime_error("PTY resize failed");
+            try {
+                terminal_.resize(size);
+            } catch (const std::exception& error) {
+                stop(QString::fromUtf8(error.what()));
+                return; // A failed engine resize cannot be presented as synchronized.
+            }
+            const auto replies = terminal_.take_replies();
+            if (!replies.empty() && !pty_.writeBytes(QByteArray(
+                                        replies.data(), static_cast<qsizetype>(replies.size()))))
+                throw std::runtime_error("PTY reply queue overflow");
             dirty_ = true;
             schedule();
             return;

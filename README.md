@@ -45,7 +45,8 @@ Latency and warm-switch targets remain provisional.
 
 Explicit CLI launch is now implemented through the existing service-owned PTY.
 The [launch receipt](evidence/cli-launch.json) records the exercised macOS scope and
-sanitizer limitations. Session identity/recovery, terminal fidelity, disk history
+dated sanitizer limitations. The [PR #2 repair](evidence/pr2-review.json) resolves
+the renderer TSan reports and records subsequent review fixes. Session identity/recovery, terminal fidelity, disk history
 and Linux qualification remain in the
 [ordered plan](docs/architecture.md#next-complete-persistent-terminal-acceptance).
 The [Codex route comparison](adapters/codex/README.md#integration-route-comparison)

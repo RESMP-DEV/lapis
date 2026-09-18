@@ -131,7 +131,8 @@ Install the macOS Brewfile dependencies and bootstrap Ghostty above. The desktop
 requires **Qt 6.11.2 exactly**, Vulkan headers/loader (exercised at 1.4.357.0), and
 MoltenVK (1.4.2). Homebrew formulae move; a newer Qt installation deliberately
 fails the CMake version check until that version is evaluated. The headless build
-does not depend on Qt. `just desktop` uses an optimized build with symbols;
+does not depend on Qt. Check the installed version with `qmake -query QT_VERSION`
+(expected: `6.11.2`) before configuring. `just desktop` uses an optimized build with symbols;
 `just run` opens `build/desktop/apps/desktop/lapis_desktop.app`. The app locates its
 service using the build path; copying the bundle alone is not a portable install.
 
@@ -143,7 +144,8 @@ build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop \
 ```
 
 This opens a real window, clears a harmless partial command with Control-U, sends
-a unique `printf` marker and `stty size` through Qt key routing, waits for the
+a unique `printf` marker and `stty size` through Qt key routing (including
+Alt-B/Alt-D shell word editing), waits for the
 service snapshot, captures the window, and exits. `--compact` tests 980×700 logical
 pixels. The shell survives the capture process. Keep captures private under
 `build/` unless reviewed for terminal content. This is functional acceptance, not
@@ -219,6 +221,9 @@ and screen, and explicit exit. Distinguish service death from GUI detachment.
 Keep raw output/captures private under `build/` and socket/state under `runtime/`.
 Do not use `--smoke-input` while Codex is running: that probe sends shell commands.
 
+The no-prompt check clears its draft with Ctrl-C, verifies the cleared screen,
+then uses the empty-composer Ctrl-D quit shortcut. It submits no model prompt.
+
 Start with a no-prompt TUI check. A later real input/approval fixture needs a
 declared provider/model, bounded turn deadline and explicit test approval policy.
 Check the effective runtime route and actual request/response/continuation;
@@ -242,12 +247,14 @@ Point `check_cli_launch.py --build-dir` at each instrumented desktop build to te
 its actual service. Run GUI checks one at a time: focus changes from another test
 can pause the attention cue and invalidate a timing assertion.
 
-At this checkpoint, ASan/UBSan passes the desktop CTest suite and service harness;
-TSan passes the non-GUI CTest cases and service harness. The threaded Qt scene
-runner reports races between `TerminalSurface` construction and `updatePaintNode`
-through uninstrumented Qt libraries. Keep that report open; it is not a passing
-threaded-renderer result. No sanitizer suppression was added. Vendor
-instrumentation and renderer qualification remain outside this launch acceptance.
+The PR #2 repair passes all seven desktop CTest cases under ASan/UBSan and
+TSan, with `QSG_RENDER_LOOP=threaded`, plus the instrumented service harness.
+The earlier `TerminalSurface` construction/render reports are resolved by an
+explicit mutex handoff of owned immutable render state. No suppression was added;
+the render callback no longer reads a GUI-owned `QPointer`, snapshot or preedit.
+The [repair receipt](evidence/pr2-review.json) records the tested source and scope.
+Vendor Qt/MoltenVK/Ghostty remain uninstrumented; this does not establish race
+freedom inside those libraries or physical input-to-presentation performance.
 
 ### UI tuning and debugging
 
@@ -281,7 +288,7 @@ build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop \
 Use `--compact` for 980×700 logical pixels, `--reduced-motion` for a steady cue,
 and a shorter capture delay to sample the pulse. The normal requested size is
 1400×960; the window manager may constrain it. Captures wait for a rendered frame
-and fail within 15 seconds. Traces include focus ownership, pane/card geometry,
+and fail within 15 seconds plus the configured capture delay. Traces include focus ownership, pane/card geometry,
 request state and bounded GUI-thread `frameSwapped` observations. Signal delivery
 includes scheduling overhead: these are neither physical presentation nor input
 latency measurements. The short post-pulse idle observation is not a CPU/GPU load

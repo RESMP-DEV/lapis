@@ -61,6 +61,21 @@ int main(int argc, char** argv) {
             static_cast<void>(posix::prepare_endpoint(shared + QStringLiteral("/session.sock")));
         });
         require(QFile::permissions(shared).testFlag(QFile::ReadOther));
+        const auto existing = temporary.filePath(QStringLiteral("existing"));
+        require(QDir().mkdir(existing));
+        const auto nested = existing + QStringLiteral("/nested");
+        require(QDir().mkdir(nested));
+        const auto original = QFile::permissions(existing);
+        require(QFile::setPermissions(existing, QFile::ReadOwner | QFile::WriteOwner |
+                                                    QFile::ExeOwner | QFile::WriteGroup));
+        rejects([&] {
+            static_cast<void>(posix::prepare_endpoint(nested + QStringLiteral("/session.sock")));
+        });
+        require(QFile::setPermissions(existing, original));
+        QTemporaryDir sticky_parent(QStringLiteral("/tmp/lapis-endpoint-XXXXXX"));
+        require(sticky_parent.isValid());
+        require(!posix::prepare_endpoint(sticky_parent.filePath(QStringLiteral("session.sock")))
+                     .isEmpty());
         const auto occupied = temporary.filePath(QStringLiteral("ordinary-file"));
         QFile ordinary(occupied);
         require(ordinary.open(QIODevice::WriteOnly));
