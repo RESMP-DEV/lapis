@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 
+#include <array>
 #include <stdexcept>
 #include <utility>
 
@@ -21,7 +22,7 @@ SessionPreview::SessionPreview(QString title, QString directory, QString activit
     snapshot_ = terminal.snapshot();
 }
 
-Workspace::Workspace() {
+Workspace::Workspace(WorkspaceMode mode) : preview_mode_(mode == WorkspaceMode::preview) {
     const auto add = [this](const char* title, const char* directory, const char* activity,
                             const char* accent, std::string_view content) {
         sessions_.push_back(std::make_unique<SessionPreview>(
@@ -30,11 +31,22 @@ Workspace::Workspace() {
     };
     const QString directory = QStringLiteral(LAPIS_PROJECT_ROOT);
     add("Shell", directory.toUtf8().constData(), "Connecting", "#87cbac", "");
-    const QString runtime = directory + QStringLiteral("/runtime");
-    if (!QDir().mkpath(runtime))
-        throw std::runtime_error("Cannot create session runtime directory");
-    QFile::setPermissions(runtime, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
-    sessions_.front()->startLive(runtime + QStringLiteral("/desktop-v1.sock"), directory);
+    if (!preview_mode_) {
+        const QString runtime = directory + QStringLiteral("/runtime");
+        if (!QDir().mkpath(runtime))
+            throw std::runtime_error("Cannot create session runtime directory");
+        QFile::setPermissions(runtime, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        sessions_.front()->startLive(runtime + QStringLiteral("/desktop-v1.sock"), directory);
+    } else {
+        session::Terminal terminal({100, 30});
+        terminal.feed("\x1b]10;rgb:d9/de/e8\x1b\\\x1b]11;rgb:0d/13/1d\x1b\\"
+                      "~/lapis\r\n\r\n> Ready for the next step.\r\n\r\n"
+                      "  The focused terminal stays readable.\r\n"
+                      "  Neighboring sessions surface requests below.\r\n"
+                      "  Attention never takes keyboard ownership.\r\n");
+        sessions_.front()->applySnapshot(terminal.snapshot());
+        sessions_.front()->setActivity(QStringLiteral("UI preview"));
+    }
     add("Renderer", "lapis/apps/desktop", "In progress", "#9cb4ee",
         "\x1b[35mlapis\x1b[0m  \x1b[90mapps/desktop\x1b[0m\r\n\r\n"
         "\x1b[1mTerminal surface\x1b[0m\r\n\r\n"
@@ -79,6 +91,9 @@ Workspace::Workspace() {
         "  Use color for attention, not decoration.\r\n"
         "  Leave enough quiet space to think.\r\n\r\n"
         "\x1b[90m  Preview cards show the planned layout.\x1b[0m\r\n");
+    const std::array ids{"shell", "renderer", "agent", "service", "checks", "notes"};
+    for (std::size_t i = 0; i < sessions_.size(); ++i)
+        sessions_[i]->setSessionId(QString::fromLatin1(ids[i]));
 }
 
 QVariantList Workspace::sessions() const {
@@ -100,4 +115,62 @@ void Workspace::setFocusedIndex(int index) {
     emit focusChanged();
 }
 
+bool SessionPreview::addPreviewRequest(const QString& id, const QString& reason) {
+    if (id.isEmpty() || id.size() > 64 || reason.size() > 256 || requests_.contains(id) ||
+        requests_.size() >= 8)
+        return false;
+    requests_.insert(id, reason);
+    ++attention_serial_;
+    emit attentionChanged();
+    emit attentionArrived();
+    return true;
+}
+bool SessionPreview::resolvePreviewRequest(const QString& id) {
+    if (requests_.remove(id) == 0)
+        return false;
+    emit attentionChanged();
+    return true;
+}
+void SessionPreview::clearPreviewRequests() {
+    if (requests_.isEmpty())
+        return;
+    requests_.clear();
+    emit attentionChanged();
+}
+SessionPreview* Workspace::session(const QString& id) const {
+    for (const auto& item : sessions_)
+        if (item->sessionId() == id)
+            return item.get();
+    return nullptr;
+}
+bool Workspace::requestAttention(const QString& session_id, const QString& request_id,
+                                 const QString& reason) {
+    auto* target = session(session_id);
+    return preview_mode_ && target && target->addPreviewRequest(request_id, reason);
+}
+bool Workspace::resolveAttention(const QString& session_id, const QString& request_id) {
+    auto* target = session(session_id);
+    return preview_mode_ && target && target->resolvePreviewRequest(request_id);
+}
+bool Workspace::replayAttention(const QString& scenario) {
+    if (!preview_mode_)
+        return false;
+    if (scenario == QStringLiteral("arrival") || scenario == QStringLiteral("duplicate"))
+        return requestAttention(QStringLiteral("agent"), QStringLiteral("request-1"),
+                                QStringLiteral("Review the next step"));
+    if (scenario == QStringLiteral("two")) {
+        static_cast<void>(requestAttention(QStringLiteral("agent"), QStringLiteral("request-1"),
+                                           QStringLiteral("Review the next step")));
+        return requestAttention(QStringLiteral("renderer"), QStringLiteral("request-2"),
+                                QStringLiteral("Choose the rendering option"));
+    }
+    if (scenario == QStringLiteral("resolve"))
+        return resolveAttention(QStringLiteral("agent"), QStringLiteral("request-1"));
+    if (scenario == QStringLiteral("reset")) {
+        for (const auto& item : sessions_)
+            item->clearPreviewRequests();
+        return true;
+    }
+    return false;
+}
 } // namespace lapis::desktop

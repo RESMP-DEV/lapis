@@ -4,6 +4,7 @@
 #include <lapis/session/terminal.hpp>
 
 #include <QColor>
+#include <QMap>
 #include <QObject>
 #include <QString>
 #include <QVariantList>
@@ -17,6 +18,11 @@ class LiveConnection;
 
 class SessionPreview final : public QObject {
     Q_OBJECT
+    Q_PROPERTY(QString sessionId READ sessionId CONSTANT)
+    Q_PROPERTY(bool attentionPending READ attentionPending NOTIFY attentionChanged)
+    Q_PROPERTY(QString attentionReason READ attentionReason NOTIFY attentionChanged)
+    Q_PROPERTY(quint32 attentionSerial READ attentionSerial NOTIFY attentionChanged)
+    Q_PROPERTY(int attentionCount READ attentionCount NOTIFY attentionChanged)
     Q_PROPERTY(QString title READ title CONSTANT)
     Q_PROPERTY(QString directory READ directory CONSTANT)
     Q_PROPERTY(QString activity READ activity NOTIFY snapshotChanged)
@@ -32,6 +38,17 @@ class SessionPreview final : public QObject {
     void sendText(const QByteArray& bytes, bool paste = false);
     void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
     void resizeTerminal(session::TerminalSize size);
+    void setSessionId(const QString& id) { session_id_ = id; }
+    [[nodiscard]] const QString& sessionId() const { return session_id_; }
+    [[nodiscard]] bool attentionPending() const { return !requests_.isEmpty(); }
+    [[nodiscard]] QString attentionReason() const {
+        return requests_.isEmpty() ? QString{} : requests_.first();
+    }
+    [[nodiscard]] quint32 attentionSerial() const { return attention_serial_; }
+    [[nodiscard]] int attentionCount() const { return static_cast<int>(requests_.size()); }
+    bool addPreviewRequest(const QString& id, const QString& reason);
+    bool resolvePreviewRequest(const QString& id);
+    void clearPreviewRequests();
     [[nodiscard]] bool live() const { return live_ != nullptr; }
     [[nodiscard]] const QString& title() const { return title_; }
     [[nodiscard]] const QString& directory() const { return directory_; }
@@ -41,9 +58,14 @@ class SessionPreview final : public QObject {
 
   signals:
     void snapshotChanged();
+    void attentionChanged();
+    void attentionArrived();
 
   private:
     std::unique_ptr<LiveConnection> live_;
+    QString session_id_;
+    QMap<QString, QString> requests_;
+    quint32 attention_serial_{};
     QString title_;
     QString directory_;
     QString activity_;
@@ -51,14 +73,24 @@ class SessionPreview final : public QObject {
     session::TerminalSnapshot snapshot_;
 };
 
+enum class WorkspaceMode { live, preview };
+
 class Workspace final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList sessions READ sessions CONSTANT)
+    Q_PROPERTY(bool previewMode READ previewMode CONSTANT)
     Q_PROPERTY(int focusedIndex READ focusedIndex WRITE setFocusedIndex NOTIFY focusChanged)
     Q_PROPERTY(
         lapis::desktop::SessionPreview* focusedSession READ focusedSession NOTIFY focusChanged)
   public:
-    Workspace();
+    explicit Workspace(WorkspaceMode mode = WorkspaceMode::live);
+    [[nodiscard]] bool previewMode() const { return preview_mode_; }
+    [[nodiscard]] SessionPreview* session(const QString& id) const;
+    // Development fixture v1 only. No calls are accepted in a live workspace.
+    Q_INVOKABLE bool requestAttention(const QString& session_id, const QString& request_id,
+                                      const QString& reason);
+    Q_INVOKABLE bool resolveAttention(const QString& session_id, const QString& request_id);
+    Q_INVOKABLE bool replayAttention(const QString& scenario);
     [[nodiscard]] QVariantList sessions() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;
@@ -69,6 +101,7 @@ class Workspace final : public QObject {
   private:
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
     int focused_index_{};
+    bool preview_mode_{};
 };
 
 } // namespace lapis::desktop
