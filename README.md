@@ -57,6 +57,8 @@ input-context lifecycle checks and an opt-in correlated timing probe. The
 [milestone qualification receipt](evidence/milestone-one.json) records the assembled
 checks, including automated Option-key, paste and native text-composition
 acceptance using the built-in Japanese input method as a test fixture.
+The [review-fix receipt](evidence/pr3-review.json) covers bounded error-shutdown
+draining, storage retry status and commit-only input regressions.
 The [ordered plan](docs/architecture.md#persistent-terminal-acceptance) records
 the completed scope and later work.
 The [Codex route comparison](adapters/codex/README.md#integration-route-comparison)
