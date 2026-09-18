@@ -243,6 +243,7 @@ def run_step(
         step.update(exit_code=None, timed_out=True)
         if hasattr(error, "cleanup_failure"):
             step["cleanup_failure"] = error.cleanup_failure
+        print(f"FAIL {name} (timed out): {log}", flush=True)
         raise
     finally:
         step["elapsed_seconds"] = round(time.monotonic() - start, 3)
@@ -400,7 +401,13 @@ def probe(engine, args):
         if engine == "ghostty":
             host = f"{platform.system()}-{platform.machine()}"
             if host not in manifest["zig"]:
-                supported = ", ".join(sorted(manifest["zig"]))
+                supported = ", ".join(
+                    sorted(
+                        name
+                        for name, value in manifest["zig"].items()
+                        if isinstance(value, dict)
+                    )
+                )
                 raise RuntimeError(
                     f"Unsupported Ghostty host {host}; pinned hosts are: {supported}"
                 )

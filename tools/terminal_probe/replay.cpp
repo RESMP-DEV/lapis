@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <iostream>
 #include <stdexcept>
@@ -31,6 +32,15 @@ void expect_text(const Snapshot& state, std::size_t row, std::u32string_view tex
         require(cell(state, column, row).text == std::u32string(1, text[column]),
                 "unexpected row text");
     }
+}
+
+void expect_style(const lapis::probe::Cell& styled, char32_t text, bool bold,
+                  std::uint32_t foreground, std::uint32_t background,
+                  std::string_view description) {
+    require(styled.text == std::u32string(1, text) && styled.bold == bold,
+            std::string(description) + " text/bold mismatch");
+    require(styled.foreground_rgb == foreground && styled.background_rgb == background,
+            std::string(description) + " RGB mismatch");
 }
 
 void ascii_cursor() {
@@ -91,13 +101,27 @@ void wrap_and_resize() {
 
 void styles() {
     auto engine = make_engine({12, 4});
-    engine->feed("\x1b[1;38;2;17;34;51;48;2;68;85;102mX\x1b[0mY");
+    engine->feed("\x1b]4;1;rgb:11/22/33\x1b\\"
+                 "\x1b]4;4;rgb:44/55/66\x1b\\"
+                 "\x1b]4;9;rgb:a0/a0/a0\x1b\\"
+                 "\x1b]4;12;rgb:b0/b0/b0\x1b\\"
+                 "\x1b]10;rgb:c0/c0/c0\x1b\\"
+                 "\x1b]11;rgb:d0/d0/d0\x1b\\");
+    engine->feed("\x1b[1;38;2;17;34;51;48;2;68;85;102mX"
+                 "\x1b[0;38;5;1;48;5;4mN"
+                 "\x1b[1;38;5;1;48;5;4mB"
+                 "\x1b[1;38;5;9;48;5;12mE"
+                 "\x1b[0;7;38;5;1;48;5;4mI"
+                 "\x1b[1;7;38;5;1;48;5;4mJ"
+                 "\x1b[0mR");
     const auto state = engine->snapshot();
-    const auto& styled = cell(state, 0, 0);
-    require(styled.text == U"X" && styled.bold, "SGR bold/text not represented");
-    require(styled.foreground_rgb == 0x112233 && styled.background_rgb == 0x445566,
-            "truecolor attributes not represented");
-    require(!cell(state, 1, 0).bold, "SGR reset did not clear bold");
+    expect_style(cell(state, 0, 0), U'X', true, 0x112233, 0x445566, "truecolor");
+    expect_style(cell(state, 1, 0), U'N', false, 0x112233, 0x445566, "normal indexed");
+    expect_style(cell(state, 2, 0), U'B', true, 0x112233, 0x445566, "bold indexed");
+    expect_style(cell(state, 3, 0), U'E', true, 0xA0A0A0, 0xB0B0B0, "explicit bright indexed");
+    expect_style(cell(state, 4, 0), U'I', false, 0x445566, 0x112233, "inverse indexed");
+    expect_style(cell(state, 5, 0), U'J', true, 0x445566, 0x112233, "bold inverse indexed");
+    expect_style(cell(state, 6, 0), U'R', false, 0xC0C0C0, 0xD0D0D0, "reset");
 }
 
 void input_modes() {

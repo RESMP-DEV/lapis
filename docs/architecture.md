@@ -193,6 +193,10 @@ or a reason to alter the shared expectation.
 
 The exercised boundary copies viewport graphemes, widths/continuations, bold and
 resolved RGB colors, cursor position and tested input modes into owned values.
+The color comparison applies inverse to resolved foreground/background colors,
+keeps bold independent of palette brightening, and pins palette/default colors
+in replay. Indexed, explicit bright, inverse, bold-inverse and reset cases now
+exercise that policy on both platforms; the earlier truecolor-only case did not.
 Snapshots survive parser mutation, resize and engine destruction. Key-up and paste
 encoding follow terminal modes. This supports the direction of a snapshot-fed Qt
 surface; actual rendering remains unproven. Production snapshots still need the

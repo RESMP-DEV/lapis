@@ -137,6 +137,7 @@ class ProbeTests(unittest.TestCase):
     def test_timeout_preserves_command_and_log(self):
         steps = []
         with (
+            redirect_stdout(io.StringIO()) as output,
             patch.object(
                 probe,
                 "run_process",
@@ -149,6 +150,7 @@ class ProbeTests(unittest.TestCase):
         self.assertIsNone(steps[0]["exit_code"])
         self.assertEqual(steps[0]["command"], ["build"])
         self.assertTrue(Path(steps[0]["log"]).exists())
+        self.assertIn(f"FAIL build (timed out): {steps[0]['log']}", output.getvalue())
 
     def test_timeout_stops_descendant_that_ignores_sigterm(self):
         child_code = (
@@ -425,7 +427,14 @@ class ProbeTests(unittest.TestCase):
         sources.mkdir(parents=True)
         (sources / "sources.json").write_text(
             json.dumps(
-                {"archives": [], "zig": {"Darwin-arm64": {}, "Linux-aarch64": {}}}
+                {
+                    "archives": [],
+                    "zig": {
+                        "version": "0.16.0",
+                        "Darwin-arm64": {},
+                        "Linux-aarch64": {},
+                    },
+                }
             )
         )
         args = argparse.Namespace(build_root=self.cache, mode="dev")

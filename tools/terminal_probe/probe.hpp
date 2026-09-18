@@ -19,6 +19,8 @@ struct Cell {
     std::u32string text;
     std::uint8_t width{1}; // Zero denotes the continuation of a wide cell.
     bool bold{false};
+    // Effective rendering colors: inverse is applied, while bold remains a
+    // separate attribute and never implies palette brightening.
     std::uint32_t foreground_rgb{0}; // Resolved 0xRRGGBB; palette identity is not retained.
     std::uint32_t background_rgb{0};
 };

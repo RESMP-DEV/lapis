@@ -65,17 +65,19 @@ class ContourEngine final : public Engine {
                                  ? 0
                                  : cell.width();
                 copy.bold = cell.isFlagEnabled(vtbackend::CellFlag::Bold);
-                const auto mode =
-                    copy.bold ? vtbackend::ColorMode::Bright : vtbackend::ColorMode::Normal;
                 copy.foreground_rgb =
                     vtbackend::apply(terminal_.colorPalette(), cell.foregroundColor(),
-                                     vtbackend::ColorTarget::Foreground, mode)
+                                     vtbackend::ColorTarget::Foreground,
+                                     vtbackend::ColorMode::Normal)
                         .value();
                 copy.background_rgb =
                     vtbackend::apply(terminal_.colorPalette(), cell.backgroundColor(),
                                      vtbackend::ColorTarget::Background,
                                      vtbackend::ColorMode::Normal)
                         .value();
+                if (cell.isFlagEnabled(vtbackend::CellFlag::Inverse)) {
+                    std::swap(copy.foreground_rgb, copy.background_rgb);
+                }
                 result.cells.push_back(std::move(copy));
             }
         }
