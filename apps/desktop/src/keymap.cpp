@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QJsonValue>
+#include <QSaveFile>
 #include <QVariantMap>
 #include <array>
 
@@ -113,52 +114,40 @@ constexpr std::array<Theme, 6> kThemes = {{
     return kThemes.front();
 }
 
-// Collapse arrays of short strings onto one line. QJsonDocument's writer only
-// offers all-expanded or all-compact output, and this config is read and edited
-// by hand, so a list such as ["Ctrl+Q"] must stay on one line.
-[[nodiscard]] QByteArray collapse_string_arrays(const QByteArray& json) {
-    QByteArray out;
-    out.reserve(json.size());
-    qsizetype index = 0;
-    while (index < json.size()) {
-        const qsizetype open = json.indexOf('[', index);
-        if (open < 0) {
-            out.append(json.mid(index));
-            break;
-        }
-        const qsizetype close = json.indexOf(']', open);
-        if (close < 0) {
-            out.append(json.mid(index));
-            break;
-        }
-        const QByteArray body = json.mid(open + 1, close - open - 1);
-        const bool scalar_only = !body.contains('{') && !body.contains('[') && !body.contains(':');
-        out.append(json.mid(index, open - index + 1));
-        if (scalar_only) {
-            // Join the wrapped entries with a single space after each comma.
-            QByteArray joined;
-            const QList<QByteArray> parts = body.split(',');
-            for (const QByteArray& raw : parts) {
-                const QByteArray trimmed = raw.trimmed();
-                if (trimmed.isEmpty())
-                    continue;
-                if (!joined.isEmpty())
-                    joined.append(' ');
-                joined.append(trimmed);
-                joined.append(',');
-            }
-            if (!joined.isEmpty())
-                joined.chop(1); // drop the trailing comma
-            out.append(' ');
-            out.append(joined);
-            out.append(' ');
-        } else {
-            out.append(body);
-        }
-        out.append(']');
-        index = close + 1;
+// Keep scalar arrays compact without editing serialized string contents.
+// Qt performs every scalar escape; object/array structure comes from parsed JSON.
+[[nodiscard]] QByteArray format_config(const QJsonValue& value, int indent = 0) {
+    if (!value.isObject() && !value.isArray())
+        return value.toJson(QJsonValue::JsonFormat::Compact);
+    if (value.isArray()) {
+        bool scalar_only = true;
+        for (const auto& item : value.toArray())
+            scalar_only = scalar_only && !item.isArray() && !item.isObject();
+        if (scalar_only)
+            return value.toJson(QJsonValue::JsonFormat::Compact);
     }
-    return out;
+    QByteArray output = value.isObject() ? "{\n" : "[\n";
+    bool first = true;
+    const auto append = [&](const QByteArray& member) {
+        if (!first)
+            output.append(",\n");
+        first = false;
+        output.append(QByteArray(indent + 4, ' '));
+        output.append(member);
+    };
+    if (value.isObject()) {
+        const QJsonObject object = value.toObject();
+        for (auto it = object.begin(); it != object.end(); ++it)
+            append(QJsonValue(it.key()).toJson(QJsonValue::JsonFormat::Compact) + ": " +
+                   format_config(it.value(), indent + 4));
+    } else {
+        for (const auto& item : value.toArray())
+            append(format_config(item, indent + 4));
+    }
+    output.append('\n');
+    output.append(QByteArray(indent, ' '));
+    output.append(value.isObject() ? '}' : ']');
+    return output;
 }
 
 [[nodiscard]] QString density_name(CardDensity density) {
@@ -299,6 +288,11 @@ bool KeyMap::load() {
         emit changed();
         return false;
     }
+    if (file.size() > qint64{1024} * 1024) {
+        diagnostic_ = QStringLiteral("Config exceeds 1 MiB; using defaults");
+        emit changed();
+        return false;
+    }
     QJsonParseError parse_error{};
     const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parse_error);
     file.close();
@@ -397,6 +391,13 @@ QStringList KeyMap::densities() const {
 
 QStringList KeyMap::sequences(const QString& action) const { return bindings_.value(action); }
 
+QVariantMap KeyMap::shortcutBindings() const {
+    QVariantMap result;
+    for (auto it = bindings_.begin(); it != bindings_.end(); ++it)
+        result.insert(it.key(), it.value());
+    return result;
+}
+
 bool KeyMap::reload() {
     const bool ok = load();
     qInfo().noquote() << "lapis keymap reloaded:" << (ok ? "ok" : "failed")
@@ -460,41 +461,39 @@ bool KeyMap::setDensity(const QString& name) {
 bool KeyMap::save() { return persist(); }
 
 bool KeyMap::persist() {
-    const QFileInfo info(source_path_);
+    const auto fail = [this](const QString& reason) {
+        diagnostic_ = QStringLiteral("Could not save %1: %2").arg(source_path_, reason);
+        qWarning().noquote() << "lapis config:" << diagnostic_;
+        emit changed();
+        return false;
+    };
     QJsonObject root;
-    if (info.isFile()) {
+    if (QFileInfo::exists(source_path_)) {
         QFile existing(source_path_);
-        if (existing.open(QIODevice::ReadOnly)) {
-            const QJsonDocument document = QJsonDocument::fromJson(existing.readAll());
-            existing.close();
-            if (document.isObject())
-                root = document.object();
-        }
+        if (!existing.open(QIODevice::ReadOnly))
+            return fail(existing.errorString());
+        if (existing.size() > qint64{1024} * 1024)
+            return fail(QStringLiteral("config exceeds 1 MiB"));
+        const QJsonDocument document = QJsonDocument::fromJson(existing.readAll());
+        if (!document.isObject())
+            return fail(
+                QStringLiteral("existing config is not a valid JSON object; left unchanged"));
+        root = document.object();
     }
-    // Only the appearance keys are rewritten here. Keybindings and categories
-    // stay as the user wrote them, including comments they may rely on being
-    // absent when they next open the file.
     root.insert(QStringLiteral("layout"), layoutName());
     root.insert(QStringLiteral("theme"), theme_);
     root.insert(QStringLiteral("density"), densityName());
     if (!root.contains(QStringLiteral("version")))
         root.insert(QStringLiteral("version"), 1);
-
-    QFile file(source_path_);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        diagnostic_ =
-            QStringLiteral("Could not write %1: %2").arg(source_path_, file.errorString());
-        qWarning().noquote() << "lapis config:" << diagnostic_;
-        emit changed();
-        return false;
-    }
-    // This file is hand-edited, so keep short string arrays on one line. The
-    // default indented writer expands every array over three lines, which turns
-    // the keybinding block into an unreadable column.
-    file.write(collapse_string_arrays(QJsonDocument(root).toJson(QJsonDocument::Indented)));
-    file.close();
+    QSaveFile file(source_path_);
+    if (!file.open(QIODevice::WriteOnly))
+        return fail(file.errorString());
+    const QByteArray contents = format_config(root) + '\n';
+    if (file.write(contents) != contents.size() || !file.commit())
+        return fail(file.errorString());
     diagnostic_.clear();
     emit changed();
     return true;
 }
+
 } // namespace lapis::desktop

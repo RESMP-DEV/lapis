@@ -120,6 +120,34 @@ void selection_persists() {
     require(reloaded.densityName() == QStringLiteral("compact"), "density should survive a reload");
 }
 
+// Appearance changes must round-trip every unrelated JSON value exactly.
+void appearance_preserves_json_and_bad_files() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    const QDir dir(directory.path());
+    const QByteArray original =
+        R"({"keybindings":{"openSettings":["Ctrl+,"],"nextWindow":["Ctrl+Shift+]"],"custom":["a, b","quote\"[]", "space  space"]},"categories":[{"title":"[one],  two"}],"layout":"focus"})";
+    const QString path = write_config(dir, original);
+    const QJsonObject before = read_config(path);
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "load punctuation fixture");
+    require(keymap.setTheme(QStringLiteral("graphite")), "persist punctuation fixture");
+    const QJsonObject after = read_config(path);
+    require(after.value(QStringLiteral("keybindings")) ==
+                before.value(QStringLiteral("keybindings")),
+            "appearance save changed a shortcut");
+    require(after.value(QStringLiteral("categories")) == before.value(QStringLiteral("categories")),
+            "appearance save changed category text");
+    const QByteArray malformed = "{unfinished user edit";
+    static_cast<void>(write_config(dir, malformed));
+    require(!keymap.setDensity(QStringLiteral("compact")), "refuse to overwrite invalid JSON");
+    QFile raw(path);
+    require(raw.open(QIODevice::ReadOnly), "read invalid config");
+    require(raw.readAll() == malformed, "invalid config must be preserved exactly");
+    require(!keymap.diagnostic().isEmpty(), "failed save is visible");
+}
+
 // Unknown names are rejected without disturbing the current selection, so a bad
 // config edit or a stale dialog cannot leave the window in an undefined state.
 void unknown_names_are_rejected() {
@@ -201,6 +229,7 @@ int main(int argc, char** argv) {
     try {
         themes_are_complete();
         selection_persists();
+        appearance_preserves_json_and_bad_files();
         unknown_names_are_rejected();
         malformed_values_fall_back();
         advertised_names_are_accepted();

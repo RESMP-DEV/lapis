@@ -6,6 +6,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVariantList>
+#include <QVariantMap>
 
 #include <array>
 
@@ -62,6 +63,7 @@ class KeyMap final : public QObject {
     Q_PROPERTY(QStringList densities READ densities NOTIFY changed)
     Q_PROPERTY(QString diagnostic READ diagnostic NOTIFY changed)
     Q_PROPERTY(QString sourcePath READ sourcePath NOTIFY changed)
+    Q_PROPERTY(QVariantMap shortcutBindings READ shortcutBindings NOTIFY changed)
   public:
     explicit KeyMap(QObject* parent = nullptr);
 
@@ -76,6 +78,7 @@ class KeyMap final : public QObject {
     [[nodiscard]] const QString& diagnostic() const { return diagnostic_; }
 
     [[nodiscard]] QStringList sequences(const QString& action) const;
+    [[nodiscard]] QVariantMap shortcutBindings() const;
     Q_INVOKABLE [[nodiscard]] QStringList actionSequences(const QString& action) const {
         return sequences(action);
     }

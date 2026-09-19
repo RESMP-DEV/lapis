@@ -1,6 +1,9 @@
 #include "ui_preview.hpp"
 
 #include <QDebug>
+#include <QGuiApplication>
+#include <QKeyEvent>
+#include <QKeySequence>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlError>
@@ -45,9 +48,9 @@ constexpr int kMaximumDiagnosticsLength = 4096;
 }
 
 // Move a window onto the requested screen and keep it inside that screen's
-// usable area. Returns false when no screen name matches, so the caller can
-// report the available names instead of silently opening on the wrong display.
-bool move_to_screen(QQuickWindow& window, const QString& requested) {
+// usable area. Returns false when no screen name matches so the caller can
+// surface that fallback placement is being used.
+[[nodiscard]] bool move_to_screen(QQuickWindow& window, const QString& requested) {
     const auto screens = QGuiApplication::screens();
     QScreen* target = nullptr;
     for (QScreen* screen : screens) {
@@ -66,13 +69,18 @@ bool move_to_screen(QQuickWindow& window, const QString& requested) {
         return false;
     }
     const QRect available = target->availableGeometry();
-    // Keep the window wholly visible; clamp after moving so a window larger
-    // than the panel still starts at the panel's origin.
+    const QSize minimum = window.minimumSize();
+    if (minimum.width() > available.width() || minimum.height() > available.height()) {
+        qWarning().noquote() << "Requested screen available area is smaller than window minimum:"
+                             << available.size() << "<" << minimum;
+    }
+    // Honor the QML minimum while fitting the window to the panel. If that
+    // minimum exceeds the panel, the resulting overflow is logged above.
     QRect geometry = window.geometry();
     if (geometry.width() > available.width())
-        geometry.setWidth(available.width());
+        geometry.setWidth(qMax(available.width(), minimum.width()));
     if (geometry.height() > available.height())
-        geometry.setHeight(available.height());
+        geometry.setHeight(qMax(available.height(), minimum.height()));
     geometry.moveTopLeft(available.topLeft());
     window.setScreen(target);
     window.setGeometry(geometry);
@@ -85,7 +93,11 @@ bool move_to_screen(QQuickWindow& window, const QString& requested) {
 } // namespace
 
 UiPreview::UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* parent)
-    : QObject(parent), workspace_(workspace), options_(std::move(options)) {}
+    : QObject(parent), workspace_(workspace), options_(std::move(options)) {
+    if (options_.keymap != nullptr)
+        connect(options_.keymap, &KeyMap::changed, this, &UiPreview::deferTerminalFocus);
+    connect(&workspace_, &Workspace::focusChanged, this, &UiPreview::deferTerminalFocus);
+}
 
 UiPreview::~UiPreview() {
     engine_.reset();
@@ -145,6 +157,9 @@ bool UiPreview::assignTerminalFocus() {
     QQuickWindow* target_window = window();
     if (target_window == nullptr)
         return false;
+    const auto* settings = target_window->findChild<QObject*>(QStringLiteral("settingsDialog"));
+    if (settings != nullptr && settings->property("visible").toBool())
+        return false;
     // Focus and columns keep the single live pane; blocks and stack promote one
     // tile per session. Workspace owns which session is focused, so ask it for
     // the id. This mirrors the QML paneVisible rule: the pane owns the keyboard
@@ -171,6 +186,54 @@ bool UiPreview::assignTerminalFocus() {
         return false;
     terminal->forceActiveFocus(Qt::OtherFocusReason);
     return terminal->hasActiveFocus();
+}
+
+void UiPreview::deferTerminalFocus() {
+    QMetaObject::invokeMethod(
+        this,
+        [this] {
+            QQuickWindow* target_window = window();
+            if (target_window != nullptr && target_window->isActive())
+                assignTerminalFocus();
+        },
+        Qt::QueuedConnection);
+}
+
+bool UiPreview::eventFilter(QObject* watched, QEvent* event) {
+    if (event->type() != QEvent::KeyPress)
+        return QObject::eventFilter(watched, event);
+
+    auto* current_window = qobject_cast<QQuickWindow*>(watched);
+    if (current_window == nullptr || current_window != window_.data() ||
+        !current_window->isActive())
+        return QObject::eventFilter(watched, event);
+
+    auto* key_event = static_cast<QKeyEvent*>(event);
+    if (key_event->isAutoRepeat())
+        return false;
+    const QKeySequence pressed(key_event->keyCombination());
+    const QKeySequence::SequenceMatch exact = QKeySequence::ExactMatch;
+    if (options_.keymap != nullptr) {
+        const QStringList sequences = options_.keymap->sequences(QStringLiteral("openSettings"));
+        for (const QString& text : sequences) {
+            const QKeySequence sequence(text);
+            if (sequence.matches(pressed) == exact) {
+                if (openSettings()) {
+                    event->accept();
+                    return true;
+                }
+                return false;
+            }
+        }
+        return false;
+    }
+
+    const QKeySequence default_sequence(QStringLiteral("Ctrl+,"));
+    if (default_sequence.matches(pressed) == exact && openSettings()) {
+        event->accept();
+        return true;
+    }
+    return false;
 }
 
 bool UiPreview::openSettings() {
@@ -280,8 +343,14 @@ bool UiPreview::loadCandidate() {
     }
 
     emit windowChanged(candidateWindow);
-    if (!options_.screen.isEmpty() && !reloading)
-        move_to_screen(*candidateWindow, options_.screen);
+    candidateWindow->installEventFilter(this);
+    if (!options_.screen.isEmpty() && !reloading &&
+        !move_to_screen(*candidateWindow, options_.screen)) {
+        setDiagnostics(
+            appendDiagnostics(candidateDiagnostics,
+                              QStringLiteral("No screen matched '%1'; see log for available names")
+                                  .arg(options_.screen)));
+    }
     candidateWindow->show();
 
     return true;

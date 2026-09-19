@@ -1,3 +1,5 @@
+#include "keymap.hpp"
+#include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include "ui_preview.hpp"
 #include <QElapsedTimer>
@@ -11,11 +13,14 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QImage>
+#include <QKeyEvent>
+#include <QMouseEvent>
 #include <QObject>
 #include <QPointer>
 #include <QQuickWindow>
 #include <QRect>
 #include <QSGRendererInterface>
+#include <QScreen>
 #include <QTemporaryDir>
 #include <QUrl>
 
@@ -173,6 +178,25 @@ int run_ui_tests() {
     CHECK(window->width() == 980);
     CHECK(window->height() == 700);
 
+    QScreen* selected = QGuiApplication::primaryScreen();
+    if (selected != nullptr && !selected->name().isEmpty()) {
+        lapis::desktop::UiPreview placed(
+            workspace,
+            {.source = QUrl::fromLocalFile(qml_path), .compact = true, .screen = selected->name()});
+        CHECK(placed.load());
+        CHECK(placed.window()->screen() == selected);
+        // macOS adjusts client geometry to leave room for native window decorations.
+        CHECK(selected->availableGeometry().contains(placed.window()->frameGeometry()));
+        placed.window()->hide();
+    }
+
+    lapis::desktop::UiPreview unmatched(workspace, {.source = QUrl::fromLocalFile(qml_path),
+                                                    .compact = true,
+                                                    .screen = QStringLiteral("no-such-screen")});
+    CHECK(unmatched.load());
+    CHECK(unmatched.diagnostics().contains(QStringLiteral("No screen matched")));
+    unmatched.window()->hide();
+
     window->setGeometry(617, 431, 523, 337);
     const QRect preserved_geometry = window->geometry();
     const bool manual_reduced_motion = !preview.reducedMotion();
@@ -245,6 +269,189 @@ void pump(int milliseconds) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
         QThread::msleep(1);
     }
+}
+void wait_active(QQuickWindow& window) {
+    lapis::desktop::test::activate_test_window(window);
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (!window.isActive() && elapsed.elapsed() < 5000)
+        pump(10);
+    if (!window.isActive())
+        throw std::runtime_error("Window failed to activate: " + window.title().toStdString() +
+                                 " size=" + std::to_string(window.width()) + "x" +
+                                 std::to_string(window.height()));
+}
+
+void write_config(const QTemporaryDir& directory, const QString& text) {
+    QFile file(directory.filePath(QStringLiteral("lapis.json")));
+    CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text));
+    file.write(text.toUtf8());
+    file.close();
+}
+
+void click_setting(QQuickWindow& window, const QString& name) {
+    auto* item = find_visual(window.contentItem(), name);
+    auto* scroll = find_visual(window.contentItem(), QStringLiteral("settingsScroll"));
+    CHECK(item != nullptr && scroll != nullptr);
+    scroll->setProperty("contentY", 0);
+    pump(10);
+    const auto offset = item->mapToItem(scroll, QPointF()).y();
+    if (offset + item->height() > scroll->height()) {
+        scroll->setProperty("contentY", offset + item->height() - scroll->height());
+        pump(10);
+    }
+    const QPointF position = item->mapToScene(QPointF(item->width() / 2, item->height() / 2));
+    const QPointF global = window.mapToGlobal(position);
+    QMouseEvent press(QEvent::MouseButtonPress, position, global, Qt::LeftButton, Qt::LeftButton,
+                      Qt::NoModifier);
+    QMouseEvent release(QEvent::MouseButtonRelease, position, global, Qt::LeftButton, Qt::NoButton,
+                        Qt::NoModifier);
+    QCoreApplication::sendEvent(&window, &press);
+    QCoreApplication::sendEvent(&window, &release);
+    pump(50);
+    CHECK(item->property("checked").toBool());
+}
+
+int run_shortcut_focus_tests() {
+    using namespace lapis::desktop;
+    Workspace workspace(WorkspaceMode::preview);
+    QTemporaryDir directory;
+    CHECK(directory.isValid());
+    write_config(directory, QStringLiteral(R"({"version":1,"layout":"focus","theme":"lapis",)"
+                                           R"("keybindings":{"openSettings":["Ctrl+Alt+T"]}})"));
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(directory.filePath(QStringLiteral("lapis.json")));
+    CHECK(keymap.load());
+
+    UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+                                  .compact = true,
+                                  .screen = QString(),
+                                  .keymap = &keymap});
+    CHECK(preview.load());
+    auto* window = preview.window();
+    window->show();
+    window->requestActivate();
+    wait_active(*window);
+    auto* terminal = find_visual(window->contentItem(), QStringLiteral("liveTerminal"));
+    auto* dialog = window->findChild<QObject*>(QStringLiteral("settingsDialog"));
+    CHECK(terminal != nullptr && dialog != nullptr);
+    terminal->forceActiveFocus();
+
+    QKeyEvent old_shortcut(QEvent::KeyPress, Qt::Key_Comma, Qt::ControlModifier);
+    QCoreApplication::sendEvent(window, &old_shortcut);
+    CHECK(!dialog->property("visible").toBool());
+
+    QKeyEvent custom(QEvent::KeyPress, Qt::Key_T, Qt::ControlModifier | Qt::AltModifier,
+                     QStringLiteral("t"));
+    CHECK(QCoreApplication::sendEvent(window, &custom));
+    CHECK(custom.isAccepted());
+    pump(150);
+    CHECK(dialog->property("opened").toBool());
+    CHECK(window->activeFocusItem() != terminal);
+    CHECK(dialog->property("shortcutHint").toString() == QStringLiteral("Ctrl+Alt+T"));
+    if (const auto path = qEnvironmentVariable("LAPIS_SETTINGS_CAPTURE"); !path.isEmpty())
+        CHECK(window->grabWindow().save(path));
+
+    CHECK(keymap.setTheme(QStringLiteral("graphite")));
+    pump(50);
+    CHECK(dialog->property("opened").toBool());
+    CHECK(window->activeFocusItem() != terminal);
+
+    CHECK(keymap.setLayout(QStringLiteral("columns")));
+    pump(50);
+    CHECK(dialog->property("opened").toBool());
+    CHECK(window->activeFocusItem() != terminal);
+
+    CHECK(QMetaObject::invokeMethod(dialog, "close"));
+    pump(50);
+    CHECK(!dialog->property("opened").toBool());
+    CHECK(terminal->hasActiveFocus());
+
+    CHECK(preview.openSettings());
+    pump(150);
+    for (const auto& theme : {"lapis", "graphite", "daylight", "solarized", "amber", "contrast"}) {
+        click_setting(*window, QStringLiteral("theme-") + QString::fromLatin1(theme));
+        CHECK(keymap.themeName() == QString::fromLatin1(theme));
+        CHECK(dialog->property("opened").toBool());
+    }
+    for (const auto& density : {"comfortable", "compact", "minimal"}) {
+        click_setting(*window, QStringLiteral("choice-") + QString::fromLatin1(density));
+        CHECK(keymap.densityName() == QString::fromLatin1(density));
+    }
+    click_setting(*window, QStringLiteral("theme-lapis"));
+    for (const auto& layout : {"focus", "columns", "blocks", "stack"}) {
+        click_setting(*window, QStringLiteral("choice-") + QString::fromLatin1(layout));
+        CHECK(keymap.layoutName() == QString::fromLatin1(layout));
+        CHECK(QMetaObject::invokeMethod(dialog, "close"));
+        pump(100);
+        auto* carousel = find_visual(window->contentItem(), QStringLiteral("sessionCarousel"));
+        auto* shell_card = find_visual(window->contentItem(), QStringLiteral("sessionCard_shell"));
+        CHECK(carousel != nullptr && shell_card != nullptr);
+        if (keymap.layoutName() == QStringLiteral("stack")) {
+            CHECK(shell_card->width() > carousel->width() * 0.95);
+            CHECK(shell_card->height() > carousel->height() * 0.95);
+            workspace.setFocusedIndex(1);
+            pump(100);
+            auto* next_card =
+                find_visual(window->contentItem(), QStringLiteral("sessionCard_renderer"));
+            CHECK(next_card != nullptr);
+            CHECK(next_card->mapToItem(carousel, QPointF()).y() >= -1);
+            CHECK(next_card->mapToItem(carousel, QPointF()).y() < carousel->height());
+            workspace.setFocusedIndex(0);
+            pump(100);
+        }
+        if (keymap.layoutName() == QStringLiteral("blocks")) {
+            window->resize(700, 700);
+            pump(100);
+            CHECK(carousel->property("occupiedRows").toInt() >= 2);
+            auto* last_card =
+                find_visual(window->contentItem(), QStringLiteral("sessionCard_checks"));
+            CHECK(last_card != nullptr);
+            CHECK(last_card->mapToItem(carousel, QPointF()).y() > shell_card->height());
+            CHECK(last_card->mapToItem(carousel, QPointF()).x() + last_card->width() <=
+                  carousel->width());
+            window->resize(980, 700);
+            pump(100);
+        }
+        if (const auto path = qEnvironmentVariable("LAPIS_LAYOUT_CAPTURE_PREFIX"); !path.isEmpty())
+            CHECK(window->grabWindow().save(path + QString::fromLatin1(layout) + ".png"));
+        CHECK(preview.openSettings());
+        pump(150);
+    }
+    KeyMap persisted;
+    persisted.setSourcePathForTesting(directory.filePath(QStringLiteral("lapis.json")));
+    CHECK(persisted.load());
+    CHECK(persisted.layoutName() == keymap.layoutName());
+    CHECK(persisted.themeName() == keymap.themeName());
+    CHECK(persisted.densityName() == keymap.densityName());
+    CHECK(QMetaObject::invokeMethod(dialog, "close"));
+    pump(50);
+
+    auto* shortcut = window->findChild<QObject*>(QStringLiteral("nextCategoryShortcut"));
+    CHECK(shortcut != nullptr);
+    const auto old_sequences = shortcut->property("sequences");
+    write_config(directory, QStringLiteral(R"({"keybindings":{"nextCategory":["Ctrl+Alt+Y"]}})"));
+    CHECK(keymap.reload());
+    pump(50);
+    CHECK(shortcut->property("sequences") != old_sequences);
+
+    // Preview documents are intentionally noninteractive. Enable only this
+    // fixture item to exercise the real card's focus routing in the same window.
+    CHECK(keymap.setLayout(QStringLiteral("stack")));
+    pump(50);
+    auto* card = find_visual(window->contentItem(), QStringLiteral("cardTerminal_shell"));
+    CHECK(card != nullptr);
+    card->setEnabled(true);
+    wait_active(*window);
+    preview.deferTerminalFocus();
+    pump(50);
+    if (!card->hasActiveFocus())
+        std::cerr << "card focus: enabled=" << card->isEnabled() << " visible=" << card->isVisible()
+                  << " window=" << window->isActive()
+                  << " dialog=" << dialog->property("visible").toBool()
+                  << " focused=" << workspace.focusedSession()->sessionId().toStdString() << '\n';
+    CHECK(card->hasActiveFocus());
+    return EXIT_SUCCESS;
 }
 struct ColoredArea {
     QRect bounds;
@@ -415,6 +622,12 @@ int run_attention_ui_tests() {
     auto* agent = workspace.session(QStringLiteral("agent"));
     agent->applySnapshot(agent->snapshot());
     pump(500);
+    // Instrumentation can delay animation ticks. Check finite completion,
+    // not a release-performance deadline inside a sanitizer test.
+    QElapsedTimer completion;
+    completion.start();
+    while (card->property("cueRunning").toBool() && completion.elapsed() < 5000)
+        pump(10);
     CHECK(!card->property("cueRunning").toBool());
     CHECK(card->property("pending").toBool());
     CHECK(agent->attentionSerial() == serial);
@@ -450,6 +663,7 @@ int run_attention_ui_tests() {
 int main(int argc, char** argv) {
     QCoreApplication::setAttribute(Qt::AA_MacDontSwapCtrlAndMeta);
     QGuiApplication app(argc, argv);
+    app.setQuitOnLastWindowClosed(false);
     QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
     QCoreApplication::setApplicationName(QStringLiteral("lapis-ui-preview-tests"));
     QCoreApplication::setOrganizationName(QStringLiteral("lapis"));
@@ -458,6 +672,8 @@ int main(int argc, char** argv) {
                                                                "Owned by workspace");
     qmlRegisterType<lapis::desktop::TerminalSurface>("Lapis", 1, 0, "TerminalSurface");
     try {
+        if (app.arguments().contains(QStringLiteral("--shortcuts-only")))
+            return run_shortcut_focus_tests();
         if (run_workspace_tests() != EXIT_SUCCESS || run_ui_tests() != EXIT_SUCCESS ||
             run_surface_tests() != EXIT_SUCCESS || run_attention_ui_tests() != EXIT_SUCCESS)
             return EXIT_FAILURE;

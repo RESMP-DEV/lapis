@@ -89,6 +89,7 @@ ApplicationWindow {
     // Stack shows one session at a time with the carousel hidden.
     readonly property bool stackLayout: layoutMode === "stack"
     // The pane owns the keyboard only when it is the visible surface.
+    readonly property bool settingsOpen: settingsDialog.visible
     readonly property bool paneVisible: layoutMode === "focus" || columnsLayout
     readonly property int cardSpacing: densityMode === "minimal" ? 8 :
                                        densityMode === "compact" ? 10 : 14
@@ -101,8 +102,8 @@ ApplicationWindow {
     // as in an isolated QML preview that does not load a config file.
     function bindings(action, fallback) {
         if (typeof keymap !== "undefined" && keymap !== null) {
-            const configured = keymap.actionSequences(action)
-            if (configured.length > 0)
+            const configured = keymap.shortcutBindings[action]
+            if (configured && configured.length > 0)
                 return configured
         }
         return fallback
@@ -124,6 +125,7 @@ ApplicationWindow {
     // Category navigation: one key per category, exactly like the terminal
     // setups this mirrors. Categories are listed in lapis.json.
     Shortcut {
+        objectName: "nextCategoryShortcut"
         sequences: window.bindings("nextCategory", ["Ctrl+Tab"])
         onActivated: workspace.nextCategory()
     }
@@ -182,7 +184,7 @@ ApplicationWindow {
         }
     }
 
-    // Command-comma opens preferences in every native macOS app. The terminal
+    // The configured settings shortcut opens Appearance. The terminal
     // surface is a native focus item that consumes key events before a QML
     // Shortcut can fire, so C++ intercepts the key and calls this instead.
     function openSettingsDialog() {
@@ -203,9 +205,10 @@ ApplicationWindow {
         currentLayout: window.layoutMode
         currentDensity: window.densityMode
         configPath: typeof keymap !== "undefined" && keymap !== null ? keymap.sourcePath : ""
+        shortcutHint: window.bindings("openSettings", ["Ctrl+,"]).join(" / ")
         configDiagnostic: typeof keymap !== "undefined" && keymap !== null ? keymap.diagnostic : ""
 
-        onClosed: window.setTerminalFocus()
+        onClosed: preview.deferTerminalFocus()
 
         onThemeChosen: function(name) {
             if (typeof keymap !== "undefined" && keymap !== null)
@@ -490,7 +493,7 @@ ApplicationWindow {
             // An invisible item still occupies its grid row and its spacing, so
             // collapse it out of the layout when it is not the active surface.
             Layout.row: 1
-            Layout.rowSpan: window.paneVisible ? 1 : 0
+            Layout.rowSpan: 1
             visible: window.paneVisible
             color: window.paneColor
             radius: window.paneRadius
@@ -547,110 +550,63 @@ ApplicationWindow {
 // Input requires both the session being ready and this pane owning
                 // the keyboard, which blocks layout gives to a tile instead.
                 interactive: (preview.active || (document && document.inputReady))
-                             && window.paneVisible
-                focus: window.paneVisible
+                             && window.paneVisible && !window.settingsOpen
+                focus: window.paneVisible && !window.settingsOpen
                 Component.onCompleted: if (window.paneVisible) forceActiveFocus()
                 // Claim the keyboard whenever this pane becomes the active
                 // surface, so switching layout never leaves focus on a button.
                 Connections {
                     target: window
                     function onLayoutModeChanged() {
-                        window.setTerminalFocus()
+                        preview.deferTerminalFocus()
                     }
                 }
             }
         }
 
-        // A GridView rather than a ListView: GridView wraps into rows, which is
-        // what blocks and stack need. A ListView never wraps, so its tiles ran
-        // off the right edge and the "grid" was only ever one scrolling row.
-        ListView {
+        // One retained delegate serves the strip, channel, wrapping grid and
+        // full-window stack. Grid cell dimensions determine each scroll axis.
+        GridView {
             id: carousel
-
-            // In blocks mode this becomes the workspace: it wraps into a grid and
-            // sizes tiles to fill the available space.
+            objectName: "sessionCarousel"
             Layout.fillWidth: true
-            Layout.fillHeight: window.blocksLayout || window.stackLayout
+            Layout.fillHeight: window.columnsLayout || window.blocksLayout || window.stackLayout
             Layout.preferredWidth: window.columnsLayout ? 320 : -1
             Layout.maximumWidth: window.columnsLayout ? 320 : -1
-            Layout.preferredHeight: window.blocksLayout || window.stackLayout ? -1 :
-                                                                                window.cardHeight + 24
-            // Channels align to the top of the column; the strip sits under the
-            // pane. Without the explicit top alignment the vertical channel
-            // centers itself in the cell and the cards float.
+            Layout.preferredHeight: window.paneVisible && !window.columnsLayout ? window.cardHeight + 24 : -1
             Layout.column: 0
-            Layout.row: window.columnsLayout ? 1 : 2
+            Layout.row: window.columnsLayout || !window.paneVisible ? 1 : 2
             Layout.alignment: Qt.AlignTop | Qt.AlignLeft
-            Layout.minimumHeight: window.blocksLayout || window.stackLayout ? 0 :
-                                                                             window.cardHeight + 16
-            // Flow builds the wrap direction: left to right for the wrapping
-            // layouts, top to bottom for the single-column channel.
-            // A ListView scrolls one axis and never wraps, which is what the
-            // strip, the channel and the stack all want. Blocks opts into the
-            // wrapping grid below.
-            orientation: window.columnsLayout || window.stackLayout ?
-                             ListView.Vertical :
-                             ListView.Horizontal
+            Layout.minimumHeight: window.paneVisible && !window.columnsLayout ? window.cardHeight + 16 : 0
+            flow: window.layoutMode === "focus" ? GridView.FlowTopToBottom : GridView.FlowLeftToRight
             boundsMovement: Flickable.StopAtBounds
             clip: true
-            topMargin: 3
-            leftMargin: 1
-            rightMargin: 1
             model: workspace.sessions
+            currentIndex: workspace.focusedIndex
+            onCurrentIndexChanged: positionViewAtIndex(currentIndex, GridView.Contain)
+            onCurrentItemChanged: preview.deferTerminalFocus()
+            onCellWidthChanged: Qt.callLater(function() { carousel.positionViewAtIndex(carousel.currentIndex, GridView.Contain) })
+            onCellHeightChanged: Qt.callLater(function() { carousel.positionViewAtIndex(carousel.currentIndex, GridView.Contain) })
 
-            // Orientation cannot change at runtime, so blocks mode uses the
-            // vertical flow, which wraps into as many columns as fit. Tiles are
-            // sized so the visible rows fill the viewport with no dead space;
-            // more sessions than fit simply scroll.
-            // Only blocks wraps into a grid. Focus and columns are single-line
-            // scrollers: a strip of previews that never wraps, and a channel
-            // that never wraps. Stack wraps to fill the width.
-            readonly property int blockColumns: Math.max(1, Math.min(4, workspace.sessions.length))
-            readonly property int wrapColumns: window.blocksLayout ? blockColumns :
-                                               window.stackLayout ? Math.max(1, Math.floor(width / 320)) : 1
-            // GridView wraps by cell size, so a single-row layout must be wide
-            // enough that every cell lands in row 0 and scrolls sideways.
-            readonly property int flowColumns: window.blocksLayout || window.stackLayout ?
-                                                    wrapColumns :
-                                                    Math.max(1, workspace.sessions.length)
-            readonly property int tileWidth: window.blocksLayout ?
-                                                 Math.max(220, Math.floor((width - window.cardSpacing * (blockColumns - 1)) / blockColumns)) :
-                                             window.stackLayout ?
-                                                 Math.max(260, Math.floor((width - window.cardSpacing * (wrapColumns - 1)) / wrapColumns)) :
-                                             window.columnsLayout ? Math.max(180, width - window.cardSpacing - 10) : 238
-            // Size tiles from the rows the sessions actually occupy, not the
-            // rows that could fit. Five sessions in three columns is two rows, so
-            // two tall rows fill the viewport instead of two short ones above a
-            // band of dead space.
-            readonly property int occupiedRows: Math.max(1, Math.ceil(Math.max(1, workspace.sessions.length) /
-                                                                      Math.max(1, wrapColumns)))
-            readonly property int tileRows: occupiedRows
-            readonly property real availableHeight: height > 0 ? height : window.height - 60
-            spacing: window.cardSpacing
-            readonly property int tileHeight: window.blocksLayout || window.stackLayout ?
-                                                  Math.max(150, Math.floor((availableHeight - window.cardSpacing * (tileRows - 1)) /
-                                                                           Math.max(1, tileRows))) :
-                                              window.columnsLayout ? Math.max(120, Math.floor(height / 4)) :
-                                                                     window.cardHeight
+            readonly property int blockColumns: Math.max(1, Math.min(4, workspace.sessions.length, Math.floor(width / 220)))
+            readonly property int occupiedRows: Math.max(1, Math.ceil(workspace.sessions.length / blockColumns))
+            cellWidth: window.blocksLayout ? Math.floor(width / blockColumns) :
+                       window.columnsLayout || window.stackLayout ? width : 238 + window.cardSpacing
+            cellHeight: window.blocksLayout ? Math.max(150, Math.floor(height / occupiedRows)) :
+                        window.stackLayout ? height :
+                        window.columnsLayout ? window.cardHeight + window.cardSpacing : height
+            readonly property real tileWidth: Math.max(1, cellWidth - window.cardSpacing)
+            readonly property real tileHeight: Math.max(1, cellHeight - window.cardSpacing)
 
-            // The strip and the channel are single-line scrollers; blocks and
-            // stack wrap and scroll vertically. Showing the wrong axis leaves a
-            // bar that cannot move.
             ScrollBar.horizontal: ScrollBar {
-                visible: carousel.orientation === ListView.Horizontal && carousel.contentWidth > carousel.width
+                visible: carousel.flow === GridView.FlowTopToBottom && carousel.contentWidth > carousel.width
                 implicitHeight: 8
-                contentItem: Rectangle {
-                    radius: 4
-                    color: window.borderColor
-                }
+                contentItem: Rectangle { radius: 4; color: window.borderColor }
             }
             ScrollBar.vertical: ScrollBar {
-                visible: carousel.orientation === ListView.Vertical || carousel.contentHeight > carousel.height
+                visible: carousel.flow === GridView.FlowLeftToRight && carousel.contentHeight > carousel.height
                 implicitWidth: 8
-                contentItem: Rectangle {
-                    radius: 4
-                    color: window.borderColor
-                }
+                contentItem: Rectangle { radius: 4; color: window.borderColor }
             }
 
             delegate: Button {
@@ -659,9 +615,7 @@ ApplicationWindow {
                 required property int index
                 required property var modelData
 
-                // ListView sizes delegates from the view unless the delegate
-                // supplies its own height, so both are bound. implicitHeight
-                // alone is ignored and the tiles collapse to a fixed strip.
+                // Keep the rendered card inside its grid cell and gutter.
                 width: carousel.tileWidth
                 height: carousel.tileHeight
                 LayoutMirroring.enabled: false
@@ -823,10 +777,10 @@ ApplicationWindow {
                             enabled: !window.paneVisible
                                      && workspace.focusedIndex === sessionCard.index
                                      && sessionCard.modelData.live
-                            interactive: !window.paneVisible
+                            interactive: !window.paneVisible && !window.settingsOpen
                                          && workspace.focusedIndex === sessionCard.index
                                          && sessionCard.modelData.live
-                            focus: !window.paneVisible
+                            focus: !window.paneVisible && !window.settingsOpen
                                            && workspace.focusedIndex === sessionCard.index
                                            && sessionCard.modelData.live
                             Component.onCompleted: {
@@ -838,7 +792,7 @@ ApplicationWindow {
                             Connections {
                                 target: workspace
                                 function onFocusChanged() {
-                                    if (!window.paneVisible && sessionCard.modelData.live
+                                    if (!window.settingsOpen && !window.paneVisible && sessionCard.modelData.live
                                             && workspace.focusedIndex === sessionCard.index)
                                         cardTerminal.forceActiveFocus()
                                 }
@@ -846,7 +800,7 @@ ApplicationWindow {
                             Connections {
                                 target: window
                                 function onBlocksLayoutChanged() {
-                                    window.setTerminalFocus()
+                                    preview.deferTerminalFocus()
                                 }
                             }
                         }

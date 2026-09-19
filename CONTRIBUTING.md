@@ -270,6 +270,7 @@ defaults are:
 | Next / previous window | Ctrl+Shift+] / Ctrl+Shift+[ | Move through sessions |
 | Focus left / right | Ctrl+Left / Ctrl+Right | Step one session |
 | Cycle layout | Ctrl+L | Switch focus and blocks layouts |
+| Appearance | Ctrl+, | Open theme, layout and density settings |
 | Reload config | Ctrl+R | Re-read `lapis.json` |
 
 Each action takes a string or a list of strings, so several chords can share one
@@ -278,9 +279,14 @@ portability) rather than `Cmd+`. A missing or malformed file falls back to the
 built-in defaults and reports the problem instead of failing to start, and the
 window logs the path it read.
 
-`layout` is either `focus`, which keeps one large pane with a preview strip, or
-`blocks`, which gives every session an equal tile in a wrapping grid. Ctrl-L
-toggles it at runtime for comparison; the file sets the startup value.
+Appearance settings offer four layouts: `focus` keeps one large pane and a
+preview strip, `columns` places previews beside the pane, `blocks` uses a wrapping
+grid, and `stack` shows the selected session alone. Six themes and three card
+densities change the window chrome; terminal cell colors remain session-owned.
+Appearance choices persist atomically in `lapis.json`, preserving shortcut strings
+and other JSON values; malformed files remain untouched and show a diagnostic. Ctrl-L temporarily toggles focus/blocks at runtime;
+the Appearance dialog exposes all four choices. The session cards still include
+fixtures; navigation does not create additional live service sessions.
 
 Command-Left and Command-Right inside the terminal move to the start and end of
 the line, matching macOS editing. The terminal translates them to the Ctrl-A and
@@ -307,7 +313,8 @@ by these C++ presets; a passing test is not coverage of those implementations.
 
 ### CLI integration qualification
 
-The shell launch specification is `$SHELL -i` (or `/bin/sh -i`) in the checkout.
+The shell launch specification is `$SHELL -i` in the checkout. If `SHELL` is unset,
+lapis uses the account login shell; `/bin/sh -i` is the final fallback.
 First use requires **Session → Start new session** or `--new-session`.
 Subsequent launches without that flag reconnect using the saved identity; they
 never create a replacement process. `--discover` explicitly adopts an existing
@@ -418,8 +425,9 @@ every alert. New alerts pulse twice and remain marked until cleared. **Repeat th
 same alert** verifies that an existing alert does not pulse again. Clear it first
 to replay the pulse. **Disable animations** uses steady markers; the macOS Reduce
 Motion setting also enables it, sampled at startup and app activation. These are
-synthetic events, with no agent response or approval attached. Carousel navigation
-and keybinding settings remain planned in the
+synthetic events, with no agent response or approval attached. Manual navigation
+and configurable shortcuts work over these fixtures and the single live session;
+automatic attention-driven navigation remains planned in the
 [architecture](docs/architecture.md#ui-refinement-checkpoint).
 
 Run `just ui-check` for five captures and three expected-failure cases. Artifacts
@@ -532,12 +540,14 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `session-descriptor` | Desktop-enabled | Private identity hint, atomic replacement, corruption and unsafe-file rejection |
 | `live-connection` | Desktop-enabled | Screen-before-input, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
-| `ui-preview` | Desktop-enabled | Qt reload, attention, input and render lifecycle |
+| `keymap` | Desktop-enabled | Configuration defaults, appearance choices, persistence and invalid input |
+| `ui-preview` | Desktop-enabled | Qt reload, screen selection, attention, input and render lifecycle |
+| `appearance-input` | Desktop-enabled, native GUI | Configured settings shortcut, modal focus, all theme/layout/density controls, persistence and shortcut reload |
 | `history-store` | Desktop-enabled | Styled page round trips, per-session/global quotas, corruption, interrupted-write cleanup and file-size write failure recovery |
 | `terminal-input` | Desktop-enabled, native GUI | Qt composition commit/cancel, replacement rejection, paste and focus/document/history/disconnect ownership |
 | `terminal-render` | Desktop-enabled | Real Qt Vulkan pixel regressions for cell background grids, wide/combining characters, fallback/RTL text, styles/decorations, actual Ghostty resize, cursor placement and clearing |
 
-`just desktop` runs these thirteen suites plus static checks. The separate Python
+`just desktop` runs these fifteen suites plus static checks. The separate Python
 GUI harness checks five preview captures and three expected failures. The CLI
 harness checks detached service behavior, attachment generations, fragmented
 handshakes, synchronization timeout, stale controls, bounded queue failure and
@@ -741,7 +751,7 @@ python3 scripts/check_cli_launch.py --build-dir build/desktop-asan \
 Repeat those configure/build/test/harness commands with preset `tsan` and all
 `desktop-asan` paths changed to `desktop-tsan`. Do not combine instrumentation or
 use `ctest --preset asan` for the custom directory: that preset targets
-`build/asan`. Each desktop-enabled directory must list all thirteen suites above.
+`build/asan`. Each desktop-enabled directory must list all fifteen suites above.
 Use the same LLVM installation for normal and instrumented builds. Ccache is
 optional (`-DCMAKE_CXX_COMPILER_LAUNCHER=...`); raw CMake does not discover it.
 Reduce `--parallel` for host resource limits. The CLI command above runs service

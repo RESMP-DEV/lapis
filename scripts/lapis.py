@@ -10,6 +10,7 @@ Run `python3 scripts/lapis.py` with no arguments to list the commands.
 """
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -29,7 +30,7 @@ DESKTOP_BINARY = (
 )
 GHOSTTY_RUNS = ROOT / "build" / "terminal-probe" / "reproduce" / "ghostty" / "runs"
 RUNTIME_DIR = ROOT / "runtime"
-DEFAULT_SOCKET = RUNTIME_DIR / "desktop-v2.sock"
+DEFAULT_SOCKET = RUNTIME_DIR / "desktop-v4.sock"
 # Window tests belong on the laptop panel, not a large external display. Override
 # with LAPIS_SCREEN, or pass --screen to the app directly.
 DEFAULT_SCREEN = "built-in"
@@ -48,25 +49,49 @@ def _run(command, *, check=True, **kwargs):
     )
 
 
+def valid_ghostty_prefix(candidate):
+    """Match CMake's installed artifacts and successful pinned-source receipt."""
+    try:
+        receipt = json.loads((candidate.parent / "reports/receipt.json").read_text())
+        sources = json.loads(
+            (ROOT / "tools/terminal_probe/ghostty/sources.json").read_text()
+        )
+        return (
+            (candidate / "include/ghostty/vt.h").is_file()
+            and (candidate / "lib/libghostty-vt.a").is_file()
+            and receipt.get("engine") == "ghostty"
+            and receipt.get("passed") is True
+            and receipt.get("sources") == sources
+        )
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def ghostty_prefix():
-    """Return a validated Ghostty VT prefix, or explain how to create one."""
+    """Return the newest successful pinned build, or explain how to create one."""
     configured = os.environ.get("LAPIS_GHOSTTY_PREFIX")
     if configured:
         candidate = Path(configured).resolve()
-        if not (candidate / "include" / "ghostty" / "vt.h").is_file():
+        if not valid_ghostty_prefix(candidate):
             raise SetupError(
-                f"LAPIS_GHOSTTY_PREFIX is set but has no header: {candidate}\n"
+                f"LAPIS_GHOSTTY_PREFIX has missing artifacts or an invalid receipt: {candidate}\n"
                 "Rebuild it with: python3 scripts/lapis.py bootstrap"
             )
         return candidate
     if GHOSTTY_RUNS.is_dir():
-        prefixes = sorted(
+        prefixes = [
             run / "prefix"
             for run in GHOSTTY_RUNS.iterdir()
-            if (run / "prefix" / "include" / "ghostty" / "vt.h").is_file()
-        )
+            if valid_ghostty_prefix(run / "prefix")
+        ]
         if prefixes:
-            return prefixes[-1]
+            return max(
+                prefixes,
+                key=lambda prefix: (
+                    (prefix.parent / "reports/receipt.json").stat().st_mtime_ns,
+                    str(prefix),
+                ),
+            )
     raise SetupError(
         "Ghostty VT is not bootstrapped.\n"
         "Build the pinned dependency once with: python3 scripts/lapis.py bootstrap"
@@ -82,7 +107,7 @@ def environment():
     }
 
 
-def run_python_script(name, arguments):
+def run_python_script(name, arguments, *, needs_ghostty=True):
     """Run a sibling repository script with the resolved environment."""
     script = Path(__file__).resolve().parent / name
     if not script.is_file():
@@ -90,7 +115,8 @@ def run_python_script(name, arguments):
     result = subprocess.run(
         [sys.executable, str(script), *arguments],
         cwd=ROOT,
-        env={**os.environ, **environment()},
+        env={**os.environ, **(environment() if needs_ghostty else {})},
+        check=False,
     )
     return result.returncode
 
@@ -112,23 +138,26 @@ def private_runtime_dir():
     return RUNTIME_DIR
 
 
-def launch(arguments, *, program=None):
+def launch(arguments):
     """Exec the desktop app, passing through any extra arguments."""
     arguments = list(arguments)
-    if not any(a == "--screen" or a.startswith("--screen=") for a in arguments):
+    separator = arguments.index("--") if "--" in arguments else len(arguments)
+    app_arguments = arguments[:separator]
+    has_program = separator < len(arguments) - 1
+    if not any(a == "--screen" or a.startswith("--screen=") for a in app_arguments):
         screen = os.environ.get("LAPIS_SCREEN", DEFAULT_SCREEN)
         if screen:
             arguments[:0] = ["--screen", screen]
     command = [desktop_binary(), *arguments]
-    if program:
-        command.extend(["--", *program])
-    if not program and not any(
-        a == "--socket" or a.startswith("--socket=") for a in arguments
+    if (
+        not has_program
+        and "--ui-preview" not in app_arguments
+        and not any(a == "--socket" or a.startswith("--socket=") for a in app_arguments)
     ):
         private_runtime_dir()
         command[1:1] = ["--socket", str(DEFAULT_SOCKET)]
     os.environ.update(environment())
-    return _run(command).returncode
+    return _run(command, check=False).returncode
 
 
 def command_doctor():
@@ -139,7 +168,9 @@ def command_doctor():
         prefix = ghostty_prefix()
         rows.append(("Ghostty VT", "ok", str(prefix)))
     except SetupError as error:
-        rows.append(("Ghostty VT", "missing", str(error).splitlines()[1]))
+        lines = str(error).splitlines()
+        detail = lines[1] if len(lines) > 1 else str(error)
+        rows.append(("Ghostty VT", "missing", detail))
     rows.append(
         (
             "Desktop app",
@@ -180,7 +211,9 @@ def command_doctor():
 
 def command_bootstrap():
     """Build the pinned Ghostty VT dependency, then report readiness."""
-    code = run_python_script("probe_terminal.py", ["--engine", "ghostty"])
+    code = run_python_script(
+        "probe_terminal.py", ["--engine", "ghostty"], needs_ghostty=False
+    )
     if code != 0:
         return code
     try:
@@ -193,10 +226,6 @@ def command_bootstrap():
 
 def command_run(arguments):
     return launch(arguments)
-
-
-def command_run_program(program):
-    return launch([], program=program)
 
 
 def command_gui(arguments):
@@ -230,7 +259,8 @@ def command_ui_debug(arguments):
             "--qml",
             ROOT / "apps" / "desktop" / "qml" / "Main.qml",
             *arguments,
-        ]
+        ],
+        check=False,
     ).returncode
 
 

@@ -2,6 +2,7 @@
 #include "transport/local_protocol.hpp"
 #include "workspace.hpp"
 
+#include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include <QClipboard>
 #include <QElapsedTimer>
@@ -18,6 +19,7 @@
 #include <QThread>
 #include <functional>
 #include <iostream>
+#include <source_location>
 #include <stdexcept>
 
 namespace {
@@ -27,7 +29,8 @@ void require(bool value, const char* message) {
     if (!value)
         throw std::runtime_error(message);
 }
-void until(const std::function<bool()>& condition) {
+void until(const std::function<bool()>& condition,
+           std::source_location where = std::source_location::current()) {
     QElapsedTimer time;
     time.start();
     while (time.elapsed() < 8000) {
@@ -36,7 +39,7 @@ void until(const std::function<bool()>& condition) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
         QThread::msleep(1);
     }
-    throw std::runtime_error("Event deadline expired");
+    throw std::runtime_error("Event deadline expired at line " + std::to_string(where.line()));
 }
 void settle() {
     QElapsedTimer time;
@@ -173,7 +176,8 @@ void input_contract() {
     f.screen(peer);
     window.show();
     until([&] { return window.isExposed(); });
-    window.requestActivate();
+    lapis::desktop::test::activate_test_window(window);
+    settle(); // Drain native activation events before beginning an IME transaction.
     surface.forceActiveFocus();
     until([&] { return window.isActive() && surface.hasActiveFocus(); });
     static_cast<void>(text_frames(peer));
@@ -192,7 +196,8 @@ void input_contract() {
     {
         QQuickItem other_focus(window.contentItem());
         other_focus.forceActiveFocus();
-        window.requestActivate();
+        lapis::desktop::test::activate_test_window(window);
+        settle(); // Drain native activation events before beginning an IME transaction.
         surface.forceActiveFocus();
         until([&] { return surface.inputMethodQuery(Qt::ImEnabled).toBool(); });
         composition(surface, {}, QStringLiteral("✓"));
@@ -249,7 +254,8 @@ void input_contract() {
     require(text_frames(peer).isEmpty(), "Focus transition leaked composition");
     // Model the user returning to the terminal before beginning a new
     // composition. Native focus restoration may complete on a later event.
-    window.requestActivate();
+    lapis::desktop::test::activate_test_window(window);
+    settle(); // Drain native activation events before beginning an IME transaction.
     surface.forceActiveFocus();
     until([&] { return surface.inputMethodQuery(Qt::ImEnabled).toBool(); });
     composition(surface, QStringLiteral("new"));

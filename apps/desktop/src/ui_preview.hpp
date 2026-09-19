@@ -50,6 +50,7 @@ class UiPreview final : public QObject {
     // surface differs by layout: the single pane in focus mode, the focused
     // tile in blocks mode. Returns true when a terminal took focus.
     Q_INVOKABLE bool assignTerminalFocus();
+    Q_INVOKABLE void deferTerminalFocus();
     // Open the appearance dialog. Terminal surfaces consume key events before
     // QML Shortcut sees them, so the app-level shortcut is handled here, where
     // it can intercept ahead of any focused item.
@@ -60,6 +61,7 @@ class UiPreview final : public QObject {
     void windowChanged(QQuickWindow* window);
 
   private:
+    bool eventFilter(QObject* watched, QEvent* event) override;
     bool loadCandidate();
     Workspace& workspace_;
     UiPreviewOptions options_;

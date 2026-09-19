@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// Appearance settings. Opened with Cmd-, from anywhere in the window.
+// Appearance settings, opened with the configured openSettings shortcut.
 //
 // Every control writes straight through to the keymap, which applies the change
 // to the live window and persists it to lapis.json, so the effect is visible
@@ -19,6 +19,7 @@ Dialog {
     required property string currentDensity
     required property string configPath
     required property string configDiagnostic
+    required property string shortcutHint
 
     signal themeChosen(string name)
     signal layoutChosen(string name)
@@ -76,7 +77,7 @@ Dialog {
         font.letterSpacing: 0.6
     }
 
-    component ChoiceRow: Item {
+    component ChoiceRow: ColumnLayout {
         id: row
 
         required property string label
@@ -86,13 +87,11 @@ Dialog {
         required property var describe
         signal picked(string name)
 
-        implicitHeight: 58
+        spacing: 8
         Layout.fillWidth: true
 
         ColumnLayout {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
+            Layout.fillWidth: true
             spacing: 2
 
             Label {
@@ -112,8 +111,7 @@ Dialog {
         }
 
         RowLayout {
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
+            Layout.alignment: Qt.AlignLeft
             spacing: 6
 
             Repeater {
@@ -121,6 +119,7 @@ Dialog {
 
                 delegate: Button {
                     required property string modelData
+                    objectName: "choice-" + modelData
                     checked: modelData === row.selected
                     checkable: false
                     text: modelData === "focus" ? qsTr("Focus") :
@@ -168,17 +167,19 @@ Dialog {
                 anchors.right: parent.right
                 anchors.rightMargin: 18
                 anchors.verticalCenter: parent.verticalCenter
-                text: qsTr("Cmd-,")
+                text: settings.shortcutHint
                 color: settings.paletteMuted
                 font.pixelSize: 11
             }
         }
 
         Flickable {
+            objectName: "settingsScroll"
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.margins: 18
             contentHeight: body.implicitHeight
+            ScrollBar.vertical: ScrollBar {}
             clip: true
 
             ColumnLayout {
@@ -199,6 +200,7 @@ Dialog {
 
                         delegate: Button {
                             required property var modelData
+                            objectName: "theme-" + modelData.name
                             Layout.fillWidth: true
                             implicitHeight: 62
                             focusPolicy: Qt.NoFocus

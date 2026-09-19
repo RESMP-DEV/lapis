@@ -690,6 +690,14 @@ Planning baseline: merged `e53c4fe` (September 18, 2026). The first implementati
 checkpoint adds a standalone attention reducer and isolated live Codex probes.
 The existing desktop attention map and replay controls remain development fixtures;
 the reducer is not yet connected to the service or a production Codex adapter.
+The September 19 reconciliation preserves main's one-command launcher, configurable
+navigation, four layouts and appearance settings. These operate over the existing
+single live service session and fixture cards; they do not complete Milestone 3.
+The retained UI is exercised through all appearance controls, shortcut reload,
+modal focus and four rendered layouts. Blocks wraps into responsive rows and
+Stack fills the viewport while keeping manual selection visible. Appearance
+writes are atomic and preserve unrelated JSON values. The attention reducer
+remains independent of those UI changes.
 The original `probe_codex.py` still establishes schema, initialization and listing
 only; a separate opt-in runner exercises actual model turns.
 

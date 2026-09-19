@@ -40,7 +40,9 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_ui_preview_tests PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
     target_compile_definitions(lapis_ui_preview_tests PRIVATE LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
     add_test(NAME ui-preview COMMAND lapis_ui_preview_tests)
-    set_tests_properties(ui-preview PROPERTIES RESOURCE_LOCK "qt_gui" TIMEOUT 20 ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
+    # Isolate focus ownership from the destructive QML engine-reload fixtures.
+    add_test(NAME appearance-input COMMAND lapis_ui_preview_tests --shortcuts-only)
+    set_tests_properties(ui-preview appearance-input PROPERTIES RESOURCE_LOCK "qt_gui" TIMEOUT 20 ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
     add_executable(lapis_terminal_input_tests tests/terminal_input_test.cpp)
     target_link_libraries(lapis_terminal_input_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME terminal-input COMMAND lapis_terminal_input_tests)
@@ -51,6 +53,12 @@ if(BUILD_TESTING)
     add_test(NAME terminal-render COMMAND lapis_terminal_render_tests)
     set_tests_properties(terminal-render PROPERTIES TIMEOUT 20 RESOURCE_LOCK "qt_gui" ENVIRONMENT
         "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
+    if(APPLE)
+        foreach(test_target IN ITEMS lapis_ui_preview_tests lapis_terminal_input_tests)
+            target_sources(${test_target} PRIVATE tests/platform/window_activation.mm)
+            target_link_libraries(${test_target} PRIVATE "-framework AppKit")
+        endforeach()
+    endif()
 endif()
 
 # Opt-in measurement, not a timing gate in CTest.
