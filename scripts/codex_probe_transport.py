@@ -50,7 +50,6 @@ class UnixWebSocketTransport:
         self.writer = writer
         self.max_message_bytes = max_message_bytes
         self.closed = False
-        self._closing = False
 
     @classmethod
     async def connect(

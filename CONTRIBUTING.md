@@ -704,6 +704,12 @@ verify clipboard/input-source restoration after the fixture is destroyed.
 These checks need exclusive desktop input: foreground interference can invalidate
 a run. Intermittent failures must be retained and investigated, not hidden by
 automatic retries.
+If a GUI input fixture reports `Window failed to activate`, record that failed
+prerequisite separately from its behavioral assertions. On the qualified Mac,
+automation can set the fixture process's `frontmost` property through macOS
+System Events, using its exact PID. Such assistance requires existing automation
+permission; it must target only the test process and be recorded with the rerun.
+It must not force the product application to take focus during normal operation.
 On native focus loss, Apple's IME may commit to the original terminal; the probe
 asserts that the new terminal receives no composition bytes. This does not add a
 multi-session product UI. The candidate anchor check verifies the rectangle
