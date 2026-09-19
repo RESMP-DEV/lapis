@@ -524,5 +524,93 @@
       "Performance suggestions were implemented without making benchmark claims.",
       "Missing historical per-command timestamps/logs remain explicitly unavailable rather than invented."
     ]
+  },
+  "review_closeout": {
+    "recorded_at": "2026-09-19T21:18:57.251374+00:00",
+    "source": "389b87a0473633b48194871e312c5002d58677cf",
+    "changes": [
+      "Regression test exercises actual KeyMap save through a relative symlink and an absolute symlink chain; both links survive, the target changes, unrelated data survives and reload succeeds. No product workaround was necessary on Qt 6.11.2/macOS.",
+      "Added direct standard-library includes and documented zero acknowledgement cooldown.",
+      "Removed an unused transport lifecycle attribute; documented assisted GUI foreground activation as test-only and evidence-labeled."
+    ],
+    "validation": {
+      "desktop_static": "All 42 non-CTest checks pass.",
+      "desktop_ctest": "14 of 15 suites passed in the closeout run; Appearance failed window activation before its next input action. The isolated Appearance rerun passed with six successful System Events frontmost requests to its own test PID.",
+      "headless": "Build/static checks and 4 CTest suites pass.",
+      "symlink": "Normal, ASan/UBSan and TSan keymap suites pass.",
+      "scope": "Production implementation is unchanged from the preceding validated source; full instrumented/native/UI receipts above remain the behavioral baseline.",
+      "python": "54 tests, Ruff lint and formatting pass."
+    },
+    "artifacts": [
+      {
+        "path": "build/reports/desktop/receipt.json",
+        "sha256": "423c721bba5eb8e9196bd71cc4aadaf2f74cb1e48c56850ef5af983befa7479d"
+      },
+      {
+        "path": "build/reports/desktop/ctest.log",
+        "sha256": "0253e06f66352b23c64256fb048671ef0c7f9fa248f12af8f33efa548da44e19"
+      },
+      {
+        "path": "build/reports/dev/receipt.json",
+        "sha256": "672214df343797874dff1a0f42f95517c8c9ecf45a83ce087d17786b9a311c41"
+      },
+      {
+        "path": "build/reconcile/closeout-asan-keymap.log",
+        "sha256": "b3ac3bf07b1f583ca029e3213577ea478b6e5bfc182149f68a9695c9d2981022"
+      },
+      {
+        "path": "build/reconcile/closeout-tsan-keymap.log",
+        "sha256": "538e2cbd195f757aa3b08090f32f4c8de5bb96c9b9eb2040c62ea342cb32c8a0"
+      },
+      {
+        "path": "build/reconcile/closeout-appearance-foreground.log",
+        "sha256": "54898a9634e2b8c0d6cf7ce603bc27b357421e937eae77e8c107bb4145c4bd4e"
+      },
+      {
+        "path": "build/reconcile/closeout-appearance-foreground.json",
+        "sha256": "b799761e4279c58b70d056979e3ac175b0cccaa4e2d7f1d9cb3eece72d562a0a"
+      },
+      {
+        "path": "build/reconcile/closeout-python.log",
+        "sha256": "094227c073947e094ac2c3dba3c236c84d0a34218a62d37684b3a3d038f3bb2c"
+      },
+      {
+        "path": "build/reconcile/closeout-ruff.log",
+        "sha256": "55d3783c4abb85658c0aabbd4d32749029963821c0da6514d54f41f3c42cf91b"
+      }
+    ],
+    "review_dispositions": {
+      "coderabbit_symlink": "Runtime-disproved on the qualified Qt/macOS build; regression added for the asserted data-integrity boundary.",
+      "kimi_late": [
+        "Missing string/cstddef/utility includes added.",
+        "Source line in timeout diagnostics is already attributable within the named CTest executable; extra function-name text is optional.",
+        "Redundant reconciliation assignment was already removed.",
+        "Zero cooldown is allowed and now explicitly documented."
+      ],
+      "kimi_refresh": [
+        {
+          "finding": "Constructor-time shortcut change signal has no receiver.",
+          "resolution": "Initialization and later change handling intentionally share one cache refresh function. Emitting with no connected receivers is harmless; QML reads the initialized property when binding. No behavior change needed."
+        },
+        {
+          "finding": "Unused transport _closing attribute.",
+          "resolution": "Removed the dead attribute; closed remains the single lifecycle flag."
+        },
+        {
+          "finding": "TUI argv uses fixed indices from server_arguments.",
+          "resolution": "Current helper and consumer use the same fixed private layout, exercised by the real TUI qualification. This is a proposed future refactor, not a current argument-mapping failure; production adapter wiring remains a later slice."
+        }
+      ]
+    },
+    "review_services": {
+      "coderabbit": "Completed with one finding on 52dd868; runtime-disproved. Plan reports one included review/hour and zero remaining. Last review submitted at 2026-09-19T20:41:05Z; another hourly review is not yet eligible during closeout.",
+      "codex": "Unavailable: explicit review usage limit, no reset supplied; not reinvoked.",
+      "ocr_glm": "Initial review completed and all ten threads resolved. Refresh on 52dd868 ended with incomplete coverage after 17m40s; unavailable, not approval.",
+      "ocr_kimi": "Repeated incomplete coverage, including refresh on 52dd868 after 21m38s; unavailable, not approval. Returned earlier findings have dispositions above."
+    },
+    "limitations": [
+      "Foreground activation is an explicit prerequisite of GUI input checks. Assisted rerun is labeled; the initial failed run is retained.",
+      "Optional reviewer failures are not approvals; final PR state and any automatic late reports are recorded in the merge receipt."
+    ]
   }
 }
