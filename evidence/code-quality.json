@@ -1,0 +1,229 @@
+{
+  "schema": 1,
+  "recorded_at": "2026-09-19T23:03:47.127232+00:00",
+  "scope": "Code quality and common contributor/agent standards; remaining Milestone 2 wiring is tabled. macOS qualification only.",
+  "baseline_revision": "dc0d7061ded435450a4fb2c02120aab4944a693d",
+  "implementation_revision": "59ca7a0c3c6ca9c124d4732001d7201211ef9a3d",
+  "source_note": "Compiled/runtime checks exercised the source consolidated into compiled_behavior_revision. The later implementation revision adds only shared launcher/doctor validation and editor/documentation alignment, covered by 19 launcher tests and the 76-test common quality run. The evidence commit changes documentation only.",
+  "platform": {
+    "system": "Darwin",
+    "macos": "26.7",
+    "machine": "arm64",
+    "python": "3.14.7",
+    "qt": "6.11.2",
+    "ruff": "ruff 0.16.4"
+  },
+  "compiler_tools": {
+    "clang++": "Homebrew clang version 23.1.1",
+    "clang-tidy": "Homebrew LLVM version 23.1.1",
+    "clang-format": "Homebrew clang-format version 23.1.1",
+    "clangd": "Homebrew clangd version 23.1.1",
+    "cppcheck": "Cppcheck 2.21.0",
+    "cmake": "cmake version 4.4.3",
+    "ctest": "ctest version 4.4.3"
+  },
+  "findings": [
+    {
+      "area": "Contributing and agent guidance",
+      "resolution": "One canonical coding standard and cumulative check matrix; explicit worker briefs, temporary file scopes, shared feature ownership, evidence rules and macOS priority."
+    },
+    {
+      "area": "Common automation",
+      "resolution": "Explicit Ruff and editor settings; quality command checks repository contracts, staged/unstaged diff whitespace and nonempty Python suite. Missing tools and failed checks fail the aggregate."
+    },
+    {
+      "area": "Verification subprocesses",
+      "resolution": "Reuse process-group cleanup; keep partial timeout diagnostics and failure receipts. A timeout cannot satisfy an expected-failure detector."
+    },
+    {
+      "area": "Runtime directory",
+      "resolution": "Reject symlinks, non-directories, wrong owner and non-0700 modes without chmod or repurposing existing data; create missing default privately. Doctor uses the same validation without creating or repairing the directory and distinguishes an absent default from an unsafe existing path."
+    },
+    {
+      "area": "Shortcuts",
+      "resolution": "Validate every key chord; retain valid entries and default fallback. Settings accepts one chord. Workspace shortcuts respect the Appearance modal."
+    },
+    {
+      "area": "Service receive ownership",
+      "resolution": "After handling each frame, stop if client identity changed, detached or stopped; error reporting requires the captured owner. Baseline null-socket crash reproduced and fixed."
+    }
+  ],
+  "review_dispositions": [
+    "Separate CCR workers reviewed guidance, tooling, desktop, and session/resource code; coordinator inspected patches and integrated tests.",
+    "Retracted history queue-bound, byte-accounting, and public/private-header findings after checking actual code; no speculative fixes applied.",
+    "Deferred optional layout-cycle, pane-visibility refactoring and new features; retained the existing four layouts, six themes and three densities.",
+    "Worker-generated history tests initially had incorrect framing and insufficient pressure. Coordinator corrected the test and proved baseline failure plus fixed normal and sanitizer recovery.",
+    "Final independent CCR review found doctor/launch runtime validation mismatch; fixed with shared validation and observed symlink, wrong-owner, special-mode, valid and absent-directory tests. No other concrete finding remained."
+  ],
+  "routing_note": "Worker receipts and local CCR routing records identify zai,glm-5.3. This does not independently attest remote model weights.",
+  "validation": [
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "passed": true,
+      "check_count": 8,
+      "local_receipt": "build/reports/quality/receipt.json",
+      "receipt_sha256": "539766a21fae89bda8889013d47c3bafdcc006ac1c646979a154c2a3eea86814",
+      "source_revision": "59ca7a0c3c6ca9c124d4732001d7201211ef9a3d",
+      "source_dirty": true
+    },
+    {
+      "command": "python3 scripts/lapis.py check",
+      "passed": true,
+      "check_count": 13,
+      "local_receipt": "build/reports/dev/receipt.json",
+      "receipt_sha256": "7d99b4bdc1ed27b45f6a60ede384ecf240686769eb1dd0a6898961b472befb1d"
+    },
+    {
+      "command": "python3 scripts/lapis.py build",
+      "passed": true,
+      "check_count": 43,
+      "local_receipt": "build/reports/desktop/receipt.json",
+      "receipt_sha256": "5c734d415f94430f181de148e6155d56f0d4d459f9d1c05a6c873dc2a15f9808"
+    },
+    {
+      "command": "python3 scripts/lapis.py verify-tools",
+      "passed": true,
+      "check_count": 12,
+      "local_receipt": "build/reports/tool-verification/receipt.json",
+      "receipt_sha256": "8953072f2e333cda56b6b6d86cefb42d1eb4a77dfe8c34889181b8faf5652a5e"
+    },
+    {
+      "command": "python3 scripts/lapis.py ui-check",
+      "passed": true,
+      "check_count": 8,
+      "local_receipt": "build/ui-preview-check/receipt.json",
+      "receipt_sha256": "e37ef42a6ad07c89ca1da2a3f5c20ebd25b272f66d98d3e0b880dbcac3f7cf41"
+    },
+    {
+      "command": "python3 scripts/lapis.py cli-check --output build/quality/cli-desktop.json",
+      "passed": true,
+      "check_count": 12,
+      "local_receipt": "build/quality/cli-desktop.json",
+      "receipt_sha256": "00d70bb5968f8d6aa7eddd05d502889c0e1c06a3577786d7afed7aff8ab1c22c"
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop-asan --output build/quality/asan-cli.json",
+      "passed": true,
+      "check_count": 11,
+      "local_receipt": "build/quality/asan-cli.json",
+      "receipt_sha256": "03a5f4ce06240f24871aee51f4557f4a44650991921a65c11cf9fc12277878a2"
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop-tsan --output build/quality/tsan-cli.json",
+      "passed": true,
+      "check_count": 11,
+      "local_receipt": "build/quality/tsan-cli.json",
+      "receipt_sha256": "7d0b88413cecbcc828f8b0d6f3fb7d6d489d7ee80c947a0d51c62c5983f1b084"
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_native_input_probe --output build/quality/native-input.json",
+      "passed": true,
+      "check_count": 18,
+      "local_receipt": "build/quality/native-input.json",
+      "receipt_sha256": "1b5626ee2bdb0b256f23415f0727ef500c08c6750f691df8754631095b04eadf"
+    },
+    {
+      "command": "ctest --test-dir build/desktop-asan --output-on-failure --parallel 8",
+      "passed": true,
+      "test_count": 15,
+      "local_log": "build/quality/asan-ctest.log"
+    },
+    {
+      "command": "ctest --test-dir build/desktop-tsan --output-on-failure --parallel 8",
+      "passed": true,
+      "test_count": 15,
+      "local_log": "build/quality/tsan-ctest.log"
+    }
+  ],
+  "python_unit_tests": 76,
+  "history_regression": {
+    "maximum_requests": 200000,
+    "isolated_private_service": true,
+    "results": [
+      {
+        "build": "baseline-cli-2",
+        "passed": false,
+        "error": "CheckError: History backpressure killed service",
+        "observed": null
+      },
+      {
+        "build": "cli-desktop",
+        "passed": true,
+        "error": null,
+        "observed": {
+          "requests_sent_maximum": 200000,
+          "reply_bytes_drained": 8192,
+          "same_child_pid": 44410,
+          "reattached_and_echoed": true
+        }
+      },
+      {
+        "build": "asan-cli",
+        "passed": true,
+        "error": null,
+        "observed": {
+          "requests_sent_maximum": 200000,
+          "reply_bytes_drained": 8192,
+          "same_child_pid": 43290,
+          "reattached_and_echoed": true
+        }
+      },
+      {
+        "build": "tsan-cli",
+        "passed": true,
+        "error": null,
+        "observed": {
+          "requests_sent_maximum": 200000,
+          "reply_bytes_drained": 8192,
+          "same_child_pid": 43433,
+          "reattached_and_echoed": true
+        }
+      }
+    ],
+    "baseline_crash": {
+      "signal": "SIGSEGV",
+      "fault_address": "KERN_INVALID_ADDRESS at 0x0000000000000008",
+      "frames": [
+        {
+          "symbol": "QIODevice::write(QByteArray const&)",
+          "symbolLocation": 12
+        },
+        {
+          "symbol": "(anonymous namespace)::SessionService::send_status(QLocalSocket*, lapis::session::wire::StatusCode, QString const&) const",
+          "symbolLocation": 96
+        },
+        {
+          "symbol": "(anonymous namespace)::SessionService::receive()",
+          "symbolLocation": 3296
+        }
+      ]
+    }
+  },
+  "verification_notes": [
+    "GUI workloads ran serially. Independent private service checks and build directories ran concurrently.",
+    "The common quality command also passed when invoked by absolute path from /tmp.",
+    "Default UI capture visually inspected; all eight UI capture/rejection checks passed.",
+    "Native probe passed all 18 cases and restored keyboard source and clipboard; no physical-input check required.",
+    "Initial integration exposed formatting and compile errors; corrected before passing full checks. Logs retained in ignored build/quality/.",
+    "No runtime dependency or lockfile changes. No new dependency clearance or Linux UI qualification claimed.",
+    "Existing user service and unrelated worktrees were preserved. No PR opened or merge performed for this maintenance task.",
+    "QML style remains a manual review convention; no QML formatter/linter gate is claimed. This is a scoped audit, not proof that all future defects are absent."
+  ],
+  "implementation_file_sha256": {
+    "apps/desktop/qml/Main.qml": "00fb3ebdb985c3062738bb6de3b7b239eaa3a51cf3d7c2afc217f7250829c1c4",
+    "apps/desktop/src/keymap.cpp": "4e1df1ec2c8c365392a8205a391bce6be890573652556ef5b189ac2cce45025a",
+    "apps/desktop/tests/keymap_test.cpp": "33dc6f8d0bb70db423f7c70f6df72d13a0b1ce9134417866d33aae1b0acc27c2",
+    "apps/desktop/tests/ui_preview_test.cpp": "1eb08fc53431f904dbcb8b58a3e06183b25503da35144af78d565d2ee53a7ed8",
+    "justfile": "4fa38223635bc325d9e2f9feb54720a823de4e2cee5335d349951fdfb8fc6afa",
+    "ruff.toml": "8fac5b560aae5b95d99f6b26cc925e22bc8c8c2befa063651237b6f3dd6b6603",
+    "scripts/check_cli_launch.py": "aeb5e044cd785fe3f16a71c31c3e30321a7195dd4bec320be84c1a6a5bdd4d5c",
+    "scripts/check_cpp.py": "7f094e1053f76c639721858a7b9142ddabf03f01bcb3089682de0845456540c3",
+    "scripts/check_quality.py": "72c58e74a4bf582f2fc61046dce326d4a918caa1144bb30e2569746969fb67b7",
+    "scripts/lapis.py": "7e26cf1043bb341ff2b3761553a6b26ab03871dd669cafb3e059ca123196b445",
+    "scripts/tests/test_check_cpp.py": "ecd91cddc7d0c50f12c7f95825bf77e185b08d5bb9d94a0d057f22eb00c9ab1a",
+    "scripts/tests/test_check_quality.py": "b91e0dd4b33d9337698225e19083ed6a072aae4b11258f43cadc199e60173f4a",
+    "scripts/tests/test_lapis.py": "8c06168dd630ae88f44b6b1552bc56af935c287e9e112a3a7aaebf0c21f66427",
+    "services/session/src/session_service.cpp": "52cd29099ec00b075c760790f4c3895a14d9a7f656d43af9e5373db037b3bc56"
+  },
+  "compiled_behavior_revision": "215029785370b4f6efd6fddb16e6a074cd494dad"
+}

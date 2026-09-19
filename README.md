@@ -151,7 +151,8 @@ optional no-prompt Codex check and current limits.
 - [Architecture and near-term plan](docs/architecture.md): component ownership,
   open decisions and acceptance criteria. This is the single implementation plan.
 - [Codex investigation](adapters/codex/README.md): protocol routes and evidence.
-- [Contributing](CONTRIBUTING.md): setup, checks, profiling and the PR procedure.
+- [Contributing](CONTRIBUTING.md): shared code standards, setup, checks, profiling and the PR procedure.
+- [Quality audit receipt](evidence/code-quality.json): scoped fixes, regression evidence and macOS checks.
 - [First contributor baseline](CONTRIBUTING.md#first-contributor-baseline): isolated
   worktrees, test sequence and coordination for large changes.
 - [Test suites](CONTRIBUTING.md#test-suites-and-failure-triage) and

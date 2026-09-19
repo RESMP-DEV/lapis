@@ -422,7 +422,8 @@ Repeat the same launch without `--new-session` to reattach; changing executable/
 endpoint is rejected. A socket parent must be owned by you and private (0700).
 Existing directories/files are not repurposed. The launcher creates a missing
 default runtime directory privately and rejects a symlink, non-directory,
-wrong-owner directory, or any mode other than 0700 without changing permissions. Choose an explicit private socket path or repair the directory
+wrong-owner directory, or any mode other than 0700 without changing permissions.
+Choose an explicit private socket path or repair the directory
 deliberately before launching. `doctor` applies the same validation without
 creating or changing the directory; an absent default is reported as ready to
 create on first launch. Logs are written beside each
