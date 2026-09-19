@@ -1,6 +1,7 @@
 #ifndef LAPIS_DESKTOP_UI_PREVIEW_HPP
 #define LAPIS_DESKTOP_UI_PREVIEW_HPP
 
+#include "keymap.hpp"
 #include "workspace.hpp"
 #include <QObject>
 #include <QPointer>
@@ -15,6 +16,13 @@ namespace lapis::desktop {
 struct UiPreviewOptions {
     QUrl source;
     bool compact{};
+    // Case-insensitive substring of the target QScreen name, for example
+    // "built-in" for the MacBook panel and "ultrawide" for an external one.
+    // Empty keeps the platform's default placement.
+    QString screen;
+    // User keybindings and layout, exposed to QML as `keymap`. Optional; a
+    // null value keeps the built-in shortcuts that Main.qml defines itself.
+    KeyMap* keymap{};
 };
 
 // View host shared by normal launch and the isolated development fixture.
@@ -38,6 +46,14 @@ class UiPreview final : public QObject {
     [[nodiscard]] QQuickWindow* window() const;
     bool load();
     Q_INVOKABLE bool reload();
+    // Give keyboard ownership to the live session's terminal surface. The
+    // surface differs by layout: the single pane in focus mode, the focused
+    // tile in blocks mode. Returns true when a terminal took focus.
+    Q_INVOKABLE bool assignTerminalFocus();
+    // Open the appearance dialog. Terminal surfaces consume key events before
+    // QML Shortcut sees them, so the app-level shortcut is handled here, where
+    // it can intercept ahead of any focused item.
+    Q_INVOKABLE bool openSettings();
   signals:
     void reducedMotionChanged();
     void diagnosticsChanged();

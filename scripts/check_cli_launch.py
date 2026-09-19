@@ -88,6 +88,23 @@ def decode_snapshot(payload):
     }
 
 
+def default_shell() -> str:
+    """Mirror the session service: $SHELL, then the account's login shell.
+
+    The service resolves the shell when environment lacks SHELL, so this must
+    agree with it or the launch fingerprints differ and attachment is rejected.
+    """
+    configured = os.environ.get("SHELL")
+    if configured:
+        return configured
+    try:
+        import pwd
+
+        return pwd.getpwuid(os.getuid()).pw_shell or "/bin/sh"
+    except (ImportError, KeyError, OSError):
+        return "/bin/sh"
+
+
 class WireClient:
     def __init__(self, endpoint):
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -739,7 +756,7 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
         finally:
             original_error = sys.exc_info()[1]
             if endpoint.exists():
-                configured_shell = os.environ.get("SHELL") or "/bin/sh"
+                configured_shell = default_shell()
                 shell = os.path.abspath(
                     shutil.which(configured_shell) or configured_shell
                 )
@@ -781,7 +798,8 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
 
     def codex_terminal():
         executable = str(Path(shutil.which(codex) or codex).resolve(strict=True))
-        cli_arguments = ["--no-daemon"]
+        # Codex 0.154.0 removed `--no-daemon`; the plain TUI is the owned backend.
+        cli_arguments = []
         service = Service(
             binary, runtime, artifacts, "codex", executable, cli_arguments, ROOT
         )
@@ -910,7 +928,7 @@ def main():
             with executable.open("rb") as stream:
                 receipt["codex"] = {
                     "sha256": hashlib.file_digest(stream, "sha256").hexdigest(),
-                    "arguments": ["--no-daemon"],
+                    "arguments": [],
                     "prompt_submitted": False,
                 }
         with tempfile.TemporaryDirectory(prefix="cli-", dir=runtime_root) as directory:

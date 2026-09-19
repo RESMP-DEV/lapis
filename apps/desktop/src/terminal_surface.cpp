@@ -699,6 +699,19 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
         return;
     }
     if (event->modifiers().testFlag(Qt::MetaModifier)) {
+        // macOS editing convention: Command-Left/Right go to line start/end.
+        // The shells people actually run (zsh with emacs bindings, bash, fish)
+        // implement that as Ctrl-A and Ctrl-E, so translate rather than
+        // reimplement line editing inside the terminal.
+        if (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right) {
+            const bool line_start = event->key() == Qt::Key_Left;
+            document_->sendKey(line_start ? session::TerminalKey::home : session::TerminalKey::end,
+                               {false, true, false, false});
+            event->accept();
+            return;
+        }
+        // Every other Command combination stays available to the window for
+        // navigation and menu shortcuts.
         event->ignore();
         return;
     }

@@ -3,6 +3,7 @@ find_package(Vulkan REQUIRED)
 set(CMAKE_AUTOMOC ON)
 add_library(lapis_desktop_view STATIC
     src/workspace.cpp src/workspace.hpp
+    src/keymap.cpp src/keymap.hpp
     src/live_connection.cpp src/live_connection.hpp
     src/terminal_surface.cpp src/terminal_surface.hpp
     src/ui_preview.cpp src/ui_preview.hpp)
@@ -20,7 +21,7 @@ endif()
 target_link_libraries(lapis_desktop PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
 target_compile_definitions(lapis_desktop PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}"
     LAPIS_PROJECT_ROOT="${PROJECT_SOURCE_DIR}")
-qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml)
+qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml)
 set_target_properties(lapis_desktop PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME "lapis"
     MACOSX_BUNDLE_GUI_IDENTIFIER "dev.lapis.desktop")
@@ -30,6 +31,11 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_live_connection_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME live-connection COMMAND lapis_live_connection_tests)
     set_tests_properties(live-connection PROPERTIES TIMEOUT 30)
+    add_executable(lapis_keymap_tests tests/keymap_test.cpp)
+    target_link_libraries(lapis_keymap_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME keymap COMMAND lapis_keymap_tests)
+    set_tests_properties(keymap PROPERTIES TIMEOUT 20)
+
     add_executable(lapis_ui_preview_tests tests/ui_preview_test.cpp)
     target_link_libraries(lapis_ui_preview_tests PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
     target_compile_definitions(lapis_ui_preview_tests PRIVATE LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")

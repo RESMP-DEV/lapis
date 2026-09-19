@@ -19,6 +19,9 @@ struct LaunchSpec {
 // Resolve the executable and working directory; reject invalid/bounded inputs.
 // Throws std::invalid_argument on invalid launch requests.
 [[nodiscard]] LaunchSpec validate_launch(LaunchSpec launch);
+// The account's configured login shell, used when SHELL is not set in the
+// environment. Falls back to /bin/sh only when no account shell can be read.
+[[nodiscard]] QString login_shell();
 [[nodiscard]] LaunchSpec shell_launch(const QString& directory);
 // Call only with a validated launch. 32 bytes, tied to program/argv/cwd, not PID.
 [[nodiscard]] QByteArray launch_fingerprint(const LaunchSpec& launch);

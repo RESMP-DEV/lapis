@@ -152,6 +152,12 @@ class Workspace final : public QObject {
     bool requestAttention(const PreviewRequest& request);
     bool resolveAttention(const PreviewRequest& request);
     Q_INVOKABLE bool replayAttention(const QString& scenario);
+    // Category and window navigation. Categories group sessions; today the
+    // live session is category 0 and the remaining cards are labelled
+    // fixtures, but focus never moves implicitly.
+    Q_INVOKABLE void focusCategory(int index);
+    Q_INVOKABLE void nextCategory(int delta = 1);
+    Q_INVOKABLE void nextWindow(int delta = 1);
     [[nodiscard]] QVariantList sessions() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;

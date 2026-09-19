@@ -7,6 +7,12 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <stdexcept>
+#include <vector>
+
+#ifndef _WIN32
+#include <pwd.h>
+#include <unistd.h>
+#endif
 
 namespace lapis::session {
 LaunchSpec validate_launch(LaunchSpec launch) {
@@ -46,10 +52,43 @@ LaunchSpec validate_launch(LaunchSpec launch) {
     return launch;
 }
 
+QString login_shell() {
+#ifdef _WIN32
+    // Windows session backends are not implemented; keep the last resort.
+    return QStringLiteral("/bin/sh");
+#else
+    // POSIX: the account's shell field in the password database. getpwuid is
+    // available on macOS and Linux, and avoids spawning a subprocess.
+    // Bound an implausible sysconf result instead of allocating it.
+    constexpr long kMaximumShellBuffer = 1024L * 1024L;
+    long buffer_size = ::sysconf(_SC_GETPW_R_SIZE_MAX);
+    if (buffer_size <= 0 || buffer_size > kMaximumShellBuffer)
+        buffer_size = 16384;
+    std::vector<char> buffer(static_cast<std::size_t>(buffer_size));
+    passwd entry{};
+    passwd* result = nullptr;
+    if (::getpwuid_r(::getuid(), &entry, buffer.data(), buffer.size(), &result) == 0 &&
+        result != nullptr && entry.pw_shell != nullptr) {
+        const QString shell = QString::fromLocal8Bit(entry.pw_shell);
+        // An empty or non-executable field is not usable; keep the last resort.
+        if (!shell.isEmpty()) {
+            const QFileInfo candidate(shell);
+            if (candidate.isFile() && candidate.isExecutable())
+                return shell;
+        }
+    }
+    return QStringLiteral("/bin/sh");
+#endif
+}
+
 LaunchSpec shell_launch(const QString& directory) {
+    // Prefer the caller's environment, then the account's real login shell.
+    // Falling back to /bin/sh gives macOS bash 3.2 in POSIX mode, which is not
+    // the user's terminal and breaks agent CLIs that expect their normal PATH,
+    // aliases and rc files. /bin/sh remains only a last resort.
     QString shell = qEnvironmentVariable("SHELL");
     if (shell.isEmpty())
-        shell = QStringLiteral("/bin/sh");
+        shell = login_shell();
     return validate_launch(
         {.program = shell, .arguments = {QStringLiteral("-i")}, .directory = directory});
 }

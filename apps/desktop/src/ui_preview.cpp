@@ -4,9 +4,13 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlError>
+#include <QQuickItem>
 #include <QQuickWindow>
 #include <QRect>
+#include <QScreen>
+#include <QStringList>
 
+#include <functional>
 #include <utility>
 
 namespace lapis::desktop {
@@ -38,6 +42,44 @@ constexpr int kMaximumDiagnosticsLength = 4096;
 
 [[nodiscard]] bool isLocalSource(const QUrl& source) {
     return source.isValid() && source.isLocalFile();
+}
+
+// Move a window onto the requested screen and keep it inside that screen's
+// usable area. Returns false when no screen name matches, so the caller can
+// report the available names instead of silently opening on the wrong display.
+bool move_to_screen(QQuickWindow& window, const QString& requested) {
+    const auto screens = QGuiApplication::screens();
+    QScreen* target = nullptr;
+    for (QScreen* screen : screens) {
+        if (screen->name().contains(requested, Qt::CaseInsensitive)) {
+            target = screen;
+            break;
+        }
+    }
+    if (target == nullptr) {
+        QStringList names;
+        names.reserve(screens.size());
+        for (QScreen* screen : screens)
+            names.append(screen->name());
+        qWarning().noquote() << "No screen matched" << requested
+                             << "; available:" << names.join(QStringLiteral(", "));
+        return false;
+    }
+    const QRect available = target->availableGeometry();
+    // Keep the window wholly visible; clamp after moving so a window larger
+    // than the panel still starts at the panel's origin.
+    QRect geometry = window.geometry();
+    if (geometry.width() > available.width())
+        geometry.setWidth(available.width());
+    if (geometry.height() > available.height())
+        geometry.setHeight(available.height());
+    geometry.moveTopLeft(available.topLeft());
+    window.setScreen(target);
+    window.setGeometry(geometry);
+    const QRect placed = window.geometry();
+    qInfo().noquote() << "lapis window screen:" << target->name() << "at" << placed.x()
+                      << placed.y() << "size" << placed.width() << placed.height();
+    return true;
 }
 
 } // namespace
@@ -99,10 +141,59 @@ bool UiPreview::reload() {
     return loadCandidate();
 }
 
+bool UiPreview::assignTerminalFocus() {
+    QQuickWindow* target_window = window();
+    if (target_window == nullptr)
+        return false;
+    // Focus and columns keep the single live pane; blocks and stack promote one
+    // tile per session. Workspace owns which session is focused, so ask it for
+    // the id. This mirrors the QML paneVisible rule: the pane owns the keyboard
+    // only when it is actually on screen.
+    const KeyMap* keymap = options_.keymap;
+    const bool pane_visible = keymap == nullptr || keymap->layout() == WorkspaceLayout::Focus ||
+                              keymap->layout() == WorkspaceLayout::Columns;
+    const QString name =
+        pane_visible ? QStringLiteral("liveTerminal")
+                     : QStringLiteral("cardTerminal_") + workspace_.focusedSession()->sessionId();
+    QQuickItem* terminal = nullptr;
+    const std::function<void(QQuickItem&)> visit = [&](QQuickItem& item) {
+        if (terminal != nullptr)
+            return;
+        if (item.objectName() == name) {
+            terminal = &item;
+            return;
+        }
+        for (QQuickItem* child : item.childItems())
+            visit(*child);
+    };
+    visit(*target_window->contentItem());
+    if (terminal == nullptr || !terminal->isVisible() || !terminal->isEnabled())
+        return false;
+    terminal->forceActiveFocus(Qt::OtherFocusReason);
+    return terminal->hasActiveFocus();
+}
+
+bool UiPreview::openSettings() {
+    QQuickWindow* target_window = window();
+    if (target_window == nullptr)
+        return false;
+    // Invoke the dialog through QML rather than duplicating its state in C++.
+    // The function lives on the root Window, which is the QML root object; the
+    // content item is a child and does not carry it.
+    if (engine_ == nullptr || engine_->rootObjects().isEmpty())
+        return false;
+    QObject* root = engine_->rootObjects().first();
+    return root != nullptr &&
+           QMetaObject::invokeMethod(root, "openSettingsDialog", Qt::DirectConnection);
+}
+
 bool UiPreview::loadCandidate() {
     std::unique_ptr<QQmlApplicationEngine> candidate = std::make_unique<QQmlApplicationEngine>();
     candidate->rootContext()->setContextProperty(QStringLiteral("workspace"), &workspace_);
     candidate->rootContext()->setContextProperty(QStringLiteral("preview"), this);
+    // QML reads `keymap.actionSequences(...)`. Absent keymap keeps the literals.
+    if (options_.keymap != nullptr)
+        candidate->rootContext()->setContextProperty(QStringLiteral("keymap"), options_.keymap);
     candidate->setInitialProperties({{QStringLiteral("visible"), false}});
 
     QString candidateDiagnostics;
@@ -189,6 +280,8 @@ bool UiPreview::loadCandidate() {
     }
 
     emit windowChanged(candidateWindow);
+    if (!options_.screen.isEmpty() && !reloading)
+        move_to_screen(*candidateWindow, options_.screen);
     candidateWindow->show();
 
     return true;

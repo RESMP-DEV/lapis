@@ -162,8 +162,8 @@ int run_ui_tests() {
                                  "width: 481; height: 313; visible: false\nfunction reloadNow() { "
                                  "preview.reload(); return 7; }\n}"));
 
-    lapis::desktop::UiPreview preview(workspace,
-                                      {.source = QUrl::fromLocalFile(qml_path), .compact = true});
+    lapis::desktop::UiPreview preview(
+        workspace, {.source = QUrl::fromLocalFile(qml_path), .compact = true, .screen = QString()});
     CHECK(preview.active());
     CHECK(!preview.reducedMotion());
     CHECK(preview.load());
@@ -392,7 +392,9 @@ int run_surface_tests() {
 int run_attention_ui_tests() {
     using namespace lapis::desktop;
     Workspace workspace(WorkspaceMode::preview);
-    UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE))});
+    UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+                                  .compact = false,
+                                  .screen = QString()});
     CHECK(preview.load());
     auto* window = preview.window();
     window->requestActivate();

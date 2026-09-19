@@ -1,0 +1,37 @@
+{
+  "version": 1,
+
+  "keybindings": {
+    "quit": ["Ctrl+Q"],
+    "detachWindow": ["Ctrl+W"],
+
+    "nextCategory": ["Ctrl+Tab"],
+    "previousCategory": ["Ctrl+Shift+Tab"],
+    "category1": ["Ctrl+1"],
+    "category2": ["Ctrl+2"],
+    "category3": ["Ctrl+3"],
+    "category4": ["Ctrl+4"],
+
+    "nextWindow": ["Ctrl+Shift+]"],
+    "previousWindow": ["Ctrl+Shift+["],
+
+    "focusLeft": ["Ctrl+Left"],
+    "focusRight": ["Ctrl+Right"],
+
+    "cycleLayout": ["Ctrl+L"],
+    "openSettings": ["Ctrl+,"],
+    "reloadConfig": ["Ctrl+R"]
+  },
+
+  "layout": "focus",
+  "theme": "lapis",
+  "density": "comfortable",
+
+  "categories": [
+    { "id": "shell", "title": "Shell" },
+    { "id": "renderer", "title": "Renderer" },
+    { "id": "agents", "title": "Agents" },
+    { "id": "service", "title": "Service" },
+    { "id": "checks", "title": "Checks" }
+  ]
+}

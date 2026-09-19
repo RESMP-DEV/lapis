@@ -1,3 +1,4 @@
+#include "keymap.hpp"
 #include "platform_preferences.hpp"
 #include "terminal_surface.hpp"
 #include "ui_capture.hpp"
@@ -9,6 +10,8 @@
 #include <QDebug>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QKeyEvent>
+#include <QKeySequence>
 #include <QQmlEngine>
 #include <QQuickStyle>
 #include <QQuickWindow>
@@ -16,6 +19,36 @@
 #include <exception>
 
 namespace {
+// Intercepts the appearance shortcut before any focused item sees it. The
+// terminal surface is a native focus item, so an item-level Shortcut never
+// fires while the user is typing in a session.
+class SettingsShortcutFilter final : public QObject {
+  public:
+    SettingsShortcutFilter(lapis::desktop::UiPreview& view, QObject* parent)
+        : QObject(parent), view_(view) {}
+
+  protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() != QEvent::KeyPress)
+            return QObject::eventFilter(watched, event);
+        auto* key = static_cast<QKeyEvent*>(event);
+        // Command-comma on macOS arrives as Meta with Key_Comma. Accept either
+        // modifier so a portable Ctrl+, binding also works off this host.
+        const bool comma = key->key() == Qt::Key_Comma;
+        const bool chord = key->modifiers().testFlag(Qt::ControlModifier) ||
+                           key->modifiers().testFlag(Qt::MetaModifier);
+        if (!comma || !chord || key->modifiers().testFlag(Qt::ShiftModifier))
+            return QObject::eventFilter(watched, event);
+        if (view_.openSettings()) {
+            event->accept();
+            return true;
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+  private:
+    lapis::desktop::UiPreview& view_;
+};
 void add_options(QCommandLineParser& parser) {
     parser.addHelpOption();
     parser.addOption({QStringLiteral("new-session"),
@@ -35,6 +68,10 @@ void add_options(QCommandLineParser& parser) {
                       QStringLiteral("path")});
     parser.addOption(
         {QStringLiteral("compact"), QStringLiteral("Open at the minimum review size")});
+    parser.addOption({QStringLiteral("screen"),
+                      QStringLiteral("Open on the QScreen whose name contains this text, "
+                                     "for example built-in or ultrawide"),
+                      QStringLiteral("name")});
     parser.addOption({QStringLiteral("reduced-motion"),
                       QStringLiteral("Preview steady attention markers without motion")});
     parser.addOption({QStringLiteral("scenario"),
@@ -118,6 +155,28 @@ bool valid_options(const QCommandLineParser& parser) {
     }
     return true;
 }
+
+// Connect keyboard ownership and any requested capture to the window that
+// UiPreview creates. Lives outside main() to keep main's branching flat.
+void wire_window(QQuickWindow& window, lapis::desktop::UiPreview& view,
+                 lapis::desktop::Workspace& workspace, const QCommandLineParser& parser) {
+    QObject::connect(&window, &QQuickWindow::activeChanged, &view, [&view, &window] {
+        if (window.isActive())
+            view.assignTerminalFocus();
+    });
+    // Cmd-, opens appearance settings. A QML Shortcut cannot carry this: the
+    // terminal surface is a native focus item that consumes key events first, so
+    // the app has to intercept ahead of it. The key arrives at the window before
+    // any child, which makes this the earliest correct point.
+    window.installEventFilter(new SettingsShortcutFilter(view, &window));
+    if (parser.isSet(QStringLiteral("capture")))
+        capture_window(window, workspace, view,
+                       {.image_path = parser.value(QStringLiteral("capture")),
+                        .trace_path = parser.value(QStringLiteral("trace")),
+                        .scenario = parser.value(QStringLiteral("scenario")),
+                        .delay_ms = parser.value(QStringLiteral("capture-delay")).toInt(),
+                        .smoke_input = parser.isSet(QStringLiteral("smoke-input"))});
+}
 } // namespace
 int main(int argc, char** argv) {
     QStringList arguments;
@@ -171,16 +230,26 @@ int main(int argc, char** argv) {
             }
         }
         Workspace workspace(isolated ? WorkspaceMode::preview : WorkspaceMode::live, options);
+        KeyMap keymap;
+        keymap.load();
+        qInfo().noquote() << "lapis keymap:" << keymap.sourcePath()
+                          << (keymap.loaded() ? "loaded" : "defaults");
         qmlRegisterUncreatableType<SessionPreview>("Lapis", 1, 0, "SessionPreview",
                                                    "Sessions are owned by the workspace");
         qmlRegisterType<TerminalSurface>("Lapis", 1, 0, "TerminalSurface");
+        qmlRegisterUncreatableType<KeyMap>("Lapis", 1, 0, "KeyMap",
+                                           "The keymap is owned by the application");
         const auto source =
             parser.isSet(QStringLiteral("qml"))
                 ? QUrl::fromLocalFile(
                       QFileInfo(parser.value(QStringLiteral("qml"))).absoluteFilePath())
                 : QUrl(QStringLiteral("qrc:/qml/Main.qml"));
-        UiPreview view(workspace,
-                       {.source = source, .compact = parser.isSet(QStringLiteral("compact"))});
+        UiPreview view(workspace, {.source = source,
+                                   .compact = parser.isSet(QStringLiteral("compact")),
+                                   .screen = parser.isSet(QStringLiteral("screen"))
+                                                 ? parser.value(QStringLiteral("screen"))
+                                                 : qEnvironmentVariable("LAPIS_SCREEN"),
+                                   .keymap = &keymap});
         view.setSystemReducedMotion(system_reduced_motion());
         view.setReducedMotion(parser.isSet(QStringLiteral("reduced-motion")));
         QObject::connect(&app, &QGuiApplication::applicationStateChanged, &view,
@@ -189,14 +258,9 @@ int main(int argc, char** argv) {
                                  view.setSystemReducedMotion(system_reduced_motion());
                          });
         QObject::connect(&view, &UiPreview::windowChanged, &view, [&](QQuickWindow* window) {
-            if (parser.isSet(QStringLiteral("capture")))
-                capture_window(*window, workspace, view,
-                               {.image_path = parser.value(QStringLiteral("capture")),
-                                .trace_path = parser.value(QStringLiteral("trace")),
-                                .scenario = parser.value(QStringLiteral("scenario")),
-                                .delay_ms = parser.value(QStringLiteral("capture-delay")).toInt(),
-                                .smoke_input = parser.isSet(QStringLiteral("smoke-input"))});
+            wire_window(*window, view, workspace, parser);
         });
+        QObject::connect(&keymap, &KeyMap::changed, &view, [&view] { view.assignTerminalFocus(); });
         if (!view.load())
             return 1;
         view.window()->requestActivate();
