@@ -143,6 +143,12 @@ def private_runtime_dir():
         raise SetupError(
             f"Cannot create or inspect private runtime directory {RUNTIME_DIR}: {error}"
         ) from error
+    validate_runtime_directory(runtime_stat)
+    return RUNTIME_DIR
+
+
+def validate_runtime_directory(runtime_stat):
+    """Apply the same read-only runtime contract to launch and doctor."""
     if not stat.S_ISDIR(runtime_stat.st_mode):
         raise SetupError(f"Runtime path is not a directory: {RUNTIME_DIR}")
     if runtime_stat.st_uid != os.geteuid():
@@ -152,7 +158,6 @@ def private_runtime_dir():
         )
     if stat.S_IMODE(runtime_stat.st_mode) != 0o700:
         raise SetupError(f"Runtime directory must have mode 0700: {RUNTIME_DIR}")
-    return RUNTIME_DIR
 
 
 def launch(arguments):
@@ -214,12 +219,14 @@ def command_doctor():
             qt or "not found; brew bundle --file Brewfile",
         )
     )
-    runtime_mode = (
-        oct(RUNTIME_DIR.stat().st_mode & 0o777) if RUNTIME_DIR.exists() else "(absent)"
-    )
-    rows.append(
-        ("runtime/ mode", "ok" if runtime_mode == "0o700" else "fix", runtime_mode)
-    )
+    try:
+        runtime_stat = os.lstat(RUNTIME_DIR)
+        validate_runtime_directory(runtime_stat)
+        rows.append(("runtime/", "ok", "owned directory, mode 0700"))
+    except FileNotFoundError:
+        rows.append(("runtime/", "ok", "created privately on first launch"))
+    except (OSError, SetupError) as error:
+        rows.append(("runtime/", "fix", str(error)))
     width = max(len(name) for name, _, _ in rows)
     for name, state, detail in rows:
         print(f"{name.ljust(width)}  {state:8}  {detail}")

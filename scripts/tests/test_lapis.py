@@ -238,6 +238,32 @@ class LauncherTests(unittest.TestCase):
 
         run.assert_called_once_with("check_quality.py", ["--fast"], needs_ghostty=False)
 
+    def test_doctor_checks_runtime_without_creating_or_repairing_it(self):
+        with (
+            patch.object(lapis, "RUNTIME_DIR", self.runtime),
+            patch.object(lapis, "DESKTOP_BINARY", self.desktop),
+            patch.object(lapis, "ghostty_prefix", return_value=self.ghostty),
+            patch.object(lapis.shutil, "which", return_value="qmake"),
+            patch.object(
+                lapis.subprocess, "run", return_value=SimpleNamespace(stdout="6.11.2")
+            ),
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(lapis.command_doctor(), 0)
+            self.assertFalse(self.runtime.exists())
+            self.runtime.mkdir(mode=0o700)
+            self.assertEqual(lapis.command_doctor(), 0)
+            with patch.object(lapis.os, "geteuid", return_value=os.geteuid() + 1):
+                self.assertEqual(lapis.command_doctor(), 1)
+            os.chmod(self.runtime, 0o1700)
+            self.assertEqual(lapis.command_doctor(), 1)
+            self.assertEqual(stat.S_IMODE(os.lstat(self.runtime).st_mode), 0o1700)
+            self.runtime.rmdir()
+            self.runtime.symlink_to(self.ghostty, target_is_directory=True)
+            self.assertEqual(lapis.command_doctor(), 1)
+            self.assertTrue(self.runtime.is_symlink())
+            self.assertIn("not a directory", output.getvalue())
+
 
 class GhosttyPrefixTests(unittest.TestCase):
     def setUp(self):

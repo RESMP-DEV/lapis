@@ -113,7 +113,7 @@ vice versa.
 
 | Area | Standard and authority |
 | --- | --- |
-| Text and editors | `.editorconfig`: UTF-8, LF, final newline, spaces. Language formatters take precedence for layout; preserve intentional Markdown hard breaks. |
+| Text and editors | `.editorconfig`: UTF-8, LF, final newline, spaces. Language formatters take precedence for layout. Use a backslash for an intentional Markdown hard break; the whitespace check rejects trailing spaces. |
 | C++ / Objective-C++ | C++20; `.clang-format` owns four-space indentation, 100-column wrapping and include layout. `.clang-tidy` and `cmake/ProjectOptions.cmake` own analyzer and warning policy. Include the headers that declare the facilities used. Keep platform imports in platform files. |
 | Python | Python 3.11+, standard library unless a dependency is explicitly adopted. `ruff.toml` owns lint/format settings, including the existing 88-column baseline. Use explicit `--config ruff.toml` to avoid inheriting another workspace's settings. |
 | Qt / QML | Follow Qt's camelCase properties, signals and slots at the Qt boundary; preserve the surrounding core naming convention elsewhere. Keep declarative bindings as the source of derived UI state, and route session/input decisions through the existing C++ owners. There is no enforced QML formatter/linter gate yet; QML changes require the desktop and capture checks below. |
@@ -423,7 +423,9 @@ endpoint is rejected. A socket parent must be owned by you and private (0700).
 Existing directories/files are not repurposed. The launcher creates a missing
 default runtime directory privately and rejects a symlink, non-directory,
 wrong-owner directory, or any mode other than 0700 without changing permissions. Choose an explicit private socket path or repair the directory
-deliberately before launching. Logs are written beside each
+deliberately before launching. `doctor` applies the same validation without
+creating or changing the directory; an absent default is reported as ready to
+create on first launch. Logs are written beside each
 socket as `<socket>.log`. The default endpoint is `runtime/desktop-v4.sock`;
 old v1/v2/v3 sessions stay untouched. The `<socket>.session` hint is a private 0600
 regular file containing session ID, epoch and launch fingerprint. A missing or
