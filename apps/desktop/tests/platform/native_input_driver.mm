@@ -2,7 +2,11 @@
 #import <AppKit/AppKit.h>
 #include <Carbon/Carbon.h>
 #include <CoreGraphics/CoreGraphics.h>
+#include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QThread>
 #include <QWindow>
+#include <iostream>
 #include <stdexcept>
 #include <type_traits>
 #include <unistd.h>
@@ -53,7 +57,12 @@ struct NativeInputDriver::Impl {
     bool us_was_enabled{enabled(us.get())};
     bool parent_was_enabled{enabled(japanese_parent.get())};
     bool japanese_was_enabled{enabled(japanese.get())};
+    id monitor{nil};
+    std::int64_t sequence{0};
+    std::int64_t delivered{0};
     ~Impl() {
+        if (monitor != nil)
+            [NSEvent removeMonitor:monitor];
         if (previous)
             static_cast<void>(TISSelectInputSource(previous.get()));
         if (!us_was_enabled)
@@ -65,6 +74,24 @@ struct NativeInputDriver::Impl {
     }
 };
 NativeInputDriver::NativeInputDriver() : impl_(std::make_unique<Impl>()) {
+    auto* state = impl_.get();
+    impl_->monitor = [NSEvent
+        addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp
+                                     handler:^NSEvent*(NSEvent* event) {
+                                       if (event.CGEvent != nullptr &&
+                                           CGEventGetIntegerValueField(event.CGEvent,
+                                                                       kCGEventSourceUserData) ==
+                                               state->sequence)
+                                           state->delivered = state->sequence;
+                                       if (qEnvironmentVariableIsSet("LAPIS_NATIVE_TRACE"))
+                                           std::cerr << "AppKit key type=" << event.type
+                                                     << " code=" << event.keyCode
+                                                     << " flags=" << event.modifierFlags
+                                                     << " active=" << NSApp.active << '\n';
+                                       return event;
+                                     }];
+    if (impl_->monitor == nil)
+        throw std::runtime_error("Native input event monitor unavailable");
     if (!CGPreflightPostEventAccess())
         throw std::runtime_error("macOS Accessibility event-posting permission is unavailable");
     if (TISEnableInputSource(impl_->us.get()) != noErr ||
@@ -108,11 +135,16 @@ void NativeInputDriver::activate(QWindow& window) {
     // Qt represents the native NSView pointer as an integer WId on macOS.
     // NOLINTNEXTLINE(performance-no-int-to-ptr)
     auto* view = reinterpret_cast<NSView*>(window.winId());
+    NSWindow* native = [view window];
+    if (native == nil)
+        throw std::runtime_error("Native input fixture has no NSWindow");
+    if (window.isActive() && NSApp.active && native.isKeyWindow)
+        return;
     if (@available(macOS 14.0, *))
         [NSApp activate];
     else
         throw std::runtime_error("Native test activation requires macOS 14 or later");
-    [[view window] makeKeyAndOrderFront:nil];
+    [native makeKeyAndOrderFront:nil];
     window.requestActivate();
 }
 void NativeInputDriver::key(std::uint16_t code, NativeModifiers flags) {
@@ -121,7 +153,25 @@ void NativeInputDriver::key(std::uint16_t code, NativeModifiers flags) {
         if (!event)
             throw std::runtime_error("Could not construct native keyboard event");
         CGEventSetFlags(event.get(), static_cast<CGEventFlags>(flags));
+        const auto sequence = ++impl_->sequence;
+        CGEventSetIntegerValueField(event.get(), kCGEventSourceUserData, sequence);
         CGEventPostToPid(::getpid(), event.get());
+        // AppKit delivery is asynchronous. Drain each edge before sending the
+        // next, without resending a key that could duplicate terminal input.
+        QElapsedTimer timer;
+        timer.start();
+        while (impl_->delivered != sequence) {
+            if (timer.elapsed() >= 10000) {
+                if (down) {
+                    CGEventSetType(event.get(), kCGEventKeyUp);
+                    CGEventPostToPid(::getpid(), event.get());
+                }
+                throw std::runtime_error("AppKit did not receive native key " +
+                                         std::to_string(code) + (down ? " down" : " up"));
+            }
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+            QThread::msleep(1);
+        }
     }
 }
 } // namespace lapis::desktop::test

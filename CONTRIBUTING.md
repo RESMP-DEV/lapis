@@ -693,6 +693,17 @@ received bytes for printable/Control/Option keys and Command-V multiline Unicode
 bracketed paste; observes native preedit and commit; checks cancellation and fresh
 composition after history, document detach, window focus and actual attachment
 replacement/reconnect; and verifies commit plus the candidate anchor after resize.
+Each native key edge waits for AppKit delivery before the next edge is posted;
+keys are never resent after a deadline. `LAPIS_NATIVE_TRACE=1` logs the probe's
+AppKit key and Qt key/composition events for diagnosis. A delivery deadline is
+distinct from a PTY-byte mismatch. Composition cases await an observed preedit
+before testing commit or invalidation, and cancellation awaits an empty preedit.
+The Qt input fixture also awaits expected service bytes instead of assuming
+asynchronous transport completes in 50 ms. Failed native cases preserve preceding results and
+verify clipboard/input-source restoration after the fixture is destroyed.
+These checks need exclusive desktop input: foreground interference can invalidate
+a run. Intermittent failures must be retained and investigated, not hidden by
+automatic retries.
 On native focus loss, Apple's IME may commit to the original terminal; the probe
 asserts that the new terminal receives no composition bytes. This does not add a
 multi-session product UI. The candidate anchor check verifies the rectangle
