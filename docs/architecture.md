@@ -2,8 +2,10 @@
 
 This is the single implementation plan for lapis. See the
 [current status](../README.md#current-status) for what has been implemented and exercised.
-macOS is the active target. Milestone 1 is qualified; the next milestone is
-**attention state and verified Codex request handling**. A Linux desktop port is deferred; the headless engine has
+macOS is the active target. Milestone 1 is qualified. Remaining Milestone 2
+implementation is tabled while code quality and contributor standardization are
+the active priority. The planned next product work remains **attention state and
+verified Codex request handling**; this maintenance pass does not resume its wiring. A Linux desktop port is deferred; the headless engine has
 already been exercised on Linux, but the session service and desktop have not.
 
 ## Product philosophy
@@ -685,6 +687,10 @@ work, coalesce display updates and preserve input/lifecycle events. Pin each inp
 operation to one session. GUI detach and session termination are separate commands.
 
 ### Milestone 2: attention and Codex plan
+
+**Tabled:** the implemented checkpoint is retained, but further adapter/service/UI
+wiring waits for an explicit return to this milestone. The current quality pass
+uses the [shared contribution standards](../CONTRIBUTING.md#code-standards).
 
 Planning baseline: merged `e53c4fe` (September 18, 2026). The first implementation
 checkpoint adds a standalone attention reducer and isolated live Codex probes.

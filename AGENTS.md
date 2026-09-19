@@ -27,7 +27,8 @@ component or launch an unbounded set of agents.
 2. Read [architecture and near-term plan](docs/architecture.md) when touching
    shared behavior; it includes the attention and ownership contracts. Read the
    [Codex investigation](adapters/codex/README.md) for Codex-specific work.
-3. Follow [CONTRIBUTING.md](CONTRIBUTING.md) for checks, profiling and PR procedure.
+3. Follow the [shared code standards](CONTRIBUTING.md#code-standards) and
+   [CONTRIBUTING.md](CONTRIBUTING.md) for checks, profiling and PR procedure.
    Use existing scripts before writing replacements.
 4. Verify live interfaces. Documentation, source definitions, exported schemas,
    replay fixtures, and actual runtime events are different kinds of evidence.
@@ -96,7 +97,17 @@ animate terminal glyphs. Prefer position/color feedback over blur, transparency 
 ornamental motion. Respect reduced-motion preferences when expanding navigation.
 Keep detailed decisions in the architecture document, not another design file.
 
-## C++ and resource discipline
+## Shared quality standard
+
+[CONTRIBUTING.md#code-standards](CONTRIBUTING.md#code-standards) is the canonical
+coding and review standard for humans and agents. Follow its language/tool
+configuration, ownership, failure-handling and evidence rules. Run `just quality`
+for the common checks, then apply the affected rows of the required-check matrix.
+Quality/maintenance tasks do not authorize feature wiring or resuming a tabled
+milestone. Review findings must distinguish defects from optional preferences;
+keep cleanup scoped and preserve other contributors' changes.
+
+## Responsiveness and resource policy
 
 - Product priority is responsiveness first, ergonomics second, visuals third.
   Target high-end M-series hardware with a 120 Hz reference workload. Measure
@@ -106,13 +117,6 @@ Keep detailed decisions in the architecture document, not another design file.
   render caches warm. Do not unload a session just because focus moved. Use
   generous configurable budgets, account for unified CPU/GPU memory and other
   agent processes, and evict cold data under pressure before interactive state.
-- Prefer small components, explicit ownership, RAII, standard containers, and
-  move-only wrappers for native handles. Avoid owning raw pointers, unnecessary
-  inheritance, and custom allocators or lock-free structures without evidence.
-- Keep blocking I/O, terminal parsing bursts, and agent work off the GUI thread.
-  Define thread ownership and message boundaries; use bounded queues and explicit
-  backpressure. Handle errors at process, worker, and UI boundaries rather than
-  swallowing them or allowing exceptions to escape unexpectedly.
 - Bound history, event queues, and CPU/GPU caches per session and globally. Keep
   current screens/recent history warm and back older history with disk. Live
   objects do not guarantee physical RAM residency; the OS can compress or swap.
@@ -123,9 +127,6 @@ Keep detailed decisions in the architecture document, not another design file.
   hidden panels while still consuming their output. Animate at display refresh
   rate and let static scenes sleep. Scaled previews must not trigger continuous
   terminal resizes.
-- Link every first-party CMake target to `lapis_project_options`. Keep compiler
-  warnings, formatting, and analyzer checks enabled; fix findings at their source.
-  Any narrow suppression needs a reason tied to the actual code.
 
 ## Coordinating multiple agents
 

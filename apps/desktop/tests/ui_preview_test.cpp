@@ -16,6 +16,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QObject>
+#include <QPair>
 #include <QPointer>
 #include <QQuickWindow>
 #include <QRect>
@@ -328,6 +329,14 @@ void click_setting(QQuickWindow& window, const QString& name) {
     CHECK(item->property("checked").toBool());
 }
 
+[[nodiscard]] QString read_text(const QString& path) {
+    QFile file(path);
+    CHECK(file.open(QIODevice::ReadOnly));
+    const QByteArray contents = file.readAll();
+    CHECK(!file.error());
+    return QString::fromUtf8(contents);
+}
+
 int run_shortcut_focus_tests() {
     using namespace lapis::desktop;
     Workspace workspace(WorkspaceMode::preview);
@@ -352,6 +361,45 @@ int run_shortcut_focus_tests() {
     auto* dialog = window->findChild<QObject*>(QStringLiteral("settingsDialog"));
     CHECK(terminal != nullptr && dialog != nullptr);
     terminal->forceActiveFocus();
+
+    CHECK(QMetaObject::invokeMethod(dialog, "open"));
+    wait_popup(*dialog, true);
+    const int focused_at_modal = workspace.focusedIndex();
+    const QString layout_at_modal = keymap.layoutName();
+    const QString config_at_modal = read_text(directory.filePath(QStringLiteral("lapis.json")));
+    int changes_during_modal = 0;
+    const auto changed_connection = QObject::connect(
+        &keymap, &KeyMap::changed, [&changes_during_modal] { ++changes_during_modal; });
+    const QList<QPair<Qt::Key, Qt::KeyboardModifiers>> workspace_keys{
+        {Qt::Key_Tab, Qt::ControlModifier},
+        {Qt::Key_Tab, Qt::ControlModifier | Qt::ShiftModifier},
+        {Qt::Key_1, Qt::ControlModifier},
+        {Qt::Key_2, Qt::ControlModifier},
+        {Qt::Key_3, Qt::ControlModifier},
+        {Qt::Key_4, Qt::ControlModifier},
+        {Qt::Key_Right, Qt::ControlModifier},
+        {Qt::Key_L, Qt::ControlModifier},
+        {Qt::Key_R, Qt::ControlModifier}};
+    for (const auto& [key, modifiers] : workspace_keys) {
+        QKeyEvent press(QEvent::KeyPress, key, modifiers);
+        QKeyEvent release(QEvent::KeyRelease, key, modifiers);
+        QCoreApplication::sendEvent(window, &press);
+        QCoreApplication::sendEvent(window, &release);
+        pump(10);
+        CHECK(workspace.focusedIndex() == focused_at_modal);
+        CHECK(keymap.layoutName() == layout_at_modal);
+        CHECK(changes_during_modal == 0);
+    }
+    QObject::disconnect(changed_connection);
+    CHECK(workspace.focusedIndex() == focused_at_modal);
+    CHECK(keymap.layoutName() == layout_at_modal);
+    CHECK(read_text(directory.filePath(QStringLiteral("lapis.json"))) == config_at_modal);
+    CHECK(dialog->property("opened").toBool());
+    CHECK(window->activeFocusItem() != terminal);
+    CHECK(QMetaObject::invokeMethod(dialog, "close"));
+    wait_popup(*dialog, false);
+    CHECK(workspace.focusedIndex() == focused_at_modal);
+    CHECK(keymap.layoutName() == layout_at_modal);
 
     QKeyEvent old_shortcut(QEvent::KeyPress, Qt::Key_Comma, Qt::ControlModifier);
     QCoreApplication::sendEvent(window, &old_shortcut);

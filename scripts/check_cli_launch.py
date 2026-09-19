@@ -20,6 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = 4
 HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
+HISTORY_REQUEST, HISTORY_PAGE = range(10, 12)
 WAIT = 5
 
 
@@ -45,6 +46,24 @@ def fingerprint(program, arguments, directory):
 
 def frame(kind, payload=b""):
     return struct.pack(">IB", len(payload) + 1, kind) + payload
+
+
+def history_request_payload(request_id, direction=0, reference=0):
+    return struct.pack(">QQB", request_id, reference, direction)
+
+
+def decode_history_reply(payload):
+    require(len(payload) >= 60, "Truncated history reply")
+    attachment = payload[:40]
+    request_id, page_id = struct.unpack_from(">QQ", payload, 40)
+    length = struct.unpack_from(">I", payload, 56)[0]
+    require(len(payload) == 60 + length, "Invalid history reply message")
+    return {
+        "attachment": attachment,
+        "request_id": request_id,
+        "page_id": page_id,
+        "message": payload[60:].decode("utf-8"),
+    }
 
 
 def attach_payload(program, arguments, directory, expected=None):
@@ -129,7 +148,7 @@ class WireClient:
         self.socket.close()
 
     def send(self, kind, payload=b""):
-        if kind in (TEXT, PASTE, KEY, RESIZE):
+        if kind in (TEXT, PASTE, KEY, RESIZE, HISTORY_REQUEST):
             require(self.attachment is not None, "No accepted attachment")
             payload = self.attachment + payload
         self.socket.sendall(frame(kind, payload))
@@ -212,6 +231,19 @@ class WireClient:
             require(kind == SNAPSHOT, "Unexpected frame before status")
         raise CheckError("Status deadline expired")
 
+    def history_reply(self):
+        deadline = time.monotonic() + WAIT
+        while True:
+            kind, data = self.receive(max(0.01, deadline - time.monotonic()))
+            if kind == HISTORY_PAGE:
+                reply = decode_history_reply(data)
+                require(
+                    reply["attachment"] == self.attachment,
+                    "History reply attachment mismatch",
+                )
+                return reply
+            require(kind == SNAPSHOT, "Unexpected frame before history reply")
+
 
 def wait_socket(endpoint, process):
     deadline = time.monotonic() + WAIT
@@ -293,6 +325,9 @@ class Service:
                     self.process.wait(timeout=3)
         finally:
             self.log.close()
+
+    def log_text(self):
+        return self.log.read_text(errors="replace")
 
 
 FIXTURE = r"""
@@ -687,6 +722,57 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
                     lambda screen: "ECHO:after-nonreader" in screen["text"]
                 )
 
+    def history_backpressure_receive_batch():
+        with session("history-backpressure") as service:
+            with service.connect() as client:
+                client.snapshot(lambda screen: "READY" in screen["text"])
+                client.send(
+                    HISTORY_REQUEST,
+                    history_request_payload(1),
+                )
+                require(
+                    "No more archived history" in client.history_reply()["message"],
+                    "Initial history response was not observed",
+                )
+                # Exceed 8 MiB plus socket buffering without draining replies.
+                packet = b"".join(
+                    frame(
+                        HISTORY_REQUEST,
+                        client.attachment + history_request_payload(request_id),
+                    )
+                    for request_id in range(2, 200002)
+                )
+                try:
+                    client.socket.sendall(packet)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                time.sleep(1)  # Deliberately withhold reads to fill the reply queue.
+                deadline = time.monotonic() + WAIT
+                received_bytes = 0
+                while True:
+                    remaining = deadline - time.monotonic()
+                    require(remaining > 0, "Backpressured client did not disconnect")
+                    client.socket.settimeout(remaining)
+                    chunk = client.socket.recv(65536)
+                    if not chunk:
+                        break
+                    received_bytes += len(chunk)
+                require(
+                    service.process.poll() is None,
+                    f"History backpressure killed service (exit {service.process.returncode})",
+                )
+            with service.connect() as restored:
+                restored.send(TEXT, b"after-history-backpressure\n")
+                restored.snapshot(
+                    lambda screen: "ECHO:after-history-backpressure" in screen["text"]
+                )
+                return {
+                    "requests_sent_maximum": 200000,
+                    "reply_bytes_drained": received_bytes,
+                    "same_child_pid": service.child_pid,
+                    "reattached_and_echoed": True,
+                }
+
     def replacement_service():
         with session("replacement") as service, service.connect() as old:
             identity = old.attachment
@@ -878,6 +964,10 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
         synchronization_boundaries,
     )
     record("PTY queue overflow and non-reading attachment", backpressure)
+    record(
+        "history backpressure detaches only the owning receive client",
+        history_backpressure_receive_batch,
+    )
     record("replacement service rejects remembered identity", replacement_service)
     record("snapshot limit preserves child and permits recovery", snapshot_limit)
     record("literal argv, cwd, resize, paste and exit", literal_resize_exit)

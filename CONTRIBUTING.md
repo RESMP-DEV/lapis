@@ -31,6 +31,7 @@ On the currently qualified macOS desktop host, establish the baseline in order:
 
 ```sh
 python3 scripts/lapis.py doctor    # report which dependencies are ready
+python3 scripts/lapis.py quality  # repository/Python baseline, no GUI
 python3 scripts/lapis.py check
 python3 scripts/lapis.py build
 python3 scripts/lapis.py ui-check
@@ -64,6 +65,23 @@ edits to root CMake files, shared headers, architecture and status docs. Tempora
 worker scopes prevent collisions; separate worktrees are useful when independent
 changes need isolated builds.
 
+Before a worker writes, record a short brief with these fields (in the task or PR,
+not another project roadmap):
+
+```text
+Objective and exclusions:
+Committed baseline and working directory:
+Temporary write allowlist; shared-file integration owner:
+Dependencies and shared interface/version:
+Acceptance commands; build directory/owner; GUI exclusivity:
+Handoff: changed files, contract effects, commands/results, evidence, open issues
+```
+
+Review the diff and completion receipt before integration; a worker's completed
+turn is not proof that its assignment or tests finished. Reuse the same scoped
+worker for corrections when possible. These temporary write boundaries coordinate
+concurrent edits; contributors continue to share ownership of the feature.
+
 For sweeping changes, open reviewable checkpoints that keep `main` buildable.
 Separate mechanical moves from behavior changes where practical. Settle the
 smallest shared contract before dependent implementations diverge. Record
@@ -83,10 +101,82 @@ Individual branches passing tests do not establish integration acceptance. Use
 one build owner per checkout/preset; shared `build/reports/<mode>/` receipts are
 overwritten on rerun, so preserve relevant logs before another run.
 
+## Code standards
+
+This section is the shared coding standard for people and agents. Architecture
+owns component/protocol contracts; this guide owns development and verification
+procedure; executable configuration owns mechanical style. Apply the same rules
+to new code and the code you change. Avoid repository-wide renaming or formatting
+mixed into a behavioral repair, especially while other contributors have work in
+progress. An established Qt convention is not a reason to rename the core, or
+vice versa.
+
+| Area | Standard and authority |
+| --- | --- |
+| Text and editors | `.editorconfig`: UTF-8, LF, final newline, spaces. Language formatters take precedence for layout; preserve intentional Markdown hard breaks. |
+| C++ / Objective-C++ | C++20; `.clang-format` owns four-space indentation, 100-column wrapping and include layout. `.clang-tidy` and `cmake/ProjectOptions.cmake` own analyzer and warning policy. Include the headers that declare the facilities used. Keep platform imports in platform files. |
+| Python | Python 3.11+, standard library unless a dependency is explicitly adopted. `ruff.toml` owns lint/format settings, including the existing 88-column baseline. Use explicit `--config ruff.toml` to avoid inheriting another workspace's settings. |
+| Qt / QML | Follow Qt's camelCase properties, signals and slots at the Qt boundary; preserve the surrounding core naming convention elsewhere. Keep declarative bindings as the source of derived UI state, and route session/input decisions through the existing C++ owners. There is no enforced QML formatter/linter gate yet; QML changes require the desktop and capture checks below. |
+| Build targets | Every first-party target links `lapis_project_options`. Keep vendor flags local, sanitizers in separate builds, and platform-specific dependencies behind the existing platform boundary. |
+
+### Ownership, failure handling and limits
+
+- Use RAII and move-only wrappers for owned native resources. A raw pointer or
+  reference is a borrow unless a framework explicitly owns it; document that
+  ownership at the declaration when it is not obvious. Qt parent ownership and
+  scene-graph ownership must not conflict with independent deletion.
+- State the owning thread and handoff for mutable state. Keep blocking process,
+  network, disk and parsing work off the GUI thread; bound queues and caches with
+  named limits and explicit overflow behavior. Do not replace these boundaries
+  with locks, inheritance or custom allocators without a demonstrated need.
+- Validate external sizes, IDs, paths and protocol state before allocation or
+  mutation. Preserve identity/epoch checks, atomic settings writes and existing
+  configuration values. Specify units and whether boundary values such as zero
+  disable a feature or are rejected.
+- Handle exceptions at process, worker and UI boundaries with an actionable
+  diagnostic. Broad catches are for cleanup or those outer boundaries, not for
+  silently converting failures into success. Cleanup must preserve the original
+  error. Assertions do not replace runtime validation of external input.
+- For bounded Python subprocesses, pass an argv list and explicit working
+  directory, retain partial output on timeout, and clean up only the process
+  group created by the fixture. Reuse the existing process helper instead of
+  creating another termination policy. Interactive application launches are not
+  bounded test jobs. Never assemble commands from untrusted shell text.
+- Fix analyzer findings at their source. A suppression must name the narrow rule,
+  explain the concrete API constraint next to the code, and cover only that
+  statement or target. Do not disable warnings globally to make a check pass.
+
+### Tests, review and evidence
+
+Test observable contracts and failure recovery: lifetime, limits, invalid input,
+ordering, persistence and input ownership. Use isolated fixtures, temporary files
+and private endpoints; never reuse someone's live agent or shell as a test fixture.
+Await observable completion for asynchronous positive assertions. A fixed sleep
+is not proof of delivery; a negative observation interval must be labeled and
+paired with evidence that its triggering action occurred. GUI checks own the
+foreground only for their declared test and run serially across checkouts. Workspace
+shortcuts must respect modal ownership; declaring an explicit shortcut context
+and testing blocked navigation is part of review for those controls.
+
+Use `just quality` (or `python3 scripts/lapis.py quality`) for the common repository
+and Python checks. It checks the instruction symlink and index ignore rule, diff
+whitespace, Ruff and Python tests without compiling C++ or starting a GUI. An empty Python suite is
+a failure. The receipt records HEAD plus whether the source tree has local changes. Add
+every relevant row of the required-check matrix; the common command is not a
+replacement for compiled, sanitizer, native-input or live-adapter verification.
+
+A quality review separates a reproducible defect, an unenforced convention, and
+an optional preference. Record the smallest repair, affected contract, useful
+validation and disposition for each actionable finding. Preserve failed receipts;
+state exactly which command and revision passed on rerun. Current runs, historical
+receipts, skipped checks and unmeasured claims are different evidence. A new
+standard needs an enforcement mechanism or an explicit manual review rule; do not
+present prose-only rules as an automated gate.
+
 ## Contribution and PR procedure
 
-1. Inspect `git status --short` and choose one coherent change within the current
-   milestone. Work on a branch from `main`; preserve unrelated work. Discuss
+1. Inspect `git status --short` and choose one coherent change within the assigned
+   feature or maintenance scope. Work on a branch from `main`; preserve unrelated work. Discuss
    architectural changes before expanding implementation, and record decisions
    in `docs/architecture.md` rather than adding another plan.
 2. Implement the smallest reviewable result. Keep refactors separate when they
@@ -174,8 +264,10 @@ elapsed time as a reason to declare incomplete work finished.
 
 On macOS, run `brew bundle --file Brewfile`. Xcode or its command-line tools must
 provide an SDK. Python 3.11+ runs the verification scripts without extra packages.
-`just` is an optional command shortcut. Python tooling changes also require Ruff;
-install these optional tools with `brew install just ruff` when needed.
+`just` is an optional command shortcut. The common quality command requires Ruff;
+install it with `brew install ruff` (and optionally `brew install just`). The root
+`ruff.toml` fixes the rule set; record the installed tool version when comparing
+results or adopting a changed formatter. Missing Ruff fails the quality command.
 
 The runner locates Homebrew LLVM without editing shell PATH or replacing Apple's
 compiler. Set `LAPIS_LLVM_BIN` to another LLVM installation's `bin` directory to
@@ -277,7 +369,12 @@ Each action takes a string or a list of strings, so several chords can share one
 action. Qt names the macOS Command key `Meta`; write `Meta+` (or `Ctrl+` for
 portability) rather than `Cmd+`. A missing or malformed file falls back to the
 built-in defaults and reports the problem instead of failing to start, and the
-window logs the path it read.
+window logs the path it read. Invalid shortcut strings are diagnosed and omitted;
+valid entries in the same list still apply. A known action with no valid entries
+(including an empty list) retains its defaults. Ordinary shortcuts can use Qt
+multi-chord sequences, but `openSettings` accepts only single chords because its
+modal-safe event filter handles one key press at a time. Workspace navigation,
+layout toggles, and config reload shortcuts are disabled while Appearance is open.
 
 Appearance settings offer four layouts: `focus` keeps one large pane and a
 preview strip, `columns` places previews beside the pane, `blocks` uses a wrapping
@@ -323,7 +420,10 @@ Use `--socket PATH --cwd DIRECTORY -- PROGRAM ARG...` for an explicit launch.
 Arguments are literal; use `--` to separate lapis options from the child's options.
 Repeat the same launch without `--new-session` to reattach; changing executable/argv/cwd on an occupied
 endpoint is rejected. A socket parent must be owned by you and private (0700).
-Existing directories/files are not repurposed. Logs are written beside each
+Existing directories/files are not repurposed. The launcher creates a missing
+default runtime directory privately and rejects a symlink, non-directory,
+wrong-owner directory, or any mode other than 0700 without changing permissions. Choose an explicit private socket path or repair the directory
+deliberately before launching. Logs are written beside each
 socket as `<socket>.log`. The default endpoint is `runtime/desktop-v4.sock`;
 old v1/v2/v3 sessions stay untouched. The `<socket>.session` hint is a private 0600
 regular file containing session ID, epoch and launch fingerprint. A missing or
@@ -475,6 +575,7 @@ Run from the repository root:
 
 | Command | What it checks |
 | --- | --- |
+| `just quality` | Repository contracts, diff whitespace, Python lint/format and unit tests; no GUI |
 | `just check` | Compiler warnings as errors, CTest, format, clang-tidy, and Cppcheck |
 | `just asan` | CTest with AddressSanitizer and UndefinedBehaviorSanitizer |
 | `just tsan` | CTest with ThreadSanitizer in a separate build |
@@ -499,8 +600,8 @@ Required checks accumulate when a change touches multiple areas:
 | QML, rendering or desktop input | `just desktop` and `just ui-check`; live input changes also need `just cli-check` and `just native-input` on the qualified Mac |
 | Build/test tooling | `just verify-tools` plus affected positive check/build paths |
 | Disk history | `python3 scripts/check_history.py --disk-full` on macOS, plus desktop-enabled ASan/TSan; the disk-full fixture creates and removes its own 32 MiB disk image |
-| Python tooling | `ruff check --isolated scripts` and `ruff format --isolated --check scripts`, plus relevant runtime probes |
-| Documentation or symlinks only | Verify paths, links and instruction consistency; no unrelated C++ rebuild |
+| Python tooling | `ruff check --config ruff.toml scripts` and `ruff format --config ruff.toml --check scripts`, plus relevant runtime probes |
+| Documentation or symlinks only | Verify paths, links and instruction consistency; run `just quality` for shared check/config/instruction changes; no unrelated C++ rebuild |
 
 Without `just`, use `python3 scripts/check_cpp.py dev`, replacing `dev` with
 `asan`, `tsan`, `profile`, `desktop`, or `format` as appropriate. The detector check is
@@ -585,8 +686,8 @@ shared-server probe also sends no model prompt:
 ```sh
 python3 scripts/probe_codex_attention.py --output build/codex-shared-server.json
 python3 -m unittest discover -s scripts/tests -v
-ruff check --isolated scripts
-ruff format --isolated --check scripts
+ruff check --config ruff.toml scripts
+ruff format --config ruff.toml --check scripts
 ```
 
 It uses a private Codex home and server, tests WebSocket-over-Unix transport, and

@@ -516,7 +516,9 @@ class SessionService final : public QObject {
         }
     }
     void receive() {
-        if (!client_ || client_->state() != QLocalSocket::ConnectedState)
+        QLocalSocket* const receiving_client = client_;
+        const wire::Attachment receiving_attachment = attachment_;
+        if (!receiving_client || receiving_client->state() != QLocalSocket::ConnectedState)
             return;
         try {
             buffer_ += client_->read(wire::max_frame_bytes + 4 - buffer_.size());
@@ -529,6 +531,10 @@ class SessionService final : public QObject {
                     return;
                 }
                 handle(frame);
+                if (client_ != receiving_client || attachment_ != receiving_attachment ||
+                    stopping_) {
+                    return;
+                }
             }
             if (buffer_.size() > wire::max_frame_bytes + 4)
                 throw std::runtime_error("Session input overflow");
@@ -540,8 +546,11 @@ class SessionService final : public QObject {
                     receive();
             });
         } catch (const std::exception& error) {
-            send_status(client_, wire::StatusCode::rejected, QString::fromUtf8(error.what()));
-            detach_client();
+            if (client_ == receiving_client && attachment_ == receiving_attachment && !stopping_) {
+                send_status(client_, wire::StatusCode::rejected, QString::fromUtf8(error.what()));
+                if (client_ == receiving_client && attachment_ == receiving_attachment)
+                    detach_client();
+            }
         }
     }
     void acknowledge(const QByteArray& payload) {
