@@ -9,6 +9,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -121,6 +122,33 @@ void selection_persists() {
     require(reloaded.themeName() == QStringLiteral("graphite"), "theme should survive a reload");
     require(reloaded.layoutName() == QStringLiteral("columns"), "layout should survive a reload");
     require(reloaded.densityName() == QStringLiteral("compact"), "density should survive a reload");
+}
+
+void symbolic_link_config_updates_target() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    const QDir dir(directory.path());
+    const QString target = write_config(dir, R"({"layout":"focus","retained":true})");
+    const QString link = dir.filePath(QStringLiteral("linked.json"));
+    const QString chain = dir.filePath(QStringLiteral("chain.json"));
+    require(QFile::link(QStringLiteral("lapis.json"), link), "relative config symlink");
+    require(QFile::link(link, chain), "absolute config symlink chain");
+    const QString canonical_target = QFileInfo(target).canonicalFilePath();
+    require(QFileInfo(chain).canonicalFilePath() == canonical_target,
+            "fixture symlink does not refer to the temporary config");
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(chain);
+    require(keymap.load(), "linked config should load");
+    require(keymap.setTheme(QStringLiteral("graphite")), "linked config should save");
+    require(QFileInfo(link).isSymbolicLink() && QFileInfo(chain).isSymbolicLink(),
+            "appearance save replaced a config symlink");
+    require(QFileInfo(chain).canonicalFilePath() == canonical_target, "config link target changed");
+    const auto saved = read_config(target);
+    require(saved.value(QStringLiteral("theme")).toString() == QStringLiteral("graphite") &&
+                saved.value(QStringLiteral("retained")).toBool(),
+            "linked save did not preserve and update the actual target");
+    require(keymap.load() && keymap.themeName() == QStringLiteral("graphite"),
+            "linked config did not reload");
 }
 
 // Appearance changes must round-trip every unrelated JSON value exactly.
@@ -362,6 +390,7 @@ int main(int argc, char** argv) {
     try {
         themes_are_complete();
         selection_persists();
+        symbolic_link_config_updates_target();
         appearance_preserves_json_and_bad_files();
         deeply_nested_values_survive_persistence();
         empty_objects_are_compact();

@@ -4,6 +4,7 @@
 #include <limits>
 #include <source_location>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 using namespace lapis::session::attention;

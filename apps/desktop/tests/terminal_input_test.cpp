@@ -21,6 +21,7 @@
 #include <iostream>
 #include <source_location>
 #include <stdexcept>
+#include <string>
 
 namespace {
 namespace wire = lapis::session::wire;

@@ -26,6 +26,7 @@
 #include <memory>
 #include <source_location>
 #include <stdexcept>
+#include <string>
 
 namespace {
 using lapis::desktop::SessionPreview;

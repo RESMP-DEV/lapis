@@ -1,6 +1,7 @@
 #ifndef LAPIS_SESSION_ATTENTION_HPP
 #define LAPIS_SESSION_ATTENTION_HPP
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <set>
@@ -28,7 +29,7 @@ struct Limits {
     std::size_t pending{128};
     std::size_t retired{1024};
     Tick aging_interval{1000};
-    Tick cooldown{1000};
+    Tick cooldown{1000}; // Zero disables the acknowledgement delay.
 };
 struct Request {
     RequestId id;

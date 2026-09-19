@@ -8,6 +8,7 @@
 #include <QWindow>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <unistd.h>
 
