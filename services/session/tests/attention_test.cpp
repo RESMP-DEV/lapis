@@ -11,6 +11,7 @@ void require(bool value, std::source_location where = std::source_location::curr
     if (!value)
         throw std::runtime_error("Attention check failed at line " + std::to_string(where.line()));
 }
+constexpr auto maximum_sequence = std::numeric_limits<std::uint64_t>::max();
 Request request(RequestId id = std::int64_t{1}, std::uint8_t priority = 0) {
     return {std::move(id),  "thread",           "turn",  "item", "approval",
             "Run fixture?", {"accept", "deny"}, priority};
@@ -75,6 +76,62 @@ void recovery() {
     require(s.reconcile({3, 0}, {a}, 0) == Outcome::applied);
     require(!s.respond(3, a.id, s.pending().at(a.id).revision, "accept"));
 }
+void replay_tokens_and_local_eligibility() {
+    auto s = state();
+    auto a = request();
+    auto b = request(std::int64_t{2});
+    require(s.request({1, 1}, a, 100) == Outcome::applied);
+    require(s.request({1, 2}, b, 100) == Outcome::applied);
+    const auto revision = s.pending().at(a.id).revision;
+    const auto b_revision = s.pending().at(b.id).revision;
+    require(s.snooze(a.id, 300, 100));
+    require(s.reconcile({1, 2}, {a, b}, 100) == Outcome::applied);
+    require(s.pending().at(a.id).revision == revision);
+    require(s.pending().at(a.id).arrived == 100);
+    require(s.pending().at(a.id).not_before == 300);
+    require(s.ordered(200).front() == b.id);
+    require(s.ordered(300).front() == a.id);
+    require(s.respond(1, a.id, revision, "accept"));
+    const auto submitted_revision = s.pending().at(a.id).revision;
+    require(s.reconcile({1, 2}, {a, b}, 300) == Outcome::applied);
+    require(s.pending().at(a.id).status == RequestStatus::responding);
+    require(s.pending().at(a.id).submitted);
+    require(s.pending().at(a.id).revision == submitted_revision);
+    require(!s.acknowledge(a.id, 300));
+    require(!s.snooze(a.id, 400, 300));
+
+    s.overflow();
+    require(!s.acknowledge(b.id, 300));
+    require(s.reconcile({1, 3}, {a, b}, 300) == Outcome::applied);
+    require(s.pending().at(a.id).revision != revision);
+    const auto recovered = s.pending().at(a.id).revision;
+    require(!s.respond(1, a.id, recovered, "accept")); // Submitted responses are never retried.
+    require(s.pending().at(b.id).revision != b_revision);
+    require(!s.respond(1, b.id, b_revision, "accept"));
+    require(!s.snooze(a.id, 400, 300));
+
+    s.connect(2, {true, true, true});
+    const auto before_epoch = s.pending().at(a.id).revision;
+    require(s.reconcile({2, 0}, {a, b}, 300) == Outcome::applied);
+    require(s.pending().at(a.id).revision != before_epoch);
+    require(s.snooze(a.id, 400, 300)); // A new source epoch is a fresh pending request.
+    require(s.respond(2, a.id, s.pending().at(a.id).revision, "accept"));
+    require(!s.snooze(a.id, 400, 300));
+    s.disconnect();
+    require(!s.acknowledge(b.id, 400));
+}
+void observation_only_requests() {
+    auto s = state();
+    auto a = request();
+    a.choices.clear();
+    require(s.request({1, 1}, a, 0) == Outcome::applied);
+    const auto revision = s.pending().at(a.id).revision;
+    require(s.ordered(0).front() == a.id);
+    require(!s.respond(1, a.id, revision, ""));
+    require(!s.respond(1, a.id, revision, "accept"));
+    require(s.resolve({1, 2}, a.id) == Outcome::applied);
+    require(s.pending().empty());
+}
 void malformed_and_bounds() {
     auto s = state({2, 2, 100, 10});
     auto a = request();
@@ -132,14 +189,23 @@ void recovery_watermark() {
     require(s.reconcile({1, 5}, {a}, 0) == Outcome::rejected);
     require(s.reconcile({1, 6}, {a}, 0) == Outcome::applied);
 }
+void sequence_exhaustion() {
+    auto s = state();
+    const auto a = request();
+    require(s.reconcile({1, maximum_sequence}, {a}, 0) == Outcome::applied);
+    require(s.request({1, maximum_sequence}, request(std::int64_t{2}), 0) == Outcome::duplicate);
+}
 } // namespace
 int main() {
     try {
         identity_and_lifecycle();
         recovery();
+        replay_tokens_and_local_eligibility();
+        observation_only_requests();
         malformed_and_bounds();
         ordering();
         recovery_watermark();
+        sequence_exhaustion();
         std::cout << "Attention identity, lifecycle, recovery, bounds and scheduling passed\n";
         return 0;
     } catch (const std::exception& error) {

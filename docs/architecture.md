@@ -710,6 +710,12 @@ rather than silently forgetting duplicate history. Queue ordering, aging, snooze
 and acknowledgement cooldown are exercised within that source. Cross-session
 aggregation remains later work. The library has single-thread ownership, no I/O,
 and no focus or GUI-attachment policy; those checks belong in service integration.
+An unchanged request in a same-epoch snapshot preserves its decision token only
+while the source remains synchronized. Recovery, changed payloads and new epochs
+rotate tokens; a submitted response remains non-retriable within its source epoch.
+Snooze and acknowledgement accept only synchronized pending requests. Empty
+choice lists represent observation-only notices that the originating adapter
+must resolve from source state.
 
 Real GLM turns against a dedicated Codex server deliver user-input and command
 approval requests. An observer receives pending requests on resume, receives the

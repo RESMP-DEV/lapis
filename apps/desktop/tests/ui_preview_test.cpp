@@ -185,8 +185,12 @@ int run_ui_tests() {
             {.source = QUrl::fromLocalFile(qml_path), .compact = true, .screen = selected->name()});
         CHECK(placed.load());
         CHECK(placed.window()->screen() == selected);
+#ifdef Q_OS_MACOS
         // macOS adjusts client geometry to leave room for native window decorations.
         CHECK(selected->availableGeometry().contains(placed.window()->frameGeometry()));
+#else
+        CHECK(selected->availableGeometry().contains(placed.window()->geometry()));
+#endif
         placed.window()->hide();
     }
 
@@ -285,7 +289,9 @@ void wait_active(QQuickWindow& window) {
 void write_config(const QTemporaryDir& directory, const QString& text) {
     QFile file(directory.filePath(QStringLiteral("lapis.json")));
     CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text));
-    file.write(text.toUtf8());
+    const auto bytes = text.toUtf8();
+    CHECK(file.write(bytes) == bytes.size());
+    CHECK(file.flush());
     file.close();
 }
 
@@ -339,6 +345,9 @@ int run_shortcut_focus_tests() {
 
     QKeyEvent old_shortcut(QEvent::KeyPress, Qt::Key_Comma, Qt::ControlModifier);
     QCoreApplication::sendEvent(window, &old_shortcut);
+    CHECK(!dialog->property("visible").toBool());
+    QKeyEvent old_mac_shortcut(QEvent::KeyPress, Qt::Key_Comma, Qt::MetaModifier);
+    QCoreApplication::sendEvent(window, &old_mac_shortcut);
     CHECK(!dialog->property("visible").toBool());
 
     QKeyEvent custom(QEvent::KeyPress, Qt::Key_T, Qt::ControlModifier | Qt::AltModifier,
@@ -434,6 +443,19 @@ int run_shortcut_focus_tests() {
     CHECK(keymap.reload());
     pump(50);
     CHECK(shortcut->property("sequences") != old_sequences);
+    wait_active(*window);
+    QKeyEvent obsolete(QEvent::KeyPress, Qt::Key_T, Qt::ControlModifier | Qt::AltModifier);
+    QCoreApplication::sendEvent(window, &obsolete);
+    CHECK(!dialog->property("visible").toBool());
+    for (const auto modifier : {Qt::ControlModifier, Qt::MetaModifier}) {
+        QKeyEvent settings_key(QEvent::KeyPress, Qt::Key_Comma, modifier);
+        QCoreApplication::sendEvent(window, &settings_key);
+        pump(150);
+        CHECK(dialog->property("opened").toBool());
+        CHECK(QMetaObject::invokeMethod(dialog, "close"));
+        pump(150);
+        CHECK(!dialog->property("visible").toBool());
+    }
 
     // Preview documents are intentionally noninteractive. Enable only this
     // fixture item to exercise the real card's focus routing in the same window.

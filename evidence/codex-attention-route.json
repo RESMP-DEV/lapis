@@ -143,12 +143,13 @@
       "2026-09-18T20:54:35.431772Z",
       "2026-09-18T20:54:40.480370Z"
     ],
-    "limitation": "Local router dispatch evidence; not an independent attestation of the upstream model weights"
+    "limitations": [
+      "Local router dispatch evidence; not an independent attestation of the upstream model weights"
+    ]
   },
   "reconciliation_source_inspection": {
     "repository": "openai/codex (local checkout)",
     "revision": "256a74f942a2fae1d4c198797d6d5246063f06e3",
-    "limitation": "Inspected source supports interpretation of the live probe; a checkout revision alone does not establish binary build provenance",
     "sha256": {
       "codex-rs/app-server-protocol/src/protocol/common.rs": "02cd72be646c4388e90f21ed651838aeab3d6273ade14715e38f2de6c095ba99",
       "codex-rs/app-server/src/request_serialization.rs": "b624a9bac63d16f786939f3e9d2c8916faf5d4bc499af7ed099b1e3803f4632a",
@@ -163,6 +164,9 @@
       "Resume waits for the listener completion signal",
       "The listener sends the resume response, awaits pending-request replay, then signals completion",
       "Outgoing messages preserve enqueue order; the subsequent read reply marks the captured boundary"
+    ],
+    "limitations": [
+      "Inspected source supports interpretation of the live probe; a checkout revision alone does not establish binary build provenance"
     ]
   },
   "checks": [
@@ -198,22 +202,34 @@
       "command": "python3 -m unittest discover -s scripts/tests",
       "passed": true,
       "tests": 43,
-      "log": "build/m2-python-tests.log"
+      "log": "build/m2-python-tests.log",
+      "recorded_at": null,
+      "timestamp_status": "Command timestamp was not separately recorded in this dated checkpoint; see the enclosing receipt date."
     },
     {
       "command": "python3 -m unittest scripts.tests.test_probe_codex_attention",
       "passed": true,
       "tests": 5,
-      "log": "build/m2-probe-independent.log"
+      "log": "build/m2-probe-independent.log",
+      "recorded_at": null,
+      "timestamp_status": "Command timestamp was not separately recorded in this dated checkpoint; see the enclosing receipt date."
     },
     {
       "command": "ruff check --isolated scripts",
-      "passed": true
+      "passed": true,
+      "recorded_at": null,
+      "timestamp_status": "Command timestamp was not separately recorded in this dated checkpoint; see the enclosing receipt date.",
+      "log": null,
+      "log_status": "No separate command log was retained in this dated checkpoint; current verification is in reconciliation.json."
     },
     {
       "command": "ruff format --isolated --check scripts",
       "passed": true,
-      "files": 14
+      "files": 14,
+      "recorded_at": null,
+      "timestamp_status": "Command timestamp was not separately recorded in this dated checkpoint; see the enclosing receipt date.",
+      "log": null,
+      "log_status": "No separate command log was retained in this dated checkpoint; current verification is in reconciliation.json."
     }
   ],
   "limitations": [
@@ -239,6 +255,8 @@
       }
     ],
     "verification": "43 Python tests and repeated live input/approval/TUI/reconnect qualification passed after fixes",
-    "limitation": "Reviewer did not run builds; coordinator ran the recorded checks"
+    "limitations": [
+      "Reviewer did not run builds; coordinator ran the recorded checks"
+    ]
   }
 }

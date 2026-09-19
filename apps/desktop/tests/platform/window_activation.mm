@@ -14,7 +14,10 @@ void activate_test_window(QWindow& window) {
     // Qt exposes the native NSView as an integer WId on macOS.
     // NOLINTNEXTLINE(performance-no-int-to-ptr)
     auto* view = reinterpret_cast<NSView*>(window.winId());
-    [[view window] makeKeyAndOrderFront:nil];
+    NSWindow* native = [view window];
+    if (native == nil)
+        throw std::runtime_error("Test window has no native NSWindow for activation");
+    [native makeKeyAndOrderFront:nil];
     window.requestActivate();
 }
 } // namespace lapis::desktop::test

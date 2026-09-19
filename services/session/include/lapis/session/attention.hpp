@@ -37,6 +37,7 @@ struct Request {
     std::string item_id;
     std::string reason;
     std::string summary;
+    // Empty means an observation-only notice; the adapter must resolve it from source state.
     std::vector<std::string> choices;
     std::uint8_t priority{}; // 0..3; aging eventually outranks a newer high priority.
     bool operator==(const Request&) const = default;
@@ -55,22 +56,33 @@ struct Pending {
 // Sequences order local delivery only. The adapter must separately establish source completeness.
 class State {
   public:
+    // Throws std::invalid_argument for invalid identities or limits.
     State(std::string session_id, std::string adapter_id, const Limits& limits = {});
+    // Throws std::invalid_argument for a zero or non-increasing source epoch.
     void connect(std::uint64_t epoch, Capabilities capabilities);
     void disconnect();
     void overflow();
     // Authoritative snapshots replace state atomically. Retired IDs persist for an epoch;
     // exhausting their bound requires a new epoch, never silent tombstone eviction.
+    // A content-identical same-epoch entry retains its revision only when the state is
+    // already synchronized; recovery, desynchronization, changed content, and new epochs
+    // issue fresh revisions. Methods taking Tick throw std::invalid_argument for a backward
+    // clock. Token allocation can throw std::overflow_error when revisions are exhausted.
+    // Sequence wrap is not observed as a gap: duplicates remain duplicates, and the caller
+    // must establish a new epoch before sequence UINT64_MAX would be exceeded.
     Outcome reconcile(Position position, const std::vector<Request>& requests, Tick now);
     Outcome request(Position position, const Request& request, Tick now);
     Outcome resolve(Position position, const RequestId& id);
     Outcome activity(Position position, Activity activity);
     // Exact source/epoch/revision plus adapter-validated choice. Sending never retires a request.
     // A lost response must not be retransmitted automatically by the adapter.
-    bool respond(std::uint64_t epoch, const RequestId& id, std::uint64_t revision,
-                 const std::string& choice);
-    bool snooze(const RequestId& id, Tick until, Tick now);
-    bool acknowledge(const RequestId& id, Tick now);
+    // request()/respond() throw std::overflow_error if token space is exhausted;
+    // reconcile() instead reports desynchronized when its token batch cannot fit.
+    [[nodiscard]] bool respond(std::uint64_t epoch, const RequestId& id, std::uint64_t revision,
+                               const std::string& choice);
+    // Local scheduling accepts only synchronized, pending requests. It never resolves them.
+    [[nodiscard]] bool snooze(const RequestId& id, Tick until, Tick now);
+    [[nodiscard]] bool acknowledge(const RequestId& id, Tick now);
     [[nodiscard]] std::vector<RequestId> ordered(Tick now) const;
     [[nodiscard]] const std::map<RequestId, Pending>& pending() const { return pending_; }
     [[nodiscard]] bool ready() const { return connected_ && synchronized_; }

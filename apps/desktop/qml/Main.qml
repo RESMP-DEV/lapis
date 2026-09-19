@@ -205,7 +205,7 @@ ApplicationWindow {
         currentLayout: window.layoutMode
         currentDensity: window.densityMode
         configPath: typeof keymap !== "undefined" && keymap !== null ? keymap.sourcePath : ""
-        shortcutHint: window.bindings("openSettings", ["Ctrl+,"]).join(" / ")
+        shortcutHint: preview.settingsShortcuts.join(" / ")
         configDiagnostic: typeof keymap !== "undefined" && keymap !== null ? keymap.diagnostic : ""
 
         onClosed: preview.deferTerminalFocus()
@@ -490,8 +490,8 @@ ApplicationWindow {
             // The channel is declared after the pane, so pin the pane to column 1
             // in columns mode and let the carousel occupy column 0 to its left.
             Layout.column: window.columnsLayout ? 1 : 0
-            // An invisible item still occupies its grid row and its spacing, so
-            // collapse it out of the layout when it is not the active surface.
+            // Keep a valid row span; visibility and zero preferred height
+            // remove the inactive pane from the layout.
             Layout.row: 1
             Layout.rowSpan: 1
             visible: window.paneVisible

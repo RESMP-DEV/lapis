@@ -270,7 +270,7 @@ defaults are:
 | Next / previous window | Ctrl+Shift+] / Ctrl+Shift+[ | Move through sessions |
 | Focus left / right | Ctrl+Left / Ctrl+Right | Step one session |
 | Cycle layout | Ctrl+L | Switch focus and blocks layouts |
-| Appearance | Ctrl+, | Open theme, layout and density settings |
+| Appearance | Ctrl+, / Meta+, (Command-comma on macOS) | Open theme, layout and density settings |
 | Reload config | Ctrl+R | Re-read `lapis.json` |
 
 Each action takes a string or a list of strings, so several chords can share one

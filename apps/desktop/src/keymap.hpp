@@ -46,6 +46,7 @@ struct Theme {
 [[nodiscard]] const Theme& theme_for(const QString& name);
 [[nodiscard]] const std::array<Theme, 6>& theme_table();
 [[nodiscard]] bool theme_exists(const QString& name);
+[[nodiscard]] QStringList default_settings_shortcuts();
 
 // User-editable keybindings, layout, theme, and card density, loaded from
 // lapis.json at the project root. Missing or malformed input falls back to

@@ -94,9 +94,23 @@ constexpr int kMaximumDiagnosticsLength = 4096;
 
 UiPreview::UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* parent)
     : QObject(parent), workspace_(workspace), options_(std::move(options)) {
+    refreshSettingsShortcuts();
     if (options_.keymap != nullptr)
-        connect(options_.keymap, &KeyMap::changed, this, &UiPreview::deferTerminalFocus);
+        connect(options_.keymap, &KeyMap::changed, this, [this] {
+            refreshSettingsShortcuts();
+            deferTerminalFocus();
+        });
     connect(&workspace_, &Workspace::focusChanged, this, &UiPreview::deferTerminalFocus);
+}
+
+void UiPreview::refreshSettingsShortcuts() {
+    settings_shortcuts_ = options_.keymap != nullptr
+                              ? options_.keymap->sequences(QStringLiteral("openSettings"))
+                              : default_settings_shortcuts();
+    parsed_settings_shortcuts_.clear();
+    for (const auto& text : settings_shortcuts_)
+        parsed_settings_shortcuts_.append(QKeySequence(text));
+    emit settingsShortcutsChanged();
 }
 
 UiPreview::~UiPreview() {
@@ -211,27 +225,11 @@ bool UiPreview::eventFilter(QObject* watched, QEvent* event) {
     auto* key_event = static_cast<QKeyEvent*>(event);
     if (key_event->isAutoRepeat())
         return false;
-    const QKeySequence pressed(key_event->keyCombination());
-    const QKeySequence::SequenceMatch exact = QKeySequence::ExactMatch;
-    if (options_.keymap != nullptr) {
-        const QStringList sequences = options_.keymap->sequences(QStringLiteral("openSettings"));
-        for (const QString& text : sequences) {
-            const QKeySequence sequence(text);
-            if (sequence.matches(pressed) == exact) {
-                if (openSettings()) {
-                    event->accept();
-                    return true;
-                }
-                return false;
-            }
+    for (const auto& sequence : parsed_settings_shortcuts_) {
+        if (sequence.count() == 1 && sequence[0] == key_event->keyCombination() && openSettings()) {
+            event->accept();
+            return true;
         }
-        return false;
-    }
-
-    const QKeySequence default_sequence(QStringLiteral("Ctrl+,"));
-    if (default_sequence.matches(pressed) == exact && openSettings()) {
-        event->accept();
-        return true;
     }
     return false;
 }

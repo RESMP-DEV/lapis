@@ -80,7 +80,7 @@ Outcome State::advance(Position position) {
     }
     if (position.sequence <= sequence_)
         return Outcome::duplicate;
-    if (sequence_ == maximum || position.sequence != sequence_ + 1) {
+    if (position.sequence != sequence_ + 1) {
         sequence_ = position.sequence;
         desynchronize();
         return Outcome::desynchronized;
@@ -98,6 +98,7 @@ Outcome State::reconcile(Position position, const std::vector<Request>& requests
         desynchronize();
         return Outcome::desynchronized;
     }
+    const bool already_ready = ready();
     std::map<RequestId, Pending> replacement;
     for (const auto& request : requests) {
         if (!valid_request(request) || replacement.contains(request.id) ||
@@ -111,6 +112,8 @@ Outcome State::reconcile(Position position, const std::vector<Request>& requests
             previous->second.request == request) {
             item.arrived = previous->second.arrived;
             item.not_before = previous->second.not_before;
+            if (already_ready)
+                item.revision = previous->second.revision;
             if (previous->second.submitted) {
                 item.status = RequestStatus::responding;
                 item.submitted = true;
@@ -127,17 +130,20 @@ Outcome State::reconcile(Position position, const std::vector<Request>& requests
         desynchronize();
         return Outcome::desynchronized;
     }
-    if (replacement.size() > maximum - revision_) {
+    const auto new_revisions = static_cast<std::uint64_t>(
+        std::count_if(replacement.begin(), replacement.end(),
+                      [](const auto& entry) { return entry.second.revision == 0; }));
+    if (new_revisions > maximum - revision_) {
         desynchronize();
         return Outcome::desynchronized;
     }
     for (auto& [id, entry] : replacement) {
         static_cast<void>(id);
-        entry.revision = revision();
+        if (entry.revision == 0)
+            entry.revision = revision();
     }
     retired_ = std::move(retired);
     pending_ = std::move(replacement);
-    sequence_ = position.sequence;
     synchronized_ = true;
     return Outcome::applied;
 }
@@ -209,7 +215,8 @@ bool State::respond(std::uint64_t epoch, const RequestId& id, std::uint64_t revi
 bool State::snooze(const RequestId& id, Tick until, Tick now) {
     clock(now);
     const auto entry = pending_.find(id);
-    if (entry == pending_.end() || until < now)
+    if (!ready() || entry == pending_.end() || entry->second.status != RequestStatus::pending ||
+        until < now)
         return false;
     entry->second.not_before = until;
     return true;
@@ -220,23 +227,29 @@ bool State::acknowledge(const RequestId& id, Tick now) {
 std::vector<RequestId> State::ordered(Tick now) const {
     if (now < now_)
         throw std::invalid_argument("Attention clock moved backwards");
-    std::vector<RequestId> result;
+    struct Ordered {
+        RequestId id;
+        Tick arrived{};
+        std::uint64_t score{};
+    };
+    std::vector<Ordered> result;
     if (!ready())
-        return result;
+        return {};
     for (const auto& [id, entry] : pending_)
         if (entry.status == RequestStatus::pending && entry.not_before <= now)
-            result.push_back(id);
-    const auto score = [&](const Pending& item) {
-        return std::min((now - item.arrived) / limits_.aging_interval, maximum - 3) +
-               item.request.priority;
-    };
-    std::sort(result.begin(), result.end(), [&](const auto& left, const auto& right) {
-        const auto& a = pending_.at(left);
-        const auto& b = pending_.at(right);
-        if (score(a) != score(b))
-            return score(a) > score(b);
-        return std::tie(a.arrived, left) < std::tie(b.arrived, right);
+            result.push_back(
+                {id, entry.arrived,
+                 std::min((now - entry.arrived) / limits_.aging_interval, maximum - 3) +
+                     entry.request.priority});
+    std::sort(result.begin(), result.end(), [](const Ordered& left, const Ordered& right) {
+        if (left.score != right.score)
+            return left.score > right.score;
+        return std::tie(left.arrived, left.id) < std::tie(right.arrived, right.id);
     });
-    return result;
+    std::vector<RequestId> ids;
+    ids.reserve(result.size());
+    for (auto& entry : result)
+        ids.push_back(std::move(entry.id));
+    return ids;
 }
 } // namespace lapis::session::attention

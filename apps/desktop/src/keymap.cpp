@@ -19,6 +19,8 @@ namespace {
 // while "Meta" (or "Cmd") reaches the same modifier on this host.
 constexpr int kMaximumSequencesPerAction = 4;
 constexpr int kMaximumActions = 64;
+constexpr qint64 kMaximumConfigBytes = qint64{1024} * 1024;
+constexpr int kMaximumPrettyDepth = 64;
 
 // Built-in colour schemes. Every theme keeps the same contrast relationships:
 // background is darkest, cards sit above it, focused borders are the brightest
@@ -116,8 +118,10 @@ constexpr std::array<Theme, 6> kThemes = {{
 
 // Keep scalar arrays compact without editing serialized string contents.
 // Qt performs every scalar escape; object/array structure comes from parsed JSON.
-[[nodiscard]] QByteArray format_config(const QJsonValue& value, int indent = 0) {
+[[nodiscard]] QByteArray format_config(const QJsonValue& value, int depth = 0) {
     if (!value.isObject() && !value.isArray())
+        return value.toJson(QJsonValue::JsonFormat::Compact);
+    if (value.isObject() && value.toObject().isEmpty())
         return value.toJson(QJsonValue::JsonFormat::Compact);
     if (value.isArray()) {
         bool scalar_only = true;
@@ -126,26 +130,28 @@ constexpr std::array<Theme, 6> kThemes = {{
         if (scalar_only)
             return value.toJson(QJsonValue::JsonFormat::Compact);
     }
+    if (depth > kMaximumPrettyDepth)
+        return value.toJson(QJsonValue::JsonFormat::Compact);
     QByteArray output = value.isObject() ? "{\n" : "[\n";
     bool first = true;
     const auto append = [&](const QByteArray& member) {
         if (!first)
             output.append(",\n");
         first = false;
-        output.append(QByteArray(indent + 4, ' '));
+        output.append(QByteArray(qsizetype{depth + 1} * 4, ' '));
         output.append(member);
     };
     if (value.isObject()) {
         const QJsonObject object = value.toObject();
         for (auto it = object.begin(); it != object.end(); ++it)
             append(QJsonValue(it.key()).toJson(QJsonValue::JsonFormat::Compact) + ": " +
-                   format_config(it.value(), indent + 4));
+                   format_config(it.value(), depth + 1));
     } else {
         for (const auto& item : value.toArray())
-            append(format_config(item, indent + 4));
+            append(format_config(item, depth + 1));
     }
     output.append('\n');
-    output.append(QByteArray(indent, ' '));
+    output.append(QByteArray(qsizetype{depth} * 4, ' '));
     output.append(value.isObject() ? '}' : ']');
     return output;
 }
@@ -162,6 +168,15 @@ constexpr std::array<Theme, 6> kThemes = {{
     return QStringLiteral("comfortable");
 }
 
+[[nodiscard]] bool config_path_is_regular(const QString& path, QString* reason) {
+    const QFileInfo info(path);
+    if (info.exists() && !info.isFile()) {
+        *reason = QStringLiteral("path is not a regular file");
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 const std::array<Theme, 6>& theme_table() { return kThemes; }
@@ -175,6 +190,10 @@ bool theme_exists(const QString& name) {
 }
 
 const Theme& theme_for(const QString& name) { return find_theme(name); }
+
+QStringList default_settings_shortcuts() {
+    return {QStringLiteral("Ctrl+,"), QStringLiteral("Meta+,")};
+}
 
 namespace {
 
@@ -264,7 +283,7 @@ void KeyMap::apply_defaults() {
         {QStringLiteral("focusLeft"), {QStringLiteral("Ctrl+Left")}},
         {QStringLiteral("focusRight"), {QStringLiteral("Ctrl+Right")}},
         {QStringLiteral("cycleLayout"), {QStringLiteral("Ctrl+L")}},
-        {QStringLiteral("openSettings"), {QStringLiteral("Ctrl+,")}},
+        {QStringLiteral("openSettings"), default_settings_shortcuts()},
         {QStringLiteral("reloadConfig"), {QStringLiteral("Ctrl+R")}},
     };
     layout_ = WorkspaceLayout::Focus;
@@ -276,8 +295,15 @@ bool KeyMap::load() {
     apply_defaults();
     diagnostic_.clear();
     loaded_ = false;
+    QString path_reason;
+    if (!config_path_is_regular(source_path_, &path_reason)) {
+        diagnostic_ = QStringLiteral("%1 not read: %2; using built-in defaults")
+                          .arg(source_path_, path_reason);
+        emit changed();
+        return false;
+    }
     const QFileInfo info(source_path_);
-    if (!info.isFile()) {
+    if (!info.exists()) {
         diagnostic_ = QStringLiteral("%1 not found; using built-in defaults").arg(source_path_);
         emit changed();
         return false;
@@ -288,14 +314,20 @@ bool KeyMap::load() {
         emit changed();
         return false;
     }
-    if (file.size() > qint64{1024} * 1024) {
+    if (file.size() > kMaximumConfigBytes) {
         diagnostic_ = QStringLiteral("Config exceeds 1 MiB; using defaults");
         emit changed();
         return false;
     }
     QJsonParseError parse_error{};
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parse_error);
+    const QByteArray contents = file.read(kMaximumConfigBytes + 1);
     file.close();
+    if (contents.size() > kMaximumConfigBytes) {
+        diagnostic_ = QStringLiteral("Config exceeds 1 MiB; using defaults");
+        emit changed();
+        return false;
+    }
+    const QJsonDocument document = QJsonDocument::fromJson(contents, &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !document.isObject()) {
         diagnostic_ = QStringLiteral("%1 is not a valid JSON object: %2")
                           .arg(source_path_, parse_error.errorString());
@@ -467,15 +499,25 @@ bool KeyMap::persist() {
         emit changed();
         return false;
     };
+    QString path_reason;
+    if (!config_path_is_regular(source_path_, &path_reason))
+        return fail(path_reason);
     QJsonObject root;
     if (QFileInfo::exists(source_path_)) {
         QFile existing(source_path_);
         if (!existing.open(QIODevice::ReadOnly))
             return fail(existing.errorString());
-        if (existing.size() > qint64{1024} * 1024)
+        if (existing.size() > kMaximumConfigBytes)
             return fail(QStringLiteral("config exceeds 1 MiB"));
-        const QJsonDocument document = QJsonDocument::fromJson(existing.readAll());
-        if (!document.isObject())
+        const QByteArray contents = existing.read(kMaximumConfigBytes + 1);
+        if (existing.error() != QFileDevice::NoError)
+            return fail(existing.errorString());
+        existing.close();
+        if (contents.size() > kMaximumConfigBytes)
+            return fail(QStringLiteral("config exceeds 1 MiB"));
+        QJsonParseError parse_error{};
+        const QJsonDocument document = QJsonDocument::fromJson(contents, &parse_error);
+        if (!contents.isEmpty() && !document.isObject())
             return fail(
                 QStringLiteral("existing config is not a valid JSON object; left unchanged"));
         root = document.object();
@@ -485,10 +527,14 @@ bool KeyMap::persist() {
     root.insert(QStringLiteral("density"), densityName());
     if (!root.contains(QStringLiteral("version")))
         root.insert(QStringLiteral("version"), 1);
+    QByteArray contents = format_config(root) + '\n';
+    if (contents.size() > kMaximumConfigBytes)
+        contents = QJsonDocument(root).toJson(QJsonDocument::Compact) + '\n';
+    if (contents.size() > kMaximumConfigBytes)
+        return fail(QStringLiteral("updated config exceeds 1 MiB; left unchanged"));
     QSaveFile file(source_path_);
     if (!file.open(QIODevice::WriteOnly))
         return fail(file.errorString());
-    const QByteArray contents = format_config(root) + '\n';
     if (file.write(contents) != contents.size() || !file.commit())
         return fail(file.errorString());
     diagnostic_.clear();
