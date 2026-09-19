@@ -230,5 +230,299 @@
     "Appearance controls/layout captures use fixture sessions; native-input separately verifies real PTY and OS-generated input",
     "Vendor Qt, MoltenVK and Ghostty builds remain uninstrumented; sanitizer timings are not performance claims",
     "GUI fixtures explicitly activate their windows, drain native activation events and isolate appearance focus from engine-reload tests"
-  ]
+  ],
+  "review_repair": {
+    "recorded_at": "2026-09-19T20:32:02.727541+00:00",
+    "source": "025e8e3bc6cf9e2ede418babfa66629ceee9673e",
+    "changes": [
+      "Shared Ctrl-comma and Meta-comma settings defaults; cached key comparisons and matching hint; exact custom-binding replacement",
+      "Bounded configuration reads/formatting/output, empty-file initialization, compact empty objects, nonregular-path rejection and read-error preservation",
+      "Unchanged synchronized same-epoch requests preserve decision tokens; recovery and changed payloads rotate them; submitted responses remain non-retriable",
+      "Local snooze and acknowledgement require synchronized pending requests; observation-only notices and exception contracts are explicit",
+      "Ordering computes ranking keys once; duplicate sequence-exhaustion behavior is documented and tested",
+      "GUI tests await actual popup lifecycle and preserve already-active windows; native-window failures and test write failures report directly",
+      "Native events are tagged and acknowledged at AppKit before the next edge; IME cases await observed preedit/cancellation; Qt service assertions await expected bytes instead of a fixed 50 ms"
+    ],
+    "checks": [
+      {
+        "name": "desktop-static-and-ctest",
+        "passed": true,
+        "cases_or_suites": 15,
+        "receipt": "build/reports/desktop/receipt.json",
+        "sha256": "dddbddc9b10d2784cb1f4cc784dfd3adb887fcbbfe5ac6b4ecac21a63716d15d"
+      },
+      {
+        "name": "headless-static-and-ctest",
+        "passed": true,
+        "cases_or_suites": 4,
+        "receipt": "build/reports/dev/receipt.json",
+        "sha256": "a6f4108bb152a13f06a6866bb7c350d3d2c83b9fee3de824d442edb236fcc1ea"
+      },
+      {
+        "name": "desktop-asan",
+        "passed": true,
+        "cases_or_suites": 15,
+        "receipt": "build/reconcile/review-asan-ctest.log",
+        "sha256": "4097f6d92459e98db890c39a8736758c091601803a54554db90c319435a3f442"
+      },
+      {
+        "name": "desktop-tsan",
+        "passed": true,
+        "cases_or_suites": 15,
+        "receipt": "build/reconcile/review-tsan-ctest.log",
+        "sha256": "db59e69504d4f1e7e8ceb8fd78064939fe5a223b05d96579734eb13f33febcc4"
+      },
+      {
+        "name": "cli-desktop",
+        "passed": true,
+        "cases_or_suites": 11,
+        "receipt": "build/cli-launch-check/receipt.json",
+        "sha256": "ef0ccb77f2fe28261de491a5dccc9017af9a284b6ee658305f05959b89a79671"
+      },
+      {
+        "name": "native-input",
+        "passed": true,
+        "cases_or_suites": 18,
+        "receipt": "build/reconcile/review-native-input.json",
+        "sha256": "1b5626ee2bdb0b256f23415f0727ef500c08c6750f691df8754631095b04eadf"
+      },
+      {
+        "name": "ui-captures",
+        "passed": true,
+        "cases_or_suites": 8,
+        "receipt": "build/ui-preview-check/receipt.json",
+        "sha256": "8d9705bde639b0d3af91182f90646a91c1ea644427a11966caf2ded43cfe9116"
+      }
+    ],
+    "github_threads": [
+      {
+        "thread": "PRRT_kwDOUfkyeM6kCuo0",
+        "path": "apps/desktop/src/keymap.cpp",
+        "resolution": "Empty objects now serialize as {}; scalar arrays remain compact. New keymap persistence regressions pass."
+      },
+      {
+        "thread": "PRRT_kwDOUfkyeM6kCupO",
+        "path": "apps/desktop/src/keymap.cpp",
+        "resolution": "An existing zero-byte file can initialize on the first appearance save. Non-empty malformed JSON remains untouched; explicit tests cover both paths."
+      },
+      {
+        "thread": "PRRT_kwDOUfkyeM6kCupX",
+        "path": "apps/desktop/src/ui_preview.cpp",
+        "resolution": "UiPreview caches parsed settings shortcuts when configuration changes; the typing path compares key combinations without reparsing strings."
+      },
+      {
+        "thread": "PRRT_kwDOUfkyeM6kCupe",
+        "path": "apps/desktop/src/ui_preview.cpp",
+        "resolution": "Shared default_settings_shortcuts provides Ctrl+, and Meta+, for KeyMap and UiPreview. The repository config includes both, and the displayed hint uses the same active list. Qt input tests verify both defaults and exact custom replacement after reload."
+      },
+      {
+        "thread": "PRRT_kwDOUfkyeM6kCupm",
+        "path": "evidence/codex-attention-route.json",
+        "resolution": "Hand-authored singular limitation fields now use limitations arrays; verbatim live/no-turn limits remain unchanged."
+      },
+      {
+        "thread": "PRRT_kwDOUfkyeM6kCupx",
+        "path": "evidence/codex-attention-route.json",
+        "resolution": "Every historical check now has recorded_at. Missing command timestamps are explicitly null with an explanation, and missing historical logs are marked rather than fabricated. The current reconciliation receipt provides current checks and artifact hashes."
+      },
+      {
+        "thread": "PRRT_kwDOUfkyeM6kCup1",
+        "path": "services/session/include/lapis/session/attention.hpp",
+        "resolution": "Marked respond, snooze and acknowledge [[nodiscard]] so callers must handle rejection. Header documentation covers failure/exception semantics."
+      },
+      {
+        "thread": "PRRT_kwDOUfkyeM6kCuqA",
+        "path": "services/session/src/attention.cpp",
+        "resolution": "Empty choices intentionally represent observation-only notices. Documented the source-resolution obligation and added an ordering/response-rejection/resolution test."
+      },
+      {
+        "thread": "PRRT_kwDOUfkyeM6kCuqE",
+        "path": "services/session/src/attention.cpp",
+        "resolution": "Removed the unreachable maximum disjunct. Duplicate-at-maximum behavior remains idempotent and is tested; the caller must start a new epoch before wrapping, as now documented."
+      },
+      {
+        "thread": "PRRT_kwDOUfkyeM6kCuqN",
+        "path": "services/session/src/attention.cpp",
+        "resolution": "Ordering now computes each eligible request score/arrival/id once, sorts those records, and extracts the IDs. Existing aging/cooldown/ordering tests pass; no unmeasured speed claim is made."
+      }
+    ],
+    "additional_partial_kimi_findings": [
+      {
+        "path": "evidence/codex-attention-route.json",
+        "finding": "Minor consistency note (not a spelling issue): the `checks` array entries here use heterogeneous key sets \u2014 the first four entries use `command`/`recorded_at`/`ctest_passed`/`local_receipt`, the Python-test entries use `tests`/`log`, and the ruff entries use neither (one has a bare `files` key). Additionally, `evidence/reconciliation.json` uses a different convention for the same concept (`name`/`cases_or_suites`/`receipt`). No keys are misspelled, but if any tooling parses these evidence files generically, aligning on one key convention per schema would make consumption more robust.",
+        "resolution": "Distinct dated evidence schemas intentionally retain their original per-check metadata; no generic parser is claimed. Missing historical timestamps are explicitly null. Renaming heterogeneous historical measurements would invent uniformity."
+      },
+      {
+        "path": "services/session/src/attention.cpp",
+        "finding": "`snooze()` (and `acknowledge()`, which delegates to it) bypasses the state and validity guards that `respond()` enforces: there is no `ready()`/epoch check and no `valid_id()` validation. As a result a caller can mutate `not_before` on `stale` or `responding` entries, or while the state is fully desynchronized. Such mutations are then silently ignored by `ordered()` (which only surfaces `RequestStatus::pending` entries), masking adapter misuse that the revision/epoch guards elsewhere were designed to catch. Consider validating the ID and returning `false` when `!ready()` or when the entry is not in `pending` status, consistent with `respond()`.",
+        "resolution": "Addressed in a87eb86: local scheduling now requires ready state and pending status. IDs not present cannot mutate state."
+      },
+      {
+        "path": "services/session/src/attention.cpp",
+        "finding": "Redundant assignment: `sequence_ = position.sequence;` is executed here immediately after the capability/watermark checks, and then again verbatim on the success path at the end of the function. On the success path the first write is dead; on early-return paths (`desynchronized`) `desynchronize()` already leaves the state stale, so the early write only serves as a watermark advance. Either drop the first assignment or add a comment clarifying that it intentionally raises the watermark even when reconciliation fails, since having two identical writes is confusing about which one is authoritative.",
+        "resolution": "Addressed in a87eb86: removed the redundant later assignment; the initial assignment intentionally advances the failure watermark."
+      },
+      {
+        "path": "services/session/include/lapis/session/attention.hpp",
+        "finding": "`contract_version` currently has no consumers anywhere in the codebase (verified by search). If it is intended as the versioning hook for future wire serialization, consider documenting that intent in a comment; otherwise it is dead surface area in the public header.",
+        "resolution": "contract_version is the public standalone reducer contract marker for adapters integrating this checkpoint; no serialization is implemented or claimed. Retained as the agreed interface version."
+      },
+      {
+        "path": "services/session/src/attention.cpp",
+        "finding": "Asymmetric ID validity: `valid_id()` accepts any `std::int64_t` (including `0` and negative values, which are common sentinel choices) while rejecting empty strings. If `0`/negative integer IDs are meant to be invalid just like empty strings, the check should handle the integer alternative explicitly; otherwise a short comment on why only string emptiness is rejected would help readers.",
+        "resolution": "Integer IDs are source identities, not local sentinels. Zero and negative signed IDs are valid protocol values; only empty/oversized string identities are rejected. Preserving source types is a repository contract."
+      },
+      {
+        "path": "services/session/src/attention.cpp",
+        "finding": "The sort comparator recomputes `score()` (including an integer division by `aging_interval`) for both elements on every comparison, which is O(n log n) redundant work and relies on the comparator being a strict weak ordering over values derived from mutable state. With the default `pending` limit of 128 this is minor, but precomputing the score once per element (e.g. sorting a vector of `{score, arrived, id}` tuples or decorating before sorting) would be clearer and cheaper, and removes the repeated `pending_.at()` lookups inside the comparator.",
+        "resolution": "Addressed in a87eb86: each rank is computed once before sorting."
+      },
+      {
+        "path": "services/session/src/attention.cpp",
+        "finding": "A duplicate `reconcile` at the same sequence (`position.sequence == sequence_` is allowed by the `<` check above) re-applies the snapshot and, at the end of the function, assigns a fresh `revision()` to *every* entry \u2014 including entries whose request payload is byte-identical and whose `arrived`/`not_before`/`submitted` are explicitly preserved. This unnecessarily invalidates an in-flight response token captured just before the re-delivery: `respond(epoch, id, old_revision, ...)` will fail even though nothing about the request changed. Since duplicate reconcile deliveries should be idempotent, consider skipping the revision bump for entries that match the preserved previous entry exactly (only new/changed entries need a fresh revision).",
+        "resolution": "Addressed in a87eb86: identical synchronized same-epoch requests preserve revisions; stale recovery still rotates them."
+      },
+      {
+        "path": "services/session/src/attention.cpp",
+        "finding": "Capability gating is inconsistent: `reconcile()` refuses to run unless `capabilities_.observation` (and `reconciliation`) is set, but `request()`, `resolve()`, and `activity()` \u2014 which are also source-observation events \u2014 never check `capabilities_.observation`. A source connected with `observation=false` can still drive the entire incremental event stream and only fails on reconcile/respond. Either the observation gate should apply in `advance()` (covering all three), or the asymmetry should be documented in the header as intentional.",
+        "resolution": "Inapplicable: connect always desynchronizes. Only reconcile can establish synchronized_=true, and it requires observation and reconciliation. advance requires ready(). A non-observing source therefore cannot apply incremental events."
+      },
+      {
+        "path": "services/session/include/lapis/session/attention.hpp",
+        "finding": "`State` is implicitly copyable (all members are copyable value types). Copying a live attention state machine produces two independent instances sharing the same `session_id`/`adapter_id`/`epoch_`/`revision_`, which can then diverge silently \u2014 exactly the kind of split-brain condition this class's epoch/sequence/revision machinery is designed to prevent. Consider explicitly deleting the copy constructor/assignment (moves can remain) to make single ownership of a source connection enforced by the type, matching the 'One service-owned source connection' contract in the comment.",
+        "resolution": "This reducer is a value model with no I/O or connection handles. Copying it for deterministic replay does not duplicate a real connection; the service/adapter owns response execution. Deleting copy would not enforce source uniqueness because another State can be constructed with the same IDs."
+      },
+      {
+        "path": "services/session/tests/attention_test.cpp",
+        "finding": "The `ordering()` test exercises aging, snooze, and acknowledge, but never verifies the strict-weak-ordering tie-break on equal scores (same `arrived`, same priority) or the `RequestId` heterogeneity in ordering (mixed `int64_t`/`string` IDs sort by variant index before value). Since `ordered()` relies on `std::tie(a.arrived, left) < std::tie(b.arrived, right)` as the final tie-break over a `std::variant`, a small case with two equal-score requests (one integer ID, one string ID, inserted at the same tick) would pin down that the comparator is deterministic and total.",
+        "resolution": "The implementation now sorts precomputed score/arrival/id tuples with standard tuple and variant ordering. Existing replay/order tests cover deterministic ranking; this is an optional extra tie-break fixture, not a demonstrated failure."
+      }
+    ],
+    "partial_kimi_findings": [
+      {
+        "path": "apps/desktop/tests/platform/window_activation.mm",
+        "line": 16,
+        "resolution": "Native activation reports missing NSWindow explicitly; already-active windows are left alone."
+      },
+      {
+        "path": "apps/desktop/src/keymap.cpp",
+        "line": 119,
+        "resolution": "Live Qt 6.11.2 rejects excessive nesting, including 1024/2048/50000 levels. The actual formatter expansion risk is fixed by bounded pretty depth plus a compact fallback at the byte cap; 768-level and large-array save/reload regressions pass."
+      },
+      {
+        "path": "apps/desktop/src/keymap.cpp",
+        "line": 147,
+        "resolution": "Empty objects now stay compact; scalar arrays already used compact serialization and continue to do so."
+      },
+      {
+        "path": "apps/desktop/src/keymap.cpp",
+        "line": 475,
+        "resolution": "Load and save share a named 1 MiB constant, including bounded reads and serialized-output checks."
+      },
+      {
+        "path": "apps/desktop/src/keymap.cpp",
+        "line": 471,
+        "resolution": "Both paths reject nonregular files before opening and report the path problem; valid symlinks to regular files retain existing behavior."
+      },
+      {
+        "path": "apps/desktop/src/ui_preview.cpp",
+        "line": 231,
+        "resolution": "Shared Ctrl+, and Meta+, defaults preserve macOS Command-comma. Custom bindings replace those defaults exactly and are checked after reload."
+      },
+      {
+        "path": "apps/desktop/tests/ui_preview_test.cpp",
+        "line": 285,
+        "resolution": "Test writes now verify byte count and flush success."
+      },
+      {
+        "path": "services/session/src/attention.cpp",
+        "line": 134,
+        "resolution": "Unchanged entries retain revisions only when already synchronized in the same epoch; recovery, changed payloads and new epochs rotate tokens. Tests preserve scheduling and reject stale/duplicate submissions."
+      },
+      {
+        "path": "services/session/src/attention.cpp",
+        "line": 209,
+        "resolution": "Snooze/acknowledge require synchronized pending entries; tests cover responding/stale/disconnected rejection."
+      },
+      {
+        "path": "services/session/src/attention.cpp",
+        "line": 138,
+        "resolution": "Removed the dead sequence assignment. Existing explicit discard of unused structured-binding keys remains valid C++20; unrelated naming/style changes are not needed for correctness."
+      },
+      {
+        "path": "services/session/include/lapis/session/attention.hpp",
+        "line": 74,
+        "resolution": "Public header documents validation, backward clocks, revision exhaustion, observation-only notices and local scheduling eligibility; response/scheduling bool results are nodiscard."
+      },
+      {
+        "path": "services/session/src/attention.cpp",
+        "line": 83,
+        "resolution": "Removed the unreachable disjunct and documented/tested duplicate-at-maximum semantics. The adapter must establish a new epoch before sequence wrap."
+      },
+      {
+        "path": "apps/desktop/tests/ui_preview_test.cpp",
+        "line": 189,
+        "resolution": "Native-frame containment is macOS-specific; other platforms check client geometry. Linux desktop remains unqualified."
+      },
+      {
+        "path": "apps/desktop/src/ui_preview.cpp",
+        "line": 231,
+        "resolution": "Settings defaults are shared by KeyMap and UiPreview; the hint uses the active cached list and the null-keymap contract is documented."
+      }
+    ],
+    "initial_review_services": {
+      "coderabbit": {
+        "state": "completed-with-findings",
+        "reviewed_head": "369f26688e619068ac1e98de2f9b7ffbc8c54e3f",
+        "approval": true,
+        "finding": "One stale QML comment, corrected"
+      },
+      "ocr_glm": {
+        "state": "completed-with-findings",
+        "reviewed_head": "369f26688e619068ac1e98de2f9b7ffbc8c54e3f",
+        "selected_files": 24,
+        "findings": 10
+      },
+      "ocr_kimi": {
+        "state": "skipped/unavailable",
+        "reason": "Incomplete coverage: 18 of 24 selected files completed; six timed out. All 14 returned findings were assessed and addressed; no approval claimed."
+      },
+      "codex": {
+        "state": "skipped/unavailable",
+        "reason": "Provider reported code-review usage limits; no reset supplied; no further invocation before next local day."
+      }
+    },
+    "native_input_investigation": {
+      "prior_failures": [
+        {
+          "receipt": "build/reconcile/review-native-input-first.json",
+          "sha256": "31f9ddd4e1fce3f2329dbf405150463ba458d64e4105e7427c220e3e4a62aeac",
+          "error": "Native event deadline expired at line 172"
+        },
+        {
+          "receipt": "build/reconcile/review-native-input-fourth.json",
+          "sha256": "632bf3eec4aa5df31d83ac7b553b0dc5c4ee9025d550b03ce15d3ac030742e19",
+          "error": "IME recovers after history return: input deadline; active=1 focused=1 ready=1"
+        },
+        {
+          "receipt": "build/reconcile/review-native-input-second.json",
+          "sha256": "a9ba80f8a6b937d7b54001010148e38895ad5288816b4bfd590d694df290a9d9",
+          "error": "Native IME produced no preedit event"
+        },
+        {
+          "receipt": "build/reconcile/review-native-input-third.json",
+          "sha256": "4ddb3bf1b004f813869dde2023f1a3041a633e0a9c5573f6180af1ef430b7b83",
+          "error": "Native event deadline expired at line 174"
+        }
+      ],
+      "finding": "Earlier runs missed different keys or IME transitions. Qt readiness alone did not identify which boundary lost delivery. The input-method mach-port warning also occurred on successful runs and is not a demonstrated cause.",
+      "changes": "Added per-edge AppKit acknowledgement, stage-specific IME observations, bounded service-byte waits and opt-in event tracing; no automatic key retries or relaxed byte expectations.",
+      "limits": "Passing refreshed checks verifies these fixtures on this Mac; it does not prove every earlier intermittent failure had one root cause."
+    },
+    "limitations": [
+      "Review service states above describe the original reviewed head; final merge state is recorded on the pull request.",
+      "Performance suggestions were implemented without making benchmark claims.",
+      "Missing historical per-command timestamps/logs remain explicitly unavailable rather than invented."
+    ]
+  }
 }
