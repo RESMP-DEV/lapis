@@ -35,7 +35,8 @@ implemented and qualified on macOS.**
 | Codex integration | Direct TUI launch and same-child reattachment; isolated shared-server approval/input requests, observer responses, resume/read reconciliation and TUI display | Production adapter/service integration, cancellation and simultaneous live requests |
 
 [Desktop evidence](evidence/desktop-preview.json),
-[UI refinement evidence](evidence/ui-preview.json) and
+[UI refinement evidence](evidence/ui-preview.json),
+[reconciled UI and test evidence](evidence/reconciliation.json) and
 [adapter evidence](evidence/terminal-adapter.json) delimit these observations.
 Dependency packaging remains unfinished; this is a local developer build.
 The [two UI refinements](docs/architecture.md#ui-refinement-checkpoint) are

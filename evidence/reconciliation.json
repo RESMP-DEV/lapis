@@ -1,0 +1,234 @@
+{
+  "schema": "lapis.reconciliation/1",
+  "recorded_at": "2026-09-19T19:19:50.302146+00:00",
+  "source": "c445d6b47a78a584c3c09ef89b5058faed97172b",
+  "integrated_main": "801deddc7550928b5488fd7e4c424eba96e5de19",
+  "recovery_branch": "recovery/m2-before-reconciliation-20260919",
+  "platform": {
+    "os": "macOS 26.7",
+    "machine": "Apple M4 Max",
+    "qt": "6.11.2",
+    "renderer": "Vulkan/MoltenVK"
+  },
+  "retained": [
+    "One-command launcher, screen selection and login shell launch",
+    "Configurable category/session navigation and reload",
+    "Six themes, three densities and persistent Appearance dialog",
+    "Focus strip, Columns channel, responsive Blocks grid and full-viewport Stack"
+  ],
+  "repairs": [
+    "Default protocol-v4 endpoint, preview/socket separation and child-argument boundaries",
+    "Select newest successful matching pinned Ghostty receipt; bootstrap works before a prefix exists",
+    "Atomic appearance persistence preserves punctuation and unrelated JSON values; refuses malformed files",
+    "Configured settings shortcut and displayed hint agree; modal input blocks terminal focus",
+    "GridView replaces non-wrapping layout implementation; selection stays visible and delegate creation schedules focus",
+    "Appearance descriptions no longer overlap choice buttons"
+  ],
+  "checks": [
+    {
+      "name": "desktop-static-and-ctest",
+      "passed": true,
+      "cases_or_suites": 15,
+      "receipt": "build/reports/desktop/receipt.json",
+      "sha256": "e4fa17c693ba8bb4cd5f76db6898ba6e0bc53cb8258b13559c6355de692bd08c"
+    },
+    {
+      "name": "python",
+      "passed": true,
+      "cases_or_suites": 54,
+      "receipt": "build/reconcile/python-tests.log",
+      "sha256": "14eaa2c2371e3f4e363a722b1c6f9041fab61d7c50654bf0a22d9e9da64db425"
+    },
+    {
+      "name": "desktop-asan",
+      "passed": true,
+      "cases_or_suites": 15,
+      "receipt": "build/reconcile/desktop-asan-ctest.log",
+      "sha256": "bb189dd5f54c65a3e61f69ccc44fcf51248592a2c62c518dcc4cc993537d2451"
+    },
+    {
+      "name": "desktop-tsan",
+      "passed": true,
+      "cases_or_suites": 15,
+      "receipt": "build/reconcile/desktop-tsan-ctest.log",
+      "sha256": "f9f97f3f57361a429e0d49e24b5063c80e0e5c473a17dc205aa6129fe87be58a"
+    },
+    {
+      "name": "cli-desktop",
+      "passed": true,
+      "cases_or_suites": 11,
+      "receipt": "build/cli-launch-check/receipt.json",
+      "sha256": "c1196b93e06a00a08a69a85f6f87251c8dd2ad09c9f2d6317f4ef61ad99abb33"
+    },
+    {
+      "name": "ui-captures",
+      "passed": true,
+      "cases_or_suites": 8,
+      "receipt": "build/ui-preview-check/receipt.json",
+      "sha256": "b6e4e88146915d489d4237d7a9c8af44b44807f7c76655d4bd32bafb649b7f88"
+    },
+    {
+      "name": "native-input",
+      "passed": true,
+      "cases_or_suites": 18,
+      "receipt": "build/reconcile/native-input.json",
+      "sha256": "1b5626ee2bdb0b256f23415f0727ef500c08c6750f691df8754631095b04eadf"
+    },
+    {
+      "name": "cli-asan",
+      "passed": true,
+      "cases_or_suites": 10,
+      "receipt": "build/reconcile/desktop-asan-cli.json",
+      "sha256": "fa058e71dd6e54cc39d6f91d9d37381ec802a2dc135662a1c264a6a7dc97ff0c"
+    },
+    {
+      "name": "cli-tsan",
+      "passed": true,
+      "cases_or_suites": 10,
+      "receipt": "build/reconcile/desktop-tsan-cli.json",
+      "sha256": "745cd753f251dd2aeb4bcce404a79b51bdba8754ee8f098b5ad312c905ef8204"
+    },
+    {
+      "name": "codex-no-turn",
+      "passed": true,
+      "cases_or_suites": null,
+      "receipt": "build/reconcile/codex-shared-server.json",
+      "sha256": "c5c3f91abcd6884559069edd2e3d36dd54c939e3fd32d8617fdc7c9baa8356e3"
+    },
+    {
+      "name": "codex-live-attention",
+      "passed": true,
+      "cases_or_suites": null,
+      "receipt": "build/reconcile/codex-attention-live.json",
+      "sha256": "718c245b85667b879ff37d70dc06a792a876c0780807b910d84b9d97faa13dde"
+    }
+  ],
+  "native_state_restored": true,
+  "visual_captures": [
+    {
+      "path": "build/reconcile/layout-blocks.png",
+      "sha256": "53dfc5f91dfcbcbb34d54278a109161dee33606a0aa468f7c09e3d49169121b7"
+    },
+    {
+      "path": "build/reconcile/layout-columns.png",
+      "sha256": "a7053837177ecb6f3777345310320dd73c135401e67eeb76a42fcb90cff19b23"
+    },
+    {
+      "path": "build/reconcile/layout-focus.png",
+      "sha256": "c27b74060cecf6040d666234f6e5b4ac103e70859874b3f0c21220167fdb07af"
+    },
+    {
+      "path": "build/reconcile/layout-stack.png",
+      "sha256": "54814b8683d1ea8fca508eed47ab08276526db574c6ca3b90a880bbfd7ee6bb0"
+    },
+    {
+      "path": "build/reconcile/settings.png",
+      "sha256": "63e598c669c008095ff066d9da8e4f99f1a65c10d52099be03169dca173f9ceb"
+    }
+  ],
+  "superseded_pr4_threads": [
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4GeH",
+      "path": "apps/desktop/src/main.cpp",
+      "resolution": "Added LAPIS_SCREEN fallback to --screen help; both forms remain supported."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4GeS",
+      "path": "apps/desktop/src/ui_preview.cpp",
+      "resolution": "Unmatched screen selection now appears in UiPreview diagnostics as well as the log; fallback window remains usable."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4GeW",
+      "path": "justfile",
+      "resolution": "The reconciled justfile ends with LF. Also repaired the cli-check recipe indentation; just --list parses."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4Geb",
+      "path": "scripts/lapis.py",
+      "resolution": "Automatic Ghostty selection uses the newest successful receipt timestamp, validates headers/static library and matches pinned sources. Unit tests exercise reversed UUID order and invalid receipts."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4Geh",
+      "path": "scripts/lapis.py",
+      "resolution": "Explicit --socket and --socket= values are preserved; the default endpoint is v4 and only injected before the child separator for live default-shell launches. Preview mode receives no socket."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4Gem",
+      "path": "scripts/lapis.py",
+      "resolution": "Desktop execution uses check=False and returns the child exit code without an uncaught CalledProcessError; unit test covers exit 2."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4Geq",
+      "path": "scripts/lapis.py",
+      "resolution": "Removed the unused command_run_program wrapper and obsolete program parameter."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4Ges",
+      "path": "scripts/lapis.py",
+      "resolution": "Debugger execution uses check=False and propagates the child status; unit test covers nonzero exit."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4X6F",
+      "path": "apps/desktop/src/main.cpp",
+      "resolution": "Not applicable to the pinned Qt 6.11.2 API: qEnvironmentVariable(const char*) returns QString, verified in the installed qtenvironmentvariables.h. The conditional expression is type-correct; normal and instrumented builds compile it."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4X6T",
+      "path": "apps/desktop/src/ui_preview.cpp",
+      "resolution": "Added a direct QGuiApplication include in ui_preview.cpp."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4X6Z",
+      "path": "apps/desktop/src/ui_preview.cpp",
+      "resolution": "Duplicate screen-error finding: the caller now propagates an unmatched selector into diagnostics while retaining a fallback window."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4X6i",
+      "path": "apps/desktop/src/ui_preview.cpp",
+      "resolution": "Sizing now honors the declared minimum and logs explicitly when the selected available area is smaller. Such a display cannot contain the minimum-size window; the diagnostic states the limitation. The actual screen/frame placement regression passes."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4X6q",
+      "path": "apps/desktop/tests/ui_preview_test.cpp",
+      "resolution": "Added actual-screen selection and unmatched-selector tests, including QScreen identity, available frame bounds and diagnostics."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4X65",
+      "path": "justfile",
+      "resolution": "Duplicate newline finding: the reconciled justfile already ends with LF and just --list parses."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4X69",
+      "path": "scripts/lapis.py",
+      "resolution": "Duplicate receipt-ordering finding: choose newest successful matching receipt by mtime, not UUID; pinned-source/header/library validation is covered."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4X7J",
+      "path": "scripts/lapis.py",
+      "resolution": "Preview launches no longer receive a default --socket; explicit live sockets and child argument boundaries remain intact. Unit coverage includes preview and live paths."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4X7R",
+      "path": "scripts/lapis.py",
+      "resolution": "Duplicate exit-code finding: launcher propagates nonzero app status without an uncaught exception."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4X7X",
+      "path": "scripts/lapis.py",
+      "resolution": "Doctor formats both one-line and multi-line SetupError messages safely; one-line failure regression passes."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6j4X7Z",
+      "path": "scripts/lapis.py",
+      "resolution": "Duplicate unused-wrapper finding: removed command_run_program and the unused program parameter."
+    }
+  ],
+  "limitations": [
+    "macOS qualification only; Linux desktop deferred",
+    "One service-owned live terminal plus labeled development fixtures; multi-session orchestration remains unfinished",
+    "Standalone attention reducer and isolated Codex request round trips are not wired into the production service/desktop",
+    "Appearance controls/layout captures use fixture sessions; native-input separately verifies real PTY and OS-generated input",
+    "Vendor Qt, MoltenVK and Ghostty builds remain uninstrumented; sanitizer timings are not performance claims",
+    "GUI fixtures explicitly activate their windows, drain native activation events and isolate appearance focus from engine-reload tests"
+  ]
+}
