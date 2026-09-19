@@ -295,6 +295,16 @@ void write_config(const QTemporaryDir& directory, const QString& text) {
     file.close();
 }
 
+void wait_popup(QObject& dialog, bool open) {
+    const auto* property = open ? "opened" : "visible";
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (dialog.property(property).toBool() != open && elapsed.elapsed() < 5000)
+        pump(10);
+    CHECK(dialog.property(property).toBool() == open);
+    pump(20); // Deliver queued focus restoration after the transition's completion signal.
+}
+
 void click_setting(QQuickWindow& window, const QString& name) {
     auto* item = find_visual(window.contentItem(), name);
     auto* scroll = find_visual(window.contentItem(), QStringLiteral("settingsScroll"));
@@ -354,7 +364,7 @@ int run_shortcut_focus_tests() {
                      QStringLiteral("t"));
     CHECK(QCoreApplication::sendEvent(window, &custom));
     CHECK(custom.isAccepted());
-    pump(150);
+    wait_popup(*dialog, true);
     CHECK(dialog->property("opened").toBool());
     CHECK(window->activeFocusItem() != terminal);
     CHECK(dialog->property("shortcutHint").toString() == QStringLiteral("Ctrl+Alt+T"));
@@ -372,12 +382,12 @@ int run_shortcut_focus_tests() {
     CHECK(window->activeFocusItem() != terminal);
 
     CHECK(QMetaObject::invokeMethod(dialog, "close"));
-    pump(50);
+    wait_popup(*dialog, false);
     CHECK(!dialog->property("opened").toBool());
     CHECK(terminal->hasActiveFocus());
 
     CHECK(preview.openSettings());
-    pump(150);
+    wait_popup(*dialog, true);
     for (const auto& theme : {"lapis", "graphite", "daylight", "solarized", "amber", "contrast"}) {
         click_setting(*window, QStringLiteral("theme-") + QString::fromLatin1(theme));
         CHECK(keymap.themeName() == QString::fromLatin1(theme));
@@ -392,7 +402,7 @@ int run_shortcut_focus_tests() {
         click_setting(*window, QStringLiteral("choice-") + QString::fromLatin1(layout));
         CHECK(keymap.layoutName() == QString::fromLatin1(layout));
         CHECK(QMetaObject::invokeMethod(dialog, "close"));
-        pump(100);
+        wait_popup(*dialog, false);
         auto* carousel = find_visual(window->contentItem(), QStringLiteral("sessionCarousel"));
         auto* shell_card = find_visual(window->contentItem(), QStringLiteral("sessionCard_shell"));
         CHECK(carousel != nullptr && shell_card != nullptr);
@@ -425,7 +435,7 @@ int run_shortcut_focus_tests() {
         if (const auto path = qEnvironmentVariable("LAPIS_LAYOUT_CAPTURE_PREFIX"); !path.isEmpty())
             CHECK(window->grabWindow().save(path + QString::fromLatin1(layout) + ".png"));
         CHECK(preview.openSettings());
-        pump(150);
+        wait_popup(*dialog, true);
     }
     KeyMap persisted;
     persisted.setSourcePathForTesting(directory.filePath(QStringLiteral("lapis.json")));
@@ -434,7 +444,7 @@ int run_shortcut_focus_tests() {
     CHECK(persisted.themeName() == keymap.themeName());
     CHECK(persisted.densityName() == keymap.densityName());
     CHECK(QMetaObject::invokeMethod(dialog, "close"));
-    pump(50);
+    wait_popup(*dialog, false);
 
     auto* shortcut = window->findChild<QObject*>(QStringLiteral("nextCategoryShortcut"));
     CHECK(shortcut != nullptr);
@@ -450,10 +460,10 @@ int run_shortcut_focus_tests() {
     for (const auto modifier : {Qt::ControlModifier, Qt::MetaModifier}) {
         QKeyEvent settings_key(QEvent::KeyPress, Qt::Key_Comma, modifier);
         QCoreApplication::sendEvent(window, &settings_key);
-        pump(150);
+        wait_popup(*dialog, true);
         CHECK(dialog->property("opened").toBool());
         CHECK(QMetaObject::invokeMethod(dialog, "close"));
-        pump(150);
+        wait_popup(*dialog, false);
         CHECK(!dialog->property("visible").toBool());
     }
 
