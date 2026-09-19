@@ -3,8 +3,9 @@
 ## Evidence boundary
 
 The ordinary Codex TUI now runs through lapis's explicit PTY launch path. The
-structured attention adapter remains an investigation: there are no lapis hooks
-or approval routing. Source was inspected on 2026-09-17 at revision
+production attention adapter remains an investigation: there are no lapis hooks
+or service/desktop approval routing. An isolated shared-server probe now exercises
+real requests and responses, as described below. Source was inspected on 2026-09-17 at revision
 `256a74f942a2fae1d4c198797d6d5246063f06e3` of a local Codex checkout. The checkout
 had an unrelated modified build script. Its locally built binary reported
 `codex-cli 0.0.0`; that string does not prove it was built from the inspected HEAD.
@@ -12,7 +13,7 @@ had an unrelated modified build script. Its locally built binary reported
 The [runtime receipt](../../evidence/codex-probe.json) records the actual binary
 hash, exported schema methods, and live initialization/list result. Schema
 presence establishes an advertised shape, not successful delivery of real agent
-attention. Approval/input events and hooks still require end-to-end qualification.
+attention. Service/desktop integration and hooks still require end-to-end qualification.
 
 On 2026-09-18 the read-only probe was repeated against the installed executable:
 436 schema files, all ten tracked methods advertised, successful initialization
@@ -38,7 +39,7 @@ owns implementation order; this document owns Codex-specific qualification.
 | --- | --- | --- |
 | Ordinary Codex TUI in a lapis-owned PTY | No-prompt editing/navigation/paste/resize, interrupt/exit, same-child reattachment and macOS GPU captures exercised | Terminal interaction works for the exercised cases; all three structured capabilities remain unqualified |
 | Native hooks on that CLI | Source event names plus an enabled runtime feature | Dispatch, payload identity, trust, loss/reconnect and return semantics all require live probes; no hooks installed by lapis |
-| TUI and lapis connected to the same app-server | Installed help advertises remote, daemon and proxy options | Candidate for retaining the TUI with structured attention; multi-client event delivery, request ownership and reconnect remain unqualified |
+| TUI and observer connected to the same app-server | Real input/approval requests displayed in the TUI; observer resume/reconnect replays matching IDs, responses resolve and turns continue | Selected for the two exercised blocking request kinds, including resume/read reconciliation; production service/desktop routing remains unqualified |
 | Separate lapis-owned stdio app-server | Live initialization and loaded-thread listing pass | Structured request/response/reconciliation remain unqualified; does not render the ordinary TUI or observe a different server's threads |
 
 The empty loaded-thread page describes the private probe process only. It does
@@ -46,6 +47,47 @@ not establish whether existing CLI sessions use a shared daemon or whether its
 threads can be observed. Probe a dedicated server and disposable session before
 selecting shared attachment. Preserve typed IDs and connection boundaries even
 if two clients see the same thread.
+
+## First attention checkpoint
+
+The opt-in `scripts/check_codex_attention.py --live-glm --with-tui` runner uses a
+private server/home and the explicit CCR `zai,glm-5.3` route. Real user-input and
+command-approval requests reach an owner and an observer; resume replays the same
+pending ID after observer reconnect. The observer answers, matching
+`serverRequest/resolved` arrives, and the turn completes. A separate ordinary TUI
+resumes that same thread and displays both request kinds. This is an isolated
+protocol/TUI fixture, not the lapis service or Qt desktop integration.
+
+The Unix endpoint carries WebSocket frames. The installed `app-server proxy`
+forwards raw bytes and does not convert newline-delimited JSON to WebSocket.
+The test transport implements bounded client framing and validates the upgrade;
+`stdio://` remains newline-delimited. No extra runtime dependency was added.
+
+A newly started zero-turn thread may lack resumable history. The live runner
+waits for a real pending request before resuming the observer; the no-turn probe
+reports unavailable operations separately from transport success. The resume reply
+alone has no full pending-request set/end marker. For the tested implementation,
+a following `thread/read` on the same thread provides a boundary: both methods
+share an exclusive serialization key, and resume awaits replay enqueueing before
+releasing it. The probe captures events received before that read reply, applies
+matching resolutions even if they precede a copied replay, and checks both a live
+pending request and absence after a request was answered during disconnection.
+The latter also verifies idle status and the matching completed turn.
+
+The source chain is `protocol/common.rs` (method serialization scopes),
+`request_serialization.rs` (exclusive thread queue), `thread_processor.rs`
+(resume completion wait), `thread_lifecycle.rs` (response then awaited replay),
+and `outgoing_message.rs` (pending map and ordered outgoing queue), under Codex's
+`codex-rs/app-server-protocol/src/` and `codex-rs/app-server/src/`. This contract is
+specific to the recorded implementation; the API schema alone does not promise it.
+Requalify other binary hashes. Cancellation, simultaneous requests and other
+request kinds still need qualification as adapter integration proceeds.
+
+The [test procedure](../../CONTRIBUTING.md#codex-attention-qualification) owns
+commands and isolation details. The [checkpoint receipt](../../evidence/codex-attention-route.json)
+records exercised scope and limitations. Next, implement and qualify adapter
+failure cases, the service/IPC connection and the minimal
+live attention UI described in the architecture plan.
 
 ## Structured app-server route
 

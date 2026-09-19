@@ -1,0 +1,262 @@
+{
+  "schema": "lapis.codex-attention-route/1",
+  "recorded_at": "2026-09-18T20:55:04.283218+00:00",
+  "scope": "Milestone 2 first implementation checkpoint: standalone attention core and isolated shared-server route qualification",
+  "platform": "macOS arm64",
+  "milestone_two_complete": false,
+  "source": {
+    "baseline_revision": "7ce89b8b9379390ca51bebbd58acaa8c0d5e4afa",
+    "qualification_state": "Exact implementation revision and tested file hashes",
+    "sha256": {
+      "services/session/CMakeLists.txt": "5bfb4f2619993c29c638e68ad0de36455402173f206340ebe6df1d08e95114da",
+      "services/session/include/lapis/session/attention.hpp": "b7d7bdaf4367ef930fa1673d2ae705a35d0fb983fd87698c96eceb2328c2d0de",
+      "services/session/src/attention.cpp": "60ef847396826a45caf15656fad39bee32a3368e16c8e7d6f8c4b1d9f513e1f5",
+      "services/session/tests/attention_test.cpp": "116aa38ee5b3a9bfca77eb1006c6f517b4bcb80827a1246dd0b931565cec93e8",
+      "scripts/check_codex_attention.py": "fa0cb7c7fce4e365054648113c3098d511b1dfb903f8c156b4fe846f747ac867",
+      "scripts/codex_probe_transport.py": "5629adc3e59bf18d58ddfa4be2d723d8909c73622179d46229a9b7d364686bdf",
+      "scripts/probe_codex_attention.py": "c14d7ab11502fb33a06bd37d507dbb10c8c47359763c7c32a76d89be2a402735",
+      "scripts/tests/test_check_codex_attention.py": "102c21c3821b70e3ef4c76e3ecfe3005a6557d8a098d5220482bd1361e1117ea",
+      "scripts/tests/test_codex_probe_transport.py": "ffefe9caf3b3f24bf65eb7c9dbeb1dad7e3b6c5882e4ee7057db1ef8c9b9a189",
+      "scripts/tests/test_probe_codex_attention.py": "f74a5daf7e03e35545c6d36b2e4cb935de310bf07b95fd105a374a04af81189f"
+    },
+    "implementation_revision": "1bc28c147b788c69c1cb75a3f283bc8e8b457749"
+  },
+  "selected_route": {
+    "transport": "WebSocket over a private Unix-domain socket",
+    "session": "Dedicated Codex app-server shared by an ordinary Codex TUI and an observer",
+    "request_kinds": [
+      "item/tool/requestUserInput",
+      "item/commandExecution/requestApproval"
+    ],
+    "reconciliation": "thread/resume followed by thread/read for the same thread; collect preceding replay and resolution events, with resolution winning over a copied replay",
+    "version_policy": "Requalify a changed Codex binary before enabling responses"
+  },
+  "live": {
+    "command": "python3 scripts/check_codex_attention.py --live-glm --with-tui --output build/m2-live-tracked.json",
+    "schema": "lapis.codex-attention-live/1",
+    "recorded_at": "2026-09-18T20:54:25.605955+00:00",
+    "passed": true,
+    "configured_model": "zai,glm-5.3",
+    "configured_provider": "CCR on loopback port 3456",
+    "cases": [
+      {
+        "case": "input",
+        "effective_model": "zai,glm-5.3",
+        "effective_provider": "lapis_probe",
+        "passed": true,
+        "request_id_type": "int",
+        "owner_delivery": true,
+        "observer_resume_replay": true,
+        "reconnect_replay": true,
+        "pending_at_serialized_read_boundary": true,
+        "resolved_while_disconnected_absent_at_boundary": true,
+        "reconciled_idle_and_completed_turn": true,
+        "explicit_observer_response": true,
+        "matching_resolution": true,
+        "completed_turn": true,
+        "tui_displayed_request": true
+      },
+      {
+        "case": "approval",
+        "effective_model": "zai,glm-5.3",
+        "effective_provider": "lapis_probe",
+        "passed": true,
+        "request_id_type": "int",
+        "owner_delivery": true,
+        "observer_resume_replay": true,
+        "reconnect_replay": true,
+        "pending_at_serialized_read_boundary": true,
+        "resolved_while_disconnected_absent_at_boundary": true,
+        "reconciled_idle_and_completed_turn": true,
+        "explicit_observer_response": true,
+        "matching_resolution": true,
+        "completed_turn": true,
+        "tui_displayed_request": true
+      }
+    ],
+    "limits": [
+      "Isolated protocol/TUI fixture, not lapis service/desktop integration",
+      "Resume/read boundary depends on this Codex implementation's same-thread serialization; requalify changed binaries",
+      "Only blocking command approval and tool user-input requests are qualified; other request kinds remain unsupported",
+      "No claim of pixel-presentation or hardware keyboard latency"
+    ],
+    "binary_sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+    "cleanup_complete": true
+  },
+  "no_turn": {
+    "command": "python3 scripts/probe_codex_attention.py --output build/m2-shared-server.json",
+    "schema": "lapis.codex-shared-server/1",
+    "recorded_at": "2026-09-18T20:54:25.604626+00:00",
+    "passed": true,
+    "turns_started": 0,
+    "real_attention_qualified": false,
+    "phases": [
+      {
+        "method": "initialize",
+        "status": "passed",
+        "platform_os": "macos"
+      },
+      {
+        "method": "initialize",
+        "status": "passed",
+        "platform_os": "macos"
+      },
+      {
+        "method": "thread/start",
+        "status": "passed",
+        "ephemeral": true
+      },
+      {
+        "method": "thread/read",
+        "status": "passed"
+      },
+      {
+        "method": "initialize",
+        "status": "passed",
+        "platform_os": "macos"
+      },
+      {
+        "method": "thread/read",
+        "status": "passed"
+      },
+      {
+        "method": "thread/resume",
+        "status": "unavailable_for_zero_turn_fixture",
+        "rpc_code": -32600
+      }
+    ],
+    "limits": [
+      "No-turn transport/metadata probe only",
+      "Zero-turn history may not support read/resume",
+      "No inference, TUI, response or complete reconciliation evidence"
+    ],
+    "binary_sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+    "cleanup_complete": true
+  },
+  "routing_observation": {
+    "source": "Local CCR service runtime log",
+    "route": "zai,glm-5.3",
+    "log_message": "Direct routing: zai,glm-5.3 (not in tier list)",
+    "timestamps": [
+      "2026-09-18T20:54:25.883154Z",
+      "2026-09-18T20:54:31.159592Z",
+      "2026-09-18T20:54:35.431772Z",
+      "2026-09-18T20:54:40.480370Z"
+    ],
+    "limitations": [
+      "Local router dispatch evidence; not an independent attestation of the upstream model weights"
+    ]
+  },
+  "reconciliation_source_inspection": {
+    "repository": "openai/codex (local checkout)",
+    "revision": "256a74f942a2fae1d4c198797d6d5246063f06e3",
+    "sha256": {
+      "codex-rs/app-server-protocol/src/protocol/common.rs": "02cd72be646c4388e90f21ed651838aeab3d6273ade14715e38f2de6c095ba99",
+      "codex-rs/app-server/src/request_serialization.rs": "b624a9bac63d16f786939f3e9d2c8916faf5d4bc499af7ed099b1e3803f4632a",
+      "codex-rs/app-server/src/request_processors/thread_processor.rs": "34b181f60e14940fbd090b3eca1dac4323b5a8464b8fd3c1399026f6fb2e8ef5",
+      "codex-rs/app-server/src/request_processors/thread_lifecycle.rs": "f45839e0f8314df65bee6953901406b03f09d7fa7e81dc21fde5194a20d726eb",
+      "codex-rs/app-server/src/outgoing_message.rs": "686875697d32cebf61d965116bc1852f095d11b2d54680516d17c70523f259c8",
+      "codex-rs/app-server/src/lib.rs": "c76614a385558f166b0250c67ef42895af8f36fc7fb0296d624d2367c3700659"
+    },
+    "ordering_chain": [
+      "thread/resume and thread/read use the same thread serialization key",
+      "The key uses exclusive request execution",
+      "Resume waits for the listener completion signal",
+      "The listener sends the resume response, awaits pending-request replay, then signals completion",
+      "Outgoing messages preserve enqueue order; the subsequent read reply marks the captured boundary"
+    ],
+    "limitations": [
+      "Inspected source supports interpretation of the live probe; a checkout revision alone does not establish binary build provenance"
+    ]
+  },
+  "checks": [
+    {
+      "command": "python3 scripts/check_cpp.py dev",
+      "recorded_at": "2026-09-18T20:30:41.145852+00:00",
+      "passed": true,
+      "ctest_passed": 4,
+      "local_receipt": "build/reports/dev/receipt.json"
+    },
+    {
+      "command": "python3 scripts/check_cpp.py asan",
+      "recorded_at": "2026-09-18T20:32:46.652899+00:00",
+      "passed": true,
+      "ctest_passed": 4,
+      "local_receipt": "build/reports/asan/receipt.json"
+    },
+    {
+      "command": "python3 scripts/check_cpp.py tsan",
+      "recorded_at": "2026-09-18T20:32:47.864138+00:00",
+      "passed": true,
+      "ctest_passed": 4,
+      "local_receipt": "build/reports/tsan/receipt.json"
+    },
+    {
+      "command": "python3 scripts/check_cpp.py desktop",
+      "recorded_at": "2026-09-18T20:33:58.316466+00:00",
+      "passed": true,
+      "ctest_passed": 13,
+      "local_receipt": "build/reports/desktop/receipt.json"
+    },
+    {
+      "command": "python3 -m unittest discover -s scripts/tests",
+      "passed": true,
+      "tests": 43,
+      "log": "build/m2-python-tests.log",
+      "recorded_at": null,
+      "timestamp_status": "Command timestamp was not separately recorded in this dated checkpoint; see the enclosing receipt date."
+    },
+    {
+      "command": "python3 -m unittest scripts.tests.test_probe_codex_attention",
+      "passed": true,
+      "tests": 5,
+      "log": "build/m2-probe-independent.log",
+      "recorded_at": null,
+      "timestamp_status": "Command timestamp was not separately recorded in this dated checkpoint; see the enclosing receipt date."
+    },
+    {
+      "command": "ruff check --isolated scripts",
+      "passed": true,
+      "recorded_at": null,
+      "timestamp_status": "Command timestamp was not separately recorded in this dated checkpoint; see the enclosing receipt date.",
+      "log": null,
+      "log_status": "No separate command log was retained in this dated checkpoint; current verification is in reconciliation.json."
+    },
+    {
+      "command": "ruff format --isolated --check scripts",
+      "passed": true,
+      "files": 14,
+      "recorded_at": null,
+      "timestamp_status": "Command timestamp was not separately recorded in this dated checkpoint; see the enclosing receipt date.",
+      "log": null,
+      "log_status": "No separate command log was retained in this dated checkpoint; current verification is in reconciliation.json."
+    }
+  ],
+  "limitations": [
+    "The core is not yet wired into a production adapter, service IPC or desktop attention view",
+    "The deterministic reducer tests use synthetic events; they are separate from real Codex protocol/TUI evidence",
+    "Cancellation, simultaneous live requests and additional request kinds require adapter qualification",
+    "The shared-server contract is version-specific; no global pending-request snapshot API is claimed",
+    "Native hooks and Linux desktop qualification remain unexercised",
+    "No pixel presentation, hardware keyboard latency or performance acceptance is claimed",
+    "This checkpoint adds no runtime dependency; distribution notice and SBOM work remains separate"
+  ],
+  "review": {
+    "scope": "Independent CCR/GLM read-only review of attention core and probe transport, followed by coordinator verification",
+    "attention_core": "No actionable findings reported",
+    "transport_findings": [
+      {
+        "finding": "Blocked pong write had no transport deadline",
+        "resolution": "Bound every frame drain; timeout aborts the socket; regression exercises an unresponsive peer"
+      },
+      {
+        "finding": "Invalid close code bypassed cleanup",
+        "resolution": "Validate and encode inside the cleanup scope; regression verifies closed writer for invalid codes"
+      }
+    ],
+    "verification": "43 Python tests and repeated live input/approval/TUI/reconnect qualification passed after fixes",
+    "limitations": [
+      "Reviewer did not run builds; coordinator ran the recorded checks"
+    ]
+  }
+}

@@ -19,7 +19,7 @@
     "focusRight": ["Ctrl+Right"],
 
     "cycleLayout": ["Ctrl+L"],
-    "openSettings": ["Ctrl+,"],
+    "openSettings": ["Ctrl+,", "Meta+,"],
     "reloadConfig": ["Ctrl+R"]
   },
 

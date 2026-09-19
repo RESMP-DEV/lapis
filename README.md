@@ -19,8 +19,8 @@ to that same file so Codex and Claude Code share one set of project instructions
 ## Current status
 
 The macOS preview has a **live terminal in the enlarged pane** (shell by default) and a horizontal
-strip of five placeholder sessions plus the live preview below it. The cards show
-the carousel composition; they do not switch sessions yet. **Milestone 1 is
+strip of five placeholder sessions plus the live preview below it. The cards provide manual navigation through the live session and development
+fixtures; they do not start additional live processes. **Milestone 1 is
 implemented and qualified on macOS.**
 
 | Component | Exercised | Remaining |
@@ -30,18 +30,27 @@ implemented and qualified on macOS.**
 | Local transport | Version 4 identity/epoch/generation attachment and correlated history paging, restored-screen input gating, bounded queues and explicit reconnect | Automatic recovery policy and multi-session registry |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK | Cross-cell contextual shaping, selection and accessibility; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
-| UI iteration and attention fixture | Isolated source-QML reload, PNG captures, LLDB launch/attach, compact header and finite red cue replay | Maintainer visual review, rebindable navigation and real attention integration |
-| Codex integration | Direct TUI launch, no-prompt editing/navigation/paste/resize, normal/compact GPU captures and same-child reattachment; separate schema/init/list probe | Real model-turn attention requests, responses and source reconnect handling |
+| UI iteration and attention fixture | Isolated source-QML reload, captures, configurable navigation, appearance settings and finite red cue replay | Live multi-session routing and real attention integration |
+| Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Adapter/service wiring and workspace-wide aggregation |
+| Codex integration | Direct TUI launch and same-child reattachment; isolated shared-server approval/input requests, observer responses, resume/read reconciliation and TUI display | Production adapter/service integration, cancellation and simultaneous live requests |
 
 [Desktop evidence](evidence/desktop-preview.json),
-[UI refinement evidence](evidence/ui-preview.json) and
+[UI refinement evidence](evidence/ui-preview.json),
+[reconciled UI and test evidence](evidence/reconciliation.json) and
 [adapter evidence](evidence/terminal-adapter.json) delimit these observations.
 Dependency packaging remains unfinished; this is a local developer build.
 The [two UI refinements](docs/architecture.md#ui-refinement-checkpoint) are
 implemented for visual review: an isolated preview/debugging workflow and a compact
-header with replayable red attention cues. Rebindable navigation follows; real
-agent attention and automatic carousel behavior remain later work. The next
-product milestone is attention state and verified Codex request handling.
+header with replayable red attention cues. Configurable navigation, layouts, themes
+and card densities are available; real agent attention and automatic carousel
+behavior remain later work. The next
+product milestone is attention state and verified Codex request handling; the
+[Milestone 2 plan](docs/architecture.md#milestone-2-attention-and-codex-plan)
+defines its route decision, implementation slices and acceptance checks.
+The first checkpoint implements the standalone attention core and exercises real
+Codex request round trips; Milestone 2 is still in progress. The live desktop
+continues to use fixture attention indicators. See the
+[attention test procedure](CONTRIBUTING.md#codex-attention-qualification).
 Latency and warm-switch targets remain provisional.
 
 Explicit CLI launch is now implemented through the existing service-owned PTY.
@@ -157,9 +166,9 @@ python3 scripts/lapis.py verify-tools  # Prove the tools detect faulty fixtures
 ```
 
 The contribution guide covers installation. Default CTest covers the toolchain,
-POSIX descriptor ownership and the production terminal adapter; run
-`python3 scripts/lapis.py bootstrap` once first. `python3 scripts/lapis.py build`
-additionally covers PTY, local transport and UI reload/attention
+POSIX descriptor ownership, the production terminal adapter and the attention
+reducer; run `python3 scripts/lapis.py bootstrap` once first.
+`python3 scripts/lapis.py build` additionally covers PTY, local transport and UI reload/attention
 behavior; isolated captures and the live input probe are described in the
 contribution guide. The engine comparison runs separately below.
 

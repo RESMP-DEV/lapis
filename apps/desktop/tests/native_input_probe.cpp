@@ -10,6 +10,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QLocalSocket>
 #include <QMimeData>
 #include <QProcess>
@@ -19,11 +20,13 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QThread>
+#include <exception>
 #include <functional>
 #include <iostream>
 #include <memory>
 #include <source_location>
 #include <stdexcept>
+#include <string>
 
 namespace {
 using lapis::desktop::SessionPreview;
@@ -66,9 +69,23 @@ struct ClipboardBackup {
 };
 struct Observations final : QObject {
     QStringList preedits, commits;
+    bool composing{false};
     bool eventFilter(QObject*, QEvent* event) override {
+        if (qEnvironmentVariableIsSet("LAPIS_NATIVE_TRACE") &&
+            (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease)) {
+            const auto* key = static_cast<QKeyEvent*>(event);
+            std::cerr << "Qt key type=" << event->type() << " key=" << key->key()
+                      << " mods=" << key->modifiers().toInt()
+                      << " text=" << key->text().toUtf8().toHex().toStdString() << '\n';
+        }
         if (event->type() == QEvent::InputMethod) {
             const auto* input = static_cast<QInputMethodEvent*>(event);
+            composing = !input->preeditString().isEmpty();
+            if (qEnvironmentVariableIsSet("LAPIS_NATIVE_TRACE"))
+                std::cerr << "Qt IME preedit="
+                          << input->preeditString().toUtf8().toHex().toStdString()
+                          << " commit=" << input->commitString().toUtf8().toHex().toStdString()
+                          << '\n';
             if (!input->preeditString().isEmpty())
                 preedits.append(input->preeditString());
             if (!input->commitString().isEmpty())
@@ -164,12 +181,38 @@ struct Qualification {
         driver.key(code, flags);
         pump(100);
     }
+    void preeditKey(std::uint16_t code = 0) {
+        const auto count = observations.preedits.size();
+        key(code);
+        until([&] { return observations.preedits.size() > count && observations.composing; });
+    }
     void expect(const QString& name, const QByteArray& expected,
                 const std::function<void()>& action) {
         std::cerr << "Checking " << name.toStdString() << "\n";
+        // Each case begins with this fixture owning input; actions may then
+        // deliberately transfer ownership to test cancellation and recovery.
+        driver.activate(window);
+        surface.forceActiveFocus();
+        try {
+            until([&] {
+                return window.isActive() && surface.inputMethodQuery(Qt::ImEnabled).toBool();
+            });
+        } catch (const std::exception&) {
+            throw std::runtime_error(name.toStdString() + ": fixture activation deadline; active=" +
+                                     std::to_string(window.isActive()) +
+                                     " focused=" + std::to_string(surface.hasActiveFocus()) +
+                                     " ready=" + std::to_string(document.inputReady()));
+        }
         const auto before = fixture.bytes();
         action();
-        until([&] { return fixture.bytes().size() >= before.size() + expected.size(); });
+        try {
+            until([&] { return fixture.bytes().size() >= before.size() + expected.size(); });
+        } catch (const std::exception&) {
+            throw std::runtime_error(name.toStdString() + ": input deadline; active=" +
+                                     std::to_string(window.isActive()) +
+                                     " focused=" + std::to_string(surface.hasActiveFocus()) +
+                                     " ready=" + std::to_string(document.inputReady()));
+        }
         pump(100);
         const auto actual = fixture.bytes().sliced(before.size());
         if (actual != expected)
@@ -212,7 +255,7 @@ struct Qualification {
         japanese();
         expect(QStringLiteral("native IME focus commit stays with its original terminal"),
                QStringLiteral("あ").toUtf8(), [&] {
-                   key(0);
+                   preeditKey();
                    driver.activate(other);
                    other_surface.forceActiveFocus();
                    until([&] { return other.isActive(); });
@@ -244,25 +287,27 @@ struct Qualification {
                QByteArray("\x1b[200~") + paste.toUtf8() + QByteArray("\x1b[201~"),
                [&] { key(9, NativeModifiers::command); });
         japanese();
-        const auto count = observations.preedits.size();
-        expect(QStringLiteral("real Japanese IME preedit emits no PTY bytes"), {}, [&] { key(0); });
-        require(observations.preedits.size() > count, "Native IME produced no preedit event");
+        const auto before_preedit = fixture.bytes();
+        expect(QStringLiteral("real Japanese IME preedit emits no PTY bytes"), {},
+               [&] { preeditKey(); });
+        require(fixture.bytes() == before_preedit, "Native preedit leaked delayed PTY bytes");
         expect(QStringLiteral("real Japanese IME commit"), QStringLiteral("あ").toUtf8(),
                [&] { key(36); });
         expect(QStringLiteral("real Japanese IME cancellation"), {}, [&] {
-            key(40);
-            key(0);
+            preeditKey(40);
+            preeditKey();
             key(53);
             key(53);
+            until([&] { return !observations.composing; });
         });
         expect(QStringLiteral("IME recovers after cancellation"), QStringLiteral("あ").toUtf8(),
                [&] {
-                   key(0);
+                   preeditKey();
                    key(36);
                });
         require(!observations.commits.isEmpty(), "Native IME produced no commit event");
         expect(QStringLiteral("IME composition cleared by history mode"), {}, [&] {
-            key(0);
+            preeditKey();
             document.olderHistory();
             pump(200);
             document.returnToLive();
@@ -271,11 +316,11 @@ struct Qualification {
         });
         expect(QStringLiteral("IME recovers after history return"), QStringLiteral("あ").toUtf8(),
                [&] {
-                   key(0);
+                   preeditKey();
                    key(36);
                });
         expect(QStringLiteral("IME composition cleared by document detach"), {}, [&] {
-            key(0);
+            preeditKey();
             surface.setDocument(nullptr);
             pump(100);
             surface.setDocument(&document);
@@ -284,18 +329,18 @@ struct Qualification {
         });
         expect(QStringLiteral("IME recovers after document reattach"),
                QStringLiteral("あ").toUtf8(), [&] {
-                   key(0);
+                   preeditKey();
                    key(36);
                });
         focus_transition();
         expect(QStringLiteral("IME recovers after native focus return"),
                QStringLiteral("あ").toUtf8(), [&] {
-                   key(0);
+                   preeditKey();
                    key(36);
                });
         expect(QStringLiteral("IME composition cleared by attachment replacement and reconnect"),
                {}, [&] {
-                   key(0);
+                   preeditKey();
                    const auto identity = document.serviceSessionId();
                    QLocalSocket replacement;
                    replacement.connectToServer(fixture.endpoint);
@@ -323,12 +368,12 @@ struct Qualification {
                });
         expect(QStringLiteral("IME recovers after service reconnect"),
                QStringLiteral("あ").toUtf8(), [&] {
-                   key(0);
+                   preeditKey();
                    key(36);
                });
         expect(QStringLiteral("IME composition survives resize"), QStringLiteral("あ").toUtf8(),
                [&] {
-                   key(0);
+                   preeditKey();
                    surface.setSize(QSizeF(760, 460));
                    window.resize(760, 460);
                    pump(150);
@@ -364,9 +409,14 @@ int main(int argc, char** argv) {
         if (const auto* mime = QGuiApplication::clipboard()->mimeData())
             for (const auto& format : mime->formats())
                 original_clipboard.insert(format, mime->data(format));
+        std::exception_ptr failure;
         {
             Qualification qualification;
-            qualification.run();
+            try {
+                qualification.run();
+            } catch (...) {
+                failure = std::current_exception();
+            }
             receipt.insert(QStringLiteral("cases"), qualification.cases);
             receipt.insert(QStringLiteral("preedit_events"),
                            qualification.observations.preedits.size());
@@ -388,6 +438,8 @@ int main(int argc, char** argv) {
         receipt.insert(QStringLiteral("input_path"),
                        QStringLiteral("CoreGraphics keyboard events through AppKit, Apple Japanese "
                                       "IME, Qt and the real PTY service"));
+        if (failure)
+            std::rethrow_exception(failure);
         receipt.insert(QStringLiteral("passed"), true);
         result = 0;
     } catch (const std::exception& error) {

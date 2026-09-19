@@ -55,7 +55,7 @@ ui-check:
 
 # Dedicated service/desktop launch cases; no model turn or live-shell reuse.
 cli-check:
-python3 scripts/lapis.py cli-check
+    python3 scripts/lapis.py cli-check
 
 # Real service history, quotas and controlled macOS disk exhaustion.
 history-check:

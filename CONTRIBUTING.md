@@ -139,6 +139,10 @@ repository protection and unresolved correctness findings still govern merges.
 ### Long-running work
 
 Keep slow work bounded and observable; a silent command is not necessarily stuck.
+Operation timeouts and diagnostic checkpoints are not an overall project time
+limit. Continue authorized implementation and verification through those
+checkpoints; diagnose, resume or replace stalled operations without treating
+elapsed time as a reason to declare incomplete work finished.
 
 1. Before a substantial build, investigation or delegated task, state its scope,
    acceptance command, expected duration when known, and diagnostic checkpoint.
@@ -266,6 +270,7 @@ defaults are:
 | Next / previous window | Ctrl+Shift+] / Ctrl+Shift+[ | Move through sessions |
 | Focus left / right | Ctrl+Left / Ctrl+Right | Step one session |
 | Cycle layout | Ctrl+L | Switch focus and blocks layouts |
+| Appearance | Ctrl+, / Meta+, (Command-comma on macOS) | Open theme, layout and density settings |
 | Reload config | Ctrl+R | Re-read `lapis.json` |
 
 Each action takes a string or a list of strings, so several chords can share one
@@ -274,9 +279,14 @@ portability) rather than `Cmd+`. A missing or malformed file falls back to the
 built-in defaults and reports the problem instead of failing to start, and the
 window logs the path it read.
 
-`layout` is either `focus`, which keeps one large pane with a preview strip, or
-`blocks`, which gives every session an equal tile in a wrapping grid. Ctrl-L
-toggles it at runtime for comparison; the file sets the startup value.
+Appearance settings offer four layouts: `focus` keeps one large pane and a
+preview strip, `columns` places previews beside the pane, `blocks` uses a wrapping
+grid, and `stack` shows the selected session alone. Six themes and three card
+densities change the window chrome; terminal cell colors remain session-owned.
+Appearance choices persist atomically in `lapis.json`, preserving shortcut strings
+and other JSON values; malformed files remain untouched and show a diagnostic. Ctrl-L temporarily toggles focus/blocks at runtime;
+the Appearance dialog exposes all four choices. The session cards still include
+fixtures; navigation does not create additional live service sessions.
 
 Command-Left and Command-Right inside the terminal move to the start and end of
 the line, matching macOS editing. The terminal translates them to the Ctrl-A and
@@ -303,7 +313,8 @@ by these C++ presets; a passing test is not coverage of those implementations.
 
 ### CLI integration qualification
 
-The shell launch specification is `$SHELL -i` (or `/bin/sh -i`) in the checkout.
+The shell launch specification is `$SHELL -i` in the checkout. If `SHELL` is unset,
+lapis uses the account login shell; `/bin/sh -i` is the final fallback.
 First use requires **Session → Start new session** or `--new-session`.
 Subsequent launches without that flag reconnect using the saved identity; they
 never create a replacement process. `--discover` explicitly adopts an existing
@@ -414,8 +425,9 @@ every alert. New alerts pulse twice and remain marked until cleared. **Repeat th
 same alert** verifies that an existing alert does not pulse again. Clear it first
 to replay the pulse. **Disable animations** uses steady markers; the macOS Reduce
 Motion setting also enables it, sampled at startup and app activation. These are
-synthetic events, with no agent response or approval attached. Carousel navigation
-and keybinding settings remain planned in the
+synthetic events, with no agent response or approval attached. Manual navigation
+and configurable shortcuts work over these fixtures and the single live session;
+automatic attention-driven navigation remains planned in the
 [architecture](docs/architecture.md#ui-refinement-checkpoint).
 
 Run `just ui-check` for five captures and three expected-failure cases. Artifacts
@@ -520,6 +532,7 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | CTest name | Build | Behavior |
 | --- | --- | --- |
 | `toolchain-smoke` | Headless and desktop | Compiled toolchain baseline |
+| `attention-state` | Headless and desktop | Typed requests, exact retirement, stale decisions, reconciliation watermarks, bounds, aging and snooze/cooldown |
 | `session-platform-ownership` | Headless and desktop | POSIX descriptor ownership and moves |
 | `terminal-behavior` | Headless and desktop | Ghostty parsing, snapshots, history, resize and mode-aware input |
 | `launch-spec` | Desktop-enabled | Literal launch validation and private endpoint rules |
@@ -527,19 +540,22 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `session-descriptor` | Desktop-enabled | Private identity hint, atomic replacement, corruption and unsafe-file rejection |
 | `live-connection` | Desktop-enabled | Screen-before-input, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
-| `ui-preview` | Desktop-enabled | Qt reload, attention, input and render lifecycle |
+| `keymap` | Desktop-enabled | Configuration defaults, appearance choices, persistence and invalid input |
+| `ui-preview` | Desktop-enabled | Qt reload, screen selection, attention, input and render lifecycle |
+| `appearance-input` | Desktop-enabled, native GUI | Configured settings shortcut, modal focus, all theme/layout/density controls, persistence and shortcut reload |
 | `history-store` | Desktop-enabled | Styled page round trips, per-session/global quotas, corruption, interrupted-write cleanup and file-size write failure recovery |
 | `terminal-input` | Desktop-enabled, native GUI | Qt composition commit/cancel, replacement rejection, paste and focus/document/history/disconnect ownership |
 | `terminal-render` | Desktop-enabled | Real Qt Vulkan pixel regressions for cell background grids, wide/combining characters, fallback/RTL text, styles/decorations, actual Ghostty resize, cursor placement and clearing |
 
-`just desktop` runs these twelve suites plus static checks. The separate Python
+`just desktop` runs these fifteen suites plus static checks. The separate Python
 GUI harness checks five preview captures and three expected failures. The CLI
 harness checks detached service behavior, attachment generations, fragmented
 handshakes, synchronization timeout, stale controls, bounded queue failure and
 replacement identities; `--desktop` adds Qt-to-shell input and
 captures, and optional `--codex` adds the installed no-prompt TUI acceptance.
 A screenshot, a headless suite and a real agent approval round trip prove different
-things. See [CLI qualification](#cli-integration-qualification) for the latter gap.
+things. See [attention qualification](#codex-attention-qualification) for isolated
+live round trips and the remaining service/desktop integration gap.
 
 After a failure, retain `build/reports/<mode>/receipt.json`, the named check log,
 and CTest's `build/<build-name>/Testing/Temporary/LastTest.log`. Fix the cause,
@@ -555,6 +571,62 @@ probe as a pass unless its expected diagnostic was observed. Raw CMake/CTest
 commands below do not run format, clang-tidy or Cppcheck; `just desktop` supplies
 those checks. Save custom build/test output under `build/` and include exact
 commands with any sanitized receipt committed to `evidence/`.
+
+### Codex attention qualification
+
+The attention core is a standalone C++20 library, not yet wired into the session
+service. Run `just check`, `just asan` and `just tsan` for its normal/static and
+separate sanitizer checks. `attention-state` is registered in all build modes;
+synthetic reducer events do not establish delivery from Codex.
+
+The original `scripts/probe_codex.py` retains its no-turn behavior. The separate
+shared-server probe also sends no model prompt:
+
+```sh
+python3 scripts/probe_codex_attention.py --output build/codex-shared-server.json
+python3 -m unittest discover -s scripts/tests -v
+ruff check --isolated scripts
+ruff format --isolated --check scripts
+```
+
+It uses a private Codex home and server, tests WebSocket-over-Unix transport, and
+reports capability limits independently of transport success. A fresh thread may
+not yet have resumable history; successful initialization or live metadata reads
+are not proof of pending-request reconciliation.
+
+For **opt-in live model turns**, the current fixture requires the local CCR service
+at `127.0.0.1:3456` with the `zai,glm-5.3` route. There is no fallback model:
+
+```sh
+python3 scripts/check_codex_attention.py --live-glm --with-tui \
+  --output build/codex-attention-live.json
+```
+
+This submits one input fixture and one command-approval fixture to a disposable
+server, reconnects an observer, and answers exact pending request IDs. The approval
+fixture permits only `python3 -c 'print(123456789)'`, optionally wrapped by a known
+shell; unexpected commands fail without approval. The input fixture chooses Blue.
+`--case input` or `--case approval` limits a diagnostic run. Each RPC/request has
+a deadline; the runner does not retry model turns automatically. Failure produces
+a nonzero exit and JSON receipt rather than synthetic success.
+
+`--with-tui` starts the ordinary Codex TUI in a private PTY, checks that it displays
+the real question/approval, and keeps it attached while the observer responds.
+The only automated TUI confirmation is trust for the fixture's empty directory,
+stored in its disposable Codex home. No global hooks/configuration, user's daemon,
+clipboard or desktop focus is changed. This is not the lapis GPU/Qt input path;
+use the existing CLI and native-input procedures when integrating that path.
+
+Receipts distinguish configured/provider-reported model identity, request replay,
+explicit response, matching resolution, completed turns and TUI participation.
+Corroborate upstream routing from CCR runtime evidence; configuration alone is not
+provider proof. Raw fixture data stays under `build/` and disposable runtime state
+is removed. The runner additionally tests a pending request and a request resolved
+while a second observer is disconnected, capturing replay/resolution events before
+a subsequent same-thread `thread/read` reply. This boundary depends on the tested
+server's exclusive method serialization, so source inspection plus a new live run
+is required for another binary hash. It qualifies only the two exercised blocking
+request kinds. See the [Milestone 2 plan](docs/architecture.md#milestone-2-attention-and-codex-plan).
 
 ### History and input qualification
 
@@ -621,6 +693,23 @@ received bytes for printable/Control/Option keys and Command-V multiline Unicode
 bracketed paste; observes native preedit and commit; checks cancellation and fresh
 composition after history, document detach, window focus and actual attachment
 replacement/reconnect; and verifies commit plus the candidate anchor after resize.
+Each native key edge waits for AppKit delivery before the next edge is posted;
+keys are never resent after a deadline. `LAPIS_NATIVE_TRACE=1` logs the probe's
+AppKit key and Qt key/composition events for diagnosis. A delivery deadline is
+distinct from a PTY-byte mismatch. Composition cases await an observed preedit
+before testing commit or invalidation, and cancellation awaits an empty preedit.
+The Qt input fixture also awaits expected service bytes instead of assuming
+asynchronous transport completes in 50 ms. Failed native cases preserve preceding results and
+verify clipboard/input-source restoration after the fixture is destroyed.
+These checks need exclusive desktop input: foreground interference can invalidate
+a run. Intermittent failures must be retained and investigated, not hidden by
+automatic retries.
+If a GUI input fixture reports `Window failed to activate`, record that failed
+prerequisite separately from its behavioral assertions. On the qualified Mac,
+automation can set the fixture process's `frontmost` property through macOS
+System Events, using its exact PID. Such assistance requires existing automation
+permission; it must target only the test process and be recorded with the rerun.
+It must not force the product application to take focus during normal operation.
 On native focus loss, Apple's IME may commit to the original terminal; the probe
 asserts that the new terminal receives no composition bytes. This does not add a
 multi-session product UI. The candidate anchor check verifies the rectangle
@@ -679,7 +768,7 @@ python3 scripts/check_cli_launch.py --build-dir build/desktop-asan \
 Repeat those configure/build/test/harness commands with preset `tsan` and all
 `desktop-asan` paths changed to `desktop-tsan`. Do not combine instrumentation or
 use `ctest --preset asan` for the custom directory: that preset targets
-`build/asan`. Each desktop-enabled directory must list all twelve suites above.
+`build/asan`. Each desktop-enabled directory must list all fifteen suites above.
 Use the same LLVM installation for normal and instrumented builds. Ccache is
 optional (`-DCMAKE_CXX_COMPILER_LAUNCHER=...`); raw CMake does not discover it.
 Reduce `--parallel` for host resource limits. The CLI command above runs service
@@ -711,7 +800,8 @@ New CMake targets must link `lapis_project_options` so warning and sanitizer
 settings apply. Add meaningful CTest cases for ownership, parsing, event ordering,
 and input routing as those components arrive. Header-only code needs a compiled
 consumer. Current tests cover the toolchain, POSIX descriptor ownership with real pipes,
-and 14 terminal adapter cases on macOS/Linux ARM64. Desktop-enabled tests additionally cover PTY/transport and UI reload/attention
+and 14 terminal adapter cases on macOS/Linux ARM64. The standalone attention
+reducer is additionally exercised on macOS in normal and sanitizer builds. Desktop-enabled tests additionally cover PTY/transport and UI reload/attention
 behavior; actual captures run through `just ui-check`. The original
 [checkpoint receipt](evidence/cpp-verification.json) records its dated scope;
 new local check receipts are under `build/reports/<mode>/`.

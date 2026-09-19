@@ -6,6 +6,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVariantList>
+#include <QVariantMap>
 
 #include <array>
 
@@ -45,6 +46,7 @@ struct Theme {
 [[nodiscard]] const Theme& theme_for(const QString& name);
 [[nodiscard]] const std::array<Theme, 6>& theme_table();
 [[nodiscard]] bool theme_exists(const QString& name);
+[[nodiscard]] QStringList default_settings_shortcuts();
 
 // User-editable keybindings, layout, theme, and card density, loaded from
 // lapis.json at the project root. Missing or malformed input falls back to
@@ -62,6 +64,7 @@ class KeyMap final : public QObject {
     Q_PROPERTY(QStringList densities READ densities NOTIFY changed)
     Q_PROPERTY(QString diagnostic READ diagnostic NOTIFY changed)
     Q_PROPERTY(QString sourcePath READ sourcePath NOTIFY changed)
+    Q_PROPERTY(QVariantMap shortcutBindings READ shortcutBindings NOTIFY changed)
   public:
     explicit KeyMap(QObject* parent = nullptr);
 
@@ -76,6 +79,7 @@ class KeyMap final : public QObject {
     [[nodiscard]] const QString& diagnostic() const { return diagnostic_; }
 
     [[nodiscard]] QStringList sequences(const QString& action) const;
+    [[nodiscard]] QVariantMap shortcutBindings() const;
     Q_INVOKABLE [[nodiscard]] QStringList actionSequences(const QString& action) const {
         return sequences(action);
     }

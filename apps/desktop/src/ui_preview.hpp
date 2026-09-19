@@ -3,9 +3,12 @@
 
 #include "keymap.hpp"
 #include "workspace.hpp"
+#include <QKeySequence>
+#include <QList>
 #include <QObject>
 #include <QPointer>
 #include <QString>
+#include <QStringList>
 #include <QUrl>
 #include <memory>
 
@@ -21,7 +24,7 @@ struct UiPreviewOptions {
     // Empty keeps the platform's default placement.
     QString screen;
     // User keybindings and layout, exposed to QML as `keymap`. Optional; a
-    // null value keeps the built-in shortcuts that Main.qml defines itself.
+    // null value uses the shared C++ settings defaults and QML navigation defaults.
     KeyMap* keymap{};
 };
 
@@ -34,6 +37,7 @@ class UiPreview final : public QObject {
         bool reducedMotion READ reducedMotion WRITE setReducedMotion NOTIFY reducedMotionChanged)
     Q_PROPERTY(bool systemReducedMotion READ systemReducedMotion NOTIFY reducedMotionChanged)
     Q_PROPERTY(QString diagnostics READ diagnostics NOTIFY diagnosticsChanged)
+    Q_PROPERTY(QStringList settingsShortcuts READ settingsShortcuts NOTIFY settingsShortcutsChanged)
   public:
     UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* parent = nullptr);
     ~UiPreview() override;
@@ -43,6 +47,7 @@ class UiPreview final : public QObject {
     void setReducedMotion(bool enabled);
     void setSystemReducedMotion(bool enabled);
     [[nodiscard]] const QString& diagnostics() const { return diagnostics_; }
+    [[nodiscard]] const QStringList& settingsShortcuts() const { return settings_shortcuts_; }
     [[nodiscard]] QQuickWindow* window() const;
     bool load();
     Q_INVOKABLE bool reload();
@@ -50,6 +55,7 @@ class UiPreview final : public QObject {
     // surface differs by layout: the single pane in focus mode, the focused
     // tile in blocks mode. Returns true when a terminal took focus.
     Q_INVOKABLE bool assignTerminalFocus();
+    Q_INVOKABLE void deferTerminalFocus();
     // Open the appearance dialog. Terminal surfaces consume key events before
     // QML Shortcut sees them, so the app-level shortcut is handled here, where
     // it can intercept ahead of any focused item.
@@ -57,15 +63,20 @@ class UiPreview final : public QObject {
   signals:
     void reducedMotionChanged();
     void diagnosticsChanged();
+    void settingsShortcutsChanged();
     void windowChanged(QQuickWindow* window);
 
   private:
+    bool eventFilter(QObject* watched, QEvent* event) override;
     bool loadCandidate();
+    void refreshSettingsShortcuts();
     Workspace& workspace_;
     UiPreviewOptions options_;
     std::unique_ptr<QQmlApplicationEngine> engine_;
     QPointer<QQuickWindow> window_;
     QString diagnostics_;
+    QStringList settings_shortcuts_;
+    QList<QKeySequence> parsed_settings_shortcuts_;
     bool reduced_motion_{};
     bool system_reduced_motion_{};
 };

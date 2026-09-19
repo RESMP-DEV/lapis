@@ -2,6 +2,7 @@
 #include "transport/local_protocol.hpp"
 #include "workspace.hpp"
 
+#include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include <QClipboard>
 #include <QElapsedTimer>
@@ -18,7 +19,9 @@
 #include <QThread>
 #include <functional>
 #include <iostream>
+#include <source_location>
 #include <stdexcept>
+#include <string>
 
 namespace {
 namespace wire = lapis::session::wire;
@@ -27,7 +30,8 @@ void require(bool value, const char* message) {
     if (!value)
         throw std::runtime_error(message);
 }
-void until(const std::function<bool()>& condition) {
+void until(const std::function<bool()>& condition,
+           std::source_location where = std::source_location::current()) {
     QElapsedTimer time;
     time.start();
     while (time.elapsed() < 8000) {
@@ -36,7 +40,7 @@ void until(const std::function<bool()>& condition) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
         QThread::msleep(1);
     }
-    throw std::runtime_error("Event deadline expired");
+    throw std::runtime_error("Event deadline expired at line " + std::to_string(where.line()));
 }
 void settle() {
     QElapsedTimer time;
@@ -138,18 +142,23 @@ struct Fixture {
     }
 };
 
-QByteArray text_frames(Peer& peer) {
-    settle();
-    peer.bytes += peer.socket->readAll();
-    wire::Frame frame;
+QByteArray text_frames(Peer& peer, qsizetype minimum = 0) {
+    if (minimum == 0)
+        settle();
     QByteArray text;
-    while (wire::take_frame(peer.bytes, frame)) {
-        if (frame.kind == wire::Kind::text || frame.kind == wire::Kind::paste)
-            text += wire::decode_control(frame.payload).payload;
-        else
-            require(frame.kind == wire::Kind::resize || frame.kind == wire::Kind::history_request,
-                    "Unexpected input frame");
-    }
+    until([&] {
+        peer.bytes += peer.socket->readAll();
+        wire::Frame frame;
+        while (wire::take_frame(peer.bytes, frame)) {
+            if (frame.kind == wire::Kind::text || frame.kind == wire::Kind::paste)
+                text += wire::decode_control(frame.payload).payload;
+            else
+                require(frame.kind == wire::Kind::resize ||
+                            frame.kind == wire::Kind::history_request,
+                        "Unexpected input frame");
+        }
+        return text.size() >= minimum;
+    });
     return text;
 }
 void composition(lapis::desktop::TerminalSurface& surface, QStringView preedit,
@@ -173,7 +182,8 @@ void input_contract() {
     f.screen(peer);
     window.show();
     until([&] { return window.isExposed(); });
-    window.requestActivate();
+    lapis::desktop::test::activate_test_window(window);
+    settle(); // Drain native activation events before beginning an IME transaction.
     surface.forceActiveFocus();
     until([&] { return window.isActive() && surface.hasActiveFocus(); });
     static_cast<void>(text_frames(peer));
@@ -181,28 +191,29 @@ void input_contract() {
     const auto original = surface.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
     require(!original.isEmpty(), "IME candidate rectangle missing");
     composition(surface, {}, QStringLiteral("✓"));
-    require(text_frames(peer) == QStringLiteral("✓").toUtf8(),
+    require(text_frames(peer, 3) == QStringLiteral("✓").toUtf8(),
             "Idle terminal rejected commit-only input");
     composition(surface, {}, QStringLiteral("★"));
-    require(text_frames(peer) == QStringLiteral("★").toUtf8(),
+    require(text_frames(peer, 3) == QStringLiteral("★").toUtf8(),
             "Repeated commit-only input was rejected");
     QKeyEvent printable(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
     QCoreApplication::sendEvent(&surface, &printable);
-    require(text_frames(peer) == QByteArray("x"), "Printable key fixture did not reach PTY");
+    require(text_frames(peer, 1) == QByteArray("x"), "Printable key fixture did not reach PTY");
     {
         QQuickItem other_focus(window.contentItem());
         other_focus.forceActiveFocus();
-        window.requestActivate();
+        lapis::desktop::test::activate_test_window(window);
+        settle(); // Drain native activation events before beginning an IME transaction.
         surface.forceActiveFocus();
         until([&] { return surface.inputMethodQuery(Qt::ImEnabled).toBool(); });
         composition(surface, {}, QStringLiteral("✓"));
-        require(text_frames(peer) == QStringLiteral("✓").toUtf8(),
+        require(text_frames(peer, 3) == QStringLiteral("✓").toUtf8(),
                 "Ordinary typing and focus return incorrectly invalidated commit-only input");
     }
     composition(surface, QStringLiteral("にほん"));
     require(text_frames(peer).isEmpty(), "Preedit leaked into PTY");
     composition(surface, {}, QStringLiteral("日本"));
-    require(text_frames(peer) == QStringLiteral("日本").toUtf8(), "IME commit changed bytes");
+    require(text_frames(peer, 6) == QStringLiteral("日本").toUtf8(), "IME commit changed bytes");
     composition(surface, QStringLiteral("pending"));
     QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
     QCoreApplication::sendEvent(&surface, &escape);
@@ -221,8 +232,13 @@ void input_contract() {
     QKeyEvent paste(QEvent::KeyPress, Qt::Key_V, Qt::MetaModifier);
     QCoreApplication::sendEvent(&surface, &paste);
     QGuiApplication::clipboard()->setText(clipboard);
-    require(text_frames(peer) == QStringLiteral("paste界\nsecond").toUtf8(),
-            "Paste was split or changed");
+    const auto pasted = text_frames(peer, QStringLiteral("paste界\nsecond").toUtf8().size());
+    if (pasted != QStringLiteral("paste界\nsecond").toUtf8()) {
+        std::cerr << "paste=" << pasted.toHex().toStdString()
+                  << " focus=" << surface.hasActiveFocus() << " active=" << window.isActive()
+                  << " ready=" << f.document.inputReady() << '\n';
+        throw std::runtime_error("Paste was split or changed");
+    }
     composition(surface, {}, QStringLiteral("late-after-paste"));
     require(text_frames(peer).isEmpty(), "Pre-paste composition committed late");
     composition(surface, QStringLiteral("before-history"));
@@ -249,12 +265,13 @@ void input_contract() {
     require(text_frames(peer).isEmpty(), "Focus transition leaked composition");
     // Model the user returning to the terminal before beginning a new
     // composition. Native focus restoration may complete on a later event.
-    window.requestActivate();
+    lapis::desktop::test::activate_test_window(window);
+    settle(); // Drain native activation events before beginning an IME transaction.
     surface.forceActiveFocus();
     until([&] { return surface.inputMethodQuery(Qt::ImEnabled).toBool(); });
     composition(surface, QStringLiteral("new"));
     composition(surface, {}, QStringLiteral("新"));
-    const auto recovered = text_frames(peer);
+    const auto recovered = text_frames(peer, 3);
     if (recovered != QStringLiteral("新").toUtf8()) {
         std::cerr << "recovered=" << recovered.toHex().toStdString()
                   << " focus=" << surface.hasActiveFocus() << " active=" << window.isActive()
@@ -262,7 +279,7 @@ void input_contract() {
         throw std::runtime_error("Fresh composition did not recover");
     }
     composition(surface, {}, QStringLiteral("✓"));
-    require(text_frames(peer) == QStringLiteral("✓").toUtf8(),
+    require(text_frames(peer, 3) == QStringLiteral("✓").toUtf8(),
             "Recovered terminal rejected commit-only input");
     composition(surface, QStringLiteral("disconnect"));
     peer.socket->abort();

@@ -9,14 +9,18 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QTemporaryDir>
 #include <iostream>
 #include <stdexcept>
 
 namespace {
 using lapis::desktop::CardDensity;
+using lapis::desktop::default_settings_shortcuts;
 using lapis::desktop::KeyMap;
 using lapis::desktop::theme_table;
 using lapis::desktop::WorkspaceLayout;
@@ -120,6 +124,191 @@ void selection_persists() {
     require(reloaded.densityName() == QStringLiteral("compact"), "density should survive a reload");
 }
 
+void symbolic_link_config_updates_target() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    const QDir dir(directory.path());
+    const QString target = write_config(dir, R"({"layout":"focus","retained":true})");
+    const QString link = dir.filePath(QStringLiteral("linked.json"));
+    const QString chain = dir.filePath(QStringLiteral("chain.json"));
+    require(QFile::link(QStringLiteral("lapis.json"), link), "relative config symlink");
+    require(QFile::link(link, chain), "absolute config symlink chain");
+    const QString canonical_target = QFileInfo(target).canonicalFilePath();
+    require(QFileInfo(chain).canonicalFilePath() == canonical_target,
+            "fixture symlink does not refer to the temporary config");
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(chain);
+    require(keymap.load(), "linked config should load");
+    require(keymap.setTheme(QStringLiteral("graphite")), "linked config should save");
+    require(QFileInfo(link).isSymbolicLink() && QFileInfo(chain).isSymbolicLink(),
+            "appearance save replaced a config symlink");
+    require(QFileInfo(chain).canonicalFilePath() == canonical_target, "config link target changed");
+    const auto saved = read_config(target);
+    require(saved.value(QStringLiteral("theme")).toString() == QStringLiteral("graphite") &&
+                saved.value(QStringLiteral("retained")).toBool(),
+            "linked save did not preserve and update the actual target");
+    require(keymap.load() && keymap.themeName() == QStringLiteral("graphite"),
+            "linked config did not reload");
+}
+
+// Appearance changes must round-trip every unrelated JSON value exactly.
+void appearance_preserves_json_and_bad_files() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    const QDir dir(directory.path());
+    const QByteArray original =
+        R"({"keybindings":{"openSettings":["Ctrl+,"],"nextWindow":["Ctrl+Shift+]"],"custom":["a, b","quote\"[]", "space  space"]},"categories":[{"title":"[one],  two"}],"layout":"focus"})";
+    const QString path = write_config(dir, original);
+    const QJsonObject before = read_config(path);
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "load punctuation fixture");
+    require(keymap.setTheme(QStringLiteral("graphite")), "persist punctuation fixture");
+    const QJsonObject after = read_config(path);
+    require(after.value(QStringLiteral("keybindings")) ==
+                before.value(QStringLiteral("keybindings")),
+            "appearance save changed a shortcut");
+    require(after.value(QStringLiteral("categories")) == before.value(QStringLiteral("categories")),
+            "appearance save changed category text");
+    const QByteArray malformed = "{unfinished user edit";
+    static_cast<void>(write_config(dir, malformed));
+    require(!keymap.setDensity(QStringLiteral("compact")), "refuse to overwrite invalid JSON");
+    QFile raw(path);
+    require(raw.open(QIODevice::ReadOnly), "read invalid config");
+    require(raw.readAll() == malformed, "invalid config must be preserved exactly");
+    require(!keymap.diagnostic().isEmpty(), "failed save is visible");
+}
+
+// Pretty whitespace must not make a valid deeply nested config grow beyond the
+// read cap. Qt itself has a finite parser limit; this depth is within it.
+void deeply_nested_values_survive_persistence() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    QJsonValue nested(QStringLiteral("leaf"));
+    for (int depth = 0; depth < 768; ++depth) {
+        if (depth % 2 == 0)
+            nested = QJsonObject{{QStringLiteral("child"), nested}};
+        else
+            nested = QJsonArray{nested};
+    }
+    QJsonObject root{{QStringLiteral("nested"), nested}};
+    const QDir dir(directory.path());
+    const QString path =
+        write_config(dir, QJsonDocument(root).toJson(QJsonDocument::JsonFormat::Compact) + '\n');
+
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "768-level JSON is accepted by Qt and loaded");
+    require(keymap.setTheme(QStringLiteral("graphite")), "deep config should save");
+
+    const QJsonObject written = read_config(path);
+    require(written.value(QStringLiteral("nested")) == nested,
+            "deep nested values should be preserved");
+    KeyMap reloaded;
+    reloaded.setSourcePathForTesting(path);
+    require(reloaded.load(), "saved deep config should reload below the byte cap");
+    require(reloaded.themeName() == QStringLiteral("graphite"), "deep config reload state");
+}
+
+// Empty structures carry no human-facing content, so pretty printing should not
+// spend four lines on them.
+void empty_objects_are_compact() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    const QDir dir(directory.path());
+    const QString path =
+        write_config(dir, QByteArrayLiteral(R"({"empty":{},"nested":{"empty":{}},"version":1})"));
+
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "empty-object fixture should load");
+    require(keymap.setDensity(QStringLiteral("minimal")), "empty-object fixture should save");
+
+    QFile raw(path);
+    require(raw.open(QIODevice::ReadOnly), "compact config should be readable");
+    const QString text = QString::fromUtf8(raw.readAll());
+    raw.close();
+    require(text.contains(QStringLiteral("\"empty\": {}")),
+            "empty objects should be serialized compactly");
+    require(text.contains(QStringLiteral("\"nested\": {")) &&
+                !text.contains(QStringLiteral("\"nested\": {}}")),
+            "non-empty objects should remain pretty-printed");
+}
+
+void expanded_config_remains_reloadable() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    QJsonArray entries;
+    for (int index = 0; index < 30000; ++index)
+        entries.append(QJsonObject{{QStringLiteral("v"), index}});
+    const auto contents = QJsonDocument(QJsonObject{{QStringLiteral("entries"), entries}})
+                              .toJson(QJsonDocument::Compact);
+    const auto path = write_config(QDir(directory.path()), contents);
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "compact array fixture loads");
+    require(keymap.setTheme(QStringLiteral("amber")), "large config saves within read cap");
+    require(keymap.reload(), "saved large config reloads");
+    require(read_config(path).value(QStringLiteral("entries")).toArray() == entries,
+            "compaction preserves every array entry");
+}
+
+// An absent config is a first launch, but a partially written non-empty file is
+// treated as user data and never overwritten.
+void zero_byte_file_initializes() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    const QDir dir(directory.path());
+    const QString path = write_config(dir, QByteArray{});
+
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(!keymap.load(), "zero-byte file has no JSON object yet");
+    require(keymap.setTheme(QStringLiteral("daylight")), "zero-byte file should initialize");
+    const QJsonObject written = read_config(path);
+    require(written.value(QStringLiteral("theme")).toString() == QStringLiteral("daylight"),
+            "initialized config should contain the first selection");
+    require(written.value(QStringLiteral("version")).toInt() == 1,
+            "initialized config should contain the schema version");
+}
+
+// Directories, FIFOs, and devices must not be opened as configuration. The
+// directory case also verifies that persist and load share the same guard.
+void nonregular_config_paths_are_rejected() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    QDir dir(directory.path());
+    require(dir.mkdir(QStringLiteral("config")), "create directory config path");
+    const QString path = dir.filePath(QStringLiteral("config"));
+
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(!keymap.load(), "load must reject a nonregular path");
+    require(!keymap.save(), "persist must reject a nonregular path");
+}
+
+// The dialog must expose both platform spellings without changing custom
+// sequences loaded from the user's config.
+void default_settings_chords_are_shared() {
+    const QStringList expected{QStringLiteral("Ctrl+,"), QStringLiteral("Meta+,")};
+    require(default_settings_shortcuts() == expected,
+            "exported settings defaults must contain both chords");
+    KeyMap keymap;
+    require(keymap.actionSequences(QStringLiteral("openSettings")) == expected,
+            "KeyMap defaults must use the exported settings chords");
+
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory for custom binding");
+    const QDir dir(directory.path());
+    const QString path =
+        write_config(dir, QByteArrayLiteral(R"({"keybindings":{"openSettings":[" Alt+F4 "]}})"));
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "custom settings fixture should load");
+    const QStringList custom = keymap.actionSequences(QStringLiteral("openSettings"));
+    require(custom == QStringList{QStringLiteral("Alt+F4")},
+            "custom bindings must replace defaults exactly, with only surrounding space trimmed");
+}
+
 // Unknown names are rejected without disturbing the current selection, so a bad
 // config edit or a stale dialog cannot leave the window in an undefined state.
 void unknown_names_are_rejected() {
@@ -201,6 +390,14 @@ int main(int argc, char** argv) {
     try {
         themes_are_complete();
         selection_persists();
+        symbolic_link_config_updates_target();
+        appearance_preserves_json_and_bad_files();
+        deeply_nested_values_survive_persistence();
+        empty_objects_are_compact();
+        expanded_config_remains_reloadable();
+        zero_byte_file_initializes();
+        nonregular_config_paths_are_rejected();
+        default_settings_chords_are_shared();
         unknown_names_are_rejected();
         malformed_values_fall_back();
         advertised_names_are_accepted();

@@ -1,3 +1,14 @@
+# Service-owned attention policy has no GUI, protocol or terminal dependency.
+add_library(lapis_attention STATIC src/attention.cpp)
+target_link_libraries(lapis_attention PRIVATE lapis_project_options)
+target_include_directories(lapis_attention PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+if(BUILD_TESTING)
+    add_executable(lapis_attention_tests tests/attention_test.cpp)
+    target_link_libraries(lapis_attention_tests PRIVATE lapis_project_options lapis_attention)
+    add_test(NAME attention-state COMMAND lapis_attention_tests)
+    set_tests_properties(attention-state PROPERTIES TIMEOUT 10)
+endif()
+
 # Internal POSIX resource ownership. Engine and desktop code must not include it.
 add_library(lapis_session_platform STATIC
     src/platform/posix/unique_fd.cpp)
