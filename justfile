@@ -1,6 +1,10 @@
 default:
     @python3 scripts/lapis.py
 
+# Common repository/Python quality checks, without a desktop or dependency build.
+quality:
+    python3 scripts/lapis.py quality
+
 # Report which local dependencies are ready.
 doctor:
     python3 scripts/lapis.py doctor

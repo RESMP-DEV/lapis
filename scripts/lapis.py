@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -132,10 +133,31 @@ def desktop_binary():
 
 def private_runtime_dir():
     """The service requires a socket parent owned by the user with mode 0700."""
-    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    if RUNTIME_DIR.stat().st_mode & 0o777 != 0o700:
-        RUNTIME_DIR.chmod(0o700)
+    try:
+        try:
+            RUNTIME_DIR.mkdir(mode=0o700, parents=True)
+        except FileExistsError:
+            pass
+        runtime_stat = os.lstat(RUNTIME_DIR)
+    except OSError as error:
+        raise SetupError(
+            f"Cannot create or inspect private runtime directory {RUNTIME_DIR}: {error}"
+        ) from error
+    validate_runtime_directory(runtime_stat)
     return RUNTIME_DIR
+
+
+def validate_runtime_directory(runtime_stat):
+    """Apply the same read-only runtime contract to launch and doctor."""
+    if not stat.S_ISDIR(runtime_stat.st_mode):
+        raise SetupError(f"Runtime path is not a directory: {RUNTIME_DIR}")
+    if runtime_stat.st_uid != os.geteuid():
+        raise SetupError(
+            f"Runtime directory is owned by UID {runtime_stat.st_uid}, "
+            f"not current UID {os.geteuid()}: {RUNTIME_DIR}"
+        )
+    if stat.S_IMODE(runtime_stat.st_mode) != 0o700:
+        raise SetupError(f"Runtime directory must have mode 0700: {RUNTIME_DIR}")
 
 
 def launch(arguments):
@@ -197,12 +219,14 @@ def command_doctor():
             qt or "not found; brew bundle --file Brewfile",
         )
     )
-    runtime_mode = (
-        oct(RUNTIME_DIR.stat().st_mode & 0o777) if RUNTIME_DIR.exists() else "(absent)"
-    )
-    rows.append(
-        ("runtime/ mode", "ok" if runtime_mode == "0o700" else "fix", runtime_mode)
-    )
+    try:
+        runtime_stat = os.lstat(RUNTIME_DIR)
+        validate_runtime_directory(runtime_stat)
+        rows.append(("runtime/", "ok", "owned directory, mode 0700"))
+    except FileNotFoundError:
+        rows.append(("runtime/", "ok", "created privately on first launch"))
+    except (OSError, SetupError) as error:
+        rows.append(("runtime/", "fix", str(error)))
     width = max(len(name) for name, _, _ in rows)
     for name, state, detail in rows:
         print(f"{name.ljust(width)}  {state:8}  {detail}")
@@ -271,6 +295,7 @@ def command_smoke(arguments):
 
 
 COMMANDS = {
+    "quality": lambda a: run_python_script("check_quality.py", a, needs_ghostty=False),
     "check": lambda a: run_python_script("check_cpp.py", ["dev", *a]),
     "asan": lambda a: run_python_script("check_cpp.py", ["asan", *a]),
     "tsan": lambda a: run_python_script("check_cpp.py", ["tsan", *a]),
@@ -291,6 +316,7 @@ COMMANDS = {
 }
 
 DESCRIPTIONS = {
+    "quality": "Repository contracts, Python lint/format and unit tests (no GUI)",
     "check": "Compile, lint, format-check and run CTest",
     "asan": "CTest with AddressSanitizer and UndefinedBehaviorSanitizer",
     "tsan": "CTest with ThreadSanitizer",

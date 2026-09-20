@@ -48,7 +48,8 @@ product milestone is attention state and verified Codex request handling; the
 [Milestone 2 plan](docs/architecture.md#milestone-2-attention-and-codex-plan)
 defines its route decision, implementation slices and acceptance checks.
 The first checkpoint implements the standalone attention core and exercises real
-Codex request round trips; Milestone 2 is still in progress. The live desktop
+Codex request round trips. Remaining Milestone 2 implementation is tabled
+while code quality and shared contributor standards are the active priority. The live desktop
 continues to use fixture attention indicators. See the
 [attention test procedure](CONTRIBUTING.md#codex-attention-qualification).
 Latency and warm-switch targets remain provisional.
@@ -81,6 +82,7 @@ everything through one entry point. No environment variables need exporting:
 ```sh
 python3 scripts/lapis.py doctor    # report which dependencies are ready
 python3 scripts/lapis.py bootstrap # build the pinned Ghostty terminal library (once)
+python3 scripts/lapis.py quality   # repository/Python quality checks (no GUI)
 python3 scripts/lapis.py check     # compile, lint, format-check and run CTest
 python3 scripts/lapis.py build     # build the desktop app and run its checks
 python3 scripts/lapis.py run       # open the live shell window
@@ -149,7 +151,8 @@ optional no-prompt Codex check and current limits.
 - [Architecture and near-term plan](docs/architecture.md): component ownership,
   open decisions and acceptance criteria. This is the single implementation plan.
 - [Codex investigation](adapters/codex/README.md): protocol routes and evidence.
-- [Contributing](CONTRIBUTING.md): setup, checks, profiling and the PR procedure.
+- [Contributing](CONTRIBUTING.md): shared code standards, setup, checks, profiling and the PR procedure.
+- [Quality audit receipt](evidence/code-quality.json): scoped fixes, regression evidence and macOS checks.
 - [First contributor baseline](CONTRIBUTING.md#first-contributor-baseline): isolated
   worktrees, test sequence and coordination for large changes.
 - [Test suites](CONTRIBUTING.md#test-suites-and-failure-triage) and

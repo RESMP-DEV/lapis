@@ -11,6 +11,11 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
+if __package__:
+    from .probe_terminal import run_process
+else:
+    from probe_terminal import run_process
+
 ROOT = Path(__file__).resolve().parents[1]
 CPP_SUFFIXES = {".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh", ".hxx", ".ipp", ".mm"}
 
@@ -56,26 +61,36 @@ def toolchain():
     return tools
 
 
-def run(label, command, log_dir, *, expect_failure=None, cwd=ROOT):
+def run(label, command, log_dir, *, expect_failure=None, cwd=ROOT, timeout=300):
     """Save diagnostics; expected-failure probes require a specific diagnostic."""
     start = time.monotonic()
+    timed_out = False
     try:
-        result = subprocess.run(
+        result = run_process(
             [str(arg) for arg in command],
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            timeout=300,
-            check=False,
+            timeout=timeout,
         )
         output = result.stdout
         passed = result.returncode == 0
         if expect_failure:
             passed = result.returncode != 0 and expect_failure in output
         return_code = result.returncode
-    except subprocess.TimeoutExpired:
-        output = "Command exceeded the 300-second verification timeout.\n"
+    except subprocess.TimeoutExpired as error:
+        output = error.output or ""
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
+        output += f"\nCommand exceeded the {timeout}-second verification timeout.\n"
+        if getattr(error, "cleanup_failure", None):
+            output += error.cleanup_failure + "\n"
+        timed_out = True
+        passed = False
+        return_code = None
+    except OSError as error:
+        output = f"Could not run {command[0]}: {error}\n"
         passed = False
         return_code = None
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -89,7 +104,10 @@ def run(label, command, log_dir, *, expect_failure=None, cwd=ROOT):
         print(output[-6000:], flush=True)
     return {
         "check": label,
+        "command": [str(arg) for arg in command],
+        "cwd": str(cwd),
         "passed": passed,
+        "timed_out": timed_out,
         "exit_code": return_code,
         "expected_diagnostic": expect_failure,
         "elapsed_seconds": round(time.monotonic() - start, 3),

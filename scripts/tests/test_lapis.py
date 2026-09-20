@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import stat
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -84,28 +85,24 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(lapis.command_bootstrap(), 9)
         self.assertIn("probe_terminal.py", run.call_args.args[0][1])
 
-    def test_explicit_socket_option_is_preserved(self):
+    def test_explicit_socket_argument_is_preserved(self):
         socket = self.temporary_root / "explicit.sock"
-        _, run = self.launch(["--socket", str(socket)])
+        cases = [
+            ["--socket", str(socket)],
+            [f"--socket={socket}"],
+        ]
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                _, run = self.launch(arguments)
 
-        command = run.call_args.args[0]
-        self.assertIn("--socket", command)
-        self.assertIn(str(socket), command)
-        self.assertEqual(
-            command.count("--socket")
-            + sum(str(part).startswith("--socket=") for part in command),
-            1,
-        )
-        self.assertFalse(self.runtime.exists())
-
-    def test_explicit_socket_assignment_is_preserved(self):
-        socket = self.temporary_root / "explicit.sock"
-        _, run = self.launch([f"--socket={socket}"])
-
-        command = run.call_args.args[0]
-        self.assertIn(f"--socket={socket}", command)
-        self.assertNotIn("--socket", command)
-        self.assertFalse(self.runtime.exists())
+                command = run.call_args.args[0]
+                self.assertEqual(command[-len(arguments) :], arguments)
+                self.assertEqual(
+                    command.count("--socket")
+                    + sum(str(part).startswith("--socket=") for part in command),
+                    1,
+                )
+                self.assertFalse(self.runtime.exists())
 
     def test_ui_preview_does_not_inject_a_socket(self):
         _, run = self.launch(["--ui-preview"])
@@ -122,6 +119,94 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("--socket", command)
         self.assertIn(str(self.runtime / "desktop-v4.sock"), command)
         self.assertEqual(self.runtime.stat().st_mode & 0o777, 0o700)
+
+    def test_new_runtime_directory_is_private(self):
+        self.assertFalse(self.runtime.exists())
+
+        with patch.object(lapis, "RUNTIME_DIR", self.runtime):
+            self.assertEqual(lapis.private_runtime_dir(), self.runtime)
+
+        runtime_stat = os.lstat(self.runtime)
+        self.assertTrue(stat.S_ISDIR(runtime_stat.st_mode))
+        self.assertEqual(runtime_stat.st_uid, os.geteuid())
+        self.assertEqual(stat.S_IMODE(runtime_stat.st_mode), 0o700)
+
+    def test_private_existing_runtime_directory_is_preserved(self):
+        self.runtime.mkdir(mode=0o700)
+        marker = self.runtime / ".private"
+        marker.write_text("kept")
+        before = os.lstat(self.runtime)
+
+        with patch.object(lapis, "RUNTIME_DIR", self.runtime):
+            self.assertEqual(lapis.private_runtime_dir(), self.runtime)
+
+        self.assertEqual(os.lstat(self.runtime), before)
+        self.assertEqual(marker.read_text(), "kept")
+
+    def test_unsafe_runtime_permissions_are_rejected_without_repair(self):
+        for mode in (0o750, 0o701, 0o777, 0o500, 0o1700):
+            with self.subTest(mode=oct(mode)):
+                self.runtime.mkdir(mode=mode)
+                os.chmod(self.runtime, mode)
+
+                with (
+                    patch.object(lapis, "RUNTIME_DIR", self.runtime),
+                    patch.object(lapis.os, "chmod") as chmod,
+                    self.assertRaisesRegex(lapis.SetupError, "must have mode 0700"),
+                ):
+                    lapis.private_runtime_dir()
+
+                self.assertEqual(stat.S_IMODE(os.lstat(self.runtime).st_mode), mode)
+                chmod.assert_not_called()
+                self.runtime.rmdir()
+
+    def test_runtime_symlink_is_rejected_without_changing_target(self):
+        target = self.temporary_root / "runtime-target"
+        target.mkdir(mode=0o750)
+        os.chmod(target, 0o750)
+        self.runtime.symlink_to(target, target_is_directory=True)
+
+        with (
+            patch.object(lapis, "RUNTIME_DIR", self.runtime),
+            patch.object(lapis.os, "chmod") as chmod,
+            self.assertRaisesRegex(lapis.SetupError, "not a directory"),
+        ):
+            lapis.private_runtime_dir()
+
+        self.assertTrue(self.runtime.is_symlink())
+        self.assertEqual(stat.S_IMODE(os.lstat(target).st_mode), 0o750)
+        chmod.assert_not_called()
+
+    def test_runtime_non_directory_and_wrong_owner_are_rejected(self):
+        self.runtime.write_text("not a directory")
+        with (
+            patch.object(lapis, "RUNTIME_DIR", self.runtime),
+            self.assertRaisesRegex(lapis.SetupError, "not a directory"),
+        ):
+            lapis.private_runtime_dir()
+
+        owner_mode = stat.S_IFDIR | 0o700
+        wrong_owner = os.stat_result(
+            (owner_mode, 1, 2, 3, os.geteuid() + 1, os.getegid(), 7, 8, 9, 10)
+        )
+        with (
+            patch.object(lapis, "RUNTIME_DIR", self.runtime),
+            patch.object(lapis.os, "lstat", return_value=wrong_owner),
+            self.assertRaisesRegex(lapis.SetupError, "owned by UID"),
+        ):
+            lapis.private_runtime_dir()
+
+    def test_runtime_creation_failure_becomes_setup_error(self):
+        blocked_parent = self.temporary_root / "blocked-parent"
+        blocked_parent.write_text("not a directory")
+        blocked_runtime = blocked_parent / "runtime"
+        with (
+            patch.object(lapis, "RUNTIME_DIR", blocked_runtime),
+            self.assertRaisesRegex(
+                lapis.SetupError, "Cannot create or inspect private runtime directory"
+            ),
+        ):
+            lapis.private_runtime_dir()
 
     def test_child_exit_code_propagates_without_checking(self):
         code, run = self.launch(["--ui-preview"], result_code=42)
@@ -142,6 +227,38 @@ class LauncherTests(unittest.TestCase):
 
         self.assertEqual(code, 7)
         self.assertFalse(run.call_args.kwargs["check"])
+
+    def test_quality_dispatcher_does_not_resolve_ghostty(self):
+        with patch.object(lapis, "run_python_script", return_value=0) as run:
+            self.assertEqual(lapis.COMMANDS["quality"](["--fast"]), 0)
+
+        run.assert_called_once_with("check_quality.py", ["--fast"], needs_ghostty=False)
+
+    def test_doctor_checks_runtime_without_creating_or_repairing_it(self):
+        with (
+            patch.object(lapis, "RUNTIME_DIR", self.runtime),
+            patch.object(lapis, "DESKTOP_BINARY", self.desktop),
+            patch.object(lapis, "ghostty_prefix", return_value=self.ghostty),
+            patch.object(lapis.shutil, "which", return_value="qmake"),
+            patch.object(
+                lapis.subprocess, "run", return_value=SimpleNamespace(stdout="6.11.2")
+            ),
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(lapis.command_doctor(), 0)
+            self.assertFalse(self.runtime.exists())
+            self.runtime.mkdir(mode=0o700)
+            self.assertEqual(lapis.command_doctor(), 0)
+            with patch.object(lapis.os, "geteuid", return_value=os.geteuid() + 1):
+                self.assertEqual(lapis.command_doctor(), 1)
+            os.chmod(self.runtime, 0o1700)
+            self.assertEqual(lapis.command_doctor(), 1)
+            self.assertEqual(stat.S_IMODE(os.lstat(self.runtime).st_mode), 0o1700)
+            self.runtime.rmdir()
+            self.runtime.symlink_to(self.ghostty, target_is_directory=True)
+            self.assertEqual(lapis.command_doctor(), 1)
+            self.assertTrue(self.runtime.is_symlink())
+            self.assertIn("not a directory", output.getvalue())
 
 
 class GhosttyPrefixTests(unittest.TestCase):

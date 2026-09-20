@@ -127,26 +127,38 @@ ApplicationWindow {
     Shortcut {
         objectName: "nextCategoryShortcut"
         sequences: window.bindings("nextCategory", ["Ctrl+Tab"])
+        context: Qt.WindowShortcut
+        enabled: !window.settingsOpen
         onActivated: workspace.nextCategory()
     }
     Shortcut {
         sequences: window.bindings("previousCategory", ["Ctrl+Shift+Tab"])
+        context: Qt.WindowShortcut
+        enabled: !window.settingsOpen
         onActivated: workspace.nextCategory(-1)
     }
     Shortcut {
         sequences: window.bindings("category1", ["Ctrl+1"])
+        context: Qt.WindowShortcut
+        enabled: !window.settingsOpen
         onActivated: workspace.focusCategory(0)
     }
     Shortcut {
         sequences: window.bindings("category2", ["Ctrl+2"])
+        context: Qt.WindowShortcut
+        enabled: !window.settingsOpen
         onActivated: workspace.focusCategory(1)
     }
     Shortcut {
         sequences: window.bindings("category3", ["Ctrl+3"])
+        context: Qt.WindowShortcut
+        enabled: !window.settingsOpen
         onActivated: workspace.focusCategory(2)
     }
     Shortcut {
         sequences: window.bindings("category4", ["Ctrl+4"])
+        context: Qt.WindowShortcut
+        enabled: !window.settingsOpen
         onActivated: workspace.focusCategory(3)
     }
 
@@ -154,23 +166,33 @@ ApplicationWindow {
     // because Qt auto-repeats an activated Shortcut while the keys are held.
     Shortcut {
         sequences: window.bindings("nextWindow", ["Ctrl+Shift+]"])
+        context: Qt.WindowShortcut
+        enabled: !window.settingsOpen
         onActivated: workspace.nextWindow()
     }
     Shortcut {
         sequences: window.bindings("previousWindow", ["Ctrl+Shift+["])
+        context: Qt.WindowShortcut
+        enabled: !window.settingsOpen
         onActivated: workspace.nextWindow(-1)
     }
     Shortcut {
         sequences: window.bindings("focusLeft", ["Ctrl+Left"])
+        context: Qt.WindowShortcut
+        enabled: !window.settingsOpen
         onActivated: workspace.nextWindow(-1)
     }
     Shortcut {
         sequences: window.bindings("focusRight", ["Ctrl+Right"])
+        context: Qt.WindowShortcut
+        enabled: !window.settingsOpen
         onActivated: workspace.nextWindow()
     }
 
     Shortcut {
         sequences: window.bindings("cycleLayout", ["Ctrl+L"])
+        context: Qt.WindowShortcut
+        enabled: !window.settingsOpen
         onActivated: {
             if (typeof keymap !== "undefined" && keymap !== null)
                 keymap.toggleLayout()
@@ -178,6 +200,8 @@ ApplicationWindow {
     }
     Shortcut {
         sequences: window.bindings("reloadConfig", ["Ctrl+R"])
+        context: Qt.WindowShortcut
+        enabled: !window.settingsOpen
         onActivated: {
             if (typeof keymap !== "undefined" && keymap !== null)
                 keymap.reload()

@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QJsonValue>
+#include <QKeySequence>
 #include <QSaveFile>
 #include <QVariantMap>
 #include <array>
@@ -200,23 +201,39 @@ namespace {
 [[nodiscard]] QStringList normalise(const QJsonValue& value, QString* diagnostic,
                                     const QString& action) {
     QStringList sequences;
-    const auto add = [&sequences, diagnostic, &action](const QString& text) {
-        if (text.trimmed().isEmpty())
-            return;
-        if (sequences.size() >= kMaximumSequencesPerAction) {
-            *diagnostic = QStringLiteral("%1: at most %2 sequences are used")
-                              .arg(action)
-                              .arg(kMaximumSequencesPerAction);
-            return;
-        }
-        sequences.append(text.trimmed());
-    };
+    QStringList entries;
     if (value.isString())
-        add(value.toString());
+        entries.append(value.toString());
     else if (value.isArray()) {
         for (const auto& entry : value.toArray())
-            add(entry.toString());
+            entries.append(entry.toString());
     }
+    const auto add = [&sequences, diagnostic, &action](const QString& text) {
+        const QString trimmed = text.trimmed();
+        if (trimmed.isEmpty())
+            return;
+        const QKeySequence sequence(trimmed);
+        const bool single_chord_only = action == QStringLiteral("openSettings");
+        bool invalid = sequence.isEmpty() || (single_chord_only && sequence.count() != 1);
+        for (uint chord = 0; chord < static_cast<uint>(sequence.count()); ++chord)
+            invalid = invalid || sequence[chord].key() == Qt::Key_unknown;
+        if (invalid) {
+            const QString message =
+                QStringLiteral("%1: invalid key sequence '%2'").arg(action, trimmed);
+            *diagnostic = diagnostic->isEmpty() ? message : *diagnostic + '\n' + message;
+            return;
+        }
+        if (sequences.size() >= kMaximumSequencesPerAction) {
+            const QString message = QStringLiteral("%1: at most %2 sequences are used")
+                                        .arg(action)
+                                        .arg(kMaximumSequencesPerAction);
+            *diagnostic = diagnostic->isEmpty() ? message : *diagnostic + '\n' + message;
+            return;
+        }
+        sequences.append(trimmed);
+    };
+    for (const auto& entry : entries)
+        add(entry);
     return sequences;
 }
 } // namespace

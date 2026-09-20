@@ -309,6 +309,58 @@ void default_settings_chords_are_shared() {
             "custom bindings must replace defaults exactly, with only surrounding space trimmed");
 }
 
+// Configured text must produce a valid QKeySequence. Known actions
+// retain their built-ins when a list contains no usable entry; the historical
+// empty-list form does the same rather than disabling the action.
+void configured_shortcuts_are_validated() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory for shortcut validation");
+    const QDir dir(directory.path());
+    const QString path = write_config(
+        dir, QByteArrayLiteral(R"({"keybindings":{"nextCategory":["Nonsense","Ctrl+Alt+N",""],)"
+                               R"("openSettings":["Ctrl+X, Ctrl+Y"],"custom":["Nonsense"]}})"));
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "mixed shortcut fixture should load");
+    require(keymap.actionSequences(QStringLiteral("nextCategory")) ==
+                QStringList{QStringLiteral("Ctrl+Alt+N")},
+            "a known action should retain only valid mixed-list entries");
+    require(keymap.actionSequences(QStringLiteral("openSettings")) == default_settings_shortcuts(),
+            "settings must fall back when only a multi-chord entry is configured");
+    require(keymap.actionSequences(QStringLiteral("custom")).isEmpty(),
+            "an invalid unknown action should not expose a sequence");
+    require(keymap.diagnostic().contains(QStringLiteral("nextCategory: invalid key sequence")),
+            "invalid known actions need action-specific diagnostics");
+    require(keymap.diagnostic().contains(
+                QStringLiteral("openSettings: invalid key sequence 'Ctrl+X, Ctrl+Y'")),
+            "multi-chord settings input needs a specific diagnostic");
+
+    const QString mixed_settings_path =
+        write_config(dir, QByteArrayLiteral(R"({"keybindings":{"openSettings":)"
+                                            R"(["Ctrl+X, Ctrl+Y","Ctrl+Alt+S"]}})"));
+    keymap.setSourcePathForTesting(mixed_settings_path);
+    require(keymap.load(), "mixed settings fixture should load");
+    require(keymap.actionSequences(QStringLiteral("openSettings")) ==
+                QStringList{QStringLiteral("Ctrl+Alt+S")},
+            "a valid mixed settings entry should be retained without its unusable sibling");
+
+    const QString multi_path =
+        write_config(dir, QByteArrayLiteral(R"({"keybindings":{"nextCategory":["Ctrl+X, Ctrl+Y",)"
+                                            R"("Ctrl+X, Nonsense"]}})"));
+    keymap.setSourcePathForTesting(multi_path);
+    require(keymap.load(), "ordinary multi-chord fixture should load");
+    require(keymap.actionSequences(QStringLiteral("nextCategory")) ==
+                QStringList{QStringLiteral("Ctrl+X, Ctrl+Y")},
+            "ordinary shortcuts support multiple chords, each of which must be valid");
+
+    const QString empty_path =
+        write_config(dir, QByteArrayLiteral(R"({"keybindings":{"nextCategory":[]}})"));
+    keymap.setSourcePathForTesting(empty_path);
+    require(keymap.load(), "empty shortcut fixture should load");
+    require(!keymap.actionSequences(QStringLiteral("nextCategory")).isEmpty(),
+            "explicit empty lists historically retain built-in bindings");
+}
+
 // Unknown names are rejected without disturbing the current selection, so a bad
 // config edit or a stale dialog cannot leave the window in an undefined state.
 void unknown_names_are_rejected() {
@@ -398,6 +450,7 @@ int main(int argc, char** argv) {
         zero_byte_file_initializes();
         nonregular_config_paths_are_rejected();
         default_settings_chords_are_shared();
+        configured_shortcuts_are_validated();
         unknown_names_are_rejected();
         malformed_values_fall_back();
         advertised_names_are_accepted();
