@@ -103,6 +103,8 @@ Keep detailed decisions in the architecture document, not another design file.
 coding and review standard for humans and agents. Follow its language/tool
 configuration, ownership, failure-handling and evidence rules. Run `just quality`
 for the common checks, then apply the affected rows of the required-check matrix.
+Use its [selection and result-reuse rules](CONTRIBUTING.md#selecting-checks-and-reusing-results)
+to avoid duplicate runs; retain the original revision and scope of reused evidence.
 Quality/maintenance tasks do not authorize feature wiring or resuming a tabled
 milestone. Review findings must distinguish defects from optional preferences;
 keep cleanup scoped and preserve other contributors' changes.

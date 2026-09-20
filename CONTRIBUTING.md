@@ -27,7 +27,10 @@ existing verified prefix. Keep its adjacent probe receipt and source manifest;
 reuse this dependency read-only. Configure fresh build directories in each
 checkout; never copy CMake caches or compilation databases between worktrees.
 
-On the currently qualified macOS desktop host, establish the baseline in order:
+On a new contributor checkout or after changing the toolchain, establish both
+headless and desktop build configurations on the qualified Mac in this order.
+For subsequent edits, select checks using the [matrix](#checks) and
+[result-reuse rules](#selecting-checks-and-reusing-results):
 
 ```sh
 python3 scripts/lapis.py doctor    # report which dependencies are ready
@@ -95,8 +98,10 @@ service-owned child; focus and acknowledgement must never imply approval.
 
 Each checkpoint hands off changed files, interface effects, exact commands and
 results, source SHA, platform/tool versions, evidence paths and remaining limits.
-The integration owner reviews the combined diff, reruns the accumulated checks
-on the assembled head, and updates README status and architecture acceptance.
+The integration owner reviews the combined diff, verifies the required coverage
+on the assembled source, and updates README status and architecture acceptance.
+Apply the [result-reuse rules](#selecting-checks-and-reusing-results) before
+scheduling checks that already passed on unchanged assembled source.
 Individual branches passing tests do not establish integration acceptance. Use
 one build owner per checkout/preset; shared `build/reports/<mode>/` receipts are
 overwritten on rerun, so preserve relevant logs before another run.
@@ -157,6 +162,13 @@ paired with evidence that its triggering action occurred. GUI checks own the
 foreground only for their declared test and run serially across checkouts. Workspace
 shortcuts must respect modal ownership; declaring an explicit shortcut context
 and testing blocked navigation is part of review for those controls.
+
+Parameterize cases that share setup and assertions, with a named subtest for each
+input variant. Preserve each boundary and its failure diagnostic. Similar scenarios
+at different layers can remain separate: Qt events test terminal logic, native
+macOS events test OS delivery, and service probes test process/transport behavior.
+Do not replace transition-specific recovery assertions with one final assertion
+that could hide an earlier failure.
 
 Use `just quality` (or `python3 scripts/lapis.py quality`) for the common repository
 and Python checks. It checks the instruction symlink and index ignore rule, diff
@@ -592,19 +604,57 @@ Run from the repository root:
 | `just cli-check` | Isolated live service/CLI and shell GUI acceptance |
 | `just native-input` | Automated macOS keyboard/clipboard and real Japanese IME through the PTY |
 
-Required checks accumulate when a change touches multiple areas:
+Required coverage accumulates when a change touches multiple areas. Take the
+union of the relevant checks; a check satisfying two rows runs once:
 
 | Change | Required validation |
 | --- | --- |
-| C++ code | `just check` plus meaningful behavioral cases; `just desktop` for desktop/service Qt code |
+| Shared C++ core, public contracts or build configuration | `just check` plus meaningful behavioral cases; add `just desktop` when desktop consumers or configuration are affected |
+| Desktop/service-only C++ | `just desktop` plus meaningful behavioral cases; no separate headless run unless shared core/build configuration also changed |
 | Memory/lifetime, parsing or process resources | Relevant cases through `just asan` |
 | Threading, queues or session lifecycle | Relevant cases through `just tsan`, separately from ASan |
 | PTY, local transport or CLI launch | `just desktop`, `just cli-check`, and desktop-enabled ASan/TSan as applicable below |
 | QML, rendering or desktop input | `just desktop` and `just ui-check`; live input changes also need `just cli-check` and `just native-input` on the qualified Mac |
-| Build/test tooling | `just verify-tools` plus affected positive check/build paths |
+| C++ verification runner, compiler/analyzer flags or toolchain | `just verify-tools` plus affected positive check/build paths |
+| Test cases or other test harnesses | `just quality` for Python; affected build/CTest cases for C++; exercise the affected runtime probe when its harness behavior changes |
 | Disk history | `python3 scripts/check_history.py --disk-full` on macOS, plus desktop-enabled ASan/TSan; the disk-full fixture creates and removes its own 32 MiB disk image |
-| Python tooling | `ruff check --config ruff.toml scripts` and `ruff format --config ruff.toml --check scripts`, plus relevant runtime probes |
+| Python tooling | `just quality` (includes Ruff and Python unit tests), plus relevant runtime probes |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; run `just quality` for shared check/config/instruction changes; no unrelated C++ rebuild |
+
+### Selecting checks and reusing results
+
+Select the required commands before running them:
+
+- `just quality` includes Python lint, format checks and unit discovery. Separate
+  Ruff or unittest commands are useful for focused diagnosis, but need not follow
+  a passing quality run on the same inputs.
+- `just desktop` includes all four core CTest suites and the C++ static checks.
+  For desktop/service-only changes it satisfies normal C++ validation. Keep
+  `just check` for shared-core changes and headless/build-configuration coverage;
+  Debug and desktop RelWithDebInfo are different configurations.
+- `just cli-check` includes the service cases and adds the desktop case. Do not
+  also run the service-only harness against the same binary merely to repeat
+  those cases. A different sanitizer binary is a distinct validation target.
+- ASan/UBSan and TSan detect different failures. Select relevant cases in each
+  required build, and record that scope; a targeted run is not a full-suite pass.
+  Qt input, native macOS input, disk-full recovery and live adapter probes also
+  retain their own acceptance boundaries.
+
+During iteration, run focused cases. Before handoff, establish the relevant
+integration coverage on the assembled source. Reuse an earlier passing result
+only when its tested code, tests, fixtures, dependencies, toolchain, build options
+and relevant environment are unchanged. A documentation/evidence-only commit or
+commit-hash change alone does not invalidate behavior checks. Changes to check
+selection or agent instructions still require reviewing which coverage applies.
+
+Keep the original receipt, tested revision and scope, and explain why it applies
+to the final diff. Do not relabel reused evidence as a fresh run on a new SHA.
+Use `git diff --check` and documentation/link checks for the new text instead of
+rerunning behavior suites solely to obtain a clean-tree receipt. New behavior,
+changed test inputs, failures, shared-contract changes or environment changes
+require the affected checks again. Required CI and repository rules still apply.
+The commands themselves execute their checks; this procedure does not add an
+automatic cache or silently skip a requested run.
 
 Without `just`, use `python3 scripts/check_cpp.py dev`, replacing `dev` with
 `asan`, `tsan`, `profile`, `desktop`, or `format` as appropriate. The detector check is
@@ -663,7 +713,8 @@ live round trips and the remaining service/desktop integration gap.
 
 After a failure, retain `build/reports/<mode>/receipt.json`, the named check log,
 and CTest's `build/<build-name>/Testing/Temporary/LastTest.log`. Fix the cause,
-rerun the failing suite, then rerun the relevant complete check on the final diff.
+rerun the failing suite, then establish the relevant complete coverage on the
+final diff. Reuse unaffected results according to the rules above.
 For a capture watchdog failure, inspect its log and window activation/frame
 prerequisites; stop competing GUI checks and reproduce that case in isolation.
 Preserve the original failure even if a clean run subsequently passes.

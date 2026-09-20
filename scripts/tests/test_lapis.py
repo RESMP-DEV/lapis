@@ -85,28 +85,24 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(lapis.command_bootstrap(), 9)
         self.assertIn("probe_terminal.py", run.call_args.args[0][1])
 
-    def test_explicit_socket_option_is_preserved(self):
+    def test_explicit_socket_argument_is_preserved(self):
         socket = self.temporary_root / "explicit.sock"
-        _, run = self.launch(["--socket", str(socket)])
+        cases = [
+            ["--socket", str(socket)],
+            [f"--socket={socket}"],
+        ]
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                _, run = self.launch(arguments)
 
-        command = run.call_args.args[0]
-        self.assertIn("--socket", command)
-        self.assertIn(str(socket), command)
-        self.assertEqual(
-            command.count("--socket")
-            + sum(str(part).startswith("--socket=") for part in command),
-            1,
-        )
-        self.assertFalse(self.runtime.exists())
-
-    def test_explicit_socket_assignment_is_preserved(self):
-        socket = self.temporary_root / "explicit.sock"
-        _, run = self.launch([f"--socket={socket}"])
-
-        command = run.call_args.args[0]
-        self.assertIn(f"--socket={socket}", command)
-        self.assertNotIn("--socket", command)
-        self.assertFalse(self.runtime.exists())
+                command = run.call_args.args[0]
+                self.assertEqual(command[-len(arguments) :], arguments)
+                self.assertEqual(
+                    command.count("--socket")
+                    + sum(str(part).startswith("--socket=") for part in command),
+                    1,
+                )
+                self.assertFalse(self.runtime.exists())
 
     def test_ui_preview_does_not_inject_a_socket(self):
         _, run = self.launch(["--ui-preview"])
