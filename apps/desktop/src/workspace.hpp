@@ -155,19 +155,32 @@ struct PreviewRequest {
 
 struct WorkspaceOptions {
     QString endpoint;
+    QString manifest; // Empty retains the explicit single-session connection path.
     std::optional<session::LaunchSpec> launch;
     session::wire::AttachMode mode{session::wire::AttachMode::reconnect};
 };
 
 class Workspace final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QVariantList sessions READ sessions CONSTANT)
+    Q_PROPERTY(QVariantList sessions READ sessions NOTIFY sessionsChanged)
+    Q_PROPERTY(bool registryEnabled READ registryEnabled CONSTANT)
+    Q_PROPERTY(bool loading READ loading NOTIFY workspaceChanged)
+    Q_PROPERTY(bool canAddSessions READ canAddSessions NOTIFY workspaceChanged)
+    Q_PROPERTY(QString status READ status NOTIFY workspaceChanged)
     Q_PROPERTY(bool previewMode READ previewMode CONSTANT)
     Q_PROPERTY(int focusedIndex READ focusedIndex WRITE setFocusedIndex NOTIFY focusChanged)
     Q_PROPERTY(
         lapis::desktop::SessionPreview* focusedSession READ focusedSession NOTIFY focusChanged)
   public:
     explicit Workspace(WorkspaceMode mode = WorkspaceMode::live, WorkspaceOptions options = {});
+    ~Workspace() override;
+    [[nodiscard]] bool registryEnabled() const { return !manifest_.isEmpty(); }
+    [[nodiscard]] bool loading() const { return loading_; }
+    [[nodiscard]] bool canAddSessions() const;
+    [[nodiscard]] QString status() const { return status_; }
+    Q_INVOKABLE bool addSession(bool codex, const QString& directory, const QString& endpoint = {});
+    Q_INVOKABLE bool removeSession(const QString& id);
+    Q_INVOKABLE void setInteractionBlocked(const QString& reason, bool blocked);
     [[nodiscard]] bool previewMode() const { return preview_mode_; }
     [[nodiscard]] SessionPreview* session(const QString& id) const;
     // Development fixture v1 only. No calls are accepted in a live workspace.
@@ -186,10 +199,24 @@ class Workspace final : public QObject {
     void setFocusedIndex(int index);
   signals:
     void focusChanged();
+    void sessionsChanged();
+    void workspaceChanged();
 
   private:
     [[nodiscard]] static QString rootDirectory();
     [[nodiscard]] static QString defaultEndpoint();
+    class Storage;
+    std::unique_ptr<Storage> storage_;
+    void loadRegistry();
+    void persistRegistry();
+    void appendSession(std::unique_ptr<SessionPreview> session);
+    void flushFocus();
+    QString manifest_;
+    QString status_;
+    QString pending_focus_;
+    QSet<QString> interaction_blocks_;
+    bool loading_{};
+    bool registry_ready_{};
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
     int focused_index_{};
     bool preview_mode_{};
