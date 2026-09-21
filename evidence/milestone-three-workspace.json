@@ -1,0 +1,214 @@
+{
+  "schema": "lapis.workspace/1",
+  "recorded_at": "2026-09-21T21:08:54.034558+00:00",
+  "scope": "Milestone 3 checkpoint 3A functional qualification with two retained sessions on macOS",
+  "passed": true,
+  "source": {
+    "revision": "7904db15cf127899bf9930709941975111deb565",
+    "dirty": false,
+    "sha256": {
+      "CONTRIBUTING.md": "1b3180224fab5d9861468677ff90211b6f6f93923bbadfaa1dffa18af060cc81",
+      "README.md": "a547d200628415d6b05b6bce0286d297bc98d21afb276e0c30fa345837b66a4f",
+      "apps/desktop/CMakeLists.txt": "684a2ff4b0562573df50b5d1723e894d03a147a838457376dc8d2336898265d7",
+      "apps/desktop/qml/Main.qml": "2a54b8d44270818df246436aad02ad785e1f669c010563a707f57ac6699b581c",
+      "apps/desktop/src/live_connection.cpp": "978c8893437b1c08e42b1fdd95eddfbbed6e983053bf63c3a4a88e866dc35e32",
+      "apps/desktop/src/live_connection.hpp": "adc93ce427fea1acaaa54879f4f878094b86b3592d17b06e4be3c186b989f02c",
+      "apps/desktop/src/main.cpp": "a3693f30283cfe44bf8253d92e5849767a548c7ff6896387ba57f44d2675d5a2",
+      "apps/desktop/src/terminal_surface.cpp": "d9bc751b747d28b05d6b24d717700da89a516df908a2ba23996f1d5406d762af",
+      "apps/desktop/src/terminal_surface.hpp": "296e0904c3e9624f9e850d57d44d4e81cac751094609a5609d82a73cf7a42816",
+      "apps/desktop/src/ui_preview.cpp": "9fff3d6c387adba5b566eef1b189cd30c8cf592936ee894a9895733358e5cea5",
+      "apps/desktop/src/ui_preview.hpp": "dccca9672cf33fb75354a03e6342c5739d3ef7fbf5dce632f8403f1d70dba8a7",
+      "apps/desktop/src/workspace.cpp": "4bb2fc73138f6d3882372ed3b68ea861ff5d14f02db32f34745f427d142961c5",
+      "apps/desktop/src/workspace.hpp": "9ede2a7f7538d01c4600d06ca993414e1cd4e57ebc590686d2b8fb4db738bb41",
+      "apps/desktop/src/workspace_registry.cpp": "78130cd8436e6e3f55bcb13aed1c2449dab264519d6db4b584c22b83060c8aab",
+      "apps/desktop/src/workspace_registry.hpp": "ebf039c1ad131fccf1c867aaea4fab459365317be279bd3b087d97859c9005ea",
+      "apps/desktop/tests/live_connection_test.cpp": "463ffe5af1ff9d7a908d3861d6510698b8c358d12a01eeecd8ee33e8abfdedc2",
+      "apps/desktop/tests/native_input_probe.cpp": "2808f9f4f026aab0a48426fe0096c2cc7522e6dc03cb205ff69891179c87e211",
+      "apps/desktop/tests/platform/native_input_driver.mm": "febe6f9bc2476663446050978590c91c674c208817a6b5a27af8910222171253",
+      "apps/desktop/tests/platform/window_activation.mm": "207e03bcf1b027db83ced3f4be2ca794da195d9ee8d585117efa59c75be54146",
+      "apps/desktop/tests/terminal_input_test.cpp": "e5ce2fb100248f2c9c099551428cde89d8c0f63ac6836d5defddda7e0a99202d",
+      "apps/desktop/tests/terminal_render_test.cpp": "058e3f2c5f692a3efadebf78890ec1d0f12f0e2d60a0ba28926afebf816ef767",
+      "apps/desktop/tests/ui_preview_test.cpp": "fe70b10a61200faed8b3a0152ff5120b5f519e7a52a27b93e1e3a8389b926b84",
+      "apps/desktop/tests/workspace_registry_test.cpp": "a64be4ad37fade48ac2a624211061b76732fec62cf965947562994cb25d91f18",
+      "apps/desktop/tests/workspace_test.cpp": "06bfebea0a304b236f4f4f31df4193156de265aa16d04040beae25ff3e49dee9",
+      "apps/desktop/tests/workspace_ui_probe.cpp": "455d8fc9a2a90fa765f753f51d615b9d9b97d411a9d5d0bc4c95eb71c675fad7",
+      "docs/architecture.md": "1b19d8a014b558936a21e141643aea42301bc3e7842adfc01a304e227756ccd2",
+      "justfile": "a5c3a49a82f882a5736d85bff0ea3e7e2387b35ddccfb1d29b26f835a621dc31",
+      "scripts/check_cli_launch.py": "78f9ea8b53de89626b819ff8f5a379dfa1d6ad37a8964eaa8ecf87c61f9c53c5",
+      "scripts/lapis.py": "82fbf9868044b04acb7a6cb7b564af730c8caee086477c86fbd3ebaaa3c084e3",
+      "scripts/tests/test_lapis.py": "71bed5863c2eaed72d25f7705593e72c36afa2d1a6cc2d45b4e397a2f51d0d52"
+    }
+  },
+  "platform": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "macos": "26.7",
+    "qt": "6.11.2",
+    "graphics": "Qt Quick Vulkan through MoltenVK"
+  },
+  "checks": [
+    {
+      "name": "desktop CTest",
+      "suites": 20,
+      "log": "build/m3-start/desktop-final.log",
+      "passed": true
+    },
+    {
+      "name": "workspace/registry/connection ASan and UBSan",
+      "suites": 3,
+      "log": "build/m3-start/asan-tests.log",
+      "passed": true
+    },
+    {
+      "name": "workspace/registry/connection TSan",
+      "suites": 3,
+      "log": "build/m3-start/tsan-tests.log",
+      "passed": true
+    },
+    {
+      "name": "repository and Python quality",
+      "log": "build/m3-start/quality-final.log",
+      "passed": true
+    },
+    {
+      "name": "clang-tidy and Cppcheck",
+      "logs": [
+        "build/m3-start/static.log",
+        "build/m3-start/static-followup.log",
+        "build/m3-start/workspace-ui-tidy-final.log",
+        "build/m3-start/final-surface-checks.log"
+      ],
+      "note": "Initial findings repaired; changed translation units and the added GUI probe passed follow-up analysis.",
+      "passed": true
+    },
+    {
+      "name": "CLI/service/desktop and installed Codex TUI",
+      "cases": 15,
+      "receipt": "build/m3-start/cli-current/receipt.json",
+      "codex": {
+        "sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+        "arguments": [],
+        "prompt_submitted": false
+      },
+      "passed": true
+    },
+    {
+      "name": "native macOS input",
+      "cases": 20,
+      "receipt": "build/m3-start/native-input-current.json",
+      "passed": true
+    },
+    {
+      "name": "production workspace GUI",
+      "receipt": "build/m3-start/workspace-ui-final.json",
+      "passed": true
+    }
+  ],
+  "workspace_behavior": [
+    "Two independent service and shell identities; separate input, output, geometry and history",
+    "Two-process archive writes with global quota eviction; archive access failure preserves both live screens",
+    "Coalesced registry mutations survive immediate workspace destruction",
+    "Same service and child PIDs after closing and reopening production QML",
+    "Removing a live entry detaches; explicit adoption reconnects the same child",
+    "One child exit leaves the other usable",
+    "Corrupt registry preserved; replacement identity never authorizes input",
+    "Manual focus defers during held keys, composition, paste and modal input"
+  ],
+  "gui": {
+    "capture": true,
+    "graphics_api": "Vulkan",
+    "initial": {
+      "background_geometry": {
+        "columns": 95,
+        "rows": 18
+      },
+      "processes": [
+        {
+          "service_pid": 82895,
+          "shell_pid": 82897
+        },
+        {
+          "service_pid": 82905,
+          "shell_pid": 82906
+        }
+      ]
+    },
+    "layouts": [
+      "focus",
+      "columns",
+      "blocks",
+      "stack"
+    ],
+    "limitations": "Qt event GUI delivery only; native OS input, GPU performance, and physical presentation latency are not measured",
+    "platform": "26.7.0",
+    "qml": "qrc:/qml/Main.qml",
+    "restored": {
+      "processes": [
+        {
+          "service_pid": 82895,
+          "shell_pid": 82897
+        },
+        {
+          "service_pid": 82905,
+          "shell_pid": 82906
+        }
+      ],
+      "stable": true
+    },
+    "scope": "opt-in macOS production Workspace/QML qualification",
+    "shell": "/bin/sh",
+    "status": "passed-clean"
+  },
+  "captures_sha256": {
+    "build/m3-start/captures-final/blocks.png": "5c845feded414230dc594152657af2aeb7bc671e6355cbffe1e201ff6c27c100",
+    "build/m3-start/captures-final/columns.png": "e364167ee91d0620e074009ef43305a96c13b8bd064c1d2020c975c0c7998324",
+    "build/m3-start/captures-final/empty.png": "cf502d37af43bcaf0eb241485484290547fc69ad443ee07ae1f4809065fcecef",
+    "build/m3-start/captures-final/focus.png": "f672c53169dc0f78e0a93e0530ced22ee1335c2c1c2737a63680b2d267f9bb91",
+    "build/m3-start/captures-final/stack.png": "62e24e89ce967e61dee2c055244b3383a09abe4f7c6ab8e2ab13359e15f43453",
+    "build/m3-start/captures-final/workspace-ui.png": "62e24e89ce967e61dee2c055244b3383a09abe4f7c6ab8e2ab13359e15f43453"
+  },
+  "native_workspace_cases": [
+    {
+      "case": "workspace IME commit defers focus switch",
+      "first_received_hex": "e38182",
+      "passed": true,
+      "second_received_hex": "",
+      "workspace_index_after_commit": 1,
+      "workspace_index_before": 0
+    },
+    {
+      "case": "workspace US input follows focus",
+      "first_received_hex": "",
+      "passed": true,
+      "second_received_hex": "62",
+      "workspace_index_after_commit": 1,
+      "workspace_index_before": 1
+    }
+  ],
+  "native_environment_restored": {
+    "input_source_restored": true,
+    "enabled_sources_restored": true,
+    "clipboard_restored": true
+  },
+  "independent_review": {
+    "route": "CCR GLM",
+    "result": "No concrete introduced defects found in final 3A functional review",
+    "artifact": "build/m3-start/final-review.txt"
+  },
+  "repairs_observed": [
+    "Preserved background geometry on reconnect without a GUI size request",
+    "Moved activation handling into the shared view host; native fixtures share the tested foreground activation helper",
+    "Rendering checks allow the bounded 10 Hz preview refresh cadence",
+    "Installed Codex TUI harness checks raw PTY mode: the first banner preceded input readiness"
+  ],
+  "limits": [
+    "Two-session functional scope; the eight-entry registry bound is not eight-session qualification",
+    "Entries require a first verified handshake before the retention guarantee applies",
+    "Cross-session Codex attention and automatic carousel remain checkpoints 3B and 3C",
+    "No Linux desktop or second CLI adapter qualification",
+    "No new two-session input-to-presentation, memory or idle-load performance baseline",
+    "OS-injected input tested; physical typing is not a required acceptance step",
+    "Sanitizers cover the three affected service/workspace suites, not the complete desktop suite",
+    "Dependency packaging and redistribution notices remain unfinished"
+  ]
+}
