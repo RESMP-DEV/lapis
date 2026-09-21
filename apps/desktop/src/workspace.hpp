@@ -4,6 +4,7 @@
 #include <lapis/session/terminal.hpp>
 
 #include "launch_spec.hpp"
+#include "workspace_registry.hpp"
 #include "transport/attention_protocol.hpp"
 #include "transport/local_protocol.hpp"
 
@@ -24,7 +25,7 @@ class LiveConnection;
 
 class SessionPreview final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QString sessionId READ sessionId CONSTANT)
+    Q_PROPERTY(QString sessionId READ sessionId NOTIFY connectionChanged)
     Q_PROPERTY(bool attentionPending READ attentionPending NOTIFY attentionChanged)
     Q_PROPERTY(QString attentionReason READ attentionReason NOTIFY attentionChanged)
     Q_PROPERTY(quint32 attentionSerial READ attentionSerial NOTIFY attentionChanged)
@@ -51,6 +52,8 @@ class SessionPreview final : public QObject {
     ~SessionPreview() override;
     void startLive(const QString& endpoint, const session::LaunchSpec& launch,
                    session::wire::AttachMode mode = session::wire::AttachMode::reconnect);
+    void restoreLive(const WorkspaceEntry& entry);
+    [[nodiscard]] std::optional<WorkspaceEntry> reconnectEntry() const;
     Q_INVOKABLE void reconnect();
     Q_INVOKABLE void discoverSession();
     Q_INVOKABLE void startNewSession();
@@ -85,7 +88,12 @@ class SessionPreview final : public QObject {
     void sendText(const QByteArray& bytes, bool paste = false);
     void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
     void resizeTerminal(session::TerminalSize size);
-    void setSessionId(const QString& id) { session_id_ = id; }
+    void setSessionId(const QString& id) {
+        if (session_id_ != id) {
+            session_id_ = id;
+            emit connectionChanged();
+        }
+    }
     [[nodiscard]] const QString& sessionId() const { return session_id_; }
     [[nodiscard]] bool attentionPending() const { return attentionCount() != 0; }
     [[nodiscard]] QString attentionReason() const;
