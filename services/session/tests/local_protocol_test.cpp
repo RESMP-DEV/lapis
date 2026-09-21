@@ -31,7 +31,7 @@ void identity_messages() {
 
     const QByteArray attach = wire::encode_attach(
         {.mode = wire::AttachMode::reconnect, .fingerprint = fingerprint, .expected = identity});
-    require(attach.size() == 69 && attach.left(4) == QByteArrayLiteral("\0\0\0\4"));
+    require(attach.size() == 69 && attach.left(4) == QByteArrayLiteral("\0\0\0\5"));
     const auto decoded_attach = wire::decode_attach(attach);
     require(decoded_attach.mode == wire::AttachMode::reconnect &&
             decoded_attach.fingerprint == fingerprint && decoded_attach.expected == identity);
@@ -57,7 +57,7 @@ void identity_messages() {
     rejects([&] { static_cast<void>(wire::decode_attach(attach + 'x')); });
     rejects([&] { static_cast<void>(wire::decode_attach(attach.chopped(1))); });
     auto bad_version = attach;
-    bad_version[3] = char{2};
+    bad_version[3] = char{4};
     rejects([&] { static_cast<void>(wire::decode_attach(bad_version)); });
 
     const wire::Hello hello{attachment, quint64{0x0a0b0c0d0e0f1011}};

@@ -18,9 +18,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = 4
+VERSION = 5
 HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
 HISTORY_REQUEST, HISTORY_PAGE = range(10, 12)
+ATTENTION_SNAPSHOT, ATTENTION_DECISION = range(12, 14)
 WAIT = 5
 
 
@@ -38,10 +39,13 @@ def qt_string(value):
     return struct.pack(">I", len(encoded)) + encoded
 
 
-def fingerprint(program, arguments, directory):
+def fingerprint(program, arguments, directory, *, codex=False):
     data = qt_string(os.path.abspath(program)) + struct.pack(">I", len(arguments))
     data += b"".join(qt_string(argument) for argument in arguments)
-    return hashlib.sha256(data + qt_string(Path(directory).resolve())).digest()
+    data += qt_string(Path(directory).resolve())
+    if codex:
+        data = b"lapis-codex-v1\0" + data
+    return hashlib.sha256(data).digest()
 
 
 def frame(kind, payload=b""):
@@ -66,11 +70,11 @@ def decode_history_reply(payload):
     }
 
 
-def attach_payload(program, arguments, directory, expected=None):
+def attach_payload(program, arguments, directory, expected=None, *, codex=False):
     identity = expected[:32] if expected is not None else bytes(32)
     return (
         struct.pack(">I", VERSION)
-        + fingerprint(program, arguments, directory)
+        + fingerprint(program, arguments, directory, codex=codex)
         + bytes([1 if expected is not None else 0])
         + identity
     )
@@ -148,7 +152,7 @@ class WireClient:
         self.socket.close()
 
     def send(self, kind, payload=b""):
-        if kind in (TEXT, PASTE, KEY, RESIZE, HISTORY_REQUEST):
+        if kind in (TEXT, PASTE, KEY, RESIZE, HISTORY_REQUEST, ATTENTION_DECISION):
             require(self.attachment is not None, "No accepted attachment")
             payload = self.attachment + payload
         self.socket.sendall(frame(kind, payload))
@@ -171,8 +175,10 @@ class WireClient:
                 raise EOFError("Service disconnected")
             self.buffer.extend(chunk)
 
-    def attach(self, program, arguments, directory, expected=None):
-        self.send(ATTACH, attach_payload(program, arguments, directory, expected))
+    def attach(self, program, arguments, directory, expected=None, *, codex=False):
+        self.send(
+            ATTACH, attach_payload(program, arguments, directory, expected, codex=codex)
+        )
         pid = self.hello()
         if expected is not None:
             require(self.attachment[:32] == expected[:32], "Reconnect identity changed")
@@ -268,14 +274,19 @@ class Service:
         arguments,
         directory,
         env_overrides=None,
+        *,
+        codex=False,
     ):
         self.endpoint = runtime / (name + ".sock")
         self.program, self.arguments, self.directory = program, arguments, directory
         self.child_pid = None
+        self.codex = codex
         self.attachment = None
         self.log = (artifacts / (name + ".service.log")).open("wb")
         self.process = subprocess.Popen(
-            [str(binary), str(self.endpoint), str(directory), program, *arguments],
+            [str(binary)]
+            + (["--codex"] if codex else [])
+            + [str(self.endpoint), str(directory), program, *arguments],
             stdin=subprocess.DEVNULL,
             stdout=self.log,
             stderr=self.log,
@@ -292,7 +303,11 @@ class Service:
         client = WireClient(self.endpoint)
         try:
             pid = client.attach(
-                self.program, self.arguments, self.directory, self.attachment
+                self.program,
+                self.arguments,
+                self.directory,
+                self.attachment,
+                codex=self.codex,
             )
             self.attachment = client.attachment
             if self.child_pid is not None:
@@ -657,13 +672,24 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
                 )
                 fragmented.send(TEXT, b"fragmented-ok\n")
                 fragmented.snapshot(lambda s: "ECHO:fragmented-ok" in s["text"])
-            with WireClient(service.endpoint) as legacy:
-                legacy.send(
-                    ATTACH,
+            for version, payload in (
+                (
+                    2,
                     struct.pack(">II", 2, 32)
                     + fingerprint(program, arguments, runtime),
-                )
-                require("incompatible" in legacy.status(), "v2 attachment accepted")
+                ),
+                (
+                    4,
+                    struct.pack(">I", 4)
+                    + attach_payload(program, arguments, runtime)[4:],
+                ),
+            ):
+                with WireClient(service.endpoint) as legacy:
+                    legacy.send(ATTACH, payload)
+                    require(
+                        "incompatible" in legacy.status(),
+                        f"v{version} attachment accepted",
+                    )
             with WireClient(service.endpoint) as idle:
                 idle.send(ATTACH, attach_payload(program, arguments, runtime))
                 idle.hello()

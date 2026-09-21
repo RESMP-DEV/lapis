@@ -27,12 +27,12 @@ implemented and qualified on macOS.**
 | --- | --- | --- |
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
 | PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS | Recovery after service loss and later Linux qualification |
-| Local transport | Version 4 identity/epoch/generation attachment and correlated history paging, restored-screen input gating, bounded queues and explicit reconnect | Automatic recovery policy and multi-session registry |
+| Local transport | Version 5 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect | Automatic recovery policy and multi-session registry |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK | Cross-cell contextual shaping, selection and accessibility; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
 | UI iteration and attention fixture | Isolated source-QML reload, captures, configurable navigation, appearance settings and finite red cue replay | Live multi-session routing and real attention integration |
-| Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Adapter/service wiring and workspace-wide aggregation |
-| Codex integration | Direct TUI launch and same-child reattachment; isolated shared-server approval/input requests, observer responses, resume/read reconciliation and TUI display | Production adapter/service integration, cancellation and simultaneous live requests |
+| Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Desktop wiring and workspace-wide aggregation |
+| Codex integration | Direct TUI launch and same-child reattachment; isolated shared-server approval/input requests, observer responses, resume/read reconciliation, service IPC approval/input responses and TUI display | Desktop response controls, cancellation and simultaneous live requests |
 
 [Desktop evidence](evidence/desktop-preview.json),
 [UI refinement evidence](evidence/ui-preview.json),
@@ -48,8 +48,8 @@ product milestone is attention state and verified Codex request handling; the
 [Milestone 2 plan](docs/architecture.md#milestone-2-attention-and-codex-plan)
 defines its route decision, implementation slices and acceptance checks.
 The first checkpoint implements the standalone attention core and exercises real
-Codex request round trips. Remaining Milestone 2 implementation is tabled
-while code quality and shared contributor standards are the active priority. The live desktop
+Codex request round trips. Following the quality cleanup in PR #6, Milestone 2
+now includes the production Codex adapter and session-service integration. The live desktop
 continues to use fixture attention indicators. See the
 [attention test procedure](CONTRIBUTING.md#codex-attention-qualification).
 Latency and warm-switch targets remain provisional.
@@ -135,15 +135,15 @@ before replacing the window, so reusing it for Codex reports a launch mismatch.
 
 Repeat the same command without `--new-session` to reconnect to the same Codex
 process. Use `--discover` only to explicitly adopt an existing matching session
-when no usable saved identity exists. Codex 0.154.0 removed the older
-`--no-daemon` flag; the plain TUI is the owned backend, and no lapis-specific
-Codex options are required. Other executables and literal arguments work after
+when no usable saved identity exists. Plain terminal launch forwards Codex options literally. Its persistent TUI
+process is separate from the upstream CLI's backend ownership; the managed
+service qualification uses a dedicated app-server. Other executables and literal arguments work after
 `--`. Explicit programs or `--cwd` require a socket, which the launcher supplies
 by default; a launch mismatch is rejected before replacing the existing window.
 No hooks or approval settings are changed. There is still one live pane per
 window; its other cards remain fixtures.
 
-The default socket is `runtime/desktop-v4.sock`. Older v1/v2/v3 sessions are not
+The default socket is `runtime/desktop-v5.sock`. Older v1/v2/v3/v4 sessions are not
 migrated or terminated by this build. See the
 [qualification procedure](CONTRIBUTING.md#cli-integration-qualification) for the
 optional no-prompt Codex check and current limits.

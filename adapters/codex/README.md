@@ -89,6 +89,24 @@ records exercised scope and limitations. Next, implement and qualify adapter
 failure cases, the service/IPC connection and the minimal
 live attention UI described in the architecture plan.
 
+## Service adapter checkpoint
+
+The compiled adapter uses Qt's local socket with bounded WebSocket framing,
+normalizes command approvals and user-input requests, and owns resume/read
+reconciliation in the session service. Wire v5 carries authoritative attention
+snapshots and exact attachment/epoch/revision-bound decisions. A sent response
+remains pending until source resolution. `evidence/codex-service.json` records
+real approval and question responses through this route, same-child reattachment,
+and owned-process cleanup after service death.
+
+Discovery reads thread metadata: the ordinary TUI creates a persistent thread,
+and the same server can create ephemeral work. Only the persistent TUI thread is
+response-capable in this checkpoint; another persistent thread fails closed.
+Temporary-thread events cannot redirect a decision. Unknown binary hashes,
+failed reconciliation and lost connections disable responses. Other request kinds
+are observation-only and must be answered in the terminal. Desktop controls and
+simultaneous/cancelled live requests remain separate qualification work.
+
 ## Structured app-server route
 
 Candidate for sessions owned by lapis: launch `codex app-server --listen stdio://`,
@@ -133,9 +151,9 @@ hooks or a supported shared-server attachment before claiming CLI attention
 coverage.
 
 The installed CLI advertises `--remote` endpoints including Unix sockets and
-WebSockets, and an `app-server daemon` with a stdio `proxy`. The older
-`--no-daemon` flag is gone in 0.154.0; a plain TUI invocation is the backend
-owned by that terminal, and no lapis-specific flag selects it.
+WebSockets, and an `app-server daemon` with a stdio `proxy`. The pinned build currently advertises `--no-daemon` as well. Plain terminal
+launch forwards the requested options unchanged; preserving the TUI PID does
+not establish ownership of any upstream shared daemon.
 Use an explicitly selected mode in qualification and record it. Killing a TUI
 process or retaining its PID says nothing by itself about daemon-owned work.
 Do not start/stop the user's shared daemon or install global hooks for a probe.

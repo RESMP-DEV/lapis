@@ -35,6 +35,15 @@ int main(int argc, char** argv) {
         auto other = launch;
         other.size = {80, 24};
         require(launch_fingerprint(other) == fingerprint);
+        other.agent = AgentMode::codex;
+        require(launch_fingerprint(validate_launch(other)) != fingerprint);
+        other.arguments = {QStringLiteral("--remote=unix:///tmp/other.sock")};
+        rejects([&] { static_cast<void>(validate_launch(other)); });
+        other.arguments = {QStringLiteral("--"), QStringLiteral("--remote=literal-prompt")};
+        require(validate_launch(other).arguments == other.arguments);
+        other.agent = static_cast<AgentMode>(99);
+        rejects([&] { static_cast<void>(validate_launch(other)); });
+        other = launch;
         other.arguments = {QStringLiteral("-c"), QStringLiteral("a b")};
         const auto literal = launch_fingerprint(other);
         other.arguments = {QStringLiteral("-c"), QStringLiteral("a"), QStringLiteral("b")};

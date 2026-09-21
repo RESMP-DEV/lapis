@@ -4,16 +4,19 @@
 #include <QByteArray>
 #include <QString>
 #include <QStringList>
+#include <cstdint>
 #include <lapis/session/terminal.hpp>
 
 namespace lapis::session {
 // Internal launch contract v1. Arguments are passed literally, never interpreted
 // by a shell. Initial geometry is not part of attachment identity.
+enum class AgentMode : std::uint8_t { terminal, codex };
 struct LaunchSpec {
     QString program;
     QStringList arguments;
     QString directory;
     TerminalSize size{100, 30};
+    AgentMode agent{AgentMode::terminal};
 };
 
 // Resolve the executable and working directory; reject invalid/bounded inputs.

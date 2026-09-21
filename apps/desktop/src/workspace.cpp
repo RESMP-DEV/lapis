@@ -33,7 +33,7 @@ QString Workspace::rootDirectory() {
 }
 
 QString Workspace::defaultEndpoint() {
-    return QDir{rootDirectory()}.filePath(QStringLiteral("runtime/desktop-v4.sock"));
+    return QDir{rootDirectory()}.filePath(QStringLiteral("runtime/desktop-v5.sock"));
 }
 
 Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)

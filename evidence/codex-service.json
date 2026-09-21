@@ -1,0 +1,142 @@
+{
+  "schema": "lapis.codex-service/1",
+  "recorded_at": "2026-09-21T04:45:48.822702+00:00",
+  "scope": "Milestone 2C: compiled Codex adapter and persistent session service; desktop response controls remain next",
+  "platform": "Darwin arm64",
+  "milestone_two_complete": false,
+  "source": {
+    "baseline_revision": "d2fe28366b4616dba74d63e9f0ba535211348df3",
+    "state": "working implementation with exact file hashes",
+    "sha256": {
+      "CMakeLists.txt": "1673ac8e8437ce45951ff92ce84a66f43d8fc7d6e3c9a2206386a5aefbd16e02",
+      "adapters/codex/CMakeLists.txt": "34ebab1650c3832c82182a5bc94fbc33b7349fc4f77dd9a305328e81c2f64d4c",
+      "adapters/codex/src/observer.cpp": "50a1d6c5d099855e94fc94bc1d189d795e525cb1c2833907a0a84bd8ea606f4a",
+      "adapters/codex/src/observer.hpp": "8060eb5a1b3b8687da387ae1a1b9a6001175ab4ddda22b10bcadd18177d7af3a",
+      "adapters/codex/src/unix_websocket.cpp": "2fbc6c8cc6d46d9e89add220ff854656536f6a69ff097eb7f06e8c7943907dd0",
+      "adapters/codex/src/unix_websocket.hpp": "cc590f6282219c00714eba1151f42ead2afd00cf22cbe341bfe8825a56349201",
+      "adapters/codex/tests/observer_test.cpp": "ac44d6f387620ee20da0c308b4d8e37a281d628c657fc759c08f0b13c540c8a2",
+      "adapters/codex/tests/unix_websocket_test.cpp": "e8b47d068cb92c496fd7e34aade18773ed492dd80d33f71527c536f71808c6da",
+      "scripts/check_cli_launch.py": "0dd86a1b561115d72c5a43e6b5b76137d644642d20778c30051fa1d9b025134d",
+      "scripts/check_service_attention.py": "4eb0dd989f22a2642f4c9338db0f20b1b491a4e5f8ace0694acd1da6ff1aae4e",
+      "services/session/CMakeLists.txt": "187ccac8b1390917f4a336dd2cb66e56ccad7cc56d203e9cc5c6c73aa7c5a696",
+      "services/session/include/lapis/session/attention.hpp": "076cebda15d0186509bc44237926cac8a3606184904b7cfc770aa9d4f282c9d4",
+      "services/session/include/lapis/session/terminal.hpp": "f4b5606c232bcd5eabfe37240dd2eec06f4f09a06ec9fc3d38423004476f1f77",
+      "services/session/src/attention.cpp": "35c1903156e222f6166d6082ff62a851f8c6b37fbd7c270bd1aa3577e8dc8af4",
+      "services/session/src/history_store.cpp": "f3880b5e218fdcb86f0e642bca690e4108853057676ca3114c7fe744e0ffc50e",
+      "services/session/src/history_store.hpp": "f8a55876a8ea7a09bbc163fbfbd538629d61a28ea99a136c570f4e783a279f4f",
+      "services/session/src/history_worker.cpp": "12e79d48fa50a1bfadbbc1f1a177b872cbbe6982d9cd640fe04941ea251e3bf9",
+      "services/session/src/history_worker.hpp": "4b6391462fa7e5bc52c9650aa1474fa2c5847f7e5186927d1f0c3eebfd26a68c",
+      "services/session/src/launch_spec.cpp": "4eb4a2c2ae7710b816ed5048bd46fe3f51c728bb8f7114b15e1af97471ab4c5b",
+      "services/session/src/launch_spec.hpp": "0a5adb681ac8738de6dced36be73980825963d2a4a764e383b3ea0105e7a4c12",
+      "services/session/src/platform/posix/local_endpoint.cpp": "601980a296137a848f0dddc09591be9174415dfe8d5b8e088249477d8a56ef01",
+      "services/session/src/platform/posix/local_endpoint.hpp": "f1b2af01921868320d9b976800c8ce9ce89e8245b966f1f1e2916b3daec2322d",
+      "services/session/src/platform/posix/process_group_guard.cpp": "babf4aa4fc5652601a851ce000d32789a9b4b8c0827976ab517d792b5334daae",
+      "services/session/src/platform/posix/process_group_guard.hpp": "00afe9bf76f305a8ee64211a705913aab3fe5a6f9526cdb939b2c3e7c8f6f835",
+      "services/session/src/platform/posix/pty_process.cpp": "0b9c2670c801c4976708284c78e1b3c5a0a2e47b1b50efafeac7a69f0936d7a2",
+      "services/session/src/platform/posix/pty_process.hpp": "5ac79160887d2004b89c979cabfd6b3d08b9652a4249c6dac04cd4aaf1271904",
+      "services/session/src/platform/posix/unique_fd.cpp": "92efde7730f6ec07d350593d295915118f9a8bb4edc1bcd7c86a8a46d0196a78",
+      "services/session/src/platform/posix/unique_fd.hpp": "599c58ab530dac5f70327f70f07c325552cce833e1c35d71a2dc3dd79c9211ec",
+      "services/session/src/session_descriptor.cpp": "4b8af12267aa09bb6be6626c18e49c0072c2ab6ef4220856e2d98b55e8fd5ff7",
+      "services/session/src/session_descriptor.hpp": "3ac88cb4dbbb4cf6f671600b7b2134e500a09900c1f26a57fa5fa6034467eeaf",
+      "services/session/src/session_service.cpp": "d3ee24ece50eee76ec6568e6c28eeb3a2cfbc30b33a4798ed149c13b8d85597c",
+      "services/session/src/terminal/terminal.cpp": "1c7626cffeb78758d83c658dd8457b472fcade40fa0a36dbbec38a91cba9a21f",
+      "services/session/src/transport/attention_protocol.cpp": "9a17ceabab03c782a0a1e1497fb2fe6f29b8634f9774e77235d7b659fbe1ac0d",
+      "services/session/src/transport/attention_protocol.hpp": "eca8923a620ccff68a2b4a8ff676a921ee2620a1357a26d25620a504bdc88d62",
+      "services/session/src/transport/local_protocol.cpp": "a2d2afcd9539ca83f5996e96d2763e6312de3ab34d77a4340aea5e77a1c6ab67",
+      "services/session/src/transport/local_protocol.hpp": "a2886c78620f69c738fcd8d25ee68b0e021debbeb4e92f48f5d91bcdfb3c4894",
+      "services/session/tests/attention_protocol_test.cpp": "208150c64a6819ba17b86733663006c8eb976ce6d7d71705712ccac2464d2192",
+      "services/session/tests/attention_test.cpp": "01f87ce62fae99b35cf9356e201aa041d37f0cc2640b920a16a2d0b82c058427",
+      "services/session/tests/history_store_test.cpp": "48d1e3107340c1558ea151857eec61a92e49198a7a899663ed55228b12223cba",
+      "services/session/tests/launch_spec_test.cpp": "6452af02ce5be23c515f5edaf5fa6d3ba9084a529686dad1e99d5e831f028e70",
+      "services/session/tests/local_protocol_test.cpp": "7ff08d0234a60b349f29913af5a54431aa5cd4a79f265dde2b24c427a67d09df",
+      "services/session/tests/pty_process_test.cpp": "3ea8f8dc9b2e22fd856feb7ef48705274afda4d6f9fc2409e4e9a1ca7b3ca3b7",
+      "services/session/tests/session_descriptor_test.cpp": "c6dfb9a6cc70f4bd1e108cfdcd46c73f25239c20fd7304d47c78322b7e2c9764",
+      "services/session/tests/terminal/terminal_test.cpp": "c01b717dc718bafc1bf3c96955ad45b762312549dd7eeca38719405b539c1712",
+      "services/session/tests/unique_fd_test.cpp": "c50a4757f7d255e80ae8b58e1f567d7cc6a54ab195d6f360f5f711b42983d0a9"
+    }
+  },
+  "route": {
+    "protocol": 5,
+    "ownership": "Dedicated backend and ordinary TUI are independently guarded children of the service",
+    "thread_scope": "One persistent TUI thread, with explicit metadata classification of ephemeral backend threads",
+    "response_kinds": [
+      "item/commandExecution/requestApproval",
+      "item/tool/requestUserInput"
+    ],
+    "reconciliation": "resume then read on the bound thread; resolutions win over copied pending requests",
+    "hash_gate": "Unqualified binaries retain terminal operation but cannot send structured responses"
+  },
+  "live": {
+    "timestamp": "2026-09-21T04:40:11.880662+00:00",
+    "checks": [
+      "managed TUI startup and attention attachment",
+      "real command approval over service IPC",
+      "pending request survives same-child reattachment",
+      "stale token rejected",
+      "duplicate decision rejected",
+      "source resolution and successful continuation",
+      "real user-input answer over service IPC and successful continuation"
+    ],
+    "passed": true,
+    "live_model_turn": true,
+    "codex_sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+    "source": "ordinary TUI created thread, service-owned backend and observer",
+    "model": "zai,glm-5.3",
+    "model_provider": "lapis_probe",
+    "last_attention": {
+      "ready": true,
+      "connected": true,
+      "diagnostic": "Codex synchronized",
+      "activity": 1
+    },
+    "last_request_count": 0,
+    "service_reaped": true,
+    "owned_process_groups_cleaned": true,
+    "elapsed_seconds": 14.736
+  },
+  "no_turn": {
+    "timestamp": "2026-09-21T04:40:10.722178+00:00",
+    "checks": [
+      "managed TUI startup and attention attachment",
+      "same-child detach and reattach without a model turn",
+      "abrupt service death cleans up TUI and backend groups"
+    ],
+    "passed": true,
+    "live_model_turn": false,
+    "codex_sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+    "source": "ordinary TUI created thread, service-owned backend and observer",
+    "service_reaped": true,
+    "owned_process_groups_cleaned": true,
+    "elapsed_seconds": 1.995
+  },
+  "checks": {
+    "normal_ctest": 18,
+    "asan_ubsan_ctest": 18,
+    "tsan_ctest": 18,
+    "cli_service_cases_per_mode": 11,
+    "managed_startup_reattach_and_crash_cleanup": [
+      "normal",
+      "address,undefined",
+      "thread"
+    ],
+    "static_analysis": "All changed translation units pass clang-tidy and cppcheck with repository rules",
+    "python_methods": 75,
+    "ui_transient": "TSan appearance-input first failed with window active=false, without a sanitizer report; the same binary passed one isolated rerun. Other 17 suites passed first run."
+  },
+  "commands": [
+    "ctest --test-dir build/desktop --output-on-failure",
+    "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-asan --output-on-failure",
+    "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-tsan --output-on-failure",
+    "python3 scripts/check_cli_launch.py --build-dir build/desktop",
+    "python3 scripts/check_service_attention.py",
+    "python3 scripts/check_service_attention.py --live-glm",
+    "python3 scripts/lapis.py quality"
+  ],
+  "limitations": [
+    "Desktop attention display and decisions not yet wired",
+    "Simultaneous requests and cancellation/replay covered synthetically; simultaneous and cancelled real Codex requests still need assembled qualification",
+    "Ephemeral backend requests are outside the persistent TUI response scope",
+    "Linux UI deferred; macOS runtime evidence only",
+    "No automatic service restart, terminal migration or multi-session registry"
+  ]
+}
