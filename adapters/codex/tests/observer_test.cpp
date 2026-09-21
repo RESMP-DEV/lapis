@@ -142,6 +142,7 @@ class Source final : public QObject {
     QString thread_name{QStringLiteral("thread")};
     std::vector<QJsonObject> received;
     bool resolved_before_replay{};
+    bool empty_discovery{};
     int replay_large_requests{};
     std::vector<QJsonObject> replay_requests;
 
@@ -192,6 +193,8 @@ class Source final : public QObject {
                                          {QStringLiteral("platformFamily"), QStringLiteral("test")},
                                          {QStringLiteral("platformOs"), QStringLiteral("test")}}}});
             send(QJsonObject{{QStringLiteral("method"), QStringLiteral("initialized")}});
+            if (empty_discovery)
+                return;
             auto temporary_request = approval(std::numeric_limits<std::int64_t>::max());
             auto temporary_params = temporary_request.value("params").toObject();
             temporary_params.insert("threadId", "temporary");
@@ -201,11 +204,10 @@ class Source final : public QObject {
                   {"params", QJsonObject{{"thread", QJsonObject{{"id", "temporary"},
                                                                 {"ephemeral", true}}}}}});
         } else if (method == QLatin1String("thread/loaded/list")) {
-            send(
-                QJsonObject{{QStringLiteral("id"), id},
-                            {QStringLiteral("result"),
-                             QJsonObject{{QStringLiteral("data"),
-                                          QJsonArray{QStringLiteral("temporary"), thread_name}}}}});
+            send({{"id", id},
+                  {"result",
+                   QJsonObject{{"data", empty_discovery ? QJsonArray{}
+                                                        : QJsonArray{"temporary", thread_name}}}}});
         } else if (method == QLatin1String("thread/resume") && !no_rollout_returned) {
             no_rollout_returned = true;
             send(QJsonObject{
@@ -337,6 +339,91 @@ QJsonObject large_approval(std::int64_t id) {
                                    {"availableDecisions", QJsonArray{"accept", "decline"}}}}};
 }
 
+void initial_binding_requires_persistent_metadata(bool temporary_first) {
+    State state{"classification", "codex"};
+    Source source;
+    source.empty_discovery = true;
+    source.start();
+    Observer observer{state};
+    bool unclassified_binding = false;
+    bool temporary_pending = false;
+    QObject::connect(&observer, &Observer::changed, [&] {
+        unclassified_binding |= observer.threadId() == "unannounced-temporary";
+        for (const auto& [id, pending] : state.pending()) {
+            static_cast<void>(id);
+            temporary_pending |= pending.request.thread_id != "thread";
+        }
+    });
+    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    require(
+        wait_for([&] { return observer.diagnostic() == "Waiting for a persistent Codex thread"; }),
+        "empty discovery waits for classified metadata");
+    require(observer.threadId().isEmpty() && state.pending().empty() && !state.ready(),
+            "empty discovery cannot enable decisions");
+
+    const RequestId id{std::numeric_limits<std::int64_t>::max()};
+    auto early = large_approval(std::numeric_limits<std::int64_t>::max());
+    if (temporary_first) {
+        auto params = early.value("params").toObject();
+        params.insert("threadId", "unannounced-temporary");
+        early.insert("params", params);
+    }
+    source.send(early);
+    if (temporary_first)
+        source.send({{"method", "thread/started"},
+                     {"params", QJsonObject{{"thread", QJsonObject{{"id", "unannounced-temporary"},
+                                                                   {"ephemeral", true}}}}}});
+    source.send(
+        {{"method", "thread/started"},
+         {"params", QJsonObject{{"thread", QJsonObject{{"id", "thread"}, {"ephemeral", false}}}}}});
+    require(wait_for([&] { return state.ready() || !state.connected(); }) && state.ready(),
+            "early unclassified requests must not poison persistent binding");
+    require(!unclassified_binding && !temporary_pending && observer.threadId() == "thread",
+            "temporary thread must never bind or expose requests");
+    require(state.pending().size() == 1 && state.pending().contains(id) &&
+                observer.details(id).value("command") == "echo fixture",
+            "authoritative replay replaces early requests with the same request ID");
+    const auto revision = state.pending().at(id).revision;
+    require(observer.decide(state.epoch(), id, revision, "accept"),
+            "classified persistent request accepts an explicit response");
+    require(wait_for([&] {
+                return std::any_of(
+                    source.received.begin(), source.received.end(), [](const auto& message) {
+                        return message.value("result").toObject().value("decision") == "accept";
+                    });
+            }),
+            "persistent response reaches the source");
+
+    observer.reconnect();
+    require(wait_for([&] { return state.ready(); }) && observer.threadId() == "thread",
+            "reconnect retains the classified identity even when discovery is empty");
+    source.send({{"method", "thread/started"},
+                 {"params", QJsonObject{{"thread", QJsonObject{{"id", "another-thread"},
+                                                               {"ephemeral", false}}}}}});
+    require(wait_for([&] { return !state.connected(); }) && observer.threadId() == "thread",
+            "a second persistent thread cannot replace the established identity");
+}
+
+void unclassified_event_queue_is_bounded() {
+    State state{"classification-budget", "codex"};
+    Source source;
+    source.empty_discovery = true;
+    source.start();
+    Observer observer{state};
+    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    require(
+        wait_for([&] { return observer.diagnostic() == "Waiting for a persistent Codex thread"; }),
+        "classification budget fixture ready");
+    for (int index = 0; index <= 1024; ++index)
+        source.send(
+            {{"method", "turn/started"}, {"params", QJsonObject{{"threadId", "unclassified"}}}});
+    require(wait_for([&] { return !state.connected(); }) &&
+                observer.diagnostic() == "Codex replay exceeded limit",
+            "unclassified event overflow fails closed");
+    require(observer.threadId().isEmpty() && state.pending().empty(),
+            "bounded preclassification events never establish a binding");
+}
+
 void pending_details_budget() {
     State state{"budget", "codex"};
     Source source;
@@ -465,6 +552,9 @@ void request_id_and_answer_boundaries() {
 
 int run(int argc, char** argv) {
     QCoreApplication application(argc, argv);
+    initial_binding_requires_persistent_metadata(true);
+    initial_binding_requires_persistent_metadata(false);
+    unclassified_event_queue_is_bounded();
     reconnect_during_initialization_and_start_new_source();
     pending_details_budget();
     request_id_and_answer_boundaries();

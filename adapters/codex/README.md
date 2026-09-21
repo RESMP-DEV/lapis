@@ -105,7 +105,12 @@ and owned-process cleanup after service death.
 Discovery reads thread metadata: the ordinary TUI creates a persistent thread,
 and the same server can create ephemeral work. Only the persistent TUI thread is
 response-capable in this checkpoint; another persistent thread fails closed.
-Temporary-thread events cannot redirect a decision. Unknown binary hashes,
+An initial binding requires explicit persistent metadata from discovery's
+`thread/read` or `thread/started`. Events received before that classification stay
+in the bounded replay queue without enabling decisions; the subsequent resume/read
+replay replaces them. Reconnect retains an already classified persistent identity,
+including when loaded-thread discovery is empty. Temporary-thread events cannot
+redirect a decision. Unknown binary hashes,
 failed reconciliation and lost connections disable responses. Other request kinds
 are observation-only and must be answered in the terminal. Desktop controls now
 exercise real approvals and answers through this service, including pending
