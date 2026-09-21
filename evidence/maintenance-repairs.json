@@ -1,0 +1,103 @@
+{
+  "schema": "lapis.maintenance-repairs/1",
+  "recorded_at": "2026-09-21",
+  "baseline": "d2fe283",
+  "layout_cycle_revision": "576786d37a18fd80948ba04f9fc6f451cb96b4e0",
+  "tested_code_revision": "da16d6e3908c42e025d6e30068cc2212e5c5a70a",
+  "platform": "macOS arm64; Qt 6.11.2",
+  "scope": [
+    "Cycle all four existing layouts through atomic appearance persistence.",
+    "Send Command-Left/Right as Control-A/E, accounting for the physical arrow keypad flag.",
+    "Replace misleading category/window wrappers with flat session traversal; preserve legacy shortcut names.",
+    "Wait for transport input readiness and visible terminal focus before one-shot shell smoke input."
+  ],
+  "checks": [
+    {
+      "name": "layout cycle",
+      "passed": true,
+      "scope": "All 16 transitions from four starting layouts, reload persistence, unrelated values, and malformed-file preservation.",
+      "artifact": "../lapis-layout-cycle/build/layout-cycle-result.txt"
+    },
+    {
+      "name": "desktop",
+      "passed": true,
+      "suites": 15,
+      "artifact": "build/reports/desktop/receipt.json",
+      "reuse": "Combined layout/navigation source at 4787f87. Subsequent da16d6e only changes ui_capture.cpp in the app executable; the tested libraries and suites are unchanged. The app was rebuilt and exercised by CLI and UI acceptance afterward."
+    },
+    {
+      "name": "capture static analysis",
+      "passed": true,
+      "artifact": "build/reports/capture-tidy.log",
+      "additional_artifact": "build/reports/capture-cppcheck.log",
+      "scope": "clang-format, clang-tidy and Cppcheck for the final ui_capture.cpp change."
+    },
+    {
+      "name": "quality",
+      "passed": true,
+      "python_tests": 75,
+      "artifact": "build/reports/quality/receipt.json"
+    },
+    {
+      "name": "CLI/service/GUI acceptance",
+      "passed": true,
+      "cases": 12,
+      "artifact": "build/cli-launch-check/receipt.json",
+      "assisted": false
+    },
+    {
+      "name": "UI capture and rejection",
+      "passed": true,
+      "cases": 8,
+      "artifact": "build/ui-preview-check/receipt.json",
+      "visual_inspection": "Default dark-mode capture inspected; no visual styling changes in these repairs."
+    },
+    {
+      "name": "native keyboard, paste and Japanese IME",
+      "passed": true,
+      "cases": 20,
+      "artifact": "build/reports/navigation-native-conditional.json",
+      "foreground_assistance": "One System Events foreground request targeting only the fixture PID, conditional on it not being frontmost. No repeated activation of an already-frontmost app.",
+      "physical_arrow_receipts": {
+        "Command-Left": "01",
+        "Command-Right": "05"
+      },
+      "restoration": {
+        "input_source_restored": true,
+        "enabled_sources_restored": true,
+        "clipboard_restored": true
+      }
+    }
+  ],
+  "earlier_failures": [
+    {
+      "artifact": "build/reports/navigation-cli.log",
+      "failure": "Shell capture timed out before readiness repair; failed run retained."
+    },
+    {
+      "artifact": "build/reports/navigation-cli-assisted.log",
+      "failure": "Shell timeout remained after a scoped foreground attempt; failed run retained."
+    },
+    {
+      "artifact": "build/reports/navigation-native.json",
+      "failure": "All 20 input cases passed, but enabled input-source inventory restoration failed. Not counted as acceptance."
+    },
+    {
+      "artifact": "build/reports/navigation-native-final.json",
+      "failure": "Corrected physical-arrow cases passed; later IME case lost foreground activation. Restoration checks passed."
+    },
+    {
+      "artifact": "build/reports/navigation-native-assisted.json",
+      "failure": "Repeated foreground requests perturbed IME cancellation. Replaced by a conditional, one-time foreground request."
+    }
+  ],
+  "review": {
+    "local": "Opus 5 found a physical-arrow modifier defect and a probe flag omission; both were fixed and its follow-up found no remaining navigation/layout defects.",
+    "remote": "CodeRabbit skipped automatic review: repository star policy on PR 8, non-default base on PR 9. Its success status is not review approval."
+  },
+  "limits": [
+    "One live session plus fixture cards; category grouping is not implemented.",
+    "Native acceptance used explicitly recorded foreground assistance; failed attempts remain separate evidence.",
+    "No performance, new-platform, production attention or multi-session qualification claim."
+  ]
+}
