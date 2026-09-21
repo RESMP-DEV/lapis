@@ -122,71 +122,71 @@ ApplicationWindow {
         onActivated: window.hide()
     }
 
-    // Category navigation: one key per category, exactly like the terminal
-    // setups this mirrors. Categories are listed in lapis.json.
+    // These legacy action names address the flat session list. Category
+    // grouping is not implemented; retain the names for existing keymaps.
     Shortcut {
         objectName: "nextCategoryShortcut"
         sequences: window.bindings("nextCategory", ["Ctrl+Tab"])
         context: Qt.WindowShortcut
         enabled: !window.settingsOpen
-        onActivated: workspace.nextCategory()
+        onActivated: workspace.nextSession()
     }
     Shortcut {
         sequences: window.bindings("previousCategory", ["Ctrl+Shift+Tab"])
         context: Qt.WindowShortcut
         enabled: !window.settingsOpen
-        onActivated: workspace.nextCategory(-1)
+        onActivated: workspace.nextSession(-1)
     }
     Shortcut {
         sequences: window.bindings("category1", ["Ctrl+1"])
         context: Qt.WindowShortcut
         enabled: !window.settingsOpen
-        onActivated: workspace.focusCategory(0)
+        onActivated: workspace.focusedIndex = 0
     }
     Shortcut {
         sequences: window.bindings("category2", ["Ctrl+2"])
         context: Qt.WindowShortcut
         enabled: !window.settingsOpen
-        onActivated: workspace.focusCategory(1)
+        onActivated: workspace.focusedIndex = 1
     }
     Shortcut {
         sequences: window.bindings("category3", ["Ctrl+3"])
         context: Qt.WindowShortcut
         enabled: !window.settingsOpen
-        onActivated: workspace.focusCategory(2)
+        onActivated: workspace.focusedIndex = 2
     }
     Shortcut {
         sequences: window.bindings("category4", ["Ctrl+4"])
         context: Qt.WindowShortcut
         enabled: !window.settingsOpen
-        onActivated: workspace.focusCategory(3)
+        onActivated: workspace.focusedIndex = 3
     }
 
-    // Window navigation inside the current category. Holding the chord repeats,
+    // Session navigation. Holding the chord repeats,
     // because Qt auto-repeats an activated Shortcut while the keys are held.
     Shortcut {
         sequences: window.bindings("nextWindow", ["Ctrl+Shift+]"])
         context: Qt.WindowShortcut
         enabled: !window.settingsOpen
-        onActivated: workspace.nextWindow()
+        onActivated: workspace.nextSession()
     }
     Shortcut {
         sequences: window.bindings("previousWindow", ["Ctrl+Shift+["])
         context: Qt.WindowShortcut
         enabled: !window.settingsOpen
-        onActivated: workspace.nextWindow(-1)
+        onActivated: workspace.nextSession(-1)
     }
     Shortcut {
         sequences: window.bindings("focusLeft", ["Ctrl+Left"])
         context: Qt.WindowShortcut
         enabled: !window.settingsOpen
-        onActivated: workspace.nextWindow(-1)
+        onActivated: workspace.nextSession(-1)
     }
     Shortcut {
         sequences: window.bindings("focusRight", ["Ctrl+Right"])
         context: Qt.WindowShortcut
         enabled: !window.settingsOpen
-        onActivated: workspace.nextWindow()
+        onActivated: workspace.nextSession()
     }
 
     Shortcut {
