@@ -439,8 +439,8 @@ Choose an explicit private socket path or repair the directory
 deliberately before launching. `doctor` applies the same validation without
 creating or changing the directory; an absent default is reported as ready to
 create on first launch. Logs are written beside each
-socket as `<socket>.log`. The default endpoint is `runtime/desktop-v5.sock`;
-old v1/v2/v3/v4 sessions stay untouched. The `<socket>.session` hint is a private 0600
+socket as `<socket>.log`. The default endpoint is `runtime/desktop-v6.sock`;
+old v1/v2/v3/v4/v5 sessions stay untouched. The `<socket>.session` hint is a private 0600
 regular file containing session ID, epoch and launch fingerprint. A missing or
 corrupt hint disables implicit attachment. Explicit discovery can replace corrupt
 contents in a safe file; unsafe modes, symlinks or hardlinks require repair first.
@@ -690,15 +690,15 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `session-platform-ownership` | Headless and desktop | POSIX descriptor ownership and moves |
 | `terminal-behavior` | Headless and desktop | Ghostty parsing, snapshots, history, resize and mode-aware input |
 | `launch-spec` | Desktop-enabled | Literal launch validation and private endpoint rules |
-| `local-protocol` | Desktop-enabled | v5 identity/timing/history envelopes, framing, bounds, snapshots and invalid messages |
+| `local-protocol` | Desktop-enabled | v6 identity/timing/history envelopes, framing, bounds, snapshots and invalid messages |
 | `attention-protocol` | Desktop-enabled | Bounded attention snapshots/decisions, typed IDs, stale epochs and malformed payloads |
 | `codex-transport` | Desktop-enabled | Unix WebSocket upgrade, masking, fragmentation, bounds and reentrant close |
 | `codex-observer` | Desktop-enabled | Discovery, temporary-thread isolation, exact decisions, simultaneous requests, resume/read recovery and source loss |
 | `session-descriptor` | Desktop-enabled | Private identity hint, atomic replacement, corruption and unsafe-file rejection |
-| `live-connection` | Desktop-enabled | Screen-before-input, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
+| `live-connection` | Desktop-enabled | Screen-before-input, exact attention decisions/rejections, duplicate gating, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
 | `keymap` | Desktop-enabled | Configuration defaults, appearance choices, persistence and invalid input |
-| `ui-preview` | Desktop-enabled | Qt reload, screen selection, attention, input and render lifecycle |
+| `ui-preview` | Desktop-enabled | Qt reload, screen selection, passive attention, modal response ownership, draft/IME preservation, input and render lifecycle |
 | `appearance-input` | Desktop-enabled, native GUI | Configured settings shortcut, modal focus, all theme/layout/density controls, persistence and shortcut reload |
 | `history-store` | Desktop-enabled | Styled page round trips, per-session/global quotas, corruption, interrupted-write cleanup and file-size write failure recovery |
 | `terminal-input` | Desktop-enabled, native GUI | Qt composition commit/cancel, replacement rejection, paste and focus/document/history/disconnect ownership |
@@ -742,6 +742,7 @@ The compiled service has its own runner, distinct from the protocol investigatio
 ```sh
 python3 scripts/check_service_attention.py
 python3 scripts/check_service_attention.py --live-glm
+python3 scripts/check_service_attention.py --live-glm --desktop
 ```
 
 The default creates a private home, working directory and service endpoint, starts
@@ -749,7 +750,16 @@ an ordinary Codex TUI through the managed backend, verifies same-child reattachm
 and kills only its own service to check both process groups are cleaned up. It
 starts no model turn. `--live-glm` explicitly runs the harmless approval fixture
 and a Blue/Green question through **compiled service IPC**, rejects stale and
-duplicate decisions, and verifies source resolution and successful continuation.
+duplicate decisions, verifies explicit retry eligibility after invalid answers,
+and observes source resolution and successful continuation. It also archives and
+restores only its own thread to verify source-loss gating and fresh-epoch recovery,
+cancels a subsequent question by interrupting its turn, and resolves two real
+simultaneous command approvals independently.
+`--desktop` uses the compiled production QML and Qt mouse/key events to select and
+submit both decisions, recording captures in the receipt directory. It owns desktop
+focus and must run serially with other GUI checks. The service-only variant covers
+duplicate submissions; the desktop variant covers provisional-send gating through
+CTest and the actual controls.
 The runtime model/provider and binary hash are recorded. Use `--build-dir` to
 select a sanitizer build and `--output` to isolate receipts from concurrent runs.
 
@@ -759,7 +769,7 @@ in file/CLI config even though its exported RPC schema still advertises that
 value. Production launch inherits the caller's policy. The ordinary TUI also
 creates ephemeral backend threads; the adapter classifies source metadata and
 only enables responses for the one persistent TUI thread. Unknown binary hashes
-keep structured responses disabled. This service check is not desktop acceptance.
+keep structured responses disabled. Only the `--desktop` variant exercises the desktop response controls.
 
 The original `scripts/probe_codex.py` retains its no-turn behavior. The separate
 shared-server probe also sends no model prompt:

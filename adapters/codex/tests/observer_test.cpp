@@ -394,6 +394,13 @@ int run(int argc, char** argv) {
             "explicit reconnect sends no decision replay");
     require(state.pending().empty(), "resolution wins over a later copied request during replay");
 
+    for (const auto* method : {"thread/closed", "thread/archived"}) {
+        source.send({{"method", method}, {"params", QJsonObject{{"threadId", "thread"}}}});
+        require(wait_for([&] { return !state.connected(); }), "closed source disables replies");
+        observer.reconnect();
+        require(wait_for([&] { return state.ready(); }),
+                "restored source reconciles after closure");
+    }
     source.disconnect_client();
     require(wait_for([&] { return !state.connected(); }), "disconnect marks state stale");
     observer.stop();

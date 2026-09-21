@@ -58,7 +58,7 @@ class LauncherTests(unittest.TestCase):
             ),
             patch.object(lapis, "DESKTOP_BINARY", self.desktop),
             patch.object(lapis, "RUNTIME_DIR", self.runtime),
-            patch.object(lapis, "DEFAULT_SOCKET", self.runtime / "desktop-v5.sock"),
+            patch.object(lapis, "DEFAULT_SOCKET", self.runtime / "desktop-v6.sock"),
             patch.object(lapis, "_run", return_value=result) as run,
         ):
             code = lapis.launch(arguments)
@@ -117,7 +117,7 @@ class LauncherTests(unittest.TestCase):
 
         command = run.call_args.args[0]
         self.assertIn("--socket", command)
-        self.assertIn(str(self.runtime / "desktop-v5.sock"), command)
+        self.assertIn(str(self.runtime / "desktop-v6.sock"), command)
         self.assertEqual(self.runtime.stat().st_mode & 0o777, 0o700)
 
     def test_new_runtime_directory_is_private(self):

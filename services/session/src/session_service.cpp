@@ -747,6 +747,27 @@ class SessionService final : public QObject {
         schedule_attention();
         schedule();
     }
+    void allow_decision_retry(wire::AttentionDecision decision) {
+        if (!codex_state_ || !codex_state_->ready() ||
+            codex_state_->epoch() != decision.source_epoch)
+            return;
+        const auto found = codex_state_->pending().find(decision.request_id);
+        if (found == codex_state_->pending().end())
+            return;
+        const auto& pending = found->second;
+        if (pending.revision != decision.revision || pending.submitted ||
+            pending.status != attention::RequestStatus::pending)
+            return;
+        // This is an explicit rejection before source submission. An older
+        // queued snapshot alone must never unblock the desktop's duplicate guard.
+        decision.answers = {};
+        const auto bytes = wire::frame(
+            wire::Kind::attention_retry,
+            wire::encode_control({attachment_, wire::encode_attention_decision(decision)}));
+        if (client_->bytesToWrite() + bytes.size() > wire::max_frame_bytes ||
+            client_->write(bytes) != bytes.size())
+            throw std::runtime_error("Decision rejection queue failed");
+    }
     void handle(const wire::Frame& frame) {
         if (!process_started_ || stopping_)
             throw std::runtime_error("Session is not ready for input");
@@ -766,6 +787,7 @@ class SessionService final : public QObject {
             if (!codex_observer_ ||
                 !codex_observer_->decide(decision.source_epoch, decision.request_id,
                                          decision.revision, decision.choice, decision.answers)) {
+                allow_decision_retry(decision);
                 decision_error_ =
                     QStringLiteral("Request changed or response is unsupported; refresh attention");
                 attention_dirty_ = true;

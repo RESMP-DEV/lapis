@@ -347,7 +347,7 @@ int main() {
         canonical_json_and_utf8();
         malformed_snapshots();
         malformed_decisions();
-        std::cout << "Attention v5 codec boundary and recovery checks passed\n";
+        std::cout << "Attention v6 codec boundary and recovery checks passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

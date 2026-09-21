@@ -16,6 +16,7 @@ from pathlib import Path
 
 from check_cli_launch import (
     ATTENTION_DECISION,
+    ATTENTION_RETRY,
     ATTENTION_SNAPSHOT,
     SNAPSHOT,
     STATUS,
@@ -33,6 +34,7 @@ from check_codex_attention import (
 )
 from codex_probe_transport import UnixWebSocketTransport
 from probe_codex_attention import initialize
+from probe_terminal import run_process
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -128,6 +130,7 @@ class View:
     def __init__(self, client):
         self.client = client
         self.attention = None
+        self.retry = None
         self.screen = (client.cached_snapshot or {}).get("text", "")
         self.running = True
         self.task = asyncio.create_task(self.pump())
@@ -150,6 +153,11 @@ class View:
                     data[:40] == self.client.attachment, "Terminal attachment mismatch"
                 )
                 self.screen = decode_snapshot(data[72:])["text"]
+            elif kind == ATTENTION_RETRY:
+                require(
+                    data[:40] == self.client.attachment, "Rejection attachment mismatch"
+                )
+                self.retry = data[40:]
             elif kind == STATUS:
                 raise RuntimeError(
                     "Service returned status: " + data[1:].decode("utf-8")
@@ -192,7 +200,7 @@ async def wait_groups_gone(groups):
             await asyncio.sleep(0.05)
 
 
-async def completed_turn(owner, thread, turn):
+async def finished_turn(owner, thread, turn, expected="completed"):
     async with asyncio.timeout(90):
         while True:
             result = await owner.rpc(
@@ -201,10 +209,118 @@ async def completed_turn(owner, thread, turn):
             found = [item for item in result["thread"]["turns"] if item["id"] == turn]
             if found and found[0]["status"] != "inProgress":
                 require(
-                    found[0]["status"] == "completed", "Fixture turn did not complete"
+                    found[0]["status"] == expected,
+                    f"Expected fixture turn status {expected}, got {found[0]['status']}; "
+                    f"error kind: {(found[0].get('error') or {}).get('codexErrorInfo')}",
                 )
                 return
             await asyncio.sleep(0.1)
+
+
+async def question_turn(owner, thread, question_id):
+    return await owner.rpc(
+        "turn/start",
+        {
+            "threadId": thread,
+            "input": [
+                {
+                    "type": "text",
+                    "text": f"Use request_user_input now to ask one question with id {question_id}: choose Blue or Green. Do not use any other tool. After I answer, reply with just the selected color.",
+                }
+            ],
+            "collaborationMode": {
+                "mode": "plan",
+                "settings": {
+                    "model": MODEL,
+                    "reasoning_effort": "low",
+                    "developer_instructions": None,
+                },
+            },
+        },
+    )
+
+
+async def desktop_response(args, service, artifacts, request, choice, answers=None):
+    """Exercise the production QML controls against this exact disposable request."""
+    config = artifacts / f"desktop-{choice}.json"
+    config.write_text(
+        json.dumps(
+            {
+                "endpoint": str(service.endpoint),
+                "program": service.program,
+                "arguments": service.arguments,
+                "directory": str(service.directory),
+                "details": request["details"],
+                "choice": choice,
+                "answers": answers or {},
+                "capture": str(artifacts / f"desktop-{choice}.png"),
+            }
+        )
+    )
+    with (artifacts / f"desktop-{choice}.log").open("w") as log:
+        result = await asyncio.to_thread(
+            run_process,
+            [args.build_dir / "apps/desktop/lapis_attention_ui_probe", config],
+            cwd=ROOT,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            timeout=60,
+        )
+    require(result.returncode == 0, f"Desktop {choice} probe failed; see its log")
+
+
+async def simultaneous_approvals(owner, view, thread, receipt):
+    started = await owner.rpc(
+        "turn/start",
+        {
+            "threadId": thread,
+            "input": [
+                {
+                    "type": "text",
+                    "text": 'Call exec_command twice in parallel, as two separate tool calls. Each call must run exactly python3 -c "print(123456789)" with sandbox_permissions require_escalated and justification "Verify lapis simultaneous approvals". Issue both calls before waiting for either result. Do not combine commands or use any other command. After both finish reply DONE.',
+                }
+            ],
+            "collaborationMode": {
+                "mode": "default",
+                "settings": {
+                    "model": MODEL,
+                    "reasoning_effort": "low",
+                    "developer_instructions": None,
+                },
+            },
+        },
+    )
+    await view.wait(
+        lambda: view.attention["ready"] and len(view.attention["requests"]) == 2, 30
+    )
+    first, second = view.attention["requests"]
+    for request in (first, second):
+        require(
+            request["thread"] == thread and request["turn"] == started["turn"]["id"],
+            "Parallel request context mismatch",
+        )
+        require(
+            approved_fixture(request["details"].get("command")),
+            "Refusing non-fixture parallel command",
+        )
+    require(
+        type(first["id"]) is not type(second["id"]) or first["id"] != second["id"],
+        "Parallel identities collided",
+    )
+    view.client.send(ATTENTION_DECISION, decision(first, "accept"))
+    await view.wait(lambda: len(view.attention["requests"]) == 1)
+    remaining = view.attention["requests"][0]
+    require(
+        type(remaining["id"]) is type(second["id"]) and remaining["id"] == second["id"],
+        "First resolution removed the other request",
+    )
+    require(not remaining["submitted"], "First decision submitted the other request")
+    view.client.send(ATTENTION_DECISION, decision(remaining, "accept"))
+    await view.wait(lambda: view.attention["ready"] and not view.attention["requests"])
+    await finished_turn(owner, thread, started["turn"]["id"])
+    receipt["checks"].append(
+        "two simultaneous real approvals retain distinct identities and resolve independently"
+    )
 
 
 async def exercise(args, receipt):
@@ -356,40 +472,31 @@ async def exercise(args, receipt):
                 not view.attention["requests"][0]["submitted"],
                 "Stale decision consumed token",
             )
-            payload = decision(request, "accept")
-            view.client.send(ATTENTION_DECISION, payload)
-            view.client.send(ATTENTION_DECISION, payload)
+            if args.desktop:
+                await view.close()
+                view = None
+                await desktop_response(args, service, artifacts, request, "accept")
+                view = View(await asyncio.to_thread(service.connect))
+                await view.wait(lambda: view.attention is not None)
+                receipt["checks"].append(
+                    "real command approval through desktop controls"
+                )
+            else:
+                payload = decision(request, "accept")
+                view.client.send(ATTENTION_DECISION, payload)
+                view.client.send(ATTENTION_DECISION, payload)
+                receipt["checks"].append("duplicate decision rejected")
             await view.wait(
                 lambda: view.attention["ready"] and not view.attention["requests"]
             )
-            await completed_turn(owner, thread, request["turn"])
+            await finished_turn(owner, thread, request["turn"])
             receipt["checks"] += [
                 "real command approval over service IPC",
                 "pending request survives same-child reattachment",
                 "stale token rejected",
-                "duplicate decision rejected",
                 "source resolution and successful continuation",
             ]
-            started = await owner.rpc(
-                "turn/start",
-                {
-                    "threadId": thread,
-                    "input": [
-                        {
-                            "type": "text",
-                            "text": "Use request_user_input now to ask one question with id color: choose Blue or Green. Do not use any other tool. After I answer, reply with just the selected color.",
-                        }
-                    ],
-                    "collaborationMode": {
-                        "mode": "plan",
-                        "settings": {
-                            "model": MODEL,
-                            "reasoning_effort": "low",
-                            "developer_instructions": None,
-                        },
-                    },
-                },
-            )
+            started = await question_turn(owner, thread, "color")
             await view.wait(
                 lambda: view.attention["ready"] and bool(view.attention["requests"])
             )
@@ -406,17 +513,89 @@ async def exercise(args, receipt):
             )
             label = questions[0]["options"][0]["label"]
             require(label.startswith("Blue"), "Unexpected question answer")
-            view.client.send(
-                ATTENTION_DECISION,
-                decision(request, "submit", {"color": {"answers": [label]}}),
+            # Invalid answers are rejected before source submission, with an
+            # explicit retry receipt; queued older snapshots are not that receipt.
+            invalid = decision(request, "submit")
+            view.client.send(ATTENTION_DECISION, invalid)
+            await view.wait(lambda: view.retry == invalid)
+            require(
+                not view.attention["requests"][0]["submitted"],
+                "Rejected answers consumed token",
+            )
+            receipt["checks"].append(
+                "invalid answers rejected with an exact retry token"
+            )
+            answers = {"color": {"answers": [label]}}
+            if args.desktop:
+                await view.close()
+                view = None
+                await desktop_response(
+                    args, service, artifacts, request, "submit", answers
+                )
+                view = View(await asyncio.to_thread(service.connect))
+                await view.wait(lambda: view.attention is not None)
+                receipt["checks"].append(
+                    "real user-input answer through desktop controls"
+                )
+            else:
+                view.client.send(
+                    ATTENTION_DECISION, decision(request, "submit", answers)
+                )
+            await view.wait(
+                lambda: view.attention["ready"] and not view.attention["requests"]
+            )
+            await finished_turn(owner, thread, request["turn"])
+            receipt["checks"].append(
+                "real user-input answer over service IPC and successful continuation"
+            )
+            previous_epoch = view.attention["epoch"]
+            await owner.rpc("thread/archive", {"threadId": thread})
+            await view.wait(lambda: not view.attention["connected"], 15)
+            require(not view.attention["ready"], "Archived source still allows replies")
+            await owner.rpc("thread/unarchive", {"threadId": thread})
+            await owner.rpc("thread/resume", {"threadId": thread, "excludeTurns": True})
+            await view.close()
+            view = View(await asyncio.to_thread(service.connect))
+            await view.wait(
+                lambda: view.attention is not None and view.attention["ready"]
+            )
+            require(
+                view.attention["epoch"] > previous_epoch,
+                "Source reconnect reused its epoch",
+            )
+            require(
+                not view.attention["requests"],
+                "Resolved requests resurrected on reconnect",
+            )
+            receipt["checks"].append(
+                "archived source disables replies; restored source reconciles in a fresh epoch"
+            )
+            interrupted = await question_turn(owner, thread, "cancel_check")
+            await view.wait(
+                lambda: view.attention["ready"] and bool(view.attention["requests"])
+            )
+            cancelled = view.attention["requests"][0]
+            require(
+                cancelled["thread"] == thread
+                and cancelled["turn"] == interrupted["turn"]["id"],
+                "Cancellation request context mismatch",
+            )
+            require(
+                cancelled["details"].get("questions", [{}])[0].get("id")
+                == "cancel_check",
+                "Unexpected cancellation fixture",
+            )
+            await owner.rpc(
+                "turn/interrupt", {"threadId": thread, "turnId": cancelled["turn"]}
             )
             await view.wait(
                 lambda: view.attention["ready"] and not view.attention["requests"]
             )
-            await completed_turn(owner, thread, request["turn"])
+            await finished_turn(owner, thread, cancelled["turn"], "interrupted")
             receipt["checks"].append(
-                "real user-input answer over service IPC and successful continuation"
+                "new request after source recovery is cancelled by an observed turn interruption"
             )
+            await simultaneous_approvals(owner, view, thread, receipt)
         finally:
             if view and view.attention:
                 receipt["last_attention"] = {
@@ -424,7 +603,8 @@ async def exercise(args, receipt):
                     for key in ("ready", "connected", "diagnostic", "activity")
                 }
                 receipt["last_request_count"] = len(view.attention["requests"])
-                (artifacts / "fixture-screen.txt").write_text(view.screen)
+                with contextlib.suppress(OSError):
+                    (artifacts / "fixture-screen.txt").write_text(view.screen)
             if owner:
                 with contextlib.suppress(Exception):
                     await owner.close()
@@ -445,11 +625,18 @@ def main():
         action="store_true",
         help="Explicitly run the harmless GLM approval fixture",
     )
+    parser.add_argument(
+        "--desktop",
+        action="store_true",
+        help="Use Qt desktop controls for live decisions",
+    )
     parser.add_argument("--build-dir", type=Path, default=ROOT / "build/desktop")
     parser.add_argument(
         "--output", type=Path, default=ROOT / "build/m2-service/receipt.json"
     )
     args = parser.parse_args()
+    if args.desktop and not args.live_glm:
+        parser.error("--desktop requires --live-glm")
     args.build_dir = args.build_dir.resolve()
     args.output = args.output.resolve()
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -458,6 +645,7 @@ def main():
         "checks": [],
         "passed": False,
         "live_model_turn": args.live_glm,
+        "desktop_controls": args.desktop,
     }
     started = time.monotonic()
     try:

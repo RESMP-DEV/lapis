@@ -18,10 +18,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = 5
+VERSION = 6
 HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
 HISTORY_REQUEST, HISTORY_PAGE = range(10, 12)
-ATTENTION_SNAPSHOT, ATTENTION_DECISION = range(12, 14)
+ATTENTION_SNAPSHOT, ATTENTION_DECISION, ATTENTION_RETRY = range(12, 15)
 WAIT = 5
 
 
@@ -679,8 +679,8 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
                     + fingerprint(program, arguments, runtime),
                 ),
                 (
-                    4,
-                    struct.pack(">I", 4)
+                    VERSION - 1,
+                    struct.pack(">I", VERSION - 1)
                     + attach_payload(program, arguments, runtime)[4:],
                 ),
             ):

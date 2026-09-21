@@ -464,6 +464,11 @@ class Observer::Impl final : public QObject {
                 background_.erase(source_thread.toString());
             return;
         }
+        if (source_thread.toString() == thread_ &&
+            (method == "thread/closed" || method == "thread/archived")) {
+            fail("Codex thread closed; restore the source before reconnecting");
+            return;
+        }
         if (discovering_) {
             queue(message, size);
             return;

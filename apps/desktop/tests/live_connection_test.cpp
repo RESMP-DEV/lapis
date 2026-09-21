@@ -10,6 +10,7 @@
 #include <QLocalSocket>
 #include <QTemporaryDir>
 #include <QThread>
+#include <array>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -311,6 +312,102 @@ void missing_and_replaced() {
     require(lapis::session::read_descriptor(f.endpoint, fingerprint) == f.identity,
             "Discovery did not remember verified identity");
 }
+void attention_routing_and_reconnect() {
+    using namespace lapis::session::attention;
+    Fixture f;
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    wire::AttentionSnapshot state;
+    state.attachment = {f.identity, 1};
+    state.available = state.connected = state.ready = true;
+    state.source_epoch = 7;
+    const std::array<RequestId, 2> ids{std::int64_t{9223372036854775807LL},
+                                       std::string{"9223372036854775807"}};
+    for (size_t index = 0; index < ids.size(); ++index) {
+        Pending pending;
+        pending.request = {.id = ids[index],
+                           .thread_id = "thread",
+                           .turn_id = "turn",
+                           .item_id = "item",
+                           .reason = "Command approval",
+                           .summary = "Approve",
+                           .choices = {"accept", "decline"}};
+        pending.source_epoch = 7;
+        pending.revision = 9007199254740993ULL + index;
+        state.requests.push_back({pending, {}});
+    }
+    const auto publish = [&] {
+        peer.send(wire::Kind::attention_snapshot, wire::encode_attention_snapshot(state));
+        settle();
+    };
+    publish();
+    require(f.document.attentionCount() == 2 && f.document.attentionReady(),
+            "Requests not exposed");
+    const auto initial = f.document.attentionRequests();
+    const auto first_token = initial[0].toMap().value("token").toString();
+    const auto second_token = initial[1].toMap().value("token").toString();
+    require(first_token != second_token, "Large revisions collapsed in UI token");
+    require(!f.document.respondAttention(first_token, {{"choice", "unsupported"}}),
+            "Invalid choice accepted");
+    require(f.document.respondAttention(first_token, {{"choice", "decline"}}),
+            "Provisional decision not sent");
+    const auto rejected_frame = peer.read();
+    publish();
+    require(!f.document.attentionRequests()[0].toMap().value("enabled").toBool(),
+            "Old snapshot unblocked provisional decision");
+    peer.send(wire::Kind::attention_retry, rejected_frame.payload);
+    until([&] { return f.document.attentionRequests()[0].toMap().value("enabled").toBool(); });
+    require(f.document.respondAttention(first_token, {{"choice", "accept"}}),
+            "Explicit decision not sent");
+    const auto frame = peer.read();
+    require(frame.kind == wire::Kind::attention_decision, "Wrong response kind");
+    const auto envelope = wire::decode_control(frame.payload);
+    const auto decision = wire::decode_attention_decision(envelope.payload);
+    require(envelope.attachment == state.attachment && decision.request_id == ids[0] &&
+                decision.revision == state.requests[0].pending.revision &&
+                decision.source_epoch == 7 && decision.choice == "accept",
+            "Decision changed exact native identity");
+    require(!f.document.respondAttention(first_token, {{"choice", "accept"}}),
+            "Duplicate response sent");
+    publish(); // A queued older snapshot cannot re-enable the locally submitted token.
+    require(!f.document.attentionRequests()[0].toMap().value("enabled").toBool(),
+            "Snapshot re-enabled send");
+    require(f.document.attentionCount() == 2, "Sending resolved a request");
+    state.requests.erase(state.requests.begin());
+    publish();
+    require(f.document.attentionCount() == 1 &&
+                f.document.attentionRequests()[0].toMap().value("token") == second_token,
+            "Resolution removed the wrong typed ID");
+    peer.socket->abort();
+    until([&] { return !f.document.attentionReady(); });
+    require(!f.document.respondAttention(second_token, {{"choice", "accept"}}),
+            "Disconnected send accepted");
+    require(f.document.attentionCount() == 1, "Disconnect discarded pending evidence");
+    f.document.reconnect();
+    peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer, 2);
+    f.screen(peer, 2);
+    require(!f.document.attentionReady(), "Screen alone enabled stale attention");
+    state.attachment.generation = 2;
+    publish();
+    require(f.document.attentionReady(), "Reconciled requests did not become ready");
+    require(!f.document.respondAttention(second_token, {{"choice", "decline"}}),
+            "Old attachment token sent");
+    const auto fresh = f.document.attentionRequests()[0].toMap().value("token").toString();
+    require(f.document.respondAttention(fresh, {{"choice", "decline"}}),
+            "Fresh attachment token failed");
+    const auto reply =
+        wire::decode_attention_decision(wire::decode_control(peer.read().payload).payload);
+    require(reply.request_id == ids[1] && reply.choice == "decline", "String identity was coerced");
+    state.attachment.generation = 1;
+    publish();
+    require(!f.document.inputReady(), "Wrong-attachment snapshot was accepted");
+}
+
 void lost_before_screen() {
     Fixture f;
     f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
@@ -345,6 +442,7 @@ int main(int argc, char** argv) {
         history_browsing_and_input_gating();
         stale_reconnect_and_history_errors();
         missing_and_replaced();
+        attention_routing_and_reconnect();
         lost_before_screen();
         legacy_server();
         std::cout << "Identity, initial-screen gating, history paging/cancellation, explicit "

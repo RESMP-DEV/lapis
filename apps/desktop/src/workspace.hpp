@@ -4,11 +4,13 @@
 #include <lapis/session/terminal.hpp>
 
 #include "launch_spec.hpp"
+#include "transport/attention_protocol.hpp"
 #include "transport/local_protocol.hpp"
 
 #include <QColor>
 #include <QMap>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QVariantList>
 
@@ -27,6 +29,10 @@ class SessionPreview final : public QObject {
     Q_PROPERTY(QString attentionReason READ attentionReason NOTIFY attentionChanged)
     Q_PROPERTY(quint32 attentionSerial READ attentionSerial NOTIFY attentionChanged)
     Q_PROPERTY(int attentionCount READ attentionCount NOTIFY attentionChanged)
+    Q_PROPERTY(bool hasAttentionSource READ hasAttentionSource NOTIFY attentionChanged)
+    Q_PROPERTY(bool attentionReady READ attentionReady NOTIFY attentionChanged)
+    Q_PROPERTY(QString attentionDiagnostic READ attentionDiagnostic NOTIFY attentionChanged)
+    Q_PROPERTY(QVariantList attentionRequests READ attentionRequests NOTIFY attentionChanged)
     Q_PROPERTY(QString title READ title CONSTANT)
     Q_PROPERTY(QString directory READ directory CONSTANT)
     Q_PROPERTY(QString activity READ activity NOTIFY snapshotChanged)
@@ -51,6 +57,14 @@ class SessionPreview final : public QObject {
     Q_INVOKABLE void olderHistory();
     Q_INVOKABLE void newerHistory();
     Q_INVOKABLE void returnToLive();
+    Q_INVOKABLE bool respondAttention(const QString& token, const QVariantMap& response);
+    void applyAttention(session::wire::AttentionSnapshot snapshot);
+    void invalidateAttention();
+    void retryAttention(const session::wire::AttentionDecision& decision);
+    [[nodiscard]] bool hasAttentionSource() const;
+    [[nodiscard]] bool attentionReady() const;
+    [[nodiscard]] QString attentionDiagnostic() const;
+    [[nodiscard]] QVariantList attentionRequests() const;
     void setConnection(const QString& state, bool input_ready);
     void setServiceIdentity(const QByteArray& identity);
     [[nodiscard]] bool inputReady() const {
@@ -73,12 +87,10 @@ class SessionPreview final : public QObject {
     void resizeTerminal(session::TerminalSize size);
     void setSessionId(const QString& id) { session_id_ = id; }
     [[nodiscard]] const QString& sessionId() const { return session_id_; }
-    [[nodiscard]] bool attentionPending() const { return !requests_.isEmpty(); }
-    [[nodiscard]] QString attentionReason() const {
-        return requests_.isEmpty() ? QString{} : requests_.first();
-    }
+    [[nodiscard]] bool attentionPending() const { return attentionCount() != 0; }
+    [[nodiscard]] QString attentionReason() const;
     [[nodiscard]] quint32 attentionSerial() const { return attention_serial_; }
-    [[nodiscard]] int attentionCount() const { return static_cast<int>(requests_.size()); }
+    [[nodiscard]] int attentionCount() const;
     bool addPreviewRequest(const QString& id, const QString& reason);
     bool resolvePreviewRequest(const QString& id);
     void clearPreviewRequests();
@@ -104,6 +116,8 @@ class SessionPreview final : public QObject {
     std::unique_ptr<LiveConnection> live_;
     QString session_id_;
     QMap<QString, QString> requests_;
+    std::optional<session::wire::AttentionSnapshot> attention_;
+    QSet<QString> submitted_attention_;
     quint32 attention_serial_{};
     bool live_snapshot_ready_{};
     bool live_snapshot_received_{};

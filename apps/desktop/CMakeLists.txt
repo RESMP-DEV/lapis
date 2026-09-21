@@ -3,6 +3,7 @@ find_package(Vulkan REQUIRED)
 set(CMAKE_AUTOMOC ON)
 add_library(lapis_desktop_view STATIC
     src/workspace.cpp src/workspace.hpp
+    src/attention_view.cpp
     src/keymap.cpp src/keymap.hpp
     src/live_connection.cpp src/live_connection.hpp
     src/terminal_surface.cpp src/terminal_surface.hpp
@@ -21,7 +22,7 @@ endif()
 target_link_libraries(lapis_desktop PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
 target_compile_definitions(lapis_desktop PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}"
     LAPIS_PROJECT_ROOT="${PROJECT_SOURCE_DIR}")
-qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml)
+qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml)
 set_target_properties(lapis_desktop PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME "lapis"
     MACOSX_BUNDLE_GUI_IDENTIFIER "dev.lapis.desktop")
@@ -80,4 +81,14 @@ if(APPLE)
         LAPIS_SESSION_SERVICE_PATH="$<TARGET_FILE:lapis_session_service>"
         LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
     add_dependencies(lapis_native_input_probe lapis_session_service)
+endif()
+
+# Uses a private service fixture supplied by check_service_attention.py --desktop.
+if(APPLE)
+    add_executable(lapis_attention_ui_probe tests/attention_ui_probe.cpp tests/platform/window_activation.mm)
+    target_link_libraries(lapis_attention_ui_probe PRIVATE lapis_project_options lapis_desktop_view
+        Qt6::QuickControls2 "-framework AppKit")
+    target_compile_definitions(lapis_attention_ui_probe PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
+    qt_add_resources(lapis_attention_ui_probe attention_qml PREFIX "/" FILES
+        qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml)
 endif()

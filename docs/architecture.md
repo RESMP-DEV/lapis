@@ -167,7 +167,7 @@ needs them. Every first-party target uses `lapis_project_options`.
 | `services/session/src/platform/posix/` | Native descriptor ownership, then PTY launch/I/O/resize/reaping | `UniqueFd` on macOS/Linux; Qt-owned PTY launch/I/O/resize/reaping exercised on macOS |
 | `tools/terminal_probe/` | Shared headless workloads and independent Ghostty/Contour consumers | Implemented; pinned builds and eight-case replay on macOS/Linux |
 | `services/session/src/terminal/` | Wrap the selected engine's parsing, mode-aware input and screen extraction | Implemented as `lapis_terminal`; 14 behavioral cases on macOS/Linux ARM64 |
-| `services/session/include/lapis/session/` | Owned commands, session identity and snapshots for clients | Owned terminal values implemented; internal version 5 attachment/snapshot/history and attention framing under `src/transport/` |
+| `services/session/include/lapis/session/` | Owned commands, session identity and snapshots for clients | Owned terminal values implemented; internal version 6 attachment/snapshot/history and attention framing under `src/transport/` |
 | `services/session/src/` | Service event loop and session lifecycle, then local IPC | Separate one-terminal service with explicit argv/cwd and bounded local transport on macOS |
 | `apps/desktop/` | Minimal Qt view, input routing and terminal surface | Live enlarged shell and static carousel composition; macOS Vulkan capture |
 | `adapters/codex/` | Codex protocol mapping and attention delivery | Ordinary TUI plus isolated shared-server request/response/reconnect exercised; service adapter and IPC approval/input round trips exercised |
@@ -352,7 +352,7 @@ programs or cwd overrides require `--socket`; all child arguments follow `--`.
 Fixture mode rejects launch/endpoint options and does not inspect the user's
 shell. Shell smoke injection rejects explicit launch/cwd overrides.
 
-Service IPC is **version 5**. The launch fingerprint remains SHA-256 of a
+Service IPC is **version 6**. The launch fingerprint remains SHA-256 of a
 Qt_6_0 big-endian stream of executable path, arguments and canonical cwd; terminal
 size is excluded. Managed Codex mode prefixes this byte stream with
 `lapis-codex-v1` plus a NUL byte, keeping it distinct from plain terminal launch.
@@ -367,7 +367,7 @@ five seconds. Only an explicit new-session action starts a service.
 
 Socket parents must be private and owned by the current user. Ordinary files,
 symlinks and live foreign listeners are rejected; existing directories are not
-chmodded. The default `runtime/desktop-v5.sock` leaves old v1/v2/v3/v4 sessions alone.
+chmodded. The default `runtime/desktop-v6.sock` leaves old v1/v2/v3/v4/v5 sessions alone.
 No state migration, multi-session manager or automatic service recovery is implied.
 Launch profiles, hooks and approval policies remain owned by the selected CLI.
 
@@ -499,7 +499,7 @@ Implemented contract:
   starts with an authoritative screen, not replay of an unbounded byte backlog.
 - Version incompatible envelopes. Wire v4 added history paging and
   timing to the v3 identity contract. Leave older endpoints untouched and use
-  `runtime/desktop-v5.sock` by default. Shared serialization and client/server
+  `runtime/desktop-v6.sock` by default. Shared serialization and client/server
   behavior must change together; test rejection of mismatched versions.
 
 The wire uses big-endian integers and nonzero raw 16-byte UUIDs. Attach contains
@@ -690,16 +690,17 @@ operation to one session. GUI detach and session termination are separate comman
 
 ### Milestone 2: attention and Codex plan
 
-**Active:** following PR #6, implement 2C, then 2D and 2E in order. Keep one
+**Completed on macOS:** following PR #6, 2C, 2D and assembled 2E qualification
+are recorded in `evidence/milestone-two.json`. Keep one
 dedicated Codex app-server per live terminal, with the ordinary TUI and a
 service-owned observer connected to that server. Reuse the
 [shared contribution standards](../CONTRIBUTING.md#code-standards).
 
 Planning baseline: merged `e53c4fe` (September 18, 2026). The first implementation
 checkpoint adds a standalone attention reducer and isolated live Codex probes.
-The existing desktop attention map and replay controls remain development fixtures;
-the reducer was not yet connected to the service or a production Codex adapter.
-The 2C service checkpoint now connects them; desktop response controls remain next.
+The original desktop attention map and replay controls remain isolated development
+fixtures. Checkpoints 2C and 2D now connect the reducer to a production Codex
+adapter, service IPC and the live pane's explicit response dialog.
 The September 19 reconciliation preserves main's one-command launcher, configurable
 navigation, four layouts and appearance settings. These operate over the existing
 single live service session and fixture cards; they do not complete Milestone 3.
@@ -763,16 +764,31 @@ ephemeral backend threads; discovery classifies these explicitly and does not ro
 their requests through the TUI controls. A second persistent thread disables
 structured responses pending a future thread-switch contract.
 
-Wire v5 retains terminal and history envelopes and adds attachment-bound attention
+Wire v6 retains terminal and history envelopes and adds attachment-bound attention
 snapshots and decisions. Snapshots include typed source IDs, source epoch, revision,
 readiness and pending/response-in-flight/stale state. Decisions require the active
 GUI attachment and exact source token. Sending consumes the token but does not
 resolve the request; only source resolution does. Source reconnect must reconcile
 before enabling decisions, and unqualified Codex binary hashes keep structured
-responses disabled. Existing v4 services are neither migrated nor stopped.
+responses disabled. Wire v6 adds `attention_retry` (kind 14): an attachment-bound echo of the decision
+identity/choice with empty answers. The service sends it only when rejection
+occurred before submission and the exact request is still pending. This releases
+the UI's provisional duplicate guard for a corrected explicit response; ordinary
+queued snapshots cannot do so. Older v4/v5 services are neither migrated nor stopped.
 The service qualification in `evidence/codex-service.json` exercises approval and
 user-input responses, same-child reattachment, stale/duplicate decisions and
 cleanup after abrupt service death. Desktop controls are not included in that receipt.
+
+The desktop exposes request count/reason and stale diagnostics without automatic
+focus changes. Its modal response dialog binds a frozen draft to an opaque native
+attachment/epoch/revision token; request IDs and revisions never round-trip through
+JavaScript numbers. Incoming updates invalidate actions without replacing typed
+answers or composition. Modal ownership blocks workspace shortcuts and terminal
+focus restoration. The production QML controls are exercised against a disposable
+real Codex session by `check_service_attention.py --live-glm --desktop`.
+Thread close/archive events disable the source even while the backend remains
+alive. Restoring that thread and explicitly reattaching reconciles under a fresh
+epoch; no response is retransmitted.
 
 **Outcome:** a real Codex session can request attention, receive an explicit
 decision through a verified route, and continue. lapis retains the exact request
@@ -824,7 +840,7 @@ The logical contract below guides the implemented core and remaining integration
 `attention.hpp` supplies the single-source C++ types; `Position` keeps the source
 epoch and local sequence together. Decisions use per-request revision tokens so
 unrelated activity cannot invalidate an otherwise current response.
-It is separate from terminal IPC v5. Any incompatible IPC extension gets a new
+It is separate from terminal IPC v6. Any incompatible IPC extension gets a new
 wire version and private endpoint, with explicit rejection of older clients;
 existing service processes and sockets are left intact.
 
@@ -875,8 +891,12 @@ flow on the same assembled source revision, not just a passing standalone probe.
 Keep sanitized receipts under `evidence/` with commands, source/binary hashes,
 capability results and limitations; raw logs stay under ignored `build/`.
 The first checkpoint receipt is `evidence/codex-attention-route.json`.
-`evidence/milestone-two.json` remains reserved for assembled acceptance; it does
-not exist yet and this checkpoint does not complete Milestone 2.
+`evidence/milestone-two.json` records assembled acceptance: real desktop approval
+and answer controls, exact rejection/retry, pending reattachment, archive/restore
+reconciliation, a new request cancelled after recovery, and two simultaneous real
+approvals resolved independently. Normal, ASan/UBSan and TSan suites, CLI checks,
+preview captures and native macOS input pass. This qualifies the one-session
+Milestone 2 scope on the recorded binary; Milestone 3 remains unimplemented.
 Update README's status table only as those capabilities land. Linux desktop,
 32-session load, second adapters, selection/accessibility/contextual shaping and
 fresh presentation-latency targets are outside this phase. Packaging/notices/SBOM

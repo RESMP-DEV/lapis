@@ -93,7 +93,7 @@ live attention UI described in the architecture plan.
 
 The compiled adapter uses Qt's local socket with bounded WebSocket framing,
 normalizes command approvals and user-input requests, and owns resume/read
-reconciliation in the session service. Wire v5 carries authoritative attention
+reconciliation in the session service. Wire v6 carries authoritative attention
 snapshots and exact attachment/epoch/revision-bound decisions. A sent response
 remains pending until source resolution. `evidence/codex-service.json` records
 real approval and question responses through this route, same-child reattachment,
@@ -104,8 +104,10 @@ and the same server can create ephemeral work. Only the persistent TUI thread is
 response-capable in this checkpoint; another persistent thread fails closed.
 Temporary-thread events cannot redirect a decision. Unknown binary hashes,
 failed reconciliation and lost connections disable responses. Other request kinds
-are observation-only and must be answered in the terminal. Desktop controls and
-simultaneous/cancelled live requests remain separate qualification work.
+are observation-only and must be answered in the terminal. Desktop controls now
+exercise real approvals and answers through this service, including pending
+reattachment and archive/restore source reconciliation. The assembled receipt also records cancellation and two simultaneous live
+approvals, separately from the synthetic adapter coverage.
 
 ## Structured app-server route
 

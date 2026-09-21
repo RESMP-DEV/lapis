@@ -21,18 +21,19 @@ to that same file so Codex and Claude Code share one set of project instructions
 The macOS preview has a **live terminal in the enlarged pane** (shell by default) and a horizontal
 strip of five placeholder sessions plus the live preview below it. The cards provide manual navigation through the live session and development
 fixtures; they do not start additional live processes. **Milestone 1 is
-implemented and qualified on macOS.**
+implemented and qualified on macOS.** Milestone 2 is also qualified for one managed
+Codex session: service attention, explicit desktop decisions and source recovery.
 
 | Component | Exercised | Remaining |
 | --- | --- | --- |
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
 | PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS | Recovery after service loss and later Linux qualification |
-| Local transport | Version 5 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect | Automatic recovery policy and multi-session registry |
+| Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect | Automatic recovery policy and multi-session registry |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK | Cross-cell contextual shaping, selection and accessibility; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
-| UI iteration and attention fixture | Isolated source-QML reload, captures, configurable navigation, appearance settings and finite red cue replay | Live multi-session routing and real attention integration |
-| Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Desktop wiring and workspace-wide aggregation |
-| Codex integration | Direct TUI launch and same-child reattachment; isolated shared-server approval/input requests, observer responses, resume/read reconciliation, service IPC approval/input responses and TUI display | Desktop response controls, cancellation and simultaneous live requests |
+| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation | Live multi-session routing and automatic carousel |
+| Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Workspace-wide aggregation |
+| Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals | Broader binary and request-kind qualification |
 
 [Desktop evidence](evidence/desktop-preview.json),
 [UI refinement evidence](evidence/ui-preview.json),
@@ -42,15 +43,16 @@ Dependency packaging remains unfinished; this is a local developer build.
 The [two UI refinements](docs/architecture.md#ui-refinement-checkpoint) are
 implemented for visual review: an isolated preview/debugging workflow and a compact
 header with replayable red attention cues. Configurable navigation, layouts, themes
-and card densities are available; real agent attention and automatic carousel
-behavior remain later work. The next
+and card densities are available. Managed Codex sessions now surface real requests;
+automatic carousel behavior remains later work. The next
 product milestone is attention state and verified Codex request handling; the
 [Milestone 2 plan](docs/architecture.md#milestone-2-attention-and-codex-plan)
 defines its route decision, implementation slices and acceptance checks.
-The first checkpoint implements the standalone attention core and exercises real
-Codex request round trips. Following the quality cleanup in PR #6, Milestone 2
-now includes the production Codex adapter and session-service integration. The live desktop
-continues to use fixture attention indicators. See the
+The first checkpoint implemented the standalone attention core and exercised real
+Codex request round trips. [Milestone 2 evidence](evidence/milestone-two.json) now
+records assembled service/desktop acceptance on macOS. Following the quality cleanup in PR #6, Milestone 2
+now includes the production Codex adapter, session-service integration and explicit
+desktop response controls. Request arrival never moves keyboard focus. See the
 [attention test procedure](CONTRIBUTING.md#codex-attention-qualification).
 Latency and warm-switch targets remain provisional.
 
@@ -121,12 +123,12 @@ session and 256 MiB shared-root page budgets by default. See the
 [history and input procedure](CONTRIBUTING.md#history-and-input-qualification) for
 limits, recovery and automated native-input acceptance.
 
-To launch Codex directly in its own persistent terminal, use the launcher, which
+To launch Codex with managed attention in its own persistent terminal, use the launcher, which
 resolves the build environment and opens on the laptop panel:
 
 ```sh
-python3 scripts/lapis.py run \
-  --socket "$PWD/runtime/codex-v4.sock" --new-session --cwd "$PWD" -- codex
+python3 scripts/lapis.py run --codex \
+  --socket "$PWD/runtime/codex-v6.sock" --new-session --cwd "$PWD" -- codex
 ```
 
 Use a dedicated socket for a Codex session. The default socket keeps the shell
@@ -135,15 +137,21 @@ before replacing the window, so reusing it for Codex reports a launch mismatch.
 
 Repeat the same command without `--new-session` to reconnect to the same Codex
 process. Use `--discover` only to explicitly adopt an existing matching session
-when no usable saved identity exists. Plain terminal launch forwards Codex options literally. Its persistent TUI
-process is separate from the upstream CLI's backend ownership; the managed
-service qualification uses a dedicated app-server. Other executables and literal arguments work after
+when no usable saved identity exists. The `--codex` mode owns a dedicated backend
+and observes the ordinary TUI's persistent thread. Open **Requests** to review a
+pending command or question. Select a request, then explicitly approve, decline,
+cancel or send its answers. Sending does not clear it; source resolution does.
+Unsupported request kinds must be answered in the terminal. Lost or unqualified
+sources disable the controls; reattachment reconciles before enabling them.
+
+Omit `--codex` for plain terminal launch, which forwards Codex options literally.
+That mode retains the upstream CLI's backend ownership. Other executables and literal arguments work after
 `--`. Explicit programs or `--cwd` require a socket, which the launcher supplies
 by default; a launch mismatch is rejected before replacing the existing window.
 No hooks or approval settings are changed. There is still one live pane per
 window; its other cards remain fixtures.
 
-The default socket is `runtime/desktop-v5.sock`. Older v1/v2/v3/v4 sessions are not
+The default socket is `runtime/desktop-v6.sock`. Older v1/v2/v3/v4/v5 sessions are not
 migrated or terminated by this build. See the
 [qualification procedure](CONTRIBUTING.md#cli-integration-qualification) for the
 optional no-prompt Codex check and current limits.
