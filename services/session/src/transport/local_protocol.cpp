@@ -1,4 +1,5 @@
 #include "local_protocol.hpp"
+#include "wire_bytes.hpp"
 #include <QDataStream>
 #include <QIODevice>
 #include <QUuid>
@@ -6,6 +7,7 @@
 #include <stdexcept>
 
 namespace lapis::session::wire {
+using namespace bytes;
 namespace {
 void check(bool valid) {
     if (!valid)
@@ -28,47 +30,6 @@ quint16 style_flags(const TerminalStyle& style) {
                                 (style.faint ? 4U : 0U) | (style.blink ? 8U : 0U) |
                                 (style.inverse ? 16U : 0U) | (style.invisible ? 32U : 0U) |
                                 (style.strikethrough ? 64U : 0U) | (style.overline ? 128U : 0U));
-}
-void append_quint32(QByteArray& bytes, quint32 value) {
-    bytes.append(static_cast<char>(value >> 24U));
-    bytes.append(static_cast<char>(value >> 16U));
-    bytes.append(static_cast<char>(value >> 8U));
-    bytes.append(static_cast<char>(value));
-}
-void append_quint64(QByteArray& bytes, quint64 value) {
-    append_quint32(bytes, static_cast<quint32>(value >> 32U));
-    append_quint32(bytes, static_cast<quint32>(value));
-}
-QByteArray raw_bytes(const unsigned char*& cursor, qsizetype size) {
-    QByteArray result(reinterpret_cast<const char*>(cursor), size);
-    cursor += size;
-    return result;
-}
-quint32 read_quint32(const unsigned char*& cursor) {
-    const quint32 value = (quint32{cursor[0]} << 24U) | (quint32{cursor[1]} << 16U) |
-                          (quint32{cursor[2]} << 8U) | quint32{cursor[3]};
-    cursor += 4;
-    return value;
-}
-quint64 read_quint64(const unsigned char*& cursor) {
-    const quint64 high = read_quint32(cursor);
-    return (high << 32U) | read_quint32(cursor);
-}
-QByteArray encode_attachment(const Attachment& attachment) {
-    check(valid_identity(attachment.identity) && attachment.generation != 0);
-    QByteArray result;
-    result += attachment.identity.session_id;
-    result += attachment.identity.epoch;
-    append_quint64(result, attachment.generation);
-    return result;
-}
-Attachment decode_attachment(const unsigned char*& cursor) {
-    Attachment result;
-    result.identity.session_id = raw_bytes(cursor, 16);
-    result.identity.epoch = raw_bytes(cursor, 16);
-    result.generation = read_quint64(cursor);
-    check(valid_identity(result.identity) && result.generation != 0);
-    return result;
 }
 } // namespace
 bool valid_identity(const SessionIdentity& identity) {

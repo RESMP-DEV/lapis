@@ -15,6 +15,11 @@
 
 namespace lapis::desktop {
 namespace wire = session::wire;
+namespace {
+constexpr int codex_sync_timeout_ms = 15000;
+constexpr int terminal_sync_timeout_ms = 5000;
+constexpr int history_timeout_ms = 5000;
+} // namespace
 SessionPreview::~SessionPreview() { live_.reset(); }
 void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpec& launch,
                                wire::AttachMode mode) {
@@ -155,14 +160,15 @@ LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
     retry_.setSingleShot(true);
     retry_.setInterval(100);
     handshake_.setSingleShot(true);
-    handshake_.setInterval(launch.agent == session::AgentMode::codex ? 15000 : 5000);
+    handshake_.setInterval(launch.agent == session::AgentMode::codex ? codex_sync_timeout_ms
+                                                                     : terminal_sync_timeout_ms);
     if (launch.agent == session::AgentMode::codex)
         service_arguments_.prepend(QStringLiteral("--codex"));
     connect(&handshake_, &QTimer::timeout, this,
             [this] { fail(QStringLiteral("Session synchronization timed out")); });
     connect(&retry_, &QTimer::timeout, this, [this] { connectSocket(); });
     history_timeout_.setSingleShot(true);
-    history_timeout_.setInterval(5000);
+    history_timeout_.setInterval(history_timeout_ms);
     connect(&history_timeout_, &QTimer::timeout, this, [this] {
         if (!outstanding_history_request_)
             return;
@@ -368,8 +374,14 @@ void LiveConnection::requestHistory(wire::HistoryDirection direction, quint64 re
     outstanding_history_request_ = request_id;
     document_.setHistoryRequestId(request_id);
     history_timeout_.start();
-    send(wire::Kind::history_request,
-         wire::encode_history_request({request_id, reference, direction}));
+    if (!send(wire::Kind::history_request,
+              wire::encode_history_request({request_id, reference, direction}))) {
+        history_timeout_.stop();
+        outstanding_history_request_.reset();
+        document_.setHistoryRequestId(0);
+        document_.failHistoryRequest(
+            QStringLiteral("History request could not be queued; try again."));
+    }
 }
 void LiveConnection::acceptHello(const wire::Hello& hello) {
     if (attachment_)

@@ -749,7 +749,7 @@ The default creates a private home, working directory and service endpoint, star
 an ordinary Codex TUI through the managed backend, verifies same-child reattachment,
 and kills only its own service to check both process groups are cleaned up. It
 starts no model turn. `--live-glm` explicitly runs the harmless approval fixture
-and a Blue/Green question through **compiled service IPC**, rejects stale and
+and a two-question color fixture through **compiled service IPC**, rejects stale and
 duplicate decisions, verifies explicit retry eligibility after invalid answers,
 and observes source resolution and successful continuation. It also archives and
 restores only its own thread to verify source-loss gating and fresh-epoch recovery,
@@ -770,6 +770,30 @@ value. Production launch inherits the caller's policy. The ordinary TUI also
 creates ephemeral backend threads; the adapter classifies source metadata and
 only enables responses for the one persistent TUI thread. Unknown binary hashes
 keep structured responses disabled. Only the `--desktop` variant exercises the desktop response controls.
+
+### Reading qualification receipts
+
+Receipts are dated observations, not current-source declarations. Check `schema`,
+source identity, per-check timestamps, pass/fail results and explicit limits before
+reusing one. Source hashes identify working-tree inputs when the final commit did
+not yet exist. `recorded_at` records assembly (or a documented upper bound), and
+must not precede the results it includes. A newer wire version does not invalidate
+or silently rewrite the protocol version exercised by an older receipt.
+
+The two Milestone 2 receipt schemas have these equivalent fields:
+
+| Meaning | `lapis.codex-service/1` | `lapis.milestone-two/1` |
+| --- | --- | --- |
+| Source file digests | `source.sha256` | `source_sha256` |
+| Main starting commit | `source.baseline_revision` | `main_baseline` |
+| Exercised IPC version | `route.protocol` | `wire_version` |
+| Qualification limits | `limitations` | `limits` |
+
+`codex-service.json` is the historical v5 service checkpoint; `milestone-two.json`
+is the assembled v6 desktop qualification. Preserve their schema-specific names
+and facts. New review receipts identify the base commit, changed source digests,
+commands/results and reused evidence explicitly. Consumers must dispatch on the
+schema identifier rather than assume every evidence JSON has the same shape.
 
 The original `scripts/probe_codex.py` retains its no-turn behavior. The separate
 shared-server probe also sends no model prompt:

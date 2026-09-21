@@ -4,9 +4,11 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QPointer>
+#include <QStringList>
 #include <QTimer>
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <optional>
@@ -21,14 +23,15 @@ using attention::Activity;
 using attention::RequestId;
 constexpr qsizetype message_limit = qsizetype{64} * 1024;
 constexpr qsizetype details_limit = qsizetype{16} * 1024;
+constexpr qsizetype aggregate_details_limit = qsizetype{512} * 1024;
 constexpr int rpc_timeout = 10000;
 quint64 now() {
     return static_cast<quint64>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::steady_clock::now().time_since_epoch())
                                     .count());
 }
-bool text(const QString& value, qsizetype limit, bool empty = false) {
-    return (empty || !value.isEmpty()) && value.toUtf8().size() <= limit;
+bool text(const QString& value, qsizetype limit) {
+    return !value.isEmpty() && value.toUtf8().size() <= limit;
 }
 std::optional<RequestId> request_id(const QJsonValue& value) {
     if (value.isString() && text(value.toString(), 256))
@@ -133,6 +136,7 @@ Request parse_request(const QJsonObject& message) {
     result.core.summary = result.core.reason;
     return result;
 }
+qsizetype details_cost(const Request& request) { return json(request.details).size(); }
 bool valid_answers(const Request& request, const QJsonObject& answers) {
     if (answers.size() != request.questions.size())
         return false;
@@ -174,6 +178,10 @@ class Observer::Impl final : public QObject {
     }
     void start(const QString& socket, QStringView hash) {
         stop();
+        thread_.clear();
+        requests_.clear();
+        retired_.clear();
+        pending_details_bytes_ = 0;
         if (hash != Observer::qualifiedBinarySha256()) {
             diagnostic_ = "Unsupported Codex binary hash";
             emit owner_.changed();
@@ -202,19 +210,19 @@ class Observer::Impl final : public QObject {
         discovery_.clear();
         background_.clear();
         diagnostic_ = "Connecting to Codex";
-        transport_ = std::make_unique<UnixWebSocket>();
-        connect(transport_.get(), &UnixWebSocket::opened, this, [this] {
+        transport_ = new UnixWebSocket(this);
+        connect(transport_, &UnixWebSocket::opened, this, [this] {
             rpc("initialize", {{"clientInfo", QJsonObject{{"name", "lapis"}, {"version", "0.1"}}},
                                {"capabilities", QJsonObject{{"experimentalApi", true}}}});
         });
-        connect(transport_.get(), &UnixWebSocket::message, this, [this](const QByteArray& bytes) {
+        connect(transport_, &UnixWebSocket::message, this, [this](const QByteArray& bytes) {
             try {
                 receive(bytes);
             } catch (const std::exception& error) {
                 fail(QString::fromUtf8(error.what()));
             }
         });
-        connect(transport_.get(), &UnixWebSocket::failed, this,
+        connect(transport_, &UnixWebSocket::failed, this,
                 [this](const QString& error) { fail(error); });
         transport_->open(path_);
         emit owner_.changed();
@@ -269,8 +277,8 @@ class Observer::Impl final : public QObject {
         if (transport_) {
             transport_->disconnect(this);
             transport_->close();
-            // A signal can close its own source. Retire it after signal delivery.
-            transport_.release()->deleteLater();
+            transport_->deleteLater();
+            transport_ = nullptr;
         }
         state_.disconnect();
         waiting_.clear();
@@ -314,10 +322,6 @@ class Observer::Impl final : public QObject {
     void reconcile() {
         if (!initialized_ || !transport_ || !waiting_.isEmpty())
             return;
-        if (thread_.isEmpty()) {
-            rpc("thread/loaded/list", {{"limit", 2}});
-            return;
-        }
         state_.overflow();
         recovering_ = true;
         replay_.clear();
@@ -336,6 +340,9 @@ class Observer::Impl final : public QObject {
         if (!retired_.contains(id) && retired_.size() >= 1024)
             throw std::runtime_error("Codex retired request limit reached");
         retired_.insert(id);
+        const auto request = requests_.find(id);
+        if (request != requests_.end())
+            pending_details_bytes_ -= details_cost(request->second);
         requests_.erase(id);
         check(state_.resolve(next(), id));
     }
@@ -349,7 +356,13 @@ class Observer::Impl final : public QObject {
             const auto old = requests_.find(request.core.id);
             if (old != requests_.end() && old->second.details != request.details)
                 throw std::runtime_error("Conflicting Codex request replay");
+            const auto details_bytes = details_cost(request);
+            if (old == requests_.end() &&
+                pending_details_bytes_ + details_bytes > aggregate_details_limit)
+                throw std::runtime_error("Codex pending attention details exceeded limit");
             check(state_.request(next(), request.core, now()));
+            if (old == requests_.end())
+                pending_details_bytes_ += details_bytes;
             requests_[request.core.id] = request;
         } else if (method == "serverRequest/resolved") {
             const auto id = request_id(params.value("requestId"));
@@ -390,12 +403,20 @@ class Observer::Impl final : public QObject {
             throw std::runtime_error("Codex retired request limit reached");
         for (const auto& id : resolved_ids)
             replacement.erase(id);
+        qsizetype replacement_details_bytes = 0;
+        for (const auto& [id, request] : replacement) {
+            static_cast<void>(id);
+            replacement_details_bytes += details_cost(request);
+            if (replacement_details_bytes > aggregate_details_limit)
+                throw std::runtime_error("Codex pending attention details exceeded limit");
+        }
         std::vector<attention::Request> pending;
         pending.reserve(replacement.size());
         for (const auto& [id, request] : replacement)
             pending.push_back(request.core);
         check(state_.reconcile(next(), pending, now()));
         requests_ = std::move(replacement);
+        pending_details_bytes_ = replacement_details_bytes;
         retired_ = std::move(resolved_ids);
         check(state_.activity(next(), activity(thread.value("status").toObject())));
         // Record resolutions in the core after the authoritative replacement,
@@ -528,8 +549,9 @@ class Observer::Impl final : public QObject {
                 throw std::runtime_error("Codex initialization write failed");
             initialized_ = true;
             QPointer<Impl> alive(this);
+            QPointer<UnixWebSocket> current = transport_;
             emit owner_.initialized();
-            if (alive && transport_)
+            if (alive && current && transport_ == current)
                 rpc("thread/loaded/list", {{"limit", 128}});
         } else if (method == "thread/loaded/list") {
             loaded_threads(result);
@@ -550,7 +572,7 @@ class Observer::Impl final : public QObject {
     }
     attention::State& state_;
     Observer& owner_;
-    std::unique_ptr<UnixWebSocket> transport_;
+    QPointer<UnixWebSocket> transport_;
     QTimer deadline_;
     QTimer retry_;
     QString path_;
@@ -568,11 +590,14 @@ class Observer::Impl final : public QObject {
     qsizetype replay_bytes_{};
     std::vector<QJsonObject> replay_;
     std::map<RequestId, Request> requests_;
+    qsizetype pending_details_bytes_{};
     std::set<RequestId> retired_;
 };
 Observer::Observer(attention::State& state, QObject* parent)
     : QObject(parent), impl_(std::make_unique<Impl>(state, *this)) {}
 Observer::~Observer() = default;
+// Updating this pin requires the live requalification procedure in
+// adapters/codex/README.md; a version string alone is insufficient.
 QString Observer::qualifiedBinarySha256() {
     return QStringLiteral("f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9");
 }

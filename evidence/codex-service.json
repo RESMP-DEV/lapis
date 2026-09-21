@@ -138,5 +138,6 @@
     "Ephemeral backend requests are outside the persistent TUI response scope",
     "Linux UI deferred; macOS runtime evidence only",
     "No automatic service restart, terminal migration or multi-session registry"
-  ]
+  ],
+  "checkpoint_note": "Historical pre-desktop checkpoint committed in 44b933b38e3a0daec0f72fe00fe1ec15c064d6cf, exercised on IPC v5. The assembled v6 qualification is evidence/milestone-two.json; this receipt does not describe current source."
 }

@@ -1,6 +1,7 @@
 #include "live_connection.hpp"
 #include "workspace.hpp"
 
+#include <QDebug>
 #include <QJsonObject>
 #include <algorithm>
 #include <exception>
@@ -64,9 +65,13 @@ void SessionPreview::applyAttention(session::wire::AttentionSnapshot snapshot) {
     for (const auto& item : snapshot.requests) {
         current.insert(token(snapshot, item.pending));
         const auto& id = item.pending.request.id;
-        if (!attention_ ||
-            std::none_of(attention_->requests.begin(), attention_->requests.end(),
-                         [&](const auto& old) { return old.pending.request.id == id; }))
+        if (!attention_ || std::none_of(attention_->requests.begin(), attention_->requests.end(),
+                                        [&](const auto& old) {
+                                            return old.pending.request.id == id &&
+                                                   old.pending.source_epoch ==
+                                                       item.pending.source_epoch &&
+                                                   old.pending.revision == item.pending.revision;
+                                        }))
             arrived = true;
     }
     submitted_attention_.intersect(current);
@@ -120,7 +125,8 @@ bool SessionPreview::respondAttention(const QString& key, const QVariantMap& res
         if (!live_->send(session::wire::Kind::attention_decision,
                          session::wire::encode_attention_decision(decision)))
             return false;
-    } catch (const std::exception&) {
+    } catch (const std::exception& error) {
+        qWarning() << "Attention response rejected before queueing:" << error.what();
         return false; // Encoding rejects invalid/bounded input before any bytes are queued.
     }
     submitted_attention_.insert(key);

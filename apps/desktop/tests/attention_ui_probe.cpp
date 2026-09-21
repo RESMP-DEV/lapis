@@ -16,6 +16,7 @@
 #include <QThread>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 
 namespace {
@@ -23,14 +24,23 @@ void require(bool condition, const char* message) {
     if (!condition)
         throw std::runtime_error(message);
 }
-void until(const std::function<bool()>& condition) {
+void until(const std::function<bool()>& condition,
+           const char* message = "Desktop attention condition timed out") {
     QElapsedTimer elapsed;
     elapsed.start();
     while (!condition() && elapsed.elapsed() < 15000) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
         QThread::msleep(1);
     }
-    require(condition(), "Desktop attention condition timed out");
+    require(condition(), message);
+}
+void present_layout(QQuickWindow& window) {
+    const auto presented = std::make_shared<bool>(false);
+    QObject::connect(
+        &window, &QQuickWindow::frameSwapped, &window, [presented] { *presented = true; },
+        Qt::SingleShotConnection);
+    window.requestUpdate();
+    until([&] { return *presented; }, "Desktop layout was not presented");
 }
 QQuickItem* item(QQuickItem* root, const QString& name) {
     if (root->objectName() == name)
@@ -103,13 +113,29 @@ void exercise(const QJsonObject& config) {
     const auto answers = config.value("answers").toObject();
     for (auto answer = answers.begin(); answer != answers.end(); ++answer) {
         const auto name = QStringLiteral("options-") + answer.key();
+        present_layout(*window);
         click(*window, name);
+        auto* combo = item(window->contentItem(), name);
+        auto* popup = combo->property("popup").value<QObject*>();
+        require(popup, "Question options popup missing");
+        until([&] { return popup->property("opened").toBool(); },
+              "Question options popup did not open");
         key(*window, Qt::Key_Home);
         key(*window, Qt::Key_Return);
-        until([&] {
-            return QJsonObject::fromVariantMap(dialog->property("answers").toMap()) == answers;
-        });
+        const auto expected = answer.value().toObject();
+        until(
+            [&] {
+                return QJsonObject::fromVariantMap(dialog->property("answers").toMap())
+                           .value(answer.key())
+                           .toObject() == expected;
+            },
+            "Question option selection did not update the draft");
+        until([&] { return !popup->property("visible").toBool(); },
+              "Question options popup did not close");
     }
+    until(
+        [&] { return QJsonObject::fromVariantMap(dialog->property("answers").toMap()) == answers; },
+        "Completed question answers do not match the fixture");
     require(window->grabWindow().save(config.value("capture").toString()), "Capture failed");
     click(*window, QStringLiteral("respond-") + config.value("choice").toString());
     require(!dialog->property("canRespond").toBool(), "Response remained enabled after submission");

@@ -30,6 +30,10 @@ class UnixWebSocket::Impl final : public QObject {
         deadline_.setInterval(5000);
         connect(&deadline_, &QTimer::timeout, this,
                 [this] { fail("WebSocket connect timed out"); });
+        close_deadline_.setSingleShot(true);
+        close_deadline_.setInterval(2000);
+        connect(&close_deadline_, &QTimer::timeout, this,
+                [this] { fail("WebSocket close drain timed out"); });
     }
     void close() {
         ++generation_;
@@ -39,6 +43,8 @@ class UnixWebSocket::Impl final : public QObject {
             socket_->abort();
             socket_->deleteLater();
             socket_ = nullptr;
+            closing_ = false;
+            close_deadline_.stop();
         }
         ready_ = false;
         fragmented_ = false;
@@ -50,12 +56,21 @@ class UnixWebSocket::Impl final : public QObject {
         socket_ = new QLocalSocket(this);
         socket_->setReadBufferSize(UnixWebSocket::maximum_message_bytes + header_limit + 14);
         const auto generation = generation_;
+        connect(socket_, &QLocalSocket::bytesWritten, this, [this, generation](qint64) {
+            if (generation == generation_)
+                finish_close();
+        });
         connect(socket_, &QLocalSocket::connected, this, [this, generation] {
             if (generation != generation_)
                 return;
             QByteArray nonce(16, '\0');
-            for (auto& byte : nonce)
-                byte = static_cast<char>(QRandomGenerator::system()->generate() & 0xffU);
+            for (qsizetype offset = 0; offset < nonce.size(); offset += 4) {
+                auto value = QRandomGenerator::system()->generate();
+                for (qsizetype byte = 0; byte < 4; ++byte) {
+                    nonce[offset + byte] = static_cast<char>(value & 0xffU);
+                    value >>= 8U;
+                }
+            }
             const auto key = nonce.toBase64();
             accept_ =
                 QCryptographicHash::hash(key + websocket_guid, QCryptographicHash::Sha1).toBase64();
@@ -73,18 +88,19 @@ class UnixWebSocket::Impl final : public QObject {
         });
         connect(socket_, &QLocalSocket::disconnected, this, [this, generation] {
             if (generation == generation_)
-                fail("WebSocket disconnected");
+                fail(closing_ ? "WebSocket peer closed" : "WebSocket disconnected");
         });
         connect(socket_, &QLocalSocket::errorOccurred, this,
                 [this, generation](QLocalSocket::LocalSocketError) {
-                    if (generation == generation_)
+                    if (generation == generation_ && !closing_)
                         fail("WebSocket connection failed");
                 });
         deadline_.start();
         socket_->connectToServer(path);
     }
     bool send(const QByteArray& text) {
-        if (!ready_ || text.size() > UnixWebSocket::maximum_message_bytes || !valid_utf8(text))
+        if (!ready_ || closing_ || text.size() > UnixWebSocket::maximum_message_bytes ||
+            !valid_utf8(text))
             return false;
         return send_frame(1, text);
     }
@@ -93,6 +109,11 @@ class UnixWebSocket::Impl final : public QObject {
     void fail(const char* reason) {
         close();
         emit owner_.failed(QString::fromLatin1(reason));
+    }
+    void finish_close() {
+        if (!closing_ || !socket_ || socket_->bytesToWrite() != 0)
+            return;
+        fail("WebSocket peer closed");
     }
     bool send_frame(quint8 opcode, const QByteArray& payload) {
         if (!socket_ || socket_->state() != QLocalSocket::ConnectedState ||
@@ -110,8 +131,10 @@ class UnixWebSocket::Impl final : public QObject {
                 frame.append(static_cast<char>(size >> (static_cast<unsigned int>(index) * 8U)));
         }
         QByteArray mask(4, '\0');
-        for (auto& byte : mask)
-            byte = static_cast<char>(QRandomGenerator::system()->generate() & 0xffU);
+        const auto mask_value = QRandomGenerator::system()->generate();
+        for (int index = 0; index < mask.size(); ++index)
+            mask[index] =
+                static_cast<char>((mask_value >> (static_cast<unsigned int>(index) * 8U)) & 0xffU);
         frame += mask;
         for (qsizetype index = 0; index < payload.size(); ++index)
             frame.append(static_cast<char>(static_cast<unsigned char>(payload[index]) ^
@@ -183,7 +206,8 @@ class UnixWebSocket::Impl final : public QObject {
             for (qsizetype index = 0; index < count; ++index)
                 header.length =
                     (header.length << 8U) | static_cast<quint8>(input_[header.offset++]);
-            if ((marker == 126 && header.length < 126) || (marker == 127 && header.length <= 65535))
+            if ((marker == 126 && header.length < 126) ||
+                (marker == 127 && (header.length <= 65535 || (header.length >> 63U) != 0)))
                 throw std::runtime_error("Noncanonical WebSocket frame length");
         }
         return header;
@@ -197,8 +221,10 @@ class UnixWebSocket::Impl final : public QObject {
             throw std::runtime_error("WebSocket frame exceeded limit");
     }
     void deliver(const Header& header, QByteArray payload) {
-        if (header.opcode == 8)
-            throw std::runtime_error("WebSocket peer closed");
+        if (header.opcode == 8) {
+            close_from_peer(payload);
+            return;
+        }
         if (header.opcode == 9) {
             if (!send_frame(10, payload))
                 throw std::runtime_error("WebSocket pong queue unavailable");
@@ -218,10 +244,31 @@ class UnixWebSocket::Impl final : public QObject {
             emit owner_.message(payload);
         }
     }
+    void close_from_peer(const QByteArray& payload) {
+        if (payload.size() == 1)
+            throw std::runtime_error("Invalid WebSocket close frame");
+        if (payload.size() >= 2) {
+            const auto code = (static_cast<quint32>(static_cast<quint8>(payload[0])) << 8U) |
+                              static_cast<quint8>(payload[1]);
+            const bool valid_code =
+                (code >= 1000 && code <= 1011 && code != 1004 && code != 1005 && code != 1006) ||
+                (code >= 3000 && code <= 4999);
+            if (!valid_code || (payload.size() > 2 && !valid_utf8(payload.mid(2))))
+                throw std::runtime_error("Invalid WebSocket close frame");
+        }
+        closing_ = true;
+        ready_ = false;
+        if (!send_frame(8, payload))
+            throw std::runtime_error("WebSocket close response queue unavailable");
+        close_deadline_.start();
+        finish_close();
+    }
     void receive() {
         QPointer<Impl> alive(this);
         const auto generation = generation_;
         try {
+            if (closing_)
+                return;
             input_ += socket_->readAll();
             if (input_.size() > UnixWebSocket::maximum_message_bytes + header_limit + 14)
                 throw std::runtime_error("WebSocket input exceeded limit");
@@ -229,7 +276,7 @@ class UnixWebSocket::Impl final : public QObject {
                 if (!handshake())
                     return;
                 emit owner_.opened();
-                if (!alive || generation != generation_)
+                if (!alive || generation != generation_ || closing_)
                     return;
             }
             // Bound each event-loop turn even when the server sends tiny frames.
@@ -243,7 +290,7 @@ class UnixWebSocket::Impl final : public QObject {
                 auto payload = input_.mid(header->offset, static_cast<qsizetype>(header->length));
                 input_.remove(0, header->offset + static_cast<qsizetype>(header->length));
                 deliver(*header, std::move(payload));
-                if (!alive || generation != generation_)
+                if (!alive || generation != generation_ || closing_)
                     return;
             }
             QTimer::singleShot(0, this, [this, generation] {
@@ -258,12 +305,14 @@ class UnixWebSocket::Impl final : public QObject {
     UnixWebSocket& owner_;
     QLocalSocket* socket_{}; // QObject-owned, retired with deleteLater on close.
     QTimer deadline_;
+    QTimer close_deadline_;
     QByteArray accept_;
     QByteArray input_;
     QByteArray message_;
     quint64 generation_{};
     bool ready_{};
     bool fragmented_{};
+    bool closing_{};
 };
 
 UnixWebSocket::UnixWebSocket(QObject* parent)

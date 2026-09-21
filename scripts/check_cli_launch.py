@@ -505,6 +505,71 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
             good.send(TEXT, b"after-invalid\n")
             good.snapshot(lambda s: "ECHO:after-invalid" in s["text"])
 
+    def delayed_codex_listener():
+        # This disposable executable is deliberately unqualified: terminal startup
+        # still works, while structured attention remains disabled.
+        executable = runtime / "delayed-codex"
+        executable.write_text(
+            f"#!{sys.executable}\n"
+            "import socket,sys,time\n"
+            "from pathlib import Path\n"
+            "if sys.argv[1]=='app-server':\n"
+            " endpoint=sys.argv[3].removeprefix('unix://')\n"
+            " server=socket.socket(socket.AF_UNIX)\n"
+            " server.bind(endpoint)\n"
+            " Path(endpoint+'.bound').touch()\n"
+            " time.sleep(.5)\n"
+            " server.listen()\n"
+            " while True:\n"
+            "  connection,_=server.accept();connection.close()\n"
+            "else:\n"
+            " client=socket.socket(socket.AF_UNIX)\n"
+            " client.connect(sys.argv[2].removeprefix('unix://'))\n"
+            " client.close()\n"
+            " print('LISTENER_READY',flush=True)\n"
+            " for line in sys.stdin: print('ECHO:'+line.strip(),flush=True)\n"
+        )
+        executable.chmod(0o700)
+        service = Service(
+            binary,
+            runtime,
+            artifacts,
+            "delayed-codex",
+            str(executable),
+            [],
+            runtime,
+            codex=True,
+        )
+
+        def terminal_text(client, text):
+            if client.cached_snapshot and text in client.cached_snapshot["text"]:
+                return
+            deadline = time.monotonic() + WAIT
+            while time.monotonic() < deadline:
+                kind, data = client.receive(max(0.01, deadline - time.monotonic()))
+                if kind == ATTENTION_SNAPSHOT:
+                    continue
+                require(
+                    kind == SNAPSHOT and data[:40] == client.attachment,
+                    "Unexpected frame during delayed startup",
+                )
+                if text in decode_snapshot(data[72:])["text"]:
+                    return
+            raise CheckError("Delayed backend terminal text missing")
+
+        try:
+            deadline = time.monotonic() + WAIT
+            while not Path(str(service.endpoint) + ".codex.bound").exists():
+                require(time.monotonic() < deadline, "Fake backend never bound")
+                time.sleep(0.01)
+            with service.connect() as client:
+                terminal_text(client, "LISTENER_READY")
+            with service.connect() as client:
+                client.send(TEXT, b"reattached\n")
+                terminal_text(client, "ECHO:reattached")
+        finally:
+            service.stop()
+
     def failures():
         for name, executable, cwd in [
             ("missing-program", "/nonexistent/lapis", runtime),
@@ -531,6 +596,13 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
 
     def invalid_resize_and_signal():
         with session("resize-failure") as service:
+            with service.connect() as client:
+                client.snapshot(lambda s: "READY" in s["text"])
+                client.send(ATTENTION_DECISION, b"")
+                require(
+                    "unsupported for terminal" in client.status(),
+                    "Terminal-only attention decision was not rejected",
+                )
             with service.connect() as client:
                 client.snapshot(lambda s: "READY" in s["text"])
                 client.send(RESIZE, struct.pack(">HH", 65535, 65535))
@@ -1000,6 +1072,7 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
     record("detached output and same-PID reattachment", detach)
     record("mismatch and malformed attachment preserve active client", mismatch)
     record("failed executable and cwd", failures)
+    record("Codex bind-before-listen startup and reattachment", delayed_codex_listener)
     if desktop_enabled:
         record("desktop capture, reattachment, shell default and option rejection", gui)
     if codex:

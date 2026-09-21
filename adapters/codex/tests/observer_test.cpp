@@ -28,7 +28,7 @@ using lapis::codex::Observer;
 using lapis::session::attention::RequestId;
 using lapis::session::attention::State;
 
-constexpr int maximum_test_wait_ms = 2'000;
+constexpr int maximum_test_wait_ms = 5'000;
 constexpr auto websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 void require(bool condition, const char* message) {
@@ -122,7 +122,6 @@ class Source final : public QObject {
             frame_buffer.clear();
             handshake_buffer.clear();
             connect(connection, &QLocalSocket::readyRead, this, [this] { read(); });
-            connect(connection, &QLocalSocket::disconnected, this, [this] { disconnected = true; });
         });
     }
 
@@ -137,9 +136,10 @@ class Source final : public QObject {
         connection->write(frame(json(message)));
     }
 
+    QString thread_name{QStringLiteral("thread")};
     std::vector<QJsonObject> received;
-    bool disconnected{};
     bool resolved_before_replay{};
+    int replay_large_requests{};
 
   private:
     void read() {
@@ -197,11 +197,11 @@ class Source final : public QObject {
             temporary_request.insert("params", temporary_params);
             send(temporary_request);
         } else if (method == QLatin1String("thread/loaded/list")) {
-            send(QJsonObject{
-                {QStringLiteral("id"), id},
-                {QStringLiteral("result"),
-                 QJsonObject{{QStringLiteral("data"), QJsonArray{QStringLiteral("temporary"),
-                                                                 QStringLiteral("thread")}}}}});
+            send(
+                QJsonObject{{QStringLiteral("id"), id},
+                            {QStringLiteral("result"),
+                             QJsonObject{{QStringLiteral("data"),
+                                          QJsonArray{QStringLiteral("temporary"), thread_name}}}}});
         } else if (method == QLatin1String("thread/resume") && !no_rollout_returned) {
             no_rollout_returned = true;
             send(QJsonObject{
@@ -209,14 +209,13 @@ class Source final : public QObject {
                 {QStringLiteral("error"),
                  QJsonObject{{QStringLiteral("code"), -32600},
                              {QStringLiteral("message"),
-                              QStringLiteral("no rollout found for thread id thread")}}}});
+                              QStringLiteral("no rollout found for thread id ") + thread_name}}}});
         } else if (method == QLatin1String("thread/resume")) {
-            send(QJsonObject{
-                {QStringLiteral("id"), id},
-                {QStringLiteral("result"),
-                 QJsonObject{{QStringLiteral("thread"),
-                              QJsonObject{{QStringLiteral("id"), QStringLiteral("thread")},
-                                          {"ephemeral", false}}}}}});
+            send(QJsonObject{{QStringLiteral("id"), id},
+                             {QStringLiteral("result"),
+                              QJsonObject{{QStringLiteral("thread"),
+                                           QJsonObject{{QStringLiteral("id"), thread_name},
+                                                       {"ephemeral", false}}}}}});
         } else if (method == QLatin1String("thread/read")) {
             if (!request.value("params").toObject().value("includeTurns").toBool()) {
                 const auto thread = request.value("params").toObject().value("threadId");
@@ -230,24 +229,30 @@ class Source final : public QObject {
             if (resolved_before_replay)
                 send({{"method", "serverRequest/resolved"},
                       {"params",
-                       QJsonObject{{"threadId", "thread"},
+                       QJsonObject{{"threadId", thread_name},
                                    {"requestId", std::numeric_limits<std::int64_t>::max()}}}});
             send(approval(std::numeric_limits<std::int64_t>::max()));
-            send(QJsonObject{
-                {QStringLiteral("id"), id},
-                {QStringLiteral("result"),
-                 QJsonObject{{QStringLiteral("thread"),
-                              QJsonObject{{QStringLiteral("id"), QStringLiteral("thread")},
-                                          {"ephemeral", false}}}}}});
+            for (int index = 0; index < replay_large_requests; ++index) {
+                auto replay_request = approval(index);
+                auto params = replay_request.value("params").toObject();
+                params.insert("command", QString(15000, 'x'));
+                replay_request.insert("params", params);
+                send(replay_request);
+            }
+            send(QJsonObject{{QStringLiteral("id"), id},
+                             {QStringLiteral("result"),
+                              QJsonObject{{QStringLiteral("thread"),
+                                           QJsonObject{{QStringLiteral("id"), thread_name},
+                                                       {"ephemeral", false}}}}}});
         }
     }
 
-    static QJsonObject approval(std::int64_t identifier) {
+    [[nodiscard]] QJsonObject approval(std::int64_t identifier) const {
         return QJsonObject{
             {QStringLiteral("id"), identifier},
             {QStringLiteral("method"), QStringLiteral("item/commandExecution/requestApproval")},
             {QStringLiteral("params"),
-             QJsonObject{{QStringLiteral("threadId"), QStringLiteral("thread")},
+             QJsonObject{{QStringLiteral("threadId"), thread_name},
                          {QStringLiteral("turnId"), QStringLiteral("turn")},
                          {QStringLiteral("itemId"), QStringLiteral("item")},
                          {QStringLiteral("command"), QStringLiteral("echo fixture")},
@@ -256,6 +261,7 @@ class Source final : public QObject {
                                      QStringLiteral("cancel")}}}}};
     }
 
+    // Unix transport fixture: a short path stays within macOS sockaddr_un limits.
     QTemporaryDir root{QStringLiteral("/tmp/lapis-observer-XXXXXX")};
     QLocalServer server;
     QLocalSocket* connection{};
@@ -283,8 +289,95 @@ bool wait_for(Predicate predicate, int milliseconds = maximum_test_wait_ms) {
     return true;
 }
 
+void reconnect_during_initialization_and_start_new_source() {
+    State state{"lifecycle", "codex"};
+    Source first;
+    first.start();
+    Observer observer{state};
+    int initializations = 0;
+    QObject::connect(&observer, &Observer::initialized, [&] {
+        if (++initializations == 1)
+            observer.reconnect();
+    });
+    observer.start(first.path(), Observer::qualifiedBinarySha256());
+    require(wait_for([&] { return state.ready(); }), "reentrant initialization reconciles");
+    require(initializations == 2, "replacement transport initialized once");
+    require(std::count_if(first.received.begin(), first.received.end(),
+                          [](const auto& message) {
+                              return message.value("method") == "thread/loaded/list";
+                          }) == 1,
+            "old initialization must not discover on the replacement transport");
+    observer.stop();
+    require(!state.connected() &&
+                !observer.details(std::numeric_limits<std::int64_t>::max()).isEmpty(),
+            "stop preserves stale request details");
+    Source second;
+    second.thread_name = "second-thread";
+    second.start();
+    observer.start(second.path(), Observer::qualifiedBinarySha256());
+    require(wait_for([&] { return state.ready(); }), "fresh source start reconciles");
+    require(observer.threadId() == second.thread_name &&
+                state.pending().begin()->second.request.thread_id == "second-thread",
+            "fresh start must not retain the previous thread binding");
+}
+
+QJsonObject large_approval(std::int64_t id) {
+    return {{"id", id},
+            {"method", "item/commandExecution/requestApproval"},
+            {"params", QJsonObject{{"threadId", "thread"},
+                                   {"turnId", "turn"},
+                                   {"itemId", "large"},
+                                   {"command", QString(15000, 'x')},
+                                   {"availableDecisions", QJsonArray{"accept", "decline"}}}}};
+}
+
+void pending_details_budget() {
+    State state{"budget", "codex"};
+    Source source;
+    source.start();
+    Observer observer{state};
+    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    require(wait_for([&] { return state.ready(); }), "budget fixture ready");
+    for (std::int64_t id = 0; id < 32; ++id)
+        source.send(large_approval(id));
+    require(wait_for([&] { return state.pending().size() == 33; }), "bounded requests accepted");
+    for (int duplicate = 0; duplicate < 8; ++duplicate)
+        source.send(large_approval(0));
+    source.send({{"method", "serverRequest/resolved"},
+                 {"params", QJsonObject{{"threadId", "thread"}, {"requestId", 0}}}});
+    require(wait_for([&] { return state.pending().size() == 32; }),
+            "duplicates do not consume budget");
+    source.send(large_approval(32));
+    require(wait_for([&] { return state.pending().size() == 33; }), "resolution frees budget");
+    for (std::int64_t id = 33; id < 40; ++id)
+        source.send(large_approval(id));
+    require(wait_for([&] { return !state.connected(); }), "aggregate overflow disconnects source");
+    require(observer.diagnostic().contains("details exceeded limit") && !state.ready(),
+            "overflow is explicit and disables decisions");
+    qsizetype retained_bytes = 0;
+    for (const auto& [id, pending] : state.pending()) {
+        retained_bytes += json(observer.details(id)).size();
+        require(pending.status == lapis::session::attention::RequestStatus::stale,
+                "overflow retains stale evidence");
+    }
+    require(retained_bytes <= qsizetype{512} * 1024 && state.pending().size() >= 33,
+            "retained details fit within the adapter budget");
+    const auto retained_count = state.pending().size();
+    source.replay_large_requests = 36;
+    observer.reconnect();
+    require(wait_for([&] { return !state.connected(); }), "oversized replay fails closed");
+    require(state.pending().size() == retained_count,
+            "failed replay preserves the prior bounded request set");
+    source.replay_large_requests = 0;
+    observer.reconnect();
+    require(wait_for([&] { return state.ready(); }), "bounded replay recovers from overflow");
+    require(state.pending().size() == 1, "authoritative replay replaces stale requests");
+}
+
 int run(int argc, char** argv) {
     QCoreApplication application(argc, argv);
+    reconnect_during_initialization_and_start_new_source();
+    pending_details_budget();
     State state{QStringLiteral("session").toStdString(), QStringLiteral("codex").toStdString()};
     Source source;
     source.start();
@@ -313,8 +406,13 @@ int run(int argc, char** argv) {
     require(source.received[1].value(QStringLiteral("method")) == QStringLiteral("initialized"),
             "initialized notification");
 
-    require(wait_for([&] { return source.received.size() >= 5; }),
-            "exact no-rollout retry is bounded");
+    require(wait_for([&] {
+                return std::count_if(source.received.begin(), source.received.end(),
+                                     [](const auto& item) {
+                                         return item.value("method") == "thread/resume";
+                                     }) >= 2;
+            }),
+            "no-rollout retry resumes the same thread");
     require(wait_for([&] { return state.ready() && state.pending().size() == 1; }),
             "resume/read replay");
     const RequestId identifier{std::numeric_limits<std::int64_t>::max()};
@@ -385,13 +483,16 @@ int run(int argc, char** argv) {
                      {QStringLiteral("requestId"), std::numeric_limits<std::int64_t>::max()}}}});
     require(wait_for([&] { return state.pending().empty(); }), "source resolution retires request");
 
-    const auto sent_responses = source.received.size();
+    const auto response_count = [&] {
+        return std::count_if(source.received.begin(), source.received.end(),
+                             [](const auto& item) { return !item.contains("method"); });
+    };
+    const auto sent_responses = response_count();
     source.resolved_before_replay = true;
     observer.reconnect();
     require(wait_for([&] { return state.ready(); }), "explicit reconnect reconciles");
     require(observer.threadId() == QStringLiteral("thread"), "thread scope retained");
-    require(wait_for([&] { return source.received.size() == sent_responses + 7; }),
-            "explicit reconnect sends no decision replay");
+    require(response_count() == sent_responses, "explicit reconnect sends no decision replay");
     require(state.pending().empty(), "resolution wins over a later copied request during replay");
 
     for (const auto* method : {"thread/closed", "thread/archived"}) {

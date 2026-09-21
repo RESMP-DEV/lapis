@@ -9,6 +9,7 @@
 namespace lapis::codex {
 // Single-thread asynchronous text transport for the Codex private Unix endpoint.
 // No automatic reconnect or retransmission. All signals run on the owning thread.
+// A peer close is terminal and is reported through failed().
 class UnixWebSocket final : public QObject {
     Q_OBJECT
   public:

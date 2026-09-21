@@ -43,6 +43,7 @@ int main(int argc, char** argv) {
         require(validate_launch(other).arguments == other.arguments);
         other.agent = static_cast<AgentMode>(99);
         rejects([&] { static_cast<void>(validate_launch(other)); });
+        rejects([&] { static_cast<void>(launch_fingerprint(other)); });
         other = launch;
         other.arguments = {QStringLiteral("-c"), QStringLiteral("a b")};
         const auto literal = launch_fingerprint(other);

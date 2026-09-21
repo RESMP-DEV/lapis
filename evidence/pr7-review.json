@@ -1,0 +1,380 @@
+{
+  "schema": "lapis.pr7-review/1",
+  "recorded_at": "2026-09-21T10:28:07.053958+00:00",
+  "base_commit": "f7ba6046521ad11d0c35d681f371cfdb6c33a582",
+  "wire_version": 6,
+  "platform": "macOS arm64, Qt 6.11.2, Vulkan via MoltenVK",
+  "source_sha256": {
+    "adapters/codex/src/observer.cpp": "8e1ca28872db8e07486d8d3118587409ebd5c4f7b2ea3c8304a20dd74c39cbf4",
+    "adapters/codex/src/observer.hpp": "80be8a14054b58a821fb095779f42c16d9324d65fb6bd0953142994689554cd3",
+    "adapters/codex/src/unix_websocket.cpp": "7baf1feb23fe18afa4318ffa7fb01ceabbb15108dfd86683c72acd57a357ac7e",
+    "adapters/codex/src/unix_websocket.hpp": "ce1ebeb70dd597e3eec0378cf8d4f233529eb134383f14ecb5ef0e808d29a38b",
+    "adapters/codex/tests/observer_test.cpp": "b820669729df6de50db5f1c96420442dd8df4d6dcd6bfee73aa1ddeb86ce1bdd",
+    "adapters/codex/tests/unix_websocket_test.cpp": "fe6f2511e40a9ef7a2f46b9ef6a13d3fb3bb448d2d772b0e2add80ce0a4b946e",
+    "apps/desktop/src/attention_view.cpp": "7d18bf765b232680e339a61838f773ce023258ef151c5ccaf95182c1766b4751",
+    "apps/desktop/src/live_connection.cpp": "18c3e0407adb765883cf0fbbd401bedfde83b57472095175b3a517afbd3db9c6",
+    "apps/desktop/tests/attention_ui_probe.cpp": "f099073d831cf4f9a3b17340de8e2f37c1080c1702fb52c92ac77ed19d4b3f0d",
+    "apps/desktop/tests/live_connection_test.cpp": "2abe9ac2eb38ac2544acc7aa159ffd4c4e2a9c1d9c5da980c5cf97230f05596b",
+    "scripts/check_cli_launch.py": "b96473d4cd3a6e81d9d83309c0458092d3047673d30328723d15ed2db9bb93f7",
+    "scripts/check_service_attention.py": "cf19e70972e35ab35734582436a8b6de26a8585d5483afaac72086203f386706",
+    "services/session/src/launch_spec.cpp": "88b65f1e8f8782fb13cf58da2db200dde7c82ea634f65accf2ac962733eed3ec",
+    "services/session/src/platform/posix/process_group_guard.cpp": "bd28f741e549eeceb0d409a50b6545aa3d83902012203d245390b79dbea5ed7f",
+    "services/session/src/platform/posix/process_group_guard.hpp": "b562f60669336ce7bda6310a95addab8e81f4cf8a059f530585ef8816fc80972",
+    "services/session/src/session_service.cpp": "5aaaabc0f8f519689bf2fc31bb3d9c4553f32d7a4df442ef6e1ddbc65c95dec2",
+    "services/session/src/transport/attention_protocol.cpp": "d9b4d7fe0bef46a94ca671d18336ed75ce114aad9686b70ce187a3f45d5ba173",
+    "services/session/src/transport/local_protocol.cpp": "6f06fd026ee2e81e5d72aa49031760f1d6bd99d6f7453ccf205c684571924605",
+    "services/session/tests/attention_protocol_test.cpp": "9cfce653a6f8ecb8d7806257fc72343625249a3071754078c4b4ee713d7d5985",
+    "services/session/tests/launch_spec_test.cpp": "32c49b894a0c44ccc65ef034e035e75e37125f03f0c8102d9f3de5675fd352f2",
+    "scripts/tests/test_check_service_attention.py": "b38b27219b7d3298dbed76b879100f77a853c3f1de353449aa9a46daaa3bcf0c",
+    "services/session/src/transport/wire_bytes.hpp": "8eb7094cdc61f696f23262382d219fc9ebbbb7b9f2c5da59735b265b5473536a"
+  },
+  "scope": "PR 7 review fixes: startup, observer lifecycle and budgets, frame handling, desktop cues and history rejection, multi-question qualification, documentation",
+  "findings": [
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPifs",
+      "path": "evidence/codex-service.json",
+      "disposition": "documented"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPif0",
+      "path": "scripts/check_service_attention.py",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPif3",
+      "path": "services/session/CMakeLists.txt",
+      "disposition": "inapplicable"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPwBQ",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPwBY",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPwBd",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPwBg",
+      "path": "apps/desktop/src/attention_view.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPwBl",
+      "path": "apps/desktop/src/attention_view.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPwBm",
+      "path": "apps/desktop/tests/attention_ui_probe.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPwBp",
+      "path": "scripts/check_cli_launch.py",
+      "disposition": "inapplicable"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPwBs",
+      "path": "scripts/check_cli_launch.py",
+      "disposition": "inapplicable"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPwBy",
+      "path": "scripts/check_service_attention.py",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPwB0",
+      "path": "services/session/src/session_service.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPwB6",
+      "path": "services/session/src/session_service.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPwB_",
+      "path": "services/session/src/transport/attention_protocol.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPwCC",
+      "path": "services/session/src/transport/attention_protocol.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kPwCK",
+      "path": "services/session/tests/attention_protocol_test.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDXV",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDXY",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "inapplicable"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDXb",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDXf",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "documented"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDXk",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDXp",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "documented"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDXv",
+      "path": "adapters/codex/src/unix_websocket.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDX0",
+      "path": "adapters/codex/src/unix_websocket.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDX5",
+      "path": "adapters/codex/src/unix_websocket.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDX9",
+      "path": "adapters/codex/tests/observer_test.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDYB",
+      "path": "adapters/codex/tests/observer_test.cpp",
+      "disposition": "addressed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDYG",
+      "path": "apps/desktop/src/attention_view.cpp",
+      "disposition": "duplicate"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDYN",
+      "path": "apps/desktop/src/live_connection.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDYT",
+      "path": "evidence/codex-service.json",
+      "disposition": "documented"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDYW",
+      "path": "evidence/codex-service.json",
+      "disposition": "documented"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDYe",
+      "path": "evidence/milestone-two.json",
+      "disposition": "documented"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDYk",
+      "path": "evidence/milestone-two.json",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDYo",
+      "path": "scripts/check_service_attention.py",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDYv",
+      "path": "services/session/src/launch_spec.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDY1",
+      "path": "services/session/src/platform/posix/process_group_guard.cpp",
+      "disposition": "addressed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDY5",
+      "path": "services/session/src/platform/posix/process_group_guard.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDZD",
+      "path": "services/session/src/platform/posix/process_group_guard.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDZH",
+      "path": "services/session/src/session_service.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDZK",
+      "path": "services/session/src/session_service.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDZP",
+      "path": "services/session/src/session_service.cpp",
+      "disposition": "retained"
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kSDZV",
+      "path": "services/session/tests/attention_protocol_test.cpp",
+      "disposition": "duplicate"
+    }
+  ],
+  "outside_diff_finding": {
+    "path": "apps/desktop/src/live_connection.cpp",
+    "problem": "An unqueued history request remained pending until timeout",
+    "disposition": "fixed with immediate rollback and real socket queue-full/retry regression"
+  },
+  "checks": {
+    "normal_ctest": {
+      "passed": true,
+      "tests": 18,
+      "log": "build/pr7-review/tests-final.log"
+    },
+    "headless": {
+      "passed": true,
+      "desktop_enabled": false,
+      "tests": 4,
+      "log": "build/pr7-review/headless-tests.log"
+    },
+    "asan_ubsan": {
+      "passed": true,
+      "tests": 18,
+      "log": "build/pr7-review/tests-asan.log",
+      "affected_reruns": [
+        "build/pr7-review/observer-asan.log",
+        "build/pr7-review/history-asan.log"
+      ]
+    },
+    "tsan": {
+      "passed": true,
+      "tests": 18,
+      "log": "build/pr7-review/tests-tsan.log",
+      "affected_reruns": [
+        "build/pr7-review/observer-tsan.log",
+        "build/pr7-review/history-tsan.log"
+      ]
+    },
+    "quality": {
+      "passed": true,
+      "python_test_methods": 78,
+      "log": "build/pr7-review/quality-final.log"
+    },
+    "static": {
+      "passed": true,
+      "translation_units": 15,
+      "tools": [
+        "clang-tidy",
+        "cppcheck"
+      ],
+      "receipt": "build/pr7-review/static/receipt.json"
+    },
+    "cli": {
+      "normal": {
+        "passed": true,
+        "cases": 12,
+        "receipt": "build/pr7-review/cli-corrected.json"
+      },
+      "asan_ubsan": {
+        "passed": true,
+        "cases": 12,
+        "receipt": "build/pr7-review/cli-asan.json"
+      },
+      "tsan": {
+        "passed": true,
+        "cases": 12,
+        "receipt": "build/pr7-review/cli-tsan.json"
+      }
+    },
+    "managed_no_turn": {
+      "asan": {
+        "passed": true,
+        "checks": [
+          "managed TUI startup and attention attachment",
+          "same-child detach and reattach without a model turn",
+          "abrupt service death cleans up TUI and backend groups"
+        ],
+        "owned_process_groups_cleaned": true
+      },
+      "tsan": {
+        "passed": true,
+        "checks": [
+          "managed TUI startup and attention attachment",
+          "same-child detach and reattach without a model turn",
+          "abrupt service death cleans up TUI and backend groups"
+        ],
+        "owned_process_groups_cleaned": true
+      }
+    }
+  },
+  "live": {
+    "timestamp": "2026-09-21T10:24:46.472858+00:00",
+    "checks": [
+      "managed TUI startup and attention attachment",
+      "real command approval through desktop controls",
+      "real command approval over service IPC",
+      "pending request survives same-child reattachment",
+      "stale token rejected",
+      "source resolution and successful continuation",
+      "invalid answers rejected with an exact retry token",
+      "real user-input answer through desktop controls",
+      "real user-input answer over service IPC and successful continuation",
+      "archived source disables replies; restored source reconciles in a fresh epoch",
+      "new request after source recovery is cancelled by an observed turn interruption",
+      "two simultaneous real approvals retain distinct identities and resolve independently"
+    ],
+    "passed": true,
+    "codex_sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+    "model": "zai,glm-5.3",
+    "model_provider": "lapis_probe",
+    "owned_process_groups_cleaned": true,
+    "elapsed_seconds": 40.521
+  },
+  "captures": [
+    {
+      "path": "evidence/pr7-answers.png",
+      "sha256": "af5fa616d0266c8d52da89c9915c6908c446153f90bef0b674892395ce3f9acf",
+      "scope": "Cropped production dialog showing both selected answers, before explicit submission"
+    }
+  ],
+  "iterations": [
+    "The original service failed the delayed-listener fixture; the corrected service passes normal, ASan/UBSan and TSan CLI checks.",
+    "The first live attempt refused a non-fixture model command; no approval was sent and owned groups were cleaned up.",
+    "Intermediate multi-question probes exposed a layout-settling issue. The final live run passed after waiting for a rendered layout and each option popup.",
+    "Parent integration corrected incomplete worker edits before qualification."
+  ],
+  "limits": [
+    "macOS only; Linux desktop qualification remains deferred.",
+    "Qualified Codex executable hash only; no new request kinds or multiple persistent threads.",
+    "Existing native input evidence is reused: platform input, paste/IME ownership and production QML were unchanged.",
+    "Full sanitizer suites preceded the final observer/history changes; both affected tests were rebuilt and rerun under both sanitizers.",
+    "The final live run preceded the unrelated history queue rollback; history behavior passed subsequent normal and sanitizer regressions.",
+    "No physical input-to-pixel latency measurement or new performance claim."
+  ]
+}

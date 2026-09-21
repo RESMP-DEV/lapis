@@ -1,4 +1,5 @@
 #include "attention_protocol.hpp"
+#include "wire_bytes.hpp"
 
 #include <QJsonDocument>
 #include <QJsonParseError>
@@ -7,6 +8,7 @@
 #include <utility>
 
 namespace lapis::session::wire {
+using namespace bytes;
 namespace {
 constexpr quint32 max_snapshot_bytes = 1024U * 1024U;
 constexpr quint32 max_decision_bytes = 64U * 1024U;
@@ -23,31 +25,7 @@ void check(bool valid) {
         throw std::runtime_error("Invalid attention message");
 }
 
-void append_quint32(QByteArray& bytes, quint32 value) {
-    bytes.append(static_cast<char>(value >> 24U))
-        .append(static_cast<char>(value >> 16U))
-        .append(static_cast<char>(value >> 8U))
-        .append(static_cast<char>(value));
-}
-
-void append_quint64(QByteArray& bytes, quint64 value) {
-    append_quint32(bytes, static_cast<quint32>(value >> 32U));
-    append_quint32(bytes, static_cast<quint32>(value));
-}
-
 void append_bool(QByteArray& bytes, bool value) { bytes.append(static_cast<char>(value ? 1 : 0)); }
-
-quint32 read_quint32(const unsigned char*& cursor) {
-    const quint32 value = quint32{cursor[0]} << 24U | quint32{cursor[1]} << 16U |
-                          quint32{cursor[2]} << 8U | quint32{cursor[3]};
-    cursor += 4;
-    return value;
-}
-
-quint64 read_quint64(const unsigned char*& cursor) {
-    const quint64 high = read_quint32(cursor);
-    return high << 32U | read_quint32(cursor);
-}
 
 QByteArray valid_utf8(const QByteArray& value, quint32 limit) {
     check(value.size() <= static_cast<qsizetype>(limit));
@@ -150,27 +128,6 @@ bool valid_decision(const AttentionDecision& decision) {
     return decision.source_epoch != 0 && decision.revision != 0 &&
            valid_request_id(decision.request_id) && !decision.choice.isEmpty() &&
            decision.choice.toUtf8().size() <= max_choice_bytes;
-}
-
-QByteArray encode_attachment(const Attachment& attachment) {
-    check(valid_identity(attachment.identity) && attachment.generation != 0);
-    QByteArray result;
-    result += attachment.identity.session_id;
-    result += attachment.identity.epoch;
-    append_quint64(result, attachment.generation);
-    return result;
-}
-
-Attachment decode_attachment(const unsigned char*& cursor) {
-    Attachment result;
-    result.identity.session_id =
-        QByteArray(reinterpret_cast<const char*>(cursor), static_cast<qsizetype>(16));
-    result.identity.epoch =
-        QByteArray(reinterpret_cast<const char*>(cursor + 16), static_cast<qsizetype>(16));
-    cursor += 32;
-    result.generation = read_quint64(cursor);
-    check(valid_identity(result.identity) && result.generation != 0);
-    return result;
 }
 
 class Reader {
@@ -310,8 +267,14 @@ QByteArray encode_attention_snapshot(const AttentionSnapshot& snapshot) {
     append_quint64(bytes, snapshot.source_epoch);
     append_string(bytes, snapshot.diagnostic, max_diagnostic_bytes);
     append_quint32(bytes, static_cast<quint32>(snapshot.requests.size()));
-    for (const auto& item : snapshot.requests)
-        append_request(bytes, item);
+    for (const auto& item : snapshot.requests) {
+        // Bound intermediate allocation too: individual valid records must not
+        // accumulate into a multi-megabyte snapshot before rejection.
+        QByteArray record;
+        append_request(record, item);
+        check(record.size() <= static_cast<qsizetype>(max_snapshot_bytes) - bytes.size());
+        bytes += record;
+    }
     check(bytes.size() <= static_cast<qsizetype>(max_snapshot_bytes));
     return bytes;
 }

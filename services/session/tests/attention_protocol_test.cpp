@@ -177,6 +177,15 @@ void boundaries() {
     batch.requests.push_back(request(std::string("overflow"), 20));
     rejects([&] { static_cast<void>(lapis::session::wire::encode_attention_snapshot(batch)); });
 
+    AttentionSnapshot oversized = snapshot();
+    for (quint32 index = 0; index < max_requests; ++index) {
+        auto item = maximum;
+        item.pending.request.id = std::int64_t{index};
+        item.details = QJsonObject{{"text", QString(max_json - 20, 'x')}};
+        oversized.requests.push_back(std::move(item));
+    }
+    rejects([&] { static_cast<void>(lapis::session::wire::encode_attention_snapshot(oversized)); });
+
     const QString json_key(max_json - 6, 'k');
     AttentionDecision bounded = decision(std::numeric_limits<std::int64_t>::max());
     bounded.choice = QString(max_choice, 'c');
@@ -284,9 +293,8 @@ void malformed_snapshots() {
     });
 
     auto invalid_status = snapshot({request(0, 20)});
-    invalid_status.requests.front().pending.status = static_cast<RequestStatus>(3);
-    invalid_status.requests.front().pending.status = static_cast<RequestStatus>(static_cast<quint8>(
-        static_cast<quint8>(invalid_status.requests.front().pending.status) + 1));
+    invalid_status.requests.front().pending.status =
+        static_cast<RequestStatus>(static_cast<quint8>(RequestStatus::stale) + 1);
     rejects([&] {
         static_cast<void>(lapis::session::wire::encode_attention_snapshot(invalid_status));
     });

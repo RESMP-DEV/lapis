@@ -22,8 +22,8 @@ namespace lapis::session::posix {
 bool start_group_guard(std::array<int, 2> control, int descriptor_limit);
 
 // Replaces the descriptors owned by read and write with the two ends of a new
-// CLOEXEC pipe. On partial failure, the caller must reset both UniqueFds or
-// allow their destructors to close them.
+// CLOEXEC pipe. On failure, errno is preserved from the failed operation and
+// both references remain unchanged.
 bool open_guard_pipe(UniqueFd& read, UniqueFd& write);
 
 } // namespace lapis::session::posix

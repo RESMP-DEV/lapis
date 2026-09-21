@@ -23,7 +23,6 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <csignal>
 #include <exception>
 #include <limits>
 #include <memory>
@@ -33,6 +32,10 @@
 
 namespace {
 using namespace lapis::session;
+constexpr int codex_sync_timeout_ms = 15000;
+constexpr int terminal_sync_timeout_ms = 3000;
+constexpr int backend_probe_interval_ms = 25;
+constexpr int backend_probe_attempts = 400;
 quint64 monotonic_ns() {
     return static_cast<quint64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                     std::chrono::steady_clock::now().time_since_epoch())
@@ -104,7 +107,8 @@ class SessionService final : public QObject {
         timer_.setInterval(16);
         connect(&timer_, &QTimer::timeout, this, [this] { publish(); });
         ack_timer_.setSingleShot(true);
-        ack_timer_.setInterval(launch.agent == AgentMode::codex ? 15000 : 3000);
+        ack_timer_.setInterval(launch.agent == AgentMode::codex ? codex_sync_timeout_ms
+                                                                : terminal_sync_timeout_ms);
         attention_timer_.setSingleShot(true);
         attention_timer_.setInterval(16);
         connect(&attention_timer_, &QTimer::timeout, this, [this] { publish_attention(); });
@@ -203,6 +207,7 @@ class SessionService final : public QObject {
     }
     void stop_codex() {
         backend_wait_.stop();
+        backend_probe_.abort();
         attention_timer_.stop();
         if (codex_observer_)
             codex_observer_->stop();
@@ -304,20 +309,34 @@ class SessionService final : public QObject {
             if (!process_started_)
                 stop(codex_error_);
         });
-        backend_wait_.setInterval(25);
-        connect(&backend_wait_, &QTimer::timeout, this,
-                [this, launch, backend_socket, binary_hash, attempts = 0]() mutable {
+        codex_backend_.start();
+        wait_for_codex(launch, backend_socket, binary_hash);
+    }
+    void wait_for_codex(const LaunchSpec& launch, const QString& backend_socket,
+                        const QString& binary_hash) {
+        // A pathname can exist after bind(), before the server calls listen().
+        // Probe asynchronously and launch the TUI only once a connection succeeds.
+        connect(&backend_probe_, &QLocalSocket::connected, this,
+                [this, launch, backend_socket, binary_hash] {
+                    backend_wait_.stop();
+                    backend_probe_.abort();
                     if (stopping_)
                         return;
-                    if (QFileInfo::exists(backend_socket)) {
-                        backend_wait_.stop();
-                        codex_observer_->start(backend_socket, binary_hash);
-                        start_codex_tui(launch, backend_socket);
-                    } else if (++attempts >= 400) {
-                        stop(QStringLiteral("Dedicated Codex server did not become ready"));
-                    }
+                    codex_observer_->start(backend_socket, binary_hash);
+                    start_codex_tui(launch, backend_socket);
                 });
-        codex_backend_.start();
+        backend_wait_.setInterval(backend_probe_interval_ms);
+        connect(&backend_wait_, &QTimer::timeout, this,
+                [this, backend_socket, attempts = 0]() mutable {
+                    if (stopping_)
+                        return;
+                    if (++attempts >= backend_probe_attempts) {
+                        stop(QStringLiteral("Dedicated Codex server did not become ready"));
+                        return;
+                    }
+                    if (backend_probe_.state() == QLocalSocket::UnconnectedState)
+                        backend_probe_.connectToServer(backend_socket);
+                });
         backend_wait_.start();
     }
     void configure_history() {
@@ -588,6 +607,8 @@ class SessionService final : public QObject {
             wire::Frame frame;
             if (!wire::take_frame(bytes, frame))
                 return;
+            // Preserve a useful incompatible-protocol diagnostic; decode_attach
+            // also validates the version but reports generic malformed input.
             QDataStream attachment_header(frame.payload);
             quint32 protocol_version{};
             attachment_header >> protocol_version;
@@ -629,7 +650,7 @@ class SessionService final : public QObject {
         }
         client_ = incoming;
         attention_dirty_ = true;
-        if (codex_observer_ && !codex_state_->connected() &&
+        if (codex_observer_ && pty_requested_ && !codex_state_->connected() &&
             codex_backend_.state() == QProcess::Running)
             codex_observer_->reconnect();
         buffer_.clear();
@@ -783,9 +804,11 @@ class SessionService final : public QObject {
         QByteArray bytes;
         switch (frame.kind) {
         case wire::Kind::attention_decision: {
+            if (!codex_observer_)
+                throw std::runtime_error(
+                    "Attention decisions are unsupported for terminal sessions");
             const auto decision = wire::decode_attention_decision(control.payload);
-            if (!codex_observer_ ||
-                !codex_observer_->decide(decision.source_epoch, decision.request_id,
+            if (!codex_observer_->decide(decision.source_epoch, decision.request_id,
                                          decision.revision, decision.choice, decision.answers)) {
                 allow_decision_retry(decision);
                 decision_error_ =
@@ -931,6 +954,7 @@ class SessionService final : public QObject {
     std::unique_ptr<lapis::codex::Observer> codex_observer_;
     QProcess codex_backend_;
     QTimer backend_wait_;
+    QLocalSocket backend_probe_;
     QTimer attention_timer_;
     posix::UniqueFd backend_guard_read_;
     posix::UniqueFd backend_guard_control_;

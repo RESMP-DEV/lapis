@@ -1,3 +1,4 @@
+#include "live_connection.hpp"
 #include "session_descriptor.hpp"
 #include "transport/local_protocol.hpp"
 #include "workspace.hpp"
@@ -200,6 +201,47 @@ void history_browsing_and_input_gating() {
             "Canceled history reply disconnected a usable session");
 }
 
+void unqueued_history_is_rejected_immediately() {
+    Fixture f;
+    lapis::desktop::LiveConnection connection(f.document, f.endpoint, f.launch,
+                                              wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    // Keep the event loop still while filling the actual socket write queue.
+    // Large chunks approach the bound; small ones leave no room for a request.
+    size_t queued = 0;
+    for (int index = 0; index < 32 && connection.send(wire::Kind::text, QByteArray(65536, 'x'));
+         ++index)
+        ++queued;
+    bool full = false;
+    for (int index = 0; index < 2048; ++index) {
+        if (!connection.send(wire::Kind::text, "x")) {
+            full = true;
+            break;
+        }
+        ++queued;
+    }
+    require(full, "Fixture did not fill the socket queue");
+    f.document.beginHistoryRequest();
+    connection.requestHistory(wire::HistoryDirection::older, 0);
+    require(!f.document.historyRequestPending() &&
+                f.document.historyMessage().contains("could not be queued"),
+            "Unqueued history remained pending until timeout");
+    for (size_t index = 0; index < queued; ++index)
+        require(peer.read().kind == wire::Kind::text,
+                "Rejected history request reached the socket");
+    settle();
+    f.document.beginHistoryRequest();
+    connection.requestHistory(wire::HistoryDirection::older, 0);
+    const auto retried = f.historyRequest(peer);
+    require(f.document.historyRequestPending(), "History could not retry after drain");
+    f.historyReply(peer, retried.request_id, 0, {}, "No older history");
+    until([&] { return !f.document.historyRequestPending(); });
+    require(f.document.historyMessage() == "No older history", "Retried history response was lost");
+}
+
 void stale_reconnect_and_history_errors() {
     Fixture f;
     f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
@@ -346,6 +388,19 @@ void attention_routing_and_reconnect() {
     publish();
     require(f.document.attentionCount() == 2 && f.document.attentionReady(),
             "Requests not exposed");
+    const auto first_arrival = f.document.attentionSerial();
+    publish();
+    require(f.document.attentionSerial() == first_arrival, "Duplicate snapshot re-alerted");
+    state.requests[0].pending.revision += 2;
+    publish();
+    require(f.document.attentionSerial() == first_arrival + 1,
+            "Reused request ID with a fresh revision did not alert");
+    state.source_epoch = 8;
+    for (auto& request : state.requests)
+        request.pending.source_epoch = 8;
+    publish();
+    require(f.document.attentionSerial() == first_arrival + 2,
+            "Reused request ID in a fresh source epoch did not alert");
     const auto initial = f.document.attentionRequests();
     const auto first_token = initial[0].toMap().value("token").toString();
     const auto second_token = initial[1].toMap().value("token").toString();
@@ -368,7 +423,7 @@ void attention_routing_and_reconnect() {
     const auto decision = wire::decode_attention_decision(envelope.payload);
     require(envelope.attachment == state.attachment && decision.request_id == ids[0] &&
                 decision.revision == state.requests[0].pending.revision &&
-                decision.source_epoch == 7 && decision.choice == "accept",
+                decision.source_epoch == 8 && decision.choice == "accept",
             "Decision changed exact native identity");
     require(!f.document.respondAttention(first_token, {{"choice", "accept"}}),
             "Duplicate response sent");
@@ -392,8 +447,10 @@ void attention_routing_and_reconnect() {
     f.hello(peer, 2);
     f.screen(peer, 2);
     require(!f.document.attentionReady(), "Screen alone enabled stale attention");
+    const auto before_reattach = f.document.attentionSerial();
     state.attachment.generation = 2;
     publish();
+    require(f.document.attentionSerial() == before_reattach, "Attachment alone re-alerted");
     require(f.document.attentionReady(), "Reconciled requests did not become ready");
     require(!f.document.respondAttention(second_token, {{"choice", "decline"}}),
             "Old attachment token sent");
@@ -441,6 +498,7 @@ int main(int argc, char** argv) {
         handshake_and_reconnect();
         history_browsing_and_input_gating();
         stale_reconnect_and_history_errors();
+        unqueued_history_is_rejected_immediately();
         missing_and_replaced();
         attention_routing_and_reconnect();
         lost_before_screen();

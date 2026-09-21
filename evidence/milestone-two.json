@@ -1,6 +1,6 @@
 {
   "schema": "lapis.milestone-two/1",
-  "recorded_at": "2026-09-21T05:13:39.417309+00:00",
+  "recorded_at": "2026-09-21T05:16:59+00:00",
   "milestone_two_complete": true,
   "scope": "One managed ordinary Codex TUI with a service-owned backend and observer, macOS desktop attention and explicit decisions",
   "base_commit": "44b933b38e3a0daec0f72fe00fe1ec15c064d6cf",
@@ -209,5 +209,6 @@
     "build/desktop/services/session/lapis_session_service": "df8875175879abce9cbc01dc3e5844a83d0a3e9e25c864b3cf168484e359bec8",
     "build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop": "8eb513f43d29ba7cc273f2c67b3363af4f6aa28cd45dfcf9b210bd5f90853a56",
     "build/desktop/apps/desktop/lapis_attention_ui_probe": "34a19f941ba69a34eccdf913c6a298757b73f7f3d6bb407d1b999bbe27c52f8c"
-  }
+  },
+  "timestamp_note": "Corrected during PR review: recorded_at is the containing commit f7ba6046521ad11d0c35d681f371cfdb6c33a582 timestamp, an upper bound on assembly. The former 05:13:39 timestamp preceded the final live fixture; per-check timestamps and source hashes remain unchanged."
 }

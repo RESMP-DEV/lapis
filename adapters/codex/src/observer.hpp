@@ -24,6 +24,9 @@ class Observer final : public QObject {
     // Display-only bounded details: method, command/cwd or questions/options.
     [[nodiscard]] QJsonObject details(const session::attention::RequestId& id) const;
     // Validate payload first, consume the exact State token, then send once.
+    // False may mean rejected before consumption OR consumed with delivery
+    // uncertain. A send failure disconnects the source and retains submission;
+    // reconcile explicitly before another decision. Never automatically replay.
     // Approval choice: accept/decline/cancel. Input choice: submit; answers maps
     // question IDs to {"answers":[label or free text]}, as the source requires.
     [[nodiscard]] bool decide(quint64 epoch, const session::attention::RequestId& id,

@@ -67,6 +67,10 @@ struct Fixture {
               accept + "\r\n\r\n");
         wait([&] { return opened == 1; });
     }
+    void require_failed() {
+        wait([&] { return failed == 1; });
+        require(failed == 1 && messages.empty());
+    }
     void write(const QByteArray& bytes) { require(peer->write(bytes) == bytes.size()); }
     QByteArray client_frame() {
         QByteArray bytes;
@@ -108,12 +112,12 @@ void framing() {
 void invalid_frames() {
     for (const auto& bytes :
          {"8101ff", "808000000000", "8000", "010161810162", "0900", "897e007e",
-          "827f0000000000000000", "817f0000000000100001", "817e000161", "c100", "8200"}) {
+          "827f0000000000000000", "817f8000000000000000", "817f0000000000100001", "817e000161",
+          "c100", "8200", "8801e8", "880203ed", "880303e8ff"}) {
         Fixture f;
         f.upgrade();
         f.write(QByteArray::fromHex(bytes));
-        wait([&] { return f.failed == 1; });
-        require(f.messages.empty());
+        f.require_failed();
     }
     Fixture f;
     static_cast<void>(f.connect());
@@ -121,6 +125,15 @@ void invalid_frames() {
             "Sec-WebSocket-Accept: wrong\r\n\r\n");
     wait([&] { return f.failed == 1; });
     require(f.opened == 0);
+}
+void peer_close() {
+    Fixture f;
+    f.upgrade();
+    f.write(QByteArray::fromHex("880203e8"));
+    const auto response = f.client_frame();
+    require(static_cast<quint8>(response[0]) == 0x88 &&
+            unmask(response) == QByteArray::fromHex("03e8"));
+    f.require_failed();
 }
 void reentrant_close() {
     Fixture f;
@@ -138,8 +151,9 @@ int main(int argc, char** argv) {
     try {
         framing();
         invalid_frames();
+        peer_close();
         reentrant_close();
-        std::cout << "Unix WebSocket framing, bounds and lifecycle passed\n";
+        std::cout << "Unix WebSocket framing, bounds, close and lifecycle passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

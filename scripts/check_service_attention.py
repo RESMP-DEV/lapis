@@ -22,6 +22,7 @@ from check_cli_launch import (
     STATUS,
     TEXT,
     VERSION,
+    CheckError,
     Service,
     decode_snapshot,
     require,
@@ -141,6 +142,10 @@ class View:
                 kind, data = await asyncio.to_thread(self.client.receive, 0.2)
             except socket.timeout:
                 continue
+            except CheckError as error:
+                if str(error) != "Frame deadline expired":
+                    raise
+                continue
             if kind == ATTENTION_SNAPSHOT:
                 value = snapshot(data)
                 require(
@@ -225,7 +230,14 @@ async def question_turn(owner, thread, question_id):
             "input": [
                 {
                     "type": "text",
-                    "text": f"Use request_user_input now to ask one question with id {question_id}: choose Blue or Green. Do not use any other tool. After I answer, reply with just the selected color.",
+                    "text": (
+                        "Use request_user_input now to ask two questions in one "
+                        f"request with ids {question_id}_first and {question_id}_second. "
+                        f"For {question_id}_first choose Blue or Green; for "
+                        f"{question_id}_second choose Red or Yellow. Do not use any "
+                        "other tool. After I answer both, reply with just the selected "
+                        "colors separated by a space."
+                    ),
                 }
             ],
             "collaborationMode": {
@@ -324,7 +336,9 @@ async def simultaneous_approvals(owner, view, thread, receipt):
 
 
 async def exercise(args, receipt):
-    binary = Path(shutil.which("codex")).resolve()
+    executable = shutil.which("codex")
+    require(executable is not None, "codex is not installed")
+    binary = Path(executable).resolve()
     receipt["codex_sha256"] = hashlib.sha256(binary.read_bytes()).hexdigest()
     receipt["source"] = (
         "ordinary TUI created thread, service-owned backend and observer"
@@ -485,7 +499,7 @@ async def exercise(args, receipt):
                 payload = decision(request, "accept")
                 view.client.send(ATTENTION_DECISION, payload)
                 view.client.send(ATTENTION_DECISION, payload)
-                receipt["checks"].append("duplicate decision rejected")
+                receipt["checks"].append("duplicate decision sent after first decision")
             await view.wait(
                 lambda: view.attention["ready"] and not view.attention["requests"]
             )
@@ -508,11 +522,20 @@ async def exercise(args, receipt):
             )
             questions = request["details"].get("questions", [])
             require(
-                len(questions) == 1 and questions[0]["id"] == "color",
+                len(questions) == 2
+                and questions[0]["id"] == "color_first"
+                and questions[1]["id"] == "color_second",
                 "Unexpected question fixture",
             )
-            label = questions[0]["options"][0]["label"]
-            require(label.startswith("Blue"), "Unexpected question answer")
+            labels = {
+                question["id"]: question["options"][0]["label"]
+                for question in questions
+            }
+            require(
+                labels["color_first"].startswith("Blue")
+                and labels["color_second"].startswith("Red"),
+                "Unexpected question answers",
+            )
             # Invalid answers are rejected before source submission, with an
             # explicit retry receipt; queued older snapshots are not that receipt.
             invalid = decision(request, "submit")
@@ -525,7 +548,10 @@ async def exercise(args, receipt):
             receipt["checks"].append(
                 "invalid answers rejected with an exact retry token"
             )
-            answers = {"color": {"answers": [label]}}
+            answers = {
+                "color_first": {"answers": [labels["color_first"]]},
+                "color_second": {"answers": [labels["color_second"]]},
+            }
             if args.desktop:
                 await view.close()
                 view = None
@@ -582,7 +608,7 @@ async def exercise(args, receipt):
             )
             require(
                 cancelled["details"].get("questions", [{}])[0].get("id")
-                == "cancel_check",
+                == "cancel_check_first",
                 "Unexpected cancellation fixture",
             )
             await owner.rpc(
@@ -605,6 +631,9 @@ async def exercise(args, receipt):
                 receipt["last_request_count"] = len(view.attention["requests"])
                 with contextlib.suppress(OSError):
                     (artifacts / "fixture-screen.txt").write_text(view.screen)
+                    (artifacts / "pending-fixture.json").write_text(
+                        json.dumps(view.attention["requests"], indent=2) + "\n"
+                    )
             if owner:
                 with contextlib.suppress(Exception):
                     await owner.close()

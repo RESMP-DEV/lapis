@@ -2,9 +2,11 @@
 
 This is the single implementation plan for lapis. See the
 [current status](../README.md#current-status) for what has been implemented and exercised.
-macOS is the active target. Milestone 1 is qualified. The quality cleanup landed
-in PR #6; Milestone 2 resumes with **attention state and verified Codex request
-handling**, starting with the adapter/service boundary. A Linux desktop port is deferred; the headless engine has
+macOS is the active target. Milestones 1 and 2 are qualified for the recorded
+single-session scope: a persistent terminal and managed Codex attention with
+explicit desktop responses. The quality baseline from PR #6 remains in force.
+Multi-session routing and carousel work belong to Milestone 3.
+A Linux desktop port is deferred; the headless engine has
 already been exercised on Linux, but the session service and desktop have not.
 
 ## Product philosophy
@@ -748,14 +750,19 @@ late replay of the same typed ID.
 
 This is an implementation-specific contract, not a schema guarantee or a quiet
 interval. Requalify changed Codex binaries before enabling responses. Other request
-kinds, cancellation and simultaneous live requests still need adapter qualification.
+kinds remain unqualified. Cancellation and simultaneous requests were not covered
+by this standalone checkpoint; the assembled acceptance below exercises them.
 Unknown source versions and failed reconciliation keep responses disabled. Native
 hooks remain an unqualified alternative; they are not needed for the selected
-shared-server route. Production service/IPC and desktop wiring follow in 2C/2D.
+shared-server route. Production service/IPC and desktop wiring are described below in 2C/2D.
 
 The 2C implementation uses opt-in managed Codex launch, distinct from plain
 terminal launch in the launch fingerprint. The service owns a dedicated Unix
 app-server endpoint and an ordinary TUI attached to it, plus a separate observer.
+Startup asynchronously probes for a listening backend before starting either
+client; socket-path existence alone is insufficient. This startup-only retry is
+bounded to ten seconds. GUI attachment cannot reconnect an observer that has not
+yet been started.
 Both child groups use the existing POSIX ownership guard, including cleanup on
 abrupt service loss. Production inherits the caller's Codex home and policy;
 private homes and explicit model/approval settings belong only to qualification
@@ -765,10 +772,16 @@ their requests through the TUI controls. A second persistent thread disables
 structured responses pending a future thread-switch contract.
 
 Wire v6 retains terminal and history envelopes and adds attachment-bound attention
-snapshots and decisions. Snapshots include typed source IDs, source epoch, revision,
+snapshots and decisions. The adapter caps retained pending details at 512 KiB,
+with bounded identity fields and at most 128 requests. Aggregate overflow disables
+the source while retaining the previous bounded request evidence. The IPC encoder
+also rejects oversized snapshots incrementally at 1 MiB.
+Snapshots include typed source IDs, source epoch, revision,
 readiness and pending/response-in-flight/stale state. Decisions require the active
 GUI attachment and exact source token. Sending consumes the token but does not
-resolve the request; only source resolution does. Source reconnect must reconcile
+resolve the request; only source resolution does. A transport failure after token
+consumption leaves delivery uncertain and disables responses until explicit
+reconciliation; it never triggers an automatic resend. Source reconnect must reconcile
 before enabling decisions, and unqualified Codex binary hashes keep structured
 responses disabled. Wire v6 adds `attention_retry` (kind 14): an attachment-bound echo of the decision
 identity/choice with empty answers. The service sends it only when rejection
@@ -780,7 +793,9 @@ user-input responses, same-child reattachment, stale/duplicate decisions and
 cleanup after abrupt service death. Desktop controls are not included in that receipt.
 
 The desktop exposes request count/reason and stale diagnostics without automatic
-focus changes. Its modal response dialog binds a frozen draft to an opaque native
+focus changes. A changed source epoch or request revision produces a fresh
+attention cue even when the source reuses an ID; duplicate snapshots and a changed
+GUI attachment alone do not. Its modal response dialog binds a frozen draft to an opaque native
 attachment/epoch/revision token; request IDs and revisions never round-trip through
 JavaScript numbers. Incoming updates invalidate actions without replacing typed
 answers or composition. Modal ownership blocks workspace shortcuts and terminal

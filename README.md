@@ -44,13 +44,15 @@ The [two UI refinements](docs/architecture.md#ui-refinement-checkpoint) are
 implemented for visual review: an isolated preview/debugging workflow and a compact
 header with replayable red attention cues. Configurable navigation, layouts, themes
 and card densities are available. Managed Codex sessions now surface real requests;
-automatic carousel behavior remains later work. The next
-product milestone is attention state and verified Codex request handling; the
+automatic carousel behavior remains later work. The completed attention state
+and verified Codex request handling are described in the
 [Milestone 2 plan](docs/architecture.md#milestone-2-attention-and-codex-plan)
-defines its route decision, implementation slices and acceptance checks.
+with its route decision, implementation slices and acceptance checks.
 The first checkpoint implemented the standalone attention core and exercised real
 Codex request round trips. [Milestone 2 evidence](evidence/milestone-two.json) now
-records assembled service/desktop acceptance on macOS. Following the quality cleanup in PR #6, Milestone 2
+records assembled service/desktop acceptance on macOS. The
+[PR #7 review receipt](evidence/pr7-review.json) covers subsequent lifecycle,
+startup, queue-boundary and multi-question fixes. Following the quality cleanup in PR #6, Milestone 2
 now includes the production Codex adapter, session-service integration and explicit
 desktop response controls. Request arrival never moves keyboard focus. See the
 [attention test procedure](CONTRIBUTING.md#codex-attention-qualification).
