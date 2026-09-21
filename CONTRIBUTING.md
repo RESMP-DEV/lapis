@@ -373,7 +373,7 @@ defaults are:
 | Category 1-4 | Ctrl+1 to Ctrl+4 | Jump straight to a category |
 | Next / previous window | Ctrl+Shift+] / Ctrl+Shift+[ | Move through sessions |
 | Focus left / right | Ctrl+Left / Ctrl+Right | Step one session |
-| Cycle layout | Ctrl+L | Switch focus and blocks layouts |
+| Cycle layout | Ctrl+L | Cycle focus, columns, blocks and stack; save the selection |
 | Appearance | Ctrl+, / Meta+, (Command-comma on macOS) | Open theme, layout and density settings |
 | Reload config | Ctrl+R | Re-read `lapis.json` |
 
@@ -393,9 +393,10 @@ preview strip, `columns` places previews beside the pane, `blocks` uses a wrappi
 grid, and `stack` shows the selected session alone. Six themes and three card
 densities change the window chrome; terminal cell colors remain session-owned.
 Appearance choices persist atomically in `lapis.json`, preserving shortcut strings
-and other JSON values; malformed files remain untouched and show a diagnostic. Ctrl-L temporarily toggles focus/blocks at runtime;
-the Appearance dialog exposes all four choices. The session cards still include
-fixtures; navigation does not create additional live service sessions.
+and other JSON values; malformed files remain untouched and show a diagnostic.
+Ctrl-L cycles through focus, columns, blocks and stack in that order and saves the
+selection using the same path as the Appearance dialog. The session cards still
+include fixtures; navigation does not create additional live service sessions.
 
 Command-Left and Command-Right inside the terminal move to the start and end of
 the line, matching macOS editing. The terminal translates them to the Ctrl-A and
