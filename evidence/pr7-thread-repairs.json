@@ -1,0 +1,171 @@
+{
+  "schema": "lapis.pr7-thread-repairs/1",
+  "recorded_at": "2026-09-21T20:32:56.798577+00:00",
+  "base_revision": "b43840fc531ddf2e9a755f499a4253b5a00f7104",
+  "source_sha256": {
+    "adapters/codex/README.md": "f9be477242ecb070072d30a18e5b41c63ad314c6ca87f5a1bed410711f246b97",
+    "adapters/codex/src/observer.cpp": "88ff176c8e722e46c476f245df0ebbe05d7eb57642ac6e9b6ea886114c93f2e5",
+    "adapters/codex/tests/observer_test.cpp": "e568f62ac69529ebeb87196df5e0ca826a428232cd4ca308484227fb68052a00",
+    "scripts/check_cli_launch.py": "3bd7d3f79b6c39dc97a91c0d45998c0e253400cb84f0ba91a85a2e8213707620",
+    "scripts/check_service_attention.py": "b1e19bae7295871f1b931085e000b2b441a64b4573a548c18fea3b0c82b7a2f5",
+    "scripts/tests/test_check_service_attention.py": "35deffcf3067b0e84d755bdb20b57798e4266fdc002099c13ab962ef6a6260d9",
+    "services/session/src/session_service.cpp": "5dff648efc0472ce94983379c15e8d8c64937e94ae6b44d2c6e446e8630e30ef",
+    "services/session/tests/launch_spec_test.cpp": "ab58ad303a93bf51b9d25f2ffb5a52144f8beab7b237e4c2a2513ffd99493033"
+  },
+  "changes": [
+    "Require classified persistent-thread metadata before initial observer binding; preserve established identity on reconnect.",
+    "Reject -- as a missing value for -c/--config/--enable/--disable before backend launch.",
+    "Preserve qualification errors alongside cleanup diagnostics and retain cleanup-only failures.",
+    "Keep launch-spec test sockets below Unix path-length limits in longer worktrees."
+  ],
+  "checks": [
+    {
+      "name": "desktop",
+      "passed": true,
+      "scope": "all 18 CTest suites and compiler/format/clang-tidy/Cppcheck checks",
+      "artifact": "build/reports/desktop/receipt.json"
+    },
+    {
+      "name": "quality",
+      "passed": true,
+      "scope": "repository conventions, Ruff and Python unit tests",
+      "artifact": "build/reports/quality/receipt.json"
+    },
+    {
+      "name": "CLI and GUI",
+      "passed": true,
+      "scope": "14 acceptance cases; config argument check includes 13 real-service subcases with a fake backend; no live Codex",
+      "artifact": "build/cli-launch-check/receipt.json"
+    },
+    {
+      "name": "ASan/UBSan service",
+      "passed": true,
+      "scope": "13 service cases; desktop-enabled build; no GUI",
+      "artifact": "build/repair-asan-cli.json"
+    },
+    {
+      "name": "TSan service",
+      "passed": true,
+      "scope": "13 service cases; desktop-enabled build; no GUI",
+      "artifact": "build/repair-tsan-cli.json"
+    },
+    {
+      "name": "asan targeted CTest",
+      "passed": true,
+      "scope": "codex-observer and launch-spec, 2 suites",
+      "artifact": "build/repair-asan.log"
+    },
+    {
+      "name": "tsan targeted CTest",
+      "passed": true,
+      "scope": "codex-observer and launch-spec, 2 suites",
+      "artifact": "build/repair-tsan.log"
+    }
+  ],
+  "regressions": [
+    {
+      "name": "unclassified temporary thread",
+      "old_behavior": "new test fails against the baseline observer with early unclassified requests must not poison persistent binding",
+      "fixed_behavior": "temporary-first and persistent-first startup, authoritative replay, explicit response, stable reconnect identity and bounded preclassification queue pass",
+      "artifact": "build/observer-baseline-regression.log"
+    },
+    {
+      "name": "malformed Codex config separator",
+      "old_behavior": "real baseline service launches backend for ['-c', '--', '--config=literal']",
+      "fixed_behavior": "backend never starts for missing or separator option values; valid prefixes forward exactly and literal trailing arguments are not copied",
+      "artifact": "build/arguments-baseline-regression.log"
+    },
+    {
+      "name": "cleanup failures",
+      "fixed_behavior": "mocked async cases preserve primary exception and notes, attempt both cleanup stages, and fail cleanup-only errors",
+      "artifact": "build/reports/quality/python-unittests.log"
+    }
+  ],
+  "earlier_failure": {
+    "artifact": "build/repair-desktop.log",
+    "details": "launch-spec fixture exceeded Unix socket length in this longer worktree; moved fixture to short canonical temporary path. clang-tidy required separating ++index from the expanded condition. Both corrected before final passing build."
+  },
+  "thread_dispositions": [
+    {
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4063018448",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "already handled"
+    },
+    {
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4063018458",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "fixed"
+    },
+    {
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4063018466",
+      "path": "evidence/codex-service.json",
+      "disposition": "not a correctness defect; historical schema retained"
+    },
+    {
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4063018501",
+      "path": "evidence/codex-service.json",
+      "disposition": "not a correctness defect; historical schema retained"
+    },
+    {
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4063018506",
+      "path": "evidence/codex-service.json",
+      "disposition": "not a correctness defect; historical schema retained"
+    },
+    {
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4063018514",
+      "path": "evidence/pr7-review-followup.json",
+      "disposition": "not a correctness defect; historical schema retained"
+    },
+    {
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4063018523",
+      "path": "evidence/pr7-review-followup.json",
+      "disposition": "not a correctness defect; historical schema retained"
+    },
+    {
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4063018537",
+      "path": "evidence/pr7-review-followup.json",
+      "disposition": "not a correctness defect; historical schema retained"
+    },
+    {
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4063018550",
+      "path": "evidence/pr7-review.json",
+      "disposition": "not a correctness defect; historical schema retained"
+    },
+    {
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4063018575",
+      "path": "scripts/check_service_attention.py",
+      "disposition": "deferred robustness improvement"
+    },
+    {
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4063018594",
+      "path": "scripts/check_service_attention.py",
+      "disposition": "deferred robustness improvement"
+    },
+    {
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4063018605",
+      "path": "scripts/check_service_attention.py",
+      "disposition": "fixed"
+    },
+    {
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4063018619",
+      "path": "services/session/src/session_service.cpp",
+      "disposition": "not reachable through the current producer"
+    },
+    {
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4063018632",
+      "path": "services/session/src/session_service.cpp",
+      "disposition": "fixed"
+    }
+  ],
+  "limits": [
+    "No new live Codex/model turns or provider spending. Synthetic adapter events exercise the ordering boundary; actual source event reordering is not claimed observed.",
+    "Sanitizer CTest coverage is targeted to the affected observer and launch suites, not full-suite sanitizer acceptance.",
+    "UI, rendering, wire version and response schema are unchanged. Existing milestone receipts retain their original source and scope.",
+    "No merge of PR 7, 8 or 9 is included in this repair."
+  ],
+  "review": {
+    "model": "claude-opus-5",
+    "result": "No introduced defects found in the complete repair diff.",
+    "artifact": "build/opus-repairs-review.jsonl"
+  }
+}

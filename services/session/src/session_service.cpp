@@ -240,7 +240,9 @@ class SessionService final : public QObject {
                 break;
             if (argument == QStringLiteral("-c") || argument == QStringLiteral("--config") ||
                 argument == QStringLiteral("--enable") || argument == QStringLiteral("--disable")) {
-                if (++index == launch.arguments.size())
+                ++index;
+                if (index == launch.arguments.size() ||
+                    launch.arguments.at(index) == QStringLiteral("--"))
                     throw std::invalid_argument("Codex config option requires a value");
                 arguments << argument << launch.arguments.at(index);
             } else if (argument.startsWith(QStringLiteral("--config=")) ||

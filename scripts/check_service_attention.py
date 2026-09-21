@@ -9,6 +9,7 @@ import shutil
 import socket
 import struct
 import subprocess
+import sys
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -203,6 +204,29 @@ async def wait_groups_gone(groups):
     async with asyncio.timeout(5):
         while groups & await asyncio.to_thread(process_groups):
             await asyncio.sleep(0.05)
+
+
+async def cleanup_service(service, groups, receipt, original_error):
+    errors = []
+    try:
+        await asyncio.to_thread(service.stop)
+        receipt["service_reaped"] = service.process.poll() is not None
+    except Exception as error:
+        errors.append(f"service cleanup: {str(error) or type(error).__name__}")
+    if groups:
+        try:
+            await wait_groups_gone(groups)
+            receipt["owned_process_groups_cleaned"] = True
+        except Exception as error:
+            errors.append(
+                f"process-group cleanup: {str(error) or type(error).__name__}"
+            )
+    if errors:
+        receipt["cleanup_errors"] = errors
+        if original_error is None:
+            raise CheckError("; ".join(errors))
+        for error in errors:
+            original_error.add_note(error)
 
 
 async def finished_turn(owner, thread, turn, expected="completed"):
@@ -657,6 +681,7 @@ async def exercise(args, receipt):
             )
             await simultaneous_approvals(owner, view, thread, receipt)
         finally:
+            original_error = sys.exception()
             if view and view.attention:
                 receipt["last_attention"] = {
                     key: view.attention[key]
@@ -674,11 +699,7 @@ async def exercise(args, receipt):
             if view:
                 with contextlib.suppress(Exception):
                     await view.close()
-            await asyncio.to_thread(service.stop)
-            receipt["service_reaped"] = service.process.poll() is not None
-            if groups:
-                await wait_groups_gone(groups)
-                receipt["owned_process_groups_cleaned"] = True
+            await cleanup_service(service, groups, receipt, original_error)
 
 
 def main():

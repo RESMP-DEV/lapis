@@ -26,7 +26,9 @@ int main(int argc, char** argv) {
     QCoreApplication application(argc, argv);
     using namespace lapis::session;
     try {
-        QTemporaryDir temporary(QDir::current().filePath(QStringLiteral("launch-XXXXXX")));
+        // Keep Unix socket fixtures short even in deeply nested worktrees.
+        QTemporaryDir temporary(QDir(QStringLiteral("/tmp")).canonicalPath() +
+                                QStringLiteral("/lapis-launch-XXXXXX"));
         require(temporary.isValid());
         const auto launch = validate_launch({.program = QStringLiteral("/bin/sh"),
                                              .arguments = {QStringLiteral("-i")},

@@ -55,6 +55,9 @@ records assembled service/desktop acceptance on macOS. The
 startup, queue-boundary and multi-question fixes. Its
 [follow-up receipt](evidence/pr7-review-followup.json) records request-ID and
 reconciliation fixes, order-independent question checks and refreshed validation.
+The [thread-repair receipt](evidence/pr7-thread-repairs.json) records initial-thread
+classification, config separator validation, preserved cleanup diagnostics and
+the disposition of the remaining review threads.
 Following the quality cleanup in PR #6, Milestone 2
 now includes the production Codex adapter, session-service integration and explicit
 desktop response controls. Request arrival never moves keyboard focus. See the

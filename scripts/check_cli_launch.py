@@ -505,6 +505,70 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
             good.send(TEXT, b"after-invalid\n")
             good.snapshot(lambda s: "ECHO:after-invalid" in s["text"])
 
+    def codex_config_arguments():
+        marker = runtime / "backend-arguments.json"
+        executable = runtime / "argument-codex"
+        executable.write_text(
+            f"#!{program}\n"
+            "import json,sys\n"
+            "from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+        )
+        executable.chmod(0o700)
+        cases = []
+        for option in ("-c", "--config", "--enable", "--disable"):
+            cases.extend(
+                [
+                    ([option], None),
+                    ([option, "--", "--config=literal"], None),
+                    (
+                        [option, "fixture", "--", "--config=literal"],
+                        [option, "fixture"],
+                    ),
+                ]
+            )
+        cases.append((["--", "-c", "--", "--enable=literal"], []))
+        for index, (arguments, expected) in enumerate(cases):
+            marker.unlink(missing_ok=True)
+            name = f"codex-arguments-{index}"
+            service = Service(
+                binary,
+                runtime,
+                artifacts,
+                name,
+                str(executable),
+                arguments,
+                runtime,
+                codex=True,
+            )
+            try:
+                code = service.process.wait(timeout=5)
+                require(code != 0, "Fixture backend exit must stop its service")
+            finally:
+                service.stop()
+            if expected is None:
+                require(
+                    not marker.exists(),
+                    f"Malformed option launched backend: {arguments}",
+                )
+                require(
+                    "Codex config option requires a value"
+                    in (artifacts / (name + ".service.log")).read_text(),
+                    f"Missing config-value diagnostic: {arguments}",
+                )
+            else:
+                require(
+                    marker.exists(), f"Valid options did not reach backend: {arguments}"
+                )
+                forwarded = json.loads(marker.read_text())
+                require(
+                    forwarded[:2] == ["app-server", "--listen"]
+                    and forwarded[2] == "unix://" + str(service.endpoint) + ".codex"
+                    and forwarded[3:] == expected,
+                    f"Literal arguments leaked into backend options: {forwarded}",
+                )
+        return {"argument_cases": len(cases), "live_codex_used": False}
+
     def delayed_codex_listener():
         # This disposable executable is deliberately unqualified: terminal startup
         # still works, while structured attention remains disabled.
@@ -1072,6 +1136,7 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
     record("detached output and same-PID reattachment", detach)
     record("mismatch and malformed attachment preserve active client", mismatch)
     record("failed executable and cwd", failures)
+    record("Codex config values and literal separator", codex_config_arguments)
     record("Codex bind-before-listen startup and reattachment", delayed_codex_listener)
     if desktop_enabled:
         record("desktop capture, reattachment, shell default and option rejection", gui)

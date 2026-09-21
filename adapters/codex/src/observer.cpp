@@ -499,7 +499,10 @@ class Observer::Impl final : public QObject {
             fail("Codex thread closed; restore the source before reconnecting");
             return;
         }
-        if (discovering_) {
+        // Only classified persistent metadata can establish the initial binding.
+        // Early events remain bounded and non-actionable until resume/read
+        // provides the authoritative replay for that thread.
+        if (discovering_ || thread_.isEmpty()) {
             queue(message, size);
             return;
         }
