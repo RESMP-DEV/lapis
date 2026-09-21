@@ -59,7 +59,10 @@ Following the quality cleanup in PR #6, Milestone 2
 now includes the production Codex adapter, session-service integration and explicit
 desktop response controls. Request arrival never moves keyboard focus. See the
 [attention test procedure](CONTRIBUTING.md#codex-attention-qualification).
-Latency and warm-switch targets remain provisional.
+The [Milestone 3 scope](docs/architecture.md#milestone-3-supervising-two-live-sessions-on-macos)
+is planned: two retained live sessions and safe manual switching first, then
+workspace attention and a guarded opt-in carousel. None of that multi-session
+behavior is implemented yet. Latency and warm-switch targets remain provisional.
 
 Explicit CLI launch is now implemented through the existing service-owned PTY.
 The [launch receipt](evidence/cli-launch.json) records the exercised macOS scope and
