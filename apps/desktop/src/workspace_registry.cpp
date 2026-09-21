@@ -33,7 +33,7 @@ constexpr auto fingerprint_key = "fingerprint";
 constexpr auto title_key = "title";
 constexpr auto directory_key = "directory";
 constexpr auto agent_key = "agent";
-constexpr qsizetype max_json_bytes = 64 * 1024;
+constexpr qsizetype max_json_bytes = qsizetype{64} * 1024;
 constexpr qsizetype max_text_bytes = 4096;
 
 [[noreturn]] void fail(const char* message) { throw std::runtime_error(message); }
@@ -119,8 +119,10 @@ void ensure_private_owner_directory(const QString& path) {
 }
 
 posix::UniqueFd open_private_regular_file(const QString& path, int flags) {
-    const int descriptor = ::open(QFile::encodeName(path).constData(),
-                                  flags | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0600);
+    const int descriptor = ::open(
+        QFile::encodeName(path).constData(),
+        static_cast<int>(static_cast<unsigned int>(flags) | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK),
+        0600);
     posix::UniqueFd result{descriptor};
     struct stat status{};
     if (!result || ::fstat(result.get(), &status) != 0)
@@ -243,7 +245,7 @@ std::vector<WorkspaceEntry> decode_entries(const QByteArray& bytes) {
         else if (agent == QLatin1String("codex"))
             entry.agent = session::AgentMode::codex;
         else
-            entry.agent = static_cast<session::AgentMode>(255);
+            fail("Workspace agent mode is unknown");
         entries.push_back(std::move(entry));
     }
     validate_entries(entries);
@@ -252,9 +254,8 @@ std::vector<WorkspaceEntry> decode_entries(const QByteArray& bytes) {
 
 class TemporaryFile {
   public:
-    explicit TemporaryFile(const QString& path) : path_(path) {
-        file_ = open_private_regular_file(path, O_WRONLY | O_CREAT | O_EXCL);
-    }
+    explicit TemporaryFile(const QString& path)
+        : path_(path), file_(open_private_regular_file(path, O_WRONLY | O_CREAT | O_EXCL)) {}
     ~TemporaryFile() { static_cast<void>(::unlink(QFile::encodeName(path_).constData())); }
     TemporaryFile(const TemporaryFile&) = delete;
     TemporaryFile& operator=(const TemporaryFile&) = delete;

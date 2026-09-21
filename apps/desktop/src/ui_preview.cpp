@@ -183,6 +183,8 @@ bool UiPreview::assignTerminalFocus() {
         return false;
     // Focus and columns keep the single live pane; blocks and stack promote one
     // tile per session. The dynamic workspace can be empty while loading.
+    if (target_window->property("inputBlocked").toBool())
+        return false;
     const KeyMap* keymap = options_.keymap;
     const bool pane_visible = keymap == nullptr || keymap->layout() == WorkspaceLayout::Focus ||
                               keymap->layout() == WorkspaceLayout::Columns;
@@ -384,6 +386,10 @@ bool UiPreview::loadCandidate() {
                               QStringLiteral("No screen matched '%1'; see log for available names")
                                   .arg(options_.screen)));
     }
+    connect(candidateWindow, &QQuickWindow::activeChanged, this, [this, candidateWindow] {
+        if (window_ == candidateWindow && candidateWindow->isActive())
+            deferTerminalFocus();
+    });
     candidateWindow->show();
 
     return true;

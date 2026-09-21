@@ -488,6 +488,7 @@ ApplicationWindow {
 
             Button {
                 id: sessionTools
+                objectName: "sessionTools"
                 visible: !preview.active
                 Layout.preferredHeight: 18
                 focusPolicy: Qt.NoFocus
@@ -498,12 +499,14 @@ ApplicationWindow {
                 onClicked: sessionMenu.open()
                 Menu {
                     id: sessionMenu
+                    objectName: "sessionMenu"
                     readonly property bool available: workspace.canAddSessions
                     readonly property bool focusedAvailable: workspace.focusedSession &&
                         workspace.focusedSession.connectionState !== "connecting" &&
                         workspace.focusedSession.connectionState !== "synchronizing" &&
                         !workspace.focusedSession.inputReady
                     MenuItem {
+                        objectName: "createSessionAction"
                         text: qsTr("Create or adopt…")
                         enabled: workspace.canAddSessions
                         visible: workspace.registryEnabled
@@ -521,11 +524,13 @@ ApplicationWindow {
                     }
                     MenuItem {
                         text: qsTr("Discover existing session")
+                        visible: !workspace.registryEnabled
                         enabled: sessionMenu.focusedAvailable
                         onTriggered: workspace.focusedSession.discoverSession()
                     }
                     MenuItem {
                         text: qsTr("Start new session")
+                        visible: !workspace.registryEnabled
                         enabled: sessionMenu.focusedAvailable
                         onTriggered: workspace.focusedSession.startNewSession()
                     }

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import termios
 import traceback
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -249,6 +250,33 @@ class WireClient:
                 )
                 return reply
             require(kind == SNAPSHOT, "Unexpected frame before history reply")
+
+
+def wait_raw_terminal(pid):
+    """The Codex banner may be drawn before its PTY enters interactive raw mode."""
+    terminal = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "tty="],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    ).stdout.strip()
+    require(
+        terminal and terminal not in ("?", "??") and ".." not in terminal,
+        "Controlled CLI has no terminal",
+    )
+    path = Path("/dev") / terminal.removeprefix("/dev/")
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+    try:
+        deadline = time.monotonic() + WAIT
+        while time.monotonic() < deadline:
+            local_flags = termios.tcgetattr(descriptor)[3]
+            if not local_flags & (termios.ICANON | termios.ECHO):
+                return
+            time.sleep(0.02)
+        raise CheckError("Controlled CLI did not enter raw terminal input mode")
+    finally:
+        os.close(descriptor)
 
 
 def wait_socket(endpoint, process):
@@ -1056,6 +1084,7 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
         try:
             with service.connect() as client:
                 client.snapshot(lambda s: "OpenAI Codex" in s["text"], timeout=15)
+                wait_raw_terminal(service.child_pid)
                 client.send(TEXT, marker.encode())
                 client.snapshot(lambda s: marker in s["text"])
                 client.send(KEY, bytes([2, 0]))  # TerminalKey::left

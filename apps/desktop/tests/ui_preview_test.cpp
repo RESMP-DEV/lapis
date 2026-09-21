@@ -653,7 +653,7 @@ void check_cursor_rendering(lapis::desktop::SessionPreview& document, QQuickWind
         snapshot.cursor.shape = shape;
         ++snapshot.revision;
         document.applySnapshot(snapshot);
-        pump(30);
+        pump(150); // Include the bounded noninteractive preview refresh and presentation.
         const auto image = window.grabWindow();
         CHECK(!image.isNull());
         return colored_area(image, expected);
@@ -861,9 +861,10 @@ int run_input_guard_tests() {
     pump(50);
     CHECK(workspace.focusedIndex() == 1);
 
+    wait_active(*window);
     send_key(QEvent::KeyPress, Qt::Key_Shift);
+    CHECK(preview.holdingKeys());
     workspace.setFocusedIndex(0);
-    pump(20);
     CHECK(workspace.focusedIndex() == 1);
     send_key(QEvent::KeyRelease, Qt::Key_Shift);
     pump(50);

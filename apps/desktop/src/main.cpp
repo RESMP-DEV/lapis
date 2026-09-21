@@ -85,7 +85,7 @@ bool valid_connection_options(const QCommandLineParser& parser) {
     }
     return true;
 }
-bool valid_options(const QCommandLineParser& parser) {
+bool valid_workspace_options(const QCommandLineParser& parser) {
     const bool preview = parser.isSet(QStringLiteral("ui-preview"));
     if (parser.isSet(QStringLiteral("workspace")) &&
         (preview || parser.value(QStringLiteral("workspace")).isEmpty() ||
@@ -97,6 +97,12 @@ bool valid_options(const QCommandLineParser& parser) {
                   "preview options");
         return false;
     }
+    return true;
+}
+bool valid_options(const QCommandLineParser& parser) {
+    if (!valid_workspace_options(parser))
+        return false;
+    const bool preview = parser.isSet(QStringLiteral("ui-preview"));
     if (preview && parser.isSet(QStringLiteral("codex"))) {
         qCritical("--codex cannot be combined with --ui-preview");
         return false;
@@ -187,10 +193,6 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
 // UiPreview creates. Lives outside main() to keep main's branching flat.
 void wire_window(QQuickWindow& window, lapis::desktop::UiPreview& view,
                  lapis::desktop::Workspace& workspace, const QCommandLineParser& parser) {
-    QObject::connect(&window, &QQuickWindow::activeChanged, &view, [&view, &window] {
-        if (window.isActive())
-            view.assignTerminalFocus();
-    });
     if (parser.isSet(QStringLiteral("capture")))
         capture_window(window, workspace, view,
                        {.image_path = parser.value(QStringLiteral("capture")),

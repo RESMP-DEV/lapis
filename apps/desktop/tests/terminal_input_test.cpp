@@ -202,9 +202,13 @@ void input_contract() {
     window.show();
     until([&] { return window.isExposed(); });
     lapis::desktop::test::activate_test_window(window);
+    until([&] { return window.isActive(); });
     settle(); // Drain native activation events before beginning an IME transaction.
     surface.forceActiveFocus();
-    until([&] { return window.isActive() && surface.hasActiveFocus(); });
+    until([&] {
+        surface.forceActiveFocus();
+        return window.isActive() && surface.hasActiveFocus();
+    });
     static_cast<void>(text_frames(peer));
     check_surface_blockers(surface, other_surface, peer);
     require(surface.inputMethodQuery(Qt::ImEnabled).toBool(), "Ready terminal disabled IME");
@@ -286,8 +290,14 @@ void input_contract() {
     // Model the user returning to the terminal before beginning a new
     // composition. Native focus restoration may complete on a later event.
     lapis::desktop::test::activate_test_window(window);
+    until([&] { return window.isActive(); });
     settle(); // Drain native activation events before beginning an IME transaction.
     surface.forceActiveFocus();
+    if (!surface.inputMethodQuery(Qt::ImEnabled).toBool())
+        std::cerr << "IME recovery: active=" << window.isActive()
+                  << " focus=" << surface.hasActiveFocus() << " ready=" << f.document.inputReady()
+                  << " interactive=" << surface.interactive()
+                  << " state=" << f.document.connectionState().toStdString() << '\n';
     until([&] { return surface.inputMethodQuery(Qt::ImEnabled).toBool(); });
     composition(surface, QStringLiteral("new"));
     composition(surface, {}, QStringLiteral("新"));

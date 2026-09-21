@@ -18,22 +18,27 @@ to that same file so Codex and Claude Code share one set of project instructions
 
 ## Current status
 
-The macOS preview has a **live terminal in the enlarged pane** (shell by default) and a horizontal
-strip of five placeholder sessions plus the live preview below it. The cards provide manual navigation through the live session and development
-fixtures; they do not start additional live processes. **Milestone 1 is
-implemented and qualified on macOS.** Milestone 2 is also qualified for one managed
-Codex session: service attention, explicit desktop decisions and source recovery.
+The macOS workspace retains live terminal and Codex sessions in one window. It
+supports manual switching, identity-checked reconnection and detached services.
+**Milestone 1 is qualified on macOS.** Milestone 2 is qualified for one managed
+Codex session. **Milestone 3 checkpoint 3A has passed functional qualification
+with two retained sessions on macOS.** Workspace attention aggregation and the
+automatic carousel remain planned, so Milestone 3 is not complete.
 
 | Component | Exercised | Remaining |
 | --- | --- | --- |
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
 | PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS | Recovery after service loss and later Linux qualification |
-| Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect | Automatic recovery policy and multi-session registry |
-| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK | Cross-cell contextual shaping, selection and accessibility; Linux GUI port is deferred |
+| Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues, explicit reconnect and retained workspace entries | Automatic recovery policy after service loss |
+| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, guarded manual focus switching, 10 Hz background previews, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK | Cross-cell contextual shaping, selection and accessibility; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
-| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation | Live multi-session routing and automatic carousel |
+| Retained workspace | Two real shells, GUI creation, four layouts, independent input/history/geometry, shared archive quotas/failure, same-child GUI reopen, removal/adoption and native IME switching | Cross-session Codex attention, automatic carousel and larger workloads |
+| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation | Workspace-wide attention routing and automatic carousel |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Workspace-wide aggregation |
 | Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals | Broader binary and request-kind qualification |
+
+[Workspace qualification](evidence/milestone-three-workspace.json) records the
+checkpoint 3A scope and limitations.
 
 [Desktop evidence](evidence/desktop-preview.json),
 [UI refinement evidence](evidence/ui-preview.json),
@@ -63,9 +68,10 @@ now includes the production Codex adapter, session-service integration and expli
 desktop response controls. Request arrival never moves keyboard focus. See the
 [attention test procedure](CONTRIBUTING.md#codex-attention-qualification).
 The [Milestone 3 scope](docs/architecture.md#milestone-3-supervising-two-live-sessions-on-macos)
-is planned: two retained live sessions and safe manual switching first, then
-workspace attention and a guarded opt-in carousel. None of that multi-session
-behavior is implemented yet. Latency and warm-switch targets remain provisional.
+has checkpoint 3A implemented: retained entries, manual switching and guarded
+input. Its two-session functional acceptance is recorded in the workspace receipt.
+Checkpoint 3B workspace attention aggregation and checkpoint 3C's guarded opt-in
+carousel remain planned. Latency and warm-switch targets remain provisional.
 
 Explicit CLI launch is now implemented through the existing service-owned PTY.
 The [launch receipt](evidence/cli-launch.json) records the exercised macOS scope and
@@ -98,7 +104,7 @@ python3 scripts/lapis.py bootstrap # build the pinned Ghostty terminal library (
 python3 scripts/lapis.py quality   # repository/Python quality checks (no GUI)
 python3 scripts/lapis.py check     # compile, lint, format-check and run CTest
 python3 scripts/lapis.py build     # build the desktop app and run its checks
-python3 scripts/lapis.py run       # open the live shell window
+python3 scripts/lapis.py run       # open runtime/workspace-v1.json
 python3 scripts/lapis.py ui        # isolated fixture, source-QML reload and attention replay
 python3 scripts/lapis.py ui-debug  # launch the isolated fixture in LLDB
 python3 scripts/lapis.py ui-check  # bounded preview captures and failure cases
@@ -107,24 +113,30 @@ python3 scripts/lapis.py cli-check # CLI/service/GUI acceptance fixtures
 
 `just` recipes with the same names wrap the same launcher (`just run`,
 `just ui-check`, and so on), and `python3 scripts/lapis.py` alone lists every
-command. The launcher locates the bootstrapped terminal dependency, supplies the
-socket path, and opens windows on the laptop panel. `just native-input` runs the
-automated macOS keyboard, clipboard and Japanese IME checks.
+command. The launcher locates the bootstrapped terminal dependency and opens
+windows on the laptop panel. `just run` uses `runtime/workspace-v1.json`;
+pass `--workspace /absolute/path.json` explicitly for another registry. Pass
+`--socket`, `--cwd` or an explicit `-- program` only for the legacy single-session
+mode. `just native-input` runs the automated macOS keyboard, clipboard and
+Japanese IME checks.
 
-On first use, choose **Session → Start new session**. The shell starts in this
-checkout. Closing the window detaches it; reopening verifies the saved identity
-and restores the same service-owned shell. Input stays disabled until its screen
-is restored. The pane starts your login shell: `$SHELL` when set, otherwise the
-account's shell from the user database, so a launch from an agent or script with
-an empty environment does not silently fall back to `/bin/sh` and a `sh-3.2$`
-prompt. Type `exit` to end the shell. An additional window replaces the previous
-attachment; there is still one attached window per socket.
+An empty workspace offers **Session → Create or adopt…** for a shell or Codex.
+Closing the window detaches every live child; removing a workspace entry detaches
+that entry without terminating it. Reopening reconnects only: it verifies the
+recorded identity and restores the screen, never relaunching a dead service or
+replaying input. Input stays disabled until a screen is restored and is guarded
+during paste and IME composition while focus changes manually. The pane starts
+your login shell: `$SHELL` when set, otherwise the account's shell from the user
+database. Type `exit` to end a shell. One GUI may attach per endpoint.
 
-The Session menu offers Reconnect, Discover existing session, and Start new
-session after disconnection. Reconnect never starts another process or replays
-unsent input. If the old service ended or the endpoint now belongs to another
-session, choose an explicit action. Builds stay under `build/`; private sockets,
-logs and the bounded `.session` identity hint stay under `runtime/`.
+Entries become durable after their first verified connection; wait for Live terminal
+before closing a newly created session. The registry is private, owner-locked, atomically written and bounded to 64 KiB
+and eight entries. Its reconnect-only JSON stores endpoint, identity,
+fingerprint, title, directory and agent—never commands, transcripts or
+credentials. The single-session menu keeps explicit reconnect/discover/new-session
+actions; the workspace menu separates create/adopt and remove/detach. Builds stay
+under `build/`; private sockets, logs and bounded workspace/identity files stay
+under `runtime/`.
 
 Use **Older**, **Newer**, and **Live** above the terminal to browse archived
 output. History is read only: keys, paste and terminal resize resume only after

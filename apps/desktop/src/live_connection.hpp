@@ -66,6 +66,7 @@ class LiveConnection final : public QObject {
     bool ready_{};
     bool failed_{true};
     session::TerminalSize wanted_size_{100, 30};
+    bool wanted_size_requested_{};
     bool reconnect_only_{};
 };
 } // namespace lapis::desktop

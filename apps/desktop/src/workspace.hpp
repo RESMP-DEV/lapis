@@ -178,7 +178,7 @@ class Workspace final : public QObject {
     [[nodiscard]] bool registryEnabled() const { return !manifest_.isEmpty(); }
     [[nodiscard]] bool loading() const { return loading_; }
     [[nodiscard]] bool canAddSessions() const;
-    [[nodiscard]] QString status() const { return status_; }
+    [[nodiscard]] const QString& status() const { return status_; }
     Q_INVOKABLE bool addSession(bool codex, const QString& directory, const QString& endpoint = {});
     Q_INVOKABLE bool removeSession(const QString& id);
     Q_INVOKABLE void setInteractionBlocked(const QString& reason, bool blocked);

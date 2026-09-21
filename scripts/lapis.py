@@ -175,7 +175,8 @@ def launch(arguments):
         not has_program
         and "--ui-preview" not in app_arguments
         and not any(
-            a in ("--socket", "--workspace") or a.startswith(("--socket=", "--workspace="))
+            a in ("--socket", "--workspace")
+            or a.startswith(("--socket=", "--workspace="))
             for a in app_arguments
         )
     ):

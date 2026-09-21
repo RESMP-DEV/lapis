@@ -375,6 +375,7 @@ bool LiveConnection::send(wire::Kind kind, const QByteArray& payload) {
     return true;
 }
 void LiveConnection::resize(session::TerminalSize size) {
+    wanted_size_requested_ = true;
     if (size == wanted_size_)
         return;
     wanted_size_ = size;
@@ -386,7 +387,10 @@ void LiveConnection::resize(session::TerminalSize size) {
     send(wire::Kind::resize, bytes);
 }
 
-void LiveConnection::setWantedSize(session::TerminalSize size) { wanted_size_ = size; }
+void LiveConnection::setWantedSize(session::TerminalSize size) {
+    wanted_size_requested_ = true;
+    wanted_size_ = size;
+}
 
 void LiveConnection::applyWantedSize() {
     const auto wanted = wanted_size_;
@@ -444,6 +448,8 @@ void LiveConnection::acceptSnapshot(wire::SnapshotMessage message) {
         throw std::runtime_error("Stale or mismatched terminal snapshot");
     const bool initial = last_sequence_ == 0;
     last_sequence_ = message.sequence;
+    if (initial && !wanted_size_requested_)
+        wanted_size_ = message.snapshot.size;
     document_.setSnapshotTiming(
         {{QStringLiteral("sequence"), QVariant::fromValue(message.sequence)},
          {QStringLiteral("pty_read_ns"), QVariant::fromValue(message.timing.pty_read_ns)},

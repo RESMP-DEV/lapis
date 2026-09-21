@@ -53,7 +53,7 @@ class Workspace::Storage {
     bool dirty{};
 };
 
-Workspace::~Workspace() {
+Workspace::~Workspace() try {
     if (!registry_ready_ || !storage_ || !storage_->writing || !storage_->dirty)
         return;
     std::vector<WorkspaceEntry> entries;
@@ -73,6 +73,10 @@ Workspace::~Workspace() {
                 qWarning("Final workspace save failed: %s", error.what());
             }
         }));
+} catch (const std::exception& error) {
+    qWarning("Could not queue final workspace save: %s", error.what());
+} catch (...) {
+    qWarning("Could not queue final workspace save");
 }
 
 bool Workspace::canAddSessions() const {
@@ -230,8 +234,7 @@ bool Workspace::removeSession(const QString& id) {
     emit focusChanged();
     emit workspaceChanged();
     // QML bindings see the replacement list/focus before the old object dies.
-    removed->deleteLater();
-    static_cast<void>(removed.release());
+    removed.release()->deleteLater();
     persistRegistry();
     return true;
 }

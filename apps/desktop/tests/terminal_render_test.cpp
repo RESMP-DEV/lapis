@@ -103,7 +103,8 @@ void require_pixels(const ColorArea& area, std::string_view label, int minimum_p
 }
 
 QImage render(TerminalSurface& surface) {
-    pump(80);
+    // Allow a noninteractive preview refresh (10 Hz) and its next presentation.
+    pump(150);
     const QImage image = surface.window()->grabWindow();
     CHECK(!image.isNull());
     return image;

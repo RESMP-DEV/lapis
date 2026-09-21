@@ -1,6 +1,7 @@
 #include "workspace.hpp"
 
 #include <QCoreApplication>
+#include <QDirIterator>
 #include <QEventLoop>
 #include <QFile>
 #include <QJsonArray>
@@ -19,6 +20,7 @@
 #include <source_location>
 #include <stdexcept>
 #include <string>
+#include <sys/stat.h>
 #include <vector>
 
 namespace {
@@ -54,7 +56,12 @@ void send(SessionPreview& document, const QByteArray& command) {
     document.sendText(command + '\r');
 }
 void contains(SessionPreview& document, const QString& marker) {
-    until([&] { return screen(document).contains(marker); });
+    try {
+        until([&] { return screen(document).contains(marker); });
+    } catch (const std::exception&) {
+        throw std::runtime_error("Missing controlled marker " + marker.toStdString() +
+                                 " in screen: " + screen(document).toStdString());
+    }
 }
 QByteArray read(const QString& path) {
     QFile file(path);
@@ -91,6 +98,9 @@ struct Fixture {
     std::vector<Processes> children;
     Fixture() {
         require(directory.isValid());
+        qputenv("LAPIS_HISTORY_ROOT", directory.filePath(QStringLiteral("history")).toUtf8());
+        qputenv("LAPIS_HISTORY_SESSION_BYTES", "262144");
+        qputenv("LAPIS_HISTORY_GLOBAL_BYTES", "393216");
         open();
     }
     ~Fixture() {
@@ -117,12 +127,49 @@ struct Fixture {
         auto* document = workspace->sessions().back().value<SessionPreview*>();
         until([&] { return document->inputReady(); });
         // Split the marker so echoed input cannot satisfy the readiness check.
-        send(*document, "stty -echo; printf '\\033[2J\\033[H%s%s\\n' LAPIS_ READY");
+        send(*document, "PS1=; PS2=; unset PROMPT_COMMAND; stty -echo; printf "
+                        "'\\033[2J\\033[H%s%s\\n' LAPIS_ READY");
         contains(*document, QStringLiteral("LAPIS_READY"));
         children.push_back(probe(*document, QByteArrayLiteral("START")));
         return document;
     }
 };
+void sharedHistory(Fixture& fixture, SessionPreview& first, SessionPreview& second) {
+    const QString root = fixture.directory.filePath(QStringLiteral("history"));
+    // Both independent service processes archive concurrently under the same global quota.
+    send(first, "i=0; while [ $i -lt 2000 ]; do printf 'QUOTA_A_%04d\\n' $i; i=$((i+1)); done");
+    send(second, "i=0; while [ $i -lt 2000 ]; do printf 'QUOTA_B_%04d\\n' $i; i=$((i+1)); done");
+    contains(first, QStringLiteral("QUOTA_A_1999"));
+    contains(second, QStringLiteral("QUOTA_B_1999"));
+    for (auto* document : {&first, &second}) {
+        document->olderHistory();
+        until([&] { return !document->historyRequestPending(); });
+        require(document->historyMessage().isEmpty());
+        document->returnToLive();
+    }
+    qint64 bytes{};
+    int pages{};
+    QDirIterator files(root, {QStringLiteral("*.page")}, QDir::Files, QDirIterator::Subdirectories);
+    while (files.hasNext()) {
+        files.next();
+        bytes += files.fileInfo().size();
+        ++pages;
+    }
+    require(bytes > 0 && bytes <= 393216 && pages < 100);
+    const auto lock = QFile::encodeName(root + QStringLiteral("/.lock"));
+    require(::chmod(lock.constData(), 0644) == 0);
+    // A real shared-archive validation failure must leave both retained live screens usable.
+    first.olderHistory();
+    second.olderHistory();
+    until([&] { return !first.historyRequestPending() && !second.historyRequestPending(); });
+    require(!first.historyMessage().isEmpty() && !second.historyMessage().isEmpty());
+    first.returnToLive();
+    second.returnToLive();
+    contains(first, QStringLiteral("QUOTA_A_1999"));
+    contains(second, QStringLiteral("QUOTA_B_1999"));
+    require(first.inputReady() && second.inputReady());
+    require(::chmod(lock.constData(), 0600) == 0);
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -178,9 +225,15 @@ int main(int argc, char** argv) {
         first->returnToLive();
         contains(*first, QStringLiteral("HISTORY_A_79"));
         const auto entry = first->reconnectEntry();
-        require(entry.has_value());
-        require(!workspace.addSession(false, fixture.directory.path(), entry->endpoint));
+        if (!entry)
+            throw std::runtime_error("Missing verified workspace entry");
+        require(!workspace.addSession(false, fixture.directory.path(), entry.value().endpoint));
         require(workspace.sessions().size() == 2);
+        sharedHistory(fixture, *first, *second);
+        send(*first, "printf 'BEFORE_REOPEN_A\\n'");
+        send(*second, "printf 'BEFORE_REOPEN_B\\n'");
+        contains(*first, QStringLiteral("BEFORE_REOPEN_A"));
+        contains(*second, QStringLiteral("BEFORE_REOPEN_B"));
 
         fixture.close();
         require(!gone(fixture.children[0].shell) && !gone(fixture.children[1].shell));
@@ -190,25 +243,32 @@ int main(int argc, char** argv) {
         second = reopened.session(ids[1]);
         require(first && second);
         until([&] { return first->inputReady() && second->inputReady(); });
-        contains(*first, QStringLiteral("HISTORY_A_79"));
-        contains(*second, QStringLiteral("BACKGROUND_SECOND"));
+        contains(*first, QStringLiteral("BEFORE_REOPEN_A"));
+        contains(*second, QStringLiteral("BEFORE_REOPEN_B"));
+        require(first->snapshot().size == TerminalSize{57, 19} &&
+                second->snapshot().size == TerminalSize{43, 23});
         require(probe(*first, QByteArrayLiteral("REOPEN_A")) == fixture.children[0]);
         require(probe(*second, QByteArrayLiteral("REOPEN_B")) == fixture.children[1]);
         send(*first, "exit");
         until([&] { return first->connectionState() == QStringLiteral("ended"); });
         until([&] { return gone(fixture.children[0].service); });
-        require(reopened.removeSession(ids[0]));
-        until([&] { return savedIds(fixture.manifest) == std::vector<QString>{ids[1]}; });
         send(*second, "printf 'SURVIVOR_READY\\n'");
         contains(*second, QStringLiteral("SURVIVOR_READY"));
         const auto secondEntry = second->reconnectEntry();
-        require(secondEntry.has_value());
-        require(reopened.removeSession(ids[1])); // Detach a live child, then explicitly adopt it.
-        until([&] { return savedIds(fixture.manifest).empty(); });
-        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        if (!secondEntry)
+            throw std::runtime_error("Missing surviving workspace entry");
+        // No event-loop turn between the two mutations and destruction: the second
+        // save is coalesced behind the first and must survive watcher teardown.
+        require(reopened.removeSession(ids[0]));
+        require(reopened.removeSession(ids[1]));
+        fixture.close();
+        require(savedIds(fixture.manifest).empty());
         require(!gone(fixture.children[1].shell));
-        require(reopened.addSession(false, fixture.directory.path(), secondEntry->endpoint));
-        second = reopened.focusedSession();
+        fixture.open();
+        require(fixture.workspace->sessions().isEmpty());
+        require(fixture.workspace->addSession(false, fixture.directory.path(),
+                                              secondEntry.value().endpoint));
+        second = fixture.workspace->focusedSession();
         until([&] { return second->inputReady(); });
         require(probe(*second, QByteArrayLiteral("ADOPT_B")) == fixture.children[1]);
         send(*second, "exit");

@@ -84,7 +84,7 @@ add_dependencies(lapis_terminal_latency_probe lapis_session_service)
 # Opt-in because posting events requires macOS Accessibility permission.
 if(APPLE)
     add_executable(lapis_native_input_probe tests/native_input_probe.cpp
-        tests/platform/native_input_driver.mm)
+        tests/platform/native_input_driver.mm tests/platform/window_activation.mm)
     target_link_libraries(lapis_native_input_probe PRIVATE lapis_project_options lapis_desktop_view
         "-framework AppKit" "-framework Carbon" "-framework CoreGraphics")
     target_compile_definitions(lapis_native_input_probe PRIVATE
@@ -95,6 +95,11 @@ endif()
 
 # Uses a private service fixture supplied by check_service_attention.py --desktop.
 if(APPLE)
+    add_executable(lapis_workspace_ui_probe tests/workspace_ui_probe.cpp tests/platform/window_activation.mm)
+    target_link_libraries(lapis_workspace_ui_probe PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2 "-framework AppKit")
+    target_compile_definitions(lapis_workspace_ui_probe PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
+    qt_add_resources(lapis_workspace_ui_probe workspace_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml)
+    add_dependencies(lapis_workspace_ui_probe lapis_session_service)
     add_executable(lapis_attention_ui_probe tests/attention_ui_probe.cpp tests/platform/window_activation.mm)
     target_link_libraries(lapis_attention_ui_probe PRIVATE lapis_project_options lapis_desktop_view
         Qt6::QuickControls2 "-framework AppKit")

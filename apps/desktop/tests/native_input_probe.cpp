@@ -27,6 +27,7 @@
 #include <source_location>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 using lapis::desktop::SessionPreview;
@@ -270,6 +271,103 @@ struct Qualification {
         require(other_fixture.bytes().isEmpty(),
                 "Returning focus leaked input into the other terminal");
     }
+    void append_case(const QString& name, const QByteArray& first, const QByteArray& second,
+                     int index_before, int index_after_commit) {
+        cases.append(QJsonObject{
+            {QStringLiteral("case"), name},
+            {QStringLiteral("first_received_hex"), QString::fromLatin1(first.toHex())},
+            {QStringLiteral("second_received_hex"), QString::fromLatin1(second.toHex())},
+            {QStringLiteral("workspace_index_before"), index_before},
+            {QStringLiteral("workspace_index_after_commit"), index_after_commit},
+            {QStringLiteral("passed"), true}});
+    }
+    void workspace_switch() {
+        QTemporaryDir workspace_directory{QStringLiteral("/tmp/lapis-native-workspace-XXXXXX")};
+        require(workspace_directory.isValid(), "Workspace fixture directory failed");
+        const QString manifest = workspace_directory.filePath(QStringLiteral("workspace.json"));
+        Fixture first_fixture;
+        Fixture second_fixture;
+        std::vector<lapis::desktop::WorkspaceEntry> entries;
+        {
+            SessionPreview first_document(QStringLiteral("workspace source"),
+                                          first_fixture.directory.path(), {}, QColor(Qt::white),
+                                          "");
+            SessionPreview second_document(QStringLiteral("workspace destination"),
+                                           second_fixture.directory.path(), {}, QColor(Qt::white),
+                                           "");
+            first_document.startLive(first_fixture.endpoint, first_fixture.launch,
+                                     session::wire::AttachMode::discover);
+            second_document.startLive(second_fixture.endpoint, second_fixture.launch,
+                                      session::wire::AttachMode::discover);
+            until([&] {
+                return first_document.inputReady() && second_document.inputReady() &&
+                       first_document.reconnectEntry() && second_document.reconnectEntry();
+            });
+            const auto first_entry = first_document.reconnectEntry();
+            const auto second_entry = second_document.reconnectEntry();
+            if (!first_entry || !second_entry)
+                throw std::runtime_error("Workspace fixture lost verified reconnect metadata");
+            entries.push_back(*first_entry);
+            entries.push_back(*second_entry);
+            lapis::desktop::WorkspaceRegistry registry{manifest};
+            registry.write(entries);
+        }
+
+        lapis::desktop::WorkspaceOptions options;
+        options.manifest = manifest;
+        lapis::desktop::Workspace workspace{lapis::desktop::WorkspaceMode::live, options};
+        const auto focus_connection =
+            QObject::connect(&workspace, &lapis::desktop::Workspace::focusChanged, &surface,
+                             [&] { surface.setDocument(workspace.focusedSession()); });
+        until([&] {
+            return !workspace.loading() && workspace.sessions().size() == 2 &&
+                   workspace.focusedSession() && workspace.focusedSession()->inputReady();
+        });
+        until([&] { return workspace.sessions().back().value<SessionPreview*>()->inputReady(); });
+        surface.setDocument(workspace.focusedSession());
+        surface.setFocusWorkspace(&workspace);
+        driver.activate(window);
+        surface.forceActiveFocus();
+        until([&] {
+            return window.isActive() && surface.hasActiveFocus() &&
+                   surface.inputMethodQuery(Qt::ImEnabled).toBool();
+        });
+        japanese();
+        const QByteArray first_before = first_fixture.bytes();
+        const QByteArray second_before = second_fixture.bytes();
+        preeditKey();
+        workspace.setFocusedIndex(1);
+        require(workspace.focusedIndex() == 0,
+                "Active IME composition switched workspace focus immediately");
+        key(36);
+        until([&] { return workspace.focusedIndex() == 1; });
+        require(surface.document() == workspace.focusedSession(),
+                "Terminal document did not follow committed workspace focus");
+        pump(100);
+        const QByteArray first_commit = first_fixture.bytes().sliced(first_before.size());
+        const QByteArray second_during_ime = second_fixture.bytes().sliced(second_before.size());
+        require(first_commit == QStringLiteral("あ").toUtf8(),
+                "IME commit did not reach the original workspace session");
+        require(second_during_ime.isEmpty(), "IME switch leaked input into destination session");
+        append_case(QStringLiteral("workspace IME commit defers focus switch"), first_commit,
+                    second_during_ime, 0, 1);
+
+        driver.selectUS();
+        pump(200);
+        const QByteArray first_after_ime = first_fixture.bytes();
+        const QByteArray second_after_ime = second_fixture.bytes();
+        key(11);
+        const QByteArray first_after_b = first_fixture.bytes().sliced(first_after_ime.size());
+        const QByteArray second_after_b = second_fixture.bytes().sliced(second_after_ime.size());
+        require(first_after_b.isEmpty(), "US input reached the unfocused workspace session");
+        require(second_after_b == QByteArray("b"),
+                "US input did not reach the focused workspace session");
+        append_case(QStringLiteral("workspace US input follows focus"), first_after_b,
+                    second_after_b, 1, 1);
+        QObject::disconnect(focus_connection);
+        surface.setFocusWorkspace(nullptr);
+        surface.setDocument(&document);
+    }
     void run() {
         expect(QStringLiteral("native printable and Return"), QByteArray("a\r"), [&] {
             key(0);
@@ -385,6 +483,7 @@ struct Qualification {
         driver.selectUS();
         pump(100);
         expect(QStringLiteral("US keyboard restored"), QByteArray("b"), [&] { key(11); });
+        workspace_switch();
     }
 };
 } // namespace

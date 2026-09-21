@@ -5,9 +5,10 @@ This is the single implementation plan for lapis. See the
 macOS is the active target. Milestones 1 and 2 are qualified for the recorded
 single-session scope: a persistent terminal and managed Codex attention with
 explicit desktop responses. The quality baseline from PR #6 remains in force.
-[Milestone 3](#milestone-3-supervising-two-live-sessions-on-macos) is planned as
-three ordered checkpoints: two retained sessions and manual switching, workspace
-attention, then a guarded opt-in carousel.
+[Milestone 3](#milestone-3-supervising-two-live-sessions-on-macos) has
+checkpoint 3A functionally qualified on macOS: retained entries, manual
+switching and guarded input. Workspace attention (3B) and the guarded opt-in
+carousel (3C) remain planned, so the milestone is incomplete.
 A Linux desktop port is deferred; the headless engine has
 already been exercised on Linux, but the session service and desktop have not.
 
@@ -92,7 +93,7 @@ for ownership, shared contracts and integration checks across large changes.
 | Desktop | C++20 and Qt 6.11.2 Quick with public QSGTextNode terminal drawing | macOS Vulkan visual checkpoint exercised; macOS performance qualification remains |
 | Engine | Pinned Ghostty `libghostty-vt` selected for the first adapter | Eight-case macOS/Linux replay passes; isolate unstable C API and resolve dependency-notice gaps |
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
-| Transport | Version 6 local framing with session/epoch/generation identity, readiness, history paging and attention messages | Milestone 3 adds a workspace registry; automatic service recovery remains deferred |
+| Transport | Version 6 local framing with session/epoch/generation identity, readiness, history paging, attention messages and retained workspace entries | Automatic service recovery remains deferred |
 | Codex mode | Managed ordinary TUI with a dedicated service-owned backend and observer; desktop responses qualified in Milestone 2 | Milestone 3 qualifies routing across two independent sessions; other binaries and request kinds need separate evidence |
 
 The [research receipt](../evidence/terminal-research.json) retains pinned upstream
@@ -189,11 +190,14 @@ desktop executable is advertised as an application.
 The desktop starts a separate Qt Core service on a private local socket. That
 service owns QProcess, a nonblocking POSIX PTY, and the Ghostty terminal. Closing
 the GUI only detaches the local socket: the service continues draining output.
-The enlarged pane is a live terminal; the remaining cards are labeled placeholders.
-One GUI may attach per endpoint. A matching attachment replaces the previous
-connection; a mismatched launch is rejected first. The default socket identifies
-this checkout's shell, and explicit launches choose their own endpoint. Stable session IDs, service epochs and attachment generations bind each
-connection; a multi-session registry and automatic recovery remain later work. This wire format is internal and provisional.
+The enlarged pane and previews represent live workspace entries; the isolated
+preview retains labeled fixtures. One GUI may attach per endpoint. A matching
+attachment replaces the previous connection; a mismatched launch is rejected
+first. The default workspace registry is `runtime/workspace-v1.json`, and an
+explicit `--workspace` path selects another registry. Explicit `--socket` or
+program flags retain the legacy single-session path. Stable session IDs, service
+epochs and attachment generations bind each connection; automatic recovery
+remains later work. This wire format is internal and provisional.
 
 Qt event loops own their respective objects. PTY reads yield after 64 KiB and
 input dispatch after 64 frames. Writes have a 1 MiB queue; text messages are at
@@ -274,9 +278,10 @@ Tab or a Tab chord remains a candidate, not a selected default: plain Tab belong
 to shell completion/TUIs unless explicitly rebound. Keep positions stable and never
 split paste/IME operations. Selecting a session never sends a response.
 
-Keep real attention adapters, automatic carousel movement, multiple live sessions
-and prompt/approval routing out of this fixture. Complete persistent-terminal
-acceptance before expanding the live macOS workspace.
+Keep real attention adapters, automatic carousel movement and workspace-wide
+prompt/approval routing out of this fixture. Multiple live sessions and guarded
+manual navigation are qualified for checkpoint 3A in the
+[workspace receipt](../evidence/milestone-three-workspace.json).
 
 For parallel changes, commit the shared contract first and assign disjoint files
 with one coordinator/build owner. Preview hosting lives in `ui_preview.*`, layout
@@ -811,8 +816,8 @@ epoch; no response is retransmitted.
 **Outcome:** a real Codex session can request attention, receive an explicit
 decision through a verified route, and continue. lapis retains the exact request
 identity, distinguishes disconnection from completion, and prevents stale replies.
-Start with one live terminal and a minimal attention view. Two retained live
-panes, workspace navigation and the automatic carousel remain Milestone 3.
+Start with one live terminal and a minimal attention view. Workspace-wide
+attention aggregation and the guarded automatic carousel remain Milestone 3.
 
 #### Ordered implementation slices
 
@@ -914,7 +919,8 @@ and answer controls, exact rejection/retry, pending reattachment, archive/restor
 reconciliation, a new request cancelled after recovery, and two simultaneous real
 approvals resolved independently. Normal, ASan/UBSan and TSan suites, CLI checks,
 preview captures and native macOS input pass. This qualifies the one-session
-Milestone 2 scope on the recorded binary; Milestone 3 remains unimplemented.
+Milestone 2 scope on the recorded binary; Milestone 3 checkpoints 3B and 3C
+remain unimplemented; 3A has passed two-session functional acceptance.
 Update README's status table only as those capabilities land. Linux desktop,
 32-session load, second adapters, selection/accessibility/contextual shaping and
 fresh presentation-latency targets are outside this phase. Packaging/notices/SBOM
@@ -922,15 +928,16 @@ remain an independent prerequisite for binary distribution.
 
 ### Milestone 3: supervising two live sessions on macOS
 
-**Planned, not implemented.** The outcome is one desktop workspace that retains
-and supervises two real sessions: both continue running and consuming output,
-manual navigation sends input only to the selected session, and attention from
-either session can be reviewed and answered explicitly. A guarded, opt-in
-carousel completes this milestone after manual navigation is qualified.
+**Checkpoint 3A functionally qualified on macOS. Milestone 3 incomplete.**
+The outcome is one desktop workspace that retains and supervises two real
+sessions: both continue running and consuming output, manual navigation sends
+input only to the selected session, and attention from either session can be
+reviewed and answered explicitly. A guarded, opt-in carousel completes this
+milestone after manual navigation and workspace attention are qualified.
 
-Implementation starts from `main` after the single-session Milestone 2 work in
-PR #7 is merged through the normal repository gates. Keep multi-session changes
-in subsequent PRs. Use the three sequential checkpoints below; passing the first
+The 3A branch includes the final single-session Milestone 2 review corrections
+from PR #7. Land that prerequisite through normal repository gates before
+merging a subsequent multi-session PR. Use the three sequential checkpoints below; passing the first
 checkpoint does not mean the entire milestone is complete.
 
 #### Scope and design decisions
@@ -975,7 +982,8 @@ checkpoint does not mean the entire milestone is complete.
 
 #### Checkpoint 3A: retained sessions and manual switching
 
-Build this first as the smallest complete multi-session slice:
+Checkpoint 3A passed the two-session functional checks recorded in the
+[workspace receipt](../evidence/milestone-three-workspace.json). The implemented slice is:
 
 1. Create, explicitly adopt and reconnect individual entries. Start new shell or
    managed Codex sessions using the existing launch validation and approval-policy
@@ -1004,6 +1012,13 @@ GUI close/reopen restores both same children; failure of either session leaves
 the other usable. Exercise simultaneous archive writes and eviction under the
 shared history-root quota, including contention/failure without losing either
 retained live screen. Keep automatic switching disabled for this checkpoint.
+The receipt records two real shells, production QML creation and all four layouts,
+separate service/child identities across GUI reopen, shared-quota archive writes
+and failure isolation, and native IME commit followed by a guarded switch.
+Entries are persisted only after the first verified handshake; closing during
+initial connection is outside this retention guarantee. The eight-entry storage
+bound is not an eight-session qualification. Cross-session Codex requests and
+workspace latency/memory baselines remain part of the later milestone checkpoints.
 
 #### Checkpoint 3B: workspace attention and explicit decisions
 
@@ -1061,14 +1076,21 @@ integration coordinator and one build owner per build directory. Independent
 registry, UI investigation and verification work can proceed concurrently; focus,
 attention and registry integration share one reviewed contract.
 
-Apply the [required-check matrix](../CONTRIBUTING.md#checks): normal desktop CTest
-and static analysis, relevant ASan/UBSan and TSan suites, quality checks for Python,
-and affected CLI/UI/native-input probes. Add cross-session cases to existing
-harnesses where they fit; introduce a workspace integration runner only for the
-new assembled behavior. Document its actual command when it lands. Keep GUI runs
-serial. Automate macOS key, Option, paste and native IME checks; physical typing
-is not a completion gate. Replay tests supplement the two live Codex sources and
-do not replace them.
+For 3A, apply the [required-check matrix](../CONTRIBUTING.md#checks), including
+the `workspace` and `workspace-registry` CTest suites in the normal desktop run.
+On macOS, run the opt-in workspace UI probe serially with other GUI checks:
+
+```sh
+build/desktop/apps/desktop/lapis_workspace_ui_probe \
+  --json-file build/workspace-ui.json --output-dir build/workspace-ui
+```
+
+Native input must include the workspace IME switch case in
+`just native-input`. Also run relevant ASan/UBSan and TSan suites, quality
+checks for Python, and affected CLI/UI probes. Keep GUI runs serial. Automated
+macOS key, Option, paste and native IME checks are required; physical typing is
+not a completion gate. Replay tests supplement, and do not replace, the two live
+session sources required for the milestone.
 
 Record two-session warm-switch and input/frame timing distributions, retained
 memory and idle/background activity with the existing profiling procedure. These

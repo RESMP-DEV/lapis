@@ -75,6 +75,7 @@ int main(int argc, char** argv) {
             registry.write({});
             require(registry.read().empty());
             std::vector<WorkspaceEntry> entries;
+            entries.reserve(8);
             for (int index = 0; index < 8; ++index)
                 entries.push_back(entry(temporary, index, QByteArray{1, char(index)}));
             entries.front().agent = session::AgentMode::codex;
@@ -123,15 +124,7 @@ int main(int argc, char** argv) {
         {
             WorkspaceRegistry registry{path};
             require(registry.read().size() == 8);
-            const int descriptor =
-                ::open(QFile::encodeName(lock_path).constData(), O_RDWR | O_CLOEXEC);
-            require(descriptor >= 0);
-            struct FileDescriptor {
-                int value;
-                ~FileDescriptor() { static_cast<void>(::close(value)); }
-            } owned{descriptor};
             rejects([&] { static_cast<void>(WorkspaceRegistry{path}); });
-            require(::flock(descriptor, LOCK_UN) == 0);
         }
 
         const QByteArray original = [&] {
@@ -152,7 +145,8 @@ int main(int argc, char** argv) {
 
         {
             WorkspaceRegistry registry{path};
-            rejects([&] { static_cast<void>(registry.read()); });
+            rejects([&] { registry.write({}); });
+            require(QFileInfo(path).size() == QByteArrayLiteral("{\"schema\":2}").size());
         }
         {
             QFile file(path);

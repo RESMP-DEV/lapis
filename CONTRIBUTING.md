@@ -423,12 +423,12 @@ by these C++ presets; a passing test is not coverage of those implementations.
 ### CLI integration qualification
 
 The shell launch specification is `$SHELL -i` in the checkout. If `SHELL` is unset,
-lapis uses the account login shell; `/bin/sh -i` is the final fallback.
-First use requires **Session → Start new session** or `--new-session`.
-Subsequent launches without that flag reconnect using the saved identity; they
-never create a replacement process. `--discover` explicitly adopts an existing
-matching service. Both flags are mutually exclusive and unavailable in fixture mode.
-Use `--socket PATH --cwd DIRECTORY -- PROGRAM ARG...` for an explicit launch.
+lapis uses the account login shell. Workspace first use offers
+**Session → Create or adopt…**; subsequent opens reconnect using recorded
+identities and never create replacement processes. In explicit single-session
+mode, `--new-session` starts and `--discover` adopts a service. Both flags are
+mutually exclusive and unavailable in fixture mode.
+Use `--socket PATH --cwd DIRECTORY -- PROGRAM ARG...` for that explicit launch.
 Arguments are literal; use `--` to separate lapis options from the child's options.
 Repeat the same launch without `--new-session` to reattach; changing executable/argv/cwd on an occupied
 endpoint is rejected. A socket parent must be owned by you and private (0700).
@@ -698,21 +698,38 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `live-connection` | Desktop-enabled | Screen-before-input, exact attention decisions/rejections, duplicate gating, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
 | `keymap` | Desktop-enabled | Configuration defaults, appearance choices, persistence and invalid input |
+| `workspace` | Desktop-enabled | Registry-backed create/adopt, close/reopen, manual focus guards and retained session lifecycle |
+| `workspace-registry` | Desktop-enabled | Private bounded JSON schema, owner/lock/atomic-write validation, duplicate rejection and corruption/unsafe-path failures |
 | `ui-preview` | Desktop-enabled | Qt reload, screen selection, passive attention, modal response ownership, draft/IME preservation, input and render lifecycle |
 | `appearance-input` | Desktop-enabled, native GUI | Configured settings shortcut, modal focus, all theme/layout/density controls, persistence and shortcut reload |
 | `history-store` | Desktop-enabled | Styled page round trips, per-session/global quotas, corruption, interrupted-write cleanup and file-size write failure recovery |
 | `terminal-input` | Desktop-enabled, native GUI | Qt composition commit/cancel, replacement rejection, paste and focus/document/history/disconnect ownership |
 | `terminal-render` | Desktop-enabled | Real Qt Vulkan pixel regressions for cell background grids, wide/combining characters, fallback/RTL text, styles/decorations, actual Ghostty resize, cursor placement and clearing |
 
-`just desktop` runs these eighteen suites plus static checks. The separate Python
+`just desktop` runs these twenty suites plus static checks. The separate Python
 GUI harness checks five preview captures and five expected failures. The CLI
 harness checks detached service behavior, attachment generations, fragmented
 handshakes, synchronization timeout, stale controls, bounded queue failure and
 replacement identities; `--desktop` adds Qt-to-shell input and
 captures, and optional `--codex` adds the installed no-prompt TUI acceptance.
+That case checks the controlled child PTY's raw-input mode before typing: the
+Codex banner can appear while terminal startup is still in progress.
 A screenshot, a headless suite and a real agent approval round trip prove different
 things. See [attention qualification](#codex-attention-qualification) for isolated
 live round trips and the remaining service/desktop integration gap.
+
+For Milestone 3A, run the opt-in macOS workspace GUI probe separately from every
+other GUI check after the desktop build:
+
+```sh
+build/desktop/apps/desktop/lapis_workspace_ui_probe \
+  --json-file build/workspace-ui.json --output-dir build/workspace-ui
+```
+
+The probe creates two controlled shell sessions through production QML and
+exercises switching, all four layouts, close/reopen and cleanup, and writes only its sanitized JSON
+report and optional PNG under `build/`. Do not treat a missing desktop build,
+headless execution or an unrun probe as 3A acceptance.
 
 After a failure, retain `build/reports/<mode>/receipt.json`, the named check log,
 and CTest's `build/<build-name>/Testing/Temporary/LastTest.log`. Fix the cause,
@@ -909,6 +926,9 @@ received bytes for printable/Control/Option keys and Command-V multiline Unicode
 bracketed paste; observes native preedit and commit; checks cancellation and fresh
 composition after history, document detach, window focus and actual attachment
 replacement/reconnect; and verifies commit plus the candidate anchor after resize.
+The workspace case additionally defers focus during an active Japanese IME
+composition, commits to the originating session, and verifies that later US
+input follows the selected workspace session.
 Each native key edge waits for AppKit delivery before the next edge is posted;
 keys are never resent after a deadline. `LAPIS_NATIVE_TRACE=1` logs the probe's
 AppKit key and Qt key/composition events for diagnosis. A delivery deadline is
@@ -984,7 +1004,7 @@ python3 scripts/check_cli_launch.py --build-dir build/desktop-asan \
 Repeat those configure/build/test/harness commands with preset `tsan` and all
 `desktop-asan` paths changed to `desktop-tsan`. Do not combine instrumentation or
 use `ctest --preset asan` for the custom directory: that preset targets
-`build/asan`. Each desktop-enabled directory must list all eighteen suites above.
+`build/asan`. Each desktop-enabled directory must list all twenty suites above.
 Use the same LLVM installation for normal and instrumented builds. Ccache is
 optional (`-DCMAKE_CXX_COMPILER_LAUNCHER=...`); raw CMake does not discover it.
 Reduce `--parallel` for host resource limits. The CLI command above runs service
