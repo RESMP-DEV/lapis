@@ -126,6 +126,24 @@ void invalid_frames() {
     wait([&] { return f.failed == 1; });
     require(f.opened == 0);
 }
+void frame_budget_reschedule() {
+    Fixture f;
+    f.upgrade();
+    QByteArray burst;
+    for (int index = 0; index < 200; ++index)
+        burst += QByteArray::fromHex("810161");
+    f.write(burst);
+    wait([&] { return f.messages.size() == 200; });
+    require(f.failed == 0);
+    require(f.messages == QList<QByteArray>(200, QByteArray(1, 'a')));
+}
+void oversized_unterminated_handshake() {
+    Fixture f;
+    static_cast<void>(f.connect());
+    f.write("HTTP/1.1 101 OK\r\nX-Pad: " + QByteArray(17'000, 'a'));
+    f.require_failed();
+    require(f.opened == 0);
+}
 void peer_close() {
     Fixture f;
     f.upgrade();
@@ -151,9 +169,11 @@ int main(int argc, char** argv) {
     try {
         framing();
         invalid_frames();
+        frame_budget_reschedule();
+        oversized_unterminated_handshake();
         peer_close();
         reentrant_close();
-        std::cout << "Unix WebSocket framing, bounds, close and lifecycle passed\n";
+        std::cout << "Unix WebSocket framing, bounds, handshakes, bursts and lifecycle passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

@@ -10,7 +10,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from check_cli_launch import ATTENTION_RETRY, CheckError, WireClient, frame
-from check_service_attention import View, exercise
+from check_service_attention import View, exercise, selected_question_answers
 
 
 class StreamSocket:
@@ -84,6 +84,45 @@ class DiagnosticTests(unittest.IsolatedAsyncioTestCase):
         with patch("check_service_attention.shutil.which", return_value=None):
             with self.assertRaisesRegex(CheckError, "codex is not installed"):
                 await exercise(object(), {})
+
+
+class QuestionFixtureTests(unittest.TestCase):
+    def test_expected_answers_follow_question_and_option_order(self):
+        questions = [
+            {
+                "id": "color_second",
+                "options": [{"label": "Yellow"}, {"label": "Red (Recommended)"}],
+            },
+            {
+                "id": "color_first",
+                "options": [{"label": "Green"}, {"label": "Blue"}],
+            },
+        ]
+        self.assertEqual(
+            selected_question_answers(questions),
+            {"color_first": "Blue", "color_second": "Red (Recommended)"},
+        )
+
+    def test_rejects_duplicate_ids_and_ambiguous_or_missing_colors(self):
+        duplicate_ids = [
+            {"id": "color_first", "options": [{"label": "Blue"}]},
+            {"id": "color_first", "options": [{"label": "Red"}]},
+        ]
+        ambiguous = [
+            {
+                "id": "color_first",
+                "options": [{"label": "Blue"}, {"label": "Blue (Recommended)"}],
+            },
+            {"id": "color_second", "options": [{"label": "Red"}]},
+        ]
+        missing = [
+            {"id": "color_first", "options": [{"label": "Green"}]},
+            {"id": "color_second", "options": [{"label": "Red"}]},
+        ]
+        for questions in (duplicate_ids, ambiguous, missing):
+            with self.subTest(questions=questions):
+                with self.assertRaisesRegex(CheckError, "Unexpected question"):
+                    selected_question_answers(questions)
 
 
 if __name__ == "__main__":

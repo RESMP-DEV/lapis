@@ -233,6 +233,36 @@ void canonical_json_and_utf8() {
         [&] { static_cast<void>(lapis::session::wire::encode_attention_snapshot(invalid_text)); });
 }
 
+void golden_wire_bytes() {
+    AttentionSnapshot minimal;
+    minimal.attachment = {{QByteArray(16, 1), QByteArray(16, 2)}, quint64{1}};
+    minimal.available = true;
+    minimal.connected = true;
+    minimal.ready = true;
+    minimal.source_epoch = 1;
+    minimal.activity = Activity::idle;
+    require(lapis::session::wire::encode_attention_snapshot(minimal) ==
+            QByteArray::fromHex("00000006"                         // wire version
+                                "01010101010101010101010101010101" // session ID
+                                "02020202020202020202020202020202" // service epoch
+                                "0000000000000001"                 // attachment generation
+                                "01010102"         // available, connected, ready, idle
+                                "0000000000000001" // source epoch
+                                "00000000"         // empty diagnostic
+                                "00000000"));      // no requests
+
+    AttentionDecision minimal_decision{quint64{1}, std::int64_t{0}, quint64{1}, QStringLiteral("y"),
+                                       QJsonObject{}};
+    require(lapis::session::wire::encode_attention_decision(minimal_decision) ==
+            QByteArray::fromHex("00000006"         // wire version
+                                "0000000000000001" // source epoch
+                                "00"               // numeric ID tag
+                                "0000000000000000" // request ID
+                                "0000000000000001" // revision
+                                "0000000179"       // choice: y
+                                "000000027b7d"));  // answers: {}
+}
+
 void malformed_snapshots() {
     const QByteArray encoded =
         lapis::session::wire::encode_attention_snapshot(snapshot({request(0, 20)}));
@@ -353,6 +383,7 @@ int main() {
         round_trip_and_recovery();
         boundaries();
         canonical_json_and_utf8();
+        golden_wire_bytes();
         malformed_snapshots();
         malformed_decisions();
         std::cout << "Attention v6 codec boundary and recovery checks passed\n";

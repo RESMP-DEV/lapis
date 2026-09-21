@@ -705,7 +705,7 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `terminal-render` | Desktop-enabled | Real Qt Vulkan pixel regressions for cell background grids, wide/combining characters, fallback/RTL text, styles/decorations, actual Ghostty resize, cursor placement and clearing |
 
 `just desktop` runs these eighteen suites plus static checks. The separate Python
-GUI harness checks five preview captures and three expected failures. The CLI
+GUI harness checks five preview captures and five expected failures. The CLI
 harness checks detached service behavior, attachment generations, fragmented
 handshakes, synchronization timeout, stale controls, bounded queue failure and
 replacement identities; `--desktop` adds Qt-to-shell input and

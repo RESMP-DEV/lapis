@@ -377,8 +377,9 @@ Ownership stays separated: the PTY owns the child; the service owns parsing and
 attachment; the desktop routes input after applying and acknowledging the initial screen. `scripts/check_cli_launch.py`
 exercises literal argv/cwd, resize, paste, exit, detached output, mismatches and
 malformed handshakes against real service processes. Its optional GUI and Codex
-modes add GPU captures and no-prompt TUI interaction. Actual Codex attention and
-model-turn continuation remain unqualified. Commands live in
+modes add GPU captures and no-prompt TUI interaction; that fixture does not exercise
+Codex attention or model-turn continuation. Those are qualified separately by the
+[Milestone 2 checks](#milestone-2-attention-and-codex-plan). Commands live in
 [Contributing](../CONTRIBUTING.md#cli-integration-qualification).
 
 The PR #2 repair adds explicit render-state synchronization, retained row nodes,
@@ -442,8 +443,9 @@ GUI runs stay serial even when independent builds run concurrently. Timing
 receipts distinguish frame submission from pixel visibility and keep latency
 targets provisional. The Linux desktop port has no current host requirement or
 acceptance date; qualify an actual graphical host when that port is scheduled.
-Real attention integration, multiple live sessions, automatic carousel behavior
-and the 32-session benchmark remain in the following milestones.
+Real Codex attention integration is qualified by Milestone 2. Multiple live
+sessions, automatic carousel behavior and the 32-session benchmark remain in
+the following milestones.
 
 #### Milestone 1 completion contract
 
@@ -560,17 +562,16 @@ for each active build directory. GUI checks remain serial across worktrees.
 
 #### Following product checkpoints
 
-With macOS A through C qualified, the next product milestone is to implement the
-attention state machine and qualify a real Codex route. The
-[Milestone 2 plan](#milestone-2-attention-and-codex-plan) defines the work packages.
-Preserve the ordinary CLI view;
-choose hooks or shared-server attachment only from live observation, explicit
-response and reconnect evidence. A notification-only hook must leave the answer
-in the originating terminal. A separately owned app-server remains a distinct
-session type. Use disposable fixtures, a declared provider/model, bounded turns
-and explicit approval settings for that later qualification.
+The macOS A through C qualification led to the now-qualified attention state
+machine and managed Codex route. The
+[Milestone 2 plan](#milestone-2-attention-and-codex-plan) records its acceptance
+and evidence. Preserve the ordinary CLI view and qualify any additional route
+with live observation, explicit response and reconnect evidence. A notification-only
+hook must leave the answer in the originating terminal; a separately owned
+app-server remains a distinct session type. Use disposable fixtures, a declared
+provider/model, bounded turns and explicit approval settings for new qualification.
 
-Then replace fixture cards with **two actual retained sessions**, deliver manual
+Next replace fixture cards with **two actual retained sessions**, deliver manual
 navigation and keyboard ownership guards, and add pin/snooze and the opt-in
 attention carousel. Only after that behavior works should the 32-session workload
 and second independent adapter qualify scale and tool independence. The

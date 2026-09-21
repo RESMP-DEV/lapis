@@ -193,6 +193,16 @@ def execute_checks(binary: Path, artifacts: Path) -> list[dict]:
     invalid = artifacts / "invalid.qml"
     invalid.write_text("import QtQuick\nWindow { broken syntax ! }\n")
     cases = [
+        (
+            "reject-codex-preview",
+            ["--codex"],
+            "--codex cannot be combined with --ui-preview",
+        ),
+        (
+            "reject-codex-preview-program",
+            ["--codex", "--", "/bin/echo"],
+            "--codex cannot be combined with --ui-preview",
+        ),
         ("reject-shell-input", ["--smoke-input"], "cannot be combined"),
         ("reject-qml", ["--qml", str(invalid)], "QQmlApplicationEngine failed"),
         (

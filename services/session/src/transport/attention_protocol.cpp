@@ -3,9 +3,10 @@
 
 #include <QJsonDocument>
 #include <QJsonParseError>
+#include <cstdint>
 #include <set>
 #include <stdexcept>
-#include <utility>
+#include <variant>
 
 namespace lapis::session::wire {
 using namespace bytes;
@@ -52,8 +53,7 @@ void append_json(QByteArray& bytes, const QJsonObject& value) {
     const QByteArray encoded = QJsonDocument(value).toJson(QJsonDocument::Compact);
     check(encoded.size() <= static_cast<qsizetype>(max_json_bytes));
     const auto reparsed = QJsonDocument::fromJson(encoded);
-    check(reparsed.isObject() && reparsed.object() == value &&
-          QJsonDocument(reparsed.object()).toJson(QJsonDocument::Compact) == encoded);
+    check(reparsed.isObject() && reparsed.object() == value);
     append_quint32(bytes, static_cast<quint32>(encoded.size()));
     bytes += encoded;
 }

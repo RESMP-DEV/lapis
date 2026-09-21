@@ -1,0 +1,207 @@
+{
+  "schema": "lapis.pr7-review-followup/1",
+  "recorded_at": "2026-09-21T13:45:06.261288+00:00",
+  "base_commit": "56fef62fb42ef6426792d5eff93ad1feb53fb65f",
+  "platform": "macOS arm64, Qt 6.11.2, Vulkan via MoltenVK",
+  "wire_version": 6,
+  "source_sha256": {
+    "adapters/codex/src/observer.cpp": "25508caef032a0d9a617f18bda04054534d44853318889a63d5824140eff4a90",
+    "adapters/codex/src/observer.hpp": "c9319f3fd200ed75e711637a25eaed9cd20c1010185aaec068819be4f9e68a05",
+    "adapters/codex/tests/observer_test.cpp": "aeec73a13382d540c07eec7f379547182c35b53a3409db76ee0f5e374e307a0c",
+    "adapters/codex/tests/unix_websocket_test.cpp": "75db974aca122c5e8f94270707310a3da5420e72926918f3fc73a26c0e5c6848",
+    "apps/desktop/src/main.cpp": "4c4203eaf316e36c073a99f8e8c411c88a5be3ff44a98eb626095b5c5fd03890",
+    "apps/desktop/tests/attention_ui_probe.cpp": "d06e293a9a7892e11a7d01bacd42c9bf8abaf8fe851720152e45490f5e26b895",
+    "scripts/check_service_attention.py": "3c1721f215843a60a790136c565f9bcd8d40ee24356fe21498fe27c8b4b3ecb9",
+    "scripts/check_ui_preview.py": "b1d3d54457e15e19859471d837892dd2c552f3441274b1ea3b3c7267787d817b",
+    "scripts/tests/test_check_service_attention.py": "7a2389220ca965cb98f6a3e6207f0fbf23e6301b227cd6f1c133d29ff36d488a",
+    "services/session/src/transport/attention_protocol.cpp": "dd55bdde10f631270cb03bd1337302f28df6c36f052fc2c89176e6adc2c4b7c7",
+    "services/session/tests/attention_protocol_test.cpp": "1d91247577c17980a2612e9b665b24784f6b1fd346f155c59676ee30f3df7575"
+  },
+  "findings": [
+    {
+      "thread": "PRRT_kwDOUfkyeM6kUVwj",
+      "path": "scripts/check_service_attention.py",
+      "disposition": "fixed",
+      "evidence": "Question IDs and semantic labels determine answers; array order does not. The Qt probe selects the matched option index, and duplicate or ambiguous matches fail."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kVnob",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "fixed-related-boundary",
+      "evidence": "Qt already rejects fractional IDs. A new test exposed 2^63 comparing equal to INT64_MAX through JSON numeric equality; two conversion sentinels now reject it while preserving the full int64 range and adjacent IDs above 2^53."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kVnov",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "verified-existing-guard",
+      "evidence": "The complete encoded envelope is checked before State::respond. A 16-question oversized answer is rejected without token consumption; corrected answers reuse that token."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kVno8",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "documented",
+      "evidence": "Observer::decide true means locally queued, not delivered or resolved. Delivery uncertainty requires explicit reconciliation and never automatic retransmission."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kVnpB",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "fixed",
+      "evidence": "Mirror same-epoch request omissions into adapter retirement bookkeeping before installing the authoritative replacement. Late live and snapshot replay no longer recreates hidden details or consumes their budget."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kVnpO",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "verified-existing-boundary",
+      "evidence": "Discovery replay is cleared when reconciliation starts. The fixture now sends ephemeral attention before its classification metadata and still binds and reconciles only the persistent thread."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kVnpa",
+      "path": "adapters/codex/tests/observer_test.cpp",
+      "disposition": "fixed",
+      "evidence": "Fake source disconnect reports a missing client instead of dereferencing null."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kVnpi",
+      "path": "adapters/codex/tests/unix_websocket_test.cpp",
+      "disposition": "covered",
+      "evidence": "Added 200 valid frames in one burst to cross the 128-frame budget and an oversized unterminated upgrade-header rejection."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kVnpy",
+      "path": "apps/desktop/src/main.cpp",
+      "disposition": "fixed",
+      "evidence": "Reject --codex with --ui-preview consistently, both with and without an explicit program."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kVnp8",
+      "path": "services/session/src/transport/attention_protocol.cpp",
+      "disposition": "fixed",
+      "evidence": "Use direct cstdint and variant includes; remove unused utility."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kVnqL",
+      "path": "services/session/src/transport/attention_protocol.cpp",
+      "disposition": "simplified",
+      "evidence": "Remove redundant second JSON serialization while retaining parse/equality loss detection and decode-side canonicality checks."
+    },
+    {
+      "thread": "PRRT_kwDOUfkyeM6kVnqT",
+      "path": "services/session/tests/attention_protocol_test.cpp",
+      "disposition": "covered",
+      "evidence": "Independent, annotated v6 golden bytes establish minimal snapshot and decision layouts before malformed-payload offset cases."
+    }
+  ],
+  "outside_diff": {
+    "reviewer": "CodeRabbit",
+    "path": "docs/architecture.md",
+    "disposition": "fixed",
+    "evidence": "Scope the no-turn CLI fixture separately from qualified Milestone 2 attention and update the historical Milestone 1 handoff."
+  },
+  "validation": [
+    {
+      "command": "cmake --build build/desktop --parallel 8 && ctest --test-dir build/desktop --output-on-failure",
+      "passed": true,
+      "suites": 18,
+      "log": "build/pr7-round2/ctest.log"
+    },
+    {
+      "command": "cmake --build build/desktop-asan --parallel 6 && ctest --test-dir build/desktop-asan -R 'codex-observer|codex-transport|attention-protocol' --output-on-failure",
+      "passed": true,
+      "suites": 3,
+      "scope": "targeted, not full CTest",
+      "log": "build/pr7-round2/ctest-asan.log"
+    },
+    {
+      "command": "cmake --build build/desktop-tsan --parallel 6 && ctest --test-dir build/desktop-tsan -R 'codex-observer|codex-transport|attention-protocol' --output-on-failure",
+      "passed": true,
+      "suites": 3,
+      "scope": "targeted, not full CTest",
+      "log": "build/pr7-round2/ctest-tsan.log"
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "passed": true,
+      "python_tests": 80,
+      "log": "build/pr7-round2/quality.log"
+    },
+    {
+      "command": "clang-format --dry-run --Werror on changed C++ files; clang-tidy -p build/desktop on seven changed translation units; cppcheck --library=qt --enable=warning,performance,portability --error-exitcode=1 --inline-suppr using their compile database",
+      "passed": true,
+      "translation_units": 7,
+      "log": "build/pr7-round2/static/receipt.json"
+    },
+    {
+      "command": "python3 scripts/check_ui_preview.py --artifacts build/pr7-round2/ui",
+      "passed": true,
+      "checks": 10,
+      "scope": "five GPU captures and five expected failures",
+      "log": "build/pr7-round2/ui/receipt.json"
+    },
+    {
+      "command": "python3 scripts/check_service_attention.py --live-glm --desktop --output build/pr7-round2/live/receipt.json",
+      "passed": true,
+      "checks": 12,
+      "log": "build/pr7-round2/live/receipt.json"
+    }
+  ],
+  "live_codex": {
+    "timestamp": "2026-09-21T13:43:05.386112+00:00",
+    "checks": [
+      "managed TUI startup and attention attachment",
+      "real command approval through desktop controls",
+      "real command approval over service IPC",
+      "pending request survives same-child reattachment",
+      "stale token rejected",
+      "source resolution and successful continuation",
+      "invalid answers rejected with an exact retry token",
+      "real user-input answer through desktop controls",
+      "real user-input answer over service IPC and successful continuation",
+      "archived source disables replies; restored source reconciles in a fresh epoch",
+      "new request after source recovery is cancelled by an observed turn interruption",
+      "two simultaneous real approvals retain distinct identities and resolve independently"
+    ],
+    "passed": true,
+    "live_model_turn": true,
+    "desktop_controls": true,
+    "codex_sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+    "source": "ordinary TUI created thread, service-owned backend and observer",
+    "model": "zai,glm-5.3",
+    "model_provider": "lapis_probe",
+    "last_attention": {
+      "ready": true,
+      "connected": true,
+      "diagnostic": "Codex synchronized",
+      "activity": 3
+    },
+    "last_request_count": 0,
+    "service_reaped": true,
+    "owned_process_groups_cleaned": true,
+    "elapsed_seconds": 46.638
+  },
+  "red_to_green": [
+    {
+      "case": "out-of-range 2^63 request identity",
+      "before": "Conflicting Codex request replay: invalid ID aliases INT64_MAX",
+      "after": "Rejected as invalid identity; full int64 and adjacent large IDs preserved",
+      "log": "build/pr7-round2/id-boundary-red.log"
+    },
+    {
+      "case": "same-epoch omitted request followed by late replay",
+      "before": "late replay must not resurrect retired adapter details",
+      "after": "Retired details remain absent and subsequent snapshot reconciliation succeeds",
+      "log": "build/pr7-round2/observer-red.log"
+    }
+  ],
+  "reused_evidence": [
+    {
+      "path": "evidence/pr7-review.json",
+      "scope": "Prior CLI launch, native input, history and process guard qualification remains historical evidence; those implementations and fixtures are unchanged in this follow-up. Adapter/protocol/desktop attention behavior was freshly exercised above."
+    }
+  ],
+  "limits": [
+    "One macOS machine and one pinned Codex binary/provider route; Linux UI remains deferred.",
+    "Sanitizer runs cover only the three affected suites, not all 18. Vendor libraries remain uninstrumented.",
+    "GUI events do not claim physical keyboard testing or frame-presentation latency.",
+    "Optional Codex reviewer is quota-unavailable; no reset supplied, retry no earlier than 2026-09-22 America/Los_Angeles."
+  ]
+}

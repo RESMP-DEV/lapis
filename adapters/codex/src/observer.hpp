@@ -23,7 +23,9 @@ class Observer final : public QObject {
     [[nodiscard]] QString threadId() const;
     // Display-only bounded details: method, command/cwd or questions/options.
     [[nodiscard]] QJsonObject details(const session::attention::RequestId& id) const;
-    // Validate payload first, consume the exact State token, then send once.
+    // Validate payload and complete encoded envelope, consume the exact State
+    // token, then send once. True means queued locally, not delivered or resolved.
+    // Source resolution or explicit reconciliation determines the final outcome.
     // False may mean rejected before consumption OR consumed with delivery
     // uncertain. A send failure disconnects the source and retains submission;
     // reconcile explicitly before another decision. Never automatically replay.

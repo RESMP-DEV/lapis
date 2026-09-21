@@ -254,6 +254,22 @@ async def question_turn(owner, thread, question_id):
 
 async def desktop_response(args, service, artifacts, request, choice, answers=None):
     """Exercise the production QML controls against this exact disposable request."""
+    labels = (
+        selected_question_answers(request["details"].get("questions", []))
+        if choice == "submit"
+        else {}
+    )
+    questions_by_id = {
+        question["id"]: question for question in request["details"].get("questions", [])
+    }
+    option_indices = {
+        identifier: next(
+            index
+            for index, option in enumerate(questions_by_id[identifier]["options"])
+            if option["label"] == label
+        )
+        for identifier, label in labels.items()
+    }
     config = artifacts / f"desktop-{choice}.json"
     config.write_text(
         json.dumps(
@@ -265,6 +281,7 @@ async def desktop_response(args, service, artifacts, request, choice, answers=No
                 "details": request["details"],
                 "choice": choice,
                 "answers": answers or {},
+                "optionIndices": option_indices,
                 "capture": str(artifacts / f"desktop-{choice}.png"),
             }
         )
@@ -279,6 +296,31 @@ async def desktop_response(args, service, artifacts, request, choice, answers=No
             timeout=60,
         )
     require(result.returncode == 0, f"Desktop {choice} probe failed; see its log")
+
+
+def selected_question_answers(questions):
+    identifiers = [question.get("id") for question in questions]
+    require(
+        len(questions) == 2
+        and len(set(identifiers)) == len(identifiers)
+        and set(identifiers) == {"color_first", "color_second"},
+        "Unexpected question fixture",
+    )
+    expected_labels = {"color_first": "Blue", "color_second": "Red"}
+    labels = {}
+    for identifier, expected_label in expected_labels.items():
+        question = next(
+            question for question in questions if question["id"] == identifier
+        )
+        matches = [
+            option.get("label")
+            for option in question.get("options", [])
+            if option.get("label")
+            in (expected_label, f"{expected_label} (Recommended)")
+        ]
+        require(len(matches) == 1, "Unexpected question answers")
+        labels[identifier] = matches[0]
+    return labels
 
 
 async def simultaneous_approvals(owner, view, thread, receipt):
@@ -521,21 +563,7 @@ async def exercise(args, receipt):
                 "Question context mismatch",
             )
             questions = request["details"].get("questions", [])
-            require(
-                len(questions) == 2
-                and questions[0]["id"] == "color_first"
-                and questions[1]["id"] == "color_second",
-                "Unexpected question fixture",
-            )
-            labels = {
-                question["id"]: question["options"][0]["label"]
-                for question in questions
-            }
-            require(
-                labels["color_first"].startswith("Blue")
-                and labels["color_second"].startswith("Red"),
-                "Unexpected question answers",
-            )
+            labels = selected_question_answers(questions)
             # Invalid answers are rejected before source submission, with an
             # explicit retry receipt; queued older snapshots are not that receipt.
             invalid = decision(request, "submit")
@@ -606,9 +634,15 @@ async def exercise(args, receipt):
                 and cancelled["turn"] == interrupted["turn"]["id"],
                 "Cancellation request context mismatch",
             )
+            cancellation_ids = [
+                question.get("id")
+                for question in cancelled["details"].get("questions", [])
+            ]
             require(
-                cancelled["details"].get("questions", [{}])[0].get("id")
-                == "cancel_check_first",
+                len(cancellation_ids) == 2
+                and len(set(cancellation_ids)) == len(cancellation_ids)
+                and set(cancellation_ids)
+                == {"cancel_check_first", "cancel_check_second"},
                 "Unexpected cancellation fixture",
             )
             await owner.rpc(

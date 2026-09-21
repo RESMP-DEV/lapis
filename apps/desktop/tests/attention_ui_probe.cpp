@@ -111,8 +111,11 @@ void exercise(const QJsonObject& config) {
     click(*window, QStringLiteral("request-0"));
     until([&] { return dialog->property("canRespond").toBool(); });
     const auto answers = config.value("answers").toObject();
+    const auto optionIndices = config.value("optionIndices").toObject();
     for (auto answer = answers.begin(); answer != answers.end(); ++answer) {
         const auto name = QStringLiteral("options-") + answer.key();
+        const auto optionIndex = optionIndices.value(answer.key()).toInt(-1);
+        require(optionIndex >= 0, "Expected option index is missing or invalid");
         present_layout(*window);
         click(*window, name);
         auto* combo = item(window->contentItem(), name);
@@ -121,6 +124,8 @@ void exercise(const QJsonObject& config) {
         until([&] { return popup->property("opened").toBool(); },
               "Question options popup did not open");
         key(*window, Qt::Key_Home);
+        for (auto index = 0; index < optionIndex; ++index)
+            key(*window, Qt::Key_Down);
         key(*window, Qt::Key_Return);
         const auto expected = answer.value().toObject();
         until(

@@ -128,7 +128,10 @@ class Source final : public QObject {
     void start() { require(root.isValid() && server.listen(path()), "fake source listen failed"); }
 
     [[nodiscard]] QString path() const { return root.filePath("socket"); }
-    void disconnect_client() { connection->disconnectFromServer(); }
+    void disconnect_client() {
+        require(connection != nullptr, "fake source has no connected client");
+        connection->disconnectFromServer();
+    }
 
     void send(const QJsonObject& message) {
         require(connection && connection->state() == QLocalSocket::ConnectedState,
@@ -140,6 +143,7 @@ class Source final : public QObject {
     std::vector<QJsonObject> received;
     bool resolved_before_replay{};
     int replay_large_requests{};
+    std::vector<QJsonObject> replay_requests;
 
   private:
     void read() {
@@ -188,14 +192,14 @@ class Source final : public QObject {
                                          {QStringLiteral("platformFamily"), QStringLiteral("test")},
                                          {QStringLiteral("platformOs"), QStringLiteral("test")}}}});
             send(QJsonObject{{QStringLiteral("method"), QStringLiteral("initialized")}});
-            send({{"method", "thread/started"},
-                  {"params", QJsonObject{{"thread", QJsonObject{{"id", "temporary"},
-                                                                {"ephemeral", true}}}}}});
             auto temporary_request = approval(std::numeric_limits<std::int64_t>::max());
             auto temporary_params = temporary_request.value("params").toObject();
             temporary_params.insert("threadId", "temporary");
             temporary_request.insert("params", temporary_params);
             send(temporary_request);
+            send({{"method", "thread/started"},
+                  {"params", QJsonObject{{"thread", QJsonObject{{"id", "temporary"},
+                                                                {"ephemeral", true}}}}}});
         } else if (method == QLatin1String("thread/loaded/list")) {
             send(
                 QJsonObject{{QStringLiteral("id"), id},
@@ -232,6 +236,8 @@ class Source final : public QObject {
                        QJsonObject{{"threadId", thread_name},
                                    {"requestId", std::numeric_limits<std::int64_t>::max()}}}});
             send(approval(std::numeric_limits<std::int64_t>::max()));
+            for (const auto& replay_request : replay_requests)
+                send(replay_request);
             for (int index = 0; index < replay_large_requests; ++index) {
                 auto replay_request = approval(index);
                 auto params = replay_request.value("params").toObject();
@@ -374,10 +380,95 @@ void pending_details_budget() {
     require(state.pending().size() == 1, "authoritative replay replaces stale requests");
 }
 
+void implicit_retirement_survives_replay() {
+    State state{"retirement", "codex"};
+    Source source;
+    source.start();
+    Observer observer{state};
+    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    require(wait_for([&] { return state.ready(); }), "retirement fixture ready");
+    const auto id = std::numeric_limits<std::int64_t>::max();
+    source.send(large_approval(0));
+    require(wait_for([&] { return state.pending().size() == 2; }), "additional request accepted");
+    const auto epoch = state.epoch();
+    const auto reconcile = [&] {
+        const auto revision = state.pending().at(id).revision;
+        source.send({{"method", "thread/started"},
+                     {"params", QJsonObject{{"thread", QJsonObject{{"id", "thread"},
+                                                                   {"ephemeral", false}}}}}});
+        require(
+            wait_for([&] { return state.ready() && state.pending().at(id).revision != revision; }),
+            "same-epoch reconciliation finished");
+    };
+    reconcile();
+    require(state.epoch() == epoch && state.pending().size() == 1,
+            "snapshot implicitly retires omitted same-epoch request");
+    source.send(large_approval(0));
+    // A subsequent observed activity event orders the check after the late replay.
+    source.send({{"method", "turn/started"}, {"params", QJsonObject{{"threadId", "thread"}}}});
+    require(
+        wait_for([&] { return state.activity() == lapis::session::attention::Activity::working; }),
+        "late replay processed");
+    require(observer.details(std::int64_t{0}).isEmpty() && state.pending().size() == 1,
+            "late replay must not resurrect retired adapter details");
+    source.replay_requests = {large_approval(0)};
+    reconcile();
+    require(state.ready() && state.pending().size() == 1,
+            "later replay snapshot does not resurrect implicitly retired IDs");
+}
+
+void request_id_and_answer_boundaries() {
+    State state{"boundaries", "codex"};
+    Source source;
+    source.start();
+    Observer observer{state};
+    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    require(wait_for([&] { return state.ready(); }), "boundary fixture ready");
+    source.send(large_approval(std::numeric_limits<std::int64_t>::min()));
+    for (const std::int64_t id : {9007199254740992LL, 9007199254740993LL})
+        source.send(large_approval(id));
+    require(wait_for([&] { return state.pending().size() == 4; }),
+            "full int64 IDs and adjacent values above double precision remain distinct");
+    QJsonArray questions;
+    QJsonObject oversized;
+    QJsonObject corrected;
+    for (int index = 0; index < 16; ++index) {
+        const auto key = QString::number(index);
+        questions.append(
+            QJsonObject{{"id", key}, {"question", "Answer"}, {"options", QJsonValue::Null}});
+        oversized.insert(key, QJsonObject{{"answers", QJsonArray{QString(8192, 'x')}}});
+        corrected.insert(key, QJsonObject{{"answers", QJsonArray{"short"}}});
+    }
+    source.send({{"id", "answers"},
+                 {"method", "item/tool/requestUserInput"},
+                 {"params", QJsonObject{{"threadId", "thread"}, {"questions", questions}}}});
+    const RequestId answer_id{std::string{"answers"}};
+    require(wait_for([&] { return state.pending().contains(answer_id); }),
+            "answer request accepted");
+    const auto revision = state.pending().at(answer_id).revision;
+    require(!observer.decide(state.epoch(), answer_id, revision, "submit", oversized) &&
+                !state.pending().at(answer_id).submitted,
+            "oversized response is rejected before consuming its token");
+    require(observer.decide(state.epoch(), answer_id, revision, "submit", corrected),
+            "corrected bounded answer reuses the unconsumed token");
+    for (const auto invalid : {1.5, -1.5, 9223372036854775808.0, -9223372036854777856.0}) {
+        auto request = large_approval(0);
+        request.insert("id", invalid);
+        source.send(request);
+        require(wait_for([&] { return !state.connected(); }),
+                "non-integral or out-of-range ID rejected");
+        require(observer.diagnostic().contains("invalid identity"), "invalid ID diagnostic");
+        observer.reconnect();
+        require(wait_for([&] { return state.ready(); }), "reconcile after invalid source identity");
+    }
+}
+
 int run(int argc, char** argv) {
     QCoreApplication application(argc, argv);
     reconnect_during_initialization_and_start_new_source();
     pending_details_budget();
+    request_id_and_answer_boundaries();
+    implicit_retirement_survives_replay();
     State state{QStringLiteral("session").toStdString(), QStringLiteral("codex").toStdString()};
     Source source;
     source.start();

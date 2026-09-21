@@ -40,7 +40,9 @@ std::optional<RequestId> request_id(const QJsonValue& value) {
         return std::nullopt;
     constexpr auto sentinel = std::numeric_limits<qint64>::max();
     const auto integer = value.toInteger(sentinel);
-    if (integer == sentinel && value != QJsonValue(sentinel))
+    // A second fallback distinguishes a valid INT64_MAX from conversion failure.
+    // JSON numeric equality can round INT64_MAX to the out-of-range double 2^63.
+    if (integer == sentinel && value.toInteger(std::numeric_limits<qint64>::min()) != sentinel)
         return std::nullopt;
     return integer;
 }
@@ -324,6 +326,8 @@ class Observer::Impl final : public QObject {
             return;
         state_.overflow();
         recovering_ = true;
+        // Discovery events are not the authoritative replay. Start fresh after
+        // binding the persistent thread, before issuing resume/read.
         replay_.clear();
         replay_bytes_ = 0;
         diagnostic_ = "Reconciling Codex requests";
@@ -399,6 +403,11 @@ class Observer::Impl final : public QObject {
                 replacement[request.core.id] = request;
             }
         }
+        // The core also retires requests omitted by a same-epoch snapshot.
+        // Mirror that boundary so late replays cannot restore adapter details.
+        for (const auto& [id, pending] : state_.pending())
+            if (pending.source_epoch == state_.epoch() && !replacement.contains(id))
+                resolved_ids.insert(id);
         if (resolved_ids.size() > 1024)
             throw std::runtime_error("Codex retired request limit reached");
         for (const auto& id : resolved_ids)

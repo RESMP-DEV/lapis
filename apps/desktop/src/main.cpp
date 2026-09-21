@@ -84,6 +84,10 @@ bool valid_connection_options(const QCommandLineParser& parser) {
 }
 bool valid_options(const QCommandLineParser& parser) {
     const bool preview = parser.isSet(QStringLiteral("ui-preview"));
+    if (preview && parser.isSet(QStringLiteral("codex"))) {
+        qCritical("--codex cannot be combined with --ui-preview");
+        return false;
+    }
     const bool explicit_launch =
         !parser.positionalArguments().isEmpty() || parser.isSet(QStringLiteral("cwd"));
     if (parser.isSet(QStringLiteral("socket")) &&
