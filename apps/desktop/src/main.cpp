@@ -19,6 +19,9 @@
 namespace {
 void add_options(QCommandLineParser& parser) {
     parser.addHelpOption();
+    parser.addOption({QStringLiteral("workspace"),
+                      QStringLiteral("Open a retained multi-session workspace"),
+                      QStringLiteral("path")});
     parser.addOption(
         {QStringLiteral("codex"),
          QStringLiteral("Use managed Codex attention (requires an explicit Codex executable)")});
@@ -84,6 +87,16 @@ bool valid_connection_options(const QCommandLineParser& parser) {
 }
 bool valid_options(const QCommandLineParser& parser) {
     const bool preview = parser.isSet(QStringLiteral("ui-preview"));
+    if (parser.isSet(QStringLiteral("workspace")) &&
+        (preview || parser.value(QStringLiteral("workspace")).isEmpty() ||
+         parser.isSet(QStringLiteral("socket")) || parser.isSet(QStringLiteral("cwd")) ||
+         parser.isSet(QStringLiteral("new-session")) || parser.isSet(QStringLiteral("discover")) ||
+         parser.isSet(QStringLiteral("codex")) || parser.isSet(QStringLiteral("smoke-input")) ||
+         !parser.positionalArguments().isEmpty())) {
+        qCritical("--workspace requires a path and cannot be combined with explicit session or "
+                  "preview options");
+        return false;
+    }
     if (preview && parser.isSet(QStringLiteral("codex"))) {
         qCritical("--codex cannot be combined with --ui-preview");
         return false;
@@ -140,6 +153,11 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
                                                    bool isolated) {
     lapis::desktop::WorkspaceOptions options;
     if (!isolated) {
+        if (parser.isSet(QStringLiteral("workspace"))) {
+            options.manifest =
+                QFileInfo(parser.value(QStringLiteral("workspace"))).absoluteFilePath();
+            return options;
+        }
         if (parser.isSet(QStringLiteral("new-session")))
             options.mode = lapis::session::wire::AttachMode::create;
         else if (parser.isSet(QStringLiteral("discover")))

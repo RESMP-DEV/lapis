@@ -1,3 +1,4 @@
+import QtCore as Core
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -90,7 +91,7 @@ ApplicationWindow {
     readonly property bool stackLayout: layoutMode === "stack"
     // The pane owns the keyboard only when it is the visible surface.
     readonly property bool settingsOpen: settingsDialog.visible
-    readonly property bool inputBlocked: settingsOpen || attentionDialog.visible
+    readonly property bool inputBlocked: settingsOpen || attentionDialog.visible || sessionDialog.visible
     readonly property bool paneVisible: layoutMode === "focus" || columnsLayout
     readonly property int cardSpacing: densityMode === "minimal" ? 8 :
                                        densityMode === "compact" ? 10 : 14
@@ -226,6 +227,25 @@ ApplicationWindow {
             attentionDialog.showSession(workspace.focusedSession)
     }
 
+    function workspaceStatus(fallback) {
+        if (workspace.status.length)
+            return workspace.status
+        if (workspace.focusedSession)
+            return workspace.focusedSession.activity
+        return fallback
+    }
+
+    function createSession() {
+        if (!workspace.canAddSessions)
+            return
+        const directory = sessionDirectoryField.text.trim()
+        if (!directory.length)
+            return
+        const endpoint = sessionEndpointField.text.trim()
+        if (workspace.addSession(sessionCodexButton.checked, directory, endpoint))
+            sessionDialog.close()
+    }
+
     AttentionDialog {
         id: attentionDialog
         palette.window: window.surfaceColor
@@ -269,6 +289,63 @@ ApplicationWindow {
         }
     }
 
+    Dialog {
+        id: sessionDialog
+        objectName: "sessionDialog"
+        title: qsTr("Session")
+        modal: true
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: 480
+        footer: DialogButtonBox {
+            standardButtons: Dialog.Cancel | Dialog.Ok
+            onAccepted: window.createSession()
+            onRejected: sessionDialog.close()
+        }
+
+        onOpened: sessionDirectoryField.forceActiveFocus()
+        onClosed: preview.deferTerminalFocus()
+
+        contentItem: ColumnLayout {
+            spacing: 10
+
+            ButtonGroup {
+                id: sessionKindGroup
+            }
+
+            RadioButton {
+                id: sessionShellButton
+                ButtonGroup.group: sessionKindGroup
+                checked: true
+                text: qsTr("Shell")
+            }
+            RadioButton {
+                id: sessionCodexButton
+                ButtonGroup.group: sessionKindGroup
+                text: qsTr("Codex")
+            }
+            TextField {
+                id: sessionDirectoryField
+                objectName: "sessionDirectoryField"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Directory")
+                onAccepted: window.createSession()
+            }
+            TextField {
+                id: sessionEndpointField
+                objectName: "sessionEndpointField"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Optional existing endpoint")
+                onAccepted: window.createSession()
+            }
+            PreviewLabel {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: qsTr("Leave the endpoint empty to create the selected session kind. Provide it to discover an existing session.")
+            }
+        }
+    }
+
     // The isolated QML preview has no keymap, so these literals keep the dialog
     // usable there and double as the documented set of valid names.
     readonly property var layoutChoices: typeof keymap !== "undefined" && keymap !== null ?
@@ -281,6 +358,10 @@ ApplicationWindow {
     // layout switch re-runs it so focus never lands on a hidden pane.
     onActiveChanged: if (active) keyboardOwnershipReady()
     onLayoutModeChanged: keyboardOwnershipReady()
+    onInputBlockedChanged: {
+        workspace.setInteractionBlocked("root-modal", inputBlocked)
+        preview.deferTerminalFocus()
+    }
 
     signal keyboardOwnershipReady()
 
@@ -385,8 +466,9 @@ ApplicationWindow {
 
             PreviewLabel {
                 Layout.fillWidth: true
+                objectName: "workspaceStatus"
                 text: preview.active ? qsTr("Sample sessions") :
-                      workspace.focusedSession ? workspace.focusedSession.activity : qsTr("Disconnected")
+                      workspace.loading ? qsTr("Loading workspace…") : workspaceStatus(qsTr("No sessions"))
                 font.pixelSize: 10
                 elide: Text.ElideRight
             }
@@ -416,24 +498,44 @@ ApplicationWindow {
                 onClicked: sessionMenu.open()
                 Menu {
                     id: sessionMenu
-                    readonly property bool available: workspace.focusedSession &&
+                    readonly property bool available: workspace.canAddSessions
+                    readonly property bool focusedAvailable: workspace.focusedSession &&
                         workspace.focusedSession.connectionState !== "connecting" &&
                         workspace.focusedSession.connectionState !== "synchronizing" &&
                         !workspace.focusedSession.inputReady
                     MenuItem {
+                        text: qsTr("Create or adopt…")
+                        enabled: workspace.canAddSessions
+                        visible: workspace.registryEnabled
+                        onTriggered: {
+                            sessionDirectoryField.text = workspace.focusedSession ? workspace.focusedSession.directory : Core.StandardPaths.writableLocation(Core.StandardPaths.HomeLocation)
+                            sessionEndpointField.text = ""
+                            sessionDialog.open()
+                        }
+                    }
+                    MenuSeparator {}
+                    MenuItem {
                         text: qsTr("Reconnect")
-                        enabled: sessionMenu.available
+                        enabled: sessionMenu.focusedAvailable
                         onTriggered: workspace.focusedSession.reconnect()
                     }
                     MenuItem {
                         text: qsTr("Discover existing session")
-                        enabled: sessionMenu.available
+                        enabled: sessionMenu.focusedAvailable
                         onTriggered: workspace.focusedSession.discoverSession()
                     }
                     MenuItem {
                         text: qsTr("Start new session")
-                        enabled: sessionMenu.available
+                        enabled: sessionMenu.focusedAvailable
                         onTriggered: workspace.focusedSession.startNewSession()
+                    }
+                    MenuSeparator {}
+                    MenuItem {
+                        text: qsTr("Remove / detach")
+                        visible: workspace.registryEnabled
+                        enabled: workspace.focusedSession != null
+                        onTriggered: if (workspace.focusedSession)
+                                         workspace.removeSession(workspace.focusedSession.sessionId)
                     }
                 }
             }
@@ -566,7 +668,7 @@ ApplicationWindow {
                 anchors.margins: 10
                 height: 32
                 spacing: 8
-                property var session: workspace.focusedSession
+                property SessionPreview session: workspace.focusedSession
                 visible: session && session.live
                 Button {
                     text: qsTr("Older")
@@ -605,7 +707,8 @@ ApplicationWindow {
                 anchors.margins: 18
                 anchors.topMargin: historyBar.visible ? 54 : 18
                 document: workspace.focusedSession
-// Input requires both the session being ready and this pane owning
+                focusWorkspace: workspace
+                // Input requires both the session being ready and this pane owning
                 // the keyboard, which blocks layout gives to a tile instead.
                 interactive: (preview.active || (document && document.inputReady))
                              && window.paneVisible && !window.inputBlocked
@@ -832,6 +935,7 @@ ApplicationWindow {
                             // only when blocks mode makes this tile the pane.
                             objectName: "cardTerminal_" + sessionCard.modelData.sessionId
                             document: sessionCard.modelData
+                            focusWorkspace: workspace
                             enabled: !window.paneVisible
                                      && workspace.focusedIndex === sessionCard.index
                                      && sessionCard.modelData.live

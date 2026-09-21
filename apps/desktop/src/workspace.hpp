@@ -4,13 +4,14 @@
 #include <lapis/session/terminal.hpp>
 
 #include "launch_spec.hpp"
-#include "workspace_registry.hpp"
 #include "transport/attention_protocol.hpp"
 #include "transport/local_protocol.hpp"
+#include "workspace_registry.hpp"
 
 #include <QColor>
 #include <QMap>
 #include <QObject>
+#include <QPointer>
 #include <QSet>
 #include <QString>
 #include <QVariantList>
@@ -155,9 +156,9 @@ struct PreviewRequest {
 
 struct WorkspaceOptions {
     QString endpoint;
-    QString manifest; // Empty retains the explicit single-session connection path.
     std::optional<session::LaunchSpec> launch;
     session::wire::AttachMode mode{session::wire::AttachMode::reconnect};
+    QString manifest{}; // Empty retains the explicit single-session connection path.
 };
 
 class Workspace final : public QObject {
@@ -213,7 +214,7 @@ class Workspace final : public QObject {
     void flushFocus();
     QString manifest_;
     QString status_;
-    QString pending_focus_;
+    QPointer<SessionPreview> pending_focus_;
     QSet<QString> interaction_blocks_;
     bool loading_{};
     bool registry_ready_{};

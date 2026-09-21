@@ -63,7 +63,7 @@ struct Peer {
 };
 struct Fixture {
     QLocalServer server;
-    QTemporaryDir directory{QStringLiteral("/tmp/lapis-v4-XXXXXX")};
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-v4-XXXXXX")};
     lapis::session::LaunchSpec launch;
     wire::SessionIdentity identity{wire::new_id(), wire::new_id()};
     lapis::session::Terminal terminal{{4, 2}};
@@ -133,6 +133,16 @@ struct Fixture {
                        page_id == 0 ? std::nullopt : std::optional(snapshot)}));
     }
 };
+
+lapis::desktop::WorkspaceEntry workspace_entry(const Fixture& fixture,
+                                               const wire::SessionIdentity& identity) {
+    return {.endpoint = fixture.endpoint,
+            .identity = identity,
+            .fingerprint = lapis::session::launch_fingerprint(fixture.launch),
+            .title = fixture.document.title(),
+            .directory = fixture.document.directory(),
+            .agent = lapis::session::AgentMode::codex};
+}
 
 void history_browsing_and_input_gating() {
     Fixture f;
@@ -353,6 +363,67 @@ void missing_and_replaced() {
     f.screen(discovered, 2, 2);
     require(lapis::session::read_descriptor(f.endpoint, fingerprint) == f.identity,
             "Discovery did not remember verified identity");
+    require(f.document.sessionId() == QString::fromLatin1(f.identity.session_id.toHex()),
+            "Discovered stable session ID was not set after verification");
+}
+
+void reconnect_only_workspace_entry() {
+    Fixture f;
+    auto& document = f.document;
+    const auto entry = workspace_entry(f, f.identity);
+    document.restoreLive(entry);
+    auto peer = f.accept();
+    const auto request = f.request(peer);
+    require(request.mode == wire::AttachMode::reconnect && request.expected == f.identity,
+            "Restored entry did not pin its identity");
+    f.hello(peer);
+    f.screen(peer);
+    require(document.sessionId() == QString::fromLatin1(f.identity.session_id.toHex()),
+            "Restored entry changed its stable session ID");
+    const auto exported = document.reconnectEntry();
+    require(exported && *exported == entry, "Verified entry was not exported");
+    require(
+        !lapis::session::read_descriptor(f.endpoint, lapis::session::launch_fingerprint(f.launch)),
+        "Reconnect-only entry persisted a descriptor");
+
+    peer.socket->abort();
+    until([&] { return document.connectionState() == QStringLiteral("disconnected"); });
+    require(document.reconnectEntry() == entry, "Disconnect discarded the verified entry");
+    document.reconnect();
+    auto restored = f.accept();
+    require(f.request(restored).expected == f.identity,
+            "Reconnect-only entry did not retain its verified identity");
+    f.hello(restored, 2);
+    f.screen(restored, 2, 2);
+    require(document.reconnectEntry() == entry, "Reverify changed argument-free metadata");
+}
+
+void reconnect_only_rejects_replacement_and_other_modes() {
+    Fixture f;
+    auto& document = f.document;
+    document.restoreLive(workspace_entry(f, f.identity));
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    const wire::SessionIdentity replacement{wire::new_id(), wire::new_id()};
+    peer.send(wire::Kind::hello, wire::encode_hello({{replacement, 1}, 123}));
+    until([&] { return document.connectionState() == QStringLiteral("replaced"); });
+    require(document.reconnectEntry() == workspace_entry(f, f.identity),
+            "Rejected replacement changed the trusted reconnect identity");
+    require(
+        !lapis::session::read_descriptor(f.endpoint, lapis::session::launch_fingerprint(f.launch)),
+        "Rejected replacement wrote a descriptor");
+
+    document.startNewSession();
+    require(document.activity().contains(
+                QStringLiteral("Cannot create a session from a reconnect-only workspace entry")),
+            "Create on a reconnect-only entry lacked a clear diagnostic");
+    document.discoverSession();
+    require(document.activity().contains(
+                QStringLiteral("Cannot discover a reconnect-only workspace entry")),
+            "Discover on a reconnect-only entry lacked a clear diagnostic");
+    settle();
+    require(!f.server.hasPendingConnections(),
+            "Reconnect-only entry created or discovered another session");
 }
 void attention_routing_and_reconnect() {
     using namespace lapis::session::attention;
@@ -500,11 +571,14 @@ int main(int argc, char** argv) {
         stale_reconnect_and_history_errors();
         unqueued_history_is_rejected_immediately();
         missing_and_replaced();
+        reconnect_only_workspace_entry();
+        reconnect_only_rejects_replacement_and_other_modes();
         attention_routing_and_reconnect();
         lost_before_screen();
         legacy_server();
         std::cout << "Identity, initial-screen gating, history paging/cancellation, explicit "
-                     "reconnect/discovery, stale snapshot and legacy rejection passed\n";
+                     "reconnect/discovery, reconnect-only entries, stale snapshot and legacy "
+                     "rejection passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

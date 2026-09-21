@@ -17,6 +17,8 @@
 #include <cmath>
 #include <memory>
 
+#include <QUuid>
+
 namespace lapis::desktop {
 namespace {
 
@@ -446,6 +448,13 @@ void TerminalSurface::updateInputContext(Qt::InputMethodQueries queries) {
             method->update(queries);
 }
 
+void TerminalSurface::updateInteractionBlock() {
+    if (!focus_workspace_)
+        return;
+    focus_workspace_->setInteractionBlocked(
+        interaction_reason_, composition_state_ == CompositionState::active || paste_in_progress_);
+}
+
 void TerminalSurface::resetInputContext() {
     if (resetting_input_)
         return;
@@ -453,6 +462,7 @@ void TerminalSurface::resetInputContext() {
     if (composition_state_ == CompositionState::active)
         composition_state_ = CompositionState::stale;
     preedit_.clear();
+    updateInteractionBlock();
     if (qApp && qApp->focusObject() == this)
         qApp->inputMethod()->reset();
     resetting_input_ = false;
@@ -468,6 +478,17 @@ bool TerminalSurface::acceptsTerminalInput() const {
 TerminalSurface::TerminalSurface(QQuickItem* parent) : QQuickItem(parent) {
     setFlag(ItemHasContents);
     setClip(true);
+    preview_update_.setSingleShot(true);
+    preview_update_.setInterval(100); // Visible noninteractive previews are capped at 10 Hz.
+    connect(&preview_update_, &QTimer::timeout, this, [this] {
+        if (isVisible())
+            publishFrame(true);
+    });
+    connect(this, &QQuickItem::visibleChanged, this, [this] {
+        preview_update_.stop();
+        if (isVisible())
+            publishFrame(true);
+    });
     window_changed_connection_ =
         connect(this, &QQuickItem::windowChanged, this, &TerminalSurface::bindWindow);
     bindWindow(window());
@@ -491,6 +512,7 @@ void TerminalSurface::bindWindow(QQuickWindow* current) {
 TerminalSurface::~TerminalSurface() {
     disconnect(window_changed_connection_);
     disconnect(window_active_connection_);
+    setFocusWorkspace(nullptr);
     const std::lock_guard lock(render_mutex_);
     render_state_.reset();
 }
@@ -503,7 +525,12 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     document_ = document;
     if (document_) {
         connect(document_, &SessionPreview::snapshotChanged, this, [this] {
-            publishFrame(true);
+            if (isVisible()) {
+                if (interactive_)
+                    publishFrame(true);
+                else if (!preview_update_.isActive())
+                    preview_update_.start();
+            }
             updateInputContext(Qt::ImCursorRectangle);
         });
         connect(document_, &SessionPreview::connectionChanged, this, [this] {
@@ -595,6 +622,8 @@ void TerminalSurface::setInteractive(bool enabled) {
     if (interactive_ == enabled)
         return;
     interactive_ = enabled;
+    preview_update_.stop();
+    publishFrame(true);
     if (!enabled) {
         ++ime_epoch_;
         resetInputContext();
@@ -605,6 +634,18 @@ void TerminalSurface::setInteractive(bool enabled) {
     setActiveFocusOnTab(enabled);
     requestResize();
     emit interactiveChanged();
+}
+
+void TerminalSurface::setFocusWorkspace(Workspace* workspace) {
+    if (focus_workspace_ == workspace)
+        return;
+    if (focus_workspace_)
+        focus_workspace_->setInteractionBlocked(interaction_reason_, false);
+    focus_workspace_ = workspace;
+    interaction_reason_ = QStringLiteral("terminal-") + QUuid::createUuid().toString(QUuid::Id128);
+    if (focus_workspace_)
+        updateInteractionBlock();
+    emit focusWorkspaceChanged();
 }
 
 void TerminalSurface::focusInEvent(QFocusEvent* event) {
@@ -683,10 +724,15 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
     if (event->matches(QKeySequence::Paste)) {
         const auto owner = document_;
         const QString text = QGuiApplication::clipboard()->text();
+        paste_in_progress_ = true;
+        updateInteractionBlock();
         ++ime_epoch_;
         resetInputContext();
-        if (document_ == owner && acceptsTerminalInput())
+        if (document_ == owner && acceptsTerminalInput()) {
             document_->sendText(text.toUtf8(), true);
+        }
+        paste_in_progress_ = false;
+        updateInteractionBlock();
         event->accept();
         return;
     }
@@ -794,6 +840,7 @@ void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
     }
     if (!event->preeditString().isEmpty())
         composition_state_ = CompositionState::active;
+    updateInteractionBlock();
     if (!event->commitString().isEmpty()) {
         if (composition_state_ == CompositionState::stale) {
             event->ignore();
@@ -812,6 +859,7 @@ void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
         composition_state_ = CompositionState::idle;
     else if (composition_state_ == CompositionState::active)
         composition_state_ = CompositionState::stale;
+    updateInteractionBlock();
     publishFrame(false);
     updateInputContext(Qt::ImCursorRectangle);
     event->accept();

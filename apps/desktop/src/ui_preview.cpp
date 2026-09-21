@@ -11,6 +11,7 @@
 #include <QQuickWindow>
 #include <QRect>
 #include <QScreen>
+#include <QSet>
 #include <QStringList>
 
 #include <functional>
@@ -101,6 +102,9 @@ UiPreview::UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* pa
             deferTerminalFocus();
         });
     connect(&workspace_, &Workspace::focusChanged, this, &UiPreview::deferTerminalFocus);
+    connect(this, &UiPreview::heldKeysChanged, this, [this] {
+        workspace_.setInteractionBlocked(QStringLiteral("root-held-keys"), holdingKeys());
+    });
 }
 
 void UiPreview::refreshSettingsShortcuts() {
@@ -114,6 +118,10 @@ void UiPreview::refreshSettingsShortcuts() {
 }
 
 UiPreview::~UiPreview() {
+    if (window_ != nullptr)
+        window_->removeEventFilter(this);
+    clearHeldKeys();
+    workspace_.setInteractionBlocked(QStringLiteral("root-modal"), false);
     engine_.reset();
     const auto retired =
         findChildren<QQmlApplicationEngine*>(QString{}, Qt::FindDirectChildrenOnly);
@@ -174,15 +182,15 @@ bool UiPreview::assignTerminalFocus() {
     if (target_window->property("inputBlocked").toBool())
         return false;
     // Focus and columns keep the single live pane; blocks and stack promote one
-    // tile per session. Workspace owns which session is focused, so ask it for
-    // the id. This mirrors the QML paneVisible rule: the pane owns the keyboard
-    // only when it is actually on screen.
+    // tile per session. The dynamic workspace can be empty while loading.
     const KeyMap* keymap = options_.keymap;
     const bool pane_visible = keymap == nullptr || keymap->layout() == WorkspaceLayout::Focus ||
                               keymap->layout() == WorkspaceLayout::Columns;
-    const QString name =
-        pane_visible ? QStringLiteral("liveTerminal")
-                     : QStringLiteral("cardTerminal_") + workspace_.focusedSession()->sessionId();
+    const SessionPreview* focused = workspace_.focusedSession();
+    if (!pane_visible && focused == nullptr)
+        return false;
+    const QString name = pane_visible ? QStringLiteral("liveTerminal")
+                                      : QStringLiteral("cardTerminal_") + focused->sessionId();
     QQuickItem* terminal = nullptr;
     const std::function<void(QQuickItem&)> visit = [&](QQuickItem& item) {
         if (terminal != nullptr)
@@ -213,16 +221,22 @@ void UiPreview::deferTerminalFocus() {
 }
 
 bool UiPreview::eventFilter(QObject* watched, QEvent* event) {
-    if (event->type() != QEvent::KeyPress)
+    auto* current_window = qobject_cast<QQuickWindow*>(watched);
+    if (current_window == nullptr || current_window != window_.data())
         return QObject::eventFilter(watched, event);
 
-    auto* current_window = qobject_cast<QQuickWindow*>(watched);
-    if (current_window == nullptr || current_window != window_.data() ||
-        !current_window->isActive())
+    if (event->type() == QEvent::WindowDeactivate || event->type() == QEvent::Destroy)
+        clearHeldKeys();
+
+    if (event->type() != QEvent::KeyPress && event->type() != QEvent::KeyRelease)
+        return QObject::eventFilter(watched, event);
+
+    if (!current_window->isActive())
         return QObject::eventFilter(watched, event);
 
     auto* key_event = static_cast<QKeyEvent*>(event);
-    if (key_event->isAutoRepeat())
+    updateHeldKey(*key_event, event->type() == QEvent::KeyPress);
+    if (event->type() != QEvent::KeyPress || key_event->isAutoRepeat())
         return false;
     for (const auto& sequence : parsed_settings_shortcuts_) {
         if (sequence.count() == 1 && sequence[0] == key_event->keyCombination() && openSettings()) {
@@ -245,6 +259,25 @@ bool UiPreview::openSettings() {
     QObject* root = engine_->rootObjects().first();
     return root != nullptr &&
            QMetaObject::invokeMethod(root, "openSettingsDialog", Qt::DirectConnection);
+}
+
+void UiPreview::updateHeldKey(const QKeyEvent& event, bool pressed) {
+    if (event.isAutoRepeat())
+        return;
+    const bool was_holding = holdingKeys();
+    if (pressed)
+        held_keys_.insert(event.key());
+    else if (!held_keys_.remove(event.key()))
+        return;
+    if (was_holding != holdingKeys())
+        emit heldKeysChanged();
+}
+
+void UiPreview::clearHeldKeys() {
+    if (held_keys_.isEmpty())
+        return;
+    held_keys_.clear();
+    emit heldKeysChanged();
 }
 
 bool UiPreview::loadCandidate() {
@@ -330,6 +363,9 @@ bool UiPreview::loadCandidate() {
     const QPointer<QQuickWindow> acceptedWindow = candidateWindow;
     setDiagnostics(candidateDiagnostics);
 
+    clearHeldKeys();
+    workspace_.setInteractionBlocked(QStringLiteral("root-modal"),
+                                     candidateWindow->property("inputBlocked").toBool());
     std::swap(engine_, candidate);
     window_ = acceptedWindow;
     if (reloading) {

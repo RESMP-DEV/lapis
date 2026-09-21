@@ -174,10 +174,22 @@ def launch(arguments):
     if (
         not has_program
         and "--ui-preview" not in app_arguments
-        and not any(a == "--socket" or a.startswith("--socket=") for a in app_arguments)
+        and not any(
+            a in ("--socket", "--workspace") or a.startswith(("--socket=", "--workspace="))
+            for a in app_arguments
+        )
     ):
         private_runtime_dir()
-        command[1:1] = ["--socket", str(DEFAULT_SOCKET)]
+        explicit_session = any(
+            a in ("--new-session", "--discover", "--cwd", "--codex", "--smoke-input")
+            or a.startswith("--cwd=")
+            for a in app_arguments
+        )
+        command[1:1] = (
+            ["--socket", str(DEFAULT_SOCKET)]
+            if explicit_session
+            else ["--workspace", str(RUNTIME_DIR / "workspace-v1.json")]
+        )
     os.environ.update(environment())
     return _run(command, check=False).returncode
 

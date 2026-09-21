@@ -829,6 +829,60 @@ int run_attention_ui_tests() {
     return EXIT_SUCCESS;
 }
 
+int run_input_guard_tests() {
+    using namespace lapis::desktop;
+    Workspace workspace(WorkspaceMode::preview);
+    UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+                                  .compact = true,
+                                  .screen = QString()});
+    CHECK(preview.load());
+    auto* window = preview.window();
+    wait_active(*window);
+    auto* terminal = find_visual(window->contentItem(), QStringLiteral("liveTerminal"));
+    CHECK(terminal != nullptr);
+    terminal->forceActiveFocus();
+    pump(20);
+
+    const auto send_key = [&window](QEvent::Type type, int key, const QString& text = {},
+                                    bool repeat = false) {
+        QKeyEvent event(type, key, Qt::NoModifier, text, repeat, repeat ? 1 : 0);
+        QCoreApplication::sendEvent(window, &event);
+    };
+    send_key(QEvent::KeyPress, Qt::Key_X, QStringLiteral("x"));
+    send_key(QEvent::KeyPress, Qt::Key_X, QString(), true);
+    CHECK(preview.holdingKeys());
+    workspace.setFocusedIndex(1);
+    pump(20);
+    CHECK(workspace.focusedIndex() == 0);
+    send_key(QEvent::KeyRelease, Qt::Key_X, QString(), true);
+    CHECK(preview.holdingKeys());
+    send_key(QEvent::KeyRelease, Qt::Key_X);
+    CHECK(!preview.holdingKeys());
+    pump(50);
+    CHECK(workspace.focusedIndex() == 1);
+
+    send_key(QEvent::KeyPress, Qt::Key_Shift);
+    workspace.setFocusedIndex(0);
+    pump(20);
+    CHECK(workspace.focusedIndex() == 1);
+    send_key(QEvent::KeyRelease, Qt::Key_Shift);
+    pump(50);
+    CHECK(workspace.focusedIndex() == 0);
+
+    auto* dialog = window->findChild<QObject*>(QStringLiteral("sessionDialog"));
+    CHECK(dialog != nullptr);
+    CHECK(QMetaObject::invokeMethod(dialog, "open"));
+    wait_popup(*dialog, true);
+    workspace.setFocusedIndex(1);
+    pump(20);
+    CHECK(workspace.focusedIndex() == 0);
+    CHECK(QMetaObject::invokeMethod(dialog, "close"));
+    wait_popup(*dialog, false);
+    pump(50);
+    CHECK(workspace.focusedIndex() == 1);
+    return EXIT_SUCCESS;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -847,7 +901,7 @@ int main(int argc, char** argv) {
             return run_shortcut_focus_tests();
         if (run_workspace_tests() != EXIT_SUCCESS || run_ui_tests() != EXIT_SUCCESS ||
             run_surface_tests() != EXIT_SUCCESS || run_attention_dialog_tests() != EXIT_SUCCESS ||
-            run_attention_ui_tests() != EXIT_SUCCESS)
+            run_attention_ui_tests() != EXIT_SUCCESS || run_input_guard_tests() != EXIT_SUCCESS)
             return EXIT_FAILURE;
         std::cout << "ui_preview_test: PASS\n";
         return EXIT_SUCCESS;
