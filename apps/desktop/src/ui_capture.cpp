@@ -72,11 +72,13 @@ void type_smoke_text(QQuickWindow& window, const QString& text) {
         QCoreApplication::sendEvent(&window, &event);
     }
 }
-void send_smoke_input(QQuickWindow& window) {
-    auto* terminal = window.findChild<TerminalSurface*>(QStringLiteral("liveTerminal"));
-    if (!terminal)
-        throw std::runtime_error("Live terminal surface missing");
-    terminal->forceActiveFocus();
+bool send_smoke_input(QQuickWindow& window, UiPreview& preview) {
+    if (!preview.assignTerminalFocus())
+        return false;
+    auto* terminal = qobject_cast<TerminalSurface*>(window.activeFocusItem());
+    if (!terminal || !terminal->isVisible() || !terminal->isEnabled() || !terminal->interactive())
+        return false;
+    qInfo() << "Shell smoke input owns ready terminal" << terminal->objectName();
     QKeyEvent discard(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("discard-this"));
     QCoreApplication::sendEvent(&window, &discard);
     QKeyEvent clear_line(QEvent::KeyPress, Qt::Key_U, Qt::ControlModifier, QStringLiteral("u"));
@@ -91,6 +93,7 @@ void send_smoke_input(QQuickWindow& window) {
                     QStringLiteral("%1; stty size").arg(QCoreApplication::applicationPid()));
     QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
     QCoreApplication::sendEvent(&window, &enter);
+    return true;
 }
 class Capture final : public QObject {
   public:
@@ -114,8 +117,12 @@ class Capture final : public QObject {
         connect(&window_, &QWindow::activeChanged, this, [this] { window_.update(); });
         timeout_.setSingleShot(true);
         timeout_.setInterval(15000 + options_.delay_ms);
-        connect(&timeout_, &QTimer::timeout, this, [] {
-            qCritical("Window capture timed out waiting for a rendered frame or shell response");
+        connect(&timeout_, &QTimer::timeout, this, [this] {
+            qCritical() << "Window capture timed out; active:" << window_.isActive()
+                        << "input ready:" << workspace_.focusedSession()->inputReady()
+                        << "smoke sent:" << sent_ << "focus:"
+                        << (window_.activeFocusItem() ? window_.activeFocusItem()->objectName()
+                                                      : QString{});
             QCoreApplication::exit(1);
         });
         timeout_.start();
@@ -135,8 +142,10 @@ class Capture final : public QObject {
             return;
         try {
             if (options_.smoke_input && !sent_) {
-                send_smoke_input(window_);
-                sent_ = true;
+                // Screen restoration precedes asynchronous identity persistence.
+                // Do not discard the one-shot command while input is still gated.
+                if (workspace_.focusedSession()->inputReady())
+                    sent_ = send_smoke_input(window_, preview_);
                 return;
             }
             const auto marker = QStringLiteral("LAPIS_INPUT_%1_OK")
