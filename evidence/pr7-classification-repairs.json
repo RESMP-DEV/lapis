@@ -1,11 +1,11 @@
 {
   "schema": "lapis.pr-review-repair/1",
-  "recorded_at": "2026-09-22T02:45:49.487366+00:00",
+  "recorded_at": "2026-09-22T02:49:11.239428+00:00",
   "pull_request": 7,
   "baseline_revision": "faa31778943d3c5b06a47242a530a8b240f115ca",
   "platform": "macOS arm64; Qt 6.11.2; production protocol unchanged",
   "source_sha256": {
-    "CONTRIBUTING.md": "f039546f762dff0e70b5a68b5e6ef33219ad95e255fcceb5fd51907363d11fec",
+    "CONTRIBUTING.md": "c6027c5e26743ae9ae707e208856001e9f56afbd41bc603471d98d2b90733e94",
     "README.md": "13d5bfcda5b6a628aeae8365c826099e9104edcc4b5d541809badf7e781ac340",
     "adapters/codex/README.md": "381468f6ddbff8933c4e83f6848b62d7eabb2ca2a222152d18c06500ae2a34a5",
     "adapters/codex/src/observer.cpp": "1741b1790f67078e80a0f28c67e234d1f695ab2e2144588409c504b4ba296ac7",
@@ -13,7 +13,7 @@
     "adapters/codex/tests/observer_test.cpp": "34a92f137e019ac08a74454c80481142b5b2dc5072993237b8c8246863c6db44",
     "adapters/codex/tests/unix_websocket_test.cpp": "fad4d77999b30364a9d6db0ed3c1b3107bdd2e7a0f93edde3d40c365304790d2",
     "docs/architecture.md": "cb3b5d2c63331d5a3f0841774718bdb931751de442a3bb4d36324c9a13d638c3",
-    "scripts/check_cli_launch.py": "9a717ea904833ee03f8f42ec40167ae12573af1940091872fe2e74e7ef085129",
+    "scripts/check_cli_launch.py": "608b32c4ceb5bba705252121b42e9b0216718904bd38c7a4f35ca8f92d3bd6f1",
     "services/session/src/session_service.cpp": "a6e94aeedc44be72f79051c4402b99c6bb81b83bf257d658232afbbec7ff6957",
     "services/session/tests/attention_protocol_test.cpp": "a88c4bf75bbac0f42175c27209c79fd7ca27d9724079156ec6b6465644e5c640",
     "services/session/tests/launch_spec_test.cpp": "687fb39ca6dc9f311dc2bc9ac88f698a404e9426696d107b312f492cb685bf7d"
@@ -141,7 +141,7 @@
       ]
     },
     "cli": {
-      "command": "python3 scripts/check_cli_launch.py --desktop --codex --output build/review-sept21/cli-final.json",
+      "command": "python3 scripts/check_cli_launch.py --desktop --codex --output build/review-sept21/cli-raw-ready.json",
       "passed": 16,
       "total": 16,
       "asan_service_cases": 14,
@@ -201,7 +201,7 @@
   },
   "corrected_failures": [
     "Fake Source teardown could run disconnected callbacks after its QPointer member was destroyed. Disconnect callbacks before member teardown; the observer suite then passes normally and under both sanitizers.",
-    "The initial optional plain-TUI test sent navigation input against the Codex loading draft. Reproduced literal escape echo; waiting for bracketed-paste mode and a loaded screen fixes the fixture. All final CLI cases pass. The added decoded mode field does not alter text decoding used by the already-passing live attention/history fixtures.",
+    "The initial optional plain-TUI test sent navigation input against the Codex loading draft. Reproduced literal escape echo. Consolidation found the existing Milestone 3A wait_raw_terminal helper: it verifies ICANON and ECHO are disabled on the owned PTY. Reused that helper instead of adding another screen predicate or wire decoder field. All 16 final CLI cases pass; other fixture code and compiled inputs are unchanged.",
     "Worker-proposed receive cursor changes were discarded: installed Qt prefix removal advances its pointer. The original receive loop and reentrancy guards are retained."
   ],
   "delegation": {

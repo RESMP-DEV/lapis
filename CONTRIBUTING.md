@@ -457,8 +457,8 @@ python3 scripts/check_cli_launch.py --desktop --codex \
   --output build/cli-launch-check/codex.json
 ```
 
-The optional test waits for bracketed-paste mode and a loaded Codex screen before
-sending navigation input; its early loading header alone is not a readiness signal.
+The optional test waits for the owned PTY to disable canonical input and echo
+before sending navigation input; its early banner alone is not a readiness signal.
 It uses the current Codex configuration with no extra launch flags (Codex 0.154.0 removed the older `--no-daemon`), types
 only an unsubmitted test marker, exercises navigation/paste/resize, captures normal
 and compact windows, reattaches to the same child, clears the draft with Ctrl-C,
