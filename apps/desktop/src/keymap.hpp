@@ -93,6 +93,7 @@ class KeyMap final : public QObject {
     [[nodiscard]] QStringList layouts() const;
     [[nodiscard]] QStringList densities() const;
 
+    // Cycle through layouts() in order and persist through setLayout().
     Q_INVOKABLE void toggleLayout();
     Q_INVOKABLE bool reload();
 
