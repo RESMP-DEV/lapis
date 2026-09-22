@@ -13,6 +13,8 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QImage>
+#include <QInputMethodEvent>
+#include <QJsonArray>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QObject>
@@ -335,6 +337,95 @@ void click_setting(QQuickWindow& window, const QString& name) {
     const QByteArray contents = file.readAll();
     CHECK(!file.error());
     return QString::fromUtf8(contents);
+}
+
+int run_attention_dialog_tests() {
+    using namespace lapis::desktop;
+    namespace wire = lapis::session::wire;
+    namespace attention = lapis::session::attention;
+    Workspace workspace(WorkspaceMode::preview);
+    UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+                                  .compact = true,
+                                  .screen = QString()});
+    CHECK(preview.load());
+    auto* window = preview.window();
+    wait_active(*window);
+    auto* terminal = find_visual(window->contentItem(), QStringLiteral("liveTerminal"));
+    auto* dialog = window->findChild<QObject*>(QStringLiteral("attentionDialog"));
+    CHECK(terminal != nullptr && dialog != nullptr);
+    terminal->forceActiveFocus();
+    auto* document = workspace.focusedSession();
+    document->setConnection(QStringLiteral("ready"), true);
+    wire::AttentionSnapshot state;
+    state.attachment = {{wire::new_id(), wire::new_id()}, 1};
+    state.available = state.connected = state.ready = true;
+    state.source_epoch = 1;
+    attention::Pending pending;
+    pending.request = {.id = std::int64_t{1},
+                       .thread_id = "fixture",
+                       .turn_id = "turn",
+                       .item_id = "item",
+                       .reason = "User input",
+                       .summary = "Test question",
+                       .choices = {"submit"}};
+    pending.source_epoch = pending.revision = 1;
+    state.requests.push_back(
+        {pending,
+         QJsonObject{{"questions", QJsonArray{QJsonObject{{"id", "color"},
+                                                          {"question", "Choose a color"},
+                                                          {"options", QJsonValue::Null}}}}}});
+    document->applyAttention(state);
+    pump(20);
+    CHECK(!dialog->property("visible").toBool());
+    CHECK(terminal->hasActiveFocus());
+    CHECK(QMetaObject::invokeMethod(window, "openAttentionDialog"));
+    wait_popup(*dialog, true);
+    CHECK(window->property("inputBlocked").toBool());
+    CHECK(!preview.assignTerminalFocus());
+    CHECK(window->activeFocusItem() != terminal);
+    CHECK(QMetaObject::invokeMethod(dialog, "selectRequest",
+                                    Q_ARG(QVariant, document->attentionRequests()[0])));
+    pump(20);
+    auto* answer = find_visual(window->contentItem(), QStringLiteral("answer-color"));
+    CHECK(answer != nullptr);
+    answer->forceActiveFocus();
+    QKeyEvent letter(QEvent::KeyPress, Qt::Key_B, Qt::NoModifier, QStringLiteral("Blue"));
+    QCoreApplication::sendEvent(window, &letter);
+    CHECK(answer->property("text").toString() == QStringLiteral("Blue"));
+    QInputMethodEvent compose(QStringLiteral("仮"), {});
+    QCoreApplication::sendEvent(window, &compose);
+    CHECK(answer->property("preeditText").toString() == QStringLiteral("仮"));
+    state.diagnostic = QStringLiteral("Another request arrived");
+    auto other = state.requests[0];
+    other.pending.request.id = std::string("other");
+    other.pending.revision = 2;
+    state.requests.push_back(other);
+    document->applyAttention(state);
+    pump(20);
+    CHECK(answer == find_visual(window->contentItem(), QStringLiteral("answer-color")));
+    CHECK(answer->hasActiveFocus());
+    CHECK(answer->property("text").toString() == QStringLiteral("Blue"));
+    CHECK(answer->property("preeditText").toString() == QStringLiteral("仮"));
+    QInputMethodEvent cancel;
+    QCoreApplication::sendEvent(window, &cancel);
+    QKeyEvent navigate(QEvent::KeyPress, Qt::Key_Tab, Qt::ControlModifier);
+    QCoreApplication::sendEvent(window, &navigate);
+    CHECK(workspace.focusedIndex() == 0);
+    CHECK(preview.openSettings());
+    CHECK(!window->findChild<QObject*>(QStringLiteral("settingsDialog"))
+               ->property("visible")
+               .toBool());
+    CHECK(dialog->property("canRespond").toBool());
+    document->invalidateAttention();
+    CHECK(!dialog->property("canRespond").toBool());
+    CHECK(answer->property("text").toString() == QStringLiteral("Blue"));
+    if (const auto path = qEnvironmentVariable("LAPIS_ATTENTION_CAPTURE"); !path.isEmpty())
+        CHECK(window->grabWindow().save(path));
+    CHECK(QMetaObject::invokeMethod(dialog, "close"));
+    wait_popup(*dialog, false);
+    CHECK(!window->property("inputBlocked").toBool());
+    CHECK(terminal->hasActiveFocus());
+    return EXIT_SUCCESS;
 }
 
 int run_shortcut_focus_tests() {
@@ -755,7 +846,8 @@ int main(int argc, char** argv) {
         if (app.arguments().contains(QStringLiteral("--shortcuts-only")))
             return run_shortcut_focus_tests();
         if (run_workspace_tests() != EXIT_SUCCESS || run_ui_tests() != EXIT_SUCCESS ||
-            run_surface_tests() != EXIT_SUCCESS || run_attention_ui_tests() != EXIT_SUCCESS)
+            run_surface_tests() != EXIT_SUCCESS || run_attention_dialog_tests() != EXIT_SUCCESS ||
+            run_attention_ui_tests() != EXIT_SUCCESS)
             return EXIT_FAILURE;
         std::cout << "ui_preview_test: PASS\n";
         return EXIT_SUCCESS;

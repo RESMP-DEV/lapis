@@ -439,24 +439,27 @@ Choose an explicit private socket path or repair the directory
 deliberately before launching. `doctor` applies the same validation without
 creating or changing the directory; an absent default is reported as ready to
 create on first launch. Logs are written beside each
-socket as `<socket>.log`. The default endpoint is `runtime/desktop-v4.sock`;
-old v1/v2/v3 sessions stay untouched. The `<socket>.session` hint is a private 0600
+socket as `<socket>.log`. The default endpoint is `runtime/desktop-v6.sock`;
+old v1/v2/v3/v4/v5 sessions stay untouched. The `<socket>.session` hint is a private 0600
 regular file containing session ID, epoch and launch fingerprint. A missing or
 corrupt hint disables implicit attachment. Explicit discovery can replace corrupt
 contents in a safe file; unsafe modes, symlinks or hardlinks require repair first.
 The service identity is always checked live. After the service ends, choose Start
 new session explicitly; an occupied endpoint will be rejected, preserving its child.
 
-Run `just cli-check` for isolated service and GUI fixtures. For the optional
-installed Codex test:
+Run `just cli-check` for isolated service and GUI fixtures. Disposable backend
+executables also check Codex argument forwarding, delayed listener readiness, and
+normal/crash exit diagnostics without exposing raw stderr. These cases do not
+start model turns. For the optional installed Codex test:
 
 ```sh
 python3 scripts/check_cli_launch.py --desktop --codex \
   --output build/cli-launch-check/codex.json
 ```
 
-The optional test uses the current Codex configuration with no extra launch
-flags (Codex 0.154.0 removed the older `--no-daemon`), types
+The optional test waits for the owned PTY to disable canonical input and echo
+before sending navigation input; its early banner alone is not a readiness signal.
+It uses the current Codex configuration with no extra launch flags (Codex 0.154.0 removed the older `--no-daemon`), types
 only an unsubmitted test marker, exercises navigation/paste/resize, captures normal
 and compact windows, reattaches to the same child, clears the draft with Ctrl-C,
 and quits from the empty composer with Ctrl-D.
@@ -690,19 +693,22 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `session-platform-ownership` | Headless and desktop | POSIX descriptor ownership and moves |
 | `terminal-behavior` | Headless and desktop | Ghostty parsing, snapshots, history, resize and mode-aware input |
 | `launch-spec` | Desktop-enabled | Literal launch validation and private endpoint rules |
-| `local-protocol` | Desktop-enabled | v4 identity/timing/history envelopes, framing, bounds, snapshots and invalid messages |
+| `local-protocol` | Desktop-enabled | v6 identity/timing/history envelopes, framing, bounds, snapshots and invalid messages |
+| `attention-protocol` | Desktop-enabled | Bounded attention snapshots/decisions, typed IDs, stale epochs and malformed payloads |
+| `codex-transport` | Desktop-enabled | Unix WebSocket upgrade, masking, fragmentation, bounds and reentrant close |
+| `codex-observer` | Desktop-enabled | Discovery, temporary-thread isolation, exact decisions, simultaneous requests, resume/read recovery and source loss |
 | `session-descriptor` | Desktop-enabled | Private identity hint, atomic replacement, corruption and unsafe-file rejection |
-| `live-connection` | Desktop-enabled | Screen-before-input, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
+| `live-connection` | Desktop-enabled | Screen-before-input, exact attention decisions/rejections, duplicate gating, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
 | `keymap` | Desktop-enabled | Configuration defaults, appearance choices, persistence and invalid input |
-| `ui-preview` | Desktop-enabled | Qt reload, screen selection, attention, input and render lifecycle |
+| `ui-preview` | Desktop-enabled | Qt reload, screen selection, passive attention, modal response ownership, draft/IME preservation, input and render lifecycle |
 | `appearance-input` | Desktop-enabled, native GUI | Configured settings shortcut, modal focus, all theme/layout/density controls, persistence and shortcut reload |
 | `history-store` | Desktop-enabled | Styled page round trips, per-session/global quotas, corruption, interrupted-write cleanup and file-size write failure recovery |
 | `terminal-input` | Desktop-enabled, native GUI | Qt composition commit/cancel, replacement rejection, paste and focus/document/history/disconnect ownership |
 | `terminal-render` | Desktop-enabled | Real Qt Vulkan pixel regressions for cell background grids, wide/combining characters, fallback/RTL text, styles/decorations, actual Ghostty resize, cursor placement and clearing |
 
-`just desktop` runs these fifteen suites plus static checks. The separate Python
-GUI harness checks five preview captures and three expected failures. The CLI
+`just desktop` runs these eighteen suites plus static checks. The separate Python
+GUI harness checks five preview captures and five expected failures. The CLI
 harness checks detached service behavior, attachment generations, fragmented
 handshakes, synchronization timeout, stale controls, bounded queue failure and
 replacement identities; `--desktop` adds Qt-to-shell input and
@@ -729,10 +735,68 @@ commands with any sanitized receipt committed to `evidence/`.
 
 ### Codex attention qualification
 
-The attention core is a standalone C++20 library, not yet wired into the session
-service. Run `just check`, `just asan` and `just tsan` for its normal/static and
+The attention core is a standalone C++20 library, used by the managed Codex
+session service. Run `just check`, `just asan` and `just tsan` for its normal/static and
 separate sanitizer checks. `attention-state` is registered in all build modes;
 synthetic reducer events do not establish delivery from Codex.
+
+The compiled service has its own runner, distinct from the protocol investigation:
+
+```sh
+python3 scripts/check_service_attention.py
+python3 scripts/check_service_attention.py --live-glm
+python3 scripts/check_service_attention.py --live-glm --desktop
+```
+
+The default creates a private home, working directory and service endpoint, starts
+an ordinary Codex TUI through the managed backend, verifies same-child reattachment,
+and kills only its own service to check both process groups are cleaned up. It
+starts no model turn. `--live-glm` explicitly runs the harmless approval fixture
+and a two-question color fixture through **compiled service IPC**, rejects stale and
+duplicate decisions, verifies explicit retry eligibility after invalid answers,
+and observes source resolution and successful continuation. It also archives and
+restores only its own thread to verify source-loss gating and fresh-epoch recovery,
+cancels a subsequent question by interrupting its turn, and resolves two real
+simultaneous command approvals independently.
+`--desktop` uses the compiled production QML and Qt mouse/key events to select and
+submit both decisions, recording captures in the receipt directory. It owns desktop
+focus and must run serially with other GUI checks. The service-only variant covers
+duplicate submissions; the desktop variant covers provisional-send gating through
+CTest and the actual controls.
+The runtime model/provider and binary hash are recorded. Use `--build-dir` to
+select a sanitizer build and `--output` to isolate receipts from concurrent runs.
+
+The service fixture uses `on-request` and explicitly asks approval for its one
+whitelisted command. The installed binary rejects `approval_policy="untrusted"`
+in file/CLI config even though its exported RPC schema still advertises that
+value. Production launch inherits the caller's policy. The ordinary TUI also
+creates ephemeral backend threads; the adapter classifies source metadata and
+only enables responses for the one persistent TUI thread. Unknown binary hashes
+keep structured responses disabled. Only the `--desktop` variant exercises the desktop response controls.
+
+### Reading qualification receipts
+
+Receipts are dated observations, not current-source declarations. Check `schema`,
+source identity, per-check timestamps, pass/fail results and explicit limits before
+reusing one. Source hashes identify working-tree inputs when the final commit did
+not yet exist. `recorded_at` records assembly (or a documented upper bound), and
+must not precede the results it includes. A newer wire version does not invalidate
+or silently rewrite the protocol version exercised by an older receipt.
+
+The two Milestone 2 receipt schemas have these equivalent fields:
+
+| Meaning | `lapis.codex-service/1` | `lapis.milestone-two/1` |
+| --- | --- | --- |
+| Source file digests | `source.sha256` | `source_sha256` |
+| Main starting commit | `source.baseline_revision` | `main_baseline` |
+| Exercised IPC version | `route.protocol` | `wire_version` |
+| Qualification limits | `limitations` | `limits` |
+
+`codex-service.json` is the historical v5 service checkpoint; `milestone-two.json`
+is the assembled v6 desktop qualification. Preserve their schema-specific names
+and facts. New review receipts identify the base commit, changed source digests,
+commands/results and reused evidence explicitly. Consumers must dispatch on the
+schema identifier rather than assume every evidence JSON has the same shape.
 
 The original `scripts/probe_codex.py` retains its no-turn behavior. The separate
 shared-server probe also sends no model prompt:
@@ -923,7 +987,7 @@ python3 scripts/check_cli_launch.py --build-dir build/desktop-asan \
 Repeat those configure/build/test/harness commands with preset `tsan` and all
 `desktop-asan` paths changed to `desktop-tsan`. Do not combine instrumentation or
 use `ctest --preset asan` for the custom directory: that preset targets
-`build/asan`. Each desktop-enabled directory must list all fifteen suites above.
+`build/asan`. Each desktop-enabled directory must list all eighteen suites above.
 Use the same LLVM installation for normal and instrumented builds. Ccache is
 optional (`-DCMAKE_CXX_COMPILER_LAUNCHER=...`); raw CMake does not discover it.
 Reduce `--parallel` for host resource limits. The CLI command above runs service

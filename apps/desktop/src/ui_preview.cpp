@@ -171,8 +171,7 @@ bool UiPreview::assignTerminalFocus() {
     QQuickWindow* target_window = window();
     if (target_window == nullptr)
         return false;
-    const auto* settings = target_window->findChild<QObject*>(QStringLiteral("settingsDialog"));
-    if (settings != nullptr && settings->property("visible").toBool())
+    if (target_window->property("inputBlocked").toBool())
         return false;
     // Focus and columns keep the single live pane; blocks and stack promote one
     // tile per session. Workspace owns which session is focused, so ask it for

@@ -18,6 +18,16 @@ void activate_test_window(QWindow& window) {
     NSWindow* native = [view window];
     if (native == nil)
         throw std::runtime_error("Test window has no native NSWindow for activation");
+    if (!NSApp.active) {
+        // The modern activate call was refused when this standalone test process
+        // reacquired focus on the qualified Mac. These opt-in GUI fixtures own
+        // the foreground; keep the compatibility fallback out of product code.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        [[NSRunningApplication currentApplication]
+            activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+#pragma clang diagnostic pop
+    }
     [native makeKeyAndOrderFront:nil];
     window.requestActivate();
 }

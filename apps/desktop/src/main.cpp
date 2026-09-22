@@ -19,6 +19,9 @@
 namespace {
 void add_options(QCommandLineParser& parser) {
     parser.addHelpOption();
+    parser.addOption(
+        {QStringLiteral("codex"),
+         QStringLiteral("Use managed Codex attention (requires an explicit Codex executable)")});
     parser.addOption({QStringLiteral("new-session"),
                       QStringLiteral("Explicitly start a new session on an unused endpoint")});
     parser.addOption({QStringLiteral("discover"),
@@ -63,6 +66,10 @@ void add_options(QCommandLineParser& parser) {
                                  QStringLiteral("[PROGRAM ARG...]"));
 }
 bool valid_connection_options(const QCommandLineParser& parser) {
+    if (parser.isSet(QStringLiteral("codex")) && parser.positionalArguments().isEmpty()) {
+        qCritical("--codex requires a Codex executable after --");
+        return false;
+    }
     const bool create = parser.isSet(QStringLiteral("new-session"));
     const bool discover = parser.isSet(QStringLiteral("discover"));
     if (create && discover) {
@@ -77,6 +84,10 @@ bool valid_connection_options(const QCommandLineParser& parser) {
 }
 bool valid_options(const QCommandLineParser& parser) {
     const bool preview = parser.isSet(QStringLiteral("ui-preview"));
+    if (preview && parser.isSet(QStringLiteral("codex"))) {
+        qCritical("--codex cannot be combined with --ui-preview");
+        return false;
+    }
     const bool explicit_launch =
         !parser.positionalArguments().isEmpty() || parser.isSet(QStringLiteral("cwd"));
     if (parser.isSet(QStringLiteral("socket")) &&
@@ -125,6 +136,35 @@ bool valid_options(const QCommandLineParser& parser) {
     return true;
 }
 
+lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& parser,
+                                                   bool isolated) {
+    lapis::desktop::WorkspaceOptions options;
+    if (!isolated) {
+        if (parser.isSet(QStringLiteral("new-session")))
+            options.mode = lapis::session::wire::AttachMode::create;
+        else if (parser.isSet(QStringLiteral("discover")))
+            options.mode = lapis::session::wire::AttachMode::discover;
+        if (parser.isSet(QStringLiteral("socket")))
+            options.endpoint = QFileInfo(parser.value(QStringLiteral("socket"))).absoluteFilePath();
+        const auto positional = parser.positionalArguments();
+        if (!positional.isEmpty()) {
+            options.launch = lapis::session::LaunchSpec{
+                .program = positional.front(),
+                .arguments = positional.mid(1),
+                .directory = parser.isSet(QStringLiteral("cwd"))
+                                 ? parser.value(QStringLiteral("cwd"))
+                                 : QString::fromUtf8(LAPIS_PROJECT_ROOT),
+                .agent = parser.isSet(QStringLiteral("codex"))
+                             ? lapis::session::AgentMode::codex
+                             : lapis::session::AgentMode::terminal,
+            };
+        } else if (parser.isSet(QStringLiteral("cwd"))) {
+            options.launch = lapis::session::shell_launch(parser.value(QStringLiteral("cwd")));
+        }
+    }
+    return options;
+}
+
 // Connect keyboard ownership and any requested capture to the window that
 // UiPreview creates. Lives outside main() to keep main's branching flat.
 void wire_window(QQuickWindow& window, lapis::desktop::UiPreview& view,
@@ -171,28 +211,7 @@ int main(int argc, char** argv) {
     try {
         using namespace lapis::desktop;
         const bool isolated = parser.isSet(QStringLiteral("ui-preview"));
-        WorkspaceOptions options;
-        if (!isolated) {
-            if (parser.isSet(QStringLiteral("new-session")))
-                options.mode = lapis::session::wire::AttachMode::create;
-            else if (parser.isSet(QStringLiteral("discover")))
-                options.mode = lapis::session::wire::AttachMode::discover;
-            if (parser.isSet(QStringLiteral("socket")))
-                options.endpoint =
-                    QFileInfo(parser.value(QStringLiteral("socket"))).absoluteFilePath();
-            const auto positional = parser.positionalArguments();
-            if (!positional.isEmpty()) {
-                options.launch = lapis::session::LaunchSpec{
-                    .program = positional.front(),
-                    .arguments = positional.mid(1),
-                    .directory = parser.isSet(QStringLiteral("cwd"))
-                                     ? parser.value(QStringLiteral("cwd"))
-                                     : QString::fromUtf8(LAPIS_PROJECT_ROOT),
-                };
-            } else if (parser.isSet(QStringLiteral("cwd"))) {
-                options.launch = lapis::session::shell_launch(parser.value(QStringLiteral("cwd")));
-            }
-        }
+        const auto options = workspace_options(parser, isolated);
         Workspace workspace(isolated ? WorkspaceMode::preview : WorkspaceMode::live, options);
         KeyMap keymap;
         keymap.load();

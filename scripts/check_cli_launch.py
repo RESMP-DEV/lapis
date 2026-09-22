@@ -11,6 +11,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import termios
 import time
 import traceback
 from contextlib import contextmanager
@@ -18,9 +19,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = 4
+VERSION = 6
 HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
 HISTORY_REQUEST, HISTORY_PAGE = range(10, 12)
+ATTENTION_SNAPSHOT, ATTENTION_DECISION, ATTENTION_RETRY = range(12, 15)
 WAIT = 5
 
 
@@ -38,10 +40,13 @@ def qt_string(value):
     return struct.pack(">I", len(encoded)) + encoded
 
 
-def fingerprint(program, arguments, directory):
+def fingerprint(program, arguments, directory, *, codex=False):
     data = qt_string(os.path.abspath(program)) + struct.pack(">I", len(arguments))
     data += b"".join(qt_string(argument) for argument in arguments)
-    return hashlib.sha256(data + qt_string(Path(directory).resolve())).digest()
+    data += qt_string(Path(directory).resolve())
+    if codex:
+        data = b"lapis-codex-v1\0" + data
+    return hashlib.sha256(data).digest()
 
 
 def frame(kind, payload=b""):
@@ -66,11 +71,11 @@ def decode_history_reply(payload):
     }
 
 
-def attach_payload(program, arguments, directory, expected=None):
+def attach_payload(program, arguments, directory, expected=None, *, codex=False):
     identity = expected[:32] if expected is not None else bytes(32)
     return (
         struct.pack(">I", VERSION)
-        + fingerprint(program, arguments, directory)
+        + fingerprint(program, arguments, directory, codex=codex)
         + bytes([1 if expected is not None else 0])
         + identity
     )
@@ -148,7 +153,7 @@ class WireClient:
         self.socket.close()
 
     def send(self, kind, payload=b""):
-        if kind in (TEXT, PASTE, KEY, RESIZE, HISTORY_REQUEST):
+        if kind in (TEXT, PASTE, KEY, RESIZE, HISTORY_REQUEST, ATTENTION_DECISION):
             require(self.attachment is not None, "No accepted attachment")
             payload = self.attachment + payload
         self.socket.sendall(frame(kind, payload))
@@ -171,8 +176,10 @@ class WireClient:
                 raise EOFError("Service disconnected")
             self.buffer.extend(chunk)
 
-    def attach(self, program, arguments, directory, expected=None):
-        self.send(ATTACH, attach_payload(program, arguments, directory, expected))
+    def attach(self, program, arguments, directory, expected=None, *, codex=False):
+        self.send(
+            ATTACH, attach_payload(program, arguments, directory, expected, codex=codex)
+        )
         pid = self.hello()
         if expected is not None:
             require(self.attachment[:32] == expected[:32], "Reconnect identity changed")
@@ -245,6 +252,33 @@ class WireClient:
             require(kind == SNAPSHOT, "Unexpected frame before history reply")
 
 
+def wait_raw_terminal(pid):
+    """The Codex banner may be drawn before its PTY enters interactive raw mode."""
+    terminal = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "tty="],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    ).stdout.strip()
+    require(
+        terminal and terminal not in ("?", "??") and ".." not in terminal,
+        "Controlled CLI has no terminal",
+    )
+    path = Path("/dev") / terminal.removeprefix("/dev/")
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+    try:
+        deadline = time.monotonic() + WAIT
+        while time.monotonic() < deadline:
+            local_flags = termios.tcgetattr(descriptor)[3]
+            if not local_flags & (termios.ICANON | termios.ECHO):
+                return
+            time.sleep(0.02)
+        raise CheckError("Controlled CLI did not enter raw terminal input mode")
+    finally:
+        os.close(descriptor)
+
+
 def wait_socket(endpoint, process):
     deadline = time.monotonic() + WAIT
     while time.monotonic() < deadline:
@@ -268,14 +302,19 @@ class Service:
         arguments,
         directory,
         env_overrides=None,
+        *,
+        codex=False,
     ):
         self.endpoint = runtime / (name + ".sock")
         self.program, self.arguments, self.directory = program, arguments, directory
         self.child_pid = None
+        self.codex = codex
         self.attachment = None
         self.log = (artifacts / (name + ".service.log")).open("wb")
         self.process = subprocess.Popen(
-            [str(binary), str(self.endpoint), str(directory), program, *arguments],
+            [str(binary)]
+            + (["--codex"] if codex else [])
+            + [str(self.endpoint), str(directory), program, *arguments],
             stdin=subprocess.DEVNULL,
             stdout=self.log,
             stderr=self.log,
@@ -292,7 +331,11 @@ class Service:
         client = WireClient(self.endpoint)
         try:
             pid = client.attach(
-                self.program, self.arguments, self.directory, self.attachment
+                self.program,
+                self.arguments,
+                self.directory,
+                self.attachment,
+                codex=self.codex,
             )
             self.attachment = client.attachment
             if self.child_pid is not None:
@@ -490,6 +533,184 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
             good.send(TEXT, b"after-invalid\n")
             good.snapshot(lambda s: "ECHO:after-invalid" in s["text"])
 
+    def codex_config_arguments():
+        marker = runtime / "backend-arguments.json"
+        executable = runtime / "argument-codex"
+        executable.write_text(
+            f"#!{program}\n"
+            "import json,sys\n"
+            "from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+        )
+        executable.chmod(0o700)
+        cases = []
+        for option in ("-c", "--config", "--enable", "--disable"):
+            cases.extend(
+                [
+                    ([option], None),
+                    ([option, "--", "--config=literal"], None),
+                    (
+                        [option, "fixture", "--", "--config=literal"],
+                        [option, "fixture"],
+                    ),
+                ]
+            )
+        cases.append((["--", "-c", "--", "--enable=literal"], []))
+        for index, (arguments, expected) in enumerate(cases):
+            marker.unlink(missing_ok=True)
+            name = f"codex-arguments-{index}"
+            service = Service(
+                binary,
+                runtime,
+                artifacts,
+                name,
+                str(executable),
+                arguments,
+                runtime,
+                codex=True,
+            )
+            try:
+                code = service.process.wait(timeout=5)
+                require(code != 0, "Fixture backend exit must stop its service")
+            finally:
+                service.stop()
+            if expected is None:
+                require(
+                    not marker.exists(),
+                    f"Malformed option launched backend: {arguments}",
+                )
+                require(
+                    "Codex config option requires a value"
+                    in (artifacts / (name + ".service.log")).read_text(),
+                    f"Missing config-value diagnostic: {arguments}",
+                )
+            else:
+                require(
+                    marker.exists(), f"Valid options did not reach backend: {arguments}"
+                )
+                forwarded = json.loads(marker.read_text())
+                require(
+                    forwarded[:2] == ["app-server", "--listen"]
+                    and forwarded[2] == "unix://" + str(service.endpoint) + ".codex"
+                    and forwarded[3:] == expected,
+                    f"Literal arguments leaked into backend options: {forwarded}",
+                )
+        return {"argument_cases": len(cases), "live_codex_used": False}
+
+    def codex_backend_exit():
+        # Exercise a dedicated backend failure before TUI startup. Raw backend
+        # output may contain private data and must not enter service diagnostics.
+        executable = runtime / "exiting-codex"
+        private_marker = "PRIVATE_BACKEND_STDERR_FIXTURE"
+        outcomes = []
+        for name, statement, expected in (
+            ("normal", "sys.exit(23)", ("23", "normal")),
+            ("signal", "os.kill(os.getpid(), signal.SIGKILL)", ("crash",)),
+        ):
+            executable.write_text(
+                f"#!{program}\n"
+                "import os,signal,sys\n"
+                f"print({private_marker!r},file=sys.stderr,flush=True)\n"
+                + statement
+                + "\n"
+            )
+            executable.chmod(0o700)
+            fixture = "codex-exit-" + name
+            service = Service(
+                binary,
+                runtime,
+                artifacts,
+                fixture,
+                str(executable),
+                [],
+                runtime,
+                codex=True,
+            )
+            try:
+                require(
+                    service.process.wait(timeout=WAIT) != 0,
+                    "Backend failure did not stop startup",
+                )
+            finally:
+                service.stop()
+            diagnostic = (artifacts / (fixture + ".service.log")).read_text()
+            require(
+                "Codex server exited" in diagnostic
+                and all(part in diagnostic.lower() for part in expected),
+                f"Backend {name} exit lost code/status diagnostic",
+            )
+            require(
+                private_marker not in diagnostic,
+                "Backend stderr leaked into service diagnostics",
+            )
+            outcomes.append(name)
+        return {"backend_exit_cases": outcomes, "raw_stderr_excluded": True}
+
+    def delayed_codex_listener():
+        # This disposable executable is deliberately unqualified: terminal startup
+        # still works, while structured attention remains disabled.
+        executable = runtime / "delayed-codex"
+        executable.write_text(
+            f"#!{sys.executable}\n"
+            "import socket,sys,time\n"
+            "from pathlib import Path\n"
+            "if sys.argv[1]=='app-server':\n"
+            " endpoint=sys.argv[3].removeprefix('unix://')\n"
+            " server=socket.socket(socket.AF_UNIX)\n"
+            " server.bind(endpoint)\n"
+            " Path(endpoint+'.bound').touch()\n"
+            " time.sleep(.5)\n"
+            " server.listen()\n"
+            " while True:\n"
+            "  connection,_=server.accept();connection.close()\n"
+            "else:\n"
+            " client=socket.socket(socket.AF_UNIX)\n"
+            " client.connect(sys.argv[2].removeprefix('unix://'))\n"
+            " client.close()\n"
+            " print('LISTENER_READY',flush=True)\n"
+            " for line in sys.stdin: print('ECHO:'+line.strip(),flush=True)\n"
+        )
+        executable.chmod(0o700)
+        service = Service(
+            binary,
+            runtime,
+            artifacts,
+            "delayed-codex",
+            str(executable),
+            [],
+            runtime,
+            codex=True,
+        )
+
+        def terminal_text(client, text):
+            if client.cached_snapshot and text in client.cached_snapshot["text"]:
+                return
+            deadline = time.monotonic() + WAIT
+            while time.monotonic() < deadline:
+                kind, data = client.receive(max(0.01, deadline - time.monotonic()))
+                if kind == ATTENTION_SNAPSHOT:
+                    continue
+                require(
+                    kind == SNAPSHOT and data[:40] == client.attachment,
+                    "Unexpected frame during delayed startup",
+                )
+                if text in decode_snapshot(data[72:])["text"]:
+                    return
+            raise CheckError("Delayed backend terminal text missing")
+
+        try:
+            deadline = time.monotonic() + WAIT
+            while not Path(str(service.endpoint) + ".codex.bound").exists():
+                require(time.monotonic() < deadline, "Fake backend never bound")
+                time.sleep(0.01)
+            with service.connect() as client:
+                terminal_text(client, "LISTENER_READY")
+            with service.connect() as client:
+                client.send(TEXT, b"reattached\n")
+                terminal_text(client, "ECHO:reattached")
+        finally:
+            service.stop()
+
     def failures():
         for name, executable, cwd in [
             ("missing-program", "/nonexistent/lapis", runtime),
@@ -516,6 +737,13 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
 
     def invalid_resize_and_signal():
         with session("resize-failure") as service:
+            with service.connect() as client:
+                client.snapshot(lambda s: "READY" in s["text"])
+                client.send(ATTENTION_DECISION, b"")
+                require(
+                    "unsupported for terminal" in client.status(),
+                    "Terminal-only attention decision was not rejected",
+                )
             with service.connect() as client:
                 client.snapshot(lambda s: "READY" in s["text"])
                 client.send(RESIZE, struct.pack(">HH", 65535, 65535))
@@ -657,13 +885,24 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
                 )
                 fragmented.send(TEXT, b"fragmented-ok\n")
                 fragmented.snapshot(lambda s: "ECHO:fragmented-ok" in s["text"])
-            with WireClient(service.endpoint) as legacy:
-                legacy.send(
-                    ATTACH,
+            for version, payload in (
+                (
+                    2,
                     struct.pack(">II", 2, 32)
                     + fingerprint(program, arguments, runtime),
-                )
-                require("incompatible" in legacy.status(), "v2 attachment accepted")
+                ),
+                (
+                    VERSION - 1,
+                    struct.pack(">I", VERSION - 1)
+                    + attach_payload(program, arguments, runtime)[4:],
+                ),
+            ):
+                with WireClient(service.endpoint) as legacy:
+                    legacy.send(ATTACH, payload)
+                    require(
+                        "incompatible" in legacy.status(),
+                        f"v{version} attachment accepted",
+                    )
             with WireClient(service.endpoint) as idle:
                 idle.send(ATTACH, attach_payload(program, arguments, runtime))
                 idle.hello()
@@ -894,6 +1133,7 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
         try:
             with service.connect() as client:
                 client.snapshot(lambda s: "OpenAI Codex" in s["text"], timeout=15)
+                wait_raw_terminal(service.child_pid)
                 client.send(TEXT, marker.encode())
                 client.snapshot(lambda s: marker in s["text"])
                 client.send(KEY, bytes([2, 0]))  # TerminalKey::left
@@ -974,6 +1214,9 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
     record("detached output and same-PID reattachment", detach)
     record("mismatch and malformed attachment preserve active client", mismatch)
     record("failed executable and cwd", failures)
+    record("Codex config values and literal separator", codex_config_arguments)
+    record("Codex backend exit diagnostics exclude private stderr", codex_backend_exit)
+    record("Codex bind-before-listen startup and reattachment", delayed_codex_listener)
     if desktop_enabled:
         record("desktop capture, reattachment, shell default and option rejection", gui)
     if codex:

@@ -1,0 +1,214 @@
+{
+  "schema": "lapis.milestone-two/1",
+  "recorded_at": "2026-09-21T05:16:59+00:00",
+  "milestone_two_complete": true,
+  "scope": "One managed ordinary Codex TUI with a service-owned backend and observer, macOS desktop attention and explicit decisions",
+  "base_commit": "44b933b38e3a0daec0f72fe00fe1ec15c064d6cf",
+  "main_baseline": "d2fe28366b4616dba74d63e9f0ba535211348df3",
+  "source_sha256": {
+    "CMakeLists.txt": "1673ac8e8437ce45951ff92ce84a66f43d8fc7d6e3c9a2206386a5aefbd16e02",
+    "adapters/codex/CMakeLists.txt": "34ebab1650c3832c82182a5bc94fbc33b7349fc4f77dd9a305328e81c2f64d4c",
+    "adapters/codex/src/observer.cpp": "abc77ed546f8cc495d7d7e02405c00661bb495daef545127adb227838a5d2cdd",
+    "adapters/codex/src/observer.hpp": "8060eb5a1b3b8687da387ae1a1b9a6001175ab4ddda22b10bcadd18177d7af3a",
+    "adapters/codex/src/unix_websocket.cpp": "2fbc6c8cc6d46d9e89add220ff854656536f6a69ff097eb7f06e8c7943907dd0",
+    "adapters/codex/src/unix_websocket.hpp": "cc590f6282219c00714eba1151f42ead2afd00cf22cbe341bfe8825a56349201",
+    "adapters/codex/tests/observer_test.cpp": "959bd0ad20340aa54d17b1f58e3ece9bdfd7b23fcbe35e09352f38ff2abf8c15",
+    "adapters/codex/tests/unix_websocket_test.cpp": "e8b47d068cb92c496fd7e34aade18773ed492dd80d33f71527c536f71808c6da",
+    "apps/desktop/CMakeLists.txt": "e18647ca583c1af50093f003d45ef9e4175df0b9e188479b170303996e707795",
+    "apps/desktop/qml/AttentionDialog.qml": "3eee2531c5c10d0aafce33c5998fb4746420ec6f58aa08a77c22d8cbde19f11b",
+    "apps/desktop/qml/Main.qml": "080015f326363297f5cf60d22fbab7b66bbdadada79ca32a5c92245ee05c4225",
+    "apps/desktop/src/attention_view.cpp": "21b72c60af907d5d810794243a9115845540c3c8d1942ad2ca3fd4c93958b1c0",
+    "apps/desktop/src/live_connection.cpp": "12b299061d4965ced97ca1de06f2206399f26f349edab0bd68a6b98f8b786f87",
+    "apps/desktop/src/live_connection.hpp": "31a57b85c46b7dfb2a758ebcf10a37a9e4597257638409abd1ab545a63f9775e",
+    "apps/desktop/src/main.cpp": "bb2e9fbfe644ddb5bcab95d6902f1e6abe129a627949730f8d19abeafc13b52f",
+    "apps/desktop/src/ui_preview.cpp": "cd69937b899d72afc932bdb831fad424131baad1a2f00ad9cdfde603cce243b8",
+    "apps/desktop/src/workspace.cpp": "79f1295e7d08a2509be2ecb22fac08045503eab50e443178e5aee04ab6ce4a5e",
+    "apps/desktop/src/workspace.hpp": "63f1f9ee79fbd840766f9b9078051cd4da35512fe39163e558c1f42719e03db9",
+    "apps/desktop/tests/attention_ui_probe.cpp": "9af026fceaa037aabad4181efb02ecb84435c744924b43405452df561d76bd9e",
+    "apps/desktop/tests/live_connection_test.cpp": "8219c5d83a34cb635d34060a02ae175aa219419d7d23ca7dc8a76d43ef7cd0e4",
+    "apps/desktop/tests/platform/window_activation.mm": "2845f9928b975ce79e7d371f3225f1490602cae9c58443c25a40be1136dbe6cd",
+    "apps/desktop/tests/ui_preview_test.cpp": "eb04392d62ea3ce590a160c907c83f711b9cea5d2b2a1ad8e58b0badc0ddd30e",
+    "scripts/check_cli_launch.py": "7da34cd5705f8de32b5052a2b24e1c56cd64ebe6160c8d66d5f6cdbb89448c7e",
+    "scripts/check_service_attention.py": "e2a37b77573f37a1f84cd899d1818687283f74c260f4973cea6c36cb8d97e931",
+    "scripts/lapis.py": "ccd1a7e2e318419ebaba0b7ef273fdfbc9696e611aabed4d09da4d39e714b854",
+    "scripts/tests/test_lapis.py": "c074e8e2be1c642a3fa0c55cfe21c341b4d06ad33f9e14bf6760270c6e0bca75",
+    "services/session/CMakeLists.txt": "187ccac8b1390917f4a336dd2cb66e56ccad7cc56d203e9cc5c6c73aa7c5a696",
+    "services/session/src/launch_spec.cpp": "4eb4a2c2ae7710b816ed5048bd46fe3f51c728bb8f7114b15e1af97471ab4c5b",
+    "services/session/src/launch_spec.hpp": "0a5adb681ac8738de6dced36be73980825963d2a4a764e383b3ea0105e7a4c12",
+    "services/session/src/platform/posix/process_group_guard.cpp": "babf4aa4fc5652601a851ce000d32789a9b4b8c0827976ab517d792b5334daae",
+    "services/session/src/platform/posix/process_group_guard.hpp": "00afe9bf76f305a8ee64211a705913aab3fe5a6f9526cdb939b2c3e7c8f6f835",
+    "services/session/src/platform/posix/pty_process.cpp": "0b9c2670c801c4976708284c78e1b3c5a0a2e47b1b50efafeac7a69f0936d7a2",
+    "services/session/src/session_service.cpp": "142e0aede7aae68c3c4ddfbcd72fbed52b784ef16aac47ae712c86997985bb90",
+    "services/session/src/transport/attention_protocol.cpp": "9a17ceabab03c782a0a1e1497fb2fe6f29b8634f9774e77235d7b659fbe1ac0d",
+    "services/session/src/transport/attention_protocol.hpp": "eca8923a620ccff68a2b4a8ff676a921ee2620a1357a26d25620a504bdc88d62",
+    "services/session/src/transport/local_protocol.cpp": "8fd07d35c33a1d07b0a6d22190b18cf838bc0dba76d1335588cfd27034d07ef9",
+    "services/session/src/transport/local_protocol.hpp": "9aa3cf867d81797f219ae1dfc283bf2b8b7f6d2c6ab98a4058bf7834a2adf453",
+    "services/session/tests/attention_protocol_test.cpp": "cf24c24e70060cc4ff1a9f20d410df88008da46d2cff0f9f66408c2965720cb4",
+    "services/session/tests/launch_spec_test.cpp": "6452af02ce5be23c515f5edaf5fa6d3ba9084a529686dad1e99d5e831f028e70",
+    "services/session/tests/local_protocol_test.cpp": "3d240913523e0c2fe21ba684925dd1397ae6ba3c21402f6c1b72af5ba438b7cd"
+  },
+  "platform": {
+    "os": "macOS",
+    "version": "26.7",
+    "architecture": "arm64",
+    "qt": "6.11.2",
+    "renderer": "Qt Quick Vulkan via MoltenVK"
+  },
+  "wire_version": 6,
+  "live": {
+    "timestamp": "2026-09-21T05:14:44.682305+00:00",
+    "checks": [
+      "managed TUI startup and attention attachment",
+      "real command approval through desktop controls",
+      "real command approval over service IPC",
+      "pending request survives same-child reattachment",
+      "stale token rejected",
+      "source resolution and successful continuation",
+      "invalid answers rejected with an exact retry token",
+      "real user-input answer through desktop controls",
+      "real user-input answer over service IPC and successful continuation",
+      "archived source disables replies; restored source reconciles in a fresh epoch",
+      "new request after source recovery is cancelled by an observed turn interruption",
+      "two simultaneous real approvals retain distinct identities and resolve independently"
+    ],
+    "passed": true,
+    "live_model_turn": true,
+    "desktop_controls": true,
+    "codex_sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+    "source": "ordinary TUI created thread, service-owned backend and observer",
+    "model": "zai,glm-5.3",
+    "model_provider": "lapis_probe",
+    "last_attention": {
+      "ready": true,
+      "connected": true,
+      "diagnostic": "Codex synchronized",
+      "activity": 3
+    },
+    "last_request_count": 0,
+    "service_reaped": true,
+    "owned_process_groups_cleaned": true,
+    "elapsed_seconds": 37.845
+  },
+  "checks": [
+    {
+      "command": "cmake --build build/desktop --parallel 8; ctest --test-dir build/desktop --output-on-failure",
+      "passed": true,
+      "suites": 18,
+      "log": "build/m2/desktop-normal-qualified.log"
+    },
+    {
+      "command": "ctest --test-dir build/desktop-asan --output-on-failure",
+      "passed": true,
+      "suites": 18,
+      "log": "build/m2/desktop-asan-tests.log"
+    },
+    {
+      "command": "ctest --test-dir build/desktop-tsan --output-on-failure",
+      "passed": true,
+      "suites": 18,
+      "log": "build/m2/desktop-tsan-tests.log"
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --desktop --output build/m2/desktop-cli.json",
+      "passed": true,
+      "cases": 12
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop-asan --output build/m2/desktop-asan-cli.json",
+      "passed": true,
+      "cases": 11
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop-tsan --output build/m2/desktop-tsan-cli.json",
+      "passed": true,
+      "cases": 11
+    },
+    {
+      "command": "python3 scripts/check_ui_preview.py --artifacts build/m2/desktop-captures",
+      "passed": true,
+      "captures": 5,
+      "expected_rejections": 3
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_native_input_probe --output build/m2/desktop-native.json",
+      "passed": true,
+      "cases": 18,
+      "clipboard_restored": true,
+      "input_source_restored": true,
+      "enabled_sources_restored": true
+    },
+    {
+      "command": "python3 scripts/check_service_attention.py --live-glm --desktop --output build/m2/assembled-final/receipt.json",
+      "passed": true
+    },
+    {
+      "command": "python3 scripts/check_service_attention.py --build-dir build/desktop-asan --output build/m2/desktop-asan-managed/receipt.json",
+      "passed": true,
+      "scope": "No model turn; managed startup/reattach and abrupt service-death cleanup"
+    },
+    {
+      "command": "python3 scripts/check_service_attention.py --build-dir build/desktop-tsan --output build/m2/desktop-tsan-managed/receipt.json",
+      "passed": true,
+      "scope": "No model turn; managed startup/reattach and abrupt service-death cleanup"
+    },
+    {
+      "command": "Changed translation units: configured clang-tidy and cppcheck with build/desktop/compile_commands.json",
+      "passed": true,
+      "receipt": "build/m2/static/receipt.json"
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "passed": true,
+      "python_test_methods": 75,
+      "receipt": "build/reports/quality/receipt.json"
+    },
+    {
+      "command": "ctest --test-dir BUILD --output-on-failure -R ui-preview|appearance-input",
+      "builds": [
+        "build/desktop",
+        "build/desktop-asan",
+        "build/desktop-tsan"
+      ],
+      "scope": "Final QML response/rejection feedback, after full-suite qualification",
+      "passed": true,
+      "logs": [
+        "build/m2/desktop-feedback-tests.log",
+        "build/m2/desktop-asan-feedback-tests.log",
+        "build/m2/desktop-tsan-feedback-tests.log"
+      ]
+    }
+  ],
+  "captures": {
+    "attention-approval.png": "Actual production QML dialog crop, half-resolution, harmless private command fixture",
+    "attention-answer.png": "Actual production QML dialog crop, half-resolution, Blue/Green fixture"
+  },
+  "review": {
+    "route": "CCR GLM",
+    "first_review": "Found provisional-send retry bug; fixed with attachment-bound rejection before submission",
+    "followup": "No further concrete findings in response form, retry or source closure handling; read-only review, not a test pass"
+  },
+  "failed_attempts": [
+    {
+      "log": "build/m2/appearance-baseline.log",
+      "result": "Modern macOS activation refused foreground reacquisition, reproduced with prior QML. Test-only compatibility fallback added; final three build modes pass."
+    },
+    {
+      "receipt": "build/m2/assembled-full/receipt.json",
+      "result": "User-input response resolved but subsequent turn was not completed; that early receipt lacked actual status. Diagnostic improved, separate new disposable run passed all cases. No automatic turn retry or success inferred from resolution."
+    }
+  ],
+  "limits": [
+    "Only the recorded Codex binary hash is response-qualified; unknown builds fail closed.",
+    "Command accept/decline/cancel and one-answer-per-question forms only; other kinds remain terminal-only.",
+    "Live cancellation uses turn/interrupt; command cancel/decline are exposed only when advertised by the source, with exact choice forwarding tested separately.",
+    "Same backend thread archive/restore recovery is qualified; backend death is exposed, not automatically restarted.",
+    "No physical keyboard gate or release latency claim. Native input uses OS-generated events.",
+    "One live service session per window; additional cards remain fixtures. Milestone 3, Linux UI, accessibility, selection, packaging/notices and broader adapters remain out of scope."
+  ],
+  "binary_sha256": {
+    "build/desktop/services/session/lapis_session_service": "df8875175879abce9cbc01dc3e5844a83d0a3e9e25c864b3cf168484e359bec8",
+    "build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop": "8eb513f43d29ba7cc273f2c67b3363af4f6aa28cd45dfcf9b210bd5f90853a56",
+    "build/desktop/apps/desktop/lapis_attention_ui_probe": "34a19f941ba69a34eccdf913c6a298757b73f7f3d6bb407d1b999bbe27c52f8c"
+  },
+  "timestamp_note": "Corrected during PR review: recorded_at is the containing commit f7ba6046521ad11d0c35d681f371cfdb6c33a582 timestamp, an upper bound on assembly. The former 05:13:39 timestamp preceded the final live fixture; per-check timestamps and source hashes remain unchanged."
+}

@@ -14,7 +14,7 @@ class LiveConnection final : public QObject {
                    session::wire::AttachMode mode);
     ~LiveConnection() override;
     void begin(session::wire::AttachMode mode);
-    void send(session::wire::Kind kind, const QByteArray& payload);
+    bool send(session::wire::Kind kind, const QByteArray& payload);
     void resize(session::TerminalSize size);
     void setWantedSize(session::TerminalSize size);
     void applyWantedSize();

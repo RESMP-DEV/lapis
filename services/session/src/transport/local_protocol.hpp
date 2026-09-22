@@ -6,7 +6,7 @@
 #include <lapis/session/terminal.hpp>
 
 namespace lapis::session::wire {
-constexpr quint32 version = 4;
+constexpr quint32 version = 6;
 constexpr qsizetype max_frame_bytes = qsizetype{8} * 1024 * 1024;
 constexpr quint32 max_cells = 32768;
 constexpr quint32 max_codepoints = 65536;
@@ -21,9 +21,12 @@ enum class Kind : quint8 {
     attach,
     ready,
     history_request,
-    history_page
+    history_page,
+    attention_snapshot,
+    attention_decision,
+    attention_retry
 };
-// Identities introduced in v3 and retained in v4: two nonzero 16-byte UUIDs and a BE u64
+// Identities introduced in v3 and retained in v4/v6: two nonzero 16-byte UUIDs and a BE u64
 // generation.
 struct SessionIdentity {
     QByteArray session_id;

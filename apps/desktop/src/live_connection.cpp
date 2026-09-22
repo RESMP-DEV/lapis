@@ -15,6 +15,11 @@
 
 namespace lapis::desktop {
 namespace wire = session::wire;
+namespace {
+constexpr int codex_sync_timeout_ms = 15000;
+constexpr int terminal_sync_timeout_ms = 5000;
+constexpr int history_timeout_ms = 5000;
+} // namespace
 SessionPreview::~SessionPreview() { live_.reset(); }
 void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpec& launch,
                                wire::AttachMode mode) {
@@ -136,8 +141,10 @@ void SessionPreview::startNewSession() {
 void SessionPreview::setConnection(const QString& state, bool input_ready) {
     connection_state_ = state;
     input_ready_ = input_ready;
-    if (!input_ready)
+    if (!input_ready) {
         live_snapshot_ready_ = false;
+        invalidateAttention();
+    }
     emit connectionChanged();
 }
 void SessionPreview::setServiceIdentity(const QByteArray& identity) {
@@ -153,12 +160,15 @@ LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
     retry_.setSingleShot(true);
     retry_.setInterval(100);
     handshake_.setSingleShot(true);
-    handshake_.setInterval(5000);
+    handshake_.setInterval(launch.agent == session::AgentMode::codex ? codex_sync_timeout_ms
+                                                                     : terminal_sync_timeout_ms);
+    if (launch.agent == session::AgentMode::codex)
+        service_arguments_.prepend(QStringLiteral("--codex"));
     connect(&handshake_, &QTimer::timeout, this,
             [this] { fail(QStringLiteral("Session synchronization timed out")); });
     connect(&retry_, &QTimer::timeout, this, [this] { connectSocket(); });
     history_timeout_.setSingleShot(true);
-    history_timeout_.setInterval(5000);
+    history_timeout_.setInterval(history_timeout_ms);
     connect(&history_timeout_, &QTimer::timeout, this, [this] {
         if (!outstanding_history_request_)
             return;
@@ -305,23 +315,27 @@ void LiveConnection::report(const QString& message) {
     document_.setActivity(message);
     qInfo().noquote() << "Session:" << message;
 }
-void LiveConnection::send(wire::Kind kind, const QByteArray& payload) {
+bool LiveConnection::send(wire::Kind kind, const QByteArray& payload) {
     if (!ready_ || failed_ || !attachment_) {
         report(QStringLiteral("Input was not sent: session is not synchronized."));
-        return;
+        return false;
     }
     if (payload.size() > qsizetype{64} * 1024 ||
         socket_->bytesToWrite() + payload.size() + 45 > qint64{1024} * 1024) {
         report(QStringLiteral("Input queue full; input was not sent"));
-        return;
+        return false;
     }
     try {
         const auto bytes = wire::frame(kind, wire::encode_control({*attachment_, payload}));
-        if (socket_->write(bytes) != bytes.size())
+        if (socket_->write(bytes) != bytes.size()) {
             fail(QStringLiteral("Session input could not be queued"));
+            return false;
+        }
     } catch (const std::exception& error) {
         fail(QString::fromUtf8(error.what()));
+        return false;
     }
+    return true;
 }
 void LiveConnection::resize(session::TerminalSize size) {
     if (size == wanted_size_)
@@ -360,8 +374,14 @@ void LiveConnection::requestHistory(wire::HistoryDirection direction, quint64 re
     outstanding_history_request_ = request_id;
     document_.setHistoryRequestId(request_id);
     history_timeout_.start();
-    send(wire::Kind::history_request,
-         wire::encode_history_request({request_id, reference, direction}));
+    if (!send(wire::Kind::history_request,
+              wire::encode_history_request({request_id, reference, direction}))) {
+        history_timeout_.stop();
+        outstanding_history_request_.reset();
+        document_.setHistoryRequestId(0);
+        document_.failHistoryRequest(
+            QStringLiteral("History request could not be queued; try again."));
+    }
 }
 void LiveConnection::acceptHello(const wire::Hello& hello) {
     if (attachment_)
@@ -480,6 +500,20 @@ void LiveConnection::handle(const wire::Frame& frame) {
     case wire::Kind::snapshot:
         acceptSnapshot(wire::decode_snapshot_message(frame.payload));
         return;
+    case wire::Kind::attention_snapshot: {
+        auto snapshot = wire::decode_attention_snapshot(frame.payload);
+        if (!ready_ || !attachment_ || snapshot.attachment != *attachment_)
+            throw std::runtime_error("Stale attention attachment");
+        document_.applyAttention(std::move(snapshot));
+        return;
+    }
+    case wire::Kind::attention_retry: {
+        const auto control = wire::decode_control(frame.payload);
+        if (!ready_ || !attachment_ || control.attachment != *attachment_)
+            throw std::runtime_error("Stale decision rejection attachment");
+        document_.retryAttention(wire::decode_attention_decision(control.payload));
+        return;
+    }
     case wire::Kind::history_page:
         acceptHistoryReply(wire::decode_history_reply(frame.payload));
         return;

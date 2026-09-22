@@ -2,10 +2,12 @@
 
 ## Evidence boundary
 
-The ordinary Codex TUI now runs through lapis's explicit PTY launch path. The
-production attention adapter remains an investigation: there are no lapis hooks
-or service/desktop approval routing. An isolated shared-server probe now exercises
-real requests and responses, as described below. Source was inspected on 2026-09-17 at revision
+The ordinary Codex TUI runs through lapis's explicit PTY launch path. Managed
+Codex mode adds a dedicated service-owned backend and observer, with qualified
+macOS desktop approval and input responses for one persistent thread.
+[Milestone 2 evidence](../../evidence/milestone-two.json) records the assembled
+acceptance; native hooks remain unqualified. The investigation below records the
+dated evidence behind that selected route. Source was inspected on 2026-09-17 at revision
 `256a74f942a2fae1d4c198797d6d5246063f06e3` of a local Codex checkout. The checkout
 had an unrelated modified build script. Its locally built binary reported
 `codex-cli 0.0.0`; that string does not prove it was built from the inspected HEAD.
@@ -13,7 +15,8 @@ had an unrelated modified build script. Its locally built binary reported
 The [runtime receipt](../../evidence/codex-probe.json) records the actual binary
 hash, exported schema methods, and live initialization/list result. Schema
 presence establishes an advertised shape, not successful delivery of real agent
-attention. Service/desktop integration and hooks still require end-to-end qualification.
+attention. This original probe predates service/desktop qualification and does
+not establish native hook delivery.
 
 On 2026-09-18 the read-only probe was repeated against the installed executable:
 436 schema files, all ten tracked methods advertised, successful initialization
@@ -39,7 +42,7 @@ owns implementation order; this document owns Codex-specific qualification.
 | --- | --- | --- |
 | Ordinary Codex TUI in a lapis-owned PTY | No-prompt editing/navigation/paste/resize, interrupt/exit, same-child reattachment and macOS GPU captures exercised | Terminal interaction works for the exercised cases; all three structured capabilities remain unqualified |
 | Native hooks on that CLI | Source event names plus an enabled runtime feature | Dispatch, payload identity, trust, loss/reconnect and return semantics all require live probes; no hooks installed by lapis |
-| TUI and observer connected to the same app-server | Real input/approval requests displayed in the TUI; observer resume/reconnect replays matching IDs, responses resolve and turns continue | Selected for the two exercised blocking request kinds, including resume/read reconciliation; production service/desktop routing remains unqualified |
+| TUI and observer connected to the same app-server | Real input/approval requests displayed in the TUI; observer resume/reconnect replays matching IDs, responses resolve and turns continue | Selected for the two exercised blocking request kinds, including resume/read reconciliation and assembled service/desktop routing on the pinned binary |
 | Separate lapis-owned stdio app-server | Live initialization and loaded-thread listing pass | Structured request/response/reconciliation remain unqualified; does not render the ordinary TUI or observe a different server's threads |
 
 The empty loaded-thread page describes the private probe process only. It does
@@ -89,6 +92,36 @@ records exercised scope and limitations. Next, implement and qualify adapter
 failure cases, the service/IPC connection and the minimal
 live attention UI described in the architecture plan.
 
+## Service adapter checkpoint
+
+The compiled adapter uses Qt's local socket with bounded WebSocket framing,
+normalizes command approvals and user-input requests, and owns resume/read
+reconciliation in the session service. Wire v6 carries authoritative attention
+snapshots and exact attachment/epoch/revision-bound decisions. A sent response
+remains pending until source resolution. `evidence/codex-service.json` records
+real approval and question responses through this route, same-child reattachment,
+and owned-process cleanup after service death.
+
+Discovery reads thread metadata: the ordinary TUI creates a persistent thread,
+and the same server can create ephemeral work. Only the persistent TUI thread is
+response-capable in this checkpoint; another persistent thread fails closed.
+An initial binding requires explicit persistent metadata from discovery's
+`thread/read` or `thread/started`. Events received before that classification stay
+in the bounded replay queue without enabling decisions; the subsequent resume/read
+replay replaces them. Reconnect retains an already classified persistent identity,
+including when loaded-thread discovery is empty. Temporary-thread events cannot
+redirect a decision. After binding, traffic from an unclassified sender is never
+applied to owned requests, including during reconnect replay. Until metadata
+arrives, the adapter tracks bounded counts and bytes (1024 events / 1 MiB) rather
+than retaining payloads it can never adopt. Classification releases that sender's
+accounting; a confirmed second persistent thread or budget overflow fails closed.
+Unknown binary hashes,
+failed reconciliation and lost connections disable responses. Other request kinds
+are observation-only and must be answered in the terminal. Desktop controls now
+exercise real approvals and answers through this service, including pending
+reattachment and archive/restore source reconciliation. The assembled receipt also records cancellation and two simultaneous live
+approvals, separately from the synthetic adapter coverage.
+
 ## Structured app-server route
 
 Candidate for sessions owned by lapis: launch `codex app-server --listen stdio://`,
@@ -133,9 +166,9 @@ hooks or a supported shared-server attachment before claiming CLI attention
 coverage.
 
 The installed CLI advertises `--remote` endpoints including Unix sockets and
-WebSockets, and an `app-server daemon` with a stdio `proxy`. The older
-`--no-daemon` flag is gone in 0.154.0; a plain TUI invocation is the backend
-owned by that terminal, and no lapis-specific flag selects it.
+WebSockets, and an `app-server daemon` with a stdio `proxy`. The pinned build currently advertises `--no-daemon` as well. Plain terminal
+launch forwards the requested options unchanged; preserving the TUI PID does
+not establish ownership of any upstream shared daemon.
 Use an explicitly selected mode in qualification and record it. Killing a TUI
 process or retaining its PID says nothing by itself about daemon-owned work.
 Do not start/stop the user's shared daemon or install global hooks for a probe.
@@ -147,25 +180,20 @@ configuration, payloads, nonblocking delivery, and response semantics are not
 yet verified against the active binary. A Stop hook may participate in control
 flow; it must not blindly be mapped to definitive task completion.
 
-## Next qualification
+## Requalifying a Codex binary
 
-The [launch receipt](../../evidence/cli-launch.json) records the installed TUI
-exercise with no extra launch flags, normal/compact GUI captures and no submitted prompt.
-Input/navigation/paste were driven through service IPC; the shell smoke separately
-exercises Qt key routing. This does not qualify real IME or physical input latency.
+`Observer::qualifiedBinarySha256()` pins the installed executable whose request
+replay and response behavior was exercised. Its `0.0.0` version string alone is
+insufficient. To update that pin, inspect the candidate's live protocol and run the
+[attention qualification procedure](../../CONTRIBUTING.md#codex-attention-qualification)
+on disposable service-owned sessions, including desktop responses, cancellation,
+reconnect reconciliation and simultaneous requests. Record the executable hash,
+runtime provider/model, source revision, commands, results and limits before
+changing the pin in the same reviewed update. An unknown binary retains terminal
+operation with structured responses disabled; there is no runtime bypass.
 
-1. Extend this baseline to actual native Codex keyboard/paste/IME workflows and
-   controlled model turns. Keep the launch hash, backend ownership mode and
-   startup-versus-model-turn distinction in every receipt.
-2. On a disposable app-server/session, probe shared attachment and native hooks
-   independently. Verify which connection receives each event and which client is
-   permitted to answer it; do not infer this from method names or help text.
-3. Capture real input/approval requests with a controlled local fixture and
-   explicitly chosen approval settings. Record the effective provider/model and
-   any trust or policy prerequisite; do not change normal launch defaults.
-4. Reply using exact source request identities; verify resolution and continuation.
-   Verify cancellation, duplicate delivery, reconnect, sequence gaps and multiple
-   pending requests. Disable stale replies until the source is reconciled.
-5. Publish the observed capability matrix and select the attention route. If a
-   hook route can only notify, keep responses in the originating terminal; a
-   structured-only session must remain distinguishable from the ordinary TUI.
+Future qualification covers additional request kinds, multiple persistent TUI
+threads, a second independent CLI adapter and platform backends. Native hooks are
+an independent route that needs its own live delivery and response evidence.
+Keep ordinary launch policy unchanged and preserve exact typed request identities;
+never infer delivery from exported schema or replay fixtures alone.

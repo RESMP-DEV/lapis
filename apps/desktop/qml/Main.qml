@@ -90,6 +90,7 @@ ApplicationWindow {
     readonly property bool stackLayout: layoutMode === "stack"
     // The pane owns the keyboard only when it is the visible surface.
     readonly property bool settingsOpen: settingsDialog.visible
+    readonly property bool inputBlocked: settingsOpen || attentionDialog.visible
     readonly property bool paneVisible: layoutMode === "focus" || columnsLayout
     readonly property int cardSpacing: densityMode === "minimal" ? 8 :
                                        densityMode === "compact" ? 10 : 14
@@ -128,37 +129,37 @@ ApplicationWindow {
         objectName: "nextCategoryShortcut"
         sequences: window.bindings("nextCategory", ["Ctrl+Tab"])
         context: Qt.WindowShortcut
-        enabled: !window.settingsOpen
+        enabled: !window.inputBlocked
         onActivated: workspace.nextCategory()
     }
     Shortcut {
         sequences: window.bindings("previousCategory", ["Ctrl+Shift+Tab"])
         context: Qt.WindowShortcut
-        enabled: !window.settingsOpen
+        enabled: !window.inputBlocked
         onActivated: workspace.nextCategory(-1)
     }
     Shortcut {
         sequences: window.bindings("category1", ["Ctrl+1"])
         context: Qt.WindowShortcut
-        enabled: !window.settingsOpen
+        enabled: !window.inputBlocked
         onActivated: workspace.focusCategory(0)
     }
     Shortcut {
         sequences: window.bindings("category2", ["Ctrl+2"])
         context: Qt.WindowShortcut
-        enabled: !window.settingsOpen
+        enabled: !window.inputBlocked
         onActivated: workspace.focusCategory(1)
     }
     Shortcut {
         sequences: window.bindings("category3", ["Ctrl+3"])
         context: Qt.WindowShortcut
-        enabled: !window.settingsOpen
+        enabled: !window.inputBlocked
         onActivated: workspace.focusCategory(2)
     }
     Shortcut {
         sequences: window.bindings("category4", ["Ctrl+4"])
         context: Qt.WindowShortcut
-        enabled: !window.settingsOpen
+        enabled: !window.inputBlocked
         onActivated: workspace.focusCategory(3)
     }
 
@@ -167,32 +168,32 @@ ApplicationWindow {
     Shortcut {
         sequences: window.bindings("nextWindow", ["Ctrl+Shift+]"])
         context: Qt.WindowShortcut
-        enabled: !window.settingsOpen
+        enabled: !window.inputBlocked
         onActivated: workspace.nextWindow()
     }
     Shortcut {
         sequences: window.bindings("previousWindow", ["Ctrl+Shift+["])
         context: Qt.WindowShortcut
-        enabled: !window.settingsOpen
+        enabled: !window.inputBlocked
         onActivated: workspace.nextWindow(-1)
     }
     Shortcut {
         sequences: window.bindings("focusLeft", ["Ctrl+Left"])
         context: Qt.WindowShortcut
-        enabled: !window.settingsOpen
+        enabled: !window.inputBlocked
         onActivated: workspace.nextWindow(-1)
     }
     Shortcut {
         sequences: window.bindings("focusRight", ["Ctrl+Right"])
         context: Qt.WindowShortcut
-        enabled: !window.settingsOpen
+        enabled: !window.inputBlocked
         onActivated: workspace.nextWindow()
     }
 
     Shortcut {
         sequences: window.bindings("cycleLayout", ["Ctrl+L"])
         context: Qt.WindowShortcut
-        enabled: !window.settingsOpen
+        enabled: !window.inputBlocked
         onActivated: {
             if (typeof keymap !== "undefined" && keymap !== null)
                 keymap.toggleLayout()
@@ -201,7 +202,7 @@ ApplicationWindow {
     Shortcut {
         sequences: window.bindings("reloadConfig", ["Ctrl+R"])
         context: Qt.WindowShortcut
-        enabled: !window.settingsOpen
+        enabled: !window.inputBlocked
         onActivated: {
             if (typeof keymap !== "undefined" && keymap !== null)
                 keymap.reload()
@@ -212,11 +213,31 @@ ApplicationWindow {
     // surface is a native focus item that consumes key events before a QML
     // Shortcut can fire, so C++ intercepts the key and calls this instead.
     function openSettingsDialog() {
+        if (attentionDialog.visible) return
         settingsDialog.open()
         // The dialog holds the keyboard while open, so the terminal never
         // receives the keystrokes meant for the appearance options.
         if (settingsDialog.opened)
             settingsDialog.forceActiveFocus()
+    }
+
+    function openAttentionDialog() {
+        if (!inputBlocked && workspace.focusedSession && workspace.focusedSession.hasAttentionSource)
+            attentionDialog.showSession(workspace.focusedSession)
+    }
+
+    AttentionDialog {
+        id: attentionDialog
+        palette.window: window.surfaceColor
+        palette.base: window.backgroundColor
+        palette.button: window.cardColor
+        palette.text: window.textColor
+        palette.windowText: window.textColor
+        palette.buttonText: window.textColor
+        palette.mid: window.borderColor
+        palette.highlight: window.focusedColor
+        palette.highlightedText: window.textColor
+        onClosed: preview.deferTerminalFocus()
     }
 
     Settings {
@@ -368,6 +389,19 @@ ApplicationWindow {
                       workspace.focusedSession ? workspace.focusedSession.activity : qsTr("Disconnected")
                 font.pixelSize: 10
                 elide: Text.ElideRight
+            }
+
+            Button {
+                objectName: "reviewAttention"
+                visible: !preview.active && workspace.focusedSession && workspace.focusedSession.hasAttentionSource
+                enabled: !window.inputBlocked
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                font.pixelSize: 10
+                topPadding: 0
+                bottomPadding: 0
+                text: workspace.focusedSession ? qsTr("Requests (%1)").arg(workspace.focusedSession.attentionCount) : ""
+                onClicked: window.openAttentionDialog()
             }
 
             Button {
@@ -574,8 +608,8 @@ ApplicationWindow {
 // Input requires both the session being ready and this pane owning
                 // the keyboard, which blocks layout gives to a tile instead.
                 interactive: (preview.active || (document && document.inputReady))
-                             && window.paneVisible && !window.settingsOpen
-                focus: window.paneVisible && !window.settingsOpen
+                             && window.paneVisible && !window.inputBlocked
+                focus: window.paneVisible && !window.inputBlocked
                 Component.onCompleted: if (window.paneVisible) forceActiveFocus()
                 // Claim the keyboard whenever this pane becomes the active
                 // surface, so switching layout never leaves focus on a button.
@@ -801,10 +835,10 @@ ApplicationWindow {
                             enabled: !window.paneVisible
                                      && workspace.focusedIndex === sessionCard.index
                                      && sessionCard.modelData.live
-                            interactive: !window.paneVisible && !window.settingsOpen
+                            interactive: !window.paneVisible && !window.inputBlocked
                                          && workspace.focusedIndex === sessionCard.index
                                          && sessionCard.modelData.live
-                            focus: !window.paneVisible && !window.settingsOpen
+                            focus: !window.paneVisible && !window.inputBlocked
                                            && workspace.focusedIndex === sessionCard.index
                                            && sessionCard.modelData.live
                             Component.onCompleted: {
@@ -816,7 +850,7 @@ ApplicationWindow {
                             Connections {
                                 target: workspace
                                 function onFocusChanged() {
-                                    if (!window.settingsOpen && !window.paneVisible && sessionCard.modelData.live
+                                    if (!window.inputBlocked && !window.paneVisible && sessionCard.modelData.live
                                             && workspace.focusedIndex === sessionCard.index)
                                         cardTerminal.forceActiveFocus()
                                 }

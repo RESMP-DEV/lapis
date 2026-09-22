@@ -1,9 +1,13 @@
 #include "history_worker.hpp"
+#include "observer.hpp"
 #include "platform/posix/local_endpoint.hpp"
+#include "platform/posix/process_group_guard.hpp"
 #include "platform/posix/pty_process.hpp"
+#include "transport/attention_protocol.hpp"
 #include "transport/local_protocol.hpp"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDataStream>
 #include <QDebug>
 #include <QDir>
@@ -17,6 +21,7 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <exception>
 #include <limits>
@@ -27,6 +32,10 @@
 
 namespace {
 using namespace lapis::session;
+constexpr int codex_sync_timeout_ms = 15000;
+constexpr int terminal_sync_timeout_ms = 3000;
+constexpr int backend_probe_interval_ms = 25;
+constexpr int backend_probe_attempts = 400;
 quint64 monotonic_ns() {
     return static_cast<quint64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                     std::chrono::steady_clock::now().time_since_epoch())
@@ -98,7 +107,11 @@ class SessionService final : public QObject {
         timer_.setInterval(16);
         connect(&timer_, &QTimer::timeout, this, [this] { publish(); });
         ack_timer_.setSingleShot(true);
-        ack_timer_.setInterval(3000);
+        ack_timer_.setInterval(launch.agent == AgentMode::codex ? codex_sync_timeout_ms
+                                                                : terminal_sync_timeout_ms);
+        attention_timer_.setSingleShot(true);
+        attention_timer_.setInterval(16);
+        connect(&attention_timer_, &QTimer::timeout, this, [this] { publish_attention(); });
         connect(&ack_timer_, &QTimer::timeout, this, [this] {
             if (client_ && !ready_) {
                 send_status(client_, wire::StatusCode::rejected,
@@ -132,10 +145,15 @@ class SessionService final : public QObject {
                     else
                         finish_session(QStringLiteral("Process exited (%1)").arg(code), code);
                 });
-        pty_.start(launch);
+        if (launch.agent == AgentMode::codex)
+            start_codex(endpoint, launch);
+        else
+            pty_.start(launch);
     }
 
     ~SessionService() override {
+        stopping_ = true;
+        stop_codex();
         disconnect(&pty_, nullptr, this, nullptr);
         disconnect(&server_, nullptr, this, nullptr);
         disconnect(&timer_, nullptr, this, nullptr);
@@ -148,6 +166,186 @@ class SessionService final : public QObject {
     }
 
   private:
+    void schedule_attention() {
+        if (codex_state_ && attention_dirty_ && client_ && ready_ && !stopping_ &&
+            !attention_timer_.isActive())
+            attention_timer_.start();
+    }
+    void publish_attention() {
+        if (!codex_state_ || !codex_observer_ || !client_ || !ready_ || stopping_)
+            return;
+        QLocalSocket* const destination = client_;
+        const auto owner = attachment_;
+        try {
+            wire::AttentionSnapshot snapshot{
+                .attachment = owner,
+                .available = true,
+                .connected = codex_state_->connected(),
+                .ready = codex_state_->ready(),
+                .source_epoch = codex_state_->epoch(),
+                .activity = codex_state_->activity(),
+                .diagnostic = !decision_error_.isEmpty() ? decision_error_
+                              : !codex_error_.isEmpty()  ? codex_error_
+                                                         : codex_observer_->diagnostic(),
+                .requests = {}};
+            for (const auto& [id, pending] : codex_state_->pending())
+                snapshot.requests.push_back({pending, codex_observer_->details(id)});
+            const auto bytes = wire::frame(wire::Kind::attention_snapshot,
+                                           wire::encode_attention_snapshot(snapshot));
+            if (destination->bytesToWrite() + bytes.size() > wire::max_frame_bytes ||
+                destination->write(bytes) != bytes.size())
+                throw std::runtime_error("Attention output queue unavailable");
+            attention_dirty_ = false;
+        } catch (const std::exception& error) {
+            if (client_ == destination && attachment_ == owner) {
+                send_status(destination, wire::StatusCode::overloaded,
+                            QString::fromUtf8(error.what()));
+                detach_client();
+            }
+        }
+    }
+    void stop_codex() {
+        backend_wait_.stop();
+        backend_probe_.abort();
+        attention_timer_.stop();
+        if (codex_observer_)
+            codex_observer_->stop();
+        backend_guard_control_.reset();
+        backend_guard_read_.reset();
+        if (codex_backend_.state() != QProcess::NotRunning &&
+            !codex_backend_.waitForFinished(500)) {
+            codex_backend_.kill();
+            static_cast<void>(codex_backend_.waitForFinished(500));
+        }
+    }
+    void start_codex_tui(const LaunchSpec& launch, const QString& backend_socket) {
+        if (pty_requested_ || stopping_)
+            return;
+        auto tui = launch;
+        tui.agent = AgentMode::terminal;
+        tui.arguments.prepend(QStringLiteral("unix://") + backend_socket);
+        tui.arguments.prepend(QStringLiteral("--remote"));
+        pty_requested_ = true;
+        pty_.start(tui);
+    }
+    static QStringList codex_arguments(const LaunchSpec& launch, const QString& backend_socket) {
+        QStringList arguments{QStringLiteral("app-server"), QStringLiteral("--listen"),
+                              QStringLiteral("unix://") + backend_socket};
+        // Forward explicit provider/config definitions to the server as well as
+        // the TUI. Production otherwise inherits the user's ordinary Codex policy.
+        for (qsizetype index = 0; index < launch.arguments.size(); ++index) {
+            const auto& argument = launch.arguments.at(index);
+            if (argument == QStringLiteral("--"))
+                break;
+            if (argument == QStringLiteral("-c") || argument == QStringLiteral("--config") ||
+                argument == QStringLiteral("--enable") || argument == QStringLiteral("--disable")) {
+                ++index;
+                if (index == launch.arguments.size() ||
+                    launch.arguments.at(index) == QStringLiteral("--"))
+                    throw std::invalid_argument("Codex config option requires a value");
+                arguments << argument << launch.arguments.at(index);
+            } else if (argument.startsWith(QStringLiteral("--config=")) ||
+                       argument.startsWith(QStringLiteral("--enable=")) ||
+                       argument.startsWith(QStringLiteral("--disable=")) ||
+                       argument == QStringLiteral("--strict-config")) {
+                arguments << argument;
+            }
+        }
+        return arguments;
+    }
+    void start_codex(const QString& endpoint, const LaunchSpec& launch) {
+        const auto backend_socket = posix::prepare_endpoint(endpoint + QStringLiteral(".codex"));
+        if (QFileInfo::exists(backend_socket)) {
+            QLocalSocket existing;
+            existing.connectToServer(backend_socket);
+            if (existing.waitForConnected(100) ||
+                (existing.error() != QLocalSocket::ConnectionRefusedError &&
+                 existing.error() != QLocalSocket::ServerNotFoundError))
+                throw std::runtime_error("Codex endpoint already in use or inaccessible");
+            if (!QFile::remove(backend_socket))
+                throw std::runtime_error("Cannot remove stale Codex endpoint");
+        }
+        QFile executable(launch.program);
+        QCryptographicHash hash(QCryptographicHash::Sha256);
+        if (!executable.open(QIODevice::ReadOnly) || !hash.addData(&executable))
+            throw std::runtime_error("Cannot identify Codex executable");
+        const QString binary_hash = QString::fromLatin1(hash.result().toHex());
+        codex_state_ =
+            std::make_unique<attention::State>(identity_.session_id.toHex().toStdString(), "codex");
+        codex_observer_ = std::make_unique<lapis::codex::Observer>(*codex_state_);
+        connect(codex_observer_.get(), &lapis::codex::Observer::changed, this, [this] {
+            decision_error_.clear();
+            attention_dirty_ = true;
+            schedule_attention();
+        });
+        const auto arguments = codex_arguments(launch, backend_socket);
+        codex_backend_.setProgram(launch.program);
+        codex_backend_.setArguments(arguments);
+        codex_backend_.setWorkingDirectory(launch.directory);
+        codex_backend_.setStandardInputFile(QProcess::nullDevice());
+        codex_backend_.setStandardOutputFile(QProcess::nullDevice());
+        codex_backend_.setStandardErrorFile(QProcess::nullDevice());
+        const int descriptor_limit = ::getdtablesize();
+        if (descriptor_limit <= 0 ||
+            !posix::open_guard_pipe(backend_guard_read_, backend_guard_control_))
+            throw std::runtime_error("Cannot create Codex process-group guard");
+        const std::array<int, 2> guard{backend_guard_read_.get(), backend_guard_control_.get()};
+        codex_backend_.setChildProcessModifier([guard, descriptor_limit] {
+            if (::setsid() < 0 || !posix::start_group_guard(guard, descriptor_limit))
+                ::_exit(127);
+        });
+        connect(&codex_backend_, &QProcess::started, this, [this] { backend_guard_read_.reset(); });
+        connect(&codex_backend_, &QProcess::errorOccurred, this,
+                [this](QProcess::ProcessError error) {
+                    if (error == QProcess::FailedToStart)
+                        stop(QStringLiteral("Could not start dedicated Codex server"));
+                });
+        connect(&codex_backend_, &QProcess::finished, this,
+                [this](int code, QProcess::ExitStatus status) {
+                    if (stopping_)
+                        return;
+                    stop_codex();
+                    const QString exit_kind =
+                        status == QProcess::CrashExit
+                            ? QStringLiteral("exited abnormally (crash)")
+                            : QStringLiteral("exited normally with code %1").arg(code);
+                    codex_error_ =
+                        QStringLiteral("Codex server %1; responses are disabled").arg(exit_kind);
+                    attention_dirty_ = true;
+                    schedule_attention();
+                    if (!process_started_)
+                        stop(codex_error_);
+                });
+        codex_backend_.start();
+        wait_for_codex(launch, backend_socket, binary_hash);
+    }
+    void wait_for_codex(const LaunchSpec& launch, const QString& backend_socket,
+                        const QString& binary_hash) {
+        // A pathname can exist after bind(), before the server calls listen().
+        // Probe asynchronously and launch the TUI only once a connection succeeds.
+        connect(&backend_probe_, &QLocalSocket::connected, this,
+                [this, launch, backend_socket, binary_hash] {
+                    backend_wait_.stop();
+                    backend_probe_.abort();
+                    if (stopping_)
+                        return;
+                    codex_observer_->start(backend_socket, binary_hash);
+                    start_codex_tui(launch, backend_socket);
+                });
+        backend_wait_.setInterval(backend_probe_interval_ms);
+        connect(&backend_wait_, &QTimer::timeout, this,
+                [this, backend_socket, attempts = 0]() mutable {
+                    if (stopping_)
+                        return;
+                    if (++attempts >= backend_probe_attempts) {
+                        stop(QStringLiteral("Dedicated Codex server did not become ready"));
+                        return;
+                    }
+                    if (backend_probe_.state() == QLocalSocket::UnconnectedState)
+                        backend_probe_.connectToServer(backend_socket);
+                });
+        backend_wait_.start();
+    }
     void configure_history() {
         history_.failure = [this](const QString& error) {
             history_error_ = QStringLiteral("History recording paused: ") + error;
@@ -356,6 +554,7 @@ class SessionService final : public QObject {
         if (stopping_)
             return;
         stopping_ = true;
+        stop_codex();
         pty_.pauseOutput(true);
         timer_.stop();
         ack_timer_.stop();
@@ -415,6 +614,13 @@ class SessionService final : public QObject {
             wire::Frame frame;
             if (!wire::take_frame(bytes, frame))
                 return;
+            // Preserve a useful incompatible-protocol diagnostic; decode_attach
+            // also validates the version but reports generic malformed input.
+            QDataStream attachment_header(frame.payload);
+            quint32 protocol_version{};
+            attachment_header >> protocol_version;
+            if (protocol_version != wire::version)
+                throw std::runtime_error("Launch mismatch or incompatible attachment protocol");
             const auto request = wire::decode_attach(frame.payload);
             if (request.fingerprint != fingerprint_)
                 throw std::runtime_error("Launch mismatch or incompatible attachment protocol");
@@ -450,6 +656,10 @@ class SessionService final : public QObject {
             retire(client_);
         }
         client_ = incoming;
+        attention_dirty_ = true;
+        if (codex_observer_ && pty_requested_ && !codex_state_->connected() &&
+            codex_backend_.state() == QProcess::Running)
+            codex_observer_->reconnect();
         buffer_.clear();
         incoming->setReadBufferSize(wire::max_frame_bytes + 4);
         connect(incoming, &QLocalSocket::readyRead, this, [this, incoming] {
@@ -562,7 +772,29 @@ class SessionService final : public QObject {
         ready_ = true;
         snapshot_in_flight_ = false;
         ack_timer_.stop();
+        schedule_attention();
         schedule();
+    }
+    void allow_decision_retry(wire::AttentionDecision decision) {
+        if (!codex_state_ || !codex_state_->ready() ||
+            codex_state_->epoch() != decision.source_epoch)
+            return;
+        const auto found = codex_state_->pending().find(decision.request_id);
+        if (found == codex_state_->pending().end())
+            return;
+        const auto& pending = found->second;
+        if (pending.revision != decision.revision || pending.submitted ||
+            pending.status != attention::RequestStatus::pending)
+            return;
+        // This is an explicit rejection before source submission. An older
+        // queued snapshot alone must never unblock the desktop's duplicate guard.
+        decision.answers = {};
+        const auto bytes = wire::frame(
+            wire::Kind::attention_retry,
+            wire::encode_control({attachment_, wire::encode_attention_decision(decision)}));
+        if (client_->bytesToWrite() + bytes.size() > wire::max_frame_bytes ||
+            client_->write(bytes) != bytes.size())
+            throw std::runtime_error("Decision rejection queue failed");
     }
     void handle(const wire::Frame& frame) {
         if (!process_started_ || stopping_)
@@ -578,6 +810,21 @@ class SessionService final : public QObject {
             throw std::runtime_error("Input message too large");
         QByteArray bytes;
         switch (frame.kind) {
+        case wire::Kind::attention_decision: {
+            if (!codex_observer_)
+                throw std::runtime_error(
+                    "Attention decisions are unsupported for terminal sessions");
+            const auto decision = wire::decode_attention_decision(control.payload);
+            if (!codex_observer_->decide(decision.source_epoch, decision.request_id,
+                                         decision.revision, decision.choice, decision.answers)) {
+                allow_decision_retry(decision);
+                decision_error_ =
+                    QStringLiteral("Request changed or response is unsupported; refresh attention");
+                attention_dirty_ = true;
+                schedule_attention();
+            }
+            return;
+        }
         case wire::Kind::history_request:
             request_history(control.payload);
             return;
@@ -710,6 +957,18 @@ class SessionService final : public QObject {
     std::optional<TerminalSize> pending_resize_;
     TerminalSize current_size_;
     wire::SnapshotTiming timing_;
+    std::unique_ptr<attention::State> codex_state_;
+    std::unique_ptr<lapis::codex::Observer> codex_observer_;
+    QProcess codex_backend_;
+    QTimer backend_wait_;
+    QLocalSocket backend_probe_;
+    QTimer attention_timer_;
+    posix::UniqueFd backend_guard_read_;
+    posix::UniqueFd backend_guard_control_;
+    bool pty_requested_{};
+    bool attention_dirty_{};
+    QString codex_error_;
+    QString decision_error_;
 };
 } // namespace
 int main(int argc, char** argv) {
@@ -718,20 +977,36 @@ int main(int argc, char** argv) {
         arguments.append(QString::fromLocal8Bit(argv[index]));
     int application_argc = 1;
     QCoreApplication app(application_argc, argv);
-    bool has_session_id = arguments.size() > 1 && arguments.at(1) == QStringLiteral("--session-id");
-    const int socket_index = has_session_id ? 3 : 1;
-    const int program_index = has_session_id ? 5 : 3;
-    if ((has_session_id && arguments.size() < 6) || (!has_session_id && arguments.size() < 4)) {
-        qCritical() << "Usage: lapis_session_service [--session-id HEX32] SOCKET DIRECTORY PROGRAM "
-                       "[ARG ...]";
-        return 2;
-    }
     try {
-        const QByteArray session_id =
-            has_session_id ? parse_session_id(arguments.at(2)) : wire::new_id();
+        QByteArray session_id;
+        auto agent = AgentMode::terminal;
+        qsizetype socket_index = 1;
+        while (socket_index < arguments.size()) {
+            const auto& option = arguments.at(socket_index);
+            if (option == QStringLiteral("--session-id")) {
+                if (!session_id.isEmpty() || socket_index + 1 >= arguments.size())
+                    throw std::invalid_argument("Expected one --session-id HEX32");
+                session_id = parse_session_id(arguments.at(++socket_index));
+            } else if (option == QStringLiteral("--codex")) {
+                if (agent == AgentMode::codex)
+                    throw std::invalid_argument("Duplicate --codex option");
+                agent = AgentMode::codex;
+            } else {
+                break;
+            }
+            ++socket_index;
+        }
+        if (arguments.size() - socket_index < 3)
+            throw std::invalid_argument(
+                "Usage: lapis_session_service [--session-id HEX32] [--codex] "
+                "SOCKET DIRECTORY PROGRAM [ARG ...]");
+        if (session_id.isEmpty())
+            session_id = wire::new_id();
+        const auto program_index = socket_index + 2;
         const auto launch = validate_launch({.program = arguments.at(program_index),
                                              .arguments = arguments.mid(program_index + 1),
-                                             .directory = arguments.at(socket_index + 1)});
+                                             .directory = arguments.at(socket_index + 1),
+                                             .agent = agent});
         SessionService service(posix::prepare_endpoint(arguments.at(socket_index)), session_id,
                                launch);
         return app.exec();

@@ -15,7 +15,26 @@
 #endif
 
 namespace lapis::session {
+namespace {
+void validate_agent(const LaunchSpec& launch) {
+    switch (launch.agent) {
+    case AgentMode::terminal:
+        return;
+    case AgentMode::codex:
+        for (const auto& argument : launch.arguments) {
+            if (argument == QStringLiteral("--"))
+                break;
+            if (argument == QStringLiteral("--remote") ||
+                argument.startsWith(QStringLiteral("--remote=")))
+                throw std::invalid_argument("Managed Codex owns its remote endpoint");
+        }
+        return;
+    }
+    throw std::invalid_argument("Unknown agent integration mode");
+}
+} // namespace
 LaunchSpec validate_launch(LaunchSpec launch) {
+    validate_agent(launch);
     qsizetype bytes = 0;
     const auto check_text = [&bytes](const QString& value) {
         if (value.contains(QChar::Null))
@@ -99,6 +118,13 @@ QByteArray launch_fingerprint(const LaunchSpec& launch) {
     stream.setVersion(QDataStream::Qt_6_0);
     stream.setByteOrder(QDataStream::BigEndian);
     stream << launch.program << launch.arguments << launch.directory;
-    return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
+    switch (launch.agent) {
+    case AgentMode::terminal:
+        return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
+    case AgentMode::codex:
+        bytes.prepend(QByteArrayLiteral("lapis-codex-v1\0"));
+        return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
+    }
+    throw std::invalid_argument("Unknown agent integration mode");
 }
 } // namespace lapis::session

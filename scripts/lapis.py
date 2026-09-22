@@ -31,7 +31,7 @@ DESKTOP_BINARY = (
 )
 GHOSTTY_RUNS = ROOT / "build" / "terminal-probe" / "reproduce" / "ghostty" / "runs"
 RUNTIME_DIR = ROOT / "runtime"
-DEFAULT_SOCKET = RUNTIME_DIR / "desktop-v4.sock"
+DEFAULT_SOCKET = RUNTIME_DIR / "desktop-v6.sock"
 # Window tests belong on the laptop panel, not a large external display. Override
 # with LAPIS_SCREEN, or pass --screen to the app directly.
 DEFAULT_SCREEN = "built-in"

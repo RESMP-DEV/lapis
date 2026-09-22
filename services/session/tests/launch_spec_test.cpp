@@ -26,7 +26,11 @@ int main(int argc, char** argv) {
     QCoreApplication application(argc, argv);
     using namespace lapis::session;
     try {
-        QTemporaryDir temporary(QDir::current().filePath(QStringLiteral("launch-XXXXXX")));
+        // Keep Unix socket fixtures short and retain the canonical path used by validation.
+        const auto temporary_root = QDir(QStringLiteral("/tmp")).canonicalPath();
+        if (temporary_root.isEmpty())
+            throw std::runtime_error("Launch fixture requires an existing /tmp directory");
+        QTemporaryDir temporary(temporary_root + QStringLiteral("/lapis-launch-XXXXXX"));
         require(temporary.isValid());
         const auto launch = validate_launch({.program = QStringLiteral("/bin/sh"),
                                              .arguments = {QStringLiteral("-i")},
@@ -35,6 +39,16 @@ int main(int argc, char** argv) {
         auto other = launch;
         other.size = {80, 24};
         require(launch_fingerprint(other) == fingerprint);
+        other.agent = AgentMode::codex;
+        require(launch_fingerprint(validate_launch(other)) != fingerprint);
+        other.arguments = {QStringLiteral("--remote=unix:///tmp/other.sock")};
+        rejects([&] { static_cast<void>(validate_launch(other)); });
+        other.arguments = {QStringLiteral("--"), QStringLiteral("--remote=literal-prompt")};
+        require(validate_launch(other).arguments == other.arguments);
+        other.agent = static_cast<AgentMode>(99);
+        rejects([&] { static_cast<void>(validate_launch(other)); });
+        rejects([&] { static_cast<void>(launch_fingerprint(other)); });
+        other = launch;
         other.arguments = {QStringLiteral("-c"), QStringLiteral("a b")};
         const auto literal = launch_fingerprint(other);
         other.arguments = {QStringLiteral("-c"), QStringLiteral("a"), QStringLiteral("b")};
