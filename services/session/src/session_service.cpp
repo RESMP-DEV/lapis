@@ -200,8 +200,7 @@ class SessionService final : public QObject {
             if (client_ == destination && attachment_ == owner) {
                 send_status(destination, wire::StatusCode::overloaded,
                             QString::fromUtf8(error.what()));
-                if (client_ == destination && attachment_ == owner)
-                    detach_client();
+                detach_client();
             }
         }
     }
@@ -301,16 +300,22 @@ class SessionService final : public QObject {
                     if (error == QProcess::FailedToStart)
                         stop(QStringLiteral("Could not start dedicated Codex server"));
                 });
-        connect(&codex_backend_, &QProcess::finished, this, [this](int, QProcess::ExitStatus) {
-            if (stopping_)
-                return;
-            stop_codex();
-            codex_error_ = QStringLiteral("Codex server exited; responses are disabled");
-            attention_dirty_ = true;
-            schedule_attention();
-            if (!process_started_)
-                stop(codex_error_);
-        });
+        connect(&codex_backend_, &QProcess::finished, this,
+                [this](int code, QProcess::ExitStatus status) {
+                    if (stopping_)
+                        return;
+                    stop_codex();
+                    const QString exit_kind =
+                        status == QProcess::CrashExit
+                            ? QStringLiteral("exited abnormally (crash)")
+                            : QStringLiteral("exited normally with code %1").arg(code);
+                    codex_error_ =
+                        QStringLiteral("Codex server %1; responses are disabled").arg(exit_kind);
+                    attention_dirty_ = true;
+                    schedule_attention();
+                    if (!process_started_)
+                        stop(codex_error_);
+                });
         codex_backend_.start();
         wait_for_codex(launch, backend_socket, binary_hash);
     }

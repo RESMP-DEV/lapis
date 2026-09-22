@@ -447,16 +447,19 @@ contents in a safe file; unsafe modes, symlinks or hardlinks require repair firs
 The service identity is always checked live. After the service ends, choose Start
 new session explicitly; an occupied endpoint will be rejected, preserving its child.
 
-Run `just cli-check` for isolated service and GUI fixtures. For the optional
-installed Codex test:
+Run `just cli-check` for isolated service and GUI fixtures. Disposable backend
+executables also check Codex argument forwarding, delayed listener readiness, and
+normal/crash exit diagnostics without exposing raw stderr. These cases do not
+start model turns. For the optional installed Codex test:
 
 ```sh
 python3 scripts/check_cli_launch.py --desktop --codex \
   --output build/cli-launch-check/codex.json
 ```
 
-The optional test uses the current Codex configuration with no extra launch
-flags (Codex 0.154.0 removed the older `--no-daemon`), types
+The optional test waits for bracketed-paste mode and a loaded Codex screen before
+sending navigation input; its early loading header alone is not a readiness signal.
+It uses the current Codex configuration with no extra launch flags (Codex 0.154.0 removed the older `--no-daemon`), types
 only an unsubmitted test marker, exercises navigation/paste/resize, captures normal
 and compact windows, reattaches to the same child, clears the draft with Ctrl-C,
 and quits from the empty composer with Ctrl-D.

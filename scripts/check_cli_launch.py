@@ -107,6 +107,8 @@ def decode_snapshot(payload):
         "revision": revision,
         "columns": columns,
         "rows": rows,
+        # Cursor fields end at byte 20, then alternate-screen and paste mode.
+        "bracketed_paste": bool(payload[22]),
         "text": "".join(text),
     }
 
@@ -568,6 +570,55 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
                     f"Literal arguments leaked into backend options: {forwarded}",
                 )
         return {"argument_cases": len(cases), "live_codex_used": False}
+
+    def codex_backend_exit():
+        # Exercise a dedicated backend failure before TUI startup. Raw backend
+        # output may contain private data and must not enter service diagnostics.
+        executable = runtime / "exiting-codex"
+        private_marker = "PRIVATE_BACKEND_STDERR_FIXTURE"
+        outcomes = []
+        for name, statement, expected in (
+            ("normal", "sys.exit(23)", ("23", "normal")),
+            ("signal", "os.kill(os.getpid(), signal.SIGKILL)", ("crash",)),
+        ):
+            executable.write_text(
+                f"#!{program}\n"
+                "import os,signal,sys\n"
+                f"print({private_marker!r},file=sys.stderr,flush=True)\n"
+                + statement
+                + "\n"
+            )
+            executable.chmod(0o700)
+            fixture = "codex-exit-" + name
+            service = Service(
+                binary,
+                runtime,
+                artifacts,
+                fixture,
+                str(executable),
+                [],
+                runtime,
+                codex=True,
+            )
+            try:
+                require(
+                    service.process.wait(timeout=WAIT) != 0,
+                    "Backend failure did not stop startup",
+                )
+            finally:
+                service.stop()
+            diagnostic = (artifacts / (fixture + ".service.log")).read_text()
+            require(
+                "Codex server exited" in diagnostic
+                and all(part in diagnostic.lower() for part in expected),
+                f"Backend {name} exit lost code/status diagnostic",
+            )
+            require(
+                private_marker not in diagnostic,
+                "Backend stderr leaked into service diagnostics",
+            )
+            outcomes.append(name)
+        return {"backend_exit_cases": outcomes, "raw_stderr_excluded": True}
 
     def delayed_codex_listener():
         # This disposable executable is deliberately unqualified: terminal startup
@@ -1055,7 +1106,16 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
         edited = marker[:-1] + "X" + marker[-1] + "_paste"
         try:
             with service.connect() as client:
-                client.snapshot(lambda s: "OpenAI Codex" in s["text"], timeout=15)
+                # The startup draft already shows the header before the TUI
+                # enables input modes. Wait for its real mode and loaded screen.
+                client.snapshot(
+                    lambda s: (
+                        s["bracketed_paste"]
+                        and "OpenAI Codex" in s["text"]
+                        and "loading" not in s["text"]
+                    ),
+                    timeout=15,
+                )
                 client.send(TEXT, marker.encode())
                 client.snapshot(lambda s: marker in s["text"])
                 client.send(KEY, bytes([2, 0]))  # TerminalKey::left
@@ -1137,6 +1197,7 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
     record("mismatch and malformed attachment preserve active client", mismatch)
     record("failed executable and cwd", failures)
     record("Codex config values and literal separator", codex_config_arguments)
+    record("Codex backend exit diagnostics exclude private stderr", codex_backend_exit)
     record("Codex bind-before-listen startup and reattachment", delayed_codex_listener)
     if desktop_enabled:
         record("desktop capture, reattachment, shell default and option rejection", gui)

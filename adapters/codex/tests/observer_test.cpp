@@ -12,6 +12,7 @@
 #include <QJsonObject>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QPointer>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <algorithm>
@@ -117,12 +118,31 @@ class Source final : public QObject {
   public:
     explicit Source(QObject* parent = nullptr) : QObject(parent) {
         connect(&server, &QLocalServer::newConnection, this, [this] {
+            if (connection) {
+                connection->disconnect(this);
+                connection->abort();
+                connection->deleteLater();
+            }
             connection = server.nextPendingConnection();
+            connect(connection, &QLocalSocket::disconnected, this,
+                    [this, socket = connection.data()] {
+                        socket->disconnect(this);
+                        if (connection == socket)
+                            connection = nullptr;
+                        socket->deleteLater();
+                    });
             handshaken = false;
             frame_buffer.clear();
             handshake_buffer.clear();
             connect(connection, &QLocalSocket::readyRead, this, [this] { read(); });
         });
+    }
+
+    ~Source() override {
+        // Member destruction precedes QObject teardown. Stop socket callbacks
+        // before the connection QPointer and server members are destroyed.
+        if (connection)
+            connection->disconnect(this);
     }
 
     void start() { require(root.isValid() && server.listen(path()), "fake source listen failed"); }
@@ -272,7 +292,7 @@ class Source final : public QObject {
     // Unix transport fixture: a short path stays within macOS sockaddr_un limits.
     QTemporaryDir root{QStringLiteral("/tmp/lapis-observer-XXXXXX")};
     QLocalServer server;
-    QLocalSocket* connection{};
+    QPointer<QLocalSocket> connection;
     QByteArray handshake_buffer;
     QByteArray frame_buffer;
     bool handshaken{};
@@ -424,6 +444,91 @@ void unclassified_event_queue_is_bounded() {
             "bounded preclassification events never establish a binding");
 }
 
+void post_binding_classification() {
+    State state{"post-binding", "codex"};
+    Source source;
+    source.start();
+    Observer observer{state};
+    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    require(wait_for([&] { return state.ready(); }), "post-binding fixture ready");
+    const RequestId original{std::numeric_limits<std::int64_t>::max()};
+    auto foreign = large_approval(std::numeric_limits<std::int64_t>::max());
+    auto params = foreign.value("params").toObject();
+    params.insert("threadId", "late-temporary");
+    foreign.insert("params", params);
+    const QJsonObject foreign_resolution{
+        {"method", "serverRequest/resolved"},
+        {"params", QJsonObject{{"threadId", "late-temporary"},
+                               {"requestId", std::numeric_limits<std::int64_t>::max()}}}};
+    const QJsonObject metadata{
+        {"method", "thread/started"},
+        {"params",
+         QJsonObject{{"thread", QJsonObject{{"id", "late-temporary"}, {"ephemeral", true}}}}}};
+    auto barrier = [&](std::int64_t id) {
+        source.send(large_approval(id));
+        require(wait_for([&] {
+                    return state.pending().contains(RequestId{id}) || !state.connected();
+                }) &&
+                    state.ready() && state.pending().contains(RequestId{id}),
+                "own-thread barrier proves prior foreign traffic was consumed safely");
+        require(state.pending().contains(original) &&
+                    observer.details(original).value("command") == "echo fixture",
+                "foreign IDs cannot replace or resolve owned requests");
+    };
+    source.send(foreign);
+    source.send(foreign_resolution);
+    barrier(40); // No metadata yet: unknown traffic must remain non-actionable.
+    source.send(metadata);
+    barrier(41);
+    source.send(foreign);
+    barrier(42);
+
+    // Foreign requests during resume/read must not enter the authoritative replay.
+    source.empty_discovery = true;
+    source.replay_requests = {foreign, foreign_resolution};
+    observer.reconnect();
+    require(wait_for([&] { return state.ready() || !state.connected(); }) && state.ready(),
+            "reconnect tolerates an unannounced ephemeral sender during replay");
+    require(state.pending().size() == 1 && state.pending().contains(original),
+            "foreign reconciliation traffic cannot resolve the replayed owned request");
+    source.send(foreign);
+    source.send(metadata);
+    barrier(43);
+
+    // Classification releases its accounting; repeated short-lived temporary
+    // threads must not exhaust the unknown-event budget over the source lifetime.
+    const QJsonObject closed{{"method", "thread/closed"},
+                             {"params", QJsonObject{{"threadId", "late-temporary"}}}};
+    for (int index = 0; index < 1030; ++index) {
+        source.send(closed);
+        source.send(foreign_resolution);
+        source.send(metadata);
+    }
+    barrier(44);
+    source.send({{"method", "thread/started"},
+                 {"params", QJsonObject{{"thread", QJsonObject{{"id", "second-persistent"},
+                                                               {"ephemeral", false}}}}}});
+    require(wait_for([&] { return !state.connected(); }) && observer.threadId() == "thread",
+            "a confirmed second persistent thread still fails closed");
+}
+
+void post_binding_unknown_budget(bool byte_limit) {
+    State state{"post-binding-budget", "codex"};
+    Source source;
+    source.start();
+    Observer observer{state};
+    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    require(wait_for([&] { return state.ready(); }), "post-binding budget fixture ready");
+    QJsonObject event{{"method", "turn/started"}, {"params", QJsonObject{{"threadId", "unknown"}}}};
+    if (byte_limit)
+        event.insert("padding", QString(15000, 'x'));
+    for (int index = 0; index < (byte_limit ? 80 : 1025); ++index)
+        source.send(event);
+    require(wait_for([&] { return !state.connected(); }) &&
+                observer.diagnostic() == "Codex unclassified traffic exceeded limit",
+            "post-binding unclassified traffic has count and byte limits");
+}
+
 void pending_details_budget() {
     State state{"budget", "codex"};
     Source source;
@@ -555,6 +660,9 @@ int run(int argc, char** argv) {
     initial_binding_requires_persistent_metadata(true);
     initial_binding_requires_persistent_metadata(false);
     unclassified_event_queue_is_bounded();
+    post_binding_classification();
+    post_binding_unknown_budget(false);
+    post_binding_unknown_budget(true);
     reconnect_during_initialization_and_start_new_source();
     pending_details_budget();
     request_id_and_answer_boundaries();

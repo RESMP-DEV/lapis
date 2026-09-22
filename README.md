@@ -58,6 +58,9 @@ reconciliation fixes, order-independent question checks and refreshed validation
 The [thread-repair receipt](evidence/pr7-thread-repairs.json) records initial-thread
 classification, config separator validation, preserved cleanup diagnostics and
 the disposition of the remaining review threads.
+The [latest PR #7 receipt](evidence/pr7-classification-repairs.json) records
+post-binding thread isolation, transport and fixture cleanup, backend exit
+diagnostics, and the evidence-based disposition of the new review batch.
 Following the quality cleanup in PR #6, Milestone 2
 now includes the production Codex adapter, session-service integration and explicit
 desktop response controls. Request arrival never moves keyboard focus. See the

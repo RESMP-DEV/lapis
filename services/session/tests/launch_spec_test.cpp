@@ -26,9 +26,11 @@ int main(int argc, char** argv) {
     QCoreApplication application(argc, argv);
     using namespace lapis::session;
     try {
-        // Keep Unix socket fixtures short even in deeply nested worktrees.
-        QTemporaryDir temporary(QDir(QStringLiteral("/tmp")).canonicalPath() +
-                                QStringLiteral("/lapis-launch-XXXXXX"));
+        // Keep Unix socket fixtures short and retain the canonical path used by validation.
+        const auto temporary_root = QDir(QStringLiteral("/tmp")).canonicalPath();
+        if (temporary_root.isEmpty())
+            throw std::runtime_error("Launch fixture requires an existing /tmp directory");
+        QTemporaryDir temporary(temporary_root + QStringLiteral("/lapis-launch-XXXXXX"));
         require(temporary.isValid());
         const auto launch = validate_launch({.program = QStringLiteral("/bin/sh"),
                                              .arguments = {QStringLiteral("-i")},

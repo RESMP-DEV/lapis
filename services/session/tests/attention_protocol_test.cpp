@@ -1,14 +1,13 @@
 #include "transport/attention_protocol.hpp"
 
 #include <QJsonDocument>
-#include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <iostream>
 #include <limits>
 #include <source_location>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {

@@ -8,6 +8,7 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <iostream>
+#include <optional>
 #include <source_location>
 #include <stdexcept>
 
@@ -26,6 +27,27 @@ template <class Predicate> void wait(Predicate predicate) {
     }
     require(predicate());
 }
+struct ClientHeader {
+    qsizetype offset{};
+    qsizetype length{};
+};
+std::optional<ClientHeader> client_header(const QByteArray& frame) {
+    if (frame.size() < 2)
+        return std::nullopt;
+    require((static_cast<quint8>(frame[1]) & 128U) != 0);
+    quint64 length = static_cast<quint8>(frame[1]) & 127U;
+    const qsizetype extended = length == 126 ? 2 : length == 127 ? 8 : 0;
+    const qsizetype offset = 2 + extended + 4;
+    if (frame.size() < offset)
+        return std::nullopt;
+    if (extended != 0) {
+        length = 0;
+        for (qsizetype index = 2; index < 2 + extended; ++index)
+            length = (length << 8U) | static_cast<quint8>(frame[index]);
+    }
+    require(length <= static_cast<quint64>(lapis::codex::UnixWebSocket::maximum_message_bytes));
+    return ClientHeader{offset, static_cast<qsizetype>(length)};
+}
 struct Fixture {
     QTemporaryDir root{QStringLiteral("/tmp/lapis-ws-XXXXXX")};
     QLocalServer server;
@@ -33,12 +55,16 @@ struct Fixture {
     lapis::codex::UnixWebSocket client;
     int opened{};
     int failed{};
+    QString failure;
     QList<QByteArray> messages;
     Fixture() {
         require(root.isValid() && server.listen(root.filePath("socket")));
         QObject::connect(&client, &lapis::codex::UnixWebSocket::opened, &server, [&] { ++opened; });
         QObject::connect(&client, &lapis::codex::UnixWebSocket::failed, &server,
-                         [&](const QString&) { ++failed; });
+                         [&](const QString& reason) {
+                             ++failed;
+                             failure = reason;
+                         });
         QObject::connect(&client, &lapis::codex::UnixWebSocket::message, &server,
                          [&](const QByteArray& text) { messages.append(text); });
     }
@@ -76,17 +102,22 @@ struct Fixture {
         QByteArray bytes;
         wait([&] {
             bytes += peer->readAll();
-            return bytes.size() >= 2 && bytes.size() >= 6 + (static_cast<quint8>(bytes[1]) & 127U);
+            const auto header = client_header(bytes);
+            return header && bytes.size() >= header->offset + header->length;
         });
-        require((static_cast<quint8>(bytes[1]) & 128U) != 0);
         return bytes;
     }
 };
 QByteArray unmask(const QByteArray& frame) {
-    QByteArray result;
-    for (qsizetype index = 6; index < frame.size(); ++index)
-        result.append(static_cast<char>(static_cast<quint8>(frame[index]) ^
-                                        static_cast<quint8>(frame[2 + (index - 6) % 4])));
+    const auto header = client_header(frame);
+    if (!header)
+        throw std::runtime_error("Incomplete masked client frame");
+    require(header->offset + header->length == frame.size());
+    QByteArray result(header->length, '\0');
+    for (qsizetype index = 0; index < header->length; ++index)
+        result[index] =
+            static_cast<char>(static_cast<quint8>(frame[header->offset + index]) ^
+                              static_cast<quint8>(frame[header->offset - 4 + index % 4]));
     return result;
 }
 void framing() {
@@ -105,6 +136,11 @@ void framing() {
     require(
         !f.client.send(QByteArray(lapis::codex::UnixWebSocket::maximum_message_bytes + 1, 'x')));
     require(!f.client.send(QByteArray::fromHex("ff")));
+    for (const qsizetype length : {125, 126, 65535, 65536}) {
+        const QByteArray payload(length, 'x');
+        require(f.client.send(payload));
+        require(unmask(f.client_frame()) == payload);
+    }
     f.client.close();
     QCoreApplication::processEvents();
     require(f.failed == 0);
@@ -113,7 +149,7 @@ void invalid_frames() {
     for (const auto& bytes :
          {"8101ff", "808000000000", "8000", "010161810162", "0900", "897e007e",
           "827f0000000000000000", "817f8000000000000000", "817f0000000000100001", "817e000161",
-          "c100", "8200", "8801e8", "880203ed", "880303e8ff"}) {
+          "c100", "8200", "8801e8", "880203ed", "880303e8ff", "880203f7", "88020bb7", "88021388"}) {
         Fixture f;
         f.upgrade();
         f.write(QByteArray::fromHex(bytes));
@@ -145,13 +181,28 @@ void oversized_unterminated_handshake() {
     require(f.opened == 0);
 }
 void peer_close() {
+    for (const auto code :
+         {1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 3000, 4999}) {
+        Fixture f;
+        f.upgrade();
+        f.write(QByteArray::fromHex("8802") +
+                QByteArray(1, static_cast<char>(static_cast<unsigned>(code) >> 8U)) +
+                QByteArray(1, static_cast<char>(static_cast<unsigned>(code) & 0xffU)));
+        const auto response = f.client_frame();
+        require(static_cast<quint8>(response[0]) == 0x88);
+        const auto echoed_code = static_cast<unsigned>(
+            static_cast<quint32>(static_cast<quint8>(unmask(response)[0])) << 8U |
+            static_cast<quint8>(unmask(response)[1]));
+        require(echoed_code == static_cast<unsigned>(code));
+        f.require_failed();
+        require(f.failure == QStringLiteral("WebSocket peer closed"));
+    }
+
     Fixture f;
     f.upgrade();
-    f.write(QByteArray::fromHex("880203e8"));
-    const auto response = f.client_frame();
-    require(static_cast<quint8>(response[0]) == 0x88 &&
-            unmask(response) == QByteArray::fromHex("03e8"));
+    f.write(QByteArray::fromHex("8805") + QByteArray::fromHex("03e8e697a5"));
     f.require_failed();
+    require(f.failure == QStringLiteral("WebSocket peer closed"));
 }
 void reentrant_close() {
     Fixture f;
