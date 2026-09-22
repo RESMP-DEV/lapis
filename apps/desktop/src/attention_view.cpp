@@ -50,21 +50,19 @@ QVariantList SessionPreview::attentionRequests() const {
         const auto& pending = item.pending;
         const auto key = token(*attention_, pending);
         const bool responding = pending.submitted || submitted_attention_.contains(key);
+        const bool eligible = attentionReady() && !responding &&
+                              pending.status == session::attention::RequestStatus::pending;
         QStringList choices;
         for (const auto& choice : pending.request.choices)
             choices.append(QString::fromStdString(choice));
-        values.append(QVariantMap{
-            {"token", key},
-            {"reason", QString::fromStdString(pending.request.reason)},
-            {"summary", QString::fromStdString(pending.request.summary)},
-            {"choices", choices},
-            {"details", item.details.toVariantMap()},
-            {"responding", responding},
-            {"attentionEligible", attentionReady() && !responding &&
-                                      pending.status == session::attention::RequestStatus::pending},
-            {"enabled", attentionReady() && !responding &&
-                            pending.status == session::attention::RequestStatus::pending &&
-                            !choices.isEmpty()}});
+        values.append(QVariantMap{{"token", key},
+                                  {"reason", QString::fromStdString(pending.request.reason)},
+                                  {"summary", QString::fromStdString(pending.request.summary)},
+                                  {"choices", choices},
+                                  {"details", item.details.toVariantMap()},
+                                  {"responding", responding},
+                                  {"attentionEligible", eligible},
+                                  {"enabled", eligible && !choices.isEmpty()}});
     }
     return values;
 }

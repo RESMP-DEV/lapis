@@ -7,6 +7,7 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QTemporaryDir>
@@ -63,7 +64,7 @@ struct Peer {
 };
 struct Fixture {
     QLocalServer server;
-    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-v4-XXXXXX")};
+    QTemporaryDir directory{QStringLiteral("/tmp/lapis-v4-XXXXXX")};
     lapis::session::LaunchSpec launch;
     wire::SessionIdentity identity{wire::new_id(), wire::new_id()};
     lapis::session::Terminal terminal{{4, 2}};
@@ -73,7 +74,8 @@ struct Fixture {
         QStringLiteral("test"), QStringLiteral("/tmp"), {}, QColor(Qt::white), ""};
     Fixture() {
         require(directory.isValid(), "Temporary directory failed");
-        endpoint = QDir(directory.path()).absoluteFilePath(QStringLiteral("session.sock"));
+        endpoint = QDir(QFileInfo(directory.path()).canonicalFilePath())
+                       .absoluteFilePath(QStringLiteral("session.sock"));
         launch = lapis::session::validate_launch({.program = QStringLiteral("/bin/cat"),
                                                   .arguments = {},
                                                   .directory = directory.path()});
@@ -425,6 +427,23 @@ void reconnect_only_rejects_replacement_and_other_modes() {
     require(!f.server.hasPendingConnections(),
             "Reconnect-only entry created or discovered another session");
 }
+void direct_reconnect_only_rejection() {
+    Fixture f;
+    lapis::desktop::LiveConnection connection(f.document, workspace_entry(f, f.identity));
+    for (const auto mode : {wire::AttachMode::create, wire::AttachMode::discover}) {
+        f.document.setActivity(QString{});
+        connection.begin(mode);
+        require(f.document.activity().contains(QStringLiteral("cannot create or discover")),
+                "Direct reconnect-only rejection lost its diagnostic");
+        require(!f.server.hasPendingConnections(), "Rejected mode opened a connection");
+    }
+    // The constructor's queued reconnect still uses the original trusted identity.
+    auto peer = f.accept();
+    const auto request = f.request(peer);
+    require(request.mode == wire::AttachMode::reconnect && request.expected == f.identity,
+            "Rejected mode changed the scheduled reconnect");
+}
+
 void attention_routing_and_reconnect() {
     using namespace lapis::session::attention;
     Fixture f;
@@ -573,6 +592,7 @@ int main(int argc, char** argv) {
         missing_and_replaced();
         reconnect_only_workspace_entry();
         reconnect_only_rejects_replacement_and_other_modes();
+        direct_reconnect_only_rejection();
         attention_routing_and_reconnect();
         lost_before_screen();
         legacy_server();

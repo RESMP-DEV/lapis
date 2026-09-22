@@ -27,10 +27,7 @@
 #include <QThread>
 #include <QThreadPool>
 
-#include <algorithm>
-#include <cerrno>
 #include <chrono>
-#include <functional>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -39,14 +36,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-#include <signal.h>
-
-#ifdef Q_OS_MACOS
-#include <libproc.h>
-#include <sys/proc_info.h>
-#include <unistd.h>
-#endif
 
 namespace {
 using namespace lapis::desktop;
@@ -254,8 +243,6 @@ class WorkspaceFixture {
     struct SourceRecord {
         QString id;
         QVariantList requests;
-        QString role;
-        QString endpoint;
     };
 
     explicit WorkspaceFixture(const ProbeOptions& options) : options_(options) {
@@ -333,8 +320,7 @@ class WorkspaceFixture {
                            session->attentionCount() == 1;
                 },
                 "Adopted source request did not arrive");
-            records_.push_back(
-                {session->sessionId(), session->attentionRequests(), source.role, source.endpoint});
+            records_.push_back({session->sessionId(), session->attentionRequests()});
         }
         require(records_[0].id != records_[1].id, "Neighbor identities collided");
     }

@@ -51,7 +51,9 @@ QJsonObject event(const QString& name, const QString& tool = {}, const QString& 
 }
 struct Fixture {
     attention::State state{"session", "claude-code"};
-    lapis::claude::Observer observer{state};
+    std::unique_ptr<lapis::claude::Observer> owned_observer{
+        std::make_unique<lapis::claude::Observer>(state)};
+    lapis::claude::Observer& observer{*owned_observer};
     QString command;
     QString socket;
     QString nonce;
@@ -108,6 +110,28 @@ struct Fixture {
         require(state.ready() && state.activity() == attention::Activity::working);
     }
 };
+void callback_shutdown() {
+    Fixture f;
+    int notifications = 0;
+    QObject::connect(&f.observer, &lapis::claude::Observer::changed, &f.observer, [&] {
+        ++notifications;
+        f.observer.stop();
+    });
+    f.raw(QJsonDocument(event("SessionStart")).toJson(QJsonDocument::Compact));
+    QCoreApplication::processEvents();
+    require(!f.state.connected() && notifications == 2);
+    f.observer.stop();
+    QCoreApplication::processEvents();
+    require(notifications == 2);
+}
+void callback_destruction() {
+    Fixture f;
+    QObject::connect(&f.observer, &lapis::claude::Observer::changed, QCoreApplication::instance(),
+                     [&] { f.owned_observer.reset(); });
+    f.raw(QJsonDocument(event("SessionStart")).toJson(QJsonDocument::Compact));
+    require(!f.owned_observer);
+    QCoreApplication::processEvents();
+}
 void identities_and_boundaries() {
     Fixture f;
     f.send(event("PermissionRequest", "Bash"));
@@ -233,6 +257,8 @@ int main(int argc, char** argv) {
     if (app.arguments().value(1) == QStringLiteral("--claude-hook"))
         return lapis::claude::run_hook_relay(app.arguments().value(2), app.arguments().value(3));
     try {
+        callback_shutdown();
+        callback_destruction();
         identities_and_boundaries();
         exact_retirement();
         session_replacement();

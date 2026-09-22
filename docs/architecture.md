@@ -194,7 +194,11 @@ The enlarged pane and previews represent live workspace entries; the isolated
 preview retains labeled fixtures. One GUI may attach per endpoint. A matching
 attachment replaces the previous connection; a mismatched launch is rejected
 first. The default workspace registry is `runtime/workspace-v1.json`, and an
-explicit `--workspace` path selects another registry. Explicit `--socket` or
+explicit `--workspace` path selects another registry. Registry paths are validated
+as private trusted filesystem paths, without importing Unix socket length or
+file-type constraints. Actual service endpoints still obey platform socket limits.
+Exported endpoints are canonical (including macOS `/tmp` aliases), and manifest
+identity fields use canonical lowercase hex. Explicit `--socket` or
 program flags retain the legacy single-session path. Stable session IDs, service
 epochs and attachment generations bind each connection; automatic recovery
 remains later work. This wire format is internal and provisional.
@@ -1141,6 +1145,15 @@ after service death or reboot, new terminal selection/accessibility/shaping
 features, renderer replacement, packaging and binary distribution. Preserve
 portable boundaries and existing terminal behavior while these remain deferred.
 
+A failed registry save pauses further registry mutations and reports the failure;
+live sessions remain attached. **Session → Retry saving workspace** performs one
+explicit save attempt after the cause is corrected. Retry revalidates ownership,
+permissions, file type and existing contents through the normal atomic-write path.
+Persistent corruption remains untouched, and controls remain disabled until a save
+succeeds. There is no timed retry loop or automatic recovery from a failed initial
+manifest load. The workspace tests exercise repeated failure, corruption refusal,
+repair and successful persistence without restarting the live service.
+
 #### Claude Code hooks: an observation-only extension
 
 Claude Code sessions use the same retained terminal, workspace queue and guarded
@@ -1178,12 +1191,19 @@ observation epoch, so `/clear` can continue in the same Claude process. Delayed
 hooks from retired sources cannot rebind them. The observer remembers up to 1024
 retired sources and stops observation on overflow. Reopening an already retired
 conversation is not qualified; start a new managed session for that case. Process
-exit or explicit observer shutdown still closes the listener. The
+exit or explicit observer shutdown still closes the listener. State changes are
+immediate; observer notifications are coalesced onto the service event loop after
+transport callbacks return. A notification receiver may stop or destroy the
+observer safely, and repeated stop calls are inert. The
 [PR #10 repair receipt](../evidence/pr10-review.json) records the reproduced
 failure, live `/clear` recovery and retired-source regression cases.
 
 The adapter declares observation only: response and authoritative reconciliation
-are unsupported. A verified initial `SessionStart` or `UserPromptSubmit` boundary
+are unsupported. A well-formed unsupported decision from a wire client
+is rejected with a terminal-only diagnostic while preserving its attachment.
+Only an exact pending source/epoch/request/revision receives a retry token; no
+decision is forwarded to Claude. Malformed and stale-attachment frames retain
+the normal protocol rejection behavior. A verified initial `SessionStart` or `UserPromptSubmit` boundary
 starts an empty observation ledger; the shared reducer cannot use that operation
 to replace stale pending requests. Local delivery order is not an upstream
 sequence or proof that no hook was missed. Service restart and delivery loss

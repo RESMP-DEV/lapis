@@ -806,11 +806,11 @@ class SessionService final : public QObject {
         schedule();
     }
     void allow_decision_retry(wire::AttentionDecision decision) {
-        if (!codex_state_ || !codex_state_->ready() ||
-            codex_state_->epoch() != decision.source_epoch)
+        const auto* state = attention_state();
+        if (!state || !state->ready() || state->epoch() != decision.source_epoch)
             return;
-        const auto found = codex_state_->pending().find(decision.request_id);
-        if (found == codex_state_->pending().end())
+        const auto found = state->pending().find(decision.request_id);
+        if (found == state->pending().end())
             return;
         const auto& pending = found->second;
         if (pending.revision != decision.revision || pending.submitted ||
@@ -841,10 +841,17 @@ class SessionService final : public QObject {
         QByteArray bytes;
         switch (frame.kind) {
         case wire::Kind::attention_decision: {
-            if (!codex_observer_)
+            if (!attention_state())
                 throw std::runtime_error(
                     "Attention decisions are unsupported for terminal sessions");
             const auto decision = wire::decode_attention_decision(control.payload);
+            if (claude_observer_) {
+                allow_decision_retry(decision);
+                decision_error_ = QStringLiteral("Answer Claude requests in the terminal");
+                attention_dirty_ = true;
+                schedule_attention();
+                return;
+            }
             if (!codex_observer_->decide(decision.source_epoch, decision.request_id,
                                          decision.revision, decision.choice, decision.answers)) {
                 allow_decision_retry(decision);

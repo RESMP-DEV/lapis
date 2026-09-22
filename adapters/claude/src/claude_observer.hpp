@@ -19,6 +19,8 @@ class Observer final : public QObject {
                                               const QString& serviceExecutable);
     void stop();
   signals:
+    // State changes immediately; notifications are coalesced on the event loop.
+    // Receivers may stop or destroy the observer without reentering transport work.
     void changed();
 
   private:

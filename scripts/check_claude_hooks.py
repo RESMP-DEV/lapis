@@ -13,8 +13,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from check_cli_launch import TEXT, Service, require
-from check_service_attention import View, cleanup_service, process_groups
+from check_cli_launch import ATTENTION_DECISION, TEXT, Service, require
+from check_service_attention import View, cleanup_service, decision, process_groups
 from probe_terminal import run_process
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -124,6 +124,7 @@ def notice(view, tool):
 
 
 def stable_notice(before, after):
+    require(after is not None, "Pending notice disappeared during the stability check")
     require(
         all(after[key] == before[key] for key in ("id", "epoch", "revision"))
         and not after["submitted"],
@@ -273,6 +274,27 @@ async def exercise(args, receipt):
             receipt["permission_notice"] = before
             await asyncio.sleep(1)
             stable_notice(before, notice(view, "Bash"))
+            # A wire client cannot answer observation-only hooks. Rejection must
+            # preserve both the pending notice and the current terminal attachment.
+            attachment = view.client.attachment
+            rejected = decision(before, "allow")
+            view.client.send(ATTENTION_DECISION, rejected)
+            await view.wait(
+                lambda: (
+                    view.retry == rejected
+                    and "Answer Claude requests in the terminal"
+                    in view.attention["diagnostic"]
+                ),
+                10,
+            )
+            stable_notice(before, notice(view, "Bash"))
+            require(
+                view.client.attachment == attachment,
+                "Rejection replaced the attachment",
+            )
+            receipt["checks"].append(
+                "unsupported Claude decision rejected with exact token and attachment retained"
+            )
             await view.close()
             view = None
             await capture_desktop(args, service, receipt)
@@ -289,7 +311,8 @@ async def exercise(args, receipt):
                 ),
                 15,
             )
-            # Cancel this permission screen. No hook or desktop decision is sent.
+            # Cancel this permission screen through the terminal. The rejected wire
+            # decision above must not have answered it.
             view.client.send(TEXT, b"\x1b")
             await asyncio.sleep(1)
             view.client.send(TEXT, QUESTION_PROMPT.encode())

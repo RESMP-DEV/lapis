@@ -27,8 +27,8 @@ void validate_agent(const LaunchSpec& launch) {
             const auto option = argument.section(QLatin1Char('='), 0, 0);
             if (option == QStringLiteral("--settings") || option == QStringLiteral("--bare") ||
                 option == QStringLiteral("--safe-mode"))
-                throw std::invalid_argument(
-                    "Managed Claude owns --settings and requires hooks enabled");
+                throw std::invalid_argument("Managed Claude requires hooks enabled; --settings, "
+                                            "--bare and --safe-mode conflict");
         }
         return;
     case AgentMode::codex:

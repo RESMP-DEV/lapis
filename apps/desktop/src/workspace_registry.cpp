@@ -19,6 +19,7 @@
 
 #include <cerrno>
 #include <stdexcept>
+#include <system_error>
 #include <utility>
 
 namespace lapis::desktop {
@@ -71,28 +72,25 @@ bool valid_agent(session::AgentMode agent) {
     return false;
 }
 
-void validate_entry(const WorkspaceEntry& entry) {
-    static_cast<void>(normalized_endpoint(entry.endpoint));
-    if (!session::wire::valid_identity(entry.identity))
-        fail("Workspace identity is invalid");
-    if (entry.fingerprint.size() != 32)
-        fail("Workspace fingerprint must contain 32 bytes");
-    if (!valid_utf8(entry.title) || !valid_utf8(entry.directory))
-        fail("Workspace title or directory is invalid");
-    if (!valid_agent(entry.agent))
-        fail("Workspace agent mode is unknown");
-}
-
-void validate_entries(const std::vector<WorkspaceEntry>& entries) {
+std::vector<WorkspaceEntry> validate_entries(const std::vector<WorkspaceEntry>& entries) {
     if (entries.size() > WorkspaceRegistry::maximum_entries)
         fail("Workspace registry contains too many entries");
     std::vector<QString> endpoints;
     std::vector<QByteArray> session_ids;
     endpoints.reserve(entries.size());
     session_ids.reserve(entries.size());
-    for (const auto& entry : entries) {
-        validate_entry(entry);
-        endpoints.push_back(normalized_endpoint(entry.endpoint));
+    auto normalized = entries;
+    for (auto& entry : normalized) {
+        entry.endpoint = normalized_endpoint(entry.endpoint);
+        endpoints.push_back(entry.endpoint);
+        if (!session::wire::valid_identity(entry.identity))
+            fail("Workspace identity is invalid");
+        if (entry.fingerprint.size() != 32)
+            fail("Workspace fingerprint must contain 32 bytes");
+        if (!valid_utf8(entry.title) || !valid_utf8(entry.directory))
+            fail("Workspace title or directory is invalid");
+        if (!valid_agent(entry.agent))
+            fail("Workspace agent mode is unknown");
         session_ids.push_back(entry.identity.session_id);
     }
     std::sort(endpoints.begin(), endpoints.end());
@@ -101,6 +99,7 @@ void validate_entries(const std::vector<WorkspaceEntry>& entries) {
     std::sort(session_ids.begin(), session_ids.end());
     if (std::adjacent_find(session_ids.begin(), session_ids.end()) != session_ids.end())
         fail("Workspace session IDs must be unique");
+    return normalized;
 }
 
 void validate_directory_status(const struct stat& status) {
@@ -148,7 +147,7 @@ QByteArray encode_entries(const std::vector<WorkspaceEntry>& entries) {
     QJsonArray array;
     for (const auto& entry : entries) {
         QJsonObject object;
-        object.insert(QLatin1String(endpoint_key), normalized_endpoint(entry.endpoint));
+        object.insert(QLatin1String(endpoint_key), entry.endpoint);
         object.insert(QLatin1String(session_id_key),
                       QString::fromLatin1(entry.identity.session_id.toHex()));
         object.insert(QLatin1String(epoch_key), QString::fromLatin1(entry.identity.epoch.toHex()));
@@ -234,7 +233,7 @@ std::vector<WorkspaceEntry> decode_entries(const QByteArray& bytes) {
             const auto encoded = string_field(key);
             const auto decoded = QByteArray::fromHex(encoded.toLatin1());
             if (QString::fromLatin1(decoded.toHex()) != encoded)
-                fail("Workspace identity encoding is invalid");
+                fail("Workspace identity fields require canonical lowercase hex");
             return decoded;
         };
         entry.identity = {hex_field(session_id_key), hex_field(epoch_key)};
@@ -252,8 +251,12 @@ std::vector<WorkspaceEntry> decode_entries(const QByteArray& bytes) {
             fail("Workspace agent mode is unknown");
         entries.push_back(std::move(entry));
     }
-    validate_entries(entries);
-    return entries;
+    return validate_entries(entries);
+}
+
+[[noreturn]] void fail_errno(const char* message) {
+    const int error = errno;
+    throw std::system_error(error, std::generic_category(), message);
 }
 
 class TemporaryFile {
@@ -272,6 +275,11 @@ class TemporaryFile {
     QString path_;
     posix::UniqueFd file_;
 };
+
+void validate_existing_storage(const QString& path) {
+    if (QFileInfo::exists(path) || QFileInfo{path}.isSymLink())
+        static_cast<void>(open_private_regular_file(path, O_RDONLY));
+}
 
 void write_exact(int descriptor, const QByteArray& bytes) {
     qint64 offset = 0;
@@ -297,38 +305,31 @@ class WorkspaceRegistry::Impl final {
             info.fileName() == QLatin1String("..") || info.isSymLink())
             fail("Workspace registry filename is unsafe");
         owner_directory_ = info.absolutePath();
-        storage_path_ = QDir(owner_directory_).filePath(info.fileName());
         ensure_private_owner_directory(owner_directory_);
-        // Reuse the endpoint ancestor trust boundary for the registry directory.
-        owner_directory_ =
-            QFileInfo(session::posix::prepare_endpoint(
-                          QDir(owner_directory_).filePath(QStringLiteral("registry.guard"))))
-                .absolutePath();
+        owner_directory_ = session::posix::canonical_trusted_directory(owner_directory_);
         storage_path_ = QDir(owner_directory_).filePath(info.fileName());
-        if (QFileInfo::exists(storage_path_) || QFileInfo(storage_path_).isSymLink()) {
-            auto existing = open_private_regular_file(storage_path_, O_RDONLY);
-            static_cast<void>(existing);
-        }
+        validate_existing_storage(storage_path_);
         lock_ = open_private_regular_file(lock_path(), O_RDWR | O_CREAT);
-        if (::flock(lock_.get(), LOCK_EX | LOCK_NB) != 0)
-            fail("Workspace registry is already locked");
+        while (::flock(lock_.get(), LOCK_EX | LOCK_NB) != 0) {
+            if (errno == EINTR)
+                continue;
+            if (errno == EWOULDBLOCK)
+                fail("Workspace registry is already locked");
+            fail_errno("Could not lock workspace registry");
+        }
     }
 
     [[nodiscard]] std::vector<WorkspaceEntry> read() const {
-        if (!QFileInfo::exists(storage_path_) && !QFileInfo(storage_path_).isSymLink())
+        if (!QFileInfo::exists(storage_path_) && !QFileInfo{storage_path_}.isSymLink())
             return {};
         return decode_entries(read_all(storage_path_));
     }
 
     void write(const std::vector<WorkspaceEntry>& entries) {
-        validate_entries(entries);
-        const QByteArray bytes = encode_entries(entries);
-        if (QFileInfo::exists(storage_path_) || QFileInfo(storage_path_).isSymLink()) {
-            auto existing = open_private_regular_file(storage_path_, O_RDONLY);
-            static_cast<void>(existing);
-        }
-        // Preserve external corruption rather than replacing evidence with a fresh snapshot.
-        if (QFileInfo::exists(storage_path_))
+        const std::vector<WorkspaceEntry> normalized = validate_entries(entries);
+        const QByteArray bytes = encode_entries(normalized);
+        // Preserve external corruption and dangling symlinks rather than replacing them.
+        if (QFileInfo::exists(storage_path_) || QFileInfo{storage_path_}.isSymLink())
             static_cast<void>(decode_entries(read_all(storage_path_)));
         const QString temporary_path =
             owner_directory_ + QStringLiteral("/.registry.") +

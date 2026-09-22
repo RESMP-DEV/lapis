@@ -557,7 +557,7 @@ ApplicationWindow {
     onActiveChanged: if (active) keyboardOwnershipReady()
     onLayoutModeChanged: keyboardOwnershipReady()
     onInputBlockedChanged: {
-        workspace.setInteractionBlocked("root-modal", inputBlocked)
+        workspace.setInteractionBlocked(preview.modalBlockReason, inputBlocked)
         preview.deferTerminalFocus()
     }
 
@@ -745,6 +745,13 @@ ApplicationWindow {
                             sessionEndpointField.text = ""
                             sessionDialog.open()
                         }
+                    }
+                    MenuItem {
+                        objectName: "retryWorkspaceSaveAction"
+                        text: qsTr("Retry saving workspace")
+                        visible: workspace.canRetrySave
+                        enabled: workspace.canRetrySave
+                        onTriggered: workspace.retrySave()
                     }
                     MenuSeparator {}
                     MenuItem {

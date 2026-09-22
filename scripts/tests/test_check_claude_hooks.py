@@ -38,6 +38,10 @@ class NoticeTests(unittest.TestCase):
             with self.subTest(update=update), self.assertRaises(CheckError):
                 terminal_notice({**self.request(), **update}, "Bash")
 
+    def test_missing_notice_reports_observation_loss(self):
+        with self.assertRaisesRegex(CheckError, "Pending notice disappeared"):
+            stable_notice(self.request(), None)
+
     def test_reconnection_preserves_exact_request_token(self):
         before = self.request()
         stable_notice(before, before.copy())

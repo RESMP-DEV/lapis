@@ -167,6 +167,7 @@ class Workspace final : public QObject {
     Q_PROPERTY(bool registryEnabled READ registryEnabled CONSTANT)
     Q_PROPERTY(bool loading READ loading NOTIFY workspaceChanged)
     Q_PROPERTY(bool canAddSessions READ canAddSessions NOTIFY workspaceChanged)
+    Q_PROPERTY(bool canRetrySave READ canRetrySave NOTIFY workspaceChanged)
     Q_PROPERTY(QString status READ status NOTIFY workspaceChanged)
     Q_PROPERTY(QString defaultSessionDirectory READ defaultSessionDirectory CONSTANT)
     Q_PROPERTY(bool previewMode READ previewMode CONSTANT)
@@ -179,6 +180,8 @@ class Workspace final : public QObject {
     [[nodiscard]] bool registryEnabled() const { return !manifest_.isEmpty(); }
     [[nodiscard]] bool loading() const { return loading_; }
     [[nodiscard]] bool canAddSessions() const;
+    [[nodiscard]] bool canRetrySave() const;
+    Q_INVOKABLE void retrySave();
     [[nodiscard]] const QString& status() const { return status_; }
     [[nodiscard]] const QString& defaultSessionDirectory() const {
         return default_session_directory_;
@@ -221,7 +224,7 @@ class Workspace final : public QObject {
     class Storage;
     std::unique_ptr<Storage> storage_;
     void loadRegistry();
-    void persistRegistry();
+    void persistRegistry(bool retry = false);
     void appendSession(std::unique_ptr<SessionPreview> session);
     void flushFocus();
     QString manifest_;

@@ -1,0 +1,333 @@
+{
+  "schema": 1,
+  "recorded_at": "2026-09-22T21:59:37.491287+00:00",
+  "base_revision": "27ca95374f7ebb18fbd97e05ef0db84acb340bea",
+  "scope": "PR10: all 25 OpenCodeReview threads; reviewed repairs, supported cleanups, explicit save recovery, and evidence-backed non-changes. No merge.",
+  "platform": "macOS arm64",
+  "source_dirty_during_checks": true,
+  "staged_patch_sha256_without_this_receipt": "07482b838bcfd4dccf161911ccadae12bd9525fd11bb73409df8c57b6f468d13",
+  "source_sha256": {
+    "adapters/claude/src/claude_observer.cpp": "42ea1c606a79233ce9e1cfcc40149bd308288a46a0b509d33acc8d587877a31e",
+    "adapters/claude/src/claude_observer.hpp": "a9fc1bf551428c215ee2bc5a6b0794df99a97b06bbd6f6755f2b6f288a0f3c8a",
+    "adapters/claude/tests/claude_observer_test.cpp": "ff59a75e00d4bc23c1141bd31f1da2cac6522f280a76006e4c920924c0d61024",
+    "apps/desktop/qml/Main.qml": "e37f6643f727ddda6da6b4b80b3484697b8a01f6464e699be363d828ac9bbbcc",
+    "apps/desktop/src/attention_view.cpp": "9f9520c267a0232811b74a63caec668b263ed794f70fe173f3ecd578ef147e72",
+    "apps/desktop/src/live_connection.cpp": "7f5966c05e15c2a7107be7782fca11370fecbb7cdbec8fae741375a1e1f20fb5",
+    "apps/desktop/src/ui_preview.cpp": "efb07e68281352c388ae1af677c88e40a7ddf30ab56d6d39e3c8550eb96fc2ee",
+    "apps/desktop/src/ui_preview.hpp": "0223312118def1e97d7c49676653a21f31242b965e60b22b15e9d7bafc9a0092",
+    "apps/desktop/src/workspace.cpp": "3253ca552447efcea4f1a6c0bff98a7c0ff79d2e453715578afe64609341f887",
+    "apps/desktop/src/workspace.hpp": "d89b1cc675d5ba6937a12f15b3ef63a744740bcd03ed6e6dd1b2c3d2b43ed8a3",
+    "apps/desktop/src/workspace_registry.cpp": "b2c837bfc8385b8b8bd320fedfa3a16c86c9d978d6863eaab75d245f2cf3a87e",
+    "apps/desktop/tests/live_connection_test.cpp": "6b01f244c45137ba96e6b885b3a90278b0227d1b661ca2a290bde25c489bec8f",
+    "apps/desktop/tests/workspace_attention_ui_probe.cpp": "b08474d907914ce7b1cb0a5f55b75cd4946a4a0f8b1910d8bf42a7774384b2df",
+    "apps/desktop/tests/workspace_registry_test.cpp": "5e63ecb6df730246a4a1081963caa8be291bac8ef4dc42153f992a79db4b7426",
+    "apps/desktop/tests/workspace_test.cpp": "2214d5a14bed1df62e5411d8d8491ecdec91b7936ced62d9ca27585764eb7978",
+    "apps/desktop/tests/workspace_ui_probe.cpp": "028b0b88ff752ae7bc20d9ffa2f8d5564b359c42cb1bfd2bc61551c5b48e908a",
+    "scripts/check_claude_hooks.py": "871f6b2a673c66ad2335ca5ebff711ed5d24f61280d811652f74b7cb9365dd00",
+    "scripts/check_ui_preview.py": "8084f6f9358ca76ebf472a838581a80d3dc112dc4bc1f4d6b365238fe977704a",
+    "scripts/tests/test_check_claude_hooks.py": "0907585e406a01e05e557ac2a24ead2cc41cc5c248152638eb2252d32c71ec0b",
+    "services/session/src/launch_spec.cpp": "e86de6ce6c7b91e1d9acaa34d6c5f718f8cd0f575e5e007ec68fa3c65a2ecbf7",
+    "services/session/src/platform/posix/local_endpoint.cpp": "a53de0c165476c1091468547415176cb9ecb80244dcb69a6156d5933fdcfecde",
+    "services/session/src/platform/posix/local_endpoint.hpp": "0914843c933103760c9b6bbc9733f2eec6187fcc0d4bf4a6a9f458cb7208a238",
+    "services/session/src/session_service.cpp": "bd28e94a2c499b20dc7fe3f7c6699c980344ff9986b1d86cd0054bde79b0d6d9",
+    "README.md": "9d142313b55498318a0277c8edab89bc713c6f66e8bacc5346831e5dd8e78278",
+    "docs/architecture.md": "35f7524f71da7961a7a918ab9991d49ffc6ff0227b979afa097bfd422b00ad8f"
+  },
+  "concurrent_work": "Unrelated IDE-context probe, evidence and documentation remain outside this change. README and architecture are staged by selected hunks.",
+  "behavior": [
+    "Observer updates state synchronously and coalesces changed onto the event loop; shutdown is idempotent and callbacks may destroy the observer.",
+    "Registry trusts ordinary private directories without synthetic socket limits; validates dangling symlinks and existing corruption; explicit save retries stay gated until success.",
+    "Claude decision rejection preserves the attachment and correlates only exact pending tokens; no Claude GUI approval capability added.",
+    "Canonical endpoint/lowercase identity contracts retained; cleanup preserves observation-only attention and all focus guards."
+  ],
+  "checks": [
+    {
+      "command": "just quality",
+      "passed": true,
+      "python_cases": 96,
+      "log": "build/pr10-address/quality-final.log"
+    },
+    {
+      "command": "just desktop",
+      "passed": false,
+      "detail": "Build, format and 21/22 CTest suites passed. Registry clang-tidy rejected strerror; terminal-input timed out. Failures preserved, targeted corrections below.",
+      "log": "build/pr10-address/desktop.log"
+    },
+    {
+      "command": "cmake --build build/desktop --parallel 8; targeted workspace/workspace-registry CTest",
+      "passed": true,
+      "detail": "After replacing strerror with std::system_error. Same combined CTest invocation still failed terminal-input; do not describe that entire command as passing.",
+      "log": "build/pr10-address/final-focused-tests.log"
+    },
+    {
+      "command": "clang-tidy -p build/reports/desktop apps/desktop/src/workspace_registry.cpp",
+      "passed": true,
+      "detail": "All other translation-unit analyses passed in the original desktop run.",
+      "log": "build/pr10-address/registry-tidy.log"
+    },
+    {
+      "command": "cppcheck --project=build/reports/desktop/compile_commands.json --library=qt --enable=warning,performance,portability --error-exitcode=1 --inline-suppr --template=gcc",
+      "passed": true,
+      "log": "build/pr10-address/cppcheck-final.log"
+    },
+    {
+      "command": "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop -R '^terminal-input$' --output-on-failure --no-tests=error",
+      "passed": true,
+      "detail": "Isolated threaded run without intermediate polling. Earlier default-loop runs failed at different focus/input boundaries; instability is not claimed repaired.",
+      "log": "build/pr10-address/terminal-input-isolated.log"
+    },
+    {
+      "command": "ctest --test-dir build/desktop-asan -R ^(claude-observer|workspace-registry|workspace|live-connection|launch-spec)$ --output-on-failure --no-tests=error",
+      "passed": true,
+      "cases": 5,
+      "log": "build/pr10-address/asan-tests.log"
+    },
+    {
+      "command": "ctest --test-dir build/desktop-tsan -R ^(claude-observer|workspace-registry|workspace|live-connection|launch-spec)$ --output-on-failure --no-tests=error",
+      "passed": true,
+      "cases": 5,
+      "log": "build/pr10-address/tsan-tests.log"
+    },
+    {
+      "command": "Rebuild workspace/registry and repeat those two CTest suites separately in desktop-asan and desktop-tsan after final error-formatting change",
+      "passed": true,
+      "cases_per_instrumentation": 2,
+      "logs": [
+        "build/pr10-address/asan-registry-tests.log",
+        "build/pr10-address/tsan-registry-tests.log"
+      ]
+    },
+    {
+      "command": "just cli-check",
+      "passed": true,
+      "cases": 15,
+      "log": "build/pr10-address/cli.log"
+    },
+    {
+      "command": "just ui-check",
+      "passed": true,
+      "cases": 12,
+      "log": "build/pr10-address/ui.log"
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_native_input_probe --output build/pr10-address/native.json",
+      "passed": true,
+      "cases": 23,
+      "input_sources_and_clipboard_restored": true,
+      "log": "build/pr10-address/native.log"
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_workspace_ui_probe --json-file build/pr10-address/workspace-ui.json --output-dir build/pr10-address/workspace-ui",
+      "passed": false,
+      "detail": "Interaction guards and layouts exercised, then warm-switch frame wait failed. An ignored diagnostic copy later failed the eligible-active-window precondition.",
+      "log": "build/pr10-address/workspace-ui.log"
+    },
+    {
+      "command": "QSG_RENDER_LOOP=threaded build/desktop/apps/desktop/lapis_workspace_ui_probe --json-file build/pr10-address/workspace-ui-isolated.json --output-dir build/pr10-address/workspace-ui-isolated",
+      "passed": true,
+      "detail": "Original unmodified probe, isolated foreground run; four layouts, guarded carousel and warm-switch checks. Timings are observations, not performance gates.",
+      "log": "build/pr10-address/workspace-ui-isolated.log"
+    },
+    {
+      "command": "python3 scripts/check_claude_hooks.py --build-dir build/desktop --output build/pr10-address/claude-live.json --capture build/pr10-address/claude-pending.png",
+      "passed": true,
+      "checks": [
+        "unsupported Claude decision rejected with exact token and attachment retained",
+        "same child and pending notice after detach/reattach",
+        "terminal answer retired question and turn completed",
+        "permission remained terminal-only",
+        "new prompt retired prior permission advisory",
+        "live AskUserQuestion has exact tool identity",
+        "same Claude child delivered fresh permission attention after /clear"
+      ],
+      "global_settings_unchanged": true,
+      "log": "build/pr10-address/claude-live.log"
+    }
+  ],
+  "artifact_sha256": {
+    "build/pr10-address/quality-final.log": "d198f42608847d9ab8608106a5245327de9b41ad23e0d2764a9d57f8f50f97ef",
+    "build/pr10-address/desktop.log": "80a618e4fb3bb595c24343abaecc6ab9d1379b6863afab859965cc4d55cb8618",
+    "build/pr10-address/final-focused-tests.log": "45d7539bfe40801475661b3a815116dca3ae9fe6a8872cad8efad8079d994d23",
+    "build/pr10-address/registry-tidy.log": "85cd32ebae973b134308dca3c72887754a97d31a25fe05c5b1d92c9fb4e2d7d0",
+    "build/pr10-address/cppcheck-final.log": "42d7800c30d33e649b049c4f56e0dc385ab8ea72cdabfd2534e61812a79b6c34",
+    "build/pr10-address/terminal-input-isolated.log": "0d945dca56757770e7e1eef124bc51886712fab3d84a8e5e4126f6c5f583f643",
+    "build/pr10-address/asan-tests.log": "4721b626fd605363409fb9779f87f6585f7ea9313c9072fe646e80f8b001879d",
+    "build/pr10-address/tsan-tests.log": "616cd8ab16ba2e2ffb7bde5c1fee50e5693901ad7d4a9d2bd763b1d266b9a544",
+    "build/pr10-address/asan-registry-tests.log": "29fb6642beda45f074009b2c7fb410a1e3dea6da273d6cc20f5b116e883a33fc",
+    "build/pr10-address/tsan-registry-tests.log": "c2a3b5358b93b52d9f9166ab079ca435887edf662a956111c37143eb63248ff5",
+    "build/pr10-address/cli.log": "1566e508ccee91a0b0bc94b5b725db78471e42b72b4848ab7922437880b32b9d",
+    "build/pr10-address/ui.log": "9d7ebeaebc924f0ee16c8305d386ce5cd51bc8748d83899a6fcfc806f6c3731a",
+    "build/pr10-address/native.json": "759c2678653603d0a2f53ac4d40b76a3c1ccd77153df566eade33a27302f0b83",
+    "build/pr10-address/workspace-ui.json": "c2ba95554a23a922f501ca9e7e3dfb5907d42e0abafe4ecfaaa157dcd048f708",
+    "build/pr10-address/workspace-ui-isolated.json": "ee17c5297215e743202b866036f69c143f337db95f43b194208667d94e6fc2c4",
+    "build/pr10-address/claude-live.json": "94a307a3284059652ae82a1413613eeff8ac8a7479badedf6cfaeaa239f404d7"
+  },
+  "threads": [
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JDq",
+      "comment_id": 4076675482,
+      "disposition": "repaired_or_clarified",
+      "response": "Fixed reentrant observer shutdown and made stop idempotent. The regression calls stop directly from changed; the original sanitizer reproduction crashed at the ACK write. Callback lifetime and shutdown cases now run in the normal and instrumented observer suite."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JDy",
+      "comment_id": 4076675500,
+      "disposition": "retain_with_evidence",
+      "response": "No framing change: the relay deliberately requires EOF within its single bounded input/delivery deadline. Returning nonempty input at the deadline still reaches the caller's expired-deadline check and cannot deliver it. Existing kept-open-input coverage verifies a silent, bounded exit. No supported Claude payload was shown to violate this EOF contract."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JD2",
+      "comment_id": 4076675506,
+      "disposition": "retain_with_evidence",
+      "response": "Retained strict validation. Silently deleting a non-string identity field can change exact request identity into an advisory event. Malformed authenticated metadata intentionally reports observation loss; the current adapter tests cover malformed/oversized events. A future upstream schema needs live qualification and explicit per-field semantics, not silent field removal."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JGK",
+      "comment_id": 4076675719,
+      "disposition": "repaired_or_clarified",
+      "response": "Fixed: stable_notice now explicitly rejects a missing notice before indexing it. The new regression requires the useful observation-loss diagnostic rather than TypeError. It does not wait for a disappeared notice to return or hide the failure."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JGV",
+      "comment_id": 4076675733,
+      "disposition": "repaired_or_clarified",
+      "response": "Removed the redundant --ui-preview arguments from both Claude rejection cases. The shared invocation still supplies it once and the expected rejection messages remain checked."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JGg",
+      "comment_id": 4076675746,
+      "disposition": "repaired_or_clarified",
+      "response": "The launch rejection now names all three conflicting switches: --settings, --bare and --safe-mode. Rejection and literal-argument handling remain unchanged."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JGr",
+      "comment_id": 4076675768,
+      "disposition": "repaired_or_clarified",
+      "response": "Fixed: well-formed unsupported Claude decisions receive a terminal-only diagnostic without detaching the client. Exact pending source/epoch/request/revision matches receive the existing correlated retry frame; stale/malformed control messages retain their guards. No answer reaches Claude. The live hook probe submits a rejected decision and verifies the exact token, unchanged pending request and retained attachment."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JG3",
+      "comment_id": 4076675783,
+      "disposition": "retain_with_evidence",
+      "response": "No null-guard workaround added: the selected state and observer are constructed together, and current shutdown stops rather than independently resets either member. Construction failure unwinds before publication. This proposed partial-teardown state is not reachable in the current lifecycle. Adapter/service lifecycle coverage remains in the validation scope."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JD_",
+      "comment_id": 4076675521,
+      "disposition": "repaired_or_clarified",
+      "response": "Separated the null-preview case from the reconnect-only guard and removed the redundant live_ condition after the guard. The reconnect-only diagnostic now describes only that state."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JEK",
+      "comment_id": 4076675536,
+      "disposition": "repaired_or_clarified",
+      "response": "Fixed the direct begin() guard to call report(), since fail() intentionally returns when already failed. A focused regression exercises both forbidden modes, checks their diagnostic, and confirms the queued reconnect still uses the original trusted identity."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JEO",
+      "comment_id": 4076675541,
+      "disposition": "repaired_or_clarified",
+      "response": "Canonical export is intentional: persisted endpoints and duplicate checks use the same resolved endpoint identity. Documented the canonical-path contract. The live-connection fixture now canonicalizes its expected endpoint rather than hardcoding the macOS /private/tmp alias."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JEs",
+      "comment_id": 4076675582,
+      "disposition": "repaired_or_clarified",
+      "response": "Kept the internal manifest's canonical lowercase encoding and clarified both its diagnostic and documentation. The writer already emits lowercase and no other supported writer contract was established. The strict round-trip check continues to reject ignored/noncanonical input rather than accepting fromHex's permissive parsing."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JE0",
+      "comment_id": 4076675598,
+      "disposition": "repaired_or_clarified",
+      "response": "Fixed by separating trusted-directory canonicalization from socket-only validation. The registry no longer probes a fake registry.guard socket or inherits sun_path limits. Regression cases cover a deep valid registry directory and an unrelated regular guard file. Real service socket paths retain their platform limits; the redundant initial storage-path assignment is removed."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JE6",
+      "comment_id": 4076675611,
+      "disposition": "repaired_or_clarified",
+      "response": "Lock failures now distinguish actual contention from other system errors and handle EINTR without relabeling it as another writer. Exclusive locking and trusted-file validation remain enforced."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JFA",
+      "comment_id": 4076675620,
+      "disposition": "repaired_or_clarified",
+      "response": "Consolidated existing-file validation while preserving the exists-or-isSymLink guard and corruption check. The offered exists-only hunk would skip dangling symlinks; the regression now covers that case. Endpoint normalization is consolidated safely rather than simply removing validation."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JFI",
+      "comment_id": 4076675630,
+      "disposition": "retain_with_evidence",
+      "response": "The asserted never-finishing future is not reproduced. The installed Qt QPromise destructor calls cancelAndFinish(); the focused runtime probe reports finished=1 and canceled=1 after destruction without finish(). Current operations already encode ordinary errors in their result. The proposed catch-all can instead deliver no result to consumers that call result(), so it was not applied."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JFW",
+      "comment_id": 4076675647,
+      "disposition": "repaired_or_clarified",
+      "response": "Added an explicit Retry saving workspace action. Failed saves still freeze registry mutations and surface the error; after correcting the cause, one retry uses the normal validated atomic-write path. Tests cover repeated failure, refusing corrupt contents, successful recovery after repair, and preservation of a live shell. No automatic retry loop or corruption overwrite was introduced."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JFi",
+      "comment_id": 4076675663,
+      "disposition": "repaired_or_clarified",
+      "response": "Removed the /private/tmp fixture assumption and canonicalized the actual temporary directory when constructing its expected endpoint. This preserves macOS identity equality without requiring the macOS alias on other systems. Verified on macOS; Linux UI remains explicitly deferred."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JD8",
+      "comment_id": 4076675513,
+      "disposition": "repaired_or_clarified",
+      "response": "Hoisted the shared eligibility predicate. enabled still additionally requires response choices, preserving terminal-only notices that deserve attention but cannot be answered in the desktop."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JEW",
+      "comment_id": 4076675551,
+      "disposition": "repaired_or_clarified",
+      "response": "Centralized the C++ interaction-block reason constants and exposed the modal reason to QML through the existing UiPreview object. The QML setter and C++ cleanup now consume the same key. Existing modal, pointer/touch, held-key and focus tests remain the behavioral coverage."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JEe",
+      "comment_id": 4076675566,
+      "disposition": "repaired_or_clarified",
+      "response": "Renamed the signal to holdingKeysChanged atomically across Q_PROPERTY, declaration, connects and emits. The old explicit NOTIFY binding was functional; this completes the naming cleanup without leaving stale references."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JFp",
+      "comment_id": 4076675673,
+      "disposition": "repaired_or_clarified",
+      "response": "Removed the unused headers and macOS process-header block from the attention probe. The affected target is compiled; existing identity and cleanup assertions are preserved."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JFz",
+      "comment_id": 4076675687,
+      "disposition": "repaired_or_clarified",
+      "response": "Removed the write-only SourceRecord role and endpoint fields and their initializer arguments. SourceConfig/verified session identity validation remains intact; no redundant assertions were added just to consume dead fields."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JF5",
+      "comment_id": 4076675694,
+      "disposition": "duplicate",
+      "response": "Duplicate of discussion_r4076675687: the same SourceRecord fields and initializer are removed in that single cleanup, with identity assertions preserved."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k7JGA",
+      "comment_id": 4076675703,
+      "disposition": "repaired_or_clarified",
+      "response": "Removed the write-only SessionRecord endpoint field and initializer argument. Cleanup still obtains current endpoints from the live sessions, and process/session identity checks remain intact."
+    }
+  ],
+  "delegation": {
+    "provider_route": "zai,glm-5.3",
+    "ui": "rate-limited; cooldown honored; coordinator completed cleanup",
+    "observer": "returned analysis without edits; coordinator implemented and verified fix",
+    "registry": "partial implementation integrated and corrected by coordinator before acceptance",
+    "paid_parent_model_workers_launched": false
+  },
+  "limitations": [
+    "Default-loop GUI test instability remains recorded; isolated threaded original binaries passed. No claim that default-loop flakiness is repaired.",
+    "The ignored terminal diagnostic copy initially omitted required CTest Metal environment, so its display-lock output is excluded as evidence about the original CTest failure.",
+    "Linux UI and portability runtime qualification remain deferred.",
+    "Deep manifest support does not remove actual Unix socket path limits.",
+    "Save retry does not recover a failed initial manifest load automatically.",
+    "The scoped sanitizer runs are not full-suite sanitizer qualification.",
+    "Codex review remains quota-unavailable until September 23 America/Los_Angeles; no early retry."
+  ]
+}

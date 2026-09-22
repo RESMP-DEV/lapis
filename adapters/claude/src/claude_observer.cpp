@@ -67,6 +67,17 @@ class Observer::Impl {
         QObject::connect(&server_, &QLocalServer::newConnection, &server_, [this] { accept(); });
     }
     ~Impl() { close(); }
+    void notify() {
+        if (notification_pending_)
+            return;
+        notification_pending_ = true;
+        // Publish only after the transport callback has returned. A direct signal
+        // receiver may stop or destroy the observer; do not touch this afterward.
+        QTimer::singleShot(0, &owner_, [this] {
+            notification_pending_ = false;
+            emit owner_.changed();
+        });
+    }
     void close() {
         stopped_ = true;
         server_.close();
@@ -78,10 +89,12 @@ class Observer::Impl {
         }
     }
     void stop() {
+        if (stopped_)
+            return;
         close();
         state_.disconnect();
         diagnostic_ = QStringLiteral("Claude hook observation stopped");
-        emit owner_.changed();
+        notify();
     }
     QStringList launch(const QStringList& original, const QString& executable) {
         if (stopped_ || executable.isEmpty() || executable.contains(QChar::Null))
@@ -160,7 +173,7 @@ class Observer::Impl {
         state_.overflow();
         diagnostic_ = message + QStringLiteral("; restart the session to restore observation");
         failed_ = true;
-        emit owner_.changed();
+        notify();
     }
     attention::Position next() { return {state_.epoch(), ++sequence_}; }
     bool applied(attention::Outcome outcome) {
@@ -260,18 +273,18 @@ class Observer::Impl {
             // Only a fresh SessionStart may bind its replacement; delayed old
             // hooks cannot resurrect the retired conversation.
             diagnostic_ = QStringLiteral("Claude session ended; waiting for a new session hook");
-            emit owner_.changed();
+            notify();
             return;
         }
         if (name == QLatin1String("SessionStart")) {
-            emit owner_.changed();
+            notify();
             return;
         }
         if (name == QLatin1String("UserPromptSubmit"))
             new_prompt(prompt);
         else if (!prompt_.isEmpty() && prompt == prompt_)
             turn_event(event);
-        emit owner_.changed();
+        notify();
     }
     void new_prompt(const QString& prompt) {
         if (prompt.isEmpty()) {
@@ -352,6 +365,7 @@ class Observer::Impl {
     std::map<attention::RequestId, QJsonObject> details_;
     QString diagnostic_{QStringLiteral("Waiting for a Claude session hook; hooks may be disabled")};
     std::uint64_t sequence_{};
+    bool notification_pending_{};
     bool stopped_{};
     bool failed_{};
     bool completed_{};

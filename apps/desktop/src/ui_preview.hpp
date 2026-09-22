@@ -45,7 +45,8 @@ class UiPreview final : public QObject {
     Q_PROPERTY(bool systemReducedMotion READ systemReducedMotion NOTIFY reducedMotionChanged)
     Q_PROPERTY(QString diagnostics READ diagnostics NOTIFY diagnosticsChanged)
     Q_PROPERTY(QStringList settingsShortcuts READ settingsShortcuts NOTIFY settingsShortcutsChanged)
-    Q_PROPERTY(bool holdingKeys READ holdingKeys NOTIFY heldKeysChanged)
+    Q_PROPERTY(bool holdingKeys READ holdingKeys NOTIFY holdingKeysChanged)
+    Q_PROPERTY(QString modalBlockReason READ modalBlockReason CONSTANT)
     Q_PROPERTY(lapis::desktop::WorkspaceSupervisor* supervisor READ supervisor CONSTANT)
   public:
     UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* parent = nullptr);
@@ -57,6 +58,7 @@ class UiPreview final : public QObject {
     void setSystemReducedMotion(bool enabled);
     [[nodiscard]] const QString& diagnostics() const { return diagnostics_; }
     [[nodiscard]] const QStringList& settingsShortcuts() const { return settings_shortcuts_; }
+    [[nodiscard]] QString modalBlockReason() const;
     [[nodiscard]] bool holdingKeys() const { return !held_keys_.isEmpty(); }
     [[nodiscard]] WorkspaceSupervisor* supervisor() const { return supervisor_.get(); }
     [[nodiscard]] QQuickWindow* window() const;
@@ -75,7 +77,7 @@ class UiPreview final : public QObject {
     void reducedMotionChanged();
     void diagnosticsChanged();
     void settingsShortcutsChanged();
-    void heldKeysChanged();
+    void holdingKeysChanged();
     void windowChanged(QQuickWindow* window);
 
   private:

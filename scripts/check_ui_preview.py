@@ -195,12 +195,12 @@ def execute_checks(binary: Path, artifacts: Path) -> list[dict]:
     cases = [
         (
             "reject-claude-preview",
-            ["--ui-preview", "--claude"],
+            ["--claude"],
             "--claude cannot be combined with --ui-preview",
         ),
         (
             "reject-claude-preview-program",
-            ["--ui-preview", "--claude", "--", "claude"],
+            ["--claude", "--", "claude"],
             "--claude cannot be combined with --ui-preview",
         ),
         (

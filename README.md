@@ -107,7 +107,11 @@ Entries become durable after their first verified connection; wait for Live term
 before closing a newly created session. The registry is private, owner-locked, atomically written and bounded to 64 KiB
 and eight entries. Its reconnect-only JSON stores endpoint, identity,
 fingerprint, title, directory and agent—never commands, transcripts or
-credentials. The single-session menu keeps explicit reconnect/discover/new-session
+credentials. Endpoints are exported in canonical form, and identity fields use
+lowercase hex. If saving fails, the workspace reports the error and disables
+registry changes; after correcting the cause, use **Session → Retry saving
+workspace**. Each explicit retry validates the existing storage again and never
+overwrites corrupt content. Live terminals remain usable. The single-session menu keeps explicit reconnect/discover/new-session
 actions; the workspace menu separates create/adopt and remove/detach. Builds stay
 under `build/`; private sockets, logs and bounded workspace/identity files stay
 under `runtime/`.

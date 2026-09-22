@@ -83,6 +83,15 @@ bool Workspace::canAddSessions() const {
     return registry_ready_ && sessions_.size() < WorkspaceRegistry::maximum_entries;
 }
 
+bool Workspace::canRetrySave() const {
+    return !registry_ready_ && storage_ && storage_->registry && !storage_->writing;
+}
+
+void Workspace::retrySave() {
+    if (canRetrySave())
+        persistRegistry(true);
+}
+
 void Workspace::loadRegistry() {
     storage_ = std::make_unique<Storage>();
     connect(&storage_->load, &QFutureWatcher<LoadedWorkspace>::finished, this, [this] {
@@ -128,8 +137,8 @@ void Workspace::appendSession(std::unique_ptr<SessionPreview> document) {
     sessions_.push_back(std::move(document));
 }
 
-void Workspace::persistRegistry() {
-    if (!registry_ready_ || !storage_)
+void Workspace::persistRegistry(bool retry) {
+    if ((!registry_ready_ && !retry) || !storage_)
         return;
     if (storage_->writing) {
         storage_->dirty = true;
@@ -139,7 +148,7 @@ void Workspace::persistRegistry() {
     for (const auto& document : sessions_)
         if (const auto entry = document->reconnectEntry())
             entries.push_back(*entry);
-    if (entries == storage_->written)
+    if (!retry && entries == storage_->written)
         return;
     storage_->writing = true;
     storage_->dirty = false;
@@ -151,6 +160,7 @@ void Workspace::persistRegistry() {
             registry_ready_ = false;
             status_ = QStringLiteral("Workspace could not be saved: ") + error;
         } else {
+            registry_ready_ = true;
             storage_->written = entries;
             status_ = QString{};
             if (storage_->dirty)
@@ -158,6 +168,8 @@ void Workspace::persistRegistry() {
         }
         emit workspaceChanged();
     });
+    if (retry)
+        status_ = QStringLiteral("Retrying workspace save…");
     storage_->save.setFuture(background<QString>([registry = storage_->registry, entries] {
         try {
             registry->write(entries);
@@ -166,6 +178,7 @@ void Workspace::persistRegistry() {
             return QString::fromUtf8(error.what());
         }
     }));
+    emit workspaceChanged();
 }
 
 bool Workspace::addSession(bool codex, const QString& directory, const QString& endpoint) {

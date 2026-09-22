@@ -170,12 +170,50 @@ void sharedHistory(Fixture& fixture, SessionPreview& first, SessionPreview& seco
     require(first.inputReady() && second.inputReady());
     require(::chmod(lock.constData(), 0600) == 0);
 }
+void saveFailureRecovery() {
+    Fixture fixture;
+    auto* first = fixture.add();
+    auto* second = fixture.add();
+    const auto firstId = first->sessionId();
+    const auto secondId = second->sessionId();
+    until([&] { return savedIds(fixture.manifest).size() == 2; });
+    const auto original = read(fixture.manifest);
+    // Fail an actual save after a visible removal, without disturbing live services.
+    require(::chmod(QFile::encodeName(fixture.manifest).constData(), 0644) == 0);
+    require(fixture.workspace->removeSession(firstId));
+    until([&] { return fixture.workspace->canRetrySave(); });
+    require(!fixture.workspace->canAddSessions() && !fixture.workspace->status().isEmpty());
+    require(read(fixture.manifest) == original && !gone(fixture.children[0].shell));
+    fixture.workspace->retrySave();
+    require(!fixture.workspace->canRetrySave());
+    until([&] { return fixture.workspace->canRetrySave(); });
+    require(read(fixture.manifest) == original);
+    // Repair permissions but introduce corrupt content: explicit retry must still refuse it.
+    require(::chmod(QFile::encodeName(fixture.manifest).constData(), 0600) == 0);
+    QFile file(fixture.manifest);
+    require(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    const QByteArray corrupt = "{broken";
+    require(file.write(corrupt) == corrupt.size());
+    file.close();
+    fixture.workspace->retrySave();
+    until([&] { return fixture.workspace->canRetrySave(); });
+    require(read(fixture.manifest) == corrupt && !fixture.workspace->canAddSessions());
+    require(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    require(file.write(original) == original.size());
+    file.close();
+    fixture.workspace->retrySave();
+    until([&] { return fixture.workspace->canAddSessions(); });
+    require(!fixture.workspace->canRetrySave() && fixture.workspace->status().isEmpty());
+    require(savedIds(fixture.manifest) == std::vector<QString>{secondId});
+    require(probe(*second, QByteArrayLiteral("AFTER_SAVE_RETRY")) == fixture.children[1]);
+}
 } // namespace
 
 int main(int argc, char** argv) {
     QCoreApplication application(argc, argv);
     qputenv("SHELL", "/bin/sh");
     try {
+        saveFailureRecovery();
         Fixture fixture;
         auto& workspace = *fixture.workspace;
         require(workspace.canAddSessions() && workspace.sessions().isEmpty());

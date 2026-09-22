@@ -138,21 +138,23 @@ void SessionPreview::reconnect() {
         live_->begin(wire::AttachMode::reconnect);
 }
 void SessionPreview::discoverSession() {
-    if (!live_ || live_->reconnectOnly()) {
+    if (!live_)
+        return;
+    if (live_->reconnectOnly()) {
         setActivity(QStringLiteral("Cannot discover a reconnect-only workspace entry."));
         return;
     }
-    if (live_)
-        live_->begin(wire::AttachMode::discover);
+    live_->begin(wire::AttachMode::discover);
 }
 void SessionPreview::startNewSession() {
-    if (!live_ || live_->reconnectOnly()) {
+    if (!live_)
+        return;
+    if (live_->reconnectOnly()) {
         setActivity(
             QStringLiteral("Cannot create a session from a reconnect-only workspace entry."));
         return;
     }
-    if (live_)
-        live_->begin(wire::AttachMode::create);
+    live_->begin(wire::AttachMode::create);
 }
 void SessionPreview::setConnection(const QString& state, bool input_ready) {
     connection_state_ = state;
@@ -223,7 +225,7 @@ void LiveConnection::begin(wire::AttachMode mode) {
     if (!failed_)
         return;
     if (reconnect_only_ && mode != wire::AttachMode::reconnect) {
-        fail(
+        report(
             QStringLiteral("A reconnect-only workspace entry cannot create or discover sessions."));
         return;
     }

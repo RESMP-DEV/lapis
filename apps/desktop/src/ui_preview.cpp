@@ -21,6 +21,11 @@
 
 namespace lapis::desktop {
 namespace {
+constexpr char kHeldKeysBlock[] = "root-held-keys";
+constexpr char kModalBlock[] = "root-modal";
+constexpr char kPointerBlock[] = "root-pointer";
+constexpr char kTouchBlock[] = "root-touch";
+constexpr char kDragBlock[] = "root-drag";
 
 constexpr int kMaximumDiagnosticsLength = 4096;
 
@@ -109,8 +114,8 @@ UiPreview::UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* pa
         if (!workspace_.interactionBlocked())
             deferTerminalFocus();
     });
-    connect(this, &UiPreview::heldKeysChanged, this, [this] {
-        workspace_.setInteractionBlocked(QStringLiteral("root-held-keys"), holdingKeys());
+    connect(this, &UiPreview::holdingKeysChanged, this, [this] {
+        workspace_.setInteractionBlocked(QString::fromLatin1(kHeldKeysBlock), holdingKeys());
     });
 }
 
@@ -124,13 +129,15 @@ void UiPreview::refreshSettingsShortcuts() {
     emit settingsShortcutsChanged();
 }
 
+QString UiPreview::modalBlockReason() const { return QString::fromLatin1(kModalBlock); }
+
 UiPreview::~UiPreview() {
     supervisor_->setWindowActive(false);
     if (window_ != nullptr)
         window_->removeEventFilter(this);
     clearHeldKeys();
-    workspace_.setInteractionBlocked(QStringLiteral("root-modal"), false);
-    for (const auto* reason : {"root-pointer", "root-touch", "root-drag"})
+    workspace_.setInteractionBlocked(QString::fromLatin1(kModalBlock), false);
+    for (const auto* reason : {kPointerBlock, kTouchBlock, kDragBlock})
         workspace_.setInteractionBlocked(QString::fromLatin1(reason), false);
     engine_.reset();
     const auto retired =
@@ -239,7 +246,7 @@ bool UiPreview::eventFilter(QObject* watched, QEvent* event) {
         event->type() == QEvent::Hide) {
         supervisor_->setWindowActive(false);
         clearHeldKeys();
-        for (const auto* reason : {"root-pointer", "root-touch", "root-drag"})
+        for (const auto* reason : {kPointerBlock, kTouchBlock, kDragBlock})
             workspace_.setInteractionBlocked(QString::fromLatin1(reason), false);
     }
 
@@ -250,24 +257,24 @@ bool UiPreview::eventFilter(QObject* watched, QEvent* event) {
     switch (event->type()) {
     case QEvent::MouseButtonPress:
     case QEvent::MouseButtonDblClick:
-        block("root-pointer", true);
+        block(kPointerBlock, true);
         break;
     case QEvent::MouseButtonRelease:
-        block("root-pointer", static_cast<QMouseEvent*>(event)->buttons() != Qt::NoButton);
+        block(kPointerBlock, static_cast<QMouseEvent*>(event)->buttons() != Qt::NoButton);
         break;
     case QEvent::TouchBegin:
-        block("root-touch", true);
+        block(kTouchBlock, true);
         break;
     case QEvent::TouchEnd:
     case QEvent::TouchCancel:
-        block("root-touch", false);
+        block(kTouchBlock, false);
         break;
     case QEvent::DragEnter:
-        block("root-drag", true);
+        block(kDragBlock, true);
         break;
     case QEvent::DragLeave:
     case QEvent::Drop:
-        block("root-drag", false);
+        block(kDragBlock, false);
         break;
     case QEvent::Wheel:
     case QEvent::InputMethod:
@@ -321,14 +328,14 @@ void UiPreview::updateHeldKey(const QKeyEvent& event, bool pressed) {
     else if (!held_keys_.remove(event.key()))
         return;
     if (was_holding != holdingKeys())
-        emit heldKeysChanged();
+        emit holdingKeysChanged();
 }
 
 void UiPreview::clearHeldKeys() {
     if (held_keys_.isEmpty())
         return;
     held_keys_.clear();
-    emit heldKeysChanged();
+    emit holdingKeysChanged();
 }
 
 void UiPreview::recordRuntimeWarnings(const QList<QQmlError>& warnings) {
@@ -432,7 +439,7 @@ bool UiPreview::loadCandidate() {
     setDiagnostics(candidateDiagnostics);
 
     clearHeldKeys();
-    workspace_.setInteractionBlocked(QStringLiteral("root-modal"),
+    workspace_.setInteractionBlocked(QString::fromLatin1(kModalBlock),
                                      candidateWindow->property("inputBlocked").toBool());
     std::swap(engine_, candidate);
     window_ = acceptedWindow;

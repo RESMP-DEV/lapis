@@ -122,11 +122,49 @@ int main(int argc, char** argv) {
             require(registry.read() == entries);
         }
 
+        // The registry does not reserve a guard filename; unrelated files in the
+        // same trusted directory must remain valid.
+        {
+            QFile guard(root + QStringLiteral("/registry.guard"));
+            require(guard.open(QIODevice::WriteOnly));
+            require(guard.write("unrelated") > 0);
+        }
+
         {
             WorkspaceRegistry registry{path};
             require(registry.read().size() == 8);
             rejects([&] { static_cast<void>(WorkspaceRegistry{path}); });
         }
+
+        {
+            // Manifest storage is not an AF_UNIX endpoint and therefore must not
+            // inherit sockaddr_un::sun_path's length restriction.
+            const QString deep_name(120, QLatin1Char('d'));
+            const QString deep_root = root + QStringLiteral("/") + deep_name;
+            const QString deep_path = deep_root + QStringLiteral("/registry.json");
+            require(QDir(root).mkpath(deep_root));
+            require(QFile::setPermissions(deep_root,
+                                          QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+            WorkspaceRegistry registry{deep_path};
+            const std::vector<WorkspaceEntry> deep_entries = {
+                entry(temporary, 1, QByteArray{1, '\x01'})};
+            registry.write(deep_entries);
+            require(registry.read() == deep_entries);
+        }
+
+        // A dangling manifest must be detected even though exists() is false, and
+        // its unsafe target must not be created or replaced.
+        const QString dangling = root + QStringLiteral("/dangling.json");
+        const QString unsafe_target = temporary.filePath(QStringLiteral("unsafe-target"));
+        {
+            WorkspaceRegistry registry{dangling};
+            require(::symlink(QFile::encodeName(unsafe_target).constData(),
+                              QFile::encodeName(dangling).constData()) == 0);
+            rejects([&] { registry.write({}); });
+        }
+        require(QFileInfo{dangling}.isSymLink());
+        require(QFileInfo{dangling}.symLinkTarget() == unsafe_target);
+        require(!QFile::exists(unsafe_target));
 
         const QByteArray original = [&] {
             QFile file(path);
@@ -168,6 +206,18 @@ int main(int argc, char** argv) {
 
         {
             WorkspaceRegistry registry{path};
+            bool rejected = false;
+            try {
+                static_cast<void>(WorkspaceRegistry{path});
+            } catch (const std::runtime_error& error) {
+                require(std::string{error.what()}.find("already locked") != std::string::npos);
+                rejected = true;
+            }
+            require(rejected);
+        }
+
+        {
+            WorkspaceRegistry registry{path};
             const QString hard_link = temporary.filePath(QStringLiteral("hard.json"));
             require(::link(QFile::encodeName(path).constData(),
                            QFile::encodeName(hard_link).constData()) == 0);
@@ -192,7 +242,8 @@ int main(int argc, char** argv) {
         rejects([&] { static_cast<void>(WorkspaceRegistry{path}); });
         set_mode(root, 0700);
 
-        std::cout << "Workspace registry roundtrip, bounds, locking and unsafe storage passed\n";
+        std::cout
+            << "Workspace registry roundtrip, deep paths, locking and unsafe storage passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

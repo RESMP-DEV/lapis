@@ -240,7 +240,6 @@ bool kill(qint64 pid) { return pid != 0 && ::kill(static_cast<pid_t>(pid), SIGKI
 struct SessionRecord {
     QString id;
     ChildProcesses child;
-    QString endpoint;
 };
 
 #ifdef Q_OS_MACOS
@@ -413,7 +412,7 @@ class WorkspaceProbe {
         const auto entry = session.reconnectEntry();
         if (!entry)
             throw std::runtime_error("Live session endpoint was not retained");
-        observed_.push_back({session.sessionId(), process_probe(session, marker), entry->endpoint});
+        observed_.push_back({session.sessionId(), process_probe(session, marker)});
     }
 
     void close_session_at(int index) {
