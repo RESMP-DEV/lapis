@@ -550,11 +550,11 @@ same alert** verifies that an existing alert does not pulse again. Clear it firs
 to replay the pulse. **Disable animations** uses steady markers; the macOS Reduce
 Motion setting also enables it, sampled at startup and app activation. These are
 synthetic events, with no agent response or approval attached. Manual navigation
-and configurable shortcuts work over these fixtures and the single live session;
-automatic attention-driven navigation remains planned in the
-[architecture](docs/architecture.md#ui-refinement-checkpoint).
+and configurable shortcuts work over these fixtures and retained live sessions.
+The carousel is available only in live mode; see the
+[workspace scope](docs/architecture.md#milestone-3-supervising-two-live-sessions-on-macos).
 
-Run `just ui-check` for five captures and three expected-failure cases. Artifacts
+Run `just ui-check` for five captures and five expected-failure cases. Artifacts
 and a receipt go under `build/ui-preview-check/`. For an individual capture:
 
 ```sh
@@ -708,6 +708,7 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
 | `keymap` | Desktop-enabled | Configuration defaults, appearance choices, persistence and invalid input |
 | `workspace` | Desktop-enabled | Registry-backed create/adopt, close/reopen, manual focus guards and retained session lifecycle |
+| `workspace-supervisor` | Desktop-enabled | Aggregate typed/source identities, duplicate and stale retirement, bounds, snooze/pin/pause, deterministic clock guards and quiet-session fairness |
 | `workspace-registry` | Desktop-enabled | Private bounded JSON schema, owner/lock/atomic-write validation, duplicate rejection and corruption/unsafe-path failures |
 | `ui-preview` | Desktop-enabled | Qt reload, screen selection, passive attention, modal response ownership, draft/IME preservation, input and render lifecycle |
 | `appearance-input` | Desktop-enabled, native GUI | Configured settings shortcut, modal focus, all theme/layout/density controls, persistence and shortcut reload |
@@ -715,7 +716,7 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `terminal-input` | Desktop-enabled, native GUI | Qt composition commit/cancel, replacement rejection, paste and focus/document/history/disconnect ownership |
 | `terminal-render` | Desktop-enabled | Real Qt Vulkan pixel regressions for cell background grids, wide/combining characters, fallback/RTL text, styles/decorations, actual Ghostty resize, cursor placement and clearing |
 
-`just desktop` runs these twenty suites plus static checks. The separate Python
+`just desktop` runs these twenty-one suites plus static checks. The separate Python
 GUI harness checks five preview captures and five expected failures. The CLI
 harness checks detached service behavior, attachment generations, fragmented
 handshakes, synchronization timeout, stale controls, bounded queue failure and
@@ -725,9 +726,9 @@ That case checks the controlled child PTY's raw-input mode before typing: the
 Codex banner can appear while terminal startup is still in progress.
 A screenshot, a headless suite and a real agent approval round trip prove different
 things. See [attention qualification](#codex-attention-qualification) for isolated
-live round trips and the remaining service/desktop integration gap.
+live round trips and assembled service/desktop qualification.
 
-For Milestone 3A, run the opt-in macOS workspace GUI probe separately from every
+For Milestone 3, run the opt-in macOS workspace GUI probe separately from every
 other GUI check after the desktop build:
 
 ```sh
@@ -735,10 +736,40 @@ build/desktop/apps/desktop/lapis_workspace_ui_probe \
   --json-file build/workspace-ui.json --output-dir build/workspace-ui
 ```
 
-The probe creates two controlled shell sessions through production QML and
-exercises switching, all four layouts, close/reopen and cleanup, and writes only its sanitized JSON
-report and optional PNG under `build/`. Do not treat a missing desktop build,
-headless execution or an unrun probe as 3A acceptance.
+The probe creates two controlled shells through production QML and exercises all
+four layouts, background geometry, retained identities across close/reopen, and
+cleanup. An injected monotonic clock drives the real window's carousel guards:
+held keys, recent input, paste, IME, drag, modal work, activation, pause and pin.
+It also records 30 alternating warm switches and controlled shell round trips,
+current/peak GUI RSS, and a one-second idle CPU/frame-callback observation. Run it
+without competing builds or GUI work when using its timings. The endpoint is
+`QQuickWindow::frameSwapped`, not physical presentation; service memory and GPU
+utilization are not included. Timing thresholds are not acceptance gates.
+
+Then qualify aggregate attention with two **real managed Codex sources**:
+
+```sh
+python3 scripts/check_workspace_attention.py --live-glm \
+  --output build/workspace-attention/receipt.json
+```
+
+This opt-in runner requires the configured local CCR GLM route and the installed
+Codex binary. It uses two disposable service-owned TUIs with private homes, waits
+for simultaneous harmless approval and structured-input requests, validates the
+fixture command/questions, and answers through the production workspace dialogs.
+It checks exact source identity, both turn continuations, and cleanup of its
+services/process groups. There is no model fallback. Save failures and cleanup
+diagnostics; an unavailable provider is not live acceptance. Use `--build-dir`
+for another desktop build. The GUI probe owns only attachments; the Python runner
+owns fixture shutdown. Never run it alongside another GUI/native-input check.
+
+`just native-input` adds OS-delivered keyboard, Option, bracketed paste and native
+IME ownership checks, including two-session composition and paste while the
+supervisor attempts to switch. Deterministic model tests, real-window Qt guards,
+native OS input, and live agent decisions cover distinct boundaries; run each
+applicable layer once, following the result-reuse rules. No physical typing is
+required. A missing desktop build, headless execution or an unrun probe cannot
+qualify the milestone.
 
 After a failure, retain `build/reports/<mode>/receipt.json`, the named check log,
 and CTest's `build/<build-name>/Testing/Temporary/LastTest.log`. Fix the cause,
@@ -937,7 +968,8 @@ composition after history, document detach, window focus and actual attachment
 replacement/reconnect; and verifies commit plus the candidate anchor after resize.
 The workspace case additionally defers focus during an active Japanese IME
 composition, commits to the originating session, and verifies that later US
-input follows the selected workspace session.
+input follows the selected workspace session. A native bracketed paste stays
+whole in its originating PTY while an eligible automatic switch is attempted.
 Each native key edge waits for AppKit delivery before the next edge is posted;
 keys are never resent after a deadline. `LAPIS_NATIVE_TRACE=1` logs the probe's
 AppKit key and Qt key/composition events for diagnosis. A delivery deadline is
@@ -1013,7 +1045,7 @@ python3 scripts/check_cli_launch.py --build-dir build/desktop-asan \
 Repeat those configure/build/test/harness commands with preset `tsan` and all
 `desktop-asan` paths changed to `desktop-tsan`. Do not combine instrumentation or
 use `ctest --preset asan` for the custom directory: that preset targets
-`build/asan`. Each desktop-enabled directory must list all twenty suites above.
+`build/asan`. Each desktop-enabled directory must list all twenty-one suites above.
 Use the same LLVM installation for normal and instrumented builds. Ccache is
 optional (`-DCMAKE_CXX_COMPILER_LAUNCHER=...`); raw CMake does not discover it.
 Reduce `--parallel` for host resource limits. The CLI command above runs service

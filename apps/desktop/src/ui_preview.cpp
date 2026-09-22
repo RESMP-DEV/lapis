@@ -4,12 +4,14 @@
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QKeySequence>
+#include <QMouseEvent>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlError>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QRect>
+#include <QScopedValueRollback>
 #include <QScreen>
 #include <QSet>
 #include <QStringList>
@@ -94,7 +96,8 @@ constexpr int kMaximumDiagnosticsLength = 4096;
 } // namespace
 
 UiPreview::UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* parent)
-    : QObject(parent), workspace_(workspace), options_(std::move(options)) {
+    : QObject(parent), workspace_(workspace), options_(std::move(options)),
+      supervisor_(std::make_unique<WorkspaceSupervisor>(workspace_, options_.supervisor_clock)) {
     refreshSettingsShortcuts();
     if (options_.keymap != nullptr)
         connect(options_.keymap, &KeyMap::changed, this, [this] {
@@ -102,6 +105,10 @@ UiPreview::UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* pa
             deferTerminalFocus();
         });
     connect(&workspace_, &Workspace::focusChanged, this, &UiPreview::deferTerminalFocus);
+    connect(&workspace_, &Workspace::interactionChanged, this, [this] {
+        if (!workspace_.interactionBlocked())
+            deferTerminalFocus();
+    });
     connect(this, &UiPreview::heldKeysChanged, this, [this] {
         workspace_.setInteractionBlocked(QStringLiteral("root-held-keys"), holdingKeys());
     });
@@ -118,10 +125,13 @@ void UiPreview::refreshSettingsShortcuts() {
 }
 
 UiPreview::~UiPreview() {
+    supervisor_->setWindowActive(false);
     if (window_ != nullptr)
         window_->removeEventFilter(this);
     clearHeldKeys();
     workspace_.setInteractionBlocked(QStringLiteral("root-modal"), false);
+    for (const auto* reason : {"root-pointer", "root-touch", "root-drag"})
+        workspace_.setInteractionBlocked(QString::fromLatin1(reason), false);
     engine_.reset();
     const auto retired =
         findChildren<QQmlApplicationEngine*>(QString{}, Qt::FindDirectChildrenOnly);
@@ -179,12 +189,10 @@ bool UiPreview::assignTerminalFocus() {
     QQuickWindow* target_window = window();
     if (target_window == nullptr)
         return false;
-    if (target_window->property("inputBlocked").toBool())
+    if (workspace_.interactionBlocked() || target_window->property("inputBlocked").toBool())
         return false;
     // Focus and columns keep the single live pane; blocks and stack promote one
     // tile per session. The dynamic workspace can be empty while loading.
-    if (target_window->property("inputBlocked").toBool())
-        return false;
     const KeyMap* keymap = options_.keymap;
     const bool pane_visible = keymap == nullptr || keymap->layout() == WorkspaceLayout::Focus ||
                               keymap->layout() == WorkspaceLayout::Columns;
@@ -227,8 +235,49 @@ bool UiPreview::eventFilter(QObject* watched, QEvent* event) {
     if (current_window == nullptr || current_window != window_.data())
         return QObject::eventFilter(watched, event);
 
-    if (event->type() == QEvent::WindowDeactivate || event->type() == QEvent::Destroy)
+    if (event->type() == QEvent::WindowDeactivate || event->type() == QEvent::Destroy ||
+        event->type() == QEvent::Hide) {
+        supervisor_->setWindowActive(false);
         clearHeldKeys();
+        for (const auto* reason : {"root-pointer", "root-touch", "root-drag"})
+            workspace_.setInteractionBlocked(QString::fromLatin1(reason), false);
+    }
+
+    const auto block = [this](const char* reason, bool value) {
+        supervisor_->noteInteraction();
+        workspace_.setInteractionBlocked(QString::fromLatin1(reason), value);
+    };
+    switch (event->type()) {
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonDblClick:
+        block("root-pointer", true);
+        break;
+    case QEvent::MouseButtonRelease:
+        block("root-pointer", static_cast<QMouseEvent*>(event)->buttons() != Qt::NoButton);
+        break;
+    case QEvent::TouchBegin:
+        block("root-touch", true);
+        break;
+    case QEvent::TouchEnd:
+    case QEvent::TouchCancel:
+        block("root-touch", false);
+        break;
+    case QEvent::DragEnter:
+        block("root-drag", true);
+        break;
+    case QEvent::DragLeave:
+    case QEvent::Drop:
+        block("root-drag", false);
+        break;
+    case QEvent::Wheel:
+    case QEvent::InputMethod:
+    case QEvent::KeyPress:
+    case QEvent::KeyRelease:
+        supervisor_->noteInteraction();
+        break;
+    default:
+        break;
+    }
 
     if (event->type() != QEvent::KeyPress && event->type() != QEvent::KeyRelease)
         return QObject::eventFilter(watched, event);
@@ -280,6 +329,29 @@ void UiPreview::clearHeldKeys() {
         return;
     held_keys_.clear();
     emit heldKeysChanged();
+}
+
+void UiPreview::recordRuntimeWarnings(const QList<QQmlError>& warnings) {
+    for (const QQmlError& warning : warnings)
+        qWarning().noquote() << warning.toString();
+    // A binding displaying diagnostics can itself warn. Never recurse
+    // through that binding, or notify again once the buffer is full.
+    if (publishing_diagnostics_)
+        return;
+    const auto next = appendDiagnostics(diagnostics_, formatDiagnostics(warnings));
+    if (next == diagnostics_)
+        return;
+    const QScopedValueRollback guard(publishing_diagnostics_, true);
+    diagnostics_ = next;
+    emit diagnosticsChanged();
+}
+
+void UiPreview::updateWindowActivity(QQuickWindow* window) {
+    if (window_ != window)
+        return;
+    supervisor_->setWindowActive(window->isActive() && window->isVisible());
+    if (window->isActive())
+        deferTerminalFocus();
 }
 
 bool UiPreview::loadCandidate() {
@@ -354,13 +426,7 @@ bool UiPreview::loadCandidate() {
         },
         Qt::DirectConnection);
     QObject::connect(candidate.get(), &QQmlApplicationEngine::warnings, this,
-                     [this](const QList<QQmlError>& warnings) {
-                         for (const QQmlError& warning : warnings)
-                             qWarning().noquote() << warning.toString();
-                         diagnostics_ =
-                             appendDiagnostics(diagnostics_, formatDiagnostics(warnings));
-                         emit diagnosticsChanged();
-                     });
+                     &UiPreview::recordRuntimeWarnings);
 
     const QPointer<QQuickWindow> acceptedWindow = candidateWindow;
     setDiagnostics(candidateDiagnostics);
@@ -386,11 +452,10 @@ bool UiPreview::loadCandidate() {
                               QStringLiteral("No screen matched '%1'; see log for available names")
                                   .arg(options_.screen)));
     }
-    connect(candidateWindow, &QQuickWindow::activeChanged, this, [this, candidateWindow] {
-        if (window_ == candidateWindow && candidateWindow->isActive())
-            deferTerminalFocus();
-    });
+    connect(candidateWindow, &QQuickWindow::activeChanged, this,
+            [this, candidateWindow] { updateWindowActivity(candidateWindow); });
     candidateWindow->show();
+    supervisor_->setWindowActive(candidateWindow->isActive() && candidateWindow->isVisible());
 
     return true;
 }

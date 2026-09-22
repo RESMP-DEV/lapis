@@ -182,6 +182,9 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool addSession(bool codex, const QString& directory, const QString& endpoint = {});
     Q_INVOKABLE bool removeSession(const QString& id);
     Q_INVOKABLE void setInteractionBlocked(const QString& reason, bool blocked);
+    [[nodiscard]] bool interactionBlocked() const { return !interaction_blocks_.isEmpty(); }
+    // Automatic requests are synchronous and never join the deferred manual queue.
+    bool focusAutomatically(const QString& id);
     [[nodiscard]] bool previewMode() const { return preview_mode_; }
     [[nodiscard]] SessionPreview* session(const QString& id) const;
     // Development fixture v1 only. No calls are accepted in a live workspace.
@@ -199,6 +202,8 @@ class Workspace final : public QObject {
     void focusChanged();
     void sessionsChanged();
     void workspaceChanged();
+    void interactionChanged();
+    void manualNavigationRequested();
 
   private:
     [[nodiscard]] static QString rootDirectory();

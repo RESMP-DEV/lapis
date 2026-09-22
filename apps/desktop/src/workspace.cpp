@@ -240,10 +240,13 @@ bool Workspace::removeSession(const QString& id) {
 }
 
 void Workspace::setInteractionBlocked(const QString& reason, bool blocked) {
+    const auto previous = interaction_blocks_.size();
     if (blocked)
         interaction_blocks_.insert(reason);
     else
         interaction_blocks_.remove(reason);
+    if (previous != interaction_blocks_.size())
+        emit interactionChanged();
     if (interaction_blocks_.isEmpty() && !pending_focus_.isNull())
         QTimer::singleShot(0, this, [this] { flushFocus(); });
 }
@@ -385,6 +388,7 @@ SessionPreview* Workspace::focusedSession() const {
 void Workspace::setFocusedIndex(int index) {
     if (index < 0 || static_cast<std::size_t>(index) >= sessions_.size())
         return;
+    emit manualNavigationRequested();
     if (index == focused_index_) {
         pending_focus_.clear();
         return;
@@ -396,6 +400,23 @@ void Workspace::setFocusedIndex(int index) {
     pending_focus_.clear();
     focused_index_ = index;
     emit focusChanged();
+}
+
+bool Workspace::focusAutomatically(const QString& id) {
+    if (interactionBlocked() || pending_focus_ || !focusedSession() ||
+        !focusedSession()->inputReady())
+        return false;
+    for (std::size_t index = 0; index < sessions_.size(); ++index) {
+        const auto& target = sessions_[index];
+        if (target->sessionId() != id)
+            continue;
+        if (target.get() == focusedSession() || !target->inputReady())
+            return false;
+        focused_index_ = static_cast<int>(index);
+        emit focusChanged();
+        return true;
+    }
+    return false;
 }
 
 void Workspace::nextSession(int delta) {

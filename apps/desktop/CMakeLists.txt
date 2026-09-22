@@ -4,6 +4,7 @@ set(CMAKE_AUTOMOC ON)
 add_library(lapis_desktop_view STATIC
     src/workspace.cpp src/workspace.hpp
     src/workspace_registry.cpp src/workspace_registry.hpp
+    src/workspace_supervisor.cpp src/workspace_supervisor.hpp
     src/attention_view.cpp
     src/keymap.cpp src/keymap.hpp
     src/live_connection.cpp src/live_connection.hpp
@@ -29,6 +30,10 @@ set_target_properties(lapis_desktop PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER "dev.lapis.desktop")
 add_dependencies(lapis_desktop lapis_session_service)
 if(BUILD_TESTING)
+    add_executable(lapis_workspace_supervisor_tests tests/workspace_supervisor_test.cpp)
+    target_link_libraries(lapis_workspace_supervisor_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME workspace-supervisor COMMAND lapis_workspace_supervisor_tests)
+    set_tests_properties(workspace-supervisor PROPERTIES TIMEOUT 30)
     add_executable(lapis_workspace_tests tests/workspace_test.cpp)
     target_link_libraries(lapis_workspace_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_dependencies(lapis_workspace_tests lapis_session_service)
@@ -100,6 +105,11 @@ if(APPLE)
     target_compile_definitions(lapis_workspace_ui_probe PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
     qt_add_resources(lapis_workspace_ui_probe workspace_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml)
     add_dependencies(lapis_workspace_ui_probe lapis_session_service)
+    add_executable(lapis_workspace_attention_ui_probe tests/workspace_attention_ui_probe.cpp tests/platform/window_activation.mm)
+    target_link_libraries(lapis_workspace_attention_ui_probe PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2 "-framework AppKit")
+    target_compile_definitions(lapis_workspace_attention_ui_probe PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
+    qt_add_resources(lapis_workspace_attention_ui_probe workspace_attention_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml)
+    add_dependencies(lapis_workspace_attention_ui_probe lapis_session_service)
     add_executable(lapis_attention_ui_probe tests/attention_ui_probe.cpp tests/platform/window_activation.mm)
     target_link_libraries(lapis_attention_ui_probe PRIVATE lapis_project_options lapis_desktop_view
         Qt6::QuickControls2 "-framework AppKit")

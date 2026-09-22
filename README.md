@@ -5,7 +5,7 @@ Repository: [RESMP-DEV/lapis](https://github.com/RESMP-DEV/lapis).
 lapis is an early-stage project for a desktop workspace that supervises live CLI
 agents. The direction is persistent sessions, fast switching, GPU rendering and
 an opt-in attention carousel. macOS and Codex are the active target; a Linux
-desktop port is deferred. A macOS terminal window is now available for a visual checkpoint.
+desktop port is deferred. The macOS workspace supports two retained sessions.
 
 The priority is **responsiveness, then ergonomics, then visuals**. Design for
 high-end M-series hardware and high-refresh displays; use generous, bounded RAM
@@ -21,9 +21,10 @@ to that same file so Codex and Claude Code share one set of project instructions
 The macOS workspace retains live terminal and Codex sessions in one window. It
 supports manual switching, identity-checked reconnection and detached services.
 **Milestone 1 is qualified on macOS.** Milestone 2 is qualified for one managed
-Codex session. **Milestone 3 checkpoint 3A has passed functional qualification
-with two retained sessions on macOS.** Workspace attention aggregation and the
-automatic carousel remain planned, so Milestone 3 is not complete.
+Codex session. **Milestone 3 is qualified for two sessions on macOS:** retained
+terminals, a shared attention queue, source-bound decisions, and an opt-in guarded
+carousel. The assembled qualification and measurement limits are recorded in the
+[workspace receipt](evidence/milestone-three-workspace.json).
 
 | Component | Exercised | Remaining |
 | --- | --- | --- |
@@ -32,69 +33,31 @@ automatic carousel remain planned, so Milestone 3 is not complete.
 | Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues, explicit reconnect and retained workspace entries | Automatic recovery policy after service loss |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, guarded manual focus switching, 10 Hz background previews, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK | Cross-cell contextual shaping, selection and accessibility; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
-| Retained workspace | Two real shells, GUI creation, four layouts, independent input/history/geometry, shared archive quotas/failure, same-child GUI reopen, removal/adoption and native IME switching | Cross-session Codex attention, automatic carousel and larger workloads |
-| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation | Workspace-wide attention routing and automatic carousel |
-| Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Workspace-wide aggregation |
+| Retained workspace | Two real shells, GUI creation, four layouts, independent input/history/geometry, shared archive quotas/failure, same-child GUI reopen, removal/adoption and native IME switching; aggregate attention and guarded carousel | Larger workloads and automatic service recovery |
+| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating, per-request drafts, shared queue, pin/pause/snooze controls | Broader request-kind qualification |
+| Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards, deterministic workspace ordering and quiet-session fairness | Larger-workload profiling |
 | Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals | Broader binary and request-kind qualification |
 
-[Workspace qualification](evidence/milestone-three-workspace.json) records the
-checkpoint 3A scope and limitations.
+The [architecture](docs/architecture.md#milestone-3-supervising-two-live-sessions-on-macos)
+owns milestone scope and acceptance. Milestone 3 exercises two real shells and two
+managed Codex sources with simultaneous approval and structured-input requests.
+It retains the UI layouts and the corrections merged in PRs #7, #8 and #9.
+Automatic navigation starts off, including after reopening, and request arrival
+alone never moves keyboard focus or approves a request.
 
-[Desktop evidence](evidence/desktop-preview.json),
-[UI refinement evidence](evidence/ui-preview.json),
-[reconciled UI and test evidence](evidence/reconciliation.json) and
-[adapter evidence](evidence/terminal-adapter.json) delimit these observations.
-Dependency packaging remains unfinished; this is a local developer build.
-The [two UI refinements](docs/architecture.md#ui-refinement-checkpoint) are
-implemented for visual review: an isolated preview/debugging workflow and a compact
-header with replayable red attention cues. Configurable navigation, layouts, themes
-and card densities are available. Managed Codex sessions now surface real requests;
-automatic carousel behavior remains later work. The completed attention state
-and verified Codex request handling are described in the
-[Milestone 2 plan](docs/architecture.md#milestone-2-attention-and-codex-plan)
-with its route decision, implementation slices and acceptance checks.
-The first checkpoint implemented the standalone attention core and exercised real
-Codex request round trips. [Milestone 2 evidence](evidence/milestone-two.json) now
-records assembled service/desktop acceptance on macOS. The
-[PR #7 review receipt](evidence/pr7-review.json) covers subsequent lifecycle,
-startup, queue-boundary and multi-question fixes. Its
-[follow-up receipt](evidence/pr7-review-followup.json) records request-ID and
-reconciliation fixes, order-independent question checks and refreshed validation.
-The [thread-repair receipt](evidence/pr7-thread-repairs.json) records initial-thread
-classification, config separator validation, preserved cleanup diagnostics and
-the disposition of the remaining review threads.
-The [latest PR #7 receipt](evidence/pr7-classification-repairs.json) records
-post-binding thread isolation, transport and fixture cleanup, backend exit
-diagnostics, and the evidence-based disposition of the new review batch.
-Following the quality cleanup in PR #6, Milestone 2
-now includes the production Codex adapter, session-service integration and explicit
-desktop response controls. Request arrival never moves keyboard focus. See the
-[attention test procedure](CONTRIBUTING.md#codex-attention-qualification).
-The [Milestone 3 scope](docs/architecture.md#milestone-3-supervising-two-live-sessions-on-macos)
-has checkpoint 3A implemented: retained entries, manual switching and guarded
-input. Its two-session functional acceptance is recorded in the workspace receipt.
-Checkpoint 3B workspace attention aggregation and checkpoint 3C's guarded opt-in
-carousel remain planned. Latency and warm-switch targets remain provisional.
-
-Explicit CLI launch is now implemented through the existing service-owned PTY.
-The [launch receipt](evidence/cli-launch.json) records the exercised macOS scope and
-dated sanitizer limitations. The [PR #2 repair](evidence/pr2-review.json) resolves
-the renderer TSan reports and records subsequent review fixes. The
-[merge preparation receipt](evidence/pr2-merge.json) covers cursor presentation,
-descendant cleanup and contributor/test procedures. The [session reconnect receipt](evidence/session-reconnect.json) records identity binding,
-input readiness and failure-boundary checks. The [terminal fidelity receipt](evidence/terminal-fidelity.json)
-records native GPU regression checks for cell positioning, fallback glyphs,
-decorations, resize and cursor repaint. Milestone 1 now includes bounded disk history,
-input-context lifecycle checks and an opt-in correlated timing probe. The
-[milestone qualification receipt](evidence/milestone-one.json) records the assembled
-checks, including automated Option-key, paste and native text-composition
-acceptance using the built-in Japanese input method as a test fixture.
-The [review-fix receipt](evidence/pr3-review.json) covers bounded error-shutdown
-draining, storage retry status and commit-only input regressions.
-The [ordered plan](docs/architecture.md#persistent-terminal-acceptance) records
-the completed scope and later work.
-The [Codex route comparison](adapters/codex/README.md#integration-route-comparison)
+Qualification history remains in [Milestone 1](evidence/milestone-one.json),
+[Milestone 2](evidence/milestone-two.json), the
+[PR #7 repairs](evidence/pr7-classification-repairs.json), and the dated receipts
+under [evidence/](evidence/). These distinguish terminal behavior, native input,
+GPU pixel checks, real adapter traffic, and timing measurements. The
+[Codex route comparison](adapters/codex/README.md#integration-route-comparison)
 separates terminal operation from attention delivery.
+
+Latency targets remain provisional. Two sessions do not qualify 32-session
+capacity, Linux UI, or a second independent adapter. Selection, accessibility,
+cross-cell shaping and automatic recovery after service death remain later work.
+Dependency packaging and redistribution notices remain unfinished; this is a
+local developer build.
 
 ## Run the window on macOS
 
@@ -140,6 +103,15 @@ credentials. The single-session menu keeps explicit reconnect/discover/new-sessi
 actions; the workspace menu separates create/adopt and remove/detach. Builds stay
 under `build/`; private sockets, logs and bounded workspace/identity files stay
 under `runtime/`.
+
+Use the **Workspace** button to inspect attention from every retained session and
+open its source-bound response form. Drafts stay with their exact request while
+you move between forms, with the 64 most recent drafts retained in memory. Reviewing a request does not switch the terminal or
+approve it. The same panel provides **Automatic**, **Paused**, **Pinned**,
+and per-request **Snooze** controls. Automatic switching waits for an active window
+and idle input; typing, held keys, paste, composition, dialogs and dragging guard
+the current owner. Manual navigation takes precedence. Carousel settings and
+snoozes are not persisted.
 
 Use **Older**, **Newer**, and **Live** above the terminal to browse archived
 output. History is read only: keys, paste and terminal resize resume only after

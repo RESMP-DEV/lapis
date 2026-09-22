@@ -32,7 +32,7 @@ from check_codex_attention import (
     MODEL,
     Client,
     approved_fixture,
-    server_arguments,
+    probe_configuration_arguments,
 )
 from codex_probe_transport import UnixWebSocketTransport
 from probe_codex_attention import initialize
@@ -416,7 +416,7 @@ async def exercise(args, receipt):
         home, cwd = runtime / "home", runtime / "cwd"
         home.mkdir()
         cwd.mkdir()
-        options = server_arguments(binary, runtime / "unused")[4:]
+        options = probe_configuration_arguments()
         options += [
             "-c",
             'approval_policy="on-request"',

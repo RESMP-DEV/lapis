@@ -3,6 +3,7 @@
 
 #include "keymap.hpp"
 #include "workspace.hpp"
+#include "workspace_supervisor.hpp"
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QList>
@@ -12,9 +13,11 @@
 #include <QString>
 #include <QStringList>
 #include <QUrl>
+#include <functional>
 #include <memory>
 
 class QQmlApplicationEngine;
+class QQmlError;
 class QQuickWindow;
 
 namespace lapis::desktop {
@@ -28,6 +31,8 @@ struct UiPreviewOptions {
     // User keybindings and layout, exposed to QML as `keymap`. Optional; a
     // null value uses the shared C++ settings defaults and QML navigation defaults.
     KeyMap* keymap{};
+    // Deterministic GUI qualification; production uses the steady clock.
+    std::function<qint64()> supervisor_clock{};
 };
 
 // View host shared by normal launch and the isolated development fixture.
@@ -41,6 +46,7 @@ class UiPreview final : public QObject {
     Q_PROPERTY(QString diagnostics READ diagnostics NOTIFY diagnosticsChanged)
     Q_PROPERTY(QStringList settingsShortcuts READ settingsShortcuts NOTIFY settingsShortcutsChanged)
     Q_PROPERTY(bool holdingKeys READ holdingKeys NOTIFY heldKeysChanged)
+    Q_PROPERTY(lapis::desktop::WorkspaceSupervisor* supervisor READ supervisor CONSTANT)
   public:
     UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* parent = nullptr);
     ~UiPreview() override;
@@ -52,6 +58,7 @@ class UiPreview final : public QObject {
     [[nodiscard]] const QString& diagnostics() const { return diagnostics_; }
     [[nodiscard]] const QStringList& settingsShortcuts() const { return settings_shortcuts_; }
     [[nodiscard]] bool holdingKeys() const { return !held_keys_.isEmpty(); }
+    [[nodiscard]] WorkspaceSupervisor* supervisor() const { return supervisor_.get(); }
     [[nodiscard]] QQuickWindow* window() const;
     bool load();
     Q_INVOKABLE bool reload();
@@ -75,16 +82,20 @@ class UiPreview final : public QObject {
     bool eventFilter(QObject* watched, QEvent* event) override;
     bool loadCandidate();
     void refreshSettingsShortcuts();
+    void updateWindowActivity(QQuickWindow* window);
+    void recordRuntimeWarnings(const QList<QQmlError>& warnings);
     void clearHeldKeys();
     void updateHeldKey(const QKeyEvent& event, bool pressed);
     Workspace& workspace_;
     UiPreviewOptions options_;
+    std::unique_ptr<WorkspaceSupervisor> supervisor_;
     std::unique_ptr<QQmlApplicationEngine> engine_;
     QPointer<QQuickWindow> window_;
     QString diagnostics_;
     QStringList settings_shortcuts_;
     QList<QKeySequence> parsed_settings_shortcuts_;
     QSet<int> held_keys_;
+    bool publishing_diagnostics_{};
     bool reduced_motion_{};
     bool system_reduced_motion_{};
 };

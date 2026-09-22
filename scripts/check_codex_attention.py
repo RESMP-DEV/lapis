@@ -278,7 +278,8 @@ class Tui:
                 self.master = None
 
 
-def server_arguments(binary, socket):
+def probe_configuration_arguments():
+    """Shared isolated GLM route for app-server and ordinary-TUI fixtures."""
     config = {
         "model": MODEL,
         "model_provider": "lapis_probe",
@@ -298,10 +299,19 @@ def server_arguments(binary, socket):
         "skills.include_instructions": False,
         "analytics.enabled": False,
     }
-    arguments = [str(binary), "app-server", "--listen", "unix://" + str(socket)]
+    arguments = []
     for key, value in config.items():
         arguments.extend(["-c", key + "=" + json.dumps(value)])
     return arguments
+
+
+def server_arguments(binary, socket):
+    return [
+        str(binary),
+        "app-server",
+        "--listen",
+        "unix://" + str(socket),
+    ] + probe_configuration_arguments()
 
 
 async def roundtrip(case, owner, observer, connect, cwd, receipt, tui_arguments):

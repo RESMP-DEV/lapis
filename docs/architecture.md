@@ -6,9 +6,9 @@ macOS is the active target. Milestones 1 and 2 are qualified for the recorded
 single-session scope: a persistent terminal and managed Codex attention with
 explicit desktop responses. The quality baseline from PR #6 remains in force.
 [Milestone 3](#milestone-3-supervising-two-live-sessions-on-macos) has
-checkpoint 3A functionally qualified on macOS: retained entries, manual
-switching and guarded input. Workspace attention (3B) and the guarded opt-in
-carousel (3C) remain planned, so the milestone is incomplete.
+retained entries, workspace attention and guarded opt-in navigation assembled on
+macOS. Its two-session acceptance and measurement limits are recorded in the
+[workspace receipt](../evidence/milestone-three-workspace.json).
 A Linux desktop port is deferred; the headless engine has
 already been exercised on Linux, but the session service and desktop have not.
 
@@ -942,16 +942,15 @@ remain an independent prerequisite for binary distribution.
 
 ### Milestone 3: supervising two live sessions on macOS
 
-**Checkpoint 3A functionally qualified on macOS. Milestone 3 incomplete.**
+**All three checkpoints qualified together on macOS; evidence is recorded in
+the [workspace receipt](../evidence/milestone-three-workspace.json).**
 The outcome is one desktop workspace that retains and supervises two real
 sessions: both continue running and consuming output, manual navigation sends
 input only to the selected session, and attention from either session can be
-reviewed and answered explicitly. A guarded, opt-in carousel completes this
-milestone after manual navigation and workspace attention are qualified.
+reviewed and answered explicitly. The guarded, opt-in carousel uses the same keyboard ownership policy.
 
-The 3A branch includes the final single-session Milestone 2 review corrections
-from PR #7. Land that prerequisite through normal repository gates before
-merging a subsequent multi-session PR. Use the three sequential checkpoints below; passing the first
+The branch retains the Milestone 2 corrections and UI repairs merged in PRs
+#7, #8 and #9. Use the three sequential checkpoints below; passing the first
 checkpoint does not mean the entire milestone is complete.
 
 #### Scope and design decisions
@@ -1032,7 +1031,7 @@ and failure isolation, and native IME commit followed by a guarded switch.
 Entries are persisted only after the first verified handshake; closing during
 initial connection is outside this retention guarantee. The eight-entry storage
 bound is not an eight-session qualification. Cross-session Codex requests and
-workspace latency/memory baselines remain part of the later milestone checkpoints.
+workspace latency/memory baselines are qualified by checkpoints 3B and 3C below.
 
 #### Checkpoint 3B: workspace attention and explicit decisions
 
@@ -1045,6 +1044,12 @@ or invalidates the target.
 
 Use a bounded deterministic queue, a monotonic clock and explicit tie-breaking.
 Do not compare undocumented clock epochs from different service processes.
+`WorkspaceSupervisor` owns this GUI-thread aggregate, with at most eight sources
+and 128 requests per source. It observes the existing session models and routes
+review/snooze by stable session ID plus the complete opaque request token. Service
+IPC remains v6. The supervisor supplies queue display and navigation policy; the
+originating session still validates and sends every explicit decision. Dialog
+drafts are retained only for their exact source/request token, never a card index.
 Reconnect must reconcile a session before enabling replies, and cannot erase a
 healthy neighbor's queue entries. Keep the service's exact token checks for every
 response; matching numeric or string request IDs in different sessions are distinct.
@@ -1068,11 +1073,21 @@ One focus policy arbitrates manual and automatic navigation. Automatic changes
 require an active lapis window and an idle interaction state: no recent typing,
 held keys, paste, composition, modal work, drag or selection gesture. Manual
 navigation takes precedence and starts a cooldown. Recheck destination identity,
-readiness and interaction state when executing a queued switch; discard obsolete
-switches instead of replaying them after reconnect. Use aging and cooldowns to
+readiness and interaction state at execution; automatic switches are never queued
+or replayed after reconnect. Use aging and cooldowns to
 avoid repeated requests from one session starving the other, including a quiet
 eligible session with no pending request. Respect reduced
 motion, and never wait for an animation before accepting input.
+
+The supervisor uses the local steady clock, with an injected clock for
+deterministic qualification. Initial policy intervals are 1.5 seconds of input
+quiet, a 3-second manual-navigation cooldown, a 5-second minimum dwell, and a
+15-second fairness interval for eligible quiet sessions. These are navigation
+defaults, not performance gates. The window host reports activation and user
+interaction; the existing workspace focus owner applies automatic requests
+synchronously after checking readiness and interaction blocks. Only manual
+requests can enter the deferred focus queue. Carousel state and snoozes are
+ephemeral, so reopening never enables automatic navigation.
 
 **Exit evidence:** deterministic clock-driven ordering, aging, snooze, pin and
 cooldown cases plus actual macOS GUI tests while typing, holding keys, pasting,
@@ -1090,8 +1105,8 @@ integration coordinator and one build owner per build directory. Independent
 registry, UI investigation and verification work can proceed concurrently; focus,
 attention and registry integration share one reviewed contract.
 
-For 3A, apply the [required-check matrix](../CONTRIBUTING.md#checks), including
-the `workspace` and `workspace-registry` CTest suites in the normal desktop run.
+Apply the [required-check matrix](../CONTRIBUTING.md#checks), including
+the `workspace`, `workspace-registry` and `workspace-supervisor` CTest suites in the normal desktop run.
 On macOS, run the opt-in workspace UI probe serially with other GUI checks:
 
 ```sh
@@ -1099,7 +1114,9 @@ build/desktop/apps/desktop/lapis_workspace_ui_probe \
   --json-file build/workspace-ui.json --output-dir build/workspace-ui
 ```
 
-Native input must include the workspace IME switch case in
+The [workspace test procedure](../CONTRIBUTING.md#checks) also specifies the
+two-source live Codex probe and measurement limits. Native input includes the
+workspace composition and paste guards in
 `just native-input`. Also run relevant ASan/UBSan and TSan suites, quality
 checks for Python, and affected CLI/UI probes. Keep GUI runs serial. Automated
 macOS key, Option, paste and native IME checks are required; physical typing is
@@ -1122,17 +1139,13 @@ portable boundaries and existing terminal behavior while these remain deferred.
 
 ### Following milestones
 
-Follow [AGENTS.md](../AGENTS.md): **2. attention state and real Codex qualification
-→ 3. full desktop, guarded keyboard ownership and carousel → 4. measured 32-session
-workload → 5. second CLI and platform qualification.** The minimal view in
-milestone 1 proves persistence; milestone 3 assembles the supervising workspace.
-A later Linux port still needs actual input, rendering and lifecycle evidence.
-The following sequence is planned, not implemented by the launch slice:
+With the two-session workspace assembled, the next qualification stages are
+scale, another independent adapter, and platform completion. A later Linux port
+still needs actual input, rendering and lifecycle evidence. These stages remain
+planned; they are not implied by Milestone 3 passing.
 
 | Milestone | Dependency and owner | Exit evidence |
 | --- | --- | --- |
-| 2: attention and Codex | Stable session/source/attachment identities; service policy and adapter owners | Deterministic replay of duplicates, gaps, cancellation and simultaneous requests; real input/approval, explicit response, continuation and reconnect reconciliation against a hashed Codex binary |
-| 3: supervising desktop | Qualified macOS terminal and merged Milestone 2; shared implementation with task-scoped coordination | [3A: two retained sessions and manual switching; 3B: workspace attention; 3C: pin/snooze and guarded opt-in carousel](#milestone-3-supervising-two-live-sessions-on-macos), all qualified together with actual macOS input/focus evidence |
 | 4: scale and responsiveness | Working multi-session desktop; verification owner | Controlled 32-session output/TUI workload, p50/p95/p99 input/switch/frame results, memory growth and idle CPU/GPU; distinguish synthetic replay from real agents |
 | 5: independent adapter and platform completion | Stable adapter capability contract; separate adapter/platform owners | Second CLI independently exercises observation/response/reconciliation; macOS and named Linux backends have actual lifecycle, native input and rendering evidence |
 

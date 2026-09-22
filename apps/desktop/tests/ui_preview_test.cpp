@@ -286,6 +286,38 @@ void pump(int milliseconds) {
         QThread::msleep(1);
     }
 }
+int run_diagnostics_reentrancy_test() {
+    QTemporaryDir directory;
+    CHECK(directory.isValid());
+    const auto path = write_qml(directory, QStringLiteral("warning.qml"), QStringLiteral(R"(
+import QtQuick
+Window {
+    id: warningWindow
+    visible: false
+    width: 200; height: 200
+    function warn() { throw new Error("runtime fixture warning") }
+    Connections {
+        target: preview
+        function onDiagnosticsChanged() { throw new Error("diagnostics fixture warning") }
+    }
+    Timer { interval: 1; running: true; onTriggered: warningWindow.warn() }
+}
+)"));
+    lapis::desktop::Workspace workspace(lapis::desktop::WorkspaceMode::preview);
+    lapis::desktop::UiPreview preview(
+        workspace, {.source = QUrl::fromLocalFile(path), .compact = true, .screen = QString()});
+    int notifications = 0;
+    QObject observation;
+    QObject::connect(&preview, &lapis::desktop::UiPreview::diagnosticsChanged, &observation,
+                     [&] { ++notifications; });
+    CHECK(preview.load());
+    pump(50);
+    CHECK(preview.diagnostics().contains(QStringLiteral("runtime fixture warning")));
+    CHECK(notifications == 1);
+    CHECK(preview.diagnostics().size() <= 4096);
+    return EXIT_SUCCESS;
+}
+
 void wait_active(QQuickWindow& window) {
     lapis::desktop::test::activate_test_window(window);
     QElapsedTimer elapsed;
@@ -425,8 +457,52 @@ int run_attention_dialog_tests() {
                ->property("visible")
                .toBool());
     CHECK(dialog->property("canRespond").toBool());
+    CHECK(QMetaObject::invokeMethod(dialog, "close"));
+    wait_popup(*dialog, false);
+    CHECK(QMetaObject::invokeMethod(window, "openAttentionDialog"));
+    wait_popup(*dialog, true);
+    answer = find_visual(window->contentItem(), QStringLiteral("answer-color"));
+    CHECK(answer != nullptr && answer->property("text").toString() == QStringLiteral("Blue"));
+    CHECK(dialog->property("answers")
+              .toMap()
+              .value(QStringLiteral("color"))
+              .toMap()
+              .value(QStringLiteral("answers"))
+              .toList()
+              .first()
+              .toString() == QStringLiteral("Blue"));
+
+    // Equal source tokens in different sessions never share drafts or keyboard ownership.
+    CHECK(QMetaObject::invokeMethod(dialog, "close"));
+    wait_popup(*dialog, false);
+    auto* neighbor = workspace.session(QStringLiteral("renderer"));
+    neighbor->setConnection(QStringLiteral("ready"), true);
+    neighbor->applyAttention(state);
+    const auto neighborToken = neighbor->attentionRequests()[0].toMap().value("token").toString();
+    CHECK(neighborToken == document->attentionRequests()[0].toMap().value("token").toString());
+    CHECK(preview.supervisor()->review(neighbor->sessionId(), neighborToken));
+    wait_popup(*dialog, true);
+    CHECK(workspace.focusedSession() == document);
+    answer = find_visual(window->contentItem(), QStringLiteral("answer-color"));
+    CHECK(answer != nullptr && answer->property("text").toString().isEmpty());
+    answer->forceActiveFocus();
+    QKeyEvent neighborLetter(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier, QStringLiteral("Amber"));
+    QCoreApplication::sendEvent(window, &neighborLetter);
+    CHECK(answer->property("text").toString() == QStringLiteral("Amber"));
+    CHECK(QMetaObject::invokeMethod(dialog, "close"));
+    wait_popup(*dialog, false);
+    const auto originalToken = document->attentionRequests()[0].toMap().value("token").toString();
+    CHECK(preview.supervisor()->review(document->sessionId(), originalToken));
+    wait_popup(*dialog, true);
+    answer = find_visual(window->contentItem(), QStringLiteral("answer-color"));
+    CHECK(answer != nullptr && answer->property("text").toString() == QStringLiteral("Blue"));
     document->invalidateAttention();
     CHECK(!dialog->property("canRespond").toBool());
+    CHECK(answer->property("text").toString() == QStringLiteral("Blue"));
+    auto retired = state;
+    retired.requests.erase(retired.requests.begin());
+    document->applyAttention(retired);
+    CHECK(dialog->property("visible").toBool() && !dialog->property("canRespond").toBool());
     CHECK(answer->property("text").toString() == QStringLiteral("Blue"));
     if (const auto path = qEnvironmentVariable("LAPIS_ATTENTION_CAPTURE"); !path.isEmpty())
         CHECK(window->grabWindow().save(path));
@@ -503,15 +579,21 @@ int run_shortcut_focus_tests() {
 
     QKeyEvent old_shortcut(QEvent::KeyPress, Qt::Key_Comma, Qt::ControlModifier);
     QCoreApplication::sendEvent(window, &old_shortcut);
+    QKeyEvent old_shortcut_release(QEvent::KeyRelease, Qt::Key_Comma, Qt::ControlModifier);
+    QCoreApplication::sendEvent(window, &old_shortcut_release);
     CHECK(!dialog->property("visible").toBool());
     QKeyEvent old_mac_shortcut(QEvent::KeyPress, Qt::Key_Comma, Qt::MetaModifier);
     QCoreApplication::sendEvent(window, &old_mac_shortcut);
+    QKeyEvent old_mac_shortcut_release(QEvent::KeyRelease, Qt::Key_Comma, Qt::MetaModifier);
+    QCoreApplication::sendEvent(window, &old_mac_shortcut_release);
     CHECK(!dialog->property("visible").toBool());
 
     QKeyEvent custom(QEvent::KeyPress, Qt::Key_T, Qt::ControlModifier | Qt::AltModifier,
                      QStringLiteral("t"));
     CHECK(QCoreApplication::sendEvent(window, &custom));
     CHECK(custom.isAccepted());
+    QKeyEvent custom_release(QEvent::KeyRelease, Qt::Key_T, Qt::ControlModifier | Qt::AltModifier);
+    QCoreApplication::sendEvent(window, &custom_release);
     wait_popup(*dialog, true);
     CHECK(dialog->property("opened").toBool());
     CHECK(window->activeFocusItem() != terminal);
@@ -558,10 +640,16 @@ int run_shortcut_focus_tests() {
             CHECK(shell_card->width() > carousel->width() * 0.95);
             CHECK(shell_card->height() > carousel->height() * 0.95);
             workspace.setFocusedIndex(1);
-            pump(100);
             auto* next_card =
                 find_visual(window->contentItem(), QStringLiteral("sessionCard_renderer"));
             CHECK(next_card != nullptr);
+            QElapsedTimer scroll;
+            scroll.start();
+            while (scroll.elapsed() < 2000 &&
+                   (next_card->mapToItem(carousel, QPointF()).y() < -1 ||
+                    next_card->mapToItem(carousel, QPointF()).y() >= carousel->height()))
+                pump(5);
+            CHECK(workspace.focusedIndex() == 1);
             CHECK(next_card->mapToItem(carousel, QPointF()).y() >= -1);
             CHECK(next_card->mapToItem(carousel, QPointF()).y() < carousel->height());
             workspace.setFocusedIndex(0);
@@ -604,10 +692,16 @@ int run_shortcut_focus_tests() {
     wait_active(*window);
     QKeyEvent obsolete(QEvent::KeyPress, Qt::Key_T, Qt::ControlModifier | Qt::AltModifier);
     QCoreApplication::sendEvent(window, &obsolete);
+    QKeyEvent obsolete_release(QEvent::KeyRelease, Qt::Key_T,
+                               Qt::ControlModifier | Qt::AltModifier);
+    QCoreApplication::sendEvent(window, &obsolete_release);
     CHECK(!dialog->property("visible").toBool());
     for (const auto modifier : {Qt::ControlModifier, Qt::MetaModifier}) {
+        wait_active(*window);
         QKeyEvent settings_key(QEvent::KeyPress, Qt::Key_Comma, modifier);
         QCoreApplication::sendEvent(window, &settings_key);
+        QKeyEvent settings_key_release(QEvent::KeyRelease, Qt::Key_Comma, modifier);
+        QCoreApplication::sendEvent(window, &settings_key_release);
         wait_popup(*dialog, true);
         CHECK(dialog->property("opened").toBool());
         CHECK(QMetaObject::invokeMethod(dialog, "close"));
@@ -857,6 +951,18 @@ int run_input_guard_tests() {
         QKeyEvent event(type, key, Qt::NoModifier, text, repeat, repeat ? 1 : 0);
         QCoreApplication::sendEvent(window, &event);
     };
+    {
+        QQuickItem other(window->contentItem());
+        other.forceActiveFocus();
+        workspace.setInteractionBlocked(QStringLiteral("test-composition"), true);
+        preview.deferTerminalFocus();
+        pump(20);
+        CHECK(other.hasActiveFocus());
+        CHECK(!preview.assignTerminalFocus());
+        workspace.setInteractionBlocked(QStringLiteral("test-composition"), false);
+        pump(20);
+        CHECK(!other.hasActiveFocus());
+    }
     send_key(QEvent::KeyPress, Qt::Key_X, QStringLiteral("x"));
     send_key(QEvent::KeyPress, Qt::Key_X, QString(), true);
     CHECK(preview.holdingKeys());
@@ -910,7 +1016,9 @@ int main(int argc, char** argv) {
         if (app.arguments().contains(QStringLiteral("--shortcuts-only")))
             return run_shortcut_focus_tests();
         if (run_workspace_tests() != EXIT_SUCCESS || run_ui_tests() != EXIT_SUCCESS ||
-            run_surface_tests() != EXIT_SUCCESS || run_attention_dialog_tests() != EXIT_SUCCESS ||
+            run_surface_tests() != EXIT_SUCCESS ||
+            run_diagnostics_reentrancy_test() != EXIT_SUCCESS ||
+            run_attention_dialog_tests() != EXIT_SUCCESS ||
             run_attention_ui_tests() != EXIT_SUCCESS || run_input_guard_tests() != EXIT_SUCCESS)
             return EXIT_FAILURE;
         std::cout << "ui_preview_test: PASS\n";

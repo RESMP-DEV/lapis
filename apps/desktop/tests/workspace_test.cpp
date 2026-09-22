@@ -191,6 +191,19 @@ int main(int argc, char** argv) {
         require(ids[0] != ids[1]);
         until([&] { return savedIds(fixture.manifest) == ids; });
 
+        require(!workspace.focusAutomatically(QStringLiteral("removed-session")));
+        workspace.setInteractionBlocked(QStringLiteral("paste"), true);
+        require(!workspace.focusAutomatically(ids[0]));
+        workspace.setInteractionBlocked(QStringLiteral("paste"), false);
+        QCoreApplication::processEvents();
+        require(workspace.focusedSession() == second); // Automatic attempts are never replayed.
+        require(workspace.focusAutomatically(ids[0]));
+        workspace.setInteractionBlocked(QStringLiteral("composition"), true);
+        workspace.setFocusedIndex(1);
+        workspace.setInteractionBlocked(QStringLiteral("composition"), false);
+        require(!workspace.focusAutomatically(ids[1])); // Deferred manual intent wins first.
+        until([&] { return workspace.focusedSession() == second; });
+
         workspace.setInteractionBlocked(QStringLiteral("held-key"), true);
         workspace.setFocusedIndex(0);
         workspace.setFocusedIndex(1); // Selecting the current owner cancels a pending switch.
@@ -217,7 +230,9 @@ int main(int argc, char** argv) {
         require(first->historyMessage().isEmpty());
         const auto history = screen(*first);
         require(history.contains(QStringLiteral("HISTORY_A_")) && !first->inputReady());
+        require(!workspace.focusAutomatically(ids[0]));
         workspace.setFocusedIndex(0);
+        require(!workspace.focusAutomatically(ids[1])); // Reading history retains input ownership.
         workspace.setFocusedIndex(1);
         send(*second, "printf 'BACKGROUND_SECOND\\n'");
         contains(*second, QStringLiteral("BACKGROUND_SECOND"));

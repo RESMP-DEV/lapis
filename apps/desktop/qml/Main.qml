@@ -91,7 +91,8 @@ ApplicationWindow {
     readonly property bool stackLayout: layoutMode === "stack"
     // The pane owns the keyboard only when it is the visible surface.
     readonly property bool settingsOpen: settingsDialog.visible
-    readonly property bool inputBlocked: settingsOpen || attentionDialog.visible || sessionDialog.visible
+    readonly property bool inputBlocked: settingsOpen || attentionDialog.visible ||
+                                         sessionDialog.visible || workspaceAttentionQueue.visible
     readonly property bool paneVisible: layoutMode === "focus" || columnsLayout
     readonly property int cardSpacing: densityMode === "minimal" ? 8 :
                                        densityMode === "compact" ? 10 : 14
@@ -227,6 +228,29 @@ ApplicationWindow {
             attentionDialog.showSession(workspace.focusedSession)
     }
 
+    readonly property var workspaceSupervisor: preview.supervisor
+    readonly property var workspaceAttentionRows:
+        workspaceSupervisor ? workspaceSupervisor.attentionQueue : []
+
+    function openWorkspaceAttentionQueue() {
+        if (!inputBlocked)
+            workspaceAttentionQueue.open()
+    }
+
+    function reviewWorkspaceRequest(sessionId, token) {
+        if (!workspaceSupervisor)
+            return
+        workspaceAttentionQueue.close()
+        workspaceSupervisor.review(sessionId, token)
+    }
+
+    function pruneAttentionDrafts() {
+        const activeSessions = []
+        for (const value of workspace.sessions)
+            activeSessions.push(value)
+        attentionDialog.pruneDrafts(activeSessions)
+    }
+
     function workspaceStatus(fallback) {
         if (workspace.status.length)
             return workspace.status
@@ -258,6 +282,171 @@ ApplicationWindow {
         palette.highlight: window.focusedColor
         palette.highlightedText: window.textColor
         onClosed: preview.deferTerminalFocus()
+    }
+
+    Dialog {
+        id: workspaceAttentionQueue
+        objectName: "workspaceAttentionQueue"
+        title: qsTr("Workspace requests")
+        modal: true
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(560, window.width - 32)
+        height: Math.min(420, window.height - 32)
+        palette.window: window.surfaceColor
+        palette.windowText: window.textColor
+        palette.base: window.cardColor
+        palette.text: window.textColor
+        palette.button: window.cardColor
+        palette.buttonText: window.textColor
+        palette.mid: window.borderColor
+        palette.highlight: window.focusedColor
+        palette.highlightedText: window.textColor
+
+        onOpened: forceActiveFocus()
+        onClosed: preview.deferTerminalFocus()
+        background: Rectangle {
+            color: window.surfaceColor
+            radius: 10
+            border.color: window.borderColor
+        }
+        footer: DialogButtonBox {
+            onRejected: workspaceAttentionQueue.close()
+            Button {
+                objectName: "workspaceQueueClose"
+                text: qsTr("Close")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 10
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                Label {
+                    Layout.fillWidth: true
+                    text: workspaceSupervisor ? workspaceSupervisor.status : ""
+                    color: window.mutedTextColor
+                    font.pixelSize: 11
+                    elide: Text.ElideRight
+                }
+                CheckBox {
+                    objectName: "carouselEnabled"
+                    text: qsTr("Automatic")
+                    checked: workspaceSupervisor && workspaceSupervisor.enabled
+                    enabled: !preview.active
+                    onToggled: workspaceSupervisor.enabled = checked
+                }
+                CheckBox {
+                    objectName: "carouselPaused"
+                    text: qsTr("Paused")
+                    checked: workspaceSupervisor && workspaceSupervisor.paused
+                    enabled: workspaceSupervisor && workspaceSupervisor.enabled && !preview.active
+                    onToggled: workspaceSupervisor.paused = checked
+                }
+                CheckBox {
+                    objectName: "carouselPinned"
+                    text: qsTr("Pinned")
+                    checked: workspaceSupervisor && workspaceSupervisor.pinned
+                    enabled: !preview.active
+                    onToggled: workspaceSupervisor.pinned = checked
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                visible: workspaceAttentionRows.length === 0
+                text: qsTr("No pending requests.")
+                color: window.mutedTextColor
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+
+                ListView {
+                    implicitWidth: workspaceAttentionQueue.availableWidth
+                    model: workspaceAttentionRows
+                    spacing: 6
+                    clip: true
+
+                    delegate: RowLayout {
+                        id: requestRow
+                        required property int index
+                        required property var modelData
+                        readonly property var request: modelData
+                        width: ListView.view.width
+                        spacing: 8
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.minimumHeight: 44
+                            Layout.preferredHeight: requestLabels.implicitHeight + 16
+                            radius: 6
+                            color: window.cardColor
+                            border.color: requestRow.request.responding || requestRow.request.snoozed ?
+                                              window.borderColor : window.attentionColor
+                            border.width: 1
+
+                            ColumnLayout {
+                                id: requestLabels
+                                anchors.fill: parent
+                                anchors.margins: 8
+                                spacing: 3
+
+                                PreviewLabel {
+                                    Layout.fillWidth: true
+                                    text: requestRow.request.sessionTitle || requestRow.request.sessionId
+                                    font.pixelSize: 11
+                                    font.weight: Font.Medium
+                                    elide: Text.ElideRight
+                                }
+                                PreviewLabel {
+                                    Layout.fillWidth: true
+                                    text: requestRow.request.summary || requestRow.request.reason
+                                    font.pixelSize: 10
+                                    elide: Text.ElideMiddle
+                                }
+                                PreviewLabel {
+                                    Layout.fillWidth: true
+                                    visible: !requestRow.request.enabled || requestRow.request.responding ||
+                                             requestRow.request.snoozed
+                                    text: requestRow.request.responding ? qsTr("Response sent") :
+                                          requestRow.request.snoozed ? qsTr("Snoozed") :
+                                          qsTr("Response unavailable")
+                                    font.pixelSize: 9
+                                    elide: Text.ElideRight
+                                }
+                            }
+                        }
+
+                        Button {
+                            objectName: "workspaceRequest-" + requestRow.index
+                            Layout.preferredWidth: 64
+                            text: qsTr("Open")
+                            onClicked: window.reviewWorkspaceRequest(
+                                           requestRow.request.sessionId,
+                                           requestRow.request.token)
+                        }
+
+                        Button {
+                            objectName: "workspaceSnooze-" + requestRow.index
+                            Layout.preferredWidth: 74
+                            text: qsTr("Snooze")
+                            enabled: workspaceSupervisor &&
+                                     !requestRow.request.responding
+                            onClicked: workspaceSupervisor.snooze(
+                                           requestRow.request.sessionId,
+                                           requestRow.request.token)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Settings {
@@ -397,6 +586,23 @@ ApplicationWindow {
         }
     }
 
+    Connections {
+        target: preview.supervisor
+
+        function onReviewRequested(session, token) {
+            workspaceAttentionQueue.close()
+            attentionDialog.showSession(session, token)
+        }
+    }
+
+    Connections {
+        target: workspace
+
+        function onSessionsChanged() {
+            window.pruneAttentionDrafts()
+        }
+    }
+
     function pauseDecorativeAnimation() {
         if (!carousel)
             return;
@@ -471,6 +677,19 @@ ApplicationWindow {
                       workspace.loading ? qsTr("Loading workspace…") : workspaceStatus(qsTr("No sessions"))
                 font.pixelSize: 10
                 elide: Text.ElideRight
+            }
+
+            Button {
+                objectName: "workspaceRequests"
+                visible: !preview.active && workspaceSupervisor
+                enabled: !window.inputBlocked
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                font.pixelSize: 10
+                topPadding: 0
+                bottomPadding: 0
+                text: workspaceSupervisor ? qsTr("Workspace (%1)").arg(workspaceSupervisor.pendingCount) : ""
+                onClicked: window.openWorkspaceAttentionQueue()
             }
 
             Button {

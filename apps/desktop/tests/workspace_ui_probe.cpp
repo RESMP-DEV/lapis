@@ -1,6 +1,8 @@
+#include "clipboard_backup.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include "ui_preview.hpp"
+#include "workspace_supervisor.hpp"
 
 #include <QCommandLineOption>
 #include <QCommandLineParser>
@@ -11,9 +13,12 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QInputMethodEvent>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeyEvent>
+#include <QKeySequence>
 #include <QMouseEvent>
 #include <QQmlEngine>
 #include <QQuickItem>
@@ -24,17 +29,22 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QThreadPool>
+#include <QTimer>
+#include <mach/mach.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <numeric>
 #include <signal.h>
 #include <source_location>
 #include <stdexcept>
 #include <string>
+#include <sys/resource.h>
 #include <vector>
 
 #ifdef Q_OS_MACOS
@@ -53,6 +63,11 @@ void require(bool condition, const char* message,
              std::source_location where = std::source_location::current()) {
     if (!condition)
         throw std::runtime_error(std::string(message) + " at line " + std::to_string(where.line()));
+}
+
+void require(bool condition, const std::string& message,
+             std::source_location where = std::source_location::current()) {
+    require(condition, message.c_str(), where);
 }
 
 void pump(int milliseconds = 10) {
@@ -107,6 +122,37 @@ void click_item(QQuickWindow& window, QQuickItem* target) {
 
 void click(QQuickWindow& window, const QString& name) {
     click_item(window, visual(window.contentItem(), name));
+}
+
+void send_key(QQuickItem& item, int key, bool press) {
+    QKeyEvent event(press ? QEvent::KeyPress : QEvent::KeyRelease, key, Qt::NoModifier);
+    item.forceActiveFocus();
+    require(item.window(), "Key fixture has no window");
+    QCoreApplication::sendEvent(item.window(), &event);
+}
+
+void send_drag(QQuickWindow& window, bool enter) {
+    // The exact platform MIME payload is irrelevant here: the production host
+    // reacts to the real top-level drag event type itself.
+    QEvent event(enter ? QEvent::DragEnter : QEvent::DragLeave);
+    event.setAccepted(false);
+    QCoreApplication::sendEvent(&window, &event);
+}
+
+void send_item_preedit(QQuickItem& item, const QString& text) {
+    QList<QInputMethodEvent::Attribute> attributes;
+    QInputMethodEvent event(text, attributes);
+    QCoreApplication::sendEvent(&item, &event);
+}
+
+void send_paste(QQuickItem& item) {
+    const auto combination = QKeySequence(QKeySequence::Paste)[0];
+    QKeyEvent press(QEvent::KeyPress, combination.key(), combination.keyboardModifiers(),
+                    QStringLiteral("v"));
+    QKeyEvent release(QEvent::KeyRelease, combination.key(), combination.keyboardModifiers(),
+                      QString());
+    QCoreApplication::sendEvent(&item, &press);
+    QCoreApplication::sendEvent(&item, &release);
 }
 
 QQuickItem* item_with_text(QQuickItem* parent, const QString& text) {
@@ -266,7 +312,10 @@ void terminate_all(const std::vector<qint64>& processes) {
 
 class WorkspaceProbe {
   public:
-    explicit WorkspaceProbe(QString manifest) : manifest_(std::move(manifest)) { open(); }
+    explicit WorkspaceProbe(QString manifest, std::function<qint64()> supervisor_clock = {})
+        : manifest_(std::move(manifest)), supervisor_clock_(std::move(supervisor_clock)) {
+        open();
+    }
 
     ~WorkspaceProbe() {
         try {
@@ -315,7 +364,8 @@ class WorkspaceProbe {
             *workspace_, UiPreviewOptions{.source = QUrl(QStringLiteral("qrc:/qml/Main.qml")),
                                           .compact = true,
                                           .screen = QString(),
-                                          .keymap = &keymap_});
+                                          .keymap = &keymap_,
+                                          .supervisor_clock = supervisor_clock_});
         require(preview_->load(), "Production QML did not load");
         window().requestActivate();
         lapis::desktop::test::activate_test_window(window());
@@ -386,6 +436,7 @@ class WorkspaceProbe {
     std::unique_ptr<Workspace> workspace_;
     std::unique_ptr<UiPreview> preview_;
     std::vector<SessionRecord> observed_;
+    std::function<qint64()> supervisor_clock_;
 };
 
 QJsonArray process_array(const std::vector<SessionRecord>& records) {
@@ -425,10 +476,452 @@ void exercise_layouts(WorkspaceProbe& probe, const QString& captures) {
     require(probe.layout_name() == QStringLiteral("stack"), "Layout sequence ended incorrectly");
 }
 
+qint64 memory_bytes() {
+    struct rusage usage{};
+    return ::getrusage(RUSAGE_SELF, &usage) == 0 ? static_cast<qint64>(usage.ru_maxrss)
+                                                 : qint64{-1};
+}
+
+QJsonObject summarize(QVector<qint64> values) {
+    if (values.isEmpty())
+        return {};
+    std::sort(values.begin(), values.end());
+    const auto percentile = [&values](double fraction) {
+        const int index = std::clamp(
+            static_cast<int>(std::round(static_cast<double>(values.size() - 1) * fraction)), 0,
+            static_cast<int>(values.size() - 1));
+        return values.at(index);
+    };
+    return QJsonObject{
+        {"samples", values.size()},
+        {"minimum", values.first()},
+        {"p50", percentile(0.50)},
+        {"p95", percentile(0.95)},
+        {"p99", percentile(0.99)},
+        {"maximum", values.last()},
+        {"mean", static_cast<double>(std::accumulate(values.begin(), values.end(), qint64{0})) /
+                     static_cast<double>(values.size())}};
+}
+
+qint64 resident_bytes() {
+    mach_task_basic_info_data_t info{};
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    require(task_info(mach_task_self(), MACH_TASK_BASIC_INFO, reinterpret_cast<task_info_t>(&info),
+                      &count) == KERN_SUCCESS,
+            "Current GUI resident memory sample failed");
+    return static_cast<qint64>(info.resident_size);
+}
+
+QJsonObject timing_metadata(const QQuickWindow& window) {
+    return QJsonObject{
+        {"endpoint", QStringLiteral("QQuickWindow::frameSwapped callback on the GUI thread")},
+        {"physical_latency", false},
+        {"clock", QStringLiteral("QElapsedTimer::nsecsElapsed() monotonic nanoseconds")},
+        {"display_refresh_hz", window.screen() ? window.screen()->refreshRate() : -1},
+        {"request", QStringLiteral("Workspace::setFocusedIndex or SessionPreview::sendText")},
+        {"units", QStringLiteral("nanoseconds")},
+        {"session_count", 2},
+        {"workload", QStringLiteral("30 alternating warm switches and 30 controlled shell printf "
+                                    "commands; no continuous background output")}};
+}
+
 struct ProbeOptions {
     QString json_path;
     QString image_path;
 };
+
+QJsonObject guarded_carousel_acceptance(WorkspaceProbe& probe, qint64& injected_now) {
+    auto& workspace = probe.workspace();
+    auto* supervisor = probe.preview().supervisor();
+    auto* first = workspace.session(probe.observed().at(0).id);
+    auto* second = workspace.session(probe.observed().at(1).id);
+    require(first && second && supervisor, "Carousel fixture lost a production object");
+
+    QJsonArray cases;
+    click(probe.window(), QStringLiteral("workspaceRequests"));
+    auto* controls = probe.window().findChild<QObject*>(QStringLiteral("workspaceAttentionQueue"));
+    require(controls, "Workspace controls are missing");
+    wait_popup(*controls, true);
+    click(probe.window(), QStringLiteral("carouselEnabled"));
+    require(supervisor->enabled(), "Automatic checkbox did not enable the supervisor");
+    click(probe.window(), QStringLiteral("carouselPaused"));
+    require(supervisor->paused(), "Pause checkbox did not pause the supervisor");
+    click(probe.window(), QStringLiteral("carouselPaused"));
+    require(!supervisor->paused(), "Pause checkbox did not resume the supervisor");
+    click(probe.window(), QStringLiteral("carouselPinned"));
+    require(supervisor->pinned(), "Pin checkbox did not pin the current session");
+    click(probe.window(), QStringLiteral("carouselPinned"));
+    require(!supervisor->pinned(), "Pin checkbox did not unpin the current session");
+    click(probe.window(), QStringLiteral("carouselEnabled"));
+    require(!supervisor->enabled(), "Automatic checkbox did not disable the supervisor");
+    click(probe.window(), QStringLiteral("workspaceQueueClose"));
+    wait_popup(*controls, false);
+    until(
+        [&] {
+            return probe.window().isActive() && !workspace.interactionBlocked() &&
+                   first->inputReady() && second->inputReady();
+        },
+        "Carousel controls did not return to an eligible live window");
+    pump(20);
+    const auto current_id = [&] { return workspace.focusedSession()->sessionId(); };
+    const auto current_index = [&] { return workspace.focusedIndex(); };
+    const auto tick_blocked = [&](const QString& name, bool require_block) {
+        const QString expected = current_id();
+        if (require_block)
+            require(
+                workspace.interactionBlocked(),
+                QString(name + QStringLiteral(" did not publish a Workspace block")).toStdString());
+        supervisor->tick();
+        require(current_id() == expected,
+                QString(name + QStringLiteral(" allowed an automatic switch")).toStdString());
+        cases.append(QJsonObject{{"case", name},
+                                 {"focused_before", expected},
+                                 {"focused_after", current_id()},
+                                 {"interaction_blocked", workspace.interactionBlocked()},
+                                 {"switched", false},
+                                 {"passed", true}});
+    };
+    const auto release_and_switch = [&](const QString& name) {
+        const QString expected = current_id();
+        const QString destination =
+            first->sessionId() == expected ? second->sessionId() : first->sessionId();
+        injected_now += 5001;
+        supervisor->tick();
+        require(current_id() == destination,
+                QString(name + QStringLiteral(" did not resume automatic switching after release"))
+                    .toStdString());
+        cases.append(QJsonObject{{"case", name},
+                                 {"focused_before", expected},
+                                 {"focused_after", destination},
+                                 {"switched", true},
+                                 {"passed", true}});
+    };
+
+    const auto initial_focus = current_id();
+    supervisor->setEnabled(true);
+    supervisor->tick();
+    require(current_id() == initial_focus, "Enabling the carousel skipped its initial dwell");
+    cases.append(QJsonObject{{"case", QStringLiteral("enabled respects initial dwell")},
+                             {"switched", false},
+                             {"passed", true}});
+
+    injected_now += 5001;
+    const QString quiet_before = current_id();
+    supervisor->tick();
+    require(current_id() != quiet_before,
+            (QStringLiteral("Eligible supervisor did not visit the quiet session: ") +
+             supervisor->status() +
+             QStringLiteral(" active=%1 blocked=%2 first=%3 second=%4")
+                 .arg(probe.window().isActive())
+                 .arg(workspace.interactionBlocked())
+                 .arg(first->inputReady())
+                 .arg(second->inputReady()))
+                .toStdString());
+    cases.append(QJsonObject{{"case", QStringLiteral("eligible quiet session switch")},
+                             {"switched", true},
+                             {"passed", true}});
+
+    supervisor->setPaused(true);
+    injected_now += 5001;
+    tick_blocked(QStringLiteral("paused blocks automatic switch"), false);
+    supervisor->setPaused(false);
+    release_and_switch(QStringLiteral("paused resumes after explicit unpause"));
+
+    supervisor->setPinned(true);
+    injected_now += 5001;
+    tick_blocked(QStringLiteral("pin blocks automatic departure"), false);
+    workspace.setFocusedIndex(current_index() == 0 ? 1 : 0);
+    supervisor->setPinned(false);
+    cases.append(QJsonObject{{"case", QStringLiteral("pin preserves manual navigation")},
+                             {"switched", true},
+                             {"passed", true}});
+
+    injected_now += 5001;
+    workspace.setFocusedIndex(workspace.focusedIndex());
+    injected_now += 2999;
+    tick_blocked(QStringLiteral("manual cooldown blocks before 3000 ms"), false);
+    injected_now += 2;
+    release_and_switch(QStringLiteral("manual cooldown releases after 3000 ms"));
+
+    auto* terminal =
+        visual(probe.window().contentItem(), QStringLiteral("cardTerminal_") + current_id());
+    require(terminal, "Focused terminal is missing for typing guard");
+    send_key(*terminal, Qt::Key_A, true);
+    send_key(*terminal, Qt::Key_A, false);
+    injected_now += 1000;
+    tick_blocked(QStringLiteral("recent typing blocks before 1500 ms"), false);
+    release_and_switch(QStringLiteral("typing releases after quiet interval"));
+
+    terminal = visual(probe.window().contentItem(), QStringLiteral("cardTerminal_") + current_id());
+    require(terminal, "Focused terminal is missing for held-key guard");
+    send_key(*terminal, Qt::Key_A, true);
+    require(workspace.interactionBlocked(), "Held root key did not publish a Workspace block");
+    injected_now += 5001;
+    tick_blocked(QStringLiteral("held key blocks after input quiet interval"), true);
+    terminal = visual(probe.window().contentItem(), QStringLiteral("cardTerminal_") + current_id());
+    require(terminal, "Focused terminal is missing to release held key");
+    send_key(*terminal, Qt::Key_A, false);
+    release_and_switch(QStringLiteral("held key releases automatic switching"));
+
+    send_drag(probe.window(), true);
+    require(workspace.interactionBlocked(), "Mouse drag did not publish a Workspace block");
+    injected_now += 5001;
+    tick_blocked(QStringLiteral("mouse drag blocks after input quiet interval"), true);
+    send_drag(probe.window(), false);
+    release_and_switch(QStringLiteral("mouse drag releases automatic switching"));
+
+    const QString focused_card = QStringLiteral("cardTerminal_") + current_id();
+    terminal = visual(probe.window().contentItem(), focused_card);
+    require(terminal, "Focused terminal is missing for composition and paste guards");
+    send_item_preedit(*terminal, QStringLiteral("composition"));
+    require(workspace.interactionBlocked(), "IME composition did not publish a Workspace block");
+    injected_now += 5001;
+    tick_blocked(QStringLiteral("IME composition blocks after input quiet interval"), true);
+    send_item_preedit(*terminal, QString());
+    release_and_switch(QStringLiteral("IME composition releases automatic switching"));
+
+    terminal = visual(probe.window().contentItem(), QStringLiteral("cardTerminal_") + current_id());
+    require(terminal, "Focused terminal is missing for paste guard");
+    bool paste_block_observed = false;
+    bool paste_owner_preserved = false;
+    QObject paste_observation;
+    const auto paste_connection =
+        QObject::connect(&workspace, &Workspace::interactionChanged, &paste_observation, [&] {
+            const QString paste_source = current_id();
+            if (!workspace.interactionBlocked() || paste_block_observed)
+                return;
+            paste_block_observed = true;
+            injected_now += 5001;
+            supervisor->tick();
+            paste_owner_preserved = current_id() == paste_source;
+        });
+    {
+        lapis::desktop::test::ClipboardBackup clipboard;
+        QGuiApplication::clipboard()->setText(QStringLiteral("workspace-paste"));
+        send_paste(*terminal);
+    }
+    QObject::disconnect(paste_connection);
+    require(paste_block_observed, "Paste block was not observed while paste was active");
+    require(paste_owner_preserved, "Automatic switch split a paste across sessions");
+    cases.append(QJsonObject{{"case", QStringLiteral("paste block prevents synchronous switch")},
+                             {"interaction_blocked_during_paste", true},
+                             {"switched", false},
+                             {"passed", true}});
+    release_and_switch(QStringLiteral("paste releases automatic switching"));
+
+    auto* attention_queue =
+        probe.window().findChild<QObject*>(QStringLiteral("workspaceAttentionQueue"));
+    require(attention_queue, "Workspace attention queue is missing");
+    require(QMetaObject::invokeMethod(attention_queue, "open"), "Workspace queue did not open");
+    wait_popup(*attention_queue, true);
+    until([&] { return workspace.interactionBlocked(); },
+          "Modal workspace queue did not publish a Workspace block");
+    injected_now += 5001;
+    tick_blocked(QStringLiteral("modal workspace queue blocks automatic switching"), true);
+    require(QMetaObject::invokeMethod(attention_queue, "close"), "Workspace queue did not close");
+    wait_popup(*attention_queue, false);
+    until([&] { return !workspace.interactionBlocked(); }, "Modal block did not clear");
+    release_and_switch(QStringLiteral("modal releases automatic switching"));
+
+    QQuickWindow inactive_window;
+    inactive_window.setTitle(QStringLiteral("lapis workspace inactive qualification"));
+    inactive_window.setGeometry(140, 140, 480, 320);
+    inactive_window.show();
+    inactive_window.requestActivate();
+    lapis::desktop::test::activate_test_window(inactive_window);
+    until([&] { return inactive_window.isActive() && !probe.window().isActive(); },
+          "Real second window did not take OS activation");
+    injected_now += 5001;
+    tick_blocked(QStringLiteral("inactive window blocks automatic switching"), false);
+    probe.window().requestActivate();
+    lapis::desktop::test::activate_test_window(probe.window());
+    until([&] { return probe.window().isActive() && !inactive_window.isActive(); },
+          "Production window did not regain OS activation");
+    release_and_switch(QStringLiteral("reactivated window resumes automatic switching"));
+
+    return {{"cases", cases},
+            {"automatic_default_enabled", false},
+            {"production_controls_exercised", true},
+            {"injected_clock", true},
+            {"session_count", 2},
+            {"real_window_activation", true}};
+}
+
+QJsonObject guarded_attention_acceptance(WorkspaceProbe& probe, qint64& injected_now) {
+    auto& workspace = probe.workspace();
+    auto* supervisor = probe.preview().supervisor();
+    auto* first = workspace.session(probe.observed().at(0).id);
+    auto* second = workspace.session(probe.observed().at(1).id);
+    require(first && second && supervisor, "Attention fixture lost a production object");
+
+    supervisor->setEnabled(false);
+    workspace.setFocusedIndex(0);
+    until([&] { return workspace.focusedSession() == first; },
+          "Guard fixture focus did not settle");
+    const QString survivor_id = first->sessionId();
+    const QString obsolete_destination = QStringLiteral("workspace/no-such-session");
+    supervisor->tick();
+    require(workspace.focusedSession()->sessionId() == survivor_id,
+            "Supervisor lost its live focused identity");
+    require(!workspace.focusAutomatically(obsolete_destination),
+            "Workspace accepted an obsolete automatic destination");
+    require(workspace.focusedSession()->sessionId() == survivor_id,
+            "Failed automatic focus changed the live destination");
+
+    supervisor->setEnabled(true);
+    first->olderHistory();
+    until([&] { return first->historyActive() && !first->historyRequestPending(); },
+          "History fixture did not enter read-only mode");
+    injected_now += 5001;
+    supervisor->tick();
+    require(workspace.focusedSession()->sessionId() == survivor_id,
+            "Supervisor switched away from read-only history");
+    first->returnToLive();
+    until([&] { return first->inputReady(); }, "History fixture did not return to live input");
+
+    supervisor->setPaused(true);
+    first->reconnect();
+    until([&] { return first->inputReady(); }, "Supervisor disconnect fixture did not reconnect");
+    supervisor->tick();
+    require(workspace.focusedSession()->sessionId() == survivor_id,
+            "Reconnect discarded the surviving session identity");
+    require(supervisor->pendingCount() == 0, "Reconnect replayed resolved source state");
+    supervisor->setEnabled(false);
+    supervisor->setPaused(false);
+
+    return {{"obsolete_queue_not_replayed", true},
+            {"history_read_only_guarded", true},
+            {"disconnect_reconciled_live_state", true},
+            {"obsolete_switch_rejected", true}};
+}
+
+QJsonObject two_session_timing_baseline(WorkspaceProbe& probe) {
+    constexpr int sample_count = 30;
+    auto& workspace = probe.workspace();
+    auto* supervisor = probe.preview().supervisor();
+    supervisor->setEnabled(false);
+    auto* first = workspace.session(probe.observed().at(0).id);
+    auto* second = workspace.session(probe.observed().at(1).id);
+    require(first && second, "Timing fixture lost a two-session source");
+
+    quint64 focused_frame = 0;
+    quint64 marker_frame = 0;
+    bool timing_switch_armed = false;
+    bool switch_observed = false;
+    bool marker_updated = false;
+    SessionPreview* frame_destination = nullptr;
+    QString frame_marker;
+    QObject observation;
+    workspace.setFocusedIndex(0);
+    until([&] { return workspace.focusedSession() == first; },
+          "Timing initial focus did not settle");
+    pump(20);
+    const auto timing_focus_connection =
+        QObject::connect(&workspace, &Workspace::focusChanged, &observation, [&] {
+            if (timing_switch_armed && workspace.focusedSession() == frame_destination)
+                switch_observed = true;
+        });
+    const auto frame_connection =
+        QObject::connect(&probe.window(), &QQuickWindow::frameSwapped, &observation, [&] {
+            if (frame_destination != nullptr && workspace.focusedSession() == frame_destination &&
+                switch_observed)
+                ++focused_frame;
+            if (frame_destination && !frame_marker.isEmpty() && marker_updated &&
+                screen(*frame_destination).startsWith(frame_marker))
+                ++marker_frame;
+        });
+    const auto observeSnapshot = [&](SessionPreview* source) {
+        if (frame_destination == source && !frame_marker.isEmpty() &&
+            screen(*source).startsWith(frame_marker))
+            marker_updated = true;
+    };
+    QObject::connect(first, &SessionPreview::snapshotChanged, &observation,
+                     [&] { observeSnapshot(first); });
+    QObject::connect(second, &SessionPreview::snapshotChanged, &observation,
+                     [&] { observeSnapshot(second); });
+    const auto initial_resident_bytes = resident_bytes();
+    QVector<qint64> switch_times;
+    QVector<qint64> input_times;
+    for (int sample = 0; sample < sample_count; ++sample) {
+        auto* destination = sample % 2 == 0 ? second : first;
+        const quint64 initial_focused_frame = focused_frame;
+        frame_destination = destination;
+        switch_observed = false;
+        timing_switch_armed = true;
+        QElapsedTimer timer;
+        timer.start();
+        workspace.setFocusedIndex(sample % 2 == 0 ? 1 : 0);
+        until(
+            [&] {
+                return workspace.focusedSession() == destination &&
+                       focused_frame > initial_focused_frame;
+            },
+            "Warm switch did not render the newly focused session");
+        switch_times.append(timer.nsecsElapsed());
+        timing_switch_armed = false;
+
+        const QString marker = QStringLiteral("TIMING_%1").arg(sample, 2, 10, QLatin1Char('0'));
+        frame_marker = marker;
+        const quint64 initial_marker_frame = marker_frame;
+        marker_updated = false;
+        timer.start();
+        destination->sendText(QByteArray(1, '\x15'));
+        destination->sendText(QByteArray("printf '\\033[2J\\033[H%s\\n' '") + marker.toUtf8() +
+                              "'\r");
+        until(
+            [&] {
+                return marker_updated && screen(*destination).startsWith(marker) &&
+                       marker_frame > initial_marker_frame;
+            },
+            "Controlled terminal output did not reach a displayed frame");
+        input_times.append(timer.nsecsElapsed());
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 1);
+        frame_marker.clear();
+    }
+    QObject::disconnect(frame_connection);
+    QObject::disconnect(timing_focus_connection);
+    supervisor->setEnabled(false);
+
+    struct rusage before{};
+    require(::getrusage(RUSAGE_SELF, &before) == 0, "Idle CPU baseline failed");
+    int idle_frames = 0;
+    QEventLoop idle;
+    QObject::connect(&probe.window(), &QQuickWindow::frameSwapped, &idle, [&] { ++idle_frames; });
+    QTimer::singleShot(1000, &idle, &QEventLoop::quit);
+    const auto idle_start = std::chrono::steady_clock::now();
+    idle.exec();
+    struct rusage usage{};
+    require(::getrusage(RUSAGE_SELF, &usage) == 0, "Idle CPU sample failed");
+    const auto wall_microseconds = std::chrono::duration_cast<std::chrono::microseconds>(
+                                       std::chrono::steady_clock::now() - idle_start)
+                                       .count();
+    const auto cpu_before = (before.ru_utime.tv_sec + before.ru_stime.tv_sec) * 1000000LL +
+                            (before.ru_utime.tv_usec + before.ru_stime.tv_usec);
+    const auto cpu_total = (usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * 1000000LL +
+                           (usage.ru_utime.tv_usec + usage.ru_stime.tv_usec);
+    const auto cpu_microseconds = cpu_total - cpu_before;
+
+    return {{"warm_switch_request_to_frame_swapped", summarize(switch_times)},
+            {"terminal_input_to_frame_swapped", summarize(input_times)},
+            {"metadata", timing_metadata(probe.window())},
+            {"memory", QJsonObject{{"ru_maxrss_bytes", memory_bytes()},
+                                   {"resident_before_samples_bytes", initial_resident_bytes},
+                                   {"resident_after_samples_bytes", resident_bytes()},
+                                   {"measurement", QStringLiteral("own process high-water RSS")},
+                                   {"scope", QStringLiteral("GUI process only")}}},
+            {"idle_activity",
+             QJsonObject{{"observation_window_us", wall_microseconds},
+                         {"frame_swapped_callbacks", idle_frames},
+                         {"cpu_microseconds", cpu_microseconds},
+                         {"cpu_percent", wall_microseconds > 0
+                                             ? static_cast<double>(cpu_microseconds) /
+                                                   static_cast<double>(wall_microseconds) * 100.0
+                                             : -1},
+                         {"cpu_thread_capacity", QThread::idealThreadCount()},
+                         {"method",
+                          QStringLiteral(
+                              "own-process getrusage delta over one second; not GPU activity")}}}};
+}
 
 ProbeOptions parse_options(const QGuiApplication& app) {
     QCommandLineParser parser;
@@ -464,7 +957,8 @@ int run_probe(const ProbeOptions& options) {
                        {"qml", QStringLiteral("qrc:/qml/Main.qml")},
                        {"shell", QStringLiteral("/bin/sh")}};
     std::vector<ChildProcesses> reopened;
-    WorkspaceProbe probe(manifest);
+    qint64 injected_now = 1000000;
+    WorkspaceProbe probe(manifest, [&injected_now] { return injected_now; });
     try {
         require(probe.workspace().sessions().isEmpty() && probe.workspace().canAddSessions(),
                 "Initial production workspace was not empty");
@@ -499,6 +993,9 @@ int run_probe(const ProbeOptions& options) {
                 "Window resize changed a background terminal");
         exercise_layouts(probe, options.image_path);
         report.insert("layouts", QJsonArray{"focus", "columns", "blocks", "stack"});
+        report.insert("guarded_carousel", guarded_carousel_acceptance(probe, injected_now));
+        report.insert("timing_baseline", two_session_timing_baseline(probe));
+        report.insert("guarded_attention", guarded_attention_acceptance(probe, injected_now));
         report.insert("initial",
                       QJsonObject{{"processes", process_array(probe.observed())},
                                   {"background_geometry",
@@ -512,8 +1009,15 @@ int run_probe(const ProbeOptions& options) {
             report.insert("capture", true);
         }
 
+        probe.preview().supervisor()->setEnabled(true);
+        probe.preview().supervisor()->setPaused(true);
+        probe.preview().supervisor()->setPinned(true);
         probe.close();
         probe.open();
+        require(!probe.preview().supervisor()->enabled() &&
+                    !probe.preview().supervisor()->paused() &&
+                    !probe.preview().supervisor()->pinned(),
+                "Reopening restored automatic navigation state");
         auto* restored_first = probe.workspace().session(probe.observed()[0].id);
         auto* restored_second = probe.workspace().session(probe.observed()[1].id);
         require(restored_first && restored_second, "Restored workspace identities are missing");
@@ -532,7 +1036,8 @@ int run_probe(const ProbeOptions& options) {
                                                         probe.observed()[1].child},
                 "Restored shell or service identities changed");
         report.insert("restored", QJsonObject{{"processes", process_array(probe.observed())},
-                                              {"stable", true}});
+                                              {"stable", true},
+                                              {"carousel_reset_to_off", true}});
         report.insert("status", QStringLiteral("passed"));
         probe.close_session_at(0);
         probe.close_session_at(1);
@@ -548,8 +1053,8 @@ int run_probe(const ProbeOptions& options) {
         throw;
     }
     report.insert("limitations",
-                  QStringLiteral("Qt event GUI delivery only; native OS input, GPU performance, "
-                                 "and physical presentation latency are not measured"));
+                  QStringLiteral("Qt event delivery exercises root wiring; native physical input "
+                                 "and photon latency are not measured by this probe"));
     require(write_json(options.json_path, report), "Could not write JSON report");
     return 0;
 }
