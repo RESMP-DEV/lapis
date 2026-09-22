@@ -17,11 +17,13 @@
 #include <QSGRendererInterface>
 #include <QTemporaryDir>
 #include <QThread>
+#include <array>
 #include <functional>
 #include <iostream>
 #include <source_location>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace {
 namespace wire = lapis::session::wire;
@@ -199,6 +201,23 @@ void input_contract() {
     QKeyEvent printable(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
     QCoreApplication::sendEvent(&surface, &printable);
     require(text_frames(peer, 1) == QByteArray("x"), "Printable key fixture did not reach PTY");
+    for (const auto& [key, expected] :
+         std::array{std::pair{Qt::Key_Left, '\x01'}, std::pair{Qt::Key_Right, '\x05'}}) {
+        for (const auto origin : {Qt::NoModifier, Qt::KeypadModifier}) {
+            QKeyEvent command_arrow(QEvent::KeyPress, key, Qt::MetaModifier | origin);
+            QCoreApplication::sendEvent(&surface, &command_arrow);
+            require(command_arrow.isAccepted(), "Command-arrow did not claim terminal input");
+            require(text_frames(peer, 1) == QByteArray(1, expected),
+                    "Command-arrow must send Control-A/E bytes, not Control-Home/End");
+            for (const auto modifier : {Qt::ShiftModifier, Qt::AltModifier, Qt::ControlModifier}) {
+                QKeyEvent modified_arrow(QEvent::KeyPress, key,
+                                         Qt::MetaModifier | origin | modifier);
+                QCoreApplication::sendEvent(&surface, &modified_arrow);
+                require(!modified_arrow.isAccepted(), "Modified Command-arrow was consumed");
+                require(text_frames(peer).isEmpty(), "Modified Command-arrow sent terminal input");
+            }
+        }
+    }
     {
         QQuickItem other_focus(window.contentItem());
         other_focus.forceActiveFocus();

@@ -703,10 +703,11 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
         // The shells people actually run (zsh with emacs bindings, bash, fish)
         // implement that as Ctrl-A and Ctrl-E, so translate rather than
         // reimplement line editing inside the terminal.
-        if (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right) {
+        // AppKit also marks physical arrow keys as keypad keys.
+        if ((event->modifiers() & ~Qt::KeypadModifier) == Qt::MetaModifier &&
+            (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right)) {
             const bool line_start = event->key() == Qt::Key_Left;
-            document_->sendKey(line_start ? session::TerminalKey::home : session::TerminalKey::end,
-                               {false, true, false, false});
+            document_->sendText(QByteArray(1, line_start ? '\x01' : '\x05'));
             event->accept();
             return;
         }

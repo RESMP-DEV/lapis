@@ -360,8 +360,8 @@ display. Pass `--screen ""` or `LAPIS_SCREEN=` to keep platform placement.
 
 ### Keybindings and layout
 
-`lapis.json` at the project root holds the keybindings, the layout, and the
-category names. Edit it and press Ctrl-R in the running window, or choose
+`lapis.json` at the project root holds keybindings and appearance settings. Edit it
+and press Ctrl-R in the running window, or choose
 "Reload keybindings" from the Preview tools menu; no rebuild is needed. The
 defaults are:
 
@@ -369,8 +369,8 @@ defaults are:
 | --- | --- | --- |
 | Quit | Ctrl+Q | Exit lapis |
 | Detach window | Ctrl+W | Hide the window and leave sessions running |
-| Next / previous category | Ctrl+Tab / Ctrl+Shift+Tab | Move between categories |
-| Category 1-4 | Ctrl+1 to Ctrl+4 | Jump straight to a category |
+| Next / previous session | Ctrl+Tab / Ctrl+Shift+Tab | Move through the flat session list |
+| Session 1-4 | Ctrl+1 to Ctrl+4 | Jump straight to a session |
 | Next / previous window | Ctrl+Shift+] / Ctrl+Shift+[ | Move through sessions |
 | Focus left / right | Ctrl+Left / Ctrl+Right | Step one session |
 | Cycle layout | Ctrl+L | Cycle focus, columns, blocks and stack; save the selection |
@@ -397,6 +397,11 @@ and other JSON values; malformed files remain untouched and show a diagnostic.
 Ctrl-L cycles through focus, columns, blocks and stack in that order and saves the
 selection using the same path as the Appearance dialog. The session cards still
 include fixtures; navigation does not create additional live service sessions.
+Category grouping is not implemented. The legacy action names `nextCategory`,
+`previousCategory`, and `category1` through `category4` remain accepted keybinding
+names for flat session navigation; an old `categories` field is preserved on save
+but is not used. Use `Meta+` for Command shortcuts on this macOS build, which
+deliberately disables Qt's default Control/Command swapping.
 
 Command-Left and Command-Right inside the terminal move to the start and end of
 the line, matching macOS editing. The terminal translates them to the Ctrl-A and
