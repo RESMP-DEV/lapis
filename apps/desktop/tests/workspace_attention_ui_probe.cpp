@@ -115,13 +115,24 @@ void click(QQuickWindow& window, const QString& name) {
 }
 
 QString preferred_label(const QVariantMap& question) {
+    // Keep the fixture contract aligned with selected_question_answers in the
+    // Python runner: select by question identity, never by option order.
+    const auto identifier = question.value(QStringLiteral("id")).toString();
+    require(identifier == QStringLiteral("color_first") ||
+                identifier == QStringLiteral("color_second"),
+            "Unexpected structured-input question identity");
+    const auto expected = identifier == QStringLiteral("color_first") ? QStringLiteral("Blue")
+                                                                      : QStringLiteral("Red");
+    QString selected;
     for (const auto& value : question.value(QStringLiteral("options")).toList()) {
         const auto label = value.toMap().value(QStringLiteral("label")).toString();
-        if (label == QStringLiteral("Blue") || label == QStringLiteral("Red") ||
-            label == QStringLiteral("Red (Recommended)"))
-            return label;
+        if (label == expected || label == expected + QStringLiteral(" (Recommended)")) {
+            require(selected.isEmpty(), "Structured-input answer is ambiguous");
+            selected = label;
+        }
     }
-    throw std::runtime_error("Expected structured-input answer is unavailable");
+    require(!selected.isEmpty(), "Expected structured-input answer is unavailable");
+    return selected;
 }
 
 void select_combo_option(QQuickWindow& window, QObject* dialog, const QVariantMap& question,

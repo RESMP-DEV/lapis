@@ -24,7 +24,8 @@ supports manual switching, identity-checked reconnection and detached services.
 Codex session. **Milestone 3 is qualified for two sessions on macOS:** retained
 terminals, a shared attention queue, source-bound decisions, and an opt-in guarded
 carousel. The assembled qualification and measurement limits are recorded in the
-[workspace receipt](evidence/milestone-three-workspace.json).
+[workspace receipt](evidence/milestone-three-workspace.json), including the
+two-session integration checks repeated after the Claude hook addition.
 
 | Component | Exercised | Remaining |
 | --- | --- | --- |
@@ -93,7 +94,7 @@ pass `--workspace /absolute/path.json` explicitly for another registry. Pass
 mode. `just native-input` runs the automated macOS keyboard, clipboard and
 Japanese IME checks.
 
-An empty workspace offers **Session → Create or adopt…** for a shell or Codex.
+An empty workspace offers **Session → Create or adopt…** for a shell, Codex or Claude Code.
 Closing the window detaches every live child; removing a workspace entry detaches
 that entry without terminating it. Reopening reconnects only: it verifies the
 recorded identity and restores the screen, never relaunching a dead service or
@@ -149,12 +150,13 @@ cancel or send its answers. Sending does not clear it; source resolution does.
 Unsupported request kinds must be answered in the terminal. Lost or unqualified
 sources disable the controls; reattachment reconciles before enabling them.
 
-Omit `--codex` for plain terminal launch, which forwards Codex options literally.
+Omit `--codex` and `--claude` for plain terminal launch, which forwards agent options literally.
 That mode retains the upstream CLI's backend ownership. Other executables and literal arguments work after
 `--`. Explicit programs or `--cwd` require a socket, which the launcher supplies
 by default; a launch mismatch is rejected before replacing the existing window.
-No hooks or approval settings are changed. There is still one live pane per
-window; its other cards remain fixtures.
+Plain terminal mode installs no attention hooks or approval settings. The explicit
+socket path opens one live session; the default workspace retains multiple live
+sessions, while `ui` uses fixture cards.
 
 The default socket is `runtime/desktop-v6.sock`. Older v1/v2/v3/v4/v5 sessions are not
 migrated or terminated by this build. See the

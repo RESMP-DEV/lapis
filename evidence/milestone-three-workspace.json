@@ -835,5 +835,341 @@
         "PR 7 sanitizer and live attention coverage remains separately recorded in evidence/pr7-classification-repairs.json."
       ]
     }
+  },
+  "consolidation": {
+    "recorded_at": "2026-09-22T20:49:59.626810+00:00",
+    "scope": "Post-Claude macOS integration and PR consolidation; production sources unchanged from f819d79",
+    "passed": true,
+    "source": {
+      "revision": "f819d79c09b158a18fe09cb671044c2e6bc42a3f",
+      "working_tree": true,
+      "changed_probe": {
+        "path": "apps/desktop/tests/workspace_attention_ui_probe.cpp",
+        "sha256": "246c90fe42becee6ecfde61c54f61613bebe0d7647effaf23b24955bf54da038"
+      },
+      "claude_source_hashes_verified": 32,
+      "reference": "evidence/claude-code-hooks.json",
+      "note": "All 32 Claude source hashes match. The only subsequent compiled-code change is the test helper recorded here; other changes are documentation and evidence."
+    },
+    "workspace": {
+      "command": "build/desktop/apps/desktop/lapis_workspace_ui_probe --json-file build/pr-consolidation/workspace.json --output-dir build/pr-consolidation/workspace",
+      "receipt": {
+        "path": "build/pr-consolidation/workspace.json",
+        "sha256": "5fc00690efc4f92ff0793a4832f96310b8661d308ba057b81feda14a4f770c1a"
+      },
+      "status": "passed-clean",
+      "layouts": [
+        "focus",
+        "columns",
+        "blocks",
+        "stack"
+      ],
+      "guarded_attention": {
+        "disconnect_reconciled_live_state": true,
+        "history_read_only_guarded": true,
+        "obsolete_queue_not_replayed": true,
+        "obsolete_switch_rejected": true
+      },
+      "guarded_carousel": {
+        "automatic_default_enabled": false,
+        "cases": [
+          {
+            "case": "enabled respects initial dwell",
+            "passed": true,
+            "switched": false
+          },
+          {
+            "case": "eligible quiet session switch",
+            "passed": true,
+            "switched": true
+          },
+          {
+            "case": "paused blocks automatic switch",
+            "focused_after": "266dfa8e13e5475aace47a88630f2a99",
+            "focused_before": "266dfa8e13e5475aace47a88630f2a99",
+            "interaction_blocked": false,
+            "passed": true,
+            "switched": false
+          },
+          {
+            "case": "paused resumes after explicit unpause",
+            "focused_after": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "focused_before": "266dfa8e13e5475aace47a88630f2a99",
+            "passed": true,
+            "switched": true
+          },
+          {
+            "case": "pin blocks automatic departure",
+            "focused_after": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "focused_before": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "interaction_blocked": false,
+            "passed": true,
+            "switched": false
+          },
+          {
+            "case": "pin preserves manual navigation",
+            "passed": true,
+            "switched": true
+          },
+          {
+            "case": "manual cooldown blocks before 3000 ms",
+            "focused_after": "266dfa8e13e5475aace47a88630f2a99",
+            "focused_before": "266dfa8e13e5475aace47a88630f2a99",
+            "interaction_blocked": false,
+            "passed": true,
+            "switched": false
+          },
+          {
+            "case": "manual cooldown releases after 3000 ms",
+            "focused_after": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "focused_before": "266dfa8e13e5475aace47a88630f2a99",
+            "passed": true,
+            "switched": true
+          },
+          {
+            "case": "recent typing blocks before 1500 ms",
+            "focused_after": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "focused_before": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "interaction_blocked": false,
+            "passed": true,
+            "switched": false
+          },
+          {
+            "case": "typing releases after quiet interval",
+            "focused_after": "266dfa8e13e5475aace47a88630f2a99",
+            "focused_before": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "passed": true,
+            "switched": true
+          },
+          {
+            "case": "held key blocks after input quiet interval",
+            "focused_after": "266dfa8e13e5475aace47a88630f2a99",
+            "focused_before": "266dfa8e13e5475aace47a88630f2a99",
+            "interaction_blocked": true,
+            "passed": true,
+            "switched": false
+          },
+          {
+            "case": "held key releases automatic switching",
+            "focused_after": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "focused_before": "266dfa8e13e5475aace47a88630f2a99",
+            "passed": true,
+            "switched": true
+          },
+          {
+            "case": "mouse drag blocks after input quiet interval",
+            "focused_after": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "focused_before": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "interaction_blocked": true,
+            "passed": true,
+            "switched": false
+          },
+          {
+            "case": "mouse drag releases automatic switching",
+            "focused_after": "266dfa8e13e5475aace47a88630f2a99",
+            "focused_before": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "passed": true,
+            "switched": true
+          },
+          {
+            "case": "IME composition blocks after input quiet interval",
+            "focused_after": "266dfa8e13e5475aace47a88630f2a99",
+            "focused_before": "266dfa8e13e5475aace47a88630f2a99",
+            "interaction_blocked": true,
+            "passed": true,
+            "switched": false
+          },
+          {
+            "case": "IME composition releases automatic switching",
+            "focused_after": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "focused_before": "266dfa8e13e5475aace47a88630f2a99",
+            "passed": true,
+            "switched": true
+          },
+          {
+            "case": "paste block prevents synchronous switch",
+            "interaction_blocked_during_paste": true,
+            "passed": true,
+            "switched": false
+          },
+          {
+            "case": "paste releases automatic switching",
+            "focused_after": "266dfa8e13e5475aace47a88630f2a99",
+            "focused_before": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "passed": true,
+            "switched": true
+          },
+          {
+            "case": "modal workspace queue blocks automatic switching",
+            "focused_after": "266dfa8e13e5475aace47a88630f2a99",
+            "focused_before": "266dfa8e13e5475aace47a88630f2a99",
+            "interaction_blocked": true,
+            "passed": true,
+            "switched": false
+          },
+          {
+            "case": "modal releases automatic switching",
+            "focused_after": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "focused_before": "266dfa8e13e5475aace47a88630f2a99",
+            "passed": true,
+            "switched": true
+          },
+          {
+            "case": "inactive window blocks automatic switching",
+            "focused_after": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "focused_before": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "interaction_blocked": false,
+            "passed": true,
+            "switched": false
+          },
+          {
+            "case": "reactivated window resumes automatic switching",
+            "focused_after": "266dfa8e13e5475aace47a88630f2a99",
+            "focused_before": "975ab8b51d9c42ce8939bbd3418d4ad0",
+            "passed": true,
+            "switched": true
+          }
+        ],
+        "injected_clock": true,
+        "production_controls_exercised": true,
+        "real_window_activation": true,
+        "session_count": 2
+      },
+      "timing_baseline": {
+        "idle_activity": {
+          "cpu_microseconds": 19489,
+          "cpu_percent": 1.9467255076080021,
+          "cpu_thread_capacity": 16,
+          "frame_swapped_callbacks": 8,
+          "method": "own-process getrusage delta over one second; not GPU activity",
+          "observation_window_us": 1001117
+        },
+        "memory": {
+          "measurement": "own process high-water RSS",
+          "resident_after_samples_bytes": 207142912,
+          "resident_before_samples_bytes": 204636160,
+          "ru_maxrss_bytes": 207192064,
+          "scope": "GUI process only"
+        },
+        "metadata": {
+          "clock": "QElapsedTimer::nsecsElapsed() monotonic nanoseconds",
+          "display_refresh_hz": 120,
+          "endpoint": "QQuickWindow::frameSwapped callback on the GUI thread",
+          "physical_latency": false,
+          "request": "Workspace::setFocusedIndex or SessionPreview::sendText",
+          "session_count": 2,
+          "units": "nanoseconds",
+          "workload": "30 alternating warm switches and 30 controlled shell printf commands; no continuous background output"
+        },
+        "terminal_input_to_frame_swapped": {
+          "maximum": 59982709,
+          "mean": 53040413.96666667,
+          "minimum": 46372458,
+          "p50": 52441833,
+          "p95": 59723500,
+          "p99": 59982709,
+          "samples": 30
+        },
+        "warm_switch_request_to_frame_swapped": {
+          "maximum": 18436584,
+          "mean": 10212977.8,
+          "minimum": 5483333,
+          "p50": 11214083,
+          "p95": 16791958,
+          "p99": 18436584,
+          "samples": 30
+        }
+      },
+      "timing_limit": "Descriptive only; concurrent read-only code-review workers were active. Not a matched performance comparison, physical presentation measurement or capacity qualification.",
+      "capture": {
+        "path": "evidence/milestone-three-workspace.png",
+        "sha256": "38fc756faeb85f8895ed536bccc4215331b7ba955097a893c9525ecedbe047f3"
+      },
+      "capture_scope": "Two controlled shell fixtures in columns layout; fixture markers and temporary directory only."
+    },
+    "native_input": {
+      "command": "build/desktop/apps/desktop/lapis_native_input_probe --output build/pr-consolidation/native-input.json",
+      "receipt": {
+        "path": "build/pr-consolidation/native-input.json",
+        "sha256": "759c2678653603d0a2f53ac4d40b76a3c1ccd77153df566eade33a27302f0b83"
+      },
+      "passed": true,
+      "case_count": 23,
+      "clipboard_restored": true,
+      "input_source_restored": true,
+      "enabled_sources_restored": true
+    },
+    "live_codex": {
+      "command": "python3 scripts/check_workspace_attention.py --live-glm --output build/pr-consolidation/live-codex-fixed/receipt.json",
+      "receipt": {
+        "path": "build/pr-consolidation/live-codex-fixed/receipt.json",
+        "sha256": "af6b1fc9b733d21f4ecf2ee940906dda00c76fb23bab002fa6f60ac1e9af753a"
+      },
+      "passed": true,
+      "source_count": 2,
+      "codex_sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+      "model": "zai,glm-5.3",
+      "provider_evidence": "Local CCR router runtime log reports Trying zai,glm-5.3 during the fixture interval.",
+      "checks": [
+        "safe approval and structured-input fixtures validated before answering",
+        "two service-owned sources remained live while the GUI attached",
+        "two real managed sources were concurrently pending",
+        "production dialogs answered the exact source requests",
+        "both real turns continued successfully after matching responses"
+      ],
+      "gui_checks": [
+        "two source-bound dialogs retained neighbor identity",
+        "structured-input draft survived approval review",
+        "aggregate queue resolved only matching requests"
+      ],
+      "services_reaped": [
+        true,
+        true
+      ],
+      "process_groups_cleaned": [
+        true,
+        true
+      ],
+      "fixtures_cleaned": true,
+      "elapsed_seconds": 7.667
+    },
+    "probe_fix": {
+      "failed_receipt": {
+        "path": "build/pr-consolidation/live-codex/receipt.json",
+        "sha256": "7cb21839779f871c930ae6cbbdabb85cda5f16e2d188c7d55aeddd124bd0f093"
+      },
+      "error": "Workspace GUI probe failed: Expected structured-input answer is unavailable",
+      "cause": "The C++ GUI fixture omitted Blue (Recommended) and selected the first red/blue option rather than matching the validated question ID.",
+      "repair": "Match color_first to Blue and color_second to Red, permit the Recommended suffix, reject missing or ambiguous labels. Production response routing is unchanged.",
+      "verification": [
+        "Targeted probe build passed",
+        "clang-format, clang-tidy and Cppcheck passed for the changed translation unit",
+        "Two-source live GUI probe passed after repair"
+      ]
+    },
+    "reused_checks": {
+      "reference": "evidence/claude-code-hooks.json",
+      "checks": [
+        "headless core/configuration",
+        "22 desktop CTest suites and static analysis",
+        "95 Python tests and repository quality",
+        "15 CLI acceptance cases",
+        "12 UI cases with the preserved arrival failure and successful focused retry",
+        "4 affected suites under each of ASan/UBSan and TSan",
+        "live Claude permission, exact input retirement and same-child GUI reconnect"
+      ],
+      "reason": "Production code, tests and fixtures for these checks are unchanged; only the independent two-source GUI probe helper was repaired and rebuilt/requalified here. Previous Milestone 3 sanitizer scopes remain recorded separately."
+    },
+    "limits": [
+      "macOS and two retained sessions only",
+      "Claude remains observation-only; terminal responses and no authoritative hook-history reconciliation",
+      "Existing saved receipts retain their original revisions; this record does not relabel them as fresh runs"
+    ],
+    "local_review": {
+      "routing": "Two read-only CCR GLM workers; provider route corroborated by local runtime log",
+      "documentation": "Identified the need to qualify the shared workspace after Claude integration; addressed by the fresh workspace, native-input and two-Codex checks. Worker source-hash count corrected to 32 by parent verification.",
+      "code": "Only reported defect was inapplicable: Observer::receive handles SessionEnd and disconnects before its prompt-ID filter, including at the reviewed f819d79 commit. Parent inspected that ordering; no code change made for this finding.",
+      "limits": "Static worker reviews supplement parent verification; they are not independent runtime acceptance."
+    }
   }
 }

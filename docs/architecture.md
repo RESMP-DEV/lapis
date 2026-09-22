@@ -944,6 +944,9 @@ remain an independent prerequisite for binary distribution.
 
 **All three checkpoints qualified together on macOS; evidence is recorded in
 the [workspace receipt](../evidence/milestone-three-workspace.json).**
+Its consolidation record refreshes the retained-workspace, two-source Codex and
+native-input checks after the Claude hook extension; the original checkpoint
+receipts remain dated evidence with their tested source hashes.
 The outcome is one desktop workspace that retains and supervises two real
 sessions: both continue running and consuming output, manual navigation sends
 input only to the selected session, and attention from either session can be
