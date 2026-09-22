@@ -398,25 +398,13 @@ void Workspace::setFocusedIndex(int index) {
     emit focusChanged();
 }
 
-void Workspace::focusCategory(int index) {
-    if (index < 0 || static_cast<std::size_t>(index) >= sessions_.size())
-        return;
-    setFocusedIndex(index);
-}
-
-void Workspace::nextCategory(int delta) {
+void Workspace::nextSession(int delta) {
     if (sessions_.empty() || delta == 0)
         return;
     const int count = static_cast<int>(sessions_.size());
     // Wrap so held repeats cycle rather than sticking at an end.
-    const int next = ((focused_index_ + delta) % count + count) % count;
+    const int next = ((focused_index_ + delta % count) % count + count) % count;
     setFocusedIndex(next);
-}
-
-void Workspace::nextWindow(int delta) {
-    // One window per category today, so this is the same traversal as
-    // nextCategory until a category holds several sessions.
-    nextCategory(delta);
 }
 
 bool SessionPreview::addPreviewRequest(const QString& id, const QString& reason) {

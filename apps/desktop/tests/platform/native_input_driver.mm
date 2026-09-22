@@ -140,7 +140,12 @@ void NativeInputDriver::key(std::uint16_t code, NativeModifiers flags) {
         Handle<CGEventRef> event(CGEventCreateKeyboardEvent(nullptr, code, down));
         if (!event)
             throw std::runtime_error("Could not construct native keyboard event");
-        CGEventSetFlags(event.get(), static_cast<CGEventFlags>(flags));
+        auto event_flags = static_cast<CGEventFlags>(flags);
+        // Physical macOS arrows carry the numeric-pad flag; omitting it tests
+        // a different Qt modifier combination from real keyboard input.
+        if (code >= 123 && code <= 126)
+            event_flags |= kCGEventFlagMaskNumericPad;
+        CGEventSetFlags(event.get(), event_flags);
         const auto sequence = ++impl_->sequence;
         CGEventSetIntegerValueField(event.get(), kCGEventSourceUserData, sequence);
         CGEventPostToPid(::getpid(), event.get());

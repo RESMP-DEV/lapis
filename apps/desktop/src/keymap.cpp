@@ -455,9 +455,9 @@ bool KeyMap::reload() {
 }
 
 void KeyMap::toggleLayout() {
-    layout_ = layout_ == WorkspaceLayout::Blocks ? WorkspaceLayout::Focus : WorkspaceLayout::Blocks;
-    qInfo().noquote() << "lapis layout:" << layoutName();
-    emit changed();
+    const QStringList available = layouts();
+    const qsizetype next = (available.indexOf(layoutName()) + 1) % available.size();
+    static_cast<void>(setLayout(available.at(next)));
 }
 
 bool KeyMap::setLayout(const QString& name) {

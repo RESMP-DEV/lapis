@@ -25,13 +25,5 @@
 
   "layout": "focus",
   "theme": "lapis",
-  "density": "comfortable",
-
-  "categories": [
-    { "id": "shell", "title": "Shell" },
-    { "id": "renderer", "title": "Renderer" },
-    { "id": "agents", "title": "Agents" },
-    { "id": "service", "title": "Service" },
-    { "id": "checks", "title": "Checks" }
-  ]
+  "density": "comfortable"
 }

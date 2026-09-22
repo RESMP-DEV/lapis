@@ -124,6 +124,59 @@ void selection_persists() {
     require(reloaded.densityName() == QStringLiteral("compact"), "density should survive a reload");
 }
 
+void layout_cycle_persists_from_every_layout() {
+    const QStringList expected{QStringLiteral("focus"), QStringLiteral("columns"),
+                               QStringLiteral("blocks"), QStringLiteral("stack")};
+    for (qsizetype start = 0; start < expected.size(); ++start) {
+        std::cout << "layout cycle from " << expected.at(start).toStdString() << '\n';
+        QTemporaryDir directory;
+        require(directory.isValid(), "layout-cycle temporary directory");
+        const QString path =
+            write_config(QDir(directory.path()),
+                         QJsonDocument(QJsonObject{{QStringLiteral("layout"), expected.at(start)},
+                                                   {QStringLiteral("retained"), true}})
+                             .toJson());
+        KeyMap keymap;
+        keymap.setSourcePathForTesting(path);
+        require(keymap.load(), "layout-cycle fixture loads");
+        require(keymap.layouts() == expected, "layout cycle follows the advertised order");
+        for (qsizetype step = 1; step <= expected.size(); ++step) {
+            const QString& next = expected.at((start + step) % expected.size());
+            keymap.toggleLayout();
+            require(keymap.layoutName() == next, "layout cycle must visit the next layout");
+            const QJsonObject saved = read_config(path);
+            require(saved.value(QStringLiteral("layout")).toString() == next,
+                    "every layout-cycle step must persist");
+            require(saved.value(QStringLiteral("retained")).toBool(),
+                    "layout cycling must preserve unrelated config");
+            KeyMap reloaded;
+            reloaded.setSourcePathForTesting(path);
+            require(reloaded.load(), "cycled layout reloads");
+            require(reloaded.layoutName() == next, "cycled layout survives a restart");
+        }
+    }
+}
+
+void layout_cycle_preserves_malformed_config() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "failed layout-cycle temporary directory");
+    const QDir dir(directory.path());
+    const QString path = write_config(dir, R"({"layout":"stack"})");
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "failed layout-cycle fixture loads");
+    const QByteArray malformed = "{unfinished user edit";
+    static_cast<void>(write_config(dir, malformed));
+    keymap.toggleLayout();
+    require(keymap.layoutName() == QStringLiteral("focus"),
+            "failed cycling save keeps the selected layout active, like setLayout");
+    require(keymap.diagnostic().contains(QStringLiteral("Could not save")),
+            "failed cycling save reports its diagnostic");
+    QFile raw(path);
+    require(raw.open(QIODevice::ReadOnly), "read failed cycling config");
+    require(raw.readAll() == malformed, "failed cycling save preserves malformed bytes");
+}
+
 void symbolic_link_config_updates_target() {
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
@@ -442,6 +495,8 @@ int main(int argc, char** argv) {
     try {
         themes_are_complete();
         selection_persists();
+        layout_cycle_persists_from_every_layout();
+        layout_cycle_preserves_malformed_config();
         symbolic_link_config_updates_target();
         appearance_preserves_json_and_bad_files();
         deeply_nested_values_survive_persistence();

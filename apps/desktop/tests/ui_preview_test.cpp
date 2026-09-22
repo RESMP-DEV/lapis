@@ -64,6 +64,15 @@ int run_workspace_tests() {
     CHECK(workspace.previewMode());
     CHECK(workspace.focusedIndex() == 0);
     CHECK(workspace.focusedSession() != nullptr);
+    const int session_count = static_cast<int>(workspace.sessions().size());
+    workspace.nextSession(-1);
+    CHECK(workspace.focusedIndex() == session_count - 1);
+    workspace.nextSession();
+    CHECK(workspace.focusedIndex() == 0);
+    workspace.nextSession(session_count + 2);
+    CHECK(workspace.focusedIndex() == 2);
+    workspace.nextSession(-2);
+    CHECK(workspace.focusedIndex() == 0);
 
     const std::array<QString, 6> expected_ids = {
         QStringLiteral("shell"),   QStringLiteral("renderer"), QStringLiteral("agent"),
