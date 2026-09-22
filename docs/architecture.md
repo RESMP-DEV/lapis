@@ -770,14 +770,21 @@ app-server endpoint and an ordinary TUI attached to it, plus a separate observer
 Startup asynchronously probes for a listening backend before starting either
 client; socket-path existence alone is insufficient. This startup-only retry is
 bounded to ten seconds. GUI attachment cannot reconnect an observer that has not
-yet been started.
+yet been started. Before launching the backend, the service hashes the entire
+executable against the qualified binary identity. File metadata or a prefix digest
+is not sufficient to enable responses. This synchronous check runs in the separate
+service process; it adds startup latency, not GUI-thread work. Backend exit
+diagnostics include normal exit codes or crash status, without publishing raw
+backend stderr.
 Both child groups use the existing POSIX ownership guard, including cleanup on
 abrupt service loss. Production inherits the caller's Codex home and policy;
 private homes and explicit model/approval settings belong only to qualification
 fixtures. The observer binds one persistent TUI thread. Live source metadata also identifies
 ephemeral backend threads; discovery classifies these explicitly and does not route
-their requests through the TUI controls. A second persistent thread disables
-structured responses pending a future thread-switch contract.
+their requests through the TUI controls. Events from unknown senders after binding
+stay non-actionable, including during reconnect replay. Classification releases
+their bounded traffic accounting; overflow fails closed. A second persistent
+thread disables structured responses pending a future thread-switch contract.
 
 Wire v6 retains terminal and history envelopes and adds attachment-bound attention
 snapshots and decisions. The adapter caps retained pending details at 512 KiB,
@@ -789,7 +796,10 @@ readiness and pending/response-in-flight/stale state. Decisions require the acti
 GUI attachment and exact source token. Sending consumes the token but does not
 resolve the request; only source resolution does. A transport failure after token
 consumption leaves delivery uncertain and disables responses until explicit
-reconciliation; it never triggers an automatic resend. Source reconnect must reconcile
+reconciliation; it never triggers an automatic resend. The private WebSocket
+transport bounds queued writes at 2 MiB. An exhausted write queue, including a
+pong or close echo that cannot be queued, fails closed rather than adding a
+second retry queue. A rejected send must be handled by its caller. Source reconnect must reconcile
 before enabling decisions, and unqualified Codex binary hashes keep structured
 responses disabled. Wire v6 adds `attention_retry` (kind 14): an attachment-bound echo of the decision
 identity/choice with empty answers. The service sends it only when rejection

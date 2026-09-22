@@ -1,0 +1,222 @@
+{
+  "schema": "lapis.pr-review-repair/1",
+  "recorded_at": "2026-09-22T02:45:49.487366+00:00",
+  "pull_request": 7,
+  "baseline_revision": "faa31778943d3c5b06a47242a530a8b240f115ca",
+  "platform": "macOS arm64; Qt 6.11.2; production protocol unchanged",
+  "source_sha256": {
+    "CONTRIBUTING.md": "f039546f762dff0e70b5a68b5e6ef33219ad95e255fcceb5fd51907363d11fec",
+    "README.md": "13d5bfcda5b6a628aeae8365c826099e9104edcc4b5d541809badf7e781ac340",
+    "adapters/codex/README.md": "381468f6ddbff8933c4e83f6848b62d7eabb2ca2a222152d18c06500ae2a34a5",
+    "adapters/codex/src/observer.cpp": "1741b1790f67078e80a0f28c67e234d1f695ab2e2144588409c504b4ba296ac7",
+    "adapters/codex/src/unix_websocket.cpp": "af8f925e1848e226e61677c538ad18e11f3d2a6b429fbc70c14aab7ac9408a81",
+    "adapters/codex/tests/observer_test.cpp": "34a92f137e019ac08a74454c80481142b5b2dc5072993237b8c8246863c6db44",
+    "adapters/codex/tests/unix_websocket_test.cpp": "fad4d77999b30364a9d6db0ed3c1b3107bdd2e7a0f93edde3d40c365304790d2",
+    "docs/architecture.md": "cb3b5d2c63331d5a3f0841774718bdb931751de442a3bb4d36324c9a13d638c3",
+    "scripts/check_cli_launch.py": "9a717ea904833ee03f8f42ec40167ae12573af1940091872fe2e74e7ef085129",
+    "services/session/src/session_service.cpp": "a6e94aeedc44be72f79051c4402b99c6bb81b83bf257d658232afbbec7ff6957",
+    "services/session/tests/attention_protocol_test.cpp": "a88c4bf75bbac0f42175c27209c79fd7ca27d9724079156ec6b6465644e5c640",
+    "services/session/tests/launch_spec_test.cpp": "687fb39ca6dc9f311dc2bc9ac88f698a404e9426696d107b312f492cb685bf7d"
+  },
+  "review_threads": [
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6khJxV",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4066370394",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "Unknown senders after binding remain non-actionable, including during reconnect replay. Retain per-sender event/byte accounting, not payloads that cannot be adopted; release accounting upon classification. Tests cover request/resolution ID collisions, delayed metadata, 1030 temporary lifecycles, both overflow bounds, and a confirmed second persistent thread."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6khJxZ",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4066370400",
+      "path": "adapters/codex/src/observer.cpp",
+      "disposition": "Retain exact qualified method/code/thread-specific upstream error matching. Prefix/contains could retry unrelated failures or a different thread; a new binary must requalify this contract."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6khJxp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4066370418",
+      "path": "adapters/codex/src/unix_websocket.cpp",
+      "disposition": "Replace QString UTF-8 roundtrip with Qt QByteArray::isValidUtf8()."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6khJxu",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4066370426",
+      "path": "adapters/codex/src/unix_websocket.cpp",
+      "disposition": "Retain bounded fail-closed send semantics and nodiscard. Retry/automatic resend is deliberately outside the private observer transport contract; document it."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6khJxx",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4066370429",
+      "path": "adapters/codex/src/unix_websocket.cpp",
+      "disposition": "Reserve maximum frame header plus payload and mask into the allocated buffer."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6khJx5",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4066370438",
+      "path": "adapters/codex/src/unix_websocket.cpp",
+      "disposition": "Retain terminal failure when a control reply cannot be queued, bounded to 2 MiB; recovery must reconcile rather than accumulate another retry queue."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6khJx9",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4066370444",
+      "path": "adapters/codex/src/unix_websocket.cpp",
+      "disposition": "Accept registered close codes 1012, 1013 and 1014 while rejecting reserved on-wire codes; cover close diagnostics and echoes."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6khJyA",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4066370450",
+      "path": "adapters/codex/src/unix_websocket.cpp",
+      "disposition": "Installed Qt 6.11.2 QArrayDataOps::erase advances the data pointer for prefix removal. The claimed per-frame memmove is not present; preserve bounded receive loop."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6khJyD",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4066370454",
+      "path": "adapters/codex/tests/observer_test.cpp",
+      "disposition": "Retire old fake server sockets and disconnect their handlers when replacing or disconnecting; cover reconnect isolation."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6khJyH",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4066370460",
+      "path": "adapters/codex/tests/unix_websocket_test.cpp",
+      "disposition": "Handle masked extended-length frames in test decoding with regression payloads across length boundaries."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6khJyM",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4066370467",
+      "path": "services/session/src/session_service.cpp",
+      "disposition": "Remove redundant inner attachment guard in publish_attention while preserving the outer check."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6khJyQ",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4066370472",
+      "path": "services/session/src/session_service.cpp",
+      "disposition": "Retain full executable SHA-256 qualification. Actual Qt hashing of the 314160568-byte installed binary measured 1238.7-1287.2 ms with OS caches left intact. Service ready-ack timer begins afterward; desktop startup still pays this latency. Metadata/prefix replacements weaken the qualification boundary; no cold-disk/startup performance claim."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6khJyU",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4066370478",
+      "path": "services/session/src/session_service.cpp",
+      "disposition": "Expose backend normal exit code or crash status without raw stderr. Runtime fixtures cover both exits and verify private stderr exclusion."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6khJya",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4066370483",
+      "path": "services/session/tests/attention_protocol_test.cpp",
+      "disposition": "Remove unused headers and add the direct utility include."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6khJyf",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/7#discussion_r4066370495",
+      "path": "services/session/tests/launch_spec_test.cpp",
+      "disposition": "Fail explicitly when canonical /tmp is absent before creating a temporary fixture, retaining canonical paths needed by launch validation."
+    }
+  ],
+  "validation": {
+    "desktop": {
+      "command": "python3 scripts/check_cpp.py desktop --jobs 6",
+      "ctest": "18/18 passed",
+      "static_checks": "All initial checks passed except five clang-tidy diagnostics in the edited transport test helper. Fixed explicit optional guarding and unsigned bitwise promotion; rebuilt and reran codex-transport, clang-tidy, clang-format and Cppcheck on that translation unit successfully. Other source inputs unchanged.",
+      "receipt": "build/reports/desktop/receipt.json",
+      "followup_logs": [
+        "build/review-sept21/transport-tidy-final.log",
+        "build/review-sept21/transport-format-final.log",
+        "build/review-sept21/transport-cppcheck-final.log",
+        "build/review-sept21/desktop-transport-final.log"
+      ]
+    },
+    "sanitizers": {
+      "suites": [
+        "launch-spec",
+        "attention-protocol",
+        "codex-transport",
+        "codex-observer"
+      ],
+      "asan_ubsan": "4/4 passed; observer and transport rerun after fixture fixes",
+      "tsan": "4/4 passed; transport rerun after analyzer fixes",
+      "logs": [
+        "build/review-sept21/asan-tests.log",
+        "build/review-sept21/asan-observer-final.log",
+        "build/review-sept21/desktop-asan-transport-final.log",
+        "build/review-sept21/tsan-tests.log",
+        "build/review-sept21/desktop-tsan-transport-final.log"
+      ]
+    },
+    "cli": {
+      "command": "python3 scripts/check_cli_launch.py --desktop --codex --output build/review-sept21/cli-final.json",
+      "passed": 16,
+      "total": 16,
+      "asan_service_cases": 14,
+      "tsan_service_cases": 14,
+      "new_backend_fixture": "Normal exit 23 and SIGKILL both report the appropriate exit classification without leaking a private stderr marker."
+    },
+    "live_codex": {
+      "command": "python3 scripts/check_service_attention.py --live-glm --desktop --output build/review-sept21/live-attention.json",
+      "passed": true,
+      "checks": [
+        "managed TUI startup and attention attachment",
+        "real command approval through desktop controls",
+        "real command approval over service IPC",
+        "pending request survives same-child reattachment",
+        "stale token rejected",
+        "source resolution and successful continuation",
+        "invalid answers rejected with an exact retry token",
+        "real user-input answer through desktop controls",
+        "real user-input answer over service IPC and successful continuation",
+        "archived source disables replies; restored source reconciles in a fresh epoch",
+        "new request after source recovery is cancelled by an observed turn interruption",
+        "two simultaneous real approvals retain distinct identities and resolve independently"
+      ],
+      "model": "zai,glm-5.3",
+      "provider": "lapis_probe",
+      "binary_sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+      "service_reaped": true,
+      "owned_process_groups_cleaned": true
+    },
+    "quality": {
+      "command": "python3 scripts/lapis.py quality",
+      "passed": true,
+      "python_tests": 83,
+      "receipt": "build/reports/quality/receipt.json"
+    }
+  },
+  "hash_measurement": {
+    "executable": "/Users/kearm/.local/lib/alphaheng/packages/20260918-0034-256a74f9-dirty/bin/codex",
+    "measurement": "Qt full-file SHA-256; cache not flushed; not cold-disk or service-startup latency",
+    "samples": [
+      {
+        "bytes": 314160568,
+        "elapsed_ms": 1287.191333,
+        "sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9"
+      },
+      {
+        "bytes": 314160568,
+        "elapsed_ms": 1273.895709,
+        "sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9"
+      },
+      {
+        "bytes": 314160568,
+        "elapsed_ms": 1238.743042,
+        "sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9"
+      }
+    ]
+  },
+  "corrected_failures": [
+    "Fake Source teardown could run disconnected callbacks after its QPointer member was destroyed. Disconnect callbacks before member teardown; the observer suite then passes normally and under both sanitizers.",
+    "The initial optional plain-TUI test sent navigation input against the Codex loading draft. Reproduced literal escape echo; waiting for bracketed-paste mode and a loaded screen fixes the fixture. All final CLI cases pass. The added decoded mode field does not alter text decoding used by the already-passing live attention/history fixtures.",
+    "Worker-proposed receive cursor changes were discarded: installed Qt prefix removal advances its pointer. The original receive loop and reentrancy guards are retained."
+  ],
+  "delegation": {
+    "route": "CCR zai,glm-5.3; actual route and responses observed in router log",
+    "scope": "Three disjoint worker assignments; service/transport handoffs reviewed and corrected. Observer worker was stopped for coordinator completion after proposed changes violated existing discovery/rebinding semantics. No worker self-report is used as test acceptance.",
+    "receipts": [
+      "build/review-sept21/service.txt.status.json",
+      "build/review-sept21/transport.txt.status.json",
+      "build/review-sept21/observer.txt.status.json"
+    ]
+  },
+  "limits": [
+    "macOS qualification only; no Linux UI claim.",
+    "Hash samples leave OS caches intact and are not cold-disk or whole-startup measurements. Full-file binary verification is retained.",
+    "Qt, Ghostty and platform libraries are not instrumented; sanitizer scope is the listed first-party suites and service fixtures.",
+    "No public protocol changes or automatic decision retries. PRs remain open; this receipt does not assert external review approval."
+  ]
+}

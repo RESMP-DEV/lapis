@@ -110,7 +110,12 @@ An initial binding requires explicit persistent metadata from discovery's
 in the bounded replay queue without enabling decisions; the subsequent resume/read
 replay replaces them. Reconnect retains an already classified persistent identity,
 including when loaded-thread discovery is empty. Temporary-thread events cannot
-redirect a decision. Unknown binary hashes,
+redirect a decision. After binding, traffic from an unclassified sender is never
+applied to owned requests, including during reconnect replay. Until metadata
+arrives, the adapter tracks bounded counts and bytes (1024 events / 1 MiB) rather
+than retaining payloads it can never adopt. Classification releases that sender's
+accounting; a confirmed second persistent thread or budget overflow fails closed.
+Unknown binary hashes,
 failed reconciliation and lost connections disable responses. Other request kinds
 are observation-only and must be answered in the terminal. Desktop controls now
 exercise real approvals and answers through this service, including pending

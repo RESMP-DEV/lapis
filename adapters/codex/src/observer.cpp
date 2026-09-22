@@ -8,6 +8,7 @@
 #include <QTimer>
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <map>
@@ -286,6 +287,8 @@ class Observer::Impl final : public QObject {
         waiting_.clear();
         replay_.clear();
         replay_bytes_ = 0;
+        unclassified_.clear();
+        unclassified_total_ = {};
         recovering_ = false;
     }
     void fail(const QString& reason) {
@@ -448,13 +451,38 @@ class Observer::Impl final : public QObject {
         else
             receive_reply(message);
     }
+    struct DeferredTraffic {
+        std::size_t events{};
+        qsizetype bytes{};
+    };
+    void defer_unclassified(const QString& id, qsizetype size) {
+        if (unclassified_total_.events >= 1024 ||
+            unclassified_total_.bytes + size > UnixWebSocket::maximum_message_bytes)
+            throw std::runtime_error("Codex unclassified traffic exceeded limit");
+        // An already-bound observer can never adopt this sender. Retain only
+        // bounded accounting until metadata classifies it, not actionable payloads.
+        auto& deferred = unclassified_[id];
+        ++deferred.events;
+        deferred.bytes += size;
+        ++unclassified_total_.events;
+        unclassified_total_.bytes += size;
+    }
+    void classified(const QString& id) {
+        const auto found = unclassified_.find(id);
+        if (found == unclassified_.end())
+            return;
+        unclassified_total_.events -= found->second.events;
+        unclassified_total_.bytes -= found->second.bytes;
+        unclassified_.erase(found);
+    }
     bool classify_thread(const QJsonObject& thread) {
         const auto id = thread.value("id").toString();
         if (!text(id, 256) || !thread.value("ephemeral").isBool())
             throw std::runtime_error("Invalid Codex thread metadata");
+        classified(id);
         if (!thread.value("ephemeral").toBool())
             return bind(id);
-        if (id == thread_ || background_.size() >= 128)
+        if (id == thread_ || (!background_.contains(id) && background_.size() >= 128))
             throw std::runtime_error("Invalid Codex temporary thread set");
         background_.insert(id);
         return true;
@@ -485,7 +513,7 @@ class Observer::Impl final : public QObject {
         const auto source_thread = params.value("threadId");
         if (source_thread.isUndefined() && !message.contains("id"))
             return;
-        if (!source_thread.isString() || source_thread.toString().isEmpty()) {
+        if (!source_thread.isString() || !text(source_thread.toString(), 256)) {
             fail("Codex event lacks thread identity: " + method);
             return;
         }
@@ -497,6 +525,10 @@ class Observer::Impl final : public QObject {
         if (source_thread.toString() == thread_ &&
             (method == "thread/closed" || method == "thread/archived")) {
             fail("Codex thread closed; restore the source before reconnecting");
+            return;
+        }
+        if (!thread_.isEmpty() && source_thread.toString() != thread_) {
+            defer_unclassified(source_thread.toString(), size);
             return;
         }
         // Only classified persistent metadata can establish the initial binding.
@@ -524,6 +556,8 @@ class Observer::Impl final : public QObject {
         deadline_.stop();
         if (message.contains("error")) {
             const auto error = message.value("error").toObject();
+            // This exact error is part of the qualified binary contract; a new
+            // binary must requalify it rather than broadening retry eligibility.
             if (method == "thread/resume" && error.value("code").toInteger() == -32600 &&
                 error.value("message").toString() == "no rollout found for thread id " + thread_) {
                 recovering_ = false;
@@ -598,6 +632,8 @@ class Observer::Impl final : public QObject {
     QStringList discovery_;
     QString discovery_id_;
     std::set<QString> background_;
+    std::map<QString, DeferredTraffic> unclassified_;
+    DeferredTraffic unclassified_total_;
     bool recovering_{};
     qsizetype replay_bytes_{};
     std::vector<QJsonObject> replay_;

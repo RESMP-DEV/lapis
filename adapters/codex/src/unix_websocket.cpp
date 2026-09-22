@@ -15,7 +15,7 @@ namespace {
 constexpr qsizetype header_limit = qsizetype{16} * 1024;
 constexpr qsizetype queue_limit = 2 * UnixWebSocket::maximum_message_bytes;
 constexpr auto websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-bool valid_utf8(const QByteArray& bytes) { return QString::fromUtf8(bytes).toUtf8() == bytes; }
+bool valid_utf8(const QByteArray& bytes) { return bytes.isValidUtf8(); }
 bool token(const QByteArray& value, QByteArrayView wanted) {
     const auto values = value.toLower().split(',');
     return std::any_of(values.begin(), values.end(),
@@ -120,6 +120,7 @@ class UnixWebSocket::Impl final : public QObject {
             socket_->bytesToWrite() + payload.size() + 14 > queue_limit)
             return false;
         QByteArray frame;
+        frame.reserve(payload.size() + 14);
         frame.append(static_cast<char>(0x80U | opcode));
         const auto size = static_cast<quint64>(payload.size());
         if (size < 126) {
@@ -136,9 +137,12 @@ class UnixWebSocket::Impl final : public QObject {
             mask[index] =
                 static_cast<char>((mask_value >> (static_cast<unsigned int>(index) * 8U)) & 0xffU);
         frame += mask;
+        const auto payload_offset = frame.size();
+        frame.resize(payload_offset + payload.size());
         for (qsizetype index = 0; index < payload.size(); ++index)
-            frame.append(static_cast<char>(static_cast<unsigned char>(payload[index]) ^
-                                           static_cast<unsigned char>(mask[index % 4])));
+            frame[payload_offset + index] =
+                static_cast<char>(static_cast<unsigned char>(payload[index]) ^
+                                  static_cast<unsigned char>(mask[index % 4]));
         return socket_->write(frame) == frame.size();
     }
     bool handshake() {
@@ -251,7 +255,7 @@ class UnixWebSocket::Impl final : public QObject {
             const auto code = (static_cast<quint32>(static_cast<quint8>(payload[0])) << 8U) |
                               static_cast<quint8>(payload[1]);
             const bool valid_code =
-                (code >= 1000 && code <= 1011 && code != 1004 && code != 1005 && code != 1006) ||
+                (code >= 1000 && code <= 1014 && code != 1004 && code != 1005 && code != 1006) ||
                 (code >= 3000 && code <= 4999);
             if (!valid_code || (payload.size() > 2 && !valid_utf8(payload.mid(2))))
                 throw std::runtime_error("Invalid WebSocket close frame");
