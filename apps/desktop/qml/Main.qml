@@ -1,4 +1,3 @@
-import QtCore as Core
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -740,7 +739,9 @@ ApplicationWindow {
                         enabled: workspace.canAddSessions
                         visible: workspace.registryEnabled
                         onTriggered: {
-                            sessionDirectoryField.text = workspace.focusedSession ? workspace.focusedSession.directory : Core.StandardPaths.writableLocation(Core.StandardPaths.HomeLocation)
+                            sessionDirectoryField.text = workspace.focusedSession ?
+                                        workspace.focusedSession.directory :
+                                        workspace.defaultSessionDirectory
                             sessionEndpointField.text = ""
                             sessionDialog.open()
                         }

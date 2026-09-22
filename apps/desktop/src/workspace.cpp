@@ -295,7 +295,9 @@ QString Workspace::defaultEndpoint() {
 }
 
 Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
-    : manifest_(std::move(options.manifest)), preview_mode_(mode == WorkspaceMode::preview) {
+    : manifest_(std::move(options.manifest)),
+      default_session_directory_(QStandardPaths::writableLocation(QStandardPaths::HomeLocation)),
+      preview_mode_(mode == WorkspaceMode::preview) {
     if (!manifest_.isEmpty()) {
         if (preview_mode_ || options.launch || !options.endpoint.isEmpty())
             throw std::invalid_argument(

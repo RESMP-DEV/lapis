@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from check_cli_launch import CheckError
 import check_workspace_attention
 from check_workspace_attention import request_by_role

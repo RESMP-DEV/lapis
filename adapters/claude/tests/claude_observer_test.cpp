@@ -164,8 +164,39 @@ void exact_retirement() {
     require(f.state.pending().empty());
     f.send(event("SessionEnd", {}, {}, "next"));
     require(!f.state.connected());
+    f.observer.stop();
     f.send(event("SessionStart"));
     require(!f.state.connected());
+}
+void session_replacement() {
+    Fixture f;
+    f.begin();
+    f.send(event("PreToolUse", "AskUserQuestion", "pending"));
+    const auto previous_epoch = f.state.epoch();
+    auto end = event("SessionEnd", {}, {}, "different-final-prompt");
+    end.insert("reason", "clear");
+    f.send(end);
+    require(!f.state.connected() && f.state.pending().empty());
+    require(f.observer.details(std::string{"pending"}).isEmpty());
+    f.send(event("UserPromptSubmit", {}, {}, "late-old-prompt"));
+    f.send(event("SessionStart"));
+    require(!f.state.connected()); // Old-source hooks cannot repin a retired session.
+    auto start = event("SessionStart");
+    start.insert("session_id", "source-2");
+    start.insert("source", "clear");
+    f.send(start);
+    require(f.state.ready() && f.state.epoch() > previous_epoch);
+    auto prompt = event("UserPromptSubmit"); // Prompt IDs are scoped to the new source.
+    prompt.insert("session_id", "source-2");
+    f.send(prompt);
+    auto request = event("PermissionRequest", "Bash");
+    request.insert("session_id", "source-2");
+    f.send(request);
+    require(f.state.pending().size() == 1 &&
+            f.state.pending().begin()->second.request.thread_id == "source-2");
+    f.send(end);
+    f.send(event("Stop"));
+    require(f.state.ready() && f.state.pending().size() == 1);
 }
 void privacy_bounds_and_transport() {
     Fixture f;
@@ -204,6 +235,7 @@ int main(int argc, char** argv) {
     try {
         identities_and_boundaries();
         exact_retirement();
+        session_replacement();
         privacy_bounds_and_transport();
         std::cout << "Claude live relay, identity, retirement, privacy and deadline cases passed\n";
         return 0;

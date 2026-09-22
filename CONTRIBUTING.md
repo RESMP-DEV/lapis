@@ -655,7 +655,8 @@ when provider access or hook delivery fails.
 Acceptance distinguishes replay from runtime: adapter tests own duplicate,
 wrong-session, exact/imprecise retirement, malformed input and transport bounds;
 the live probe owns installed-binary identity, actual attention delivery,
-terminal-only handling and same-child detach/reattach. GUI tests own the Claude
+terminal-only handling, same-child detach/reattach, and fresh permission delivery
+after `/clear` in that same process. GUI tests own the Claude
 session option and terminal-only notice presentation. Run `just ui-check` and
 `just cli-check` for the assembled launch/UI change. Do not infer hook-history
 reconciliation, permission denial or task completion from missing events.
@@ -740,6 +741,7 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `attention-protocol` | Desktop-enabled | Bounded attention snapshots/decisions, typed IDs, stale epochs and malformed payloads |
 | `codex-transport` | Desktop-enabled | Unix WebSocket upgrade, masking, fragmentation, bounds and reentrant close |
 | `codex-observer` | Desktop-enabled | Discovery, temporary-thread isolation, exact decisions, simultaneous requests, resume/read recovery and source loss |
+| `claude-observer` | Desktop-enabled | Hook launch settings, relay identity/turn boundaries, exact retirement, privacy bounds and malformed/oversized-event loss |
 | `session-descriptor` | Desktop-enabled | Private identity hint, atomic replacement, corruption and unsafe-file rejection |
 | `live-connection` | Desktop-enabled | Screen-before-input, exact attention decisions/rejections, duplicate gating, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
@@ -753,8 +755,8 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `terminal-input` | Desktop-enabled, native GUI | Qt composition commit/cancel, replacement rejection, paste and focus/document/history/disconnect ownership |
 | `terminal-render` | Desktop-enabled | Real Qt Vulkan pixel regressions for cell background grids, wide/combining characters, fallback/RTL text, styles/decorations, actual Ghostty resize, cursor placement and clearing |
 
-`just desktop` runs these twenty-one suites plus static checks. The separate Python
-GUI harness checks five preview captures and five expected failures. The CLI
+`just desktop` runs these twenty-two suites plus static checks. The separate Python
+GUI harness checks five preview captures and seven expected failures. The CLI
 harness checks detached service behavior, attachment generations, fragmented
 handshakes, synchronization timeout, stale controls, bounded queue failure and
 replacement identities; `--desktop` adds Qt-to-shell input and
@@ -1082,7 +1084,7 @@ python3 scripts/check_cli_launch.py --build-dir build/desktop-asan \
 Repeat those configure/build/test/harness commands with preset `tsan` and all
 `desktop-asan` paths changed to `desktop-tsan`. Do not combine instrumentation or
 use `ctest --preset asan` for the custom directory: that preset targets
-`build/asan`. Each desktop-enabled directory must list all twenty-one suites above.
+`build/asan`. Each desktop-enabled directory must list all twenty-two suites above.
 Use the same LLVM installation for normal and instrumented builds. Ccache is
 optional (`-DCMAKE_CXX_COMPILER_LAUNCHER=...`); raw CMake does not discover it.
 Reduce `--parallel` for host resource limits. The CLI command above runs service

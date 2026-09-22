@@ -150,6 +150,31 @@ async def wait_notice(view, tool):
     return terminal_notice(notice(view, tool), tool)
 
 
+async def clear_session(view, receipt):
+    previous_epoch = view.attention["epoch"]
+    view.client.send(TEXT, b"/clear")
+    await asyncio.sleep(0.25)
+    view.client.send(TEXT, b"\r")
+    try:
+        async with asyncio.timeout(15):
+            while not (
+                view.attention
+                and view.attention["connected"]
+                and view.attention["ready"]
+                and view.attention["epoch"] > previous_epoch
+            ):
+                if view.task.done():
+                    await view.task
+                await asyncio.sleep(0.02)
+    except TimeoutError as error:
+        raise RuntimeError(
+            "Claude /clear did not start a fresh observation epoch: "
+            + str(view.attention.get("diagnostic") if view.attention else None)
+        ) from error
+    require(not view.attention["requests"], "Cleared session retained old notices")
+    receipt["clear_epochs"] = [previous_epoch, view.attention["epoch"]]
+
+
 async def capture_desktop(args, service, receipt):
     if not args.capture:
         return
@@ -310,6 +335,20 @@ async def exercise(args, receipt):
                     "new prompt retired prior permission advisory",
                     "live AskUserQuestion has exact tool identity",
                 ]
+            )
+            await clear_session(view, receipt)
+            view.client.send(TEXT, FIXTURE_PROMPT.encode())
+            await asyncio.sleep(0.25)
+            view.client.send(TEXT, b"\r")
+            fresh = await wait_notice(view, "Bash")
+            require(
+                fresh["thread"] != before["thread"]
+                and fresh["epoch"] > question["epoch"],
+                "Claude /clear did not replace the source identity",
+            )
+            receipt["post_clear_notice"] = fresh
+            receipt["checks"].append(
+                "same Claude child delivered fresh permission attention after /clear"
             )
         finally:
             original_error = sys.exception()

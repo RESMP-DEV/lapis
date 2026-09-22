@@ -933,8 +933,8 @@ and answer controls, exact rejection/retry, pending reattachment, archive/restor
 reconciliation, a new request cancelled after recovery, and two simultaneous real
 approvals resolved independently. Normal, ASan/UBSan and TSan suites, CLI checks,
 preview captures and native macOS input pass. This qualifies the one-session
-Milestone 2 scope on the recorded binary; Milestone 3 checkpoints 3B and 3C
-remain unimplemented; 3A has passed two-session functional acceptance.
+Milestone 2 scope on its recorded binary. The Milestone 3 section below records
+the completed multi-session qualification and consolidated evidence.
 Update README's status table only as those capabilities land. Linux desktop,
 32-session load, second adapters, selection/accessibility/contextual shaping and
 fresh presentation-latency targets are outside this phase. Packaging/notices/SBOM
@@ -1171,6 +1171,16 @@ output or transcript enters the attention ledger. Hook commands use a fixed
 quoted executable/socket/token; event contents never become shell commands.
 The listener and ledger survive desktop detach. Reopening the GUI restores that
 service's ledger, not a reconstructed Claude event history.
+
+`SessionEnd` retires the conversation's notices without closing the service-owned
+listener. A subsequent `SessionStart` with a fresh source identity begins a new
+observation epoch, so `/clear` can continue in the same Claude process. Delayed
+hooks from retired sources cannot rebind them. The observer remembers up to 1024
+retired sources and stops observation on overflow. Reopening an already retired
+conversation is not qualified; start a new managed session for that case. Process
+exit or explicit observer shutdown still closes the listener. The
+[PR #10 repair receipt](../evidence/pr10-review.json) records the reproduced
+failure, live `/clear` recovery and retired-source regression cases.
 
 The adapter declares observation only: response and authoritative reconciliation
 are unsupported. A verified initial `SessionStart` or `UserPromptSubmit` boundary

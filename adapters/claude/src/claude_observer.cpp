@@ -22,6 +22,7 @@ namespace attention = session::attention;
 constexpr qsizetype frame_limit = qsizetype{16} * 1024;
 constexpr qsizetype connection_limit = 8;
 constexpr qsizetype prompt_limit = 1024;
+constexpr qsizetype retired_source_limit = 1024;
 const QStringList& hook_events() {
     static const QStringList names{
         "SessionStart", "UserPromptSubmit", "PermissionRequest",  "Notification",
@@ -225,21 +226,40 @@ class Observer::Impl {
         const auto session = event.value("session_id").toString();
         const auto name = event.value("hook_event_name").toString();
         const auto prompt = event.value("prompt_id").toString();
+        if (retired_sources_.contains(session))
+            return;
         if (!pinned_.isEmpty() && pinned_ != session)
             return;
         if (pinned_.isEmpty()) {
+            if (awaiting_start_ && name != QLatin1String("SessionStart"))
+                return;
             if (name != QLatin1String("SessionStart") && name != QLatin1String("UserPromptSubmit"))
                 return;
             pinned_ = session;
+            awaiting_start_ = false;
             begin();
         }
         if (!state_.ready())
             return;
         if (name == QLatin1String("SessionEnd")) {
-            stopped_ = true;
-            server_.close();
+            if (retired_sources_.size() >= retired_source_limit) {
+                loss(QStringLiteral("Claude retired session identity bound exceeded"));
+                return;
+            }
+            clear();
+            if (failed_)
+                return;
+            retired_sources_.insert(pinned_);
             state_.disconnect();
-            diagnostic_ = QStringLiteral("Claude session ended");
+            pinned_.clear();
+            prompt_.clear();
+            prompts_.clear();
+            completed_ = false;
+            awaiting_start_ = true;
+            // /clear ends a conversation, not the service-owned Claude process.
+            // Only a fresh SessionStart may bind its replacement; delayed old
+            // hooks cannot resurrect the retired conversation.
+            diagnostic_ = QStringLiteral("Claude session ended; waiting for a new session hook");
             emit owner_.changed();
             return;
         }
@@ -328,12 +348,14 @@ class Observer::Impl {
     QString pinned_;
     QString prompt_;
     QSet<QString> prompts_;
+    QSet<QString> retired_sources_;
     std::map<attention::RequestId, QJsonObject> details_;
     QString diagnostic_{QStringLiteral("Waiting for a Claude session hook; hooks may be disabled")};
     std::uint64_t sequence_{};
     bool stopped_{};
     bool failed_{};
     bool completed_{};
+    bool awaiting_start_{};
 };
 Observer::Observer(attention::State& state, QObject* parent)
     : QObject(parent), impl_(std::make_unique<Impl>(state, *this)) {}

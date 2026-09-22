@@ -963,6 +963,30 @@ int run_probe(const ProbeOptions& options) {
         require(probe.workspace().sessions().isEmpty() && probe.workspace().canAddSessions(),
                 "Initial production workspace was not empty");
         capture(probe, options.image_path, QStringLiteral("empty"));
+
+        // Exercise the empty-registry branch without replacing the dialog's default.
+        // Keep the user's home path out of qualification receipts.
+        click(probe.window(), QStringLiteral("sessionTools"));
+        auto* initial_menu = probe.window().findChild<QObject*>(QStringLiteral("sessionMenu"));
+        require(initial_menu, "Initial session menu is missing");
+        wait_popup(*initial_menu, true);
+        click(probe.window(), QStringLiteral("createSessionAction"));
+        auto* initial_dialog = probe.window().findChild<QObject*>(QStringLiteral("sessionDialog"));
+        require(initial_dialog, "Initial session dialog is missing");
+        wait_popup(*initial_dialog, true);
+        auto* initial_directory =
+            visual(probe.window().contentItem(), QStringLiteral("sessionDirectoryField"));
+        require(initial_directory, "Initial session directory field is missing");
+        const QString default_directory = initial_directory->property("text").toString();
+        require(default_directory == probe.workspace().defaultSessionDirectory(),
+                "Empty workspace dialog did not use the native workspace default");
+        require(QFileInfo{default_directory}.isAbsolute() &&
+                    !default_directory.startsWith(QStringLiteral("file:")),
+                "Empty workspace dialog default is not a native absolute path");
+        click_text(probe.window(), QStringLiteral("Cancel"));
+        wait_popup(*initial_dialog, false);
+        report.insert("empty_dialog_default_directory", QJsonObject{{"native", true}});
+
         SessionPreview* first = probe.add_shell(directory.path());
         probe.record(*first, QByteArrayLiteral("GUI_A"));
         const auto first_size = first->snapshot().size;

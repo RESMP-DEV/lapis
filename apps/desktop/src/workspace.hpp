@@ -168,6 +168,7 @@ class Workspace final : public QObject {
     Q_PROPERTY(bool loading READ loading NOTIFY workspaceChanged)
     Q_PROPERTY(bool canAddSessions READ canAddSessions NOTIFY workspaceChanged)
     Q_PROPERTY(QString status READ status NOTIFY workspaceChanged)
+    Q_PROPERTY(QString defaultSessionDirectory READ defaultSessionDirectory CONSTANT)
     Q_PROPERTY(bool previewMode READ previewMode CONSTANT)
     Q_PROPERTY(int focusedIndex READ focusedIndex WRITE setFocusedIndex NOTIFY focusChanged)
     Q_PROPERTY(
@@ -179,6 +180,9 @@ class Workspace final : public QObject {
     [[nodiscard]] bool loading() const { return loading_; }
     [[nodiscard]] bool canAddSessions() const;
     [[nodiscard]] const QString& status() const { return status_; }
+    [[nodiscard]] const QString& defaultSessionDirectory() const {
+        return default_session_directory_;
+    }
     Q_INVOKABLE bool addSession(bool codex, const QString& directory, const QString& endpoint = {});
     Q_INVOKABLE bool addClaudeSession(const QString& directory, const QString& endpoint = {});
     Q_INVOKABLE bool removeSession(const QString& id);
@@ -222,6 +226,7 @@ class Workspace final : public QObject {
     void flushFocus();
     QString manifest_;
     QString status_;
+    QString default_session_directory_;
     QPointer<SessionPreview> pending_focus_;
     QSet<QString> interaction_blocks_;
     bool loading_{};

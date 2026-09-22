@@ -37,7 +37,7 @@ two-session integration checks repeated after the Claude hook addition.
 | Retained workspace | Two real shells, GUI creation, four layouts, independent input/history/geometry, shared archive quotas/failure, same-child GUI reopen, removal/adoption and native IME switching; aggregate attention and guarded carousel | Larger workloads and automatic service recovery |
 | UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating, per-request drafts, shared queue, pin/pause/snooze controls | Broader request-kind qualification |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards, deterministic workspace ordering and quiet-session fairness | Larger-workload profiling |
-| Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
+| Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect, `/clear` continuation and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
 | Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals | Broader binary and request-kind qualification |
 
 The [architecture](docs/architecture.md#milestone-3-supervising-two-live-sessions-on-macos)
