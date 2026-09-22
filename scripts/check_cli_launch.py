@@ -11,6 +11,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import termios
 import time
 import termios
 import traceback
