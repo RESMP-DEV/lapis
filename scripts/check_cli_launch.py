@@ -13,7 +13,6 @@ import sys
 import tempfile
 import termios
 import time
-import termios
 import traceback
 from contextlib import contextmanager
 from datetime import datetime, timezone

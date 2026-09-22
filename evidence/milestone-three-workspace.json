@@ -210,5 +210,38 @@
     "OS-injected input tested; physical typing is not a required acceptance step",
     "Sanitizers cover the three affected service/workspace suites, not the complete desktop suite",
     "Dependency packaging and redistribution notices remain unfinished"
-  ]
+  ],
+  "review_fix_integration": {
+    "recorded_at": "2026-09-22T02:52:56.654860+00:00",
+    "integrated_pr": 7,
+    "integrated_pr_head": "54d4aead37dc4b15fcc6c4c6c2708c42aadee128",
+    "local_merge_revision": "96af8bcfcbda0b9cb73bb49b463ecf3116ca464f",
+    "scope": "Retain checkpoint 3A while integrating the PR 7 observer/transport/service fixes. No PR or main-branch merge was performed.",
+    "desktop": "18 of 20 suites passed on the first combined run; ui-preview and appearance-input failed GUI expectations, then both passed in isolation on the same binary without source changes. All compiler/static checks passed. The transient GUI failure cause is not established.",
+    "desktop_logs": [
+      "build/review-sept21/m3-integration.log",
+      "build/review-sept21/m3-ui-rerun.log"
+    ],
+    "cli": {
+      "passed": 16,
+      "total": 16,
+      "command": "python3 scripts/check_cli_launch.py --desktop --codex --output build/review-sept21/m3-cli.json"
+    },
+    "quality": {
+      "passed": true,
+      "python_tests": 85,
+      "log": "build/review-sept21/m3-quality-final.log"
+    },
+    "merge_cleanup": "Retained the existing owned-PTY raw-input helper, preserved new backend-exit cases, and removed a duplicate termios import introduced by merging the helper backport. CLI behavior is unchanged by the import-only cleanup; its passing receipt is reused.",
+    "source_sha256": {
+      "scripts/check_cli_launch.py": "608b32c4ceb5bba705252121b42e9b0216718904bd38c7a4f35ca8f92d3bd6f1",
+      "adapters/codex/src/observer.cpp": "1741b1790f67078e80a0f28c67e234d1f695ab2e2144588409c504b4ba296ac7",
+      "adapters/codex/src/unix_websocket.cpp": "af8f925e1848e226e61677c538ad18e11f3d2a6b429fbc70c14aab7ac9408a81",
+      "services/session/src/session_service.cpp": "a6e94aeedc44be72f79051c4402b99c6bb81b83bf257d658232afbbec7ff6957"
+    },
+    "limits": [
+      "No new native-input or performance qualification; the original checkpoint evidence above retains its dated source and scope.",
+      "PR 7 sanitizer and live attention coverage remains separately recorded in evidence/pr7-classification-repairs.json."
+    ]
+  }
 }
