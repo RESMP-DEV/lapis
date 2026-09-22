@@ -277,6 +277,10 @@ struct Qualification {
         });
         expect(QStringLiteral("native Control-C"), QByteArray(1, '\x03'),
                [&] { key(8, NativeModifiers::control); });
+        expect(QStringLiteral("native Command-Left sends Control-A"), QByteArray(1, '\x01'),
+               [&] { key(123, NativeModifiers::command); });
+        expect(QStringLiteral("native Command-Right sends Control-E"), QByteArray(1, '\x05'),
+               [&] { key(124, NativeModifiers::command); });
         expect(QStringLiteral("native Option-B"),
                QByteArray("\x1b"
                           "b"),

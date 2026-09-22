@@ -707,6 +707,10 @@ adapter, service IPC and the live pane's explicit response dialog.
 The September 19 reconciliation preserves main's one-command launcher, configurable
 navigation, four layouts and appearance settings. These operate over the existing
 single live service session and fixture cards; they do not complete Milestone 3.
+Session navigation is a flat list. The historical category-named shortcut actions
+are compatibility aliases for that list; category definitions in old configuration
+files are not consumed. Grouping sessions remains part of the supervising desktop
+milestone, rather than a settings-only feature.
 The retained UI is exercised through all appearance controls, shortcut reload,
 modal focus and four rendered layouts. Blocks wraps into responsive rows and
 Stack fills the viewport while keeping manual selection visible. Appearance
