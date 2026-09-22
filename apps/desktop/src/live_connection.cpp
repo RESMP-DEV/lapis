@@ -176,6 +176,8 @@ LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
       wanted_size_(launch.size) {
     if (launch.agent == session::AgentMode::codex)
         service_arguments_.prepend(QStringLiteral("--codex"));
+    else if (launch.agent == session::AgentMode::claude)
+        service_arguments_.prepend(QStringLiteral("--claude"));
     initialize(launch.agent == session::AgentMode::codex ? codex_sync_timeout_ms
                                                          : terminal_sync_timeout_ms,
                mode);

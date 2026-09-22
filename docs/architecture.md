@@ -1131,11 +1131,73 @@ identity and instrumentation endpoints. Store sanitized assembled evidence under
 `evidence/`, raw logs under `build/`, and update README only as each behavior lands.
 
 The milestone completes only when all three checkpoints pass together on the
-same assembled source. Explicit exclusions: Linux UI, a second CLI adapter,
+same assembled source. The original three-checkpoint qualification excludes
+Linux UI, a second CLI adapter,
 32-session qualification, multi-window/multi-client attachment, automatic recovery
 after service death or reboot, new terminal selection/accessibility/shaping
 features, renderer replacement, packaging and binary distribution. Preserve
 portable boundaries and existing terminal behavior while these remain deferred.
+
+#### Claude Code hooks: an observation-only extension
+
+Claude Code sessions use the same retained terminal, workspace queue and guarded
+carousel. Choose **Claude** when adding a session, or launch an explicit session:
+
+```sh
+python3 scripts/lapis.py run --claude --socket runtime/claude.sock \
+  --cwd /absolute/project -- claude
+```
+
+The internal agent-mode enum adds `claude`; workspace manifest v1 stores that
+name and launch fingerprints use a separate
+`lapis-claude-v1` domain. Service IPC remains v6.
+
+The session service owns a private local hook listener and temporary settings
+file for the life of its Claude PTY. It passes those hooks using `--settings`,
+preserving normal user/project settings and permission policy. Explicit
+`--settings`, `--bare` and `--safe-mode` arguments are rejected for managed
+launches because they conflict with this contract. Globally disabled hooks or
+managed policy may prevent delivery; no observed session boundary means attention
+is unavailable, while the terminal remains usable. Existing independently
+launched Claude processes are not automatically observed.
+
+Command hooks send only bounded event and identity metadata through the private
+socket. They never return decisions, permission changes, prompt context or stdout;
+transport failure returns successfully to Claude. No raw prompt, tool input,
+output or transcript enters the attention ledger. Hook commands use a fixed
+quoted executable/socket/token; event contents never become shell commands.
+The listener and ledger survive desktop detach. Reopening the GUI restores that
+service's ledger, not a reconstructed Claude event history.
+
+The adapter declares observation only: response and authoritative reconciliation
+are unsupported. A verified initial `SessionStart` or `UserPromptSubmit` boundary
+starts an empty observation ledger; the shared reducer cannot use that operation
+to replace stale pending requests. Local delivery order is not an upstream
+sequence or proof that no hook was missed. Service restart and delivery loss
+cannot recover unobserved requests automatically.
+
+Claude 2.1.280's actual `PermissionRequest` payload has `session_id`, `prompt_id`
+and `tool_name`, but no `tool_use_id`. An `AskUserQuestion` input notice already
+covers its accompanying permission hook, so that hook adds no duplicate row.
+Other imprecise notices are session/turn scoped and remain advisory until a new prompt or completion boundary. A neighboring tool's
+completion cannot resolve them. `PreToolUse` for `AskUserQuestion` and any
+requests with an exact tool ID can be retired by the matching `PostToolUse` or
+`PostToolUseFailure`. Permission/idle notifications are advisory; silence and
+absence of post-tool events do not establish approval, denial or task completion.
+
+All Claude notices have empty response choices and instruct the user to answer
+in the originating terminal. The supervisor separately tracks attention
+eligibility and response availability, so a current terminal-only notice can
+receive carousel priority without enabling GUI approval. Arrival, review,
+snoozing and focus never send an answer. The existing typing, paste, IME, modal
+and inactive-window guards still apply.
+
+This extension does not claim Milestone 5's independent response/reconciliation
+qualification or Linux UI support. Runtime qualification uses a disposable Claude
+configuration and an explicitly selected test provider; normal launches inherit
+the user's configuration. The
+[Claude hook receipt](../evidence/claude-code-hooks.json) records separate runtime
+and GUI evidence; reproducible procedures are in CONTRIBUTING.
 
 ### Following milestones
 

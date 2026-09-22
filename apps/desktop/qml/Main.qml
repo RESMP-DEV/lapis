@@ -266,7 +266,9 @@ ApplicationWindow {
         if (!directory.length)
             return
         const endpoint = sessionEndpointField.text.trim()
-        if (workspace.addSession(sessionCodexButton.checked, directory, endpoint))
+        if (sessionClaudeButton.checked ? workspace.addClaudeSession(directory, endpoint)
+                                        : workspace.addSession(sessionCodexButton.checked,
+                                                               directory, endpoint))
             sessionDialog.close()
     }
 
@@ -379,6 +381,8 @@ ApplicationWindow {
                         required property int index
                         required property var modelData
                         readonly property var request: modelData
+                        readonly property bool terminalOnly:
+                            request.details.responseLocation === "terminal"
                         width: ListView.view.width
                         spacing: 8
 
@@ -417,6 +421,7 @@ ApplicationWindow {
                                              requestRow.request.snoozed
                                     text: requestRow.request.responding ? qsTr("Response sent") :
                                           requestRow.request.snoozed ? qsTr("Snoozed") :
+                                          requestRow.terminalOnly ? qsTr("Answer in terminal") :
                                           qsTr("Response unavailable")
                                     font.pixelSize: 9
                                     elide: Text.ElideRight
@@ -512,6 +517,11 @@ ApplicationWindow {
                 id: sessionCodexButton
                 ButtonGroup.group: sessionKindGroup
                 text: qsTr("Codex")
+            }
+            RadioButton {
+                id: sessionClaudeButton
+                ButtonGroup.group: sessionKindGroup
+                text: qsTr("Claude")
             }
             TextField {
                 id: sessionDirectoryField

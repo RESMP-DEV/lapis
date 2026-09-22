@@ -71,6 +71,16 @@ void State::disconnect() {
     desynchronize();
 }
 void State::overflow() { desynchronize(); }
+Outcome State::begin_observation(Position position, Tick now) {
+    clock(now);
+    if (!connected_ || position.epoch != epoch_ || position.sequence != 1 || sequence_ != 0 ||
+        synchronized_ || !capabilities_.observation || capabilities_.response ||
+        capabilities_.reconciliation || !pending_.empty() || !retired_.empty() || retired_overflow_)
+        return Outcome::rejected;
+    sequence_ = position.sequence;
+    synchronized_ = true;
+    return Outcome::applied;
+}
 Outcome State::advance(Position position) {
     if (position.epoch != epoch_ || !connected_)
         return Outcome::rejected;

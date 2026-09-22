@@ -80,6 +80,7 @@ int main(int argc, char** argv) {
                 entries.push_back(entry(temporary, index, QByteArray{1, char(index)}));
             entries.front().agent = session::AgentMode::codex;
             entries.front().title = QStringLiteral("日本語");
+            entries.back().agent = session::AgentMode::claude;
             registry.write(entries);
             require(registry.read() == entries);
             for (const auto& private_file : {path, lock_path}) {

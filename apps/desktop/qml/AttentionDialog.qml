@@ -28,6 +28,8 @@ Dialog {
         return null
     }
     readonly property bool canRespond: current !== null && current.enabled
+    readonly property bool terminalOnly: draft !== null &&
+                                         draft.details.responseLocation === "terminal"
     readonly property bool answersComplete: {
         const questions = draft ? (draft.details.questions || []) : []
         for (const question of questions) {
@@ -241,7 +243,7 @@ Dialog {
             ColumnLayout {
                 Layout.fillWidth: true
                 visible: dialog.draft !== null
-                enabled: dialog.canRespond
+                enabled: dialog.canRespond || dialog.terminalOnly
                 Label {
                     Layout.fillWidth: true
                     text: dialog.draft ? dialog.draft.summary : ""
@@ -268,6 +270,14 @@ Dialog {
                     text: dialog.draft ? (dialog.draft.details.reason || "") : ""
                     visible: text.length > 0
                     textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                }
+                Label {
+                    Layout.fillWidth: true
+                    objectName: "terminalOnlyNotice"
+                    visible: dialog.terminalOnly
+                    text: qsTr("Answer in the originating terminal.")
+                    font.weight: Font.Medium
                     wrapMode: Text.Wrap
                 }
                 Repeater {

@@ -190,6 +190,31 @@ void recovery_watermark() {
     require(s.reconcile({1, 5}, {a}, 0) == Outcome::rejected);
     require(s.reconcile({1, 6}, {a}, 0) == Outcome::applied);
 }
+void fresh_observation() {
+    State s("session", "claude-code");
+    require(s.begin_observation({1, 1}, 0) == Outcome::rejected);
+    s.connect(1, {true, false, false});
+    require(s.begin_observation({1, 0}, 0) == Outcome::rejected);
+    require(s.begin_observation({2, 1}, 0) == Outcome::rejected);
+    require(s.begin_observation({1, 1}, 0) == Outcome::applied);
+    require(s.begin_observation({1, 1}, 0) == Outcome::rejected);
+    auto notice = request();
+    notice.choices.clear();
+    require(s.request({1, 2}, notice, 0) == Outcome::applied);
+    require(!s.respond(1, notice.id, s.pending().at(notice.id).revision, "accept"));
+    require(s.reconcile({1, 3}, {}, 0) == Outcome::rejected);
+    s.overflow();
+    require(s.begin_observation({1, 1}, 0) == Outcome::rejected);
+    s.connect(2, {true, false, false});
+    require(s.begin_observation({2, 1}, 0) == Outcome::rejected);
+    require(s.pending().size() == 1); // A fresh boundary cannot erase stale evidence.
+    for (const auto caps : {Capabilities{false, false, false}, Capabilities{true, true, false},
+                            Capabilities{true, false, true}}) {
+        State other("session", "other");
+        other.connect(1, caps);
+        require(other.begin_observation({1, 1}, 0) == Outcome::rejected);
+    }
+}
 void sequence_exhaustion() {
     auto s = state();
     const auto a = request();
@@ -207,6 +232,7 @@ int main() {
         ordering();
         recovery_watermark();
         sequence_exhaustion();
+        fresh_observation();
         std::cout << "Attention identity, lifecycle, recovery, bounds and scheduling passed\n";
         return 0;
     } catch (const std::exception& error) {

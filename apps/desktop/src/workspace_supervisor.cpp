@@ -223,7 +223,7 @@ WorkspaceSupervisor::requestPriority(const QString& id, qint64 timestamp) const 
         if (request.snoozed_until > timestamp)
             continue;
         has_unsnoozed = true;
-        if (request.row.value(QStringLiteral("enabled")).toBool() &&
+        if (request.row.value(QStringLiteral("attentionEligible")).toBool() &&
             !request.row.value(QStringLiteral("responding")).toBool()) {
             actionable = true;
             oldest = std::min(oldest, request.first_seen);

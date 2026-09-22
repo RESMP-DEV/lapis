@@ -630,6 +630,43 @@ union of the relevant checks; a check satisfying two rows runs once:
 | Python tooling | `just quality` (includes Ruff and Python unit tests), plus relevant runtime probes |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; run `just quality` for shared check/config/instruction changes; no unrelated C++ rebuild |
 
+### Claude Code hook qualification
+
+Build with `just desktop`, then run the focused adapter cases and the disposable
+live probe:
+
+```sh
+ctest --test-dir build/desktop -R claude --output-on-failure
+python3 scripts/check_claude_hooks.py --build-dir build/desktop \
+  --output build/claude-hooks/live-receipt.json \
+  --capture build/claude-hooks/claude-pending.png
+```
+
+Run the capture serially with other GUI checks. The live probe launches the
+installed Claude Code through the real session service, using an isolated configuration and a harmless permission-gated command.
+A disposable project setting explicitly asks for Bash permission; it does not
+modify the user's settings or rely on their default approval mode.
+It uses the local CCR endpoint and the explicitly selected `zai,glm-5.3` model as
+a test fixture; the normal product launch inherits the user's provider and policy.
+Run with working local provider credentials. Do not put credentials into arguments,
+receipts or version-controlled settings. The probe must retain its failure status
+when provider access or hook delivery fails.
+
+Acceptance distinguishes replay from runtime: adapter tests own duplicate,
+wrong-session, exact/imprecise retirement, malformed input and transport bounds;
+the live probe owns installed-binary identity, actual attention delivery,
+terminal-only handling and same-child detach/reattach. GUI tests own the Claude
+session option and terminal-only notice presentation. Run `just ui-check` and
+`just cli-check` for the assembled launch/UI change. Do not infer hook-history
+reconciliation, permission denial or task completion from missing events.
+
+Record the installed version and SHA-256, source revision and dirty state, exact
+commands, test scope, and sanitized outcomes. Keep raw fixture screens and logs
+under ignored `build/`; publish only the sanitized receipt under `evidence/`.
+Hook and process-lifetime changes also require the affected desktop-enabled
+ASan/UBSan and TSan cases. Tests must preserve the user's existing global settings
+and hook definitions, and must not adopt or type into unrelated live sessions.
+
 ### Selecting checks and reusing results
 
 Select the required commands before running them:

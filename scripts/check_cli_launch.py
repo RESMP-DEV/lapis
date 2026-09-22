@@ -40,10 +40,13 @@ def qt_string(value):
     return struct.pack(">I", len(encoded)) + encoded
 
 
-def fingerprint(program, arguments, directory, *, codex=False):
+def fingerprint(program, arguments, directory, *, codex=False, claude=False):
     data = qt_string(os.path.abspath(program)) + struct.pack(">I", len(arguments))
     data += b"".join(qt_string(argument) for argument in arguments)
     data += qt_string(Path(directory).resolve())
+    require(not (codex and claude), "Expected one agent mode")
+    if claude:
+        data = b"lapis-claude-v1\0" + data
     if codex:
         data = b"lapis-codex-v1\0" + data
     return hashlib.sha256(data).digest()
@@ -71,11 +74,13 @@ def decode_history_reply(payload):
     }
 
 
-def attach_payload(program, arguments, directory, expected=None, *, codex=False):
+def attach_payload(
+    program, arguments, directory, expected=None, *, codex=False, claude=False
+):
     identity = expected[:32] if expected is not None else bytes(32)
     return (
         struct.pack(">I", VERSION)
-        + fingerprint(program, arguments, directory, codex=codex)
+        + fingerprint(program, arguments, directory, codex=codex, claude=claude)
         + bytes([1 if expected is not None else 0])
         + identity
     )
@@ -176,9 +181,14 @@ class WireClient:
                 raise EOFError("Service disconnected")
             self.buffer.extend(chunk)
 
-    def attach(self, program, arguments, directory, expected=None, *, codex=False):
+    def attach(
+        self, program, arguments, directory, expected=None, *, codex=False, claude=False
+    ):
         self.send(
-            ATTACH, attach_payload(program, arguments, directory, expected, codex=codex)
+            ATTACH,
+            attach_payload(
+                program, arguments, directory, expected, codex=codex, claude=claude
+            ),
         )
         pid = self.hello()
         if expected is not None:
@@ -304,16 +314,18 @@ class Service:
         env_overrides=None,
         *,
         codex=False,
+        claude=False,
     ):
         self.endpoint = runtime / (name + ".sock")
         self.program, self.arguments, self.directory = program, arguments, directory
         self.child_pid = None
         self.codex = codex
+        self.claude = claude
         self.attachment = None
         self.log = (artifacts / (name + ".service.log")).open("wb")
         self.process = subprocess.Popen(
             [str(binary)]
-            + (["--codex"] if codex else [])
+            + (["--codex"] if codex else ["--claude"] if claude else [])
             + [str(self.endpoint), str(directory), program, *arguments],
             stdin=subprocess.DEVNULL,
             stdout=self.log,
@@ -336,6 +348,7 @@ class Service:
                 self.directory,
                 self.attachment,
                 codex=self.codex,
+                claude=self.claude,
             )
             self.attachment = client.attachment
             if self.child_pid is not None:

@@ -60,6 +60,8 @@ QVariantList SessionPreview::attentionRequests() const {
             {"choices", choices},
             {"details", item.details.toVariantMap()},
             {"responding", responding},
+            {"attentionEligible", attentionReady() && !responding &&
+                                      pending.status == session::attention::RequestStatus::pending},
             {"enabled", attentionReady() && !responding &&
                             pending.status == session::attention::RequestStatus::pending &&
                             !choices.isEmpty()}});

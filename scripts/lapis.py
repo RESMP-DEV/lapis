@@ -182,7 +182,15 @@ def launch(arguments):
     ):
         private_runtime_dir()
         explicit_session = any(
-            a in ("--new-session", "--discover", "--cwd", "--codex", "--smoke-input")
+            a
+            in (
+                "--new-session",
+                "--discover",
+                "--cwd",
+                "--codex",
+                "--claude",
+                "--smoke-input",
+            )
             or a.startswith("--cwd=")
             for a in app_arguments
         )

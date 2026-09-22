@@ -20,6 +20,17 @@ void validate_agent(const LaunchSpec& launch) {
     switch (launch.agent) {
     case AgentMode::terminal:
         return;
+    case AgentMode::claude:
+        for (const auto& argument : launch.arguments) {
+            if (argument == QStringLiteral("--"))
+                break;
+            const auto option = argument.section(QLatin1Char('='), 0, 0);
+            if (option == QStringLiteral("--settings") || option == QStringLiteral("--bare") ||
+                option == QStringLiteral("--safe-mode"))
+                throw std::invalid_argument(
+                    "Managed Claude owns --settings and requires hooks enabled");
+        }
+        return;
     case AgentMode::codex:
         for (const auto& argument : launch.arguments) {
             if (argument == QStringLiteral("--"))
@@ -123,6 +134,9 @@ QByteArray launch_fingerprint(const LaunchSpec& launch) {
         return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
     case AgentMode::codex:
         bytes.prepend(QByteArrayLiteral("lapis-codex-v1\0"));
+        return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
+    case AgentMode::claude:
+        bytes.prepend(QByteArrayLiteral("lapis-claude-v1\0"));
         return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
     }
     throw std::invalid_argument("Unknown agent integration mode");

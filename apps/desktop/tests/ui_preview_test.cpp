@@ -513,6 +513,60 @@ int run_attention_dialog_tests() {
     return EXIT_SUCCESS;
 }
 
+int run_terminal_only_attention_test() {
+    using namespace lapis::desktop;
+    namespace wire = lapis::session::wire;
+    namespace attention = lapis::session::attention;
+    Workspace workspace(WorkspaceMode::preview);
+    UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+                                  .compact = true,
+                                  .screen = QString{}});
+    CHECK(preview.load());
+    auto* window = preview.window();
+    wait_active(*window);
+    auto* terminal = find_visual(window->contentItem(), QStringLiteral("liveTerminal"));
+    auto* dialog = window->findChild<QObject*>(QStringLiteral("attentionDialog"));
+    CHECK(terminal != nullptr && dialog != nullptr);
+    auto* document = workspace.focusedSession();
+    document->setConnection(QStringLiteral("ready"), true);
+    wire::AttentionSnapshot state;
+    state.attachment = {{wire::new_id(), wire::new_id()}, 1};
+    state.available = state.connected = state.ready = true;
+    state.source_epoch = 1;
+    attention::Pending pending;
+    pending.request = {.id = std::int64_t{1},
+                       .thread_id = "fixture",
+                       .turn_id = "turn",
+                       .item_id = "item",
+                       .reason = "Claude permission",
+                       .summary = "Test terminal request",
+                       .choices = {}};
+    pending.source_epoch = pending.revision = 1;
+    state.requests.push_back({pending, QJsonObject{{"responseLocation", QStringLiteral("terminal")},
+                                                   {"choices", QJsonArray{}}}});
+    document->applyAttention(state);
+    pump(20);
+    CHECK(QMetaObject::invokeMethod(window, "openAttentionDialog"));
+    wait_popup(*dialog, true);
+    CHECK(QMetaObject::invokeMethod(dialog, "selectRequest",
+                                    Q_ARG(QVariant, document->attentionRequests()[0])));
+    pump(20);
+    auto* notice = window->findChild<QObject*>(QStringLiteral("terminalOnlyNotice"));
+    CHECK(notice != nullptr && notice->property("visible").toBool());
+    const auto questions = document->attentionRequests()[0]
+                               .toMap()
+                               .value(QStringLiteral("details"))
+                               .toMap()
+                               .value(QStringLiteral("questions"))
+                               .toList();
+    CHECK(questions.empty());
+    CHECK(window->activeFocusItem() != terminal);
+    CHECK(QMetaObject::invokeMethod(dialog, "close"));
+    wait_popup(*dialog, false);
+    CHECK(terminal->hasActiveFocus());
+    return EXIT_SUCCESS;
+}
+
 int run_shortcut_focus_tests() {
     using namespace lapis::desktop;
     Workspace workspace(WorkspaceMode::preview);
@@ -1019,6 +1073,7 @@ int main(int argc, char** argv) {
             run_surface_tests() != EXIT_SUCCESS ||
             run_diagnostics_reentrancy_test() != EXIT_SUCCESS ||
             run_attention_dialog_tests() != EXIT_SUCCESS ||
+            run_terminal_only_attention_test() != EXIT_SUCCESS ||
             run_attention_ui_tests() != EXIT_SUCCESS || run_input_guard_tests() != EXIT_SUCCESS)
             return EXIT_FAILURE;
         std::cout << "ui_preview_test: PASS\n";

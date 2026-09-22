@@ -111,6 +111,24 @@ void aggregation() {
     require(f.supervisor.pendingCount() == 0);
     require(!f.supervisor.snooze(f.second->sessionId(), integer, 1000));
 }
+void terminal_notice_is_attention_without_a_response() {
+    Fixture f;
+    auto* quiet = f.workspace.session(QStringLiteral("agent"));
+    quiet->setConnection(QStringLiteral("ready"), true);
+    auto notice = request(std::string{"permission"});
+    notice.pending.request.choices.clear();
+    notice.details.insert(QStringLiteral("responseLocation"), QStringLiteral("terminal"));
+    f.second->applyAttention(snapshot({notice}));
+    const auto row = f.second->attentionRequests().front().toMap();
+    require(!row.value("enabled").toBool() && row.value("attentionEligible").toBool());
+    require(!f.second->respondAttention(token(*f.second), {{"choice", "accept"}}));
+    f.at(f.first); // Arrival itself cannot move input ownership.
+    f.enable();
+    f.advance(5000);
+    f.at(f.second); // Terminal-only request outranks the earlier-sorting quiet source.
+    f.second->invalidateAttention();
+    require(!f.second->attentionRequests().front().toMap().value("attentionEligible").toBool());
+}
 void scheduled_carousel_switches_without_manual_ticks() {
     Fixture f;
     QEventLoop loop;
@@ -243,6 +261,7 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
         aggregation();
+        terminal_notice_is_attention_without_a_response();
         scheduled_carousel_switches_without_manual_ticks();
         unchanged_ticks_preserve_queue_delegates();
         bounds_and_identity_replacement();

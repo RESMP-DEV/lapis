@@ -180,6 +180,7 @@ class Workspace final : public QObject {
     [[nodiscard]] bool canAddSessions() const;
     [[nodiscard]] const QString& status() const { return status_; }
     Q_INVOKABLE bool addSession(bool codex, const QString& directory, const QString& endpoint = {});
+    Q_INVOKABLE bool addClaudeSession(const QString& directory, const QString& endpoint = {});
     Q_INVOKABLE bool removeSession(const QString& id);
     Q_INVOKABLE void setInteractionBlocked(const QString& reason, bool blocked);
     [[nodiscard]] bool interactionBlocked() const { return !interaction_blocks_.isEmpty(); }
@@ -187,6 +188,11 @@ class Workspace final : public QObject {
     bool focusAutomatically(const QString& id);
     [[nodiscard]] bool previewMode() const { return preview_mode_; }
     [[nodiscard]] SessionPreview* session(const QString& id) const;
+
+  private:
+    bool createSession(session::AgentMode agent, const QString& directory, const QString& endpoint);
+
+  public:
     // Development fixture v1 only. No calls are accepted in a live workspace.
     bool requestAttention(const PreviewRequest& request);
     bool resolveAttention(const PreviewRequest& request);

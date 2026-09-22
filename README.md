@@ -18,7 +18,7 @@ to that same file so Codex and Claude Code share one set of project instructions
 
 ## Current status
 
-The macOS workspace retains live terminal and Codex sessions in one window. It
+The macOS workspace retains live terminal, Codex and Claude Code sessions in one window. It
 supports manual switching, identity-checked reconnection and detached services.
 **Milestone 1 is qualified on macOS.** Milestone 2 is qualified for one managed
 Codex session. **Milestone 3 is qualified for two sessions on macOS:** retained
@@ -36,6 +36,7 @@ carousel. The assembled qualification and measurement limits are recorded in the
 | Retained workspace | Two real shells, GUI creation, four layouts, independent input/history/geometry, shared archive quotas/failure, same-child GUI reopen, removal/adoption and native IME switching; aggregate attention and guarded carousel | Larger workloads and automatic service recovery |
 | UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating, per-request drafts, shared queue, pin/pause/snooze controls | Broader request-kind qualification |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards, deterministic workspace ordering and quiet-session fairness | Larger-workload profiling |
+| Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
 | Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals | Broader binary and request-kind qualification |
 
 The [architecture](docs/architecture.md#milestone-3-supervising-two-live-sessions-on-macos)
@@ -54,10 +55,16 @@ GPU pixel checks, real adapter traffic, and timing measurements. The
 separates terminal operation from attention delivery.
 
 Latency targets remain provisional. Two sessions do not qualify 32-session
-capacity, Linux UI, or a second independent adapter. Selection, accessibility,
-cross-cell shaping and automatic recovery after service death remain later work.
+capacity, Linux UI, or full response/reconciliation support for another adapter.
+Selection, accessibility, cross-cell shaping and automatic recovery after service death remain later work.
 Dependency packaging and redistribution notices remain unfinished; this is a
 local developer build.
+
+Claude Code can be selected when adding a session. Its permission and input
+notices appear in the shared queue; answer them in Claude's terminal. Lapis does
+not change Claude's approval policy or install global hooks. The
+[Claude hook receipt](evidence/claude-code-hooks.json) records runtime qualification.
+See the [hook contract and limitations](docs/architecture.md#claude-code-hooks-an-observation-only-extension).
 
 ## Run the window on macOS
 

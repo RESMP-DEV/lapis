@@ -65,6 +65,7 @@ bool valid_agent(session::AgentMode agent) {
     switch (agent) {
     case session::AgentMode::terminal:
     case session::AgentMode::codex:
+    case session::AgentMode::claude:
         return true;
     }
     return false;
@@ -155,9 +156,10 @@ QByteArray encode_entries(const std::vector<WorkspaceEntry>& entries) {
                       QString::fromLatin1(entry.fingerprint.toHex()));
         object.insert(QLatin1String(title_key), entry.title);
         object.insert(QLatin1String(directory_key), entry.directory);
-        object.insert(QLatin1String(agent_key), entry.agent == session::AgentMode::terminal
-                                                    ? QStringLiteral("terminal")
-                                                    : QStringLiteral("codex"));
+        object.insert(QLatin1String(agent_key),
+                      entry.agent == session::AgentMode::terminal ? QStringLiteral("terminal")
+                      : entry.agent == session::AgentMode::codex  ? QStringLiteral("codex")
+                                                                  : QStringLiteral("claude"));
         array.append(std::move(object));
     }
     QJsonObject document;
@@ -244,6 +246,8 @@ std::vector<WorkspaceEntry> decode_entries(const QByteArray& bytes) {
             entry.agent = session::AgentMode::terminal;
         else if (agent == QLatin1String("codex"))
             entry.agent = session::AgentMode::codex;
+        else if (agent == QLatin1String("claude"))
+            entry.agent = session::AgentMode::claude;
         else
             fail("Workspace agent mode is unknown");
         entries.push_back(std::move(entry));

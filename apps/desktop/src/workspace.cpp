@@ -169,15 +169,27 @@ void Workspace::persistRegistry() {
 }
 
 bool Workspace::addSession(bool codex, const QString& directory, const QString& endpoint) {
+    return createSession(codex ? session::AgentMode::codex : session::AgentMode::terminal,
+                         directory, endpoint);
+}
+
+bool Workspace::addClaudeSession(const QString& directory, const QString& endpoint) {
+    return createSession(session::AgentMode::claude, directory, endpoint);
+}
+
+bool Workspace::createSession(session::AgentMode agent, const QString& directory,
+                              const QString& endpoint) {
     if (!canAddSessions())
         return false;
     try {
         const QString cwd = directory.isEmpty() ? rootDirectory() : directory;
         auto launch = session::shell_launch(cwd);
-        if (codex) {
-            launch.program = QStandardPaths::findExecutable(QStringLiteral("codex"));
+        if (agent != session::AgentMode::terminal) {
+            launch.program = QStandardPaths::findExecutable(agent == session::AgentMode::codex
+                                                                ? QStringLiteral("codex")
+                                                                : QStringLiteral("claude"));
             launch.arguments.clear();
-            launch.agent = session::AgentMode::codex;
+            launch.agent = agent;
         }
         launch = session::validate_launch(std::move(launch));
         const QString path = session::posix::prepare_endpoint(
@@ -191,8 +203,10 @@ bool Workspace::addSession(bool codex, const QString& directory, const QString& 
                 (document->reconnectEntry() && document->reconnectEntry()->endpoint == path))
                 throw std::invalid_argument("That endpoint is already in this workspace");
         auto document = std::make_unique<SessionPreview>(
-            codex ? QStringLiteral("Codex") : QStringLiteral("Shell"), launch.directory,
-            QStringLiteral("Connecting"), QColor{"#87cbac"}, "");
+            agent == session::AgentMode::terminal ? QStringLiteral("Shell")
+            : agent == session::AgentMode::codex  ? QStringLiteral("Codex")
+                                                  : QStringLiteral("Claude"),
+            launch.directory, QStringLiteral("Connecting"), QColor{"#87cbac"}, "");
         document->setSessionId(QString::fromLatin1(session::wire::new_id().toHex()));
         document->setProperty("workspaceEndpoint", path);
         auto* added = document.get();

@@ -128,6 +128,7 @@ class LauncherTests(unittest.TestCase):
             ["--cwd", str(self.temporary_root)],
             [f"--cwd={self.temporary_root}"],
             ["--codex"],
+            ["--claude"],
             ["--smoke-input"],
         ]
         for arguments in cases:
