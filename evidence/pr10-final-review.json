@@ -449,5 +449,78 @@
       "The native input rerun passed without external foreground assistance. Earlier whole-suite/UI-capture/TSan-UI focus failures remain recorded and are not claimed repaired.",
       "Default native CTest registration and all required native/GPU checks are retained."
     ]
+  },
+  "coderabbit_followup": {
+    "baseline_revision": "0d56a4bd7af7cd28003fdeb80f09f891eb8d1a7f",
+    "review_id": 5286499355,
+    "source_sha256": {
+      "apps/desktop/tests/workspace_test.cpp": "9a9b041717b4c95598742cb5536793a288dc51f16995f4d789d9b32c7ca88f30",
+      "CONTRIBUTING.md": "ffdf4d8feaf97b99b4a8201981f196361efdf3e59454049bed0fda382f407218"
+    },
+    "dispositions": [
+      {
+        "thread_id": "PRRT_kwDOUfkyeM6lAJ_D",
+        "disposition": "fixed",
+        "evidence": "After the first Workspace scope, wait up to eight seconds for the global pool to release promise/result references before the independent corrupt-load phase takes the same registry lock. Failure has an explicit diagnostic. This changes fixture sequencing only; product code is unchanged."
+      },
+      {
+        "review_comment": "outside-diff CONTRIBUTING.md:557",
+        "disposition": "fixed",
+        "evidence": "Correct five captures plus five expected failures to five captures plus seven expected failures. Verified the actual execute_checks scenario lists in scripts/check_ui_preview.py; twelve total cases."
+      },
+      {
+        "review_comment": "Betterleaks generic-api-key alert at evidence/pr10-final-review.json:29",
+        "disposition": "false-positive",
+        "evidence": "The source_sha256 entry for scripts/lapis.py equals the independently recomputed SHA-256 of that source file. It is a provenance digest."
+      },
+      {
+        "review_comment": "session-dialog retry qualification in merge-risk summary",
+        "disposition": "existing-evidence",
+        "evidence": "The earlier build/pr10-final-review/workspace-asan.json status is passed-clean. The unchanged add_shell fixture exercises invalid-directory rejection, preservation of both fields, successful retry, and dialog close before the rest of that passing GUI run. This does not clear separate native focus failures."
+      }
+    ],
+    "checks": {
+      "quality": {
+        "passed": true,
+        "python_tests": 102,
+        "command": "just quality",
+        "log": "build/pr10-small-review/quality.log"
+      },
+      "workspace": {
+        "ctest_cases_each": [
+          "workspace"
+        ],
+        "normal": {
+          "passed": true,
+          "elapsed_seconds": 1.32,
+          "log": "build/pr10-small-review/normal-ctest.log"
+        },
+        "asan": {
+          "passed": true,
+          "elapsed_seconds": 2.07,
+          "log": "build/pr10-small-review/asan-ctest.log"
+        },
+        "tsan": {
+          "passed": true,
+          "elapsed_seconds": 12.39,
+          "log": "build/pr10-small-review/tsan-ctest.log"
+        },
+        "command_template": "ctest --test-dir build/{desktop,desktop-asan,desktop-tsan} -R '^workspace$' --output-on-failure --no-tests=error"
+      },
+      "static": {
+        "passed": true,
+        "scope": "clang-format and clang-tidy for workspace_test.cpp, Cppcheck filtered to that translation unit",
+        "logs": [
+          "build/pr10-small-review/clang-tidy.log",
+          "build/pr10-small-review/cppcheck.log"
+        ]
+      }
+    },
+    "limitations": [
+      "No native GUI tests were repeated for these documentation and fixture-only changes.",
+      "Earlier whole-suite/native-UI focus failures and incomplete native GUI acceptance remain recorded.",
+      "The lock lifetime defect was established by source/lifetime inspection; these passing runs are not a deterministic reproduction of the former scheduling race.",
+      "Optional reviewer availability and current-head review completion must be reported separately from these test results."
+    ]
   }
 }

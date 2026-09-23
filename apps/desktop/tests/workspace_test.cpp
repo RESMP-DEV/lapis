@@ -109,6 +109,9 @@ void loadFailureRecovery() {
         until([&] { return workspace.canAddSessions(); }, "lock-contention load retry");
         require(workspace.sessions().isEmpty() && !workspace.canRetrySave());
     }
+    // The completed promise can retain the registry until its pool task is deleted.
+    if (!QThreadPool::globalInstance()->waitForDone(8000))
+        throw std::runtime_error("Registry load task did not release its resources");
 
     // A corrupt read retains its refusal and must not be overwritten. Repairing
     // the file externally makes the same explicit retry load the valid manifest.

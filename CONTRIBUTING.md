@@ -554,7 +554,7 @@ and configurable shortcuts work over these fixtures and retained live sessions.
 The carousel is available only in live mode; see the
 [workspace scope](docs/architecture.md#milestone-3-supervising-two-live-sessions-on-macos).
 
-Run `just ui-check` for five captures and five expected-failure cases. Artifacts
+Run `just ui-check` for five captures and seven expected-failure cases. Artifacts
 and a receipt go under `build/ui-preview-check/`. For an individual capture:
 
 ```sh
