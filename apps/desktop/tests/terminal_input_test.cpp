@@ -392,8 +392,16 @@ void selection_and_scroll() {
     QWheelEvent wheel(middle, surface.mapToGlobal(middle), QPoint(), QPoint(0, 120), Qt::NoButton,
                       Qt::NoModifier, Qt::NoScrollPhase, false);
     QCoreApplication::sendEvent(&surface, &wheel);
-    require(f.historyRequest(peer).direction == wire::HistoryDirection::older,
+    const auto older = f.historyRequest(peer);
+    require(older.direction == wire::HistoryDirection::older,
             "Wheel did not ask for older history");
+    f.historyReply(peer, older.request_id, 1, f.terminal.snapshot());
+    until([&] { return f.document.historyActive() && !f.document.historyRequestPending(); });
+    // Typing on a history page returns to the live screen and reaches the agent.
+    QKeyEvent resume(QEvent::KeyPress, Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+    QCoreApplication::sendEvent(&surface, &resume);
+    require(!f.document.historyActive(), "Typing did not return to the live screen");
+    require(text_frames(peer, 1) == QByteArray("y"), "Typing on a history page was dropped");
 }
 } // namespace
 int main(int argc, char** argv) {

@@ -178,8 +178,9 @@ started in the same folder are numbered in cards and menus.
 
 Drag across the terminal to select text, or double-click a word; Command-C
 (Control-Shift-C on Linux) copies it, and typing clears it. The mouse wheel pages
-through history (read-only; scrolling past the newest page returns to the live
-screen), or sends arrow keys to a full-screen program on the alternate screen.
+through history (read-only; scrolling past the newest page or typing returns to
+the live screen, and the typed key reaches the agent), or sends arrow keys to a
+full-screen program on the alternate screen.
 History actions are also under **Agent**. Private
 workspace metadata and window geometry live under ignored `runtime/`. Builds and
 local captures live under ignored `build/`. Runtime state is not project config

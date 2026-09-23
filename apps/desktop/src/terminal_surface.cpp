@@ -998,6 +998,14 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
         event->accept();
         return;
     }
+    // Typing while reading history returns to the live screen and is delivered
+    // there, as in other terminals; a modifier alone does not.
+    const auto typed = event->key();
+    if (interactive_ && document_ && document_->historyActive() && typed != Qt::Key_Shift &&
+        typed != Qt::Key_Control && typed != Qt::Key_Meta && typed != Qt::Key_Alt &&
+        typed != Qt::Key_CapsLock &&
+        ((event->modifiers() & Qt::MetaModifier) == 0 || event->matches(QKeySequence::Paste)))
+        document_->returnToLive();
     if (!acceptsTerminalInput()) {
         event->ignore();
         return;
