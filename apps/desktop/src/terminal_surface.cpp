@@ -8,15 +8,21 @@
 #include <QInputMethod>
 #include <QKeySequence>
 #include <QMatrix4x4>
+#include <QMouseEvent>
 #include <QQuickWindow>
 #include <QSGSimpleRectNode>
 #include <QSGTextNode>
+#include <QStringList>
 #include <QTextCharFormat>
 #include <QTextLayout>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <memory>
+#include <optional>
+#include <utility>
 
 namespace lapis::desktop {
 namespace {
@@ -357,6 +363,29 @@ bool same_row(const session::TerminalSnapshot& left, const session::TerminalSnap
     return true;
 }
 
+// Selection endpoints in reading order.
+std::pair<QPoint, QPoint> ordered(QPoint first, QPoint second) {
+    const bool swap = first.y() > second.y() || (first.y() == second.y() && first.x() > second.x());
+    return swap ? std::pair{second, first} : std::pair{first, second};
+}
+
+void add_selection(QSGNode& overlays, const session::TerminalSnapshot& snapshot, QPoint start,
+                   QPoint end, qreal cell_width, qreal row_height) {
+    QColor tint = color(snapshot.foreground_rgb);
+    tint.setAlpha(80);
+    const int rows = snapshot.size.rows;
+    const int columns = snapshot.size.columns;
+    for (int row = start.y(); row <= end.y() && row < rows; ++row) {
+        const int first = row == start.y() ? start.x() : 0;
+        const int last = std::min(row == end.y() ? end.x() : columns - 1, columns - 1);
+        if (last >= first)
+            add_rectangle(overlays,
+                          QRectF(first * cell_width, row * row_height,
+                                 (last - first + 1) * cell_width, row_height),
+                          tint);
+    }
+}
+
 class TerminalNode final : public QSGTransformNode {
   public:
     std::shared_ptr<const session::TerminalSnapshot> snapshot;
@@ -430,6 +459,7 @@ struct TerminalSurface::RenderState {
     QString font_family;
     int font_pixel_size{};
     qreal minimum_scale{};
+    std::optional<std::pair<QPoint, QPoint>> selection;
 };
 
 void TerminalSurface::publishFrame(bool snapshot_changed) {
@@ -441,6 +471,8 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
     frame->font_family = use_system_font_ ? QString() : resolved_font_family_;
     frame->font_pixel_size = font_pixel_size_;
     frame->minimum_scale = minimum_scale_;
+    if (selection_anchor_ && selection_head_)
+        frame->selection = ordered(*selection_anchor_, *selection_head_);
     {
         const std::lock_guard lock(render_mutex_);
         if (!snapshot_changed && render_state_)
@@ -521,8 +553,14 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     if (document_)
         disconnect(document_, nullptr, this, nullptr);
     document_ = document;
+    clearSelection();
     if (document_) {
         connect(document_, &SessionPreview::snapshotChanged, this, [this] {
+            // A selection names what was on screen; once that text moves or
+            // changes, the highlight would point at something else.
+            if (selection_anchor_ && selection_head_ &&
+                textBetween(*selection_anchor_, *selection_head_) != selection_text_)
+                clearSelection();
             if (frame_interval_ > 0) {
                 // The first change opens the window; later ones share its frame.
                 if (!throttle_.isActive())
@@ -601,6 +639,9 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
         delete child;
     }
     add_cursor(*root->overlays, *window(), snapshot, font, cell_width, row_height);
+    if (frame->selection)
+        add_selection(*root->overlays, snapshot, frame->selection->first, frame->selection->second,
+                      cell_width, row_height);
     if (!frame->preedit.isEmpty() && snapshot.cursor.in_viewport) {
         auto composition = std::unique_ptr<QSGTextNode>(window()->createTextNode());
         composition->setColor(color(snapshot.foreground_rgb));
@@ -736,11 +777,185 @@ void TerminalSurface::requestResize() {
         {static_cast<std::uint16_t>(grid.width()), static_cast<std::uint16_t>(grid.height())});
 }
 void TerminalSurface::mousePressEvent(QMouseEvent* event) {
-    if (interactive_) {
-        forceActiveFocus(Qt::MouseFocusReason);
-        event->accept();
-    } else
+    if (!interactive_) {
         event->ignore();
+        return;
+    }
+    forceActiveFocus(Qt::MouseFocusReason);
+    if (event->button() == Qt::LeftButton) {
+        clearSelection();
+        press_cell_ = cellAt(event->position());
+        selecting_ = true;
+    }
+    event->accept();
+}
+void TerminalSurface::mouseMoveEvent(QMouseEvent* event) {
+    if (!selecting_) {
+        event->ignore();
+        return;
+    }
+    const auto cell = cellAt(event->position());
+    if (selection_anchor_ || cell != press_cell_)
+        setSelection(press_cell_, cell);
+    event->accept();
+}
+void TerminalSurface::mouseReleaseEvent(QMouseEvent* event) {
+    selecting_ = false;
+    event->accept();
+}
+// Double-click selects the run of non-blank cells under the pointer.
+void TerminalSurface::mouseDoubleClickEvent(QMouseEvent* event) {
+    const auto grid = cellGrid();
+    if (!interactive_ || !grid || event->button() != Qt::LeftButton) {
+        event->ignore();
+        return;
+    }
+    selecting_ = false;
+    const auto cell = cellAt(event->position());
+    const auto& snapshot = document_->snapshot();
+    const auto blank = [&](int column) {
+        const auto index =
+            static_cast<std::size_t>(cell.y()) * static_cast<std::size_t>(grid->columns) +
+            static_cast<std::size_t>(column);
+        if (snapshot.cells[index].kind == session::CellKind::wide_tail)
+            return false;
+        const auto text = snapshot.text(index);
+        return text.empty() || text == U" ";
+    };
+    if (!blank(cell.x())) {
+        int first = cell.x();
+        int last = cell.x();
+        while (first > 0 && !blank(first - 1))
+            --first;
+        while (last + 1 < grid->columns && !blank(last + 1))
+            ++last;
+        setSelection({first, cell.y()}, {last, cell.y()});
+    }
+    event->accept();
+}
+void TerminalSurface::wheelEvent(QWheelEvent* event) {
+    if (!interactive_ || !document_) {
+        event->ignore();
+        return;
+    }
+    wheel_remainder_ += event->angleDelta().y();
+    const int steps = wheel_remainder_ / 120;
+    wheel_remainder_ -= steps * 120;
+    if (steps != 0)
+        scrollHistory(steps);
+    event->accept();
+}
+// Positive steps scroll back. Full-screen programs scroll themselves, so on
+// the alternate screen the wheel becomes arrow keys, as in other terminals.
+void TerminalSurface::scrollHistory(int steps) {
+    if (document_->snapshot().alternate_screen && !document_->historyActive()) {
+        if (!acceptsTerminalInput())
+            return;
+        const auto key = steps > 0 ? session::TerminalKey::up : session::TerminalKey::down;
+        for (int line = 0; line < std::abs(steps) * 3; ++line)
+            document_->sendKey(key, {});
+        return;
+    }
+    if (steps > 0) {
+        document_->olderHistory();
+        return;
+    }
+    if (!document_->historyActive())
+        return;
+    // The newest page answers with a message instead of a page.
+    if (!document_->historyRequestPending() && !document_->historyMessage().isEmpty())
+        document_->returnToLive();
+    else
+        document_->newerHistory();
+}
+std::optional<TerminalSurface::CellGrid> TerminalSurface::cellGrid() const {
+    if (!document_)
+        return std::nullopt;
+    const auto size = document_->snapshot().size;
+    if (size.columns == 0 || size.rows == 0 || width() <= 0 || height() <= 0)
+        return std::nullopt;
+    const QFontMetricsF metrics(cellFont());
+    const qreal cell_width = metrics.horizontalAdvance(QLatin1Char('M'));
+    const qreal row_height = metrics.height() + 3;
+    // Matches updatePaintNode for a surface without a minimum scale.
+    const qreal scale =
+        std::min(width() / (size.columns * cell_width), height() / (size.rows * row_height));
+    return CellGrid{cell_width * scale, row_height * scale, size.columns, size.rows};
+}
+QPoint TerminalSurface::cellAt(QPointF position) const {
+    const auto grid = cellGrid();
+    if (!grid)
+        return {};
+    return {std::clamp(static_cast<int>(position.x() / grid->width), 0, grid->columns - 1),
+            std::clamp(static_cast<int>(position.y() / grid->height), 0, grid->rows - 1)};
+}
+QRectF TerminalSurface::cellRect(int column, int row) const {
+    const auto grid = cellGrid();
+    if (!grid)
+        return {};
+    return {column * grid->width, row * grid->height, grid->width, grid->height};
+}
+QString TerminalSurface::textBetween(QPoint start, QPoint end) const {
+    const auto grid = cellGrid();
+    if (!grid)
+        return {};
+    const auto& snapshot = document_->snapshot();
+    const auto [from, to] = ordered(start, end);
+    QStringList lines;
+    for (int row = from.y(); row <= to.y() && row < grid->rows; ++row) {
+        const int first = row == from.y() ? from.x() : 0;
+        const int last = std::min(row == to.y() ? to.x() : grid->columns - 1, grid->columns - 1);
+        QString line;
+        for (int column = first; column <= last; ++column) {
+            const auto index =
+                static_cast<std::size_t>(row) * static_cast<std::size_t>(grid->columns) +
+                static_cast<std::size_t>(column);
+            const auto kind = snapshot.cells[index].kind;
+            if (kind == session::CellKind::wide_tail || kind == session::CellKind::wrap_spacer)
+                continue;
+            const auto text = snapshot.text(index);
+            line += text.empty()
+                        ? QStringLiteral(" ")
+                        : QString::fromUcs4(text.data(), static_cast<qsizetype>(text.size()));
+        }
+        // Trailing blanks are the rest of the row, not copied text.
+        while (line.endsWith(QLatin1Char(' ')))
+            line.chop(1);
+        lines.append(line);
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+void TerminalSurface::setSelection(QPoint anchor, QPoint head) {
+    selection_anchor_ = anchor;
+    selection_head_ = head;
+    selection_text_ = textBetween(anchor, head);
+    emit selectionChanged();
+    publishFrame(false);
+}
+void TerminalSurface::clearSelection() {
+    selecting_ = false;
+    if (!selection_anchor_ && selection_text_.isEmpty())
+        return;
+    selection_anchor_.reset();
+    selection_head_.reset();
+    selection_text_.clear();
+    emit selectionChanged();
+    publishFrame(false);
+}
+// Command-C on macOS; Control-Shift-C elsewhere, where Control-C belongs to
+// the terminal. Either copies the selection, and never reaches the agent.
+bool TerminalSurface::copySelection(const QKeyEvent& event) {
+#ifdef Q_OS_MACOS
+    const bool copy = event.key() == Qt::Key_C && event.modifiers() == Qt::MetaModifier;
+#else
+    const bool copy =
+        event.key() == Qt::Key_C && event.modifiers() == (Qt::ControlModifier | Qt::ShiftModifier);
+#endif
+    if (!copy)
+        return false;
+    if (!selection_text_.isEmpty())
+        QGuiApplication::clipboard()->setText(selection_text_);
+    return true;
 }
 QByteArray terminal_text_key(const QKeyEvent& event) {
     const auto mods = event.modifiers();
@@ -778,10 +993,20 @@ QByteArray terminal_text_key(const QKeyEvent& event) {
 }
 
 void TerminalSurface::keyPressEvent(QKeyEvent* event) {
+    // Copying also works on a read-only history page.
+    if (interactive_ && copySelection(*event)) {
+        event->accept();
+        return;
+    }
     if (!acceptsTerminalInput()) {
         event->ignore();
         return;
     }
+    // New input replaces what was selected; a modifier alone does not.
+    const auto pressed = event->key();
+    if (pressed != Qt::Key_Shift && pressed != Qt::Key_Control && pressed != Qt::Key_Meta &&
+        pressed != Qt::Key_Alt && pressed != Qt::Key_CapsLock)
+        clearSelection();
     if (composition_state_ == CompositionState::stale)
         composition_state_ = CompositionState::idle;
     if (event->matches(QKeySequence::Paste)) {

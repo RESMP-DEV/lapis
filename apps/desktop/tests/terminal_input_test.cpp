@@ -14,10 +14,12 @@
 #include <QKeySequence>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QMouseEvent>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QWheelEvent>
 #include <array>
 #include <functional>
 #include <iostream>
@@ -326,6 +328,73 @@ void input_contract(bool background) {
     require(!surface.inputMethodQuery(Qt::ImEnabled).toBool(),
             "Disconnected terminal retained IME ownership");
 }
+// Dragging selects screen text and double-clicking selects a word. The copy
+// chord copies without sending input, typing clears the selection, and the
+// wheel asks for older history on the normal screen.
+void selection_and_scroll() {
+    Fixture f;
+    QQuickWindow window;
+    window.setGeometry(100, 100, 640, 360);
+    lapis::desktop::TerminalSurface surface(window.contentItem());
+    surface.setSize(QSizeF(640, 360));
+    surface.setDocument(&f.document);
+    surface.setInteractive(true);
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    window.show();
+    until([&] { return window.isExposed(); });
+    lapis::desktop::test::activate_test_window(window);
+    until([&] { return window.isActive(); });
+    settle();
+    until([&] {
+        surface.forceActiveFocus();
+        return surface.hasActiveFocus();
+    });
+    static_cast<void>(text_frames(peer));
+    const auto mouse = [&](QEvent::Type type, QPointF at, Qt::MouseButton button) {
+        const Qt::MouseButtons held =
+            type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::MouseButtons(Qt::LeftButton);
+        QMouseEvent event(type, at, surface.mapToScene(at), surface.mapToGlobal(at), button, held,
+                          Qt::NoModifier);
+        QCoreApplication::sendEvent(&surface, &event);
+    };
+    // The fixture screen is four columns: "scre" above "en".
+    mouse(QEvent::MouseButtonPress, surface.cellRect(0, 0).center(), Qt::LeftButton);
+    mouse(QEvent::MouseMove, surface.cellRect(3, 0).center(), Qt::NoButton);
+    mouse(QEvent::MouseButtonRelease, surface.cellRect(3, 0).center(), Qt::LeftButton);
+    require(surface.selectedText() == QStringLiteral("scre"), "Drag did not select the row");
+    const auto clipboard = QGuiApplication::clipboard()->text();
+#ifdef Q_OS_MACOS
+    const Qt::KeyboardModifiers copy_modifiers = Qt::MetaModifier;
+#else
+    const Qt::KeyboardModifiers copy_modifiers = Qt::ControlModifier | Qt::ShiftModifier;
+#endif
+    QKeyEvent copy(QEvent::KeyPress, Qt::Key_C, copy_modifiers, QStringLiteral("c"));
+    QCoreApplication::sendEvent(&surface, &copy);
+    const auto copied = QGuiApplication::clipboard()->text();
+    QGuiApplication::clipboard()->setText(clipboard);
+    require(copied == QStringLiteral("scre"), "Copy chord did not copy the selection");
+    require(text_frames(peer).isEmpty(), "Copy chord reached the terminal");
+    const auto word = surface.cellRect(1, 1).center();
+    mouse(QEvent::MouseButtonPress, word, Qt::LeftButton);
+    mouse(QEvent::MouseButtonRelease, word, Qt::LeftButton);
+    mouse(QEvent::MouseButtonDblClick, word, Qt::LeftButton);
+    mouse(QEvent::MouseButtonRelease, word, Qt::LeftButton);
+    require(surface.selectedText() == QStringLiteral("en"), "Double-click did not select a word");
+    QKeyEvent typed(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QCoreApplication::sendEvent(&surface, &typed);
+    require(surface.selectedText().isEmpty(), "Typing did not clear the selection");
+    require(text_frames(peer, 1) == QByteArray("x"), "Typing after a selection was lost");
+    const QPointF middle(320, 180);
+    QWheelEvent wheel(middle, surface.mapToGlobal(middle), QPoint(), QPoint(0, 120), Qt::NoButton,
+                      Qt::NoModifier, Qt::NoScrollPhase, false);
+    QCoreApplication::sendEvent(&surface, &wheel);
+    require(f.historyRequest(peer).direction == wire::HistoryDirection::older,
+            "Wheel did not ask for older history");
+}
 } // namespace
 int main(int argc, char** argv) {
     const bool background = argc == 2 && std::string_view(argv[1]) == "--background";
@@ -346,9 +415,11 @@ int main(int argc, char** argv) {
         require(background == (QGuiApplication::platformName() == QStringLiteral("offscreen")),
                 "Offscreen input tests require explicit --background mode");
         input_contract(background);
+        selection_and_scroll();
         if (background)
             std::cout << "Background Qt/software mode; native macOS input and GPU not exercised\n";
-        std::cout << "Qt IME commit/cancel, replacement rejection, paste, history, focus, document "
+        std::cout << "Qt IME commit/cancel, replacement rejection, paste, selection/copy, wheel, "
+                     "history, focus, document "
                      "and disconnect ownership passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

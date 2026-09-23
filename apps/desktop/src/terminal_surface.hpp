@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 namespace lapis::desktop {
 
@@ -43,6 +44,9 @@ class TerminalSurface : public QQuickItem {
     Q_PROPERTY(QString resolvedFontFamily READ resolvedFontFamily NOTIFY fontChanged)
     // Columns and rows this viewport requests from a live terminal.
     Q_PROPERTY(QSize gridSize READ gridSize NOTIFY gridSizeChanged)
+    // Text chosen by dragging or double-clicking; copied with Command-C
+    // (Control-Shift-C on Linux) and cleared by typing.
+    Q_PROPERTY(QString selectedText READ selectedText NOTIFY selectionChanged)
   public:
     explicit TerminalSurface(QQuickItem* parent = nullptr);
     ~TerminalSurface() override;
@@ -63,6 +67,9 @@ class TerminalSurface : public QQuickItem {
     void setFontPixelSize(int pixels);
     [[nodiscard]] const QString& resolvedFontFamily() const { return resolved_font_family_; }
     [[nodiscard]] QSize gridSize() const { return grid_size_; }
+    [[nodiscard]] const QString& selectedText() const { return selection_text_; }
+    // Item-coordinate bounds of a visible cell of the current screen.
+    [[nodiscard]] QRectF cellRect(int column, int row) const;
   signals:
     void documentChanged();
     void interactiveChanged();
@@ -71,6 +78,7 @@ class TerminalSurface : public QQuickItem {
     void inputOwnershipChanged();
     void fontChanged();
     void gridSizeChanged();
+    void selectionChanged();
 
   protected:
     QSGNode* updatePaintNode(QSGNode* old_node, UpdatePaintNodeData* data) override;
@@ -79,6 +87,10 @@ class TerminalSurface : public QQuickItem {
     void focusOutEvent(QFocusEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
     void inputMethodEvent(QInputMethodEvent* event) override;
 
   private:
@@ -90,6 +102,20 @@ class TerminalSurface : public QQuickItem {
     void publishFrame(bool snapshot_changed);
     void updateInputContext(Qt::InputMethodQueries queries);
     void resetInputContext();
+    // Cell geometry of the current screen as laid out in this item.
+    struct CellGrid {
+        qreal width{};
+        qreal height{};
+        int columns{};
+        int rows{};
+    };
+    [[nodiscard]] std::optional<CellGrid> cellGrid() const;
+    [[nodiscard]] QPoint cellAt(QPointF position) const;
+    [[nodiscard]] QString textBetween(QPoint start, QPoint end) const;
+    void setSelection(QPoint anchor, QPoint head);
+    void clearSelection();
+    bool copySelection(const QKeyEvent& event);
+    void scrollHistory(int steps);
     struct RenderState;
     std::mutex render_mutex_;
     std::shared_ptr<const RenderState> render_state_;
@@ -112,6 +138,13 @@ class TerminalSurface : public QQuickItem {
     bool resetting_input_{};
     enum class CompositionState : std::uint8_t { idle, active, stale };
     CompositionState composition_state_{CompositionState::idle};
+    // Selection endpoints in screen cells, in the order they were chosen.
+    std::optional<QPoint> selection_anchor_;
+    std::optional<QPoint> selection_head_;
+    QString selection_text_;
+    QPoint press_cell_;
+    bool selecting_{};
+    int wheel_remainder_{};
 };
 
 } // namespace lapis::desktop

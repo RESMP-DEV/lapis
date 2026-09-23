@@ -1,12 +1,4 @@
 {
-    "density": "comfortable",
     "keybindings": {},
-    "layout": "focus",
-    "previewsVisible": true,
-    "sidebarVisible": false,
-    "terminalFont": {
-        "size": 16
-    },
-    "theme": "lapis",
     "version": 1
 }

@@ -1,4 +1,4 @@
-"""The committed lapis.json must not pin keybindings over the platform defaults.
+"""The committed lapis.json must hold defaults only.
 
 The app rewrites lapis.json in place, so local overrides are normal; this reads
 the committed file. A committed override silently replaces the built-in
@@ -27,6 +27,8 @@ class TrackedConfig(unittest.TestCase):
             self.skipTest("lapis.json is not committed in this checkout")
         config = json.loads(result.stdout)
         self.assertEqual(config.get("keybindings", {}), {})
+        # Appearance and sidebar choices are per-user state, not project config.
+        self.assertEqual(set(config) - {"version", "keybindings"}, set())
 
 
 if __name__ == "__main__":

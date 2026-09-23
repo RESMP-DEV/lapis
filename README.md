@@ -59,7 +59,7 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
 | PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS | Recovery after service loss and later Linux qualification |
 | Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect | Recovery after service failure/reboot |
-| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK | Cross-cell contextual shaping, selection and accessibility; Linux GUI port is deferred |
+| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy and wheel history paging (Qt tests on anvil) | Cross-cell contextual shaping, rectangular/multi-click selection, clickable links and accessibility; native Mac selection not yet exercised; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
 | UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation | Automatic carousel and larger session-count qualification |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
@@ -159,13 +159,22 @@ placement. Closing the window does not stop agents; Command-W on an agent does.
 An agent lapis cannot reach can only have its card closed, with a warning that it
 may still be running. Failed reconnects are visible and
 never silently replaced; use the explicit recovery actions in **Commands**.
+An agent that has ended or cannot be reached keeps its last screen, with a bar
+on the stage giving the reason and the key that closes it.
 
 **Requests** appears when the selected agent needs a response. Open it, select a
 request, then explicitly approve, decline, cancel or send answers. Opening or
 selecting never approves. Stale sources disable responses. **Turn finished**
-means the agent finished a turn, not that the task or process ended.
+means the agent finished a turn, not that the task or process ended. Claude
+Code's idle reminder after a finished turn is not a request. A new Codex agent
+reads **Awaiting first prompt** until its first turn creates a thread. Agents
+started in the same folder are numbered in cards and menus.
 
-History actions are under **Agent**; browsing history is read-only. Private
+Drag across the terminal to select text, or double-click a word; Command-C
+(Control-Shift-C on Linux) copies it, and typing clears it. The mouse wheel pages
+through history (read-only; scrolling past the newest page returns to the live
+screen), or sends arrow keys to a full-screen program on the alternate screen.
+History actions are also under **Agent**. Private
 workspace metadata and window geometry live under ignored `runtime/`. Builds and
 local captures live under ignored `build/`. Runtime state is not project config
 and must not be copied between hosts.

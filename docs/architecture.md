@@ -1610,6 +1610,51 @@ workload before making comparative claims. The main product risk is truthful
 looking but stale agent status; source epochs and reconciliation gates must remain
 visible in behavior even when diagnostics are visually quieter.
 
+#### Break-it QA, selection and follow-up fixes (September 23)
+
+`tools/qa/breakit.py` drives the real GUI on anvil's isolated display with
+synthetic X11 input. Its agents are `tools/qa/fake_agent.py` installed under
+harness names on a private PATH; scenarios cover creation, typing while
+switching, finish pulses, floods, categories, closing running and signal-ignoring
+agents, crashes, GUI SIGKILL and quit/restore, service SIGKILL, rapid shortcuts and
+five window sizes, checking the registry, processes and GUI warnings. `--soak`
+runs 32 bursting agents across four categories and samples GUI/service memory and
+CPU. `scripts/fake_models.py` serves scripted OpenAI Responses and Anthropic
+Messages replies so the installed Codex and Claude Code binaries can be exercised
+without model usage; Codex's question tool needs Plan mode. Two Codex Computer Use
+sessions drove an isolated macOS copy; a copy started by macOS without its fake
+environment reached real models once, so such copies need an environment that
+survives any launch path and a guard that stops services without it.
+
+Decisions from these runs:
+
+- The committed `lapis.json` carries no keybinding overrides. It had kept the
+  pre-strip bindings, which replaced platform defaults on fresh checkouts
+  (Control-W detached the window and Control-Q quit, both terminal chords).
+- Claude Code's `idle_prompt` notice is advisory in the desktop: snapshots drop
+  `idle` requests, so a finished Claude turn reads **Turn finished** and pulses
+  once instead of showing a request with no response. The adapter still reports
+  it; other clients may rank it.
+- A Codex observer waiting for its first persistent thread labels the agent
+  **Awaiting first prompt**; reconciliation still reads **Status pending**.
+- Ended or unreachable agents get a stage bar with the service's reason and the
+  close key. Agents sharing a default title are numbered. Narrow cards drop the
+  status text; the new-agent card drops its hint rather than overflow. A card's
+  accessibility press action selects it.
+- Selection is in screen cells. The selected text is captured when chosen, so a
+  redrawing agent cannot change what is copied; the highlight clears when that
+  text moves or changes, or on typing. Command-C (Control-Shift-C elsewhere)
+  copies and never reaches the agent. The wheel pages archived history on the
+  normal screen and sends arrow keys on the alternate screen.
+- Endpoint permission errors name the directory and the `chmod 700` fix; existing
+  directories are still never chmodded.
+
+Observed but not changed: a SIGKILLed Codex service leaves its `codex app-server`
+backend running; Linux TSan reports frees and mutexes on Qt's uninstrumented
+threads in five GUI suites, identically on the pre-merge base, so TSan remains a
+macOS qualification. Native Mac selection, wheel and window-manager behavior are
+not yet exercised.
+
 ### Following milestones
 
 With the two-session workspace assembled, the next qualification stages are
