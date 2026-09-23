@@ -3,6 +3,7 @@
 
 #include <QHash>
 #include <QJsonValue>
+#include <QKeyCombination>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -12,6 +13,7 @@
 #include <array>
 
 #include <cstdint>
+#include <optional>
 
 namespace lapis::desktop {
 // Layout of the session area. "focus" keeps one large pane with a strip of
@@ -56,6 +58,9 @@ struct Theme {
 [[nodiscard]] const std::array<Theme, 7>& theme_table();
 [[nodiscard]] bool theme_exists(const QString& name);
 [[nodiscard]] QStringList default_settings_shortcuts();
+// X11 reports Shift with punctuation as the shifted symbol: Ctrl+Shift+,
+// arrives as Ctrl+Shift+<. This is that form for US-layout punctuation.
+[[nodiscard]] std::optional<QKeyCombination> shifted_punctuation(QKeyCombination combination);
 
 // Terminal text size in pixels. Machine readouts in the chrome share the same
 // family at the chrome's own size.

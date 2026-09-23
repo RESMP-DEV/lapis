@@ -785,7 +785,7 @@ def parse_args(argv=None):
     live.add_argument(
         "--live-openai",
         action="store_true",
-        help="Explicitly run live fixtures using the existing OpenAI login",
+        help="Explicitly run live fixtures using the existing OpenAI login. The fixture links ~/.codex/auth.json, and Codex rewrites that file in place when it refreshes the login, so an interrupted run can leave it empty and require codex login",
     )
     parser.add_argument("--model", help="OpenAI model; defaults to gpt-6-astra")
     parser.add_argument(

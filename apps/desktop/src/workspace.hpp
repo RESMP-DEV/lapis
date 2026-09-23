@@ -48,6 +48,7 @@ class SessionPreview final : public QObject {
     Q_PROPERTY(QString activity READ activity NOTIFY snapshotChanged)
     Q_PROPERTY(bool live READ live CONSTANT)
     Q_PROPERTY(bool inputReady READ inputReady NOTIFY connectionChanged)
+    Q_PROPERTY(bool reachable READ reachable NOTIFY connectionChanged)
     Q_PROPERTY(QString connectionState READ connectionState NOTIFY connectionChanged)
     Q_PROPERTY(QString serviceSessionId READ serviceSessionId NOTIFY connectionChanged)
     Q_PROPERTY(QVariantMap snapshotTiming READ snapshotTiming NOTIFY snapshotChanged)
@@ -106,6 +107,8 @@ class SessionPreview final : public QObject {
     [[nodiscard]] bool inputReady() const {
         return input_ready_ && !history_active_ && !history_request_pending_;
     }
+    // Synchronized with its service, even while a history page is showing.
+    [[nodiscard]] bool reachable() const { return input_ready_; }
     [[nodiscard]] const QString& connectionState() const { return connection_state_; }
     [[nodiscard]] const QString& serviceSessionId() const { return service_session_id_; }
     void applySnapshot(session::TerminalSnapshot snapshot);

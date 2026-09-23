@@ -513,7 +513,9 @@ Dialog {
                 PlainLabel {
                     objectName: "fontUnavailable"
                     Layout.fillWidth: true
-                    visible: settings.fontFamily.length > 0 && settings.fontFamily !== settings.resolvedFontFamily
+                    // Font matching ignores case, so "menlo" resolves to Menlo.
+                    visible: settings.fontFamily.length > 0 &&
+                             settings.fontFamily.toLowerCase() !== settings.resolvedFontFamily.toLowerCase()
                     text: qsTr("%1 is not an installed fixed-width font; using %2.")
                           .arg(settings.fontFamily).arg(settings.resolvedFontFamily)
                     color: settings.paletteFault

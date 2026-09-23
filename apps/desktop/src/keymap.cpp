@@ -260,6 +260,30 @@ bool theme_exists(const QString& name) {
 
 const Theme& theme_for(const QString& name) { return find_theme(name); }
 
+std::optional<QKeyCombination> shifted_punctuation(QKeyCombination combination) {
+    static constexpr std::array<std::pair<Qt::Key, Qt::Key>, 11> pairs{{
+        {Qt::Key_Comma, Qt::Key_Less},
+        {Qt::Key_Period, Qt::Key_Greater},
+        {Qt::Key_Slash, Qt::Key_Question},
+        {Qt::Key_Semicolon, Qt::Key_Colon},
+        {Qt::Key_Apostrophe, Qt::Key_QuoteDbl},
+        {Qt::Key_BracketLeft, Qt::Key_BraceLeft},
+        {Qt::Key_BracketRight, Qt::Key_BraceRight},
+        {Qt::Key_Minus, Qt::Key_Underscore},
+        {Qt::Key_Equal, Qt::Key_Plus},
+        {Qt::Key_QuoteLeft, Qt::Key_AsciiTilde},
+        {Qt::Key_Backslash, Qt::Key_Bar},
+    }};
+    if (!combination.keyboardModifiers().testFlag(Qt::ShiftModifier))
+        return std::nullopt;
+    const auto* pair = std::find_if(pairs.begin(), pairs.end(), [&](const auto& candidate) {
+        return candidate.first == combination.key();
+    });
+    if (pair == pairs.end())
+        return std::nullopt;
+    return QKeyCombination(combination.keyboardModifiers(), pair->second);
+}
+
 QStringList default_settings_shortcuts() {
 #ifdef Q_OS_MACOS
     return {QStringLiteral("Meta+,")};
