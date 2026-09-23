@@ -199,6 +199,8 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
                 parser.isSet(QStringLiteral("cwd")) ? parser.value(QStringLiteral("cwd"))
                                                     : QString::fromUtf8(LAPIS_PROJECT_ROOT));
         }
+        // The normal workspace restarts agents whose services are gone.
+        options.restoreAgents = !options.launch && options.endpoint.isEmpty();
     }
     return options;
 }

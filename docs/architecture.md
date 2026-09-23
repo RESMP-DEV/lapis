@@ -1670,6 +1670,24 @@ Each agent and each Codex backend runs under a group guard process that kills it
 group when the service's pipe closes; SIGKILL of the service alone removed the
 backend on anvil. Guards share the service's command line, so cleanup that kills
 every matching process also kills the guards and leaves backends running.
+Session restore (September 23, requested to match an iTerm2 restore plugin). A
+card still in the workspace whose service is gone when lapis opens is restarted
+in place, with `AttachMode::create` at its endpoint, instead of staying
+unreachable; this deliberately replaces the earlier rule against implicitly
+replacing an unreachable endpoint, and Command-W remains the way to remove an
+agent. Each service keeps `<endpoint>.resume` (owner-only JSON: agent and
+conversation) from the Codex observer's thread, the Claude adapter's session, or
+OSC 1337 `SetUserVar=agent_checkpoint=<base64 JSON>` in PTY output, the sequence
+the user's `iterm-agent-checkpoint` session-start hooks already print. Remote
+hosts, unknown agents and identities that could be options are refused. On
+restore the previous resume option is replaced (`codex resume`, `claude
+--resume`, `omp --resume`, `grok -r`, `opencode --session`, `kimi --session`);
+Claude and Codex resume only when their transcript or rollout exists, since
+hooks report a conversation before anything is saved. Other CLIs restart fresh.
+A service is gone only when its socket refuses or is missing. Real Claude Code
+2.1.280 and Codex 0.155.1 were checked headless against the fake model: the
+record appeared, and the resumed agent showed the earlier exchange.
+
 Observed but not changed: Linux TSan reports frees and mutexes on Qt's uninstrumented
 threads in five GUI suites, identically on the pre-merge base, so TSan remains a
 macOS qualification. Native Mac selection, wheel and window-manager behavior are

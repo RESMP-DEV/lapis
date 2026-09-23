@@ -212,6 +212,9 @@ struct WorkspaceOptions {
     std::optional<session::LaunchSpec> launch;
     session::wire::AttachMode mode{session::wire::AttachMode::reconnect};
     QString storagePath{};
+    // Restart agents whose session service is gone (after a reboot or crash),
+    // resuming each recorded conversation. Off unless the app asks for it.
+    bool restoreAgents{};
 };
 
 class Workspace final : public QObject {
@@ -287,6 +290,7 @@ class Workspace final : public QObject {
     [[nodiscard]] static QString defaultEndpoint();
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
     QHash<QString, QStringList> harness_arguments_;
+    bool restore_agents_{};
     struct Category {
         QString id;
         QString name;
@@ -323,6 +327,8 @@ class Workspace final : public QObject {
     void finishClosing(SessionPreview* item);
     [[nodiscard]] static SessionPreview::StatusSource statusSource(const Agent& agent);
     [[nodiscard]] static QStringList savedArguments(const QJsonValue& value);
+    [[nodiscard]] static std::optional<session::LaunchSpec> restoredLaunch(const Agent& agent);
+    [[nodiscard]] static bool serviceRunning(const QString& endpoint);
     void noteStatus(SessionPreview* item);
     QHash<const SessionPreview*, QString> last_kind_;
     bool batching_categories_{};

@@ -1,4 +1,5 @@
 #include "workspace.hpp"
+#include "agent_checkpoint.hpp"
 #include "live_connection.hpp"
 #include "platform/posix/local_endpoint.hpp"
 
@@ -7,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLocalSocket>
 #include <QPointer>
 #include <QSaveFile>
 #include <QStandardPaths>
@@ -18,6 +20,7 @@
 #include <utility>
 
 #include <QDir>
+#include <QDirIterator>
 #include <QFileInfo>
 
 namespace lapis::desktop {
@@ -86,7 +89,7 @@ QString Workspace::defaultEndpoint() {
 }
 
 Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
-    : preview_mode_(mode == WorkspaceMode::preview) {
+    : restore_agents_(options.restoreAgents), preview_mode_(mode == WorkspaceMode::preview) {
     // Selecting an agent is looking at it.
     connect(this, &Workspace::focusChanged, this, [this] {
         if (auto* focused = focusedSession())
@@ -790,6 +793,80 @@ void Workspace::loadCategories(const QJsonArray& groups) {
     }
     categories_ = std::move(categories);
 }
+namespace {
+// The agent's own option (or Codex's subcommand) that takes a conversation to
+// resume; harnesses whose option is unknown restart fresh in the same folder.
+QString resumeOption(const QString& harness) {
+    if (harness == QLatin1String("codex"))
+        return QStringLiteral("resume");
+    if (harness == QLatin1String("claude") || harness == QLatin1String("omp"))
+        return QStringLiteral("--resume");
+    if (harness == QLatin1String("grok"))
+        return QStringLiteral("-r");
+    if (harness == QLatin1String("opencode") || harness == QLatin1String("kimi"))
+        return QStringLiteral("--session");
+    return {};
+}
+// Hooks report a conversation at session start, before anything is saved; a
+// conversation without a transcript cannot be resumed, so it starts fresh.
+// CLIs whose storage is not known here are trusted to resume or say why not.
+bool conversationSaved(const session::ResumeRecord& record) {
+    const auto& conversation = record.session_id;
+    if (record.agent == QLatin1String("claude")) {
+        const QDir projects(qEnvironmentVariable("CLAUDE_CONFIG_DIR",
+                                                 QDir::homePath() + QStringLiteral("/.claude")) +
+                            QStringLiteral("/projects"));
+        const auto transcript = conversation + QStringLiteral(".jsonl");
+        const auto folders = projects.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+        return std::any_of(folders.begin(), folders.end(), [&](const QString& folder) {
+            return QFileInfo::exists(projects.filePath(folder + QLatin1Char('/') + transcript));
+        });
+    }
+    if (record.agent == QLatin1String("codex")) {
+        QDirIterator rollouts(
+            qEnvironmentVariable("CODEX_HOME", QDir::homePath() + QStringLiteral("/.codex")) +
+                QStringLiteral("/sessions"),
+            {QStringLiteral("rollout-*-") + conversation + QStringLiteral(".jsonl")}, QDir::Files,
+            QDirIterator::Subdirectories);
+        return rollouts.hasNext();
+    }
+    return true;
+}
+} // namespace
+bool Workspace::serviceRunning(const QString& endpoint) {
+    if (!QFileInfo::exists(endpoint))
+        return false;
+    QLocalSocket probe;
+    probe.connectToServer(endpoint);
+    if (probe.waitForConnected(250)) {
+        probe.abort();
+        return true;
+    }
+    // Only a refused or missing endpoint proves the service is gone.
+    return probe.error() != QLocalSocket::ConnectionRefusedError &&
+           probe.error() != QLocalSocket::ServerNotFoundError;
+}
+std::optional<session::LaunchSpec> Workspace::restoredLaunch(const Agent& agent) {
+    auto launch = agent.launch;
+    if (!QFileInfo(launch.program).isExecutable())
+        if (const auto* harness = findHarness(agent.harness))
+            launch.program = harnessExecutable(*harness);
+    if (launch.program.isEmpty() || !QFileInfo(launch.directory).isDir())
+        return std::nullopt;
+    // Drop the previous resume option; keep the user's own arguments.
+    const auto option = resumeOption(agent.harness);
+    const auto at = option.isEmpty() ? -1 : launch.arguments.indexOf(option);
+    if (at >= 0 && at + 1 < launch.arguments.size())
+        launch.arguments.remove(at, 2);
+    if (const auto record = session::read_resume_record(agent.endpoint);
+        !option.isEmpty() && record && record->agent == agent.harness && conversationSaved(*record))
+        launch.arguments += QStringList{option, record->session_id};
+    try {
+        return session::validate_launch(launch);
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
 QStringList Workspace::savedArguments(const QJsonValue& value) {
     const auto list = value.toArray();
     if (!value.isArray() || list.size() > 64)
@@ -898,14 +975,28 @@ void Workspace::restore() {
         if (std::none_of(categories_.begin(), categories_.end(),
                          [&](const auto& category) { return category.id == active_category_; }))
             active_category_ = categories_.front().id;
+        bool restarted = false;
         for (const auto& item : sessions_) {
             watch(item.get());
-            const auto entry = agents_.constFind(item->sessionId());
-            if (entry == agents_.cend())
+            const auto entry = agents_.find(item->sessionId());
+            if (entry == agents_.end())
                 throw std::runtime_error("Missing restored agent metadata");
-            const auto& agent = entry.value();
+            auto& agent = entry.value();
+            // A card still in the workspace whose service is gone comes back,
+            // like a restored terminal tab; Command-W is what removes an agent.
+            if (restore_agents_ && !serviceRunning(agent.endpoint))
+                if (const auto launch = restoredLaunch(agent)) {
+                    agent.launch = *launch;
+                    item->startLive(agent.endpoint, agent.launch,
+                                    session::wire::AttachMode::create);
+                    restarted = true;
+                    continue;
+                }
             item->startLive(agent.endpoint, agent.launch, session::wire::AttachMode::reconnect);
         }
+        // Restarted agents have new launch arguments, part of their fingerprint.
+        if (restarted && !save())
+            throw std::runtime_error(error_.toStdString());
     } catch (const std::exception& error) {
         sessions_.clear();
         agents_.clear();

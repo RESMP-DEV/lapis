@@ -1,3 +1,4 @@
+#include "agent_checkpoint.hpp"
 #include "workspace.hpp"
 
 #include <QCoreApplication>
@@ -694,6 +695,84 @@ void agentsStartWithoutParentSessionMarkers() {
 }
 
 // The session service ends the agent's process group; the tab closes after.
+// Agents whose session service is gone (a reboot or crash) come back when
+// lapis opens, resuming the conversation their service recorded, like a
+// restored terminal tab. Without the option nothing is restarted.
+void agentsRestoreAfterServiceLoss() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "restore directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const auto script = QDir(canonical).filePath(QStringLiteral("agent.sh"));
+    {
+        QFile file(script);
+        require(file.open(QIODevice::WriteOnly), "write the agent script");
+        file.write("#!/bin/sh\nexec sleep 600\n");
+    }
+    require(QFile::setPermissions(script, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "make the agent script executable");
+    const QString resumed = uuid();
+    const QString fresh = uuid();
+    const QString foreign = uuid();
+    const auto record = [&](const QString& id, const char* harness, const QJsonArray& arguments) {
+        auto value = agentRecord(canonical, id, "general");
+        value.insert(QStringLiteral("program"), script);
+        value.insert(QStringLiteral("harness"), QLatin1String(harness));
+        value.insert(QStringLiteral("arguments"), arguments);
+        return value;
+    };
+    WorkspaceOptions options;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{
+            {"version", 2},
+            {"activeCategory", "general"},
+            {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+            {"agents",
+             QJsonArray{record(resumed, "kimi", {"--yolo", "--session", "old-conversation"}),
+                        record(fresh, "gemini", {"--yolo"}), record(foreign, "kimi", {})}}});
+    const auto endpoint = [&](const QString& id) {
+        return QDir(canonical).filePath(id + QStringLiteral(".sock"));
+    };
+    lapis::session::write_resume_record(endpoint(resumed),
+                                        {QStringLiteral("kimi"), QStringLiteral("k-123")});
+    lapis::session::write_resume_record(endpoint(foreign),
+                                        {QStringLiteral("claude"), QStringLiteral("c-9")});
+    {
+        Workspace untouched(WorkspaceMode::live, options);
+        require(untouched.workspaceError().isEmpty(), "load without restoring");
+    }
+    const auto arguments = [&](const QString& id) {
+        for (const auto& value : QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                     .object()
+                                     .value(QStringLiteral("agents"))
+                                     .toArray())
+            if (value.toObject().value(QStringLiteral("id")).toString() == id)
+                return value.toObject().value(QStringLiteral("arguments")).toArray();
+        return QJsonArray{};
+    };
+    require(arguments(resumed) == QJsonArray{"--yolo", "--session", "old-conversation"},
+            "restore is off unless the app asks for it");
+    options.restoreAgents = true;
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "restore agents");
+    require(arguments(resumed) == QJsonArray{"--yolo", "--session", "k-123"},
+            "the recorded conversation replaces the previous one; the user's flag stays");
+    require(arguments(fresh) == QJsonArray{"--yolo"},
+            "a harness without a known resume option restarts fresh");
+    require(arguments(foreign) == QJsonArray{},
+            "a conversation recorded by another CLI is not passed on");
+    for (const auto& id : {resumed, fresh, foreign}) {
+        auto* item = workspace.session(id);
+        require(waitFor([item] { return item->inputReady(); }, 10000),
+                "a restored agent runs under a new service");
+    }
+    for (const auto& id : {resumed, fresh, foreign})
+        require(workspace.closeSession(id), "close a restored agent");
+    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "restored agents close");
+}
+
 void closeEndsTheAgent(const char* script, int minimum_ms) {
     QTemporaryDir directory;
     require(directory.isValid(), "service directory");
@@ -739,6 +818,7 @@ int main(int argc, char** argv) {
         agentArgumentsPersist();
         outputEstimate();
         agentsStartWithoutParentSessionMarkers();
+        agentsRestoreAfterServiceLoss();
         closeEndsTheAgent("exec sleep 600", 0);
         // An agent that ignores SIGHUP is ended by the SIGTERM escalation.
         closeEndsTheAgent("trap '' HUP; exec sleep 600", 1200);

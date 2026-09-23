@@ -216,13 +216,15 @@ void input_contract(bool background) {
     QCoreApplication::sendEvent(&surface, &printable);
     require(text_frames(peer, 1) == QByteArray("x"), "Printable key fixture did not reach PTY");
     for (const auto& [key, expected] :
-         std::array{std::pair{Qt::Key_Left, '\x01'}, std::pair{Qt::Key_Right, '\x05'}}) {
+         std::array{std::pair{Qt::Key_Left, '\x01'}, std::pair{Qt::Key_Right, '\x05'},
+                    std::pair{Qt::Key_Backspace, '\x15'}, std::pair{Qt::Key_Delete, '\x0b'}}) {
         for (const auto origin : {Qt::NoModifier, Qt::KeypadModifier}) {
             QKeyEvent command_arrow(QEvent::KeyPress, key, Qt::MetaModifier | origin);
             QCoreApplication::sendEvent(&surface, &command_arrow);
             require(command_arrow.isAccepted(), "Command-arrow did not claim terminal input");
-            require(text_frames(peer, 1) == QByteArray(1, expected),
-                    "Command-arrow must send Control-A/E bytes, not Control-Home/End");
+            require(
+                text_frames(peer, 1) == QByteArray(1, expected),
+                "Command-arrow must send Control-A/E (and Command-Backspace/Delete Control-U/K)");
             for (const auto modifier : {Qt::ShiftModifier, Qt::AltModifier, Qt::ControlModifier}) {
                 QKeyEvent modified_arrow(QEvent::KeyPress, key,
                                          Qt::MetaModifier | origin | modifier);

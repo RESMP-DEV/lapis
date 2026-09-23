@@ -597,6 +597,51 @@ class Run:
         self.keys.combo("ctrl+shift+j", 0.8)
         return {"screenshots": [before, self.shot("after-next-attention")]}
 
+    def s_reboot_restore(self):
+        """Every service and agent dies, as in a reboot; reopening restores them."""
+        conversations = {}
+        for agent in self.agents():
+            record = Path(agent["endpoint"] + ".resume")
+            # Harnesses without a known resume option restart fresh.
+            if record.exists() and agent.get("harness") in (
+                "kimi",
+                "grok",
+                "opencode",
+                "omp",
+            ):
+                conversations[agent["id"]] = json.loads(record.read_text())[
+                    "session_id"
+                ]
+        if not conversations:
+            raise Failure("no agent recorded a conversation")
+        os.killpg(self.gui.pid, signal.SIGKILL)
+        self.gui.wait()
+        for row in self.services() + self.fake_agents():
+            try:
+                os.kill(row["pid"], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        self.wait(lambda: not self.fake_agents(), 10, "every agent is gone")
+        self.launch()
+        expected = {
+            conversation
+            for agent_id, conversation in conversations.items()
+            if any(agent["id"] == agent_id for agent in self.agents())
+        }
+        self.wait(
+            lambda: (
+                expected
+                <= {word for row in self.fake_agents() for word in row["args"].split()}
+            ),
+            20,
+            "restored agents resume their conversations",
+        )
+        time.sleep(2.0)
+        return {
+            "resumed": len(expected),
+            "screenshot": self.shot("restored-after-reboot"),
+        }
+
     def s_quit_restore(self):
         fakes = {row["pid"] for row in self.fake_agents()}
         self.keys.combo("ctrl+shift+q", 1.0)
@@ -728,6 +773,7 @@ def main():
         ("next_attention", run.s_next_attention),
         ("service_kill", run.s_service_kill),
         ("quit_restore", run.s_quit_restore),
+        ("reboot_restore", run.s_reboot_restore),
     ]
     if args.soak:
         os.environ["LAPIS_FAKE_BURST"] = "20"

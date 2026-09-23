@@ -140,5 +140,20 @@
     "Hebrew order and emoji skin-tone modifiers render per cell (known cross-cell shaping gap)",
     "anvil timing and CPU figures are software-rendered",
     "The tracked-config unit test reads HEAD:lapis.json and fails in the anvil checkout, whose HEAD is the old base commit"
-  ]
+  ],
+  "session_restore": {
+    "recorded_at": "2026-09-23T18:30:00Z",
+    "checks": [
+      "agent-checkpoint suite: sequences split across reads, both terminators, invalid base64, remote host, option-like identity, oversized sequence, private record files",
+      "workspace suite: restore off by default; recorded conversation replaces an old resume pair and keeps user flags; unknown resume option restarts fresh; another CLI's conversation is ignored; restored agents run under new services",
+      "break-it reboot_restore on anvil: GUI, services and agents killed, reopened; 4 of 4 agents with a resume option resumed their recorded conversations (17/17 scenarios, no GUI warnings)",
+      "headless real binaries on macOS against the fake model: Claude Code 2.1.280 recorded its session from the iterm-agent-checkpoint hook sequence and `--resume` showed the earlier exchange; Codex 0.155.1 recorded its thread from the observer and `codex resume` showed the earlier prompt",
+      "full anvil gate 56/56"
+    ],
+    "limitations": [
+      "Restore runs when lapis opens; nothing relaunches lapis itself after a reboot",
+      "Agents started by services built before this change have no record and restart fresh",
+      "Grok, OpenCode, OMP and Kimi resume options come from the user's plugin and were exercised with fake agents only"
+    ]
+  }
 }
