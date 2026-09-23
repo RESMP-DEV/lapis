@@ -1,4 +1,4 @@
-"""Qualify managed Codex service attention in a disposable macOS fixture."""
+"""Qualify managed Codex service attention in a disposable fixture."""
 
 import argparse
 import asyncio
@@ -21,6 +21,7 @@ from check_cli_launch import (
     ATTENTION_SNAPSHOT,
     SNAPSHOT,
     STATUS,
+    TEXT,
     VERSION,
     CheckError,
     Service,
@@ -246,7 +247,7 @@ async def finished_turn(owner, thread, turn, expected="completed"):
             await asyncio.sleep(0.1)
 
 
-async def question_turn(owner, thread, question_id):
+async def question_turn(owner, thread, question_id, model=MODEL):
     return await owner.rpc(
         "turn/start",
         {
@@ -267,7 +268,7 @@ async def question_turn(owner, thread, question_id):
             "collaborationMode": {
                 "mode": "plan",
                 "settings": {
-                    "model": MODEL,
+                    "model": model,
                     "reasoning_effort": "low",
                     "developer_instructions": None,
                 },
@@ -347,7 +348,7 @@ def selected_question_answers(questions):
     return labels
 
 
-async def simultaneous_approvals(owner, view, thread, receipt):
+async def simultaneous_approvals(owner, view, thread, receipt, model=MODEL):
     started = await owner.rpc(
         "turn/start",
         {
@@ -361,7 +362,7 @@ async def simultaneous_approvals(owner, view, thread, receipt):
             "collaborationMode": {
                 "mode": "default",
                 "settings": {
-                    "model": MODEL,
+                    "model": model,
                     "reasoning_effort": "low",
                     "developer_instructions": None,
                 },
@@ -401,6 +402,79 @@ async def simultaneous_approvals(owner, view, thread, receipt):
     )
 
 
+async def initialize_fixture_owner(owner, home, openai):
+    reply = await initialize(owner)
+    require(
+        Path(reply["codexHome"]).resolve() == home.resolve(),
+        "Codex server is not using the private fixture home",
+    )
+    if openai:
+        account = await owner.rpc("account/read", {"refreshToken": False})
+        require(
+            (account.get("account") or {}).get("type") == "chatgpt",
+            "Codex requires an existing ChatGPT login; fixture will not start a login flow",
+        )
+
+
+def fixture_trust_prompt(screen, directory):
+    """Only acknowledge the identified disposable project, never a sign-in menu."""
+    if any(
+        text in screen
+        for text in (
+            "Sign in with ChatGPT",
+            "Finish signing in",
+            "Sign in with Device Code",
+        )
+    ):
+        raise CheckError(
+            "Codex requires sign-in; fixture will not start a login flow. Renew the host login before live qualification."
+        )
+    normalized = " ".join(screen.split())
+    return (
+        "Do you trust the contents of this directory?" in normalized
+        and "Yes, continue" in normalized
+        and "Press enter to continue" in normalized
+        and "".join(str(directory).split()) in "".join(screen.split())
+    )
+
+
+def fixture_options(args, binary, runtime):
+    """Keep the subscriber's configuration private; share only the auth-file path."""
+    if not args.live_openai:
+        return probe_configuration_arguments()
+    auth = Path.home() / ".codex" / "auth.json"
+    require(
+        auth.is_file(), "--live-openai requires an existing ~/.codex/auth.json login"
+    )
+    (runtime / "home" / "auth.json").symlink_to(auth)
+    config = {
+        "model": args.model,
+        "model_provider": "openai",
+        "cli_auth_credentials_store": "file",
+        "forced_login_method": "chatgpt",
+        "features.apps": False,
+        "features.plugins": False,
+        "agents.enabled": False,
+        "features.multi_agent": False,
+        "features.multi_agent_v2": False,
+        "skills.include_instructions": False,
+        "analytics.enabled": False,
+    }
+    options = []
+    for key, value in config.items():
+        options.extend(["-c", key + "=" + json.dumps(value)])
+    return options
+
+
+def verify_runtime_model(live, args):
+    expected_provider = "openai" if args.live_openai else "lapis_probe"
+    require(
+        live.get("model") == args.model
+        and live.get("modelProvider") == expected_provider,
+        "Unexpected runtime model/provider",
+    )
+
+
 async def exercise(args, receipt):
     executable = shutil.which("codex")
     require(executable is not None, "codex is not installed")
@@ -410,14 +484,14 @@ async def exercise(args, receipt):
         "ordinary TUI created thread, service-owned backend and observer"
     )
     artifacts = args.output.parent
-    (ROOT / "runtime").mkdir(exist_ok=True)
+    (ROOT / "runtime").mkdir(mode=0o700, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="m2-", dir=ROOT / "runtime") as temporary:
         runtime = Path(temporary)
         home, cwd = runtime / "home", runtime / "cwd"
         home.mkdir()
         cwd.mkdir()
         trust_fixture_directory(home, cwd)
-        options = probe_configuration_arguments()
+        options = fixture_options(args, binary, runtime)
         options += [
             "-c",
             'approval_policy="on-request"',
@@ -427,7 +501,7 @@ async def exercise(args, receipt):
             'sandbox_mode="read-only"',
             "--no-alt-screen",
         ]
-        if args.live_glm:
+        if args.live_glm or args.live_openai:
             prompt = 'Use exec_command to run exactly python3 -c "print(123456789)". Set sandbox_permissions to require_escalated and justification to "Verify lapis approval routing" so this harmless fixture asks for approval before execution. Do not use other commands or tools. After execution reply DONE.'
             options += ["--", prompt]
         service = Service(
@@ -460,12 +534,25 @@ async def exercise(args, receipt):
                     Path(str(service.endpoint) + ".codex")
                 )
             )
-            await initialize(owner)
+            await initialize_fixture_owner(owner, home, args.live_openai)
+            # Only this identified empty fixture's trust prompt can receive input.
+            await view.wait(
+                lambda: (
+                    "Press enter to continue" in view.screen
+                    or "context left" in view.screen
+                    or "Codex" in view.screen
+                ),
+                15,
+            )
+            if fixture_trust_prompt(view.screen, cwd):
+                view.client.send(TEXT, b"\r")
             async with asyncio.timeout(15):
                 while True:
                     loaded = await owner.rpc("thread/loaded/list", {"limit": 2})
                     if loaded.get("data"):
                         break
+                    if fixture_trust_prompt(view.screen, cwd):
+                        view.client.send(TEXT, b"\r")
                     await asyncio.sleep(0.1)
             persistent = []
             for candidate in loaded["data"]:
@@ -477,7 +564,7 @@ async def exercise(args, receipt):
             require(len(persistent) == 1, "Fixture must have one persistent TUI thread")
             thread = persistent[0]
             receipt["checks"].append("managed TUI startup and attention attachment")
-            if not args.live_glm:
+            if not (args.live_glm or args.live_openai):
                 await view.close()
                 view = View(await asyncio.to_thread(service.connect))
                 await view.wait(lambda: view.attention is not None, 15)
@@ -508,10 +595,7 @@ async def exercise(args, receipt):
             live = await owner.rpc(
                 "thread/resume", {"threadId": thread, "excludeTurns": True}
             )
-            require(
-                live["model"] == MODEL and live["modelProvider"] == "lapis_probe",
-                "Unexpected runtime model/provider",
-            )
+            verify_runtime_model(live, args)
             receipt["model"] = live["model"]
             receipt["model_provider"] = live["modelProvider"]
             # Detach with the approval pending; restored state must be actionable.
@@ -564,7 +648,7 @@ async def exercise(args, receipt):
                 "stale token rejected",
                 "source resolution and successful continuation",
             ]
-            started = await question_turn(owner, thread, "color")
+            started = await question_turn(owner, thread, "color", args.model)
             await view.wait(
                 lambda: view.attention["ready"] and bool(view.attention["requests"])
             )
@@ -636,7 +720,7 @@ async def exercise(args, receipt):
             receipt["checks"].append(
                 "archived source disables replies; restored source reconciles in a fresh epoch"
             )
-            interrupted = await question_turn(owner, thread, "cancel_check")
+            interrupted = await question_turn(owner, thread, "cancel_check", args.model)
             await view.wait(
                 lambda: view.attention["ready"] and bool(view.attention["requests"])
             )
@@ -667,7 +751,7 @@ async def exercise(args, receipt):
             receipt["checks"].append(
                 "new request after source recovery is cancelled by an observed turn interruption"
             )
-            await simultaneous_approvals(owner, view, thread, receipt)
+            await simultaneous_approvals(owner, view, thread, receipt, args.model)
         finally:
             original_error = sys.exception()
             if view and view.attention:
@@ -690,13 +774,20 @@ async def exercise(args, receipt):
             await cleanup_service(service, groups, receipt, original_error)
 
 
-def main():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    live = parser.add_mutually_exclusive_group()
+    live.add_argument(
         "--live-glm",
         action="store_true",
         help="Explicitly run the harmless GLM approval fixture",
     )
+    live.add_argument(
+        "--live-openai",
+        action="store_true",
+        help="Explicitly run live fixtures using the existing OpenAI login",
+    )
+    parser.add_argument("--model", help="OpenAI model; defaults to gpt-6-astra")
     parser.add_argument(
         "--desktop",
         action="store_true",
@@ -706,9 +797,23 @@ def main():
     parser.add_argument(
         "--output", type=Path, default=ROOT / "build/m2-service/receipt.json"
     )
-    args = parser.parse_args()
-    if args.desktop and not args.live_glm:
-        parser.error("--desktop requires --live-glm")
+    args = parser.parse_args(argv)
+    if args.desktop and not (args.live_glm or args.live_openai):
+        parser.error("--desktop requires --live-glm or --live-openai")
+    if args.model is not None and not args.live_openai:
+        parser.error("--model requires --live-openai")
+    args.model = (
+        args.model
+        if args.model is not None
+        else ("gpt-6-astra" if args.live_openai else MODEL)
+    )
+    if not args.model.strip():
+        parser.error("--model must not be empty")
+    return args
+
+
+def main():
+    args = parse_args()
     args.build_dir = args.build_dir.resolve()
     args.output = args.output.resolve()
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -716,7 +821,9 @@ def main():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "checks": [],
         "passed": False,
-        "live_model_turn": args.live_glm,
+        "live_model_turn": args.live_glm or args.live_openai,
+        "configured_model": args.model,
+        "configured_provider": "openai" if args.live_openai else "lapis_probe",
         "desktop_controls": args.desktop,
     }
     started = time.monotonic()

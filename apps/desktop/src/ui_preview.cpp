@@ -1,31 +1,33 @@
 #include "ui_preview.hpp"
 
 #include <QDebug>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QFontDatabase>
 #include <QGuiApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QKeySequence>
-#include <QMouseEvent>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlError>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QRect>
-#include <QScopedValueRollback>
+#include <QSaveFile>
 #include <QScreen>
-#include <QSet>
 #include <QStringList>
+#include <sys/stat.h>
+#include <unistd.h>
 
+#include <cerrno>
 #include <functional>
 #include <utility>
 
 namespace lapis::desktop {
 namespace {
-constexpr char kHeldKeysBlock[] = "root-held-keys";
-constexpr char kModalBlock[] = "root-modal";
-constexpr char kPointerBlock[] = "root-pointer";
-constexpr char kTouchBlock[] = "root-touch";
-constexpr char kDragBlock[] = "root-drag";
 
 constexpr int kMaximumDiagnosticsLength = 4096;
 
@@ -98,11 +100,55 @@ constexpr int kMaximumDiagnosticsLength = 4096;
     return true;
 }
 
+// Settings are local runtime state, never shared appearance configuration. Refuse
+// symlinks and permissive existing paths rather than changing someone else's files.
+[[nodiscard]] bool privateGeometryPath(const QString& path, bool create) {
+    const QString directory = QFileInfo(path).absolutePath();
+    if (create && !QFileInfo::exists(directory)) {
+        const QFileInfo directoryInfo(directory);
+        const QFileInfo parentInfo(directoryInfo.absolutePath());
+        // Only create the final settings directory. Recursive creation can
+        // follow a dangling or intermediate symlink before validation.
+        if (!parentInfo.isDir() || parentInfo.isSymbolicLink() ||
+            !QDir(parentInfo.absoluteFilePath())
+                 .mkdir(directoryInfo.fileName(),
+                        QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner))
+            return false;
+    }
+    struct stat info{};
+    const QByteArray directoryBytes = QFile::encodeName(directory);
+    if (::lstat(directoryBytes.constData(), &info) != 0 || !S_ISDIR(info.st_mode) ||
+        info.st_uid != ::getuid() || (info.st_mode & 0077) != 0)
+        return false;
+    const QByteArray pathBytes = QFile::encodeName(path);
+    if (::lstat(pathBytes.constData(), &info) != 0)
+        return errno == ENOENT;
+    return S_ISREG(info.st_mode) && info.st_uid == ::getuid() && (info.st_mode & 0077) == 0;
+}
+
+[[nodiscard]] QRect visibleGeometry(QRect geometry, const QSize& minimum) {
+    QScreen* target = QGuiApplication::primaryScreen();
+    for (QScreen* screen : QGuiApplication::screens()) {
+        if (screen->availableGeometry().contains(geometry.center())) {
+            target = screen;
+            break;
+        }
+    }
+    if (target == nullptr)
+        return {};
+    const QRect available = target->availableGeometry();
+    geometry.setSize(geometry.size().expandedTo(minimum).boundedTo(available.size()));
+    geometry.moveLeft(
+        qBound(available.left(), geometry.left(), available.right() - geometry.width() + 1));
+    geometry.moveTop(
+        qBound(available.top(), geometry.top(), available.bottom() - geometry.height() + 1));
+    return geometry;
+}
+
 } // namespace
 
 UiPreview::UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* parent)
-    : QObject(parent), workspace_(workspace), options_(std::move(options)),
-      supervisor_(std::make_unique<WorkspaceSupervisor>(workspace_, options_.supervisor_clock)) {
+    : QObject(parent), workspace_(workspace), options_(std::move(options)) {
     refreshSettingsShortcuts();
     if (options_.keymap != nullptr)
         connect(options_.keymap, &KeyMap::changed, this, [this] {
@@ -110,13 +156,17 @@ UiPreview::UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* pa
             deferTerminalFocus();
         });
     connect(&workspace_, &Workspace::focusChanged, this, &UiPreview::deferTerminalFocus);
-    connect(&workspace_, &Workspace::interactionChanged, this, [this] {
-        if (!workspace_.interactionBlocked())
-            deferTerminalFocus();
-    });
-    connect(this, &UiPreview::holdingKeysChanged, this, [this] {
-        workspace_.setInteractionBlocked(QString::fromLatin1(kHeldKeysBlock), holdingKeys());
-    });
+}
+
+QStringList UiPreview::monospaceFamilies() const {
+    QStringList families;
+    for (const QString& family : QFontDatabase::families()) {
+        // Private platform faces are not user-selectable.
+        if (!QFontDatabase::isPrivateFamily(family) && QFontDatabase::isFixedPitch(family))
+            families.append(family);
+    }
+    families.sort(Qt::CaseInsensitive);
+    return families;
 }
 
 void UiPreview::refreshSettingsShortcuts() {
@@ -129,16 +179,22 @@ void UiPreview::refreshSettingsShortcuts() {
     emit settingsShortcutsChanged();
 }
 
-QString UiPreview::modalBlockReason() const { return QString::fromLatin1(kModalBlock); }
-
 UiPreview::~UiPreview() {
-    supervisor_->setWindowActive(false);
-    if (window_ != nullptr)
-        window_->removeEventFilter(this);
-    clearHeldKeys();
-    workspace_.setInteractionBlocked(QString::fromLatin1(kModalBlock), false);
-    for (const auto* reason : {kPointerBlock, kTouchBlock, kDragBlock})
-        workspace_.setInteractionBlocked(QString::fromLatin1(reason), false);
+    shutting_down_ = true;
+    // A close event already saved the last visible placement. After native
+    // teardown Qt can report the old platform geometry, so do not overwrite
+    // that record when destroying an already closed window.
+    if (window_ && window_->isVisible())
+        saveGeometry();
+    if (window_) {
+        // Qt 6.11 queues render-thread signal proxies whose targets must still
+        // exist when delivered. Release first, then deliver before deleting QML.
+        window_->setPersistentGraphics(false);
+        window_->setPersistentSceneGraph(false);
+        window_->hide();
+        window_->releaseResources();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    }
     engine_.reset();
     const auto retired =
         findChildren<QQmlApplicationEngine*>(QString{}, Qt::FindDirectChildrenOnly);
@@ -167,6 +223,8 @@ void UiPreview::setSystemReducedMotion(bool enabled) {
 }
 
 bool UiPreview::load() {
+    if (shutting_down_)
+        return false;
     if (engine_) {
         qWarning() << "UiPreview load rejected: initial load has already completed";
         return false;
@@ -176,6 +234,8 @@ bool UiPreview::load() {
 }
 
 bool UiPreview::reload() {
+    if (shutting_down_)
+        return false;
     if (!active()) {
         qWarning() << "UiPreview reload rejected: preview mode is not active";
         return false;
@@ -193,21 +253,14 @@ bool UiPreview::reload() {
 }
 
 bool UiPreview::assignTerminalFocus() {
+    if (shutting_down_)
+        return false;
     QQuickWindow* target_window = window();
     if (target_window == nullptr)
         return false;
-    if (workspace_.interactionBlocked() || target_window->property("inputBlocked").toBool())
+    if (target_window->property("inputBlocked").toBool())
         return false;
-    // Focus and columns keep the single live pane; blocks and stack promote one
-    // tile per session. The dynamic workspace can be empty while loading.
-    const KeyMap* keymap = options_.keymap;
-    const bool pane_visible = keymap == nullptr || keymap->layout() == WorkspaceLayout::Focus ||
-                              keymap->layout() == WorkspaceLayout::Columns;
-    const SessionPreview* focused = workspace_.focusedSession();
-    if (!pane_visible && focused == nullptr)
-        return false;
-    const QString name = pane_visible ? QStringLiteral("liveTerminal")
-                                      : QStringLiteral("cardTerminal_") + focused->sessionId();
+    const QString name = QStringLiteral("liveTerminal");
     QQuickItem* terminal = nullptr;
     const std::function<void(QQuickItem&)> visit = [&](QQuickItem& item) {
         if (terminal != nullptr)
@@ -227,6 +280,8 @@ bool UiPreview::assignTerminalFocus() {
 }
 
 void UiPreview::deferTerminalFocus() {
+    if (shutting_down_)
+        return;
     QMetaObject::invokeMethod(
         this,
         [this] {
@@ -238,63 +293,18 @@ void UiPreview::deferTerminalFocus() {
 }
 
 bool UiPreview::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == window_.data() && event->type() == QEvent::Close)
+        saveGeometry();
+    if (event->type() != QEvent::KeyPress)
+        return QObject::eventFilter(watched, event);
+
     auto* current_window = qobject_cast<QQuickWindow*>(watched);
-    if (current_window == nullptr || current_window != window_.data())
-        return QObject::eventFilter(watched, event);
-
-    if (event->type() == QEvent::WindowDeactivate || event->type() == QEvent::Destroy ||
-        event->type() == QEvent::Hide) {
-        supervisor_->setWindowActive(false);
-        clearHeldKeys();
-        for (const auto* reason : {kPointerBlock, kTouchBlock, kDragBlock})
-            workspace_.setInteractionBlocked(QString::fromLatin1(reason), false);
-    }
-
-    const auto block = [this](const char* reason, bool value) {
-        supervisor_->noteInteraction();
-        workspace_.setInteractionBlocked(QString::fromLatin1(reason), value);
-    };
-    switch (event->type()) {
-    case QEvent::MouseButtonPress:
-    case QEvent::MouseButtonDblClick:
-        block(kPointerBlock, true);
-        break;
-    case QEvent::MouseButtonRelease:
-        block(kPointerBlock, static_cast<QMouseEvent*>(event)->buttons() != Qt::NoButton);
-        break;
-    case QEvent::TouchBegin:
-        block(kTouchBlock, true);
-        break;
-    case QEvent::TouchEnd:
-    case QEvent::TouchCancel:
-        block(kTouchBlock, false);
-        break;
-    case QEvent::DragEnter:
-        block(kDragBlock, true);
-        break;
-    case QEvent::DragLeave:
-    case QEvent::Drop:
-        block(kDragBlock, false);
-        break;
-    case QEvent::Wheel:
-    case QEvent::InputMethod:
-    case QEvent::KeyPress:
-    case QEvent::KeyRelease:
-        supervisor_->noteInteraction();
-        break;
-    default:
-        break;
-    }
-
-    if (event->type() != QEvent::KeyPress && event->type() != QEvent::KeyRelease)
-        return QObject::eventFilter(watched, event);
-
-    if (!current_window->isActive())
+    if (current_window == nullptr || current_window != window_.data() ||
+        !current_window->isActive())
         return QObject::eventFilter(watched, event);
 
     auto* key_event = static_cast<QKeyEvent*>(event);
-    updateHeldKey(*key_event, event->type() == QEvent::KeyPress);
-    if (event->type() != QEvent::KeyPress || key_event->isAutoRepeat())
+    if (key_event->isAutoRepeat())
         return false;
     for (const auto& sequence : parsed_settings_shortcuts_) {
         if (sequence.count() == 1 && sequence[0] == key_event->keyCombination() && openSettings()) {
@@ -306,8 +316,16 @@ bool UiPreview::eventFilter(QObject* watched, QEvent* event) {
 }
 
 bool UiPreview::openSettings() {
+    if (shutting_down_)
+        return false;
     QQuickWindow* target_window = window();
     if (target_window == nullptr)
+        return false;
+    if (target_window->property("inputBlocked").toBool())
+        return false;
+    const auto* terminal = target_window->findChild<QQuickItem*>(QStringLiteral("liveTerminal"));
+    if (terminal != nullptr &&
+        (terminal->property("composing").toBool() || terminal->property("pasting").toBool()))
         return false;
     // Invoke the dialog through QML rather than duplicating its state in C++.
     // The function lives on the root Window, which is the QML root object; the
@@ -319,46 +337,85 @@ bool UiPreview::openSettings() {
            QMetaObject::invokeMethod(root, "openSettingsDialog", Qt::DirectConnection);
 }
 
-void UiPreview::updateHeldKey(const QKeyEvent& event, bool pressed) {
-    if (event.isAutoRepeat())
-        return;
-    const bool was_holding = holdingKeys();
-    if (pressed)
-        held_keys_.insert(event.key());
-    else if (!held_keys_.remove(event.key()))
-        return;
-    if (was_holding != holdingKeys())
-        emit holdingKeysChanged();
+bool UiPreview::geometryPersistenceEnabled() const {
+    return options_.persistGeometry && !active() && options_.screen.isEmpty();
 }
 
-void UiPreview::clearHeldKeys() {
-    if (held_keys_.isEmpty())
+void UiPreview::restoreGeometry(QQuickWindow& target) {
+    if (options_.geometryPath.isEmpty())
+        options_.geometryPath = QDir(QStringLiteral(LAPIS_PROJECT_ROOT))
+                                    .filePath(QStringLiteral("runtime/window.json"));
+    if (!privateGeometryPath(options_.geometryPath, false))
         return;
-    held_keys_.clear();
-    emit holdingKeysChanged();
+    QFile file(options_.geometryPath);
+    if (!file.open(QIODevice::ReadOnly) || file.size() > 4096)
+        return;
+    const auto object = QJsonDocument::fromJson(file.readAll()).object();
+    if (object.value(QStringLiteral("version")).toInt() != 1)
+        return;
+    const int x = object.value(QStringLiteral("x")).toInt();
+    const int y = object.value(QStringLiteral("y")).toInt();
+    const int width = object.value(QStringLiteral("width")).toInt();
+    const int height = object.value(QStringLiteral("height")).toInt();
+    if (width < 1 || height < 1 || width > 32768 || height > 32768 ||
+        qAbs(static_cast<qint64>(x)) > 32768 || qAbs(static_cast<qint64>(y)) > 32768)
+        return;
+    QRect geometry(x, y, width, height);
+    geometry = visibleGeometry(geometry, target.minimumSize());
+    if (!geometry.isValid())
+        return;
+    target.setGeometry(geometry);
+    normal_geometry_ = geometry;
+    if (object.value(QStringLiteral("maximized")).toBool())
+        target.setWindowState(Qt::WindowMaximized);
 }
 
-void UiPreview::recordRuntimeWarnings(const QList<QQmlError>& warnings) {
-    for (const QQmlError& warning : warnings)
-        qWarning().noquote() << warning.toString();
-    // A binding displaying diagnostics can itself warn. Never recurse
-    // through that binding, or notify again once the buffer is full.
-    if (publishing_diagnostics_)
+void UiPreview::saveGeometry() {
+    if (!geometryPersistenceEnabled() || window_ == nullptr)
         return;
-    const auto next = appendDiagnostics(diagnostics_, formatDiagnostics(warnings));
-    if (next == diagnostics_)
+    // Native configure notifications can lag a requested move or resize. The
+    // current normal window geometry is authoritative when closing; the cache
+    // is only needed while maximized/minimized, whose geometry is not the
+    // user's normal placement.
+    if (window_->windowState() == Qt::WindowNoState)
+        normal_geometry_ = window_->geometry();
+    if (!normal_geometry_.isValid())
         return;
-    const QScopedValueRollback guard(publishing_diagnostics_, true);
-    diagnostics_ = next;
-    emit diagnosticsChanged();
+    if (options_.geometryPath.isEmpty())
+        options_.geometryPath = QDir(QStringLiteral(LAPIS_PROJECT_ROOT))
+                                    .filePath(QStringLiteral("runtime/window.json"));
+    if (!privateGeometryPath(options_.geometryPath, true)) {
+        qWarning() << "Window geometry not saved: runtime path must be private and owned by you";
+        return;
+    }
+    const QJsonObject object{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("x"), normal_geometry_.x()},
+        {QStringLiteral("y"), normal_geometry_.y()},
+        {QStringLiteral("width"), normal_geometry_.width()},
+        {QStringLiteral("height"), normal_geometry_.height()},
+        {QStringLiteral("maximized"), window_->windowState() == Qt::WindowMaximized}};
+    QSaveFile file(options_.geometryPath);
+    const QByteArray bytes = QJsonDocument(object).toJson(QJsonDocument::Compact);
+    if (!file.open(QIODevice::WriteOnly) ||
+        !file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner) ||
+        file.write(bytes) != bytes.size() || !file.commit())
+        qWarning() << "Could not save window geometry:" << file.errorString();
 }
 
-void UiPreview::updateWindowActivity(QQuickWindow* window) {
-    if (window_ != window)
-        return;
-    supervisor_->setWindowActive(window->isActive() && window->isVisible());
-    if (window->isActive())
-        deferTerminalFocus();
+void UiPreview::rememberGeometry() {
+    if (window_ && window_->windowState() == Qt::WindowNoState)
+        normal_geometry_ = window_->geometry();
+}
+
+void UiPreview::configureGeometry(QQuickWindow& target, bool reloading) {
+    if (!reloading && geometryPersistenceEnabled())
+        restoreGeometry(target);
+    connect(&target, &QWindow::xChanged, this, &UiPreview::rememberGeometry);
+    connect(&target, &QWindow::yChanged, this, &UiPreview::rememberGeometry);
+    connect(&target, &QWindow::widthChanged, this, &UiPreview::rememberGeometry);
+    connect(&target, &QWindow::heightChanged, this, &UiPreview::rememberGeometry);
+    rememberGeometry();
 }
 
 bool UiPreview::loadCandidate() {
@@ -433,20 +490,17 @@ bool UiPreview::loadCandidate() {
         },
         Qt::DirectConnection);
     QObject::connect(candidate.get(), &QQmlApplicationEngine::warnings, this,
-                     &UiPreview::recordRuntimeWarnings);
+                     [this](const QList<QQmlError>& warnings) {
+                         for (const QQmlError& warning : warnings)
+                             qWarning().noquote() << warning.toString();
+                         diagnostics_ =
+                             appendDiagnostics(diagnostics_, formatDiagnostics(warnings));
+                         emit diagnosticsChanged();
+                     });
 
     const QPointer<QQuickWindow> acceptedWindow = candidateWindow;
     setDiagnostics(candidateDiagnostics);
 
-    // Once window_ is reassigned, events from the retiring window are ignored.
-    // An unfinished gesture on that window therefore has no matching release,
-    // touch end, or drop that can clear its interaction block.
-    supervisor_->setWindowActive(false);
-    clearHeldKeys();
-    for (const auto* reason : {kPointerBlock, kTouchBlock, kDragBlock})
-        workspace_.setInteractionBlocked(QString::fromLatin1(reason), false);
-    workspace_.setInteractionBlocked(QString::fromLatin1(kModalBlock),
-                                     candidateWindow->property("inputBlocked").toBool());
     std::swap(engine_, candidate);
     window_ = acceptedWindow;
     if (reloading) {
@@ -465,10 +519,8 @@ bool UiPreview::loadCandidate() {
                               QStringLiteral("No screen matched '%1'; see log for available names")
                                   .arg(options_.screen)));
     }
-    connect(candidateWindow, &QQuickWindow::activeChanged, this,
-            [this, candidateWindow] { updateWindowActivity(candidateWindow); });
+    configureGeometry(*candidateWindow, reloading);
     candidateWindow->show();
-    supervisor_->setWindowActive(candidateWindow->isActive() && candidateWindow->isVisible());
 
     return true;
 }

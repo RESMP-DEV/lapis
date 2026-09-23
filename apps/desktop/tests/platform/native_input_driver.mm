@@ -1,5 +1,4 @@
 #include "native_input_driver.hpp"
-#include "window_activation.hpp"
 #import <AppKit/AppKit.h>
 #include <Carbon/Carbon.h>
 #include <CoreGraphics/CoreGraphics.h>
@@ -133,8 +132,22 @@ QStringList NativeInputDriver::enabledSources() {
     result.sort();
     return result;
 }
-void NativeInputDriver::activate(QWindow& window) { activate_test_window(window); }
-
+void NativeInputDriver::activate(QWindow& window) {
+    // Qt represents the native NSView pointer as an integer WId on macOS.
+    // NOLINTNEXTLINE(performance-no-int-to-ptr)
+    auto* view = reinterpret_cast<NSView*>(window.winId());
+    NSWindow* native = [view window];
+    if (native == nil)
+        throw std::runtime_error("Native input fixture has no NSWindow");
+    if (window.isActive() && NSApp.active && native.isKeyWindow)
+        return;
+    if (@available(macOS 14.0, *))
+        [NSApp activate];
+    else
+        throw std::runtime_error("Native test activation requires macOS 14 or later");
+    [native makeKeyAndOrderFront:nil];
+    window.requestActivate();
+}
 void NativeInputDriver::key(std::uint16_t code, NativeModifiers flags) {
     for (const bool down : {true, false}) {
         Handle<CGEventRef> event(CGEventCreateKeyboardEvent(nullptr, code, down));

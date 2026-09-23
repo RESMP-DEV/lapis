@@ -163,6 +163,7 @@ class Source final : public QObject {
     std::vector<QJsonObject> received;
     bool resolved_before_replay{};
     bool empty_discovery{};
+    bool fail_first_resume{};
     int replay_large_requests{};
     std::vector<QJsonObject> replay_requests;
 
@@ -228,7 +229,8 @@ class Source final : public QObject {
                   {"result",
                    QJsonObject{{"data", empty_discovery ? QJsonArray{}
                                                         : QJsonArray{"temporary", thread_name}}}}});
-        } else if (method == QLatin1String("thread/resume") && !no_rollout_returned) {
+        } else if (method == QLatin1String("thread/resume") && fail_first_resume &&
+                   !no_rollout_returned) {
             no_rollout_returned = true;
             send(QJsonObject{
                 {QStringLiteral("id"), id},
@@ -256,7 +258,8 @@ class Source final : public QObject {
                 send({{"method", "serverRequest/resolved"},
                       {"params",
                        QJsonObject{{"threadId", thread_name},
-                                   {"requestId", std::numeric_limits<std::int64_t>::max()}}}});
+                                   {"requestId", static_cast<qint64>(
+                                                     std::numeric_limits<std::int64_t>::max())}}}});
             send(approval(std::numeric_limits<std::int64_t>::max()));
             for (const auto& replay_request : replay_requests)
                 send(replay_request);
@@ -277,7 +280,7 @@ class Source final : public QObject {
 
     [[nodiscard]] QJsonObject approval(std::int64_t identifier) const {
         return QJsonObject{
-            {QStringLiteral("id"), identifier},
+            {QStringLiteral("id"), static_cast<qint64>(identifier)},
             {QStringLiteral("method"), QStringLiteral("item/commandExecution/requestApproval")},
             {QStringLiteral("params"),
              QJsonObject{{QStringLiteral("threadId"), thread_name},
@@ -381,7 +384,7 @@ void unsupported_hash_survives_reconnect_until_qualified_restart() {
 }
 
 QJsonObject large_approval(std::int64_t id) {
-    return {{"id", id},
+    return {{"id", static_cast<qint64>(id)},
             {"method", "item/commandExecution/requestApproval"},
             {"params", QJsonObject{{"threadId", "thread"},
                                    {"turnId", "turn"},
@@ -490,7 +493,8 @@ void post_binding_classification() {
     const QJsonObject foreign_resolution{
         {"method", "serverRequest/resolved"},
         {"params", QJsonObject{{"threadId", "late-temporary"},
-                               {"requestId", std::numeric_limits<std::int64_t>::max()}}}};
+                               {"requestId",
+                                static_cast<qint64>(std::numeric_limits<std::int64_t>::max())}}}};
     const QJsonObject metadata{
         {"method", "thread/started"},
         {"params",
@@ -701,6 +705,7 @@ int run(int argc, char** argv) {
     implicit_retirement_survives_replay();
     State state{QStringLiteral("session").toStdString(), QStringLiteral("codex").toStdString()};
     Source source;
+    source.fail_first_resume = true;
     source.start();
     Observer observer{state};
     bool initialized_signal = false;
@@ -801,7 +806,8 @@ int run(int argc, char** argv) {
         {QStringLiteral("method"), QStringLiteral("serverRequest/resolved")},
         {QStringLiteral("params"),
          QJsonObject{{QStringLiteral("threadId"), QStringLiteral("thread")},
-                     {QStringLiteral("requestId"), std::numeric_limits<std::int64_t>::max()}}}});
+                     {QStringLiteral("requestId"),
+                      static_cast<qint64>(std::numeric_limits<std::int64_t>::max())}}}});
     require(wait_for([&] { return state.pending().empty(); }), "source resolution retires request");
 
     const auto response_count = [&] {

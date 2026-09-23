@@ -9,10 +9,12 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 
+if __package__:
+    from .lapis import desktop_binary_path
+else:
+    from lapis import desktop_binary_path
+
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BINARY = ROOT / (
-    "build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop"
-)
 TIMEOUT_SECONDS = 20
 
 
@@ -137,20 +139,15 @@ def capture_ok(image: Path, trace: Path, scenario: str, reduced: bool) -> bool:
             return False
     if not after["terminal_owns_focus"]:
         return False
-    first = {card["id"]: card for card in before["cards"]}
-    for card in after["cards"]:
-        if card["id"] in ("shell", "renderer", "agent") and "width" not in card:
+    if before["selected_session"] != after["selected_session"]:
+        return False
+    if before["category"] != after["category"]:
+        return False
+    for session in after["sessions"]:
+        expected = session["id"] == "agent" and scenario != "none"
+        expected = expected or (session["id"] == "renderer" and scenario == "two")
+        if session["pending"] != expected:
             return False
-        expected = card["id"] == "agent" and scenario != "none"
-        expected = expected or (card["id"] == "renderer" and scenario == "two")
-        if card["pending"] != expected or card.get("cue_running", False):
-            return False
-        for field in ("x", "y", "width", "height"):
-            if (
-                field in first[card["id"]]
-                and card.get(field) != first[card["id"]][field]
-            ):
-                return False
     return True
 
 
@@ -239,7 +236,7 @@ def execute_checks(binary: Path, artifacts: Path) -> list[dict]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
+    parser.add_argument("--binary", type=Path, default=desktop_binary_path())
     parser.add_argument(
         "--artifacts", type=Path, default=ROOT / "build/ui-preview-check"
     )

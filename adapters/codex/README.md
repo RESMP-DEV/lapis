@@ -34,9 +34,12 @@ service. These transport identities are separate from Codex thread/turn/request 
 
 ## Installed binary qualification (2026-09-22)
 
-The current adapter pin is
-`81f1d50b0153837534552c7033f203c99a34d2e1fb3fdadc4ec6002fd834180c`.
-The [qualification receipt](../../evidence/codex-binary-update.json) records
+The adapter accepts two Codex 0.155.1 standalone digests:
+`81f1d50b0153837534552c7033f203c99a34d2e1fb3fdadc4ec6002fd834180c` and
+`8eaf1ad12fe6bf89b1710330f58900014322c7c5af677e43be116d8ac5fc0a9e` (the
+arm64 Mac build qualified during the category-workspace work; see
+`evidence/agent-workspace.json`). The first's
+[qualification receipt](../../evidence/codex-binary-update.json) records
 live protocol/TUI replay and response checks, compiled service/desktop decisions,
 and simultaneous requests across two managed sessions. It replaces the older
 `f066af4e…` pin; earlier receipts remain observations of their recorded binaries.

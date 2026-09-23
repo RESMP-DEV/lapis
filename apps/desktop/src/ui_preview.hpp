@@ -3,21 +3,17 @@
 
 #include "keymap.hpp"
 #include "workspace.hpp"
-#include "workspace_supervisor.hpp"
-#include <QKeyEvent>
 #include <QKeySequence>
 #include <QList>
 #include <QObject>
 #include <QPointer>
-#include <QSet>
+#include <QRect>
 #include <QString>
 #include <QStringList>
 #include <QUrl>
-#include <functional>
 #include <memory>
 
 class QQmlApplicationEngine;
-class QQmlError;
 class QQuickWindow;
 
 namespace lapis::desktop {
@@ -31,8 +27,9 @@ struct UiPreviewOptions {
     // User keybindings and layout, exposed to QML as `keymap`. Optional; a
     // null value uses the shared C++ settings defaults and QML navigation defaults.
     KeyMap* keymap{};
-    // Deterministic GUI qualification; production uses the steady clock.
-    std::function<qint64()> supervisor_clock{};
+    // Only the normal workspace restores user geometry; tests opt in with an isolated path.
+    bool persistGeometry{};
+    QString geometryPath{};
 };
 
 // View host shared by normal launch and the isolated development fixture.
@@ -45,9 +42,8 @@ class UiPreview final : public QObject {
     Q_PROPERTY(bool systemReducedMotion READ systemReducedMotion NOTIFY reducedMotionChanged)
     Q_PROPERTY(QString diagnostics READ diagnostics NOTIFY diagnosticsChanged)
     Q_PROPERTY(QStringList settingsShortcuts READ settingsShortcuts NOTIFY settingsShortcutsChanged)
-    Q_PROPERTY(bool holdingKeys READ holdingKeys NOTIFY holdingKeysChanged)
-    Q_PROPERTY(QString modalBlockReason READ modalBlockReason CONSTANT)
-    Q_PROPERTY(lapis::desktop::WorkspaceSupervisor* supervisor READ supervisor CONSTANT)
+    // Installed fixed-pitch families offered by Appearance, sorted by name.
+    Q_PROPERTY(QStringList monospaceFamilies READ monospaceFamilies CONSTANT)
   public:
     UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* parent = nullptr);
     ~UiPreview() override;
@@ -58,15 +54,12 @@ class UiPreview final : public QObject {
     void setSystemReducedMotion(bool enabled);
     [[nodiscard]] const QString& diagnostics() const { return diagnostics_; }
     [[nodiscard]] const QStringList& settingsShortcuts() const { return settings_shortcuts_; }
-    [[nodiscard]] QString modalBlockReason() const;
-    [[nodiscard]] bool holdingKeys() const { return !held_keys_.isEmpty(); }
-    [[nodiscard]] WorkspaceSupervisor* supervisor() const { return supervisor_.get(); }
+    [[nodiscard]] QStringList monospaceFamilies() const;
     [[nodiscard]] QQuickWindow* window() const;
     bool load();
     Q_INVOKABLE bool reload();
     // Give keyboard ownership to the live session's terminal surface. The
-    // surface differs by layout: the single pane in focus mode, the focused
-    // tile in blocks mode. Returns true when a terminal took focus.
+    // single stage owns input in every appearance. Returns true when a terminal took focus.
     Q_INVOKABLE bool assignTerminalFocus();
     Q_INVOKABLE void deferTerminalFocus();
     // Open the appearance dialog. Terminal surfaces consume key events before
@@ -77,27 +70,26 @@ class UiPreview final : public QObject {
     void reducedMotionChanged();
     void diagnosticsChanged();
     void settingsShortcutsChanged();
-    void holdingKeysChanged();
     void windowChanged(QQuickWindow* window);
 
   private:
     bool eventFilter(QObject* watched, QEvent* event) override;
     bool loadCandidate();
+    void configureGeometry(QQuickWindow& target, bool reloading);
+    void rememberGeometry();
     void refreshSettingsShortcuts();
-    void updateWindowActivity(QQuickWindow* window);
-    void recordRuntimeWarnings(const QList<QQmlError>& warnings);
-    void clearHeldKeys();
-    void updateHeldKey(const QKeyEvent& event, bool pressed);
+    [[nodiscard]] bool geometryPersistenceEnabled() const;
+    void restoreGeometry(QQuickWindow& window);
+    void saveGeometry();
+    QRect normal_geometry_;
     Workspace& workspace_;
     UiPreviewOptions options_;
-    std::unique_ptr<WorkspaceSupervisor> supervisor_;
     std::unique_ptr<QQmlApplicationEngine> engine_;
     QPointer<QQuickWindow> window_;
     QString diagnostics_;
     QStringList settings_shortcuts_;
     QList<QKeySequence> parsed_settings_shortcuts_;
-    QSet<int> held_keys_;
-    bool publishing_diagnostics_{};
+    bool shutting_down_{};
     bool reduced_motion_{};
     bool system_reduced_motion_{};
 };

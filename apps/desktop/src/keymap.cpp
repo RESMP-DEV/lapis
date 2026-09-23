@@ -11,7 +11,9 @@
 #include <QJsonValue>
 #include <QKeySequence>
 #include <QSaveFile>
+#include <QSignalBlocker>
 #include <QVariantMap>
+#include <algorithm>
 #include <array>
 
 namespace lapis::desktop {
@@ -25,23 +27,28 @@ constexpr int kMaximumPrettyDepth = 64;
 
 // Built-in colour schemes. Every theme keeps the same contrast relationships:
 // background is darkest, cards sit above it, focused borders are the brightest
-// accent, and text is near-white. A theme only changes the frame around the
-// terminal; the session's own palette still colours program output. A plain
-// std::array of literal pointers keeps this a constant-initialized table.
-constexpr std::array<Theme, 6> kThemes = {{
+// accent, and text has the strongest contrast. Activity, attention and fault
+// hues stay distinct from the focus accent and from one another. A theme only
+// changes the frame around the terminal; the session's own palette still colours
+// program output. A plain std::array of literal pointers keeps this a
+// constant-initialized table.
+constexpr std::array<Theme, 7> kThemes = {{
     {.name = "lapis",
-     .label = "Lapis",
-     .background = "#0b101a",
-     .surface = "#111927",
-     .card = "#151c29",
-     .hovered_card = "#1a2333",
-     .focused = "#1f2838",
-     .border = "#2b3546",
-     .focused_border = "#6a76e8",
-     .text = "#f2f3ea",
-     .muted_text = "#98a0ae",
-     .attention = "#ff5f56",
-     .attention_text = "#fff4f2"},
+     .label = "Command",
+     .background = "#090f16",
+     .surface = "#0e1822",
+     .card = "#14222e",
+     .hovered_card = "#1b303e",
+     .focused = "#193638",
+     .border = "#263c48",
+     .focused_border = "#70d8c5",
+     .text = "#e4eef1",
+     .muted_text = "#94aab7",
+     .attention = "#ffb76b",
+     .attention_text = "#201509",
+     .activity = "#74a8ff",
+     .fault = "#ee7a8a",
+     .heading_tracking = 2.0},
     {.name = "graphite",
      .label = "Graphite",
      .background = "#111214",
@@ -54,7 +61,12 @@ constexpr std::array<Theme, 6> kThemes = {{
      .text = "#eceef1",
      .muted_text = "#969ca6",
      .attention = "#f0a04b",
-     .attention_text = "#1a1408"},
+     .attention_text = "#1a1408",
+     .activity = "#6fa8dc",
+     .fault = "#ec7b84",
+     .corner_radius = 4,
+     .motion_ms = 140,
+     .heading_tracking = 0.5},
     {.name = "daylight",
      .label = "Daylight",
      .background = "#f4f5f7",
@@ -67,7 +79,12 @@ constexpr std::array<Theme, 6> kThemes = {{
      .text = "#14181f",
      .muted_text = "#5d6675",
      .attention = "#c8342c",
-     .attention_text = "#ffffff"},
+     .attention_text = "#ffffff",
+     .activity = "#0a6558",
+     .fault = "#803ba0",
+     .corner_radius = 6,
+     .motion_ms = 140,
+     .heading_tracking = 0.5},
     {.name = "solarized",
      .label = "Solarized",
      .background = "#002b36",
@@ -80,7 +97,9 @@ constexpr std::array<Theme, 6> kThemes = {{
      .text = "#eee8d5",
      .muted_text = "#93a1a1",
      .attention = "#dc322f",
-     .attention_text = "#fdf6e3"},
+     .attention_text = "#fdf6e3",
+     .activity = "#66d7cd",
+     .fault = "#b7bcff"},
     {.name = "amber",
      .label = "Amber",
      .background = "#17120a",
@@ -93,7 +112,13 @@ constexpr std::array<Theme, 6> kThemes = {{
      .text = "#f6ead2",
      .muted_text = "#a2916f",
      .attention = "#ff6b3d",
-     .attention_text = "#1a1008"},
+     .attention_text = "#1a1008",
+     .activity = "#8fd0dc",
+     .fault = "#d09cff",
+     .corner_radius = 0,
+     .motion_ms = 80,
+     .mono_chrome = true,
+     .heading_tracking = 2.0},
     {.name = "contrast",
      .label = "High contrast",
      .background = "#000000",
@@ -106,7 +131,31 @@ constexpr std::array<Theme, 6> kThemes = {{
      .text = "#ffffff",
      .muted_text = "#c8c8c8",
      .attention = "#ff4d4d",
-     .attention_text = "#000000"},
+     .attention_text = "#000000",
+     .activity = "#4dd2ff",
+     .fault = "#ff7af5",
+     .corner_radius = 0,
+     .motion_ms = 0,
+     .heading_tracking = 0.0},
+    // Pure black for OLED panels: every resting surface leaves pixels off, as
+    // the terminal engine's default background already does. Lines and text
+    // carry the structure; only hover and selection light a faint fill.
+    {.name = "oled",
+     .label = "OLED black",
+     .background = "#000000",
+     .surface = "#000000",
+     .card = "#000000",
+     .hovered_card = "#0c0c0c",
+     .focused = "#0a1614",
+     .border = "#222222",
+     .focused_border = "#62d6c2",
+     .text = "#e6e6e6",
+     .muted_text = "#8e8e8e",
+     .attention = "#ffb454",
+     .attention_text = "#000000",
+     .activity = "#6aa6ff",
+     .fault = "#ff6f86",
+     .heading_tracking = 1.0},
 }};
 
 [[nodiscard]] const Theme& find_theme(const QString& name) {
@@ -169,6 +218,25 @@ constexpr std::array<Theme, 6> kThemes = {{
     return QStringLiteral("comfortable");
 }
 
+constexpr qsizetype kMaximumFontFamilyLength = 128;
+
+void append_diagnostic(QString* diagnostic, const QString& message) {
+    *diagnostic = diagnostic->isEmpty() ? message : *diagnostic + '\n' + message;
+}
+
+// A family is an opaque name matched by the font system later; reject only
+// values that could never name a font or would corrupt a hand-edited file.
+[[nodiscard]] bool valid_font_family(const QString& family) {
+    if (family.size() > kMaximumFontFamilyLength || family != family.trimmed())
+        return false;
+    return std::ranges::none_of(
+        family, [](QChar value) { return value.unicode() < 0x20 || value.unicode() == 0x7f; });
+}
+
+[[nodiscard]] bool valid_font_size(int pixels) {
+    return pixels >= kTerminalFontSizeMinimum && pixels <= kTerminalFontSizeMaximum;
+}
+
 [[nodiscard]] bool config_path_is_regular(const QString& path, QString* reason) {
     const QFileInfo info(path);
     if (info.exists() && !info.isFile()) {
@@ -180,7 +248,7 @@ constexpr std::array<Theme, 6> kThemes = {{
 
 } // namespace
 
-const std::array<Theme, 6>& theme_table() { return kThemes; }
+const std::array<Theme, 7>& theme_table() { return kThemes; }
 
 bool theme_exists(const QString& name) {
     for (const Theme& theme : kThemes) {
@@ -193,7 +261,11 @@ bool theme_exists(const QString& name) {
 const Theme& theme_for(const QString& name) { return find_theme(name); }
 
 QStringList default_settings_shortcuts() {
-    return {QStringLiteral("Ctrl+,"), QStringLiteral("Meta+,")};
+#ifdef Q_OS_MACOS
+    return {QStringLiteral("Meta+,")};
+#else
+    return {QStringLiteral("Ctrl+Shift+,")};
+#endif
 }
 
 namespace {
@@ -286,23 +358,49 @@ QString KeyMap::default_source_path() {
 }
 
 void KeyMap::apply_defaults() {
+#ifdef Q_OS_MACOS
+    const QString modifier = QStringLiteral("Meta+");
+#else
+    const QString modifier = QStringLiteral("Ctrl+Shift+");
+#endif
+    // Command-W closes the focused agent, as in an IDE. Closing the window is
+    // the window's own control or Quit. Categories answer to both the original
+    // Command-Option-left/right and the vertical Command-Shift-up/down.
     bindings_ = {
-        {QStringLiteral("quit"), {QStringLiteral("Ctrl+Q")}},
-        {QStringLiteral("detachWindow"), {QStringLiteral("Ctrl+W")}},
-        {QStringLiteral("nextCategory"), {QStringLiteral("Ctrl+Tab")}},
-        {QStringLiteral("previousCategory"), {QStringLiteral("Ctrl+Shift+Tab")}},
-        {QStringLiteral("category1"), {QStringLiteral("Ctrl+1")}},
-        {QStringLiteral("category2"), {QStringLiteral("Ctrl+2")}},
-        {QStringLiteral("category3"), {QStringLiteral("Ctrl+3")}},
-        {QStringLiteral("category4"), {QStringLiteral("Ctrl+4")}},
-        {QStringLiteral("nextWindow"), {QStringLiteral("Ctrl+Shift+]")}},
-        {QStringLiteral("previousWindow"), {QStringLiteral("Ctrl+Shift+[")}},
-        {QStringLiteral("focusLeft"), {QStringLiteral("Ctrl+Left")}},
-        {QStringLiteral("focusRight"), {QStringLiteral("Ctrl+Right")}},
-        {QStringLiteral("cycleLayout"), {QStringLiteral("Ctrl+L")}},
+        {QStringLiteral("quit"), {modifier + QStringLiteral("Q")}},
+        {QStringLiteral("closeAgent"), {modifier + QStringLiteral("W")}},
+        {QStringLiteral("nextCategory"),
+         {modifier + QStringLiteral("Alt+Right"), modifier + QStringLiteral("Down")}},
+        {QStringLiteral("previousCategory"),
+         {modifier + QStringLiteral("Alt+Left"), modifier + QStringLiteral("Up")}},
+        {QStringLiteral("category1"), {modifier + QStringLiteral("1")}},
+        {QStringLiteral("category2"), {modifier + QStringLiteral("2")}},
+        {QStringLiteral("category3"), {modifier + QStringLiteral("3")}},
+        {QStringLiteral("category4"), {modifier + QStringLiteral("4")}},
         {QStringLiteral("openSettings"), default_settings_shortcuts()},
-        {QStringLiteral("reloadConfig"), {QStringLiteral("Ctrl+R")}},
+        {QStringLiteral("reloadConfig"), {modifier + QStringLiteral("R")}},
+        {QStringLiteral("newAgent"), {modifier + QStringLiteral("N")}},
+        {QStringLiteral("toggleSidebar"), {modifier + QStringLiteral("B")}},
     };
+#ifdef Q_OS_MACOS
+    bindings_.insert(QStringLiteral("nextCategory"),
+                     {QStringLiteral("Meta+Alt+Right"), QStringLiteral("Meta+Shift+Down")});
+    bindings_.insert(QStringLiteral("previousCategory"),
+                     {QStringLiteral("Meta+Alt+Left"), QStringLiteral("Meta+Shift+Up")});
+    bindings_.insert(QStringLiteral("nextWindow"), {QStringLiteral("Meta+Shift+]")});
+    bindings_.insert(QStringLiteral("previousWindow"), {QStringLiteral("Meta+Shift+[")});
+    bindings_.insert(QStringLiteral("newCategory"), {QStringLiteral("Meta+Shift+N")});
+    bindings_.insert(QStringLiteral("openCommands"), {QStringLiteral("Meta+Shift+P")});
+#else
+    bindings_.insert(QStringLiteral("nextWindow"), {QStringLiteral("Ctrl+Shift+]")});
+    bindings_.insert(QStringLiteral("previousWindow"), {QStringLiteral("Ctrl+Shift+[")});
+    bindings_.insert(QStringLiteral("newCategory"), {QStringLiteral("Ctrl+Shift+Alt+N")});
+    bindings_.insert(QStringLiteral("openCommands"), {QStringLiteral("Ctrl+Shift+P")});
+#endif
+    sidebar_visible_ = true;
+    previews_visible_ = true;
+    terminal_font_family_.clear();
+    terminal_font_size_ = kTerminalFontSizeDefault;
     layout_ = WorkspaceLayout::Focus;
     density_ = CardDensity::Comfortable;
     theme_ = QStringLiteral("lapis");
@@ -352,6 +450,8 @@ bool KeyMap::load() {
         return false;
     }
     const QJsonObject root = document.object();
+    sidebar_visible_ = root.value(QStringLiteral("sidebarVisible")).toBool(true);
+    previews_visible_ = root.value(QStringLiteral("previewsVisible")).toBool(true);
     const QJsonObject keys = root.value(QStringLiteral("keybindings")).toObject();
     int applied = 0;
     for (auto it = keys.begin(); it != keys.end() && applied < kMaximumActions; ++it, ++applied) {
@@ -386,9 +486,44 @@ bool KeyMap::load() {
         diagnostic_ =
             QStringLiteral("Unknown density '%1'; keeping comfortable").arg(requested_density);
 
+    load_terminal_font(root.value(QStringLiteral("terminalFont")));
+
     loaded_ = true;
     emit changed();
     return true;
+}
+
+void KeyMap::load_terminal_font(const QJsonValue& value) {
+    if (value.isUndefined() || value.isNull())
+        return;
+    if (!value.isObject()) {
+        append_diagnostic(&diagnostic_,
+                          QStringLiteral("terminalFont must be an object; using the default"));
+        return;
+    }
+    const QJsonObject font = value.toObject();
+    const QJsonValue family = font.value(QStringLiteral("family"));
+    if (!family.isUndefined() && !family.isNull()) {
+        if (family.isString() && valid_font_family(family.toString()))
+            terminal_font_family_ = family.toString();
+        else
+            append_diagnostic(&diagnostic_,
+                              QStringLiteral("terminalFont.family is not a usable font name; "
+                                             "using the system fixed-width font"));
+    }
+    const QJsonValue size = font.value(QStringLiteral("size"));
+    if (!size.isUndefined() && !size.isNull()) {
+        // toInt() returns the fallback for fractional or non-numeric values.
+        const int pixels = size.toInt(-1);
+        if (size.isDouble() && valid_font_size(pixels))
+            terminal_font_size_ = pixels;
+        else
+            append_diagnostic(&diagnostic_, QStringLiteral("terminalFont.size must be %1–%2 "
+                                                           "pixels; keeping %3")
+                                                .arg(kTerminalFontSizeMinimum)
+                                                .arg(kTerminalFontSizeMaximum)
+                                                .arg(kTerminalFontSizeDefault));
+    }
 }
 
 QString KeyMap::layoutName() const {
@@ -424,6 +559,12 @@ QVariantList KeyMap::themes() const {
             {QStringLiteral("mutedText"), QString::fromLatin1(theme.muted_text)},
             {QStringLiteral("attention"), QString::fromLatin1(theme.attention)},
             {QStringLiteral("attentionText"), QString::fromLatin1(theme.attention_text)},
+            {QStringLiteral("activity"), QString::fromLatin1(theme.activity)},
+            {QStringLiteral("fault"), QString::fromLatin1(theme.fault)},
+            {QStringLiteral("cornerRadius"), theme.corner_radius},
+            {QStringLiteral("motionDuration"), theme.motion_ms},
+            {QStringLiteral("monoChrome"), theme.mono_chrome},
+            {QStringLiteral("headingTracking"), theme.heading_tracking},
         });
     }
     return list;
@@ -507,6 +648,84 @@ bool KeyMap::setDensity(const QString& name) {
     return save();
 }
 
+bool KeyMap::setSidebarVisible(bool visible) {
+    if (sidebar_visible_ == visible)
+        return true;
+    const bool previous = sidebar_visible_;
+    sidebar_visible_ = visible;
+    if (!save()) {
+        sidebar_visible_ = previous;
+        emit changed();
+        return false;
+    }
+    emit changed();
+    return true;
+}
+
+bool KeyMap::setPreviewsVisible(bool visible) {
+    if (previews_visible_ == visible)
+        return true;
+    const bool previous = previews_visible_;
+    previews_visible_ = visible;
+    if (!save()) {
+        previews_visible_ = previous;
+        emit changed();
+        return false;
+    }
+    emit changed();
+    return true;
+}
+
+bool KeyMap::setTerminalFontFamily(const QString& family) {
+    const QString requested = family.trimmed();
+    if (!valid_font_family(requested)) {
+        diagnostic_ = QStringLiteral("Font family is not a usable name");
+        emit changed();
+        return false;
+    }
+    if (requested == terminal_font_family_)
+        return true;
+    const QString previous = terminal_font_family_;
+    terminal_font_family_ = requested;
+    if (!save_without_tentative_change()) {
+        terminal_font_family_ = previous;
+        emit changed();
+        return false;
+    }
+    qInfo().noquote() << "lapis terminal font:"
+                      << (requested.isEmpty() ? QStringLiteral("system default") : requested);
+    emit changed();
+    return true;
+}
+
+bool KeyMap::setTerminalFontSize(int pixels) {
+    if (!valid_font_size(pixels)) {
+        diagnostic_ = QStringLiteral("Font size must be %1–%2 pixels")
+                          .arg(kTerminalFontSizeMinimum)
+                          .arg(kTerminalFontSizeMaximum);
+        emit changed();
+        return false;
+    }
+    if (pixels == terminal_font_size_)
+        return true;
+    const int previous = terminal_font_size_;
+    terminal_font_size_ = pixels;
+    if (!save_without_tentative_change()) {
+        terminal_font_size_ = previous;
+        emit changed();
+        return false;
+    }
+    emit changed();
+    return true;
+}
+
+// Observers must not apply a value that is about to be rolled back: a font
+// change resizes the live terminal, so the caller emits once with the outcome.
+bool KeyMap::save_without_tentative_change() {
+    const QSignalBlocker blocker(this);
+    return persist();
+}
+
 bool KeyMap::save() { return persist(); }
 
 bool KeyMap::persist() {
@@ -542,6 +761,16 @@ bool KeyMap::persist() {
     root.insert(QStringLiteral("layout"), layoutName());
     root.insert(QStringLiteral("theme"), theme_);
     root.insert(QStringLiteral("density"), densityName());
+    root.insert(QStringLiteral("sidebarVisible"), sidebar_visible_);
+    root.insert(QStringLiteral("previewsVisible"), previews_visible_);
+    // Merge into any existing object so unrelated hand-written keys survive.
+    QJsonObject font = root.value(QStringLiteral("terminalFont")).toObject();
+    font.insert(QStringLiteral("size"), terminal_font_size_);
+    if (terminal_font_family_.isEmpty())
+        font.remove(QStringLiteral("family"));
+    else
+        font.insert(QStringLiteral("family"), terminal_font_family_);
+    root.insert(QStringLiteral("terminalFont"), font);
     if (!root.contains(QStringLiteral("version")))
         root.insert(QStringLiteral("version"), 1);
     QByteArray contents = format_config(root) + '\n';

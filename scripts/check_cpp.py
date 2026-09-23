@@ -174,6 +174,8 @@ def main():
         args.mode,
         f"-DCMAKE_CXX_COMPILER={tools['clang++']}",
     ]
+    if prefix := os.environ.get("LAPIS_GHOSTTY_PREFIX"):
+        configure.append(f"-DLAPIS_GHOSTTY_PREFIX={prefix}")
     if shutil.which("ccache"):
         configure.append(f"-DCMAKE_CXX_COMPILER_LAUNCHER={shutil.which('ccache')}")
     if sys.platform == "darwin":

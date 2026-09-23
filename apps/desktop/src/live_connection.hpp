@@ -12,11 +12,8 @@ class LiveConnection final : public QObject {
   public:
     LiveConnection(SessionPreview& document, QString endpoint, const session::LaunchSpec& launch,
                    session::wire::AttachMode mode);
-    LiveConnection(SessionPreview& document, const WorkspaceEntry& entry);
     ~LiveConnection() override;
     void begin(session::wire::AttachMode mode);
-    [[nodiscard]] bool reconnectOnly() const { return reconnect_only_; }
-    [[nodiscard]] std::optional<WorkspaceEntry> reconnectEntry() const { return verified_entry_; }
     bool send(session::wire::Kind kind, const QByteArray& payload);
     void resize(session::TerminalSize size);
     void setWantedSize(session::TerminalSize size);
@@ -37,7 +34,6 @@ class LiveConnection final : public QObject {
     void invalidateHistory();
     void persistIdentity();
     void finishSynchronization();
-    void initialize(int synchronization_timeout, session::wire::AttachMode mode);
     void report(const QString& message);
     void fail(const QString& message,
               session::wire::StatusCode code = session::wire::StatusCode::rejected);
@@ -45,9 +41,6 @@ class LiveConnection final : public QObject {
     QString endpoint_;
     QStringList service_arguments_;
     QByteArray fingerprint_;
-    std::optional<session::wire::SessionIdentity> expected_identity_;
-    std::optional<WorkspaceEntry> verified_entry_;
-    session::AgentMode agent_{session::AgentMode::terminal};
     std::unique_ptr<QLocalSocket> socket_;
     std::unique_ptr<QFutureWatcher<QString>> descriptor_write_;
     QTimer retry_;
@@ -67,7 +60,6 @@ class LiveConnection final : public QObject {
     bool failed_{true};
     session::TerminalSize wanted_size_{100, 30};
     bool wanted_size_requested_{};
-    bool reconnect_only_{};
 };
 } // namespace lapis::desktop
 #endif

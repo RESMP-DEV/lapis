@@ -49,7 +49,7 @@ std::optional<RequestId> request_id(const QJsonValue& value) {
 }
 QJsonValue json_id(const RequestId& id) {
     if (const auto* number = std::get_if<std::int64_t>(&id))
-        return QJsonValue(*number);
+        return QJsonValue(static_cast<qint64>(*number));
     return QString::fromStdString(std::get<std::string>(id));
 }
 QByteArray json(const QJsonObject& value) {
@@ -185,7 +185,7 @@ class Observer::Impl final : public QObject {
         requests_.clear();
         retired_.clear();
         pending_details_bytes_ = 0;
-        if (hash != Observer::qualifiedBinarySha256()) {
+        if (!Observer::qualifiedBinarySha256s().contains(hash)) {
             unsupported_source_ = true;
             diagnostic_ = "Unsupported Codex binary hash";
             emit owner_.changed();
@@ -654,9 +654,12 @@ Observer::Observer(attention::State& state, QObject* parent)
 Observer::~Observer() = default;
 // Updating this pin requires the live requalification procedure in
 // adapters/codex/README.md; a version string alone is insufficient.
-QString Observer::qualifiedBinarySha256() {
-    return QStringLiteral("81f1d50b0153837534552c7033f203c99a34d2e1fb3fdadc4ec6002fd834180c");
+QStringList Observer::qualifiedBinarySha256s() {
+    // Codex 0.155.1 standalone builds, each qualified live on the machine that ran it.
+    return {QStringLiteral("81f1d50b0153837534552c7033f203c99a34d2e1fb3fdadc4ec6002fd834180c"),
+            QStringLiteral("8eaf1ad12fe6bf89b1710330f58900014322c7c5af677e43be116d8ac5fc0a9e")};
 }
+QString Observer::qualifiedBinarySha256() { return qualifiedBinarySha256s().front(); }
 void Observer::start(const QString& socket, const QString& hash) { impl_->start(socket, hash); }
 void Observer::reconnect() { impl_->reconnect(); }
 void Observer::stop() { impl_->stop(); }

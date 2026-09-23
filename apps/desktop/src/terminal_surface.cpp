@@ -1,4 +1,5 @@
 #include "terminal_surface.hpp"
+#include <QScopeGuard>
 
 #include <QClipboard>
 #include <QFontDatabase>
@@ -17,16 +18,18 @@
 #include <cmath>
 #include <memory>
 
-#include <QUuid>
-
 namespace lapis::desktop {
 namespace {
 
 QColor color(std::uint32_t rgb) { return QColor::fromRgb(rgb | 0xff000000U); }
 
-QFont terminal_font() {
+// An empty family keeps the platform's fixed-width system font. Callers pass
+// only families already resolved as installed and fixed-pitch on the GUI thread.
+QFont terminal_font(const QString& family, int pixel_size) {
     QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    font.setPixelSize(16);
+    if (!family.isEmpty())
+        font.setFamily(family);
+    font.setPixelSize(pixel_size);
     font.setStyleHint(QFont::Monospace);
     return font;
 }
@@ -361,6 +364,9 @@ class TerminalNode final : public QSGTransformNode {
     QSGSimpleRectNode* background{};
     QSGNode* rows{};
     QSGNode* overlays{};
+    // Rows are laid out for one font; a different font rebuilds every row.
+    QString font_family;
+    int font_pixel_size{};
 
     TerminalNode() {
         auto background_node = std::make_unique<QSGSimpleRectNode>();
@@ -420,6 +426,10 @@ struct TerminalSurface::RenderState {
     std::shared_ptr<const session::TerminalSnapshot> snapshot;
     QString preedit;
     QSizeF viewport;
+    // Plain values: the render thread builds its own QFont from them.
+    QString font_family;
+    int font_pixel_size{};
+    qreal minimum_scale{};
 };
 
 void TerminalSurface::publishFrame(bool snapshot_changed) {
@@ -428,6 +438,9 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
     auto frame = std::make_shared<RenderState>();
     frame->preedit = preedit_;
     frame->viewport = size();
+    frame->font_family = use_system_font_ ? QString() : resolved_font_family_;
+    frame->font_pixel_size = font_pixel_size_;
+    frame->minimum_scale = minimum_scale_;
     {
         const std::lock_guard lock(render_mutex_);
         if (!snapshot_changed && render_state_)
@@ -448,13 +461,6 @@ void TerminalSurface::updateInputContext(Qt::InputMethodQueries queries) {
             method->update(queries);
 }
 
-void TerminalSurface::updateInteractionBlock() {
-    if (!focus_workspace_)
-        return;
-    focus_workspace_->setInteractionBlocked(
-        interaction_reason_, composition_state_ == CompositionState::active || paste_in_progress_);
-}
-
 void TerminalSurface::resetInputContext() {
     if (resetting_input_)
         return;
@@ -462,7 +468,7 @@ void TerminalSurface::resetInputContext() {
     if (composition_state_ == CompositionState::active)
         composition_state_ = CompositionState::stale;
     preedit_.clear();
-    updateInteractionBlock();
+    emit inputOwnershipChanged();
     if (qApp && qApp->focusObject() == this)
         qApp->inputMethod()->reset();
     resetting_input_ = false;
@@ -475,22 +481,15 @@ bool TerminalSurface::acceptsTerminalInput() const {
            document_->inputReady() && hasActiveFocus() && window() && window()->isActive();
 }
 
-TerminalSurface::TerminalSurface(QQuickItem* parent) : QQuickItem(parent) {
+TerminalSurface::TerminalSurface(QQuickItem* parent)
+    : QQuickItem(parent),
+      resolved_font_family_(QFontDatabase::systemFont(QFontDatabase::FixedFont).family()) {
     setFlag(ItemHasContents);
     setClip(true);
-    preview_update_.setSingleShot(true);
-    preview_update_.setInterval(100); // Visible noninteractive previews are capped at 10 Hz.
-    connect(&preview_update_, &QTimer::timeout, this, [this] {
-        if (isVisible())
-            publishFrame(true);
-    });
-    connect(this, &QQuickItem::visibleChanged, this, [this] {
-        preview_update_.stop();
-        if (isVisible())
-            publishFrame(true);
-    });
     window_changed_connection_ =
         connect(this, &QQuickItem::windowChanged, this, &TerminalSurface::bindWindow);
+    throttle_.setSingleShot(true);
+    connect(&throttle_, &QTimer::timeout, this, [this] { publishFrame(true); });
     bindWindow(window());
     publishFrame(true);
 }
@@ -512,7 +511,6 @@ void TerminalSurface::bindWindow(QQuickWindow* current) {
 TerminalSurface::~TerminalSurface() {
     disconnect(window_changed_connection_);
     disconnect(window_active_connection_);
-    setFocusWorkspace(nullptr);
     const std::lock_guard lock(render_mutex_);
     render_state_.reset();
 }
@@ -525,12 +523,13 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     document_ = document;
     if (document_) {
         connect(document_, &SessionPreview::snapshotChanged, this, [this] {
-            if (isVisible()) {
-                if (interactive_)
-                    publishFrame(true);
-                else if (!preview_update_.isActive())
-                    preview_update_.start();
+            if (frame_interval_ > 0) {
+                // The first change opens the window; later ones share its frame.
+                if (!throttle_.isActive())
+                    throttle_.start(frame_interval_);
+                return;
             }
+            publishFrame(true);
             updateInputContext(Qt::ImCursorRectangle);
         });
         connect(document_, &SessionPreview::connectionChanged, this, [this] {
@@ -578,13 +577,19 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
         return nullptr;
     }
     const auto& snapshot = *frame->snapshot;
-    const QFont font = terminal_font();
+    const QFont font = terminal_font(frame->font_family, frame->font_pixel_size);
     const QFontMetricsF metrics(font);
     const qreal cell_width = metrics.horizontalAdvance(QLatin1Char('M'));
     const qreal row_height = metrics.height() + 3;
     auto* root = static_cast<TerminalNode*>(old_node);
     if (!root)
         root = new TerminalNode(); // Qt takes ownership of the returned root.
+    if (root->font_family != frame->font_family ||
+        root->font_pixel_size != frame->font_pixel_size) {
+        root->font_family = frame->font_family;
+        root->font_pixel_size = frame->font_pixel_size;
+        root->snapshot.reset(); // Forces updateRows to discard every cached row.
+    }
     root->background->setRect(
         QRectF(0, 0, snapshot.size.columns * cell_width, snapshot.size.rows * row_height));
     root->background->setColor(color(snapshot.background_rgb));
@@ -610,9 +615,21 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
             &layout);
         root->overlays->appendChildNode(composition.release());
     }
-    const qreal scale = std::min(frame->viewport.width() / (snapshot.size.columns * cell_width),
-                                 frame->viewport.height() / (snapshot.size.rows * row_height));
+    qreal scale = std::min(frame->viewport.width() / (snapshot.size.columns * cell_width),
+                           frame->viewport.height() / (snapshot.size.rows * row_height));
     QMatrix4x4 matrix;
+    if (frame->minimum_scale > 0 && scale < frame->minimum_scale) {
+        // Keep the rows up to the cursor readable, where agent TUIs keep
+        // their prompt and latest output; the item clips the rest.
+        scale = frame->minimum_scale;
+        const auto rows = static_cast<qreal>(snapshot.size.rows);
+        const qreal visible_rows = frame->viewport.height() / (row_height * scale);
+        const qreal last_row = snapshot.cursor.visible && snapshot.cursor.in_viewport
+                                   ? std::min(rows, static_cast<qreal>(snapshot.cursor.row) + 3)
+                                   : rows;
+        const qreal first_row = std::max(0.0, std::floor(last_row - visible_rows));
+        matrix.translate(0, static_cast<float>(-first_row * row_height * scale));
+    }
     matrix.scale(static_cast<float>(scale));
     root->setMatrix(matrix);
     return root;
@@ -622,8 +639,6 @@ void TerminalSurface::setInteractive(bool enabled) {
     if (interactive_ == enabled)
         return;
     interactive_ = enabled;
-    preview_update_.stop();
-    publishFrame(true);
     if (!enabled) {
         ++ime_epoch_;
         resetInputContext();
@@ -636,16 +651,25 @@ void TerminalSurface::setInteractive(bool enabled) {
     emit interactiveChanged();
 }
 
-void TerminalSurface::setFocusWorkspace(Workspace* workspace) {
-    if (focus_workspace_ == workspace)
+void TerminalSurface::setFrameInterval(int milliseconds) {
+    const int bounded = std::clamp(milliseconds, 0, 5000);
+    if (frame_interval_ == bounded)
         return;
-    if (focus_workspace_)
-        focus_workspace_->setInteractionBlocked(interaction_reason_, false);
-    focus_workspace_ = workspace;
-    interaction_reason_ = QStringLiteral("terminal-") + QUuid::createUuid().toString(QUuid::Id128);
-    if (focus_workspace_)
-        updateInteractionBlock();
-    emit focusWorkspaceChanged();
+    frame_interval_ = bounded;
+    if (frame_interval_ == 0 && throttle_.isActive()) {
+        throttle_.stop();
+        publishFrame(true);
+    }
+    emit frameIntervalChanged();
+}
+
+void TerminalSurface::setMinimumScale(qreal scale) {
+    const qreal bounded = std::clamp(scale, 0.0, 1.0);
+    if (qFuzzyCompare(minimum_scale_ + 1, bounded + 1))
+        return;
+    minimum_scale_ = bounded;
+    publishFrame(false);
+    emit minimumScaleChanged();
 }
 
 void TerminalSurface::focusInEvent(QFocusEvent* event) {
@@ -662,15 +686,54 @@ void TerminalSurface::focusOutEvent(QFocusEvent* event) {
     ++ime_epoch_;
     resetInputContext();
 }
-void TerminalSurface::requestResize() {
-    if (!interactive_ || !document_ || !document_->live() || width() <= 0 || height() <= 0)
+QFont TerminalSurface::cellFont() const {
+    return terminal_font(use_system_font_ ? QString() : resolved_font_family_, font_pixel_size_);
+}
+
+void TerminalSurface::setFontFamily(const QString& family) {
+    if (font_family_ == family)
         return;
-    const QFontMetricsF metrics(terminal_font());
-    const auto columns = static_cast<std::uint16_t>(
-        std::clamp(width() / metrics.horizontalAdvance(QLatin1Char('M')), 2.0, 300.0));
-    const auto rows =
-        static_cast<std::uint16_t>(std::clamp(height() / (metrics.height() + 3), 2.0, 100.0));
-    document_->resizeTerminal({columns, rows});
+    font_family_ = family;
+    applyFont();
+}
+
+void TerminalSurface::setFontPixelSize(int pixels) {
+    const int bounded = std::clamp(pixels, kTerminalFontSizeMinimum, kTerminalFontSizeMaximum);
+    if (font_pixel_size_ == bounded)
+        return;
+    font_pixel_size_ = bounded;
+    applyFont();
+}
+
+// Resolve on the GUI thread, then commit the new cell grid as one resize.
+void TerminalSurface::applyFont() {
+    const bool usable = !font_family_.isEmpty() && QFontDatabase::hasFamily(font_family_) &&
+                        QFontDatabase::isFixedPitch(font_family_);
+    use_system_font_ = !usable;
+    resolved_font_family_ =
+        usable ? font_family_ : QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    emit fontChanged();
+    requestResize();
+    publishFrame(false);
+    updateInputContext(Qt::ImCursorRectangle);
+}
+
+void TerminalSurface::requestResize() {
+    QSize grid;
+    if (width() > 0 && height() > 0) {
+        const QFontMetricsF metrics(cellFont());
+        grid = QSize(static_cast<int>(std::clamp(
+                         width() / metrics.horizontalAdvance(QLatin1Char('M')), 2.0, 300.0)),
+                     static_cast<int>(std::clamp(height() / (metrics.height() + 3), 2.0, 100.0)));
+    }
+    if (grid != grid_size_) {
+        grid_size_ = grid;
+        emit gridSizeChanged();
+    }
+    if (!interactive_ || !document_ || !document_->live() || grid.isEmpty())
+        return;
+    document_->resizeTerminal(
+        {static_cast<std::uint16_t>(grid.width()), static_cast<std::uint16_t>(grid.height())});
 }
 void TerminalSurface::mousePressEvent(QMouseEvent* event) {
     if (interactive_) {
@@ -722,17 +785,18 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
     if (composition_state_ == CompositionState::stale)
         composition_state_ = CompositionState::idle;
     if (event->matches(QKeySequence::Paste)) {
+        pasting_ = true;
+        emit inputOwnershipChanged();
+        const auto release_paste = qScopeGuard([this] {
+            pasting_ = false;
+            emit inputOwnershipChanged();
+        });
         const auto owner = document_;
         const QString text = QGuiApplication::clipboard()->text();
-        paste_in_progress_ = true;
-        updateInteractionBlock();
         ++ime_epoch_;
         resetInputContext();
-        if (document_ == owner && acceptsTerminalInput()) {
+        if (document_ == owner && acceptsTerminalInput())
             document_->sendText(text.toUtf8(), true);
-        }
-        paste_in_progress_ = false;
-        updateInteractionBlock();
         event->accept();
         return;
     }
@@ -841,7 +905,6 @@ void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
     }
     if (!event->preeditString().isEmpty())
         composition_state_ = CompositionState::active;
-    updateInteractionBlock();
     if (!event->commitString().isEmpty()) {
         if (composition_state_ == CompositionState::stale) {
             event->ignore();
@@ -854,13 +917,13 @@ void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
         return;
     }
     preedit_ = event->preeditString();
+    emit inputOwnershipChanged();
     if (!preedit_.isEmpty())
         composition_state_ = CompositionState::active;
     else if (!event->commitString().isEmpty())
         composition_state_ = CompositionState::idle;
     else if (composition_state_ == CompositionState::active)
         composition_state_ = CompositionState::stale;
-    updateInteractionBlock();
     publishFrame(false);
     updateInputContext(Qt::ImCursorRectangle);
     event->accept();
@@ -869,7 +932,7 @@ QVariant TerminalSurface::inputMethodQuery(Qt::InputMethodQuery query) const {
     if (query == Qt::ImEnabled)
         return acceptsTerminalInput();
     if (query == Qt::ImCursorRectangle && document_) {
-        const QFontMetricsF metrics(terminal_font());
+        const QFontMetricsF metrics(cellFont());
         const auto& snapshot = document_->snapshot();
         if (!snapshot.cursor.in_viewport)
             return QRectF();

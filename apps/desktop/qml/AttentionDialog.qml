@@ -6,6 +6,7 @@ Dialog {
     id: dialog
     objectName: "attentionDialog"
     property var session: null
+    property string monoFamily: "monospace"
     // Freeze the selected form while the user types. Incoming snapshots may
     // invalidate its token, but must never replace a draft or an IME composition.
     property var draft: null
@@ -254,7 +255,7 @@ Dialog {
                     Layout.fillWidth: true
                     text: dialog.draft ? (dialog.draft.details.command || "") : ""
                     visible: text.length > 0
-                    font.family: "monospace"
+                    font.family: dialog.monoFamily
                     textFormat: Text.PlainText
                     wrapMode: Text.WrapAnywhere
                 }
@@ -262,6 +263,7 @@ Dialog {
                     Layout.fillWidth: true
                     text: dialog.draft ? (dialog.draft.details.cwd || "") : ""
                     visible: text.length > 0
+                    font.family: dialog.monoFamily
                     textFormat: Text.PlainText
                     wrapMode: Text.WrapAnywhere
                 }

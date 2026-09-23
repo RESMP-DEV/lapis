@@ -174,22 +174,6 @@ void composition(lapis::desktop::TerminalSurface& surface, QStringView preedit,
     event.setCommitString(commit, replace, replace == 0 ? 0 : 1);
     QCoreApplication::sendEvent(&surface, &event);
 }
-void check_surface_blockers(lapis::desktop::TerminalSurface& occupied,
-                            lapis::desktop::TerminalSurface& other, Peer& peer) {
-    lapis::desktop::Workspace workspace(lapis::desktop::WorkspaceMode::preview);
-    occupied.setFocusWorkspace(&workspace);
-    other.setFocusWorkspace(&workspace);
-    composition(occupied, QStringLiteral("blocked"));
-    workspace.setFocusedIndex(1);
-    require(workspace.focusedIndex() == 0, "Composition did not defer switching");
-    // Clearing an unrelated surface must not release the occupied surface's guard.
-    other.setFocusWorkspace(nullptr);
-    require(workspace.focusedIndex() == 0, "Other surface released composition ownership");
-    composition(occupied, {}, QStringLiteral("G"));
-    require(text_frames(peer, 1) == QByteArray("G"), "Composition committed to wrong source");
-    until([&] { return workspace.focusedIndex() == 1; });
-    occupied.setFocusWorkspace(nullptr);
-}
 void input_contract(bool background) {
     Fixture f;
     QQuickWindow window;
@@ -198,12 +182,9 @@ void input_contract(bool background) {
             "Input test selected the wrong rendering backend");
     window.setGeometry(100, 100, 640, 360);
     lapis::desktop::TerminalSurface surface(window.contentItem());
-    lapis::desktop::TerminalSurface other_surface(window.contentItem());
     surface.setSize(QSizeF(640, 360));
     surface.setDocument(&f.document);
     surface.setInteractive(true);
-    other_surface.setDocument(&f.document);
-    other_surface.setInteractive(false);
     f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
     auto peer = f.accept();
     static_cast<void>(f.request(peer));
@@ -220,7 +201,6 @@ void input_contract(bool background) {
         return window.isActive() && surface.hasActiveFocus();
     });
     static_cast<void>(text_frames(peer));
-    check_surface_blockers(surface, other_surface, peer);
     require(surface.inputMethodQuery(Qt::ImEnabled).toBool(), "Ready terminal disabled IME");
     const auto original = surface.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
     require(!original.isEmpty(), "IME candidate rectangle missing");

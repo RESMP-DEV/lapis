@@ -19,14 +19,13 @@
 namespace {
 void add_options(QCommandLineParser& parser) {
     parser.addHelpOption();
-    parser.addOption({QStringLiteral("workspace"),
-                      QStringLiteral("Open a retained multi-session workspace"),
-                      QStringLiteral("path")});
+    parser.addOption({QStringLiteral("development-shell"),
+                      QStringLiteral("Enable an explicit terminal qualification session")});
     parser.addOption(
         {QStringLiteral("codex"),
          QStringLiteral("Use managed Codex attention (requires an explicit Codex executable)")});
     parser.addOption({QStringLiteral("claude"),
-                      QStringLiteral("Use Claude Code terminal attention (requires an explicit "
+                      QStringLiteral("Use Claude Code hook attention (requires an explicit "
                                      "Claude executable)")});
     parser.addOption({QStringLiteral("new-session"),
                       QStringLiteral("Explicitly start a new session on an unused endpoint")});
@@ -79,8 +78,8 @@ bool valid_connection_options(const QCommandLineParser& parser) {
         return false;
     }
     if ((codex || claude) && parser.positionalArguments().isEmpty()) {
-        qCritical().noquote() << (codex ? "--codex requires a Codex executable after --"
-                                        : "--claude requires a Claude executable after --");
+        qCritical(codex ? "--codex requires a Codex executable after --"
+                        : "--claude requires a Claude executable after --");
         return false;
     }
     const bool create = parser.isSet(QStringLiteral("new-session"));
@@ -95,31 +94,34 @@ bool valid_connection_options(const QCommandLineParser& parser) {
     }
     return true;
 }
-bool valid_workspace_options(const QCommandLineParser& parser) {
-    const bool preview = parser.isSet(QStringLiteral("ui-preview"));
-    const bool agent =
-        parser.isSet(QStringLiteral("codex")) || parser.isSet(QStringLiteral("claude"));
-    if (preview && agent) {
-        qCritical("%s cannot be combined with --ui-preview",
-                  parser.isSet(QStringLiteral("codex")) ? "--codex" : "--claude");
-        return false;
-    }
-    if (parser.isSet(QStringLiteral("workspace")) &&
-        (preview || parser.value(QStringLiteral("workspace")).isEmpty() ||
-         parser.isSet(QStringLiteral("socket")) || parser.isSet(QStringLiteral("cwd")) ||
-         parser.isSet(QStringLiteral("new-session")) || parser.isSet(QStringLiteral("discover")) ||
-         agent || parser.isSet(QStringLiteral("smoke-input")) ||
-         !parser.positionalArguments().isEmpty())) {
-        qCritical("--workspace requires a path and cannot be combined with explicit session or "
-                  "preview options");
+bool valid_agent_launch(const QCommandLineParser& parser, bool preview) {
+    if (!preview && !parser.isSet(QStringLiteral("codex")) &&
+        !parser.isSet(QStringLiteral("claude")) &&
+        !parser.isSet(QStringLiteral("development-shell")) &&
+        !parser.isSet(QStringLiteral("smoke-input")) &&
+        (!parser.positionalArguments().isEmpty() || parser.isSet(QStringLiteral("socket")) ||
+         parser.isSet(QStringLiteral("cwd")))) {
+        qCritical("Agent workspaces do not launch shells; use --codex, --claude or "
+                  "--development-shell for qualification");
         return false;
     }
     return true;
 }
+// Managed agents need a live service; the isolated preview has none.
+bool valid_preview_agent(const QCommandLineParser& parser, bool preview) {
+    if (!preview)
+        return true;
+    for (const auto* option : {"codex", "claude"})
+        if (parser.isSet(QString::fromLatin1(option))) {
+            qCritical("--%s cannot be combined with --ui-preview", option);
+            return false;
+        }
+    return true;
+}
 bool valid_options(const QCommandLineParser& parser) {
-    if (!valid_workspace_options(parser))
-        return false;
     const bool preview = parser.isSet(QStringLiteral("ui-preview"));
+    if (!valid_preview_agent(parser, preview) || !valid_agent_launch(parser, preview))
+        return false;
     const bool explicit_launch =
         !parser.positionalArguments().isEmpty() || parser.isSet(QStringLiteral("cwd"));
     if (parser.isSet(QStringLiteral("socket")) &&
@@ -172,11 +174,6 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
                                                    bool isolated) {
     lapis::desktop::WorkspaceOptions options;
     if (!isolated) {
-        if (parser.isSet(QStringLiteral("workspace"))) {
-            options.manifest =
-                QFileInfo(parser.value(QStringLiteral("workspace"))).absoluteFilePath();
-            return options;
-        }
         if (parser.isSet(QStringLiteral("new-session")))
             options.mode = lapis::session::wire::AttachMode::create;
         else if (parser.isSet(QStringLiteral("discover")))
@@ -196,8 +193,11 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
                              ? lapis::session::AgentMode::claude
                              : lapis::session::AgentMode::terminal,
             };
-        } else if (parser.isSet(QStringLiteral("cwd"))) {
-            options.launch = lapis::session::shell_launch(parser.value(QStringLiteral("cwd")));
+        } else if (parser.isSet(QStringLiteral("development-shell")) ||
+                   parser.isSet(QStringLiteral("smoke-input"))) {
+            options.launch = lapis::session::shell_launch(
+                parser.isSet(QStringLiteral("cwd")) ? parser.value(QStringLiteral("cwd"))
+                                                    : QString::fromUtf8(LAPIS_PROJECT_ROOT));
         }
     }
     return options;
@@ -207,6 +207,10 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
 // UiPreview creates. Lives outside main() to keep main's branching flat.
 void wire_window(QQuickWindow& window, lapis::desktop::UiPreview& view,
                  lapis::desktop::Workspace& workspace, const QCommandLineParser& parser) {
+    QObject::connect(&window, &QQuickWindow::activeChanged, &view, [&view, &window] {
+        if (window.isActive())
+            view.assignTerminalFocus();
+    });
     if (parser.isSet(QStringLiteral("capture")))
         capture_window(window, workspace, view,
                        {.image_path = parser.value(QStringLiteral("capture")),
@@ -266,7 +270,10 @@ int main(int argc, char** argv) {
                                    .screen = parser.isSet(QStringLiteral("screen"))
                                                  ? parser.value(QStringLiteral("screen"))
                                                  : qEnvironmentVariable("LAPIS_SCREEN"),
-                                   .keymap = &keymap});
+                                   .keymap = &keymap,
+                                   .persistGeometry = !isolated && !options.launch &&
+                                                      options.endpoint.isEmpty() &&
+                                                      !parser.isSet(QStringLiteral("capture"))});
         view.setSystemReducedMotion(system_reduced_motion());
         view.setReducedMotion(parser.isSet(QStringLiteral("reduced-motion")));
         QObject::connect(&app, &QGuiApplication::applicationStateChanged, &view,
@@ -276,6 +283,10 @@ int main(int argc, char** argv) {
                          });
         QObject::connect(&view, &UiPreview::windowChanged, &view, [&](QQuickWindow* window) {
             wire_window(*window, view, workspace, parser);
+            const auto update_chrome = [window] { style_window_chrome(*window); };
+            QObject::connect(window, &QQuickWindow::colorChanged, window, update_chrome);
+            QObject::connect(window, &QWindow::visibilityChanged, window, update_chrome);
+            update_chrome();
         });
         if (!view.load())
             return 1;
