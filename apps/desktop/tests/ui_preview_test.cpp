@@ -2,6 +2,7 @@
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include "ui_preview.hpp"
+#include <QAccessible>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QQmlEngine>
@@ -1452,6 +1453,19 @@ int run_strip_ui_tests() {
     CHECK(!item(QStringLiteral("categoryUnseen_") + other)->isVisible());
     CHECK(workspace.selectCategory(QStringLiteral("general")));
     pump(30);
+    // Assistive activation of a card selects its agent, as a click does.
+    {
+        const auto target = focused_id(workspace) == QStringLiteral("renderer")
+                                ? QStringLiteral("agent")
+                                : QStringLiteral("renderer");
+        reveal_card(*window, workspace, target);
+        auto* face =
+            QAccessible::queryAccessibleInterface(item(QStringLiteral("agentTab_") + target));
+        CHECK(face != nullptr && face->actionInterface() != nullptr);
+        face->actionInterface()->doAction(QAccessibleActionInterface::pressAction());
+        pump(30);
+        CHECK(focused_id(workspace) == target);
+    }
 
     // Short windows keep the strip with shorter cards.
     window->resize(640, 480);

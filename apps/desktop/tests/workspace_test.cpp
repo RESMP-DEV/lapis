@@ -409,6 +409,17 @@ void truthfulStatus() {
     first.applyAttention(fresh);
     require(first.statusLabel() == QStringLiteral("Awaiting first prompt"),
             "a new Codex session without a thread is not a pending status");
+    lapis::session::wire::AttentionSnapshot idle;
+    idle.available = idle.connected = idle.ready = true;
+    idle.activity = lapis::session::attention::Activity::turn_completed;
+    lapis::session::wire::AttentionItem notice;
+    notice.pending.request.id = std::string("idle:prompt");
+    notice.pending.request.reason = "idle";
+    idle.requests.push_back(notice);
+    lapis::desktop::SessionPreview claude(QStringLiteral("Claude"), {}, {}, QColor{}, "");
+    claude.applyAttention(idle);
+    require(claude.attentionCount() == 0 && claude.statusKind() == QStringLiteral("finished"),
+            "an idle notice after a finished turn is not a pending request");
     fresh.diagnostic = QStringLiteral("Reconciling Codex requests");
     first.applyAttention(fresh);
     require(first.statusLabel() == QStringLiteral("Status pending"),

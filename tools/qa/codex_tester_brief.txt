@@ -18,7 +18,8 @@ come from the fake model, stop sending prompts immediately and report it. The fa
 model reacts to words in your prompt:
 - "slow": works for about 25 seconds, then finishes.
 - "approve" or "run": asks permission to run a harmless command (touch a file).
-- "ask" or "question": Codex asks a multiple-choice question.
+- "ask" or "question": Codex asks a multiple-choice question (only in Codex's Plan
+  mode; outside it Codex rejects the question tool and the turn just finishes).
 - "flood": prints hundreds of lines.
 - "fail": the model returns an error.
 - anything else: a short reply after a second.

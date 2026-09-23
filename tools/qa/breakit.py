@@ -546,6 +546,76 @@ class Run:
         time.sleep(3.0)
         return {"gui_may_exit": True, "screenshot": self.shot("restored-after-quit")}
 
+    def usage(self):
+        """Resident memory (KiB) and CPU percent of the GUI and all services."""
+        rows = {row["pid"] for row in self.services()}
+        pids = [self.gui.pid] + sorted(rows)
+        result = subprocess.run(
+            ["ps", "-o", "pid=,rss=,pcpu=", "-p", ",".join(map(str, pids))],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        gui = {"rss": 0, "cpu": 0.0}
+        services = {"rss": 0, "cpu": 0.0, "count": 0}
+        for line in result.stdout.splitlines():
+            pid, rss, cpu = line.split()
+            target = gui if int(pid) == self.gui.pid else services
+            target["rss"] += int(rss)
+            target["cpu"] += float(cpu)
+            if target is services:
+                services["count"] += 1
+        return gui, services
+
+    def soak(self, minutes, agents=32, categories=4):
+        """Many bursting agents across categories, sampled over time."""
+        names = [name for name in FAKE_NAMES]
+        per_category = agents // categories
+        for category in range(categories):
+            if category:
+                self.new_category(f"Soak {category + 1}")
+            for index in range(per_category):
+                self.new_agent(names[(category + index) % len(names)])
+        created = time.monotonic()
+        samples = []
+        shots = [self.shot("soak-start")]
+        deadline = created + minutes * 60
+        step = 0
+        while time.monotonic() < deadline:
+            step += 1
+            # Walk the agents and categories the way a supervisor would.
+            for _ in range(3):
+                self.next_agent()
+            if step % 4 == 0:
+                self.keys.combo("ctrl+shift+Down", 0.3)
+            gui, services = self.usage()
+            samples.append(
+                {
+                    "seconds": round(time.monotonic() - created),
+                    "gui_rss_kib": gui["rss"],
+                    "gui_cpu": gui["cpu"],
+                    "services": services["count"],
+                    "services_rss_kib": services["rss"],
+                    "services_cpu": services["cpu"],
+                    "agents": len(self.fake_agents()),
+                }
+            )
+            if step % 20 == 0:
+                shots.append(self.shot(f"soak-{step}"))
+            if not self.gui_alive():
+                raise Failure("GUI exited during soak")
+            time.sleep(15)
+        first, last = samples[0], samples[-1]
+        return {
+            "agents": agents,
+            "minutes": minutes,
+            "samples": samples,
+            "gui_rss_growth_kib": last["gui_rss_kib"] - first["gui_rss_kib"],
+            "services_rss_growth_kib": last["services_rss_kib"]
+            - first["services_rss_kib"],
+            "screenshots": shots,
+        }
+
     def cleanup(self):
         if self.config is not None:
             CONFIG.write_bytes(self.config)
@@ -574,6 +644,9 @@ def main():
         "--keep", action="store_true", help="reuse an existing QA runtime"
     )
     parser.add_argument("--only", nargs="*", help="scenario names to run")
+    parser.add_argument(
+        "--soak", type=float, default=0, help="minutes of 32-agent soak"
+    )
     args = parser.parse_args()
     run = Run(args.output.resolve(), args.keep)
     run.prepare()
@@ -593,6 +666,9 @@ def main():
         ("service_kill", run.s_service_kill),
         ("quit_restore", run.s_quit_restore),
     ]
+    if args.soak:
+        os.environ["LAPIS_FAKE_BURST"] = "20"
+        scenarios = [("soak", lambda: run.soak(args.soak))]
     try:
         run.launch()
         for name, function in scenarios:

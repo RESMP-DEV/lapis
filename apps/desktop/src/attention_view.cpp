@@ -138,6 +138,11 @@ QVariantList SessionPreview::attentionRequests() const {
     return values;
 }
 void SessionPreview::applyAttention(session::wire::AttentionSnapshot snapshot) {
+    // Claude Code's idle notice follows a finished turn and has no response;
+    // the finished turn already marks the agent, so only actionable requests
+    // count toward attention, the Requests list and the unseen mark.
+    std::erase_if(snapshot.requests,
+                  [](const auto& item) { return item.pending.request.reason == "idle"; });
     bool arrived = false;
     QSet<QString> current;
     for (const auto& item : snapshot.requests) {

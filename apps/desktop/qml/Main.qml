@@ -2230,6 +2230,11 @@ ApplicationWindow {
                     height: agentTabs.height
                     Accessible.role: Accessible.Button
                     Accessible.name: modelData.agentName + ", " + window.agentTabTitle(modelData) + ", " + modelData.statusLabel
+                    // Assistive activation selects the agent, as a click does.
+                    Accessible.onPressAction: {
+                        if (window.interactionArmed && workspace.selectSession(agentTab.modelData.sessionId))
+                            preview.deferTerminalFocus()
+                    }
 
                     Rectangle {
                         anchors.fill: parent
