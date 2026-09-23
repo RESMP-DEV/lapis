@@ -364,6 +364,11 @@ use platform defaults. Command-R on macOS reloads it. The product has one termin
 stage, category navigation and the category's agent strip under the stage; no
 tab row, tiling or preview layout picker. `previewsVisible` hides the strip
 (default on); the `togglePreviews` action has no default key.
+`harnessArguments` maps a harness id (`codex`, `claude`, `grok`, ...) to literal
+arguments added when lapis starts a new agent of that harness; each agent's
+arguments are saved with it because they are part of its launch fingerprint.
+The committed `lapis.json` holds defaults only (see
+`scripts/tests/test_tracked_config.py`).
 
 - macOS: Command-Option-left/right or Command-Shift-up/down changes category;
   Command-Shift-[ / ] moves through the category's agents. Command-1 through 4

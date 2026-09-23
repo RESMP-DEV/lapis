@@ -33,7 +33,9 @@ most four times a second, in tab order. Moving through it keeps part of the
 neighboring card in view, like Neovim's `sidescrolloff`; the last card is
 **+** for a new agent. A card whose agent finished a turn or started needing a
 response while another was selected pulses until you select it, and its
-category shows a pulsing dot. Codex reports working/finished through its
+category shows a pulsing dot. The Dock badge counts agents in any category that
+finished unseen or wait on a request, and a new request bounces the Dock icon
+once while lapis is in the background. Codex reports working/finished through its
 observer; Claude agents run under the session service's Claude Code hook
 adapter (`--claude`), which reports turns, permission prompts and input
 requests; other harnesses show an output estimate labelled
@@ -128,6 +130,10 @@ starts at your platform home directory; arrows select folder suggestions and
 Tab or Return completes the selected folder. The browse button opens the native
 folder picker. There is no name or model field. Each harness uses its existing
 login, default model and execution policy; model changes stay inside its own TUI.
+To add your own flags to every new agent of a harness (lapis adds none itself),
+set `harnessArguments` in `lapis.json`, for example
+`{"harnessArguments": {"claude": ["--dangerously-skip-permissions"]}}`; shell
+aliases do not apply, because lapis starts the executable directly.
 New tabs show the harness mark and a home-relative project path such as `~/dev/lapis`.
 Codex and Claude Code have verified activity integration. Other harnesses run
 their native CLI and show an output estimate instead of guessing turns.

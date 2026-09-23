@@ -211,6 +211,20 @@ void wire_window(QQuickWindow& window, lapis::desktop::UiPreview& view,
         if (window.isActive())
             view.assignTerminalFocus();
     });
+    if (!workspace.previewMode()) {
+        // The Dock badge counts agents waiting on you in any category, so it
+        // shows from another app; a new request bounces the icon once.
+        const auto badge = [&workspace] { qGuiApp->setBadgeNumber(workspace.attentionAgents()); };
+        QObject::connect(&workspace, &lapis::desktop::Workspace::categoriesChanged, &window, badge);
+        badge();
+        QObject::connect(&workspace, &lapis::desktop::Workspace::requestArrived, &window,
+                         [&window] {
+                             if (!window.isActive())
+                                 window.alert(1000);
+                         });
+        QObject::connect(qApp, &QCoreApplication::aboutToQuit, &window,
+                         [] { qGuiApp->setBadgeNumber(0); });
+    }
     if (parser.isSet(QStringLiteral("capture")))
         capture_window(window, workspace, view,
                        {.image_path = parser.value(QStringLiteral("capture")),
@@ -253,6 +267,9 @@ int main(int argc, char** argv) {
         Workspace workspace(isolated ? WorkspaceMode::preview : WorkspaceMode::live, options);
         KeyMap keymap;
         keymap.load();
+        workspace.setHarnessArguments(keymap.harnessArguments());
+        QObject::connect(&keymap, &KeyMap::changed, &workspace,
+                         [&] { workspace.setHarnessArguments(keymap.harnessArguments()); });
         qInfo().noquote() << "lapis keymap:" << keymap.sourcePath()
                           << (keymap.loaded() ? "loaded" : "defaults");
         qmlRegisterUncreatableType<SessionPreview>("Lapis", 1, 0, "SessionPreview",

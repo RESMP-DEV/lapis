@@ -460,6 +460,9 @@ void writeRegistry(const QString& path, const QJsonObject& root) {
 void unseenFollowsTurnsAndSelection() {
     Workspace workspace(WorkspaceMode::preview);
     require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
+    int arrivals = 0;
+    QObject::connect(&workspace, &Workspace::requestArrived, [&arrivals] { ++arrivals; });
+    const int waiting_before = workspace.attentionAgents();
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
     const auto turn = [&](const char* id) {
@@ -480,6 +483,7 @@ void unseenFollowsTurnsAndSelection() {
         return -1;
     };
     require(count("general") == 1, "categories count unseen agents");
+    require(workspace.attentionAgents() > waiting_before, "the Dock badge counts unseen agents");
     require(workspace.selectSession(QStringLiteral("agent")) && !agent->unseen(),
             "selecting an agent clears its mark");
     require(workspace.selectSession(QStringLiteral("renderer")), "select renderer again");
@@ -490,6 +494,7 @@ void unseenFollowsTurnsAndSelection() {
     state.requests.emplace_back();
     checks->applyAttention(state);
     require(checks->unseen(), "a new request marks its agent");
+    require(arrivals == 1, "a new request is announced once");
     require(count("general") == 1, "one unseen agent after the earlier one was selected");
 }
 
@@ -550,6 +555,50 @@ void claudeAgentsUseServiceAdapter() {
     require(source(reopened, managed) == Source::observer &&
                 source(reopened, legacy) == Source::output,
             "adapter mode survives a save and reopen");
+}
+
+// An agent's literal arguments are part of its launch fingerprint, so the
+// registry keeps them; a malformed list is rejected rather than guessed.
+void agentArgumentsPersist() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "arguments directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QString id = uuid();
+    WorkspaceOptions options;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    auto record = agentRecord(canonical, id, "general");
+    record.insert(QStringLiteral("harness"), QStringLiteral("claude"));
+    record.insert(QStringLiteral("mode"), QStringLiteral("claude"));
+    record.insert(QStringLiteral("arguments"),
+                  QJsonArray{QStringLiteral("--dangerously-skip-permissions")});
+    const QJsonObject root{
+        {"version", 2},
+        {"activeCategory", "general"},
+        {"categories",
+         QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}, {"selected", id}}}},
+        {"agents", QJsonArray{record}}};
+    writeRegistry(options.storagePath, root);
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.workspaceError().isEmpty(), "load an agent with arguments");
+        require(workspace.addCategory(QStringLiteral("Research")), "save the registry");
+    }
+    const auto saved = QJsonDocument::fromJson(readRegistry(options.storagePath))
+                           .object()
+                           .value(QStringLiteral("agents"))
+                           .toArray()
+                           .first()
+                           .toObject()
+                           .value(QStringLiteral("arguments"))
+                           .toArray();
+    require(saved == QJsonArray{QStringLiteral("--dangerously-skip-permissions")},
+            "saving keeps the agent's arguments");
+    record.insert(QStringLiteral("arguments"), QJsonArray{3});
+    auto broken = root;
+    broken.insert(QStringLiteral("agents"), QJsonArray{record});
+    writeRegistry(options.storagePath, broken);
+    Workspace rejected(WorkspaceMode::live, options);
+    require(!rejected.workspaceError().isEmpty(), "non-string arguments are rejected");
 }
 
 // Harnesses without an observer get an output-timing estimate that
@@ -678,6 +727,7 @@ int main(int argc, char** argv) {
         malformedAgentRegistry();
         unseenFollowsTurnsAndSelection();
         claudeAgentsUseServiceAdapter();
+        agentArgumentsPersist();
         outputEstimate();
         agentsStartWithoutParentSessionMarkers();
         closeEndsTheAgent("exec sleep 600", 0);

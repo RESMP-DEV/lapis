@@ -518,6 +518,37 @@ void malformed_values_fall_back() {
     require(!keymap.diagnostic().isEmpty(), "falling back should be reported");
 }
 
+// Per-harness launch arguments are literal lists; malformed entries are
+// reported and dropped without affecting the valid ones or the rest of the file.
+void harness_arguments_are_literal_lists() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    const QString path = write_config(
+        QDir(directory.path()),
+        R"({"theme": "oled", "harnessArguments": {"claude": ["--dangerously-skip-permissions"],)"
+        R"( "grok": "--yolo", "kimi": ["", 3]}})");
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "harness arguments load with the rest of the file");
+    require(keymap.harnessArguments().value(QStringLiteral("claude")) ==
+                QStringList{QStringLiteral("--dangerously-skip-permissions")},
+            "a list of strings is kept literally");
+    require(!keymap.harnessArguments().contains(QStringLiteral("grok")) &&
+                !keymap.harnessArguments().contains(QStringLiteral("kimi")),
+            "a string or a list with empty or non-string items is dropped");
+    require(keymap.diagnostic().contains(QStringLiteral("harnessArguments")),
+            "dropped entries are reported");
+    require(keymap.themeName() == QStringLiteral("oled"), "other settings still apply");
+    require(keymap.setTheme(QStringLiteral("graphite")), "persist an appearance change");
+    require(read_config(path)
+                    .value(QStringLiteral("harnessArguments"))
+                    .toObject()
+                    .value(QStringLiteral("claude"))
+                    .toArray()
+                    .size() == 1,
+            "saving appearance keeps the harness arguments");
+}
+
 // The dialog builds its controls from these lists, so they must agree with the
 // names the setters accept.
 void advertised_names_are_accepted() {
@@ -677,6 +708,7 @@ int main(int argc, char** argv) {
         configured_shortcuts_are_validated();
         unknown_names_are_rejected();
         malformed_values_fall_back();
+        harness_arguments_are_literal_lists();
         advertised_names_are_accepted();
         terminal_font_persists_and_rolls_back();
     } catch (const std::exception& error) {

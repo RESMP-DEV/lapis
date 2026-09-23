@@ -284,6 +284,7 @@ void Workspace::clearError() {
 }
 void Workspace::watch(SessionPreview* item) {
     connect(item, &SessionPreview::connectionChanged, this, [this, item] { finishClosing(item); });
+    connect(item, &SessionPreview::attentionArrived, this, &Workspace::requestArrived);
     last_kind_.insert(item, item->statusKind());
     connect(item, &SessionPreview::statusChanged, this, [this, item] { noteStatus(item); });
     connect(item, &SessionPreview::unseenChanged, this, [this] {
@@ -304,6 +305,11 @@ void Workspace::watch(SessionPreview* item) {
                 count = updated;
                 emit categoriesChanged();
             });
+}
+int Workspace::attentionAgents() const {
+    return static_cast<int>(std::count_if(sessions_.begin(), sessions_.end(), [](const auto& item) {
+        return item->unseen() || item->attentionCount() > 0;
+    }));
 }
 QVariantList Workspace::categories() const {
     QVariantList result;
@@ -661,7 +667,8 @@ bool Workspace::createAgent(const QString& directory, const QString& title,
         const auto id = newId();
         const auto endpoint = session::posix::prepare_endpoint(
             QDir(QFileInfo(storage_path_).absolutePath()).filePath(id + QStringLiteral(".sock")));
-        auto launch = session::validate_launch({program, {}, project, {100, 30}, mode});
+        auto launch = session::validate_launch(
+            {program, harness_arguments_.value(harness), project, {100, 30}, mode});
         auto item = std::make_unique<SessionPreview>(title.trimmed(), launch.directory, QString{},
                                                      QColor(QStringLiteral("#87cbac")), "");
         item->setSessionId(id);
@@ -725,6 +732,7 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
             {"mode", agent.launch.agent == session::AgentMode::claude ? QStringLiteral("claude")
                                                                       : QString()},
             {"resumeThread", resume},
+            {"arguments", QJsonArray::fromStringList(agent.launch.arguments)},
             {"directory", agent.launch.directory}});
     }
     QSaveFile file(storage_path_);
@@ -762,6 +770,19 @@ void Workspace::loadCategories(const QJsonArray& groups) {
     }
     categories_ = std::move(categories);
 }
+QStringList Workspace::savedArguments(const QJsonValue& value) {
+    const auto list = value.toArray();
+    if (!value.isArray() || list.size() > 64)
+        throw std::runtime_error("Invalid agent arguments");
+    QStringList arguments;
+    for (const auto& item : list) {
+        const auto text = item.toString();
+        if (!item.isString() || text.size() > 4096 || text.contains(QChar::Null))
+            throw std::runtime_error("Invalid agent arguments");
+        arguments.append(text);
+    }
+    return arguments;
+}
 void Workspace::loadAgents(const QJsonArray& agents) {
     QMap<QString, Agent> metadata;
     std::vector<std::unique_ptr<SessionPreview>> restored;
@@ -791,6 +812,10 @@ void Workspace::loadAgents(const QJsonArray& agents) {
             throw std::runtime_error("Invalid native resume identity");
         if (!resume.isEmpty())
             agent.launch.arguments = {QStringLiteral("resume"), resume};
+        // The full literal argument list, when recorded, is what the running
+        // service was launched with; it is part of the launch fingerprint.
+        if (object.contains(QStringLiteral("arguments")))
+            agent.launch.arguments = savedArguments(object.value(QStringLiteral("arguments")));
         // Claude agents saved before the service adapter ran as terminals; the
         // launch must match the one their running service was created with.
         if (harness == QStringLiteral("claude") &&

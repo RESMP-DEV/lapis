@@ -1648,6 +1648,15 @@ Decisions from these runs:
   normal screen and sends arrow keys on the alternate screen.
 - Endpoint permission errors name the directory and the `chmod 700` fix; existing
   directories are still never chmodded.
+- The Dock badge (`QGuiApplication::setBadgeNumber`) counts agents that finished
+  unseen or have an actionable request, across categories. A new request while
+  the window is inactive calls `QWindow::alert(1000)`: one bounce, not a
+  persistent alert; finished turns only update the badge.
+- `harnessArguments` in `lapis.json` is explicit user configuration for new
+  agents (shell aliases do not reach lapis launches). The registry saves each
+  agent's full argument list, since arguments are part of the launch
+  fingerprint; adapters still reject conflicting flags such as Claude's
+  `--settings`.
 
 Observed but not changed: a SIGKILLed Codex service leaves its `codex app-server`
 backend running; Linux TSan reports frees and mutexes on Qt's uninstrumented

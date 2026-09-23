@@ -10,6 +10,7 @@
 #include <QColor>
 #include <QHash>
 #include <QJsonArray>
+#include <QJsonValue>
 #include <QLockFile>
 #include <QMap>
 #include <QObject>
@@ -216,6 +217,8 @@ class Workspace final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList sessions READ sessions NOTIFY sessionsChanged)
     Q_PROPERTY(QVariantList categories READ categories NOTIFY categoriesChanged)
+    // Agents in any category that finished unseen or wait on a request.
+    Q_PROPERTY(int attentionAgents READ attentionAgents NOTIFY categoriesChanged)
     Q_PROPERTY(QVariantList categorySessions READ categorySessions NOTIFY sessionsChanged)
     Q_PROPERTY(QString activeCategoryId READ activeCategoryId NOTIFY categoryChanged)
     Q_PROPERTY(QString workspaceError READ workspaceError NOTIFY errorChanged)
@@ -261,8 +264,15 @@ class Workspace final : public QObject {
     [[nodiscard]] QVariantList sessions() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;
+    [[nodiscard]] int attentionAgents() const;
+    // Arguments from lapis.json added to each new agent of a harness.
+    void setHarnessArguments(QHash<QString, QStringList> arguments) {
+        harness_arguments_ = std::move(arguments);
+    }
   signals:
     void focusChanged();
+    // An agent received a new request.
+    void requestArrived();
     void sessionsChanged();
     void categoriesChanged();
     void categoryChanged();
@@ -272,6 +282,7 @@ class Workspace final : public QObject {
     [[nodiscard]] static QString rootDirectory();
     [[nodiscard]] static QString defaultEndpoint();
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
+    QHash<QString, QStringList> harness_arguments_;
     struct Category {
         QString id;
         QString name;
@@ -307,6 +318,7 @@ class Workspace final : public QObject {
     void loadAgents(const QJsonArray& agents);
     void finishClosing(SessionPreview* item);
     [[nodiscard]] static SessionPreview::StatusSource statusSource(const Agent& agent);
+    [[nodiscard]] static QStringList savedArguments(const QJsonValue& value);
     void noteStatus(SessionPreview* item);
     QHash<const SessionPreview*, QString> last_kind_;
     bool batching_categories_{};

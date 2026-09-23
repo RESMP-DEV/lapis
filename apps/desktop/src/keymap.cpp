@@ -400,6 +400,7 @@ void KeyMap::apply_defaults() {
     sidebar_visible_ = true;
     previews_visible_ = true;
     terminal_font_family_.clear();
+    harness_arguments_.clear();
     terminal_font_size_ = kTerminalFontSizeDefault;
     layout_ = WorkspaceLayout::Focus;
     density_ = CardDensity::Comfortable;
@@ -487,10 +488,44 @@ bool KeyMap::load() {
             QStringLiteral("Unknown density '%1'; keeping comfortable").arg(requested_density);
 
     load_terminal_font(root.value(QStringLiteral("terminalFont")));
+    load_harness_arguments(root.value(QStringLiteral("harnessArguments")));
 
     loaded_ = true;
     emit changed();
     return true;
+}
+
+void KeyMap::load_harness_arguments(const QJsonValue& value) {
+    if (value.isUndefined() || value.isNull())
+        return;
+    if (!value.isObject()) {
+        append_diagnostic(&diagnostic_,
+                          QStringLiteral("harnessArguments must map harness names to lists"));
+        return;
+    }
+    const auto harnesses = value.toObject();
+    for (auto it = harnesses.begin(); it != harnesses.end(); ++it) {
+        const auto list = it.value().toArray();
+        QStringList arguments;
+        const bool valid =
+            it.key().size() <= 32 && it.value().isArray() && list.size() <= 32 &&
+            std::all_of(list.begin(), list.end(), [&arguments](const QJsonValue& item) {
+                const auto text = item.toString();
+                if (!item.isString() || text.isEmpty() || text.size() > 1024 ||
+                    text.contains(QChar::Null))
+                    return false;
+                arguments.append(text);
+                return true;
+            });
+        if (!valid || harness_arguments_.size() >= 16) {
+            append_diagnostic(&diagnostic_,
+                              QStringLiteral("Ignoring harnessArguments for '%1': use a list of "
+                                             "up to 32 non-empty strings")
+                                  .arg(it.key().left(32)));
+            continue;
+        }
+        harness_arguments_.insert(it.key(), arguments);
+    }
 }
 
 void KeyMap::load_terminal_font(const QJsonValue& value) {

@@ -138,6 +138,12 @@ class KeyMap final : public QObject {
     Q_INVOKABLE bool setTerminalFontSize(int pixels);
     [[nodiscard]] const QString& terminalFontFamily() const { return terminal_font_family_; }
     [[nodiscard]] int terminalFontSize() const { return terminal_font_size_; }
+    // Literal arguments added when lapis starts an agent of each harness, for
+    // example {"claude": ["--dangerously-skip-permissions"]}. Explicit user
+    // configuration; lapis adds no execution or approval flags itself.
+    [[nodiscard]] const QHash<QString, QStringList>& harnessArguments() const {
+        return harness_arguments_;
+    }
     [[nodiscard]] static int terminalFontSizeMinimum() { return kTerminalFontSizeMinimum; }
     [[nodiscard]] static int terminalFontSizeMaximum() { return kTerminalFontSizeMaximum; }
     [[nodiscard]] static int terminalFontSizeDefault() { return kTerminalFontSizeDefault; }
@@ -152,6 +158,7 @@ class KeyMap final : public QObject {
   private:
     void apply_defaults();
     void load_terminal_font(const QJsonValue& value);
+    void load_harness_arguments(const QJsonValue& value);
     [[nodiscard]] static QString default_source_path();
     // Rewrite only the appearance keys, preserving keybindings and categories
     // as they appear on disk. Returns false when the file was not written.
@@ -165,6 +172,7 @@ class KeyMap final : public QObject {
     QString theme_{QStringLiteral("lapis")};
     QString terminal_font_family_;
     int terminal_font_size_{kTerminalFontSizeDefault};
+    QHash<QString, QStringList> harness_arguments_;
     bool loaded_{};
     bool sidebar_visible_{true};
     bool previews_visible_{true};
