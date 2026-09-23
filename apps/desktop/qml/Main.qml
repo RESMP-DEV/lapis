@@ -2097,8 +2097,10 @@ ApplicationWindow {
                     fontPixelSize: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSize : 16
                     visible: document !== null
                     enabled: visible
+                    // A history page stays interactive for the wheel, selection and
+                    // typing back to live; input reaches the agent only when live.
                     interactive: visible && window.visible && !window.inputBlocked && document !== null
-                                 && (preview.active || document.inputReady)
+                                 && (preview.active || document.inputReady || document.historyActive)
                     focus: visible && window.visible && !window.inputBlocked
                     Component.onCompleted: if (focus)
                                                forceActiveFocus()

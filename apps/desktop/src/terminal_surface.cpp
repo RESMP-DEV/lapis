@@ -34,6 +34,11 @@ QColor color(std::uint32_t rgb) { return QColor::fromRgb(rgb | 0xff000000U); }
 
 // An empty family keeps the platform's fixed-width system font. Callers pass
 // only families already resolved as installed and fixed-pitch on the GUI thread.
+bool modifier_key(int key) {
+    return key == Qt::Key_Shift || key == Qt::Key_Control || key == Qt::Key_Meta ||
+           key == Qt::Key_Alt || key == Qt::Key_CapsLock;
+}
+
 QFont terminal_font(const QString& family, int pixel_size) {
     QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     if (!family.isEmpty())
@@ -966,6 +971,15 @@ void TerminalSurface::clearSelection() {
     emit selectionChanged();
     publishFrame(false);
 }
+// Typing while reading history returns to the live screen and is delivered
+// there, as in other terminals. Modifiers and Command shortcuts other than
+// paste do not.
+void TerminalSurface::resumeLiveForTyping(const QKeyEvent& event) {
+    if (!interactive_ || !document_ || !document_->historyActive() || modifier_key(event.key()))
+        return;
+    if ((event.modifiers() & Qt::MetaModifier) == 0 || event.matches(QKeySequence::Paste))
+        document_->returnToLive();
+}
 // Command-C on macOS; Control-Shift-C elsewhere, where Control-C belongs to
 // the terminal. Either copies the selection, and never reaches the agent.
 bool TerminalSurface::copySelection(const QKeyEvent& event) {
@@ -1090,22 +1104,13 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
         event->accept();
         return;
     }
-    // Typing while reading history returns to the live screen and is delivered
-    // there, as in other terminals; a modifier alone does not.
-    const auto typed = event->key();
-    if (interactive_ && document_ && document_->historyActive() && typed != Qt::Key_Shift &&
-        typed != Qt::Key_Control && typed != Qt::Key_Meta && typed != Qt::Key_Alt &&
-        typed != Qt::Key_CapsLock &&
-        ((event->modifiers() & Qt::MetaModifier) == 0 || event->matches(QKeySequence::Paste)))
-        document_->returnToLive();
+    resumeLiveForTyping(*event);
     if (!acceptsTerminalInput()) {
         event->ignore();
         return;
     }
     // New input replaces what was selected; a modifier alone does not.
-    const auto pressed = event->key();
-    if (pressed != Qt::Key_Shift && pressed != Qt::Key_Control && pressed != Qt::Key_Meta &&
-        pressed != Qt::Key_Alt && pressed != Qt::Key_CapsLock)
+    if (!modifier_key(event->key()))
         clearSelection();
     if (composition_state_ == CompositionState::stale)
         composition_state_ = CompositionState::idle;

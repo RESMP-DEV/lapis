@@ -570,7 +570,7 @@ class Run:
 
     def s_select_and_wheel(self):
         """Drag-select the stage's first row, then wheel into history and type."""
-        x, y, width, _ = self.client_origin()
+        x, y, width, _ = self.keys.client_origin()
         # The stage starts right of the sidebar; its first text row sits near the top.
         row = y + 44
         self.keys.drag((x + 225, row), (x + int(width * 0.45), row))
