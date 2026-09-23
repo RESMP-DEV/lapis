@@ -2,6 +2,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QString>
 #include <stdexcept>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -15,13 +16,21 @@ void validate_directory(const QString& path, bool endpoint_parent) {
         throw std::runtime_error("Cannot inspect trusted directory");
     const auto mode = static_cast<unsigned int>(info.st_mode);
     if (endpoint_parent) {
+        // Existing directories are never chmodded; the message names the fix.
         if (info.st_uid != ::getuid() || (mode & 07777U) != 0700U)
-            throw std::runtime_error("Private directory must be owned by you with mode 0700");
+            throw std::runtime_error(
+                QStringLiteral("Private directory %1 must be owned by you with mode 0700 "
+                               "(chmod 700 it)")
+                    .arg(path)
+                    .toStdString());
     } else if ((info.st_uid != ::getuid() && info.st_uid != 0) ||
                ((mode & 0022U) != 0 && (mode & S_ISVTX) == 0)) {
         // A trusted sticky ancestor (for example /tmp) cannot be used by
         // another user to rename our owned child. Non-sticky shared paths can.
-        throw std::runtime_error("Path traverses an untrusted writable directory");
+        throw std::runtime_error(
+            QStringLiteral("Path traverses an untrusted writable directory: %1")
+                .arg(path)
+                .toStdString());
     }
 }
 } // namespace

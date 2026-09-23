@@ -402,6 +402,17 @@ void truthfulStatus() {
     require(item.statusKind() == QStringLiteral("waiting"), "pending request has its own state");
     item.invalidateAttention();
     require(item.attentionCount() == 1, "stale requests remain visible for reconciliation");
+    lapis::session::wire::AttentionSnapshot fresh;
+    fresh.available = fresh.connected = true;
+    fresh.diagnostic = QStringLiteral("Waiting for a persistent Codex thread");
+    lapis::desktop::SessionPreview first(QStringLiteral("Codex"), {}, {}, QColor{}, "");
+    first.applyAttention(fresh);
+    require(first.statusLabel() == QStringLiteral("Awaiting first prompt"),
+            "a new Codex session without a thread is not a pending status");
+    fresh.diagnostic = QStringLiteral("Reconciling Codex requests");
+    first.applyAttention(fresh);
+    require(first.statusLabel() == QStringLiteral("Status pending"),
+            "reconciliation still reads as pending");
     require(item.statusKind() == QStringLiteral("unknown"), "stale activity must not look current");
 }
 

@@ -181,9 +181,24 @@ ApplicationWindow {
     function projectName(path) {
         return path.replace(/\/+$/, "").split("/").pop() || "/"
     }
-    function agentTabTitle(session) {
+    function agentBaseTitle(session) {
         return workspace.previewMode || session.title !== projectName(session.directory).slice(0, 80) ?
                     session.title : workspace.displayPath(session.directory)
+    }
+    // Agents started in the same folder share a default title; number the
+    // later ones so each card and menu entry names a distinct agent.
+    function agentTabTitle(session) {
+        const base = agentBaseTitle(session)
+        if (workspace.previewMode) return base
+        const list = workspace.categorySessions
+        let ordinal = 0
+        let total = 0
+        for (let i = 0; i < list.length; ++i) {
+            if (agentBaseTitle(list[i]) !== base) continue
+            ++total
+            if (list[i] === session) ordinal = total
+        }
+        return ordinal > 1 ? base + " · " + ordinal : base
     }
     function toggleSidebar() {
         if (!interactionArmed) return
@@ -734,6 +749,8 @@ ApplicationWindow {
         property bool selected: false
         // Optional machine readout, such as the configured shortcut.
         property string hint: ""
+        // Drop the readout rather than overflow a button with a fixed width.
+        property bool hintWhenRoom: false
         property color frameColor: selected ? window.focusedBorderColor : window.borderColor
 
         focusPolicy: Qt.NoFocus
@@ -752,14 +769,18 @@ ApplicationWindow {
                 anchors.centerIn: parent
                 spacing: 8
                 PlainText {
+                    id: buttonLabel
                     anchors.verticalCenter: parent.verticalCenter
                     text: control.text
                     font: control.font
                     color: control.enabled ? window.textColor : window.mutedTextColor
                 }
                 PlainText {
+                    id: buttonHint
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: control.hint.length > 0
+                    visible: control.hint.length > 0 && (!control.hintWhenRoom
+                        || buttonLabel.implicitWidth + buttonRow.spacing + buttonHint.implicitWidth
+                           <= control.availableWidth)
                     text: control.hint
                     font.family: window.monoFamily
                     font.pixelSize: window.readoutFont
@@ -2074,6 +2095,44 @@ ApplicationWindow {
                                                forceActiveFocus()
                 }
 
+                // An ended or unreachable agent keeps its last screen; say so on the
+                // stage instead of leaving a cursor that looks live.
+                Rectangle {
+                    id: endedBar
+                    objectName: "sessionEndedBar"
+                    readonly property var session: workspace.focusedSession
+                    readonly property string connection: session && session.live ? session.connectionState : ""
+                    visible: connection === "ended" || connection === "disconnected"
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.margins: 8
+                    height: endedText.implicitHeight + 14
+                    radius: window.chromeRadius
+                    color: window.surfaceColor
+                    border.width: 1
+                    border.color: connection === "ended" ? window.borderColor : window.faultColor
+                    PlainText {
+                        id: endedText
+                        objectName: "sessionEndedText"
+                        anchors.fill: parent
+                        anchors.margins: 7
+                        verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
+                        font.family: window.monoFamily
+                        font.pixelSize: window.readoutFont
+                        color: endedBar.connection === "ended" ? window.mutedTextColor : window.faultColor
+                        text: {
+                            if (!endedBar.visible) return ""
+                            const reason = endedBar.session.activity
+                            const close = window.shortcutText("closeAgent")
+                            const head = endedBar.connection === "ended" ? qsTr("Agent ended") : qsTr("Agent unreachable")
+                            return head + (reason.length > 0 ? " · " + reason : "")
+                                + (close.length > 0 ? " · " + qsTr("%1 closes it").arg(close) : "")
+                        }
+                    }
+                }
+
                 ColumnLayout {
                     objectName: "emptyState"
                     visible: workspace.focusedSession === null
@@ -2240,7 +2299,9 @@ ApplicationWindow {
                         }
                         PlainText {
                             objectName: "statusLabel_" + agentTab.modelData.sessionId
-                            visible: agentTab.marked
+                            // On a narrow card the status dot carries the state and
+                            // the project path keeps the room.
+                            visible: agentTab.marked && agentTab.width >= 240
                             text: agentTab.modelData.statusLabel
                             color: window.statusColor(agentTab.modelData.statusKind)
                             font.family: window.monoFamily
@@ -2295,6 +2356,7 @@ ApplicationWindow {
                         height: parent.height
                         text: "+"
                         hint: window.shortcutText("newAgent")
+                        hintWhenRoom: true
                         Accessible.name: qsTr("New agent")
                         enabled: window.interactionArmed
                         onClicked: window.openNewAgentDialog()

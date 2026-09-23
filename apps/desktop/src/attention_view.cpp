@@ -86,6 +86,11 @@ QString SessionPreview::statusLabel() const {
         return QStringLiteral("Ended");
     if (harnessId() != QStringLiteral("codex") && input_ready_)
         return QStringLiteral("Connected");
+    // A new Codex session has no persistent thread until its first prompt; the
+    // observer is connected and has nothing to report yet.
+    if (attention_ && attention_->connected && !attention_->ready &&
+        attention_->diagnostic == QLatin1String("Waiting for a persistent Codex thread"))
+        return QStringLiteral("Awaiting first prompt");
     if (attention_ && attention_->connected && !attention_->ready)
         return QStringLiteral("Status pending");
     return QStringLiteral("Status unavailable");
