@@ -8,10 +8,15 @@
 #include "transport/local_protocol.hpp"
 
 #include <QColor>
+#include <QDateTime>
+#include <QHash>
+#include <QJsonArray>
+#include <QLockFile>
 #include <QMap>
 #include <QObject>
 #include <QSet>
 #include <QString>
+#include <QTimer>
 #include <QVariantList>
 
 #include <memory>
@@ -33,7 +38,11 @@ class SessionPreview final : public QObject {
     Q_PROPERTY(bool attentionReady READ attentionReady NOTIFY attentionChanged)
     Q_PROPERTY(QString attentionDiagnostic READ attentionDiagnostic NOTIFY attentionChanged)
     Q_PROPERTY(QVariantList attentionRequests READ attentionRequests NOTIFY attentionChanged)
-    Q_PROPERTY(QString title READ title CONSTANT)
+    Q_PROPERTY(QString title READ title NOTIFY identityChanged)
+    Q_PROPERTY(QString statusLabel READ statusLabel NOTIFY statusChanged)
+    Q_PROPERTY(QString statusKind READ statusKind NOTIFY statusChanged)
+    Q_PROPERTY(QString agentName READ agentName NOTIFY identityChanged)
+    Q_PROPERTY(QString harnessId READ harnessId NOTIFY identityChanged)
     Q_PROPERTY(QString directory READ directory CONSTANT)
     Q_PROPERTY(QString activity READ activity NOTIFY snapshotChanged)
     Q_PROPERTY(bool live READ live CONSTANT)
@@ -45,6 +54,11 @@ class SessionPreview final : public QObject {
     Q_PROPERTY(bool historyRequestPending READ historyRequestPending NOTIFY historyChanged)
     Q_PROPERTY(QString historyMessage READ historyMessage NOTIFY historyChanged)
     Q_PROPERTY(QColor accent READ accent CONSTANT)
+    // Set between an explicit close request and the process ending.
+    Q_PROPERTY(bool closing READ closing NOTIFY statusChanged)
+    // Finished a turn or started needing a response while another agent was
+    // selected; cleared when this agent is selected.
+    Q_PROPERTY(bool unseen READ unseen NOTIFY unseenChanged)
   public:
     SessionPreview(QString title, QString directory, QString activity, QColor accent,
                    std::string_view content);
@@ -58,6 +72,29 @@ class SessionPreview final : public QObject {
     Q_INVOKABLE void newerHistory();
     Q_INVOKABLE void returnToLive();
     Q_INVOKABLE bool respondAttention(const QString& token, const QVariantMap& response);
+    // Ask the session service to end this agent's process. Returns false when
+    // the request could not be queued on a synchronized connection.
+    bool terminate();
+    [[nodiscard]] bool closing() const { return closing_; }
+    void setClosing(bool closing);
+    [[nodiscard]] bool unseen() const { return unseen_; }
+    void setUnseen(bool unseen);
+    // Where activity comes from when the harness has no observer: Claude Code
+    // hooks report exact turn boundaries; otherwise output timing is an estimate.
+    enum class StatusSource : std::uint8_t { observer, hooks, output };
+    void setStatusSource(StatusSource source) { status_source_ = source; }
+    [[nodiscard]] StatusSource statusSource() const { return status_source_; }
+    // `working`, `idle`, `finished` or `waiting`, as the hooks last reported.
+    void setHookActivity(const QString& kind);
+    // Output estimate windows: ignore replays for `settle_ms` after attaching,
+    // treat three frames within `burst_ms` as activity, and `quiet_ms` of
+    // silence after it as a pause. Tests shorten them.
+    struct OutputTiming {
+        qint64 settle_ms{3000};
+        qint64 burst_ms{1500};
+        int quiet_ms{4000};
+    };
+    void setOutputTimingForTesting(const OutputTiming& timing) { output_timing_ = timing; }
     void applyAttention(session::wire::AttentionSnapshot snapshot);
     void invalidateAttention();
     void retryAttention(const session::wire::AttentionDecision& decision);
@@ -85,6 +122,15 @@ class SessionPreview final : public QObject {
     void sendText(const QByteArray& bytes, bool paste = false);
     void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
     void resizeTerminal(session::TerminalSize size);
+    [[nodiscard]] QString statusLabel() const;
+    [[nodiscard]] QString statusKind() const;
+    [[nodiscard]] QString agentName() const;
+    [[nodiscard]] const QString& harnessId() const { return harness_id_; }
+    void setHarnessId(const QString& id);
+    void rename(const QString& title) {
+        title_ = title;
+        emit identityChanged();
+    }
     void setSessionId(const QString& id) { session_id_ = id; }
     [[nodiscard]] const QString& sessionId() const { return session_id_; }
     [[nodiscard]] bool attentionPending() const { return attentionCount() != 0; }
@@ -106,14 +152,18 @@ class SessionPreview final : public QObject {
     [[nodiscard]] const session::TerminalSnapshot& snapshot() const { return snapshot_; }
 
   signals:
+    void identityChanged();
+    void statusChanged();
     void connectionChanged();
     void snapshotChanged();
     void historyChanged();
     void attentionChanged();
     void attentionArrived();
+    void unseenChanged();
 
   private:
     std::unique_ptr<LiveConnection> live_;
+    QString harness_id_{QStringLiteral("codex")};
     QString session_id_;
     QMap<QString, QString> requests_;
     std::optional<session::wire::AttentionSnapshot> attention_;
@@ -121,6 +171,20 @@ class SessionPreview final : public QObject {
     quint32 attention_serial_{};
     bool live_snapshot_ready_{};
     bool live_snapshot_received_{};
+    bool closing_{};
+    bool unseen_{};
+    StatusSource status_source_{StatusSource::observer};
+    QString hook_activity_;
+    // Output estimate: several frames close together read as activity, and a
+    // few quiet seconds after that as a pause. Neither implies a finished task.
+    void noteOutput();
+    [[nodiscard]] QString unobservedStatusKind() const;
+    std::vector<qint64> output_times_;
+    bool output_active_{};
+    bool output_quiet_{};
+    qint64 ready_since_{};
+    OutputTiming output_timing_;
+    QTimer quiet_timer_;
     bool history_active_{};
     bool history_request_pending_{};
     quint64 history_page_id_{};
@@ -149,38 +213,123 @@ struct WorkspaceOptions {
     QString endpoint;
     std::optional<session::LaunchSpec> launch;
     session::wire::AttachMode mode{session::wire::AttachMode::reconnect};
+    QString storagePath{};
 };
 
 class Workspace final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QVariantList sessions READ sessions CONSTANT)
+    Q_PROPERTY(QVariantList sessions READ sessions NOTIFY sessionsChanged)
+    Q_PROPERTY(QVariantList categories READ categories NOTIFY categoriesChanged)
+    Q_PROPERTY(QVariantList categorySessions READ categorySessions NOTIFY sessionsChanged)
+    Q_PROPERTY(QString activeCategoryId READ activeCategoryId NOTIFY categoryChanged)
+    Q_PROPERTY(QString workspaceError READ workspaceError NOTIFY errorChanged)
     Q_PROPERTY(bool previewMode READ previewMode CONSTANT)
-    Q_PROPERTY(int focusedIndex READ focusedIndex WRITE setFocusedIndex NOTIFY focusChanged)
+    Q_PROPERTY(QString homeDirectory READ homeDirectory CONSTANT)
+    Q_PROPERTY(int focusedIndex READ focusedIndex NOTIFY focusChanged)
     Q_PROPERTY(
         lapis::desktop::SessionPreview* focusedSession READ focusedSession NOTIFY focusChanged)
   public:
     explicit Workspace(WorkspaceMode mode = WorkspaceMode::live, WorkspaceOptions options = {});
     [[nodiscard]] bool previewMode() const { return preview_mode_; }
+    [[nodiscard]] QString homeDirectory() const;
+    Q_INVOKABLE [[nodiscard]] QVariantList availableHarnesses() const;
+    Q_INVOKABLE [[nodiscard]] QString displayPath(const QString& directory) const;
     [[nodiscard]] SessionPreview* session(const QString& id) const;
     // Development fixture v1 only. No calls are accepted in a live workspace.
     bool requestAttention(const PreviewRequest& request);
     bool resolveAttention(const PreviewRequest& request);
     Q_INVOKABLE bool replayAttention(const QString& scenario);
-    // Manual traversal of the flat session list, including labelled fixtures.
-    // Category grouping is not implemented.
+    [[nodiscard]] QVariantList categories() const;
+    [[nodiscard]] QVariantList categorySessions() const;
+    [[nodiscard]] const QString& activeCategoryId() const { return active_category_; }
+    [[nodiscard]] const QString& workspaceError() const { return error_; }
+    Q_INVOKABLE void clearError();
+    Q_INVOKABLE bool addCategory(const QString& name);
+    Q_INVOKABLE bool renameCategory(const QString& id, const QString& name);
+    Q_INVOKABLE bool removeCategory(const QString& id);
+    Q_INVOKABLE bool selectCategory(const QString& id);
+    Q_INVOKABLE void nextCategory(int delta = 1);
+    Q_INVOKABLE bool selectSession(const QString& id);
+    Q_INVOKABLE bool createAgent(const QString& directory, const QString& title,
+                                 const QString& harness = QStringLiteral("codex"));
+    // Close an agent's tab. A reachable agent is ended through its
+    // session service first and its tab closes once the process exits. An
+    // unreachable one keeps its tab unless `abandon` accepts that it may still
+    // be running without one.
+    Q_INVOKABLE bool closeSession(const QString& id, bool abandon = false);
+    Q_INVOKABLE bool moveSession(const QString& id, const QString& categoryId);
+    Q_INVOKABLE bool renameSession(const QString& id, const QString& title);
+    Q_INVOKABLE bool moveSessionBy(const QString& id, int delta);
+    Q_INVOKABLE bool removeSession(const QString& id);
     Q_INVOKABLE void nextSession(int delta = 1);
     [[nodiscard]] QVariantList sessions() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;
-    void setFocusedIndex(int index);
   signals:
     void focusChanged();
+    void sessionsChanged();
+    void categoriesChanged();
+    void categoryChanged();
+    void errorChanged();
 
   private:
     [[nodiscard]] static QString rootDirectory();
     [[nodiscard]] static QString defaultEndpoint();
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
-    int focused_index_{};
+    struct Category {
+        QString id;
+        QString name;
+        QString selected;
+    };
+    struct Agent {
+        QString category;
+        QString endpoint;
+        session::LaunchSpec launch;
+        QString harness{QStringLiteral("codex")};
+        // Claude agents launched with lapis's status hooks.
+        bool status_hooks{};
+    };
+    std::vector<Category> categories_;
+    QMap<QString, Agent> agents_;
+    QString active_category_{QStringLiteral("general")};
+    QString storage_path_;
+    std::unique_ptr<QLockFile> registry_lock_;
+    QString error_;
+    bool storage_failed_{};
+    bool fail(const QString& message);
+    struct RegistryState {
+        std::vector<Category> categories;
+        QMap<QString, Agent> agents;
+        QString active;
+        int focused;
+    };
+    [[nodiscard]] RegistryState checkpoint() const;
+    void rollback(const RegistryState& previous);
+    bool mutableRegistry();
+    bool commit(const RegistryState& previous);
+    bool save(const QString& renamedId = {}, const QString& renamedTitle = {});
+    void restore();
+    void loadCategories(const QJsonArray& groups);
+    void loadAgents(const QJsonArray& agents);
+    void finishClosing(SessionPreview* item);
+    // Claude Code status hooks: files beside the agent's endpoint.
+    [[nodiscard]] static QString hookSettingsPath(const QString& endpoint);
+    [[nodiscard]] static QString hookActivityPath(const QString& endpoint);
+    static void writeHookSettings(const QString& endpoint);
+    // Claude agents saved with status hooks relaunch with the same arguments.
+    static void restoreStatusHooks(Agent& agent, bool requested);
+    [[nodiscard]] static SessionPreview::StatusSource statusSource(const Agent& agent);
+    void pollHookActivity();
+    void noteStatus(SessionPreview* item);
+    QTimer hook_poll_;
+    QHash<QString, QDateTime> hook_seen_;
+    QHash<const SessionPreview*, QString> last_kind_;
+    bool batching_categories_{};
+    bool discardSession(const QString& id);
+    void changed();
+    void restoreSelection();
+    void watch(SessionPreview* item);
+    int focused_index_{-1};
     bool preview_mode_{};
 };
 

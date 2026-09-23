@@ -11,6 +11,7 @@
 #include <QGuiApplication>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QQuickWindow>
@@ -248,7 +249,8 @@ void input_contract() {
     composition(surface, QStringLiteral("before-paste"));
     const auto clipboard = QGuiApplication::clipboard()->text();
     QGuiApplication::clipboard()->setText(QStringLiteral("paste界\nsecond"));
-    QKeyEvent paste(QEvent::KeyPress, Qt::Key_V, Qt::MetaModifier);
+    const auto paste_key = QKeySequence(QKeySequence::Paste)[0];
+    QKeyEvent paste(QEvent::KeyPress, paste_key.key(), paste_key.keyboardModifiers());
     QCoreApplication::sendEvent(&surface, &paste);
     QGuiApplication::clipboard()->setText(clipboard);
     const auto pasted = text_frames(peer, QStringLiteral("paste界\nsecond").toUtf8().size());

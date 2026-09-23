@@ -26,6 +26,9 @@ class PtyProcess final : public QObject {
     [[nodiscard]] bool resize(TerminalSize size);
     void pauseOutput(bool paused);
     [[nodiscard]] qint64 processId() const { return process_.processId(); }
+    // End the agent the way closing its terminal would: SIGHUP to the owned
+    // process group, then SIGTERM and SIGKILL if it is still running.
+    [[nodiscard]] bool hangup();
   signals:
     void output(const QByteArray& bytes);
     void started();
@@ -36,6 +39,7 @@ class PtyProcess final : public QObject {
     [[nodiscard]] bool readReady();
     void finishWhenDrained(int exit_code, QProcess::ExitStatus exit_status, int drain_budget);
     [[nodiscard]] bool terminateProcessGroup();
+    [[nodiscard]] bool signalProcessGroup(int signal);
     void clearPendingWrite();
     void writeReady();
     UniqueFd master_;

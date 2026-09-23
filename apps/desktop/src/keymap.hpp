@@ -2,6 +2,7 @@
 #define LAPIS_DESKTOP_KEYMAP_HPP
 
 #include <QHash>
+#include <QJsonValue>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -24,7 +25,9 @@ enum class CardDensity : std::uint8_t { Comfortable, Compact, Minimal };
 
 // Colour scheme for the window chrome. Terminal cell colours come from the
 // session's own palette, so a theme changes the frame around the terminal, not
-// the program's output.
+// the program's output. Each semantic colour has one meaning: focused_border
+// marks where keyboard input goes, activity marks a working agent, attention
+// marks pending requests only, and fault marks lost connections and errors.
 struct Theme {
     const char* name;
     const char* label;
@@ -39,14 +42,26 @@ struct Theme {
     const char* muted_text;
     const char* attention;
     const char* attention_text;
+    const char* activity;
+    const char* fault;
+    int corner_radius{2};
+    int motion_ms{100};
+    bool mono_chrome{};
+    double heading_tracking{1.0};
 };
 
 // Built-in colour schemes, indexed by ThemeName. Kept in one table so the
 // settings dialog, the QML tokens, and the config file all agree.
 [[nodiscard]] const Theme& theme_for(const QString& name);
-[[nodiscard]] const std::array<Theme, 6>& theme_table();
+[[nodiscard]] const std::array<Theme, 7>& theme_table();
 [[nodiscard]] bool theme_exists(const QString& name);
 [[nodiscard]] QStringList default_settings_shortcuts();
+
+// Terminal text size in pixels. Machine readouts in the chrome share the same
+// family at the chrome's own size.
+inline constexpr int kTerminalFontSizeDefault = 16;
+inline constexpr int kTerminalFontSizeMinimum = 10;
+inline constexpr int kTerminalFontSizeMaximum = 32;
 
 // User-editable keybindings, layout, theme, and card density, loaded from
 // lapis.json at the project root. Missing or malformed input falls back to
@@ -62,9 +77,19 @@ class KeyMap final : public QObject {
     Q_PROPERTY(QVariantList themes READ themes NOTIFY changed)
     Q_PROPERTY(QStringList layouts READ layouts NOTIFY changed)
     Q_PROPERTY(QStringList densities READ densities NOTIFY changed)
+    Q_PROPERTY(bool sidebarVisible READ sidebarVisible NOTIFY changed)
+    // The strip of live agent previews under the stage.
+    Q_PROPERTY(bool previewsVisible READ previewsVisible NOTIFY changed)
     Q_PROPERTY(QString diagnostic READ diagnostic NOTIFY changed)
     Q_PROPERTY(QString sourcePath READ sourcePath NOTIFY changed)
     Q_PROPERTY(QVariantMap shortcutBindings READ shortcutBindings NOTIFY changed)
+    // Empty means the platform's fixed-width system font. Availability is
+    // resolved by the GUI surface; the keymap only validates and persists.
+    Q_PROPERTY(QString terminalFontFamily READ terminalFontFamily NOTIFY changed)
+    Q_PROPERTY(int terminalFontSize READ terminalFontSize NOTIFY changed)
+    Q_PROPERTY(int terminalFontSizeMinimum READ terminalFontSizeMinimum CONSTANT)
+    Q_PROPERTY(int terminalFontSizeMaximum READ terminalFontSizeMaximum CONSTANT)
+    Q_PROPERTY(int terminalFontSizeDefault READ terminalFontSizeDefault CONSTANT)
   public:
     explicit KeyMap(QObject* parent = nullptr);
 
@@ -103,6 +128,19 @@ class KeyMap final : public QObject {
     Q_INVOKABLE bool setLayout(const QString& name);
     Q_INVOKABLE bool setTheme(const QString& name);
     Q_INVOKABLE bool setDensity(const QString& name);
+    Q_INVOKABLE bool setSidebarVisible(bool visible);
+    [[nodiscard]] bool sidebarVisible() const { return sidebar_visible_; }
+    Q_INVOKABLE bool setPreviewsVisible(bool visible);
+    [[nodiscard]] bool previewsVisible() const { return previews_visible_; }
+    // Terminal font changes apply live and are written immediately. A value
+    // that cannot be saved is rolled back so the window matches the file.
+    Q_INVOKABLE bool setTerminalFontFamily(const QString& family);
+    Q_INVOKABLE bool setTerminalFontSize(int pixels);
+    [[nodiscard]] const QString& terminalFontFamily() const { return terminal_font_family_; }
+    [[nodiscard]] int terminalFontSize() const { return terminal_font_size_; }
+    [[nodiscard]] static int terminalFontSizeMinimum() { return kTerminalFontSizeMinimum; }
+    [[nodiscard]] static int terminalFontSizeMaximum() { return kTerminalFontSizeMaximum; }
+    [[nodiscard]] static int terminalFontSizeDefault() { return kTerminalFontSizeDefault; }
     // Write the current appearance back to the config file. Returns false and
     // sets diagnostic() when the file cannot be written, leaving the in-memory
     // choice active so the running window still matches what was selected.
@@ -113,17 +151,23 @@ class KeyMap final : public QObject {
 
   private:
     void apply_defaults();
+    void load_terminal_font(const QJsonValue& value);
     [[nodiscard]] static QString default_source_path();
     // Rewrite only the appearance keys, preserving keybindings and categories
     // as they appear on disk. Returns false when the file was not written.
     [[nodiscard]] bool persist();
+    [[nodiscard]] bool save_without_tentative_change();
     QHash<QString, QStringList> bindings_;
     QString source_path_;
     QString diagnostic_;
     WorkspaceLayout layout_{WorkspaceLayout::Focus};
     CardDensity density_{CardDensity::Comfortable};
     QString theme_{QStringLiteral("lapis")};
+    QString terminal_font_family_;
+    int terminal_font_size_{kTerminalFontSizeDefault};
     bool loaded_{};
+    bool sidebar_visible_{true};
+    bool previews_visible_{true};
 };
 } // namespace lapis::desktop
 #endif // LAPIS_DESKTOP_KEYMAP_HPP

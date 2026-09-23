@@ -2,6 +2,7 @@
 #include "platform/posix/local_endpoint.hpp"
 #include "session_descriptor.hpp"
 #include <QDataStream>
+#include <QDateTime>
 #include <QDebug>
 #include <QFile>
 #include <QFutureWatcher>
@@ -26,6 +27,7 @@ void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpe
     live_ = std::make_unique<LiveConnection>(*this, endpoint, launch, mode);
 }
 void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
+    noteOutput();
     live_snapshot_ = std::move(snapshot);
     live_snapshot_received_ = true;
     live_snapshot_ready_ = live();
@@ -105,6 +107,9 @@ void SessionPreview::sendText(const QByteArray& bytes, bool paste) {
     if (live_)
         live_->send(paste ? wire::Kind::paste : wire::Kind::text, bytes);
 }
+bool SessionPreview::terminate() {
+    return live_ && input_ready_ && live_->send(wire::Kind::terminate, {});
+}
 void SessionPreview::sendKey(session::TerminalKey key, session::KeyModifiers modifiers) {
     if (history_active_ || history_request_pending_)
         return;
@@ -140,6 +145,8 @@ void SessionPreview::startNewSession() {
 }
 void SessionPreview::setConnection(const QString& state, bool input_ready) {
     connection_state_ = state;
+    if (input_ready && !input_ready_)
+        ready_since_ = QDateTime::currentMSecsSinceEpoch();
     input_ready_ = input_ready;
     if (!input_ready) {
         live_snapshot_ready_ = false;

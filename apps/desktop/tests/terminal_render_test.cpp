@@ -429,7 +429,39 @@ struct RenderFixture {
     }
 };
 
+void check_erased_composer_background() {
+    constexpr std::uint32_t panel_background = 0x2f3239U;
+    session::Terminal terminal({32, 5});
+    terminal.feed("\x1b]10;rgb:d9/de/e8\x1b\\\x1b]11;rgb:0d/13/1d\x1b\\");
+    terminal.feed("\x1b[2;1H\x1b[48;2;47;50;57m\x1b[2K"
+                  "\x1b[3;1H\x1b[2K> Ask Codex to do anything"
+                  "\x1b[4;1H\x1b[32X\x1b[0m");
+    const auto snapshot = terminal.snapshot();
+    for (std::size_t index = 32; index < 128; ++index)
+        CHECK(snapshot.cell_background(index) == panel_background);
+    RenderFixture fixture(snapshot);
+    const auto image = render(fixture.surface);
+    const auto page = color_area(image, page_background);
+    const RenderGeometry geometry(snapshot, fixture.surface.size(), image.width(),
+                                  static_cast<int>(fixture.window.width()), page);
+    const auto panel = color_area(image, panel_background);
+    require_pixels(panel, "erased composer panel", 100);
+    require_horizontal_edges(panel, geometry.cell({0, 1}, 32), "erased composer panel");
+    CHECK(std::abs(panel.bounds.top() - geometry.cell({0, 1}).top) <= 2);
+    CHECK(std::abs(panel.bounds.bottom() + 1 - geometry.cell({0, 3}).bottom) <= 2);
+    for (const int row : {1, 3})
+        for (int column = 0; column < 32; ++column) {
+            const auto cell = geometry.cell({column, row});
+            CHECK(image.pixel(static_cast<int>((cell.left + cell.right) / 2),
+                              static_cast<int>((cell.top + cell.bottom) / 2)) ==
+                  qt_color(panel_background));
+        }
+    if (const auto path = qEnvironmentVariable("LAPIS_COMPOSER_CAPTURE"); !path.isEmpty())
+        CHECK(image.save(path));
+}
+
 int run_renderer_regression() {
+    check_erased_composer_background();
     GhosttyScenario scenario;
     session::TerminalSnapshot snapshot = scenario.snapshot();
     check_snapshot_contract(snapshot);

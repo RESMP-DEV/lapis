@@ -2,10 +2,12 @@
 
 Repository: [RESMP-DEV/lapis](https://github.com/RESMP-DEV/lapis).
 
-lapis is an early-stage project for a desktop workspace that supervises live CLI
-agents. The direction is persistent sessions, fast switching, GPU rendering and
-an opt-in attention carousel. macOS and Codex are the active target; a Linux
-desktop port is deferred. A macOS terminal window is now available for a visual checkpoint.
+lapis is a desktop workspace for live CLI agents. Categories contain ordered
+agents; one terminal stage shows the selected agent above a strip of live
+previews that is the category's navigation. Normal launch has no shell sessions
+or sample cards. Managed Codex is the first adapter.
+macOS is the live-agent qualification target; Linux tests run on anvil using
+an isolated software-rendered display.
 
 The priority is **responsiveness, then ergonomics, then visuals**. Design for
 high-end M-series hardware and high-refresh displays; use generous, bounded RAM
@@ -18,20 +20,43 @@ to that same file so Codex and Claude Code share one set of project instructions
 
 ## Current status
 
-The macOS preview has a **live terminal in the enlarged pane** (shell by default) and a horizontal
-strip of five placeholder sessions plus the live preview below it. The cards provide manual navigation through the live session and development
-fixtures; they do not start additional live processes. **Milestone 1 is
-implemented and qualified on macOS.** Milestone 2 is also qualified for one managed
-Codex session: service attention, explicit desktop decisions and source recovery.
+The category workspace supports creating Codex agents, moving and renaming tabs,
+remembering each category's selection, restoring the same service-owned processes,
+and displaying source-derived activity and pending requests. Window placement is
+saved locally and narrow windows use a category selector. The Command theme uses
+dark opaque surfaces, restrained teal accents and short selection feedback.
+On macOS the native title bar follows the selected theme while retaining the
+standard window controls and drag region. There is no tab row: the strip under
+the stage shows each agent's latest lines (the rows ending at its cursor) at
+most four times a second, in tab order. Moving through it keeps part of the
+neighboring card in view, like Neovim's `sidescrolloff`; the last card is
+**+** for a new agent. A card whose agent finished a turn or started needing a
+response while another was selected pulses until you select it, and its
+category shows a pulsing dot. Codex reports working/finished through its
+observer; Claude agents started by lapis report through per-session status
+hooks (`--settings`); other harnesses show an output estimate labelled
+**Output active** / **Quiet**. Command-W closes the focused agent, not the
+window. Agents always start as top-level sessions: when lapis itself was opened
+from inside another agent's terminal, that agent's session markers (Claude
+Code's child-session and transcript flags, Grok, OpenCode, OMP and Codex
+sandbox markers) are removed before any agent starts.
+Categories read as group labels and tabs as sessions; keyboard focus, activity,
+pending requests and lost connections have separate colors and shapes. One
+configurable fixed-width font serves the terminal and machine readouts.
+
+The underlying terminal and managed-attention milestones retain their earlier
+qualification receipts. The category workspace's current checks and remaining
+acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
+[architecture](docs/architecture.md#daily-use-agent-workspace-direction-september-21-review).
 
 | Component | Exercised | Remaining |
 | --- | --- | --- |
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
 | PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS | Recovery after service loss and later Linux qualification |
-| Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect | Automatic recovery policy and multi-session registry |
+| Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect | Recovery after service failure/reboot |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK | Cross-cell contextual shaping, selection and accessibility; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
-| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation | Live multi-session routing and automatic carousel |
+| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation | Automatic carousel and larger session-count qualification |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Workspace-wide aggregation |
 | Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals | Broader binary and request-kind qualification |
 
@@ -40,14 +65,11 @@ Codex session: service attention, explicit desktop decisions and source recovery
 [reconciled UI and test evidence](evidence/reconciliation.json) and
 [adapter evidence](evidence/terminal-adapter.json) delimit these observations.
 Dependency packaging remains unfinished; this is a local developer build.
-The [two UI refinements](docs/architecture.md#ui-refinement-checkpoint) are
-implemented for visual review: an isolated preview/debugging workflow and a compact
-header with replayable red attention cues. Configurable navigation, layouts, themes
-and card densities are available. Managed Codex sessions now surface real requests;
-automatic carousel behavior remains later work. The completed attention state
-and verified Codex request handling are described in the
+The old multi-layout preview is no longer the product surface. The explicit
+`--ui-preview` developer fixture exercises the same category UI with synthetic
+data; it is never added to a normal workspace. See the
 [Milestone 2 plan](docs/architecture.md#milestone-2-attention-and-codex-plan)
-with its route decision, implementation slices and acceptance checks.
+for the underlying attention route and its acceptance evidence.
 The first checkpoint implemented the standalone attention core and exercised real
 Codex request round trips. [Milestone 2 evidence](evidence/milestone-two.json) now
 records assembled service/desktop acceptance on macOS. The
@@ -87,96 +109,81 @@ the completed scope and later work.
 The [Codex route comparison](adapters/codex/README.md#integration-route-comparison)
 separates terminal operation from attention delivery.
 
-## Run the window on macOS
+## Run the workspace
 
-After the [dependency setup](CONTRIBUTING.md#desktop-preview), set up and run
-everything through one entry point. No environment variables need exporting:
-
-```sh
-python3 scripts/lapis.py doctor    # report which dependencies are ready
-python3 scripts/lapis.py bootstrap # build the pinned Ghostty terminal library (once)
-python3 scripts/lapis.py quality   # repository/Python quality checks (no GUI)
-python3 scripts/lapis.py check     # compile, lint, format-check and run CTest
-python3 scripts/lapis.py build     # build the desktop app and run its checks
-python3 scripts/lapis.py run       # open the live shell window
-python3 scripts/lapis.py ui        # isolated fixture, source-QML reload and attention replay
-python3 scripts/lapis.py ui-debug  # launch the isolated fixture in LLDB
-python3 scripts/lapis.py ui-check  # bounded preview captures and failure cases
-python3 scripts/lapis.py cli-check # CLI/service/GUI acceptance fixtures
-```
-
-`just` recipes with the same names wrap the same launcher (`just run`,
-`just ui-check`, and so on), and `python3 scripts/lapis.py` alone lists every
-command. The launcher locates the bootstrapped terminal dependency, supplies the
-socket path, and opens windows on the laptop panel. `just native-input` runs the
-automated macOS keyboard, clipboard and Japanese IME checks.
-
-On first use, choose **Session → Start new session**. The shell starts in this
-checkout. Closing the window detaches it; reopening verifies the saved identity
-and restores the same service-owned shell. Input stays disabled until its screen
-is restored. The pane starts your login shell: `$SHELL` when set, otherwise the
-account's shell from the user database, so a launch from an agent or script with
-an empty environment does not silently fall back to `/bin/sh` and a `sh-3.2$`
-prompt. Type `exit` to end the shell. An additional window replaces the previous
-attachment; there is still one attached window per socket.
-
-The Session menu offers Reconnect, Discover existing session, and Start new
-session after disconnection. Reconnect never starts another process or replays
-unsent input. If the old service ended or the endpoint now belongs to another
-session, choose an explicit action. Builds stay under `build/`; private sockets,
-logs and the bounded `.session` identity hint stay under `runtime/`.
-
-Use **Older**, **Newer**, and **Live** above the terminal to browse archived
-output. History is read only: keys, paste and terminal resize resume only after
-returning to Live. Output continues to update the retained live screen while you
-browse. Archives use private files under `runtime/history`, with 64 MiB per
-session and 256 MiB shared-root page budgets by default. See the
-[history and input procedure](CONTRIBUTING.md#history-and-input-qualification) for
-limits, recovery and automated native-input acceptance.
-
-To launch Codex with managed attention in its own persistent terminal, use the launcher, which
-resolves the build environment and opens on the laptop panel:
+After the [dependency setup](CONTRIBUTING.md#desktop-preview):
 
 ```sh
-python3 scripts/lapis.py run --codex \
-  --socket "$PWD/runtime/codex-v6.sock" --new-session --cwd "$PWD" -- codex
+uv run --no-project python scripts/lapis.py doctor
+uv run --no-project python scripts/lapis.py bootstrap
+uv run --no-project python scripts/lapis.py build
+uv run --no-project python scripts/lapis.py run
 ```
 
-Use a dedicated socket for a Codex session. The default socket keeps the shell
-that `just run` starts, and an occupied endpoint rejects a different program
-before replacing the window, so reusing it for Codex reports a launch mismatch.
+Use **New agent** (Command-N), choose a harness with arrows and Return, then
+enter a project folder and press Return. Codex, Claude, OMP, Grok, Kimi, OpenCode,
+Gemini and Antigravity appear in the picker; missing executables are marked
+unavailable. Escape returns from the folder step to harness selection. The field
+starts at your platform home directory; arrows select folder suggestions and
+Tab or Return completes the selected folder. The browse button opens the native
+folder picker. There is no name or model field. Each harness uses its existing
+login, default model and execution policy; model changes stay inside its own TUI.
+New tabs show the harness mark and a home-relative project path such as `~/dev/lapis`.
+Only Codex currently has verified activity/approval integration. Other harnesses
+run their native CLI and show connection state without guessing activity.
+Each agent gets a
+separate service, identity and endpoint. No approval settings or global hooks are
+changed. Unsupported Codex binaries keep explicit status/response limitations;
+there is no qualification bypass.
 
-Repeat the same command without `--new-session` to reconnect to the same Codex
-process. Use `--discover` only to explicitly adopt an existing matching session
-when no usable saved identity exists. The `--codex` mode owns a dedicated backend
-and observes the ordinary TUI's persistent thread. Open **Requests** to review a
-pending command or question. Select a request, then explicitly approve, decline,
-cancel or send its answers. Sending does not clear it; source resolution does.
-Unsupported request kinds must be answered in the terminal. Lost or unqualified
-sources disable the controls; reattachment reconciles before enabling them.
+Open **Commands** to search or scroll through actions and their configured
+shortcuts. Create categories with **New category** there. The category rail and that category's
+tab row are separate navigation levels. Every category remembers its selected
+agent. Commands and the tab's context menu rename, reorder or move the selected agent without
+restarting it. Attention counts do not reorder categories or steal input.
 
-Omit `--codex` for plain terminal launch, which forwards Codex options literally.
-That mode retains the upstream CLI's backend ownership. Other executables and literal arguments work after
-`--`. Explicit programs or `--cwd` require a socket, which the launcher supplies
-by default; a launch mismatch is rejected before replacing the existing window.
-No hooks or approval settings are changed. There is still one live pane per
-window; its other cards remain fixtures.
+On macOS, Command-Option-left/right or Command-Shift-up/down changes category;
+Command-Shift-[ and ] moves through the category's agents. Command-1 through 4
+selects a category. Command-W closes the focused agent: a running agent is
+confirmed, then ended by its session service.
+Command-Shift-P opens Commands; Command-B hides or shows the category sidebar
+and remembers that choice. Command-V remains paste. Command-N creates an agent
+(its tab defaults to the project path), Command-Shift-N creates a category, Command-comma
+opens Appearance, and Command-R reloads configuration. Linux uses Control-Shift
+bindings. Terminal Control chords and Command-left/right editing stay with the
+agent. Bindings remain configurable in `lapis.json`.
 
-The default socket is `runtime/desktop-v6.sock`. Older v1/v2/v3/v4/v5 sessions are not
-migrated or terminated by this build. See the
-[qualification procedure](CONTRIBUTING.md#cli-integration-qualification) for the
-optional no-prompt Codex check and current limits.
+Close the window (its close button or Command-Q) to detach. Reopen it to
+reconnect the same agents and restore category selections, splits and window
+placement. Closing the window does not stop agents; Command-W on an agent does.
+An agent lapis cannot reach can only have its tab closed, with a warning that it
+may still be running. Failed reconnects are visible and
+never silently replaced; use the explicit recovery actions in **Commands**.
 
-- [Architecture and near-term plan](docs/architecture.md): component ownership,
-  open decisions and acceptance criteria. This is the single implementation plan.
-- [Codex investigation](adapters/codex/README.md): protocol routes and evidence.
-- [Contributing](CONTRIBUTING.md): shared code standards, setup, checks, profiling and the PR procedure.
-- [Quality audit receipt](evidence/code-quality.json): scoped fixes, regression evidence and macOS checks.
-- [First contributor baseline](CONTRIBUTING.md#first-contributor-baseline): isolated
-  worktrees, test sequence and coordination for large changes.
-- [Test suites](CONTRIBUTING.md#test-suites-and-failure-triage) and
-  [desktop sanitizers](CONTRIBUTING.md#desktop-sanitizers): coverage, commands and
-  failure evidence.
+**Requests** appears when the selected agent needs a response. Open it, select a
+request, then explicitly approve, decline, cancel or send answers. Opening or
+selecting never approves. Stale sources disable responses. **Turn finished**
+means the agent finished a turn, not that the task or process ended.
+
+History actions are under **Agent**; browsing history is read-only. Private
+workspace metadata and window geometry live under ignored `runtime/`. Builds and
+local captures live under ignored `build/`. Runtime state is not project config
+and must not be copied between hosts.
+
+For development, `lapis.py quality`, `check`, `ui-check` and `cli-check` remain
+available. `build` is the full desktop validation gate. During edits use a focused
+CMake target and `ctest -R ... --no-tests=error` on anvil. `linux-gui` wraps supplied
+commands in a private Xvfb/Openbox software-rendered display. Native Mac input
+checks are a separately scheduled acceptance step.
+
+Standalone shell fixtures require `--development-shell` and are not offered in
+the product. Explicit managed-Codex probes retain `--codex --socket ... --cwd ...
+-- codex`. Existing v6 endpoints are neither automatically adopted nor terminated
+by the new category registry.
+
+- [Architecture](docs/architecture.md): product direction and acceptance.
+- [Codex investigation](adapters/codex/README.md): protocol and qualification.
+- [Contributing](CONTRIBUTING.md): setup, tests, profiling and review.
 
 ## Check the C++ baseline
 

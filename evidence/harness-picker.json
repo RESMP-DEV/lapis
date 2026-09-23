@@ -1,0 +1,85 @@
+{
+  "recorded_at": "2026-09-23T00:24:59.690066+00:00",
+  "source_base": "79be97a1d9927fa9858bb4daed2a9ba8704f6598",
+  "source_state": "uncommitted working tree",
+  "source_sha256": {
+    "apps/desktop/src/workspace.hpp": "81148d8d00d31b062e1a008e1f4f58e0f4139d25887f903cb19ba67a216cd76a",
+    "apps/desktop/src/workspace.cpp": "4fec19c9fee796799f7e04e96fdcd116508d3bb747dbc37b15478911feeb0a58",
+    "apps/desktop/src/attention_view.cpp": "a045954f819be85c191ac468a62c078e9c19dfba517d9f6240756d012ed4ef74",
+    "apps/desktop/qml/Main.qml": "813cd2e8269635a547019f71289417ef623b7f06934f1e57ca8ede54f7eb5ea6",
+    "apps/desktop/qml/AgentMark.qml": "4c82ab511ed16542a9d2dce5caf247023810ccb0b9c5cebdf7c09d937a336f13",
+    "apps/desktop/tests/workspace_test.cpp": "0682128e5c62ae855cee4f0d3ad774a712439e464e00f13c05a863770807b850",
+    "apps/desktop/tests/ui_preview_test.cpp": "2d4cc163fbfa6c46f0b3be3ec221f873a48dc86f35011a6425118b863bc2078f",
+    "apps/desktop/tests/workspace_live_probe.cpp": "ad53dab2c3175c420d8f5bb128bd7bafb3d2e040d5e46670ceec9d6d7c2f68f5"
+  },
+  "behavior": [
+    "Keyboard harness picker before project folder",
+    "Installed executable discovery and launch-time revalidation",
+    "Native CLI default model and policy preserved",
+    "Version 2 registry retains harness and optional validated Codex resume UUID; version 1 migration supported",
+    "Only Codex has activity/approval observation; other harnesses expose connection state"
+  ],
+  "validation": {
+    "linux_full_gate": {
+      "passed": true,
+      "checks": 51,
+      "artifact": "/home/infatoshi/lapis-agent-workspace/build/reports/desktop/receipt.json"
+    },
+    "linux_focused": {
+      "passed": true,
+      "suites": [
+        "workspace",
+        "ui-preview",
+        "appearance-input"
+      ],
+      "seconds": 5.75
+    },
+    "linux_asan_ubsan_lsan": {
+      "passed": true,
+      "suites": 3,
+      "seconds": 5.69,
+      "suppressions": false
+    },
+    "quality": {
+      "passed": true,
+      "artifact": "build/harness-picker/quality.log"
+    },
+    "native_startup_reconnect": [
+      {
+        "cleanupComplete": true,
+        "harness": "codex",
+        "modelTurns": 0,
+        "nativeTerminalPid": 48426,
+        "passed": true,
+        "samePidAfterReconnect": true,
+        "scope": "native startup screen and session lifecycle; no auth/trust response or model turn",
+        "startupNonblankCells": 191
+      },
+      {
+        "cleanupComplete": true,
+        "harness": "claude",
+        "modelTurns": 0,
+        "nativeTerminalPid": 40298,
+        "passed": true,
+        "samePidAfterReconnect": true,
+        "scope": "native startup screen and session lifecycle; no auth/trust response or model turn",
+        "startupNonblankCells": 448
+      }
+    ],
+    "mac_gui": {
+      "built_and_opened": true,
+      "harness_picker_visible": true,
+      "existing_services_preserved": true,
+      "binary_sha256": "d0ff7ecde49ac186d0c4f2cf93fbf19ecede88ce1b4f02da746ea55df4c12d0f"
+    }
+  },
+  "limitations": [
+    "OMP exits on startup because its existing auth broker is unreachable; also reproduced in a direct PTY outside lapis",
+    "Other listed native harnesses discovered, not fully qualified for activity/approval events",
+    "Existing v1 composer rendering still uses the old service; restart and native resume require the pending user approval"
+  ],
+  "visuals": [
+    "build/harness-picker/final-harnesses.png",
+    "build/harness-picker/final-new-agent.png"
+  ]
+}

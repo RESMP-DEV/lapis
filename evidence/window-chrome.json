@@ -1,0 +1,37 @@
+{
+  "recorded_at": "2026-09-23T00:51:30.580645+00:00",
+  "source_state": "uncommitted working tree",
+  "source_sha256": {
+    "apps/desktop/src/platform_preferences.hpp": "4b1e3b51fff7830a66f459581521d729e52ef69eb039db3772ab8c8fb59e0d32",
+    "apps/desktop/src/platform_preferences.mm": "b96c6aeaf97910ef62a78feccd8a2ad3673f57a087aefa89d50c737a436b9ee2",
+    "apps/desktop/src/main.cpp": "bbe84a96ddad8f276f458803daca469ff02b371ff1d0906fdad6e9190f56e319",
+    "apps/desktop/CMakeLists.txt": "17e62b48c1657c4e218fcf58c29a151431b807ca8028e24a6f6ceb838ac6a127"
+  },
+  "behavior": "Mac title bar uses window theme color, transparent native titlebar background, hidden duplicate caption and no separator; native titled-window style and controls retained",
+  "validation": {
+    "mac_build": true,
+    "mac_visual_inspection": true,
+    "native_controls_observed": [
+      "close",
+      "minimize",
+      "full screen"
+    ],
+    "existing_grok_session_restored": true,
+    "clang_tidy": true,
+    "linux_suites": [
+      "window-state",
+      "ui-preview",
+      "appearance-input"
+    ],
+    "linux_passed": true,
+    "linux_seconds": 5.49,
+    "quality": true
+  },
+  "limits": [
+    "Native visual inspection preceded final hidden-window guard; visible styling is identical",
+    "No automated Mac keyboard/IME or Recast command sequence was run",
+    "Linux window-manager decorations are unchanged",
+    "Existing v1 session service restart remains pending approval"
+  ],
+  "binary_sha256": "bd78e50867be0cecaef2c4c4ecd7943da5cca1805fc8a7f9cd9bbe7946a5bb7b"
+}

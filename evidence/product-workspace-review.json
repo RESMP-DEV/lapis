@@ -1,0 +1,39 @@
+{
+  "revision": "79be97a1d9927fa9858bb4daed2a9ba8704f6598",
+  "scope": "Independent static product reviews and coordinator reconciliation; no implementation or GUI replay.",
+  "reviewers": [
+    {
+      "model": "claude-fable-5-1",
+      "effort": "high",
+      "model_verified_in_initialization": true,
+      "artifact": "build/product-review/fable.txt",
+      "completion": "Completed report recovered from requested artifact content after CLI denied artifact writes; worker stopped after report recovery.",
+      "cli_exit": 143
+    },
+    {
+      "model": "grok-4.7-build-fast",
+      "effort": "xhigh",
+      "artifact": "build/product-review/grok.txt",
+      "cli_exit": 0
+    }
+  ],
+  "confirmed": [
+    "Normal workspace mixes one live shell and five fixtures.",
+    "AttentionSnapshot activity is not presented by the visible activity string.",
+    "Normal launcher forces built-in-screen placement; fixed minimum impedes half-screen sizing.",
+    "Requests, input readiness and stale-response safeguards already exist and must be preserved."
+  ],
+  "not_adopted": [
+    "Grok assertion that terminal keyPressEvent necessarily wins over Qt Shortcuts: unverified; Fable independently identified the opposite possible precedence.",
+    "Fable fixed 980-pixel minimum: incompatible with ordinary half-screen use.",
+    "Blanket removal of existing layouts: prefer adaptive presentation and readable interactive-size rules.",
+    "Observation on unqualified Codex binaries: qualification cannot be weakened as a UX repair.",
+    "Automatic replacement of unreachable sessions or identity from launch arguments alone.",
+    "Implicit approval via Return after request selection.",
+    "Deferring Linux, storing window geometry in tracked project configuration, or assuming C++ establishes memory superiority.",
+    "Estimated glyph-scale defects and native Dock behavior are not runtime-verified findings."
+  ],
+  "next_contract": "docs/architecture.md#daily-use-agent-workspace-direction-september-21-review",
+  "implementation_status": "Not implemented. Coordinate with the other developer before overlapping multi-session work.",
+  "validation": "Source references inspected; git diff --check only for documentation. Runtime geometry/shortcut assertions require later qualification."
+}

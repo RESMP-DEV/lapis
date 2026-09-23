@@ -19,6 +19,8 @@
 namespace {
 void add_options(QCommandLineParser& parser) {
     parser.addHelpOption();
+    parser.addOption({QStringLiteral("development-shell"),
+                      QStringLiteral("Enable an explicit terminal qualification session")});
     parser.addOption(
         {QStringLiteral("codex"),
          QStringLiteral("Use managed Codex attention (requires an explicit Codex executable)")});
@@ -82,12 +84,26 @@ bool valid_connection_options(const QCommandLineParser& parser) {
     }
     return true;
 }
+bool valid_agent_launch(const QCommandLineParser& parser, bool preview) {
+    if (!preview && !parser.isSet(QStringLiteral("codex")) &&
+        !parser.isSet(QStringLiteral("development-shell")) &&
+        !parser.isSet(QStringLiteral("smoke-input")) &&
+        (!parser.positionalArguments().isEmpty() || parser.isSet(QStringLiteral("socket")) ||
+         parser.isSet(QStringLiteral("cwd")))) {
+        qCritical("Agent workspaces do not launch shells; use --codex or --development-shell for "
+                  "qualification");
+        return false;
+    }
+    return true;
+}
 bool valid_options(const QCommandLineParser& parser) {
     const bool preview = parser.isSet(QStringLiteral("ui-preview"));
     if (preview && parser.isSet(QStringLiteral("codex"))) {
         qCritical("--codex cannot be combined with --ui-preview");
         return false;
     }
+    if (!valid_agent_launch(parser, preview))
+        return false;
     const bool explicit_launch =
         !parser.positionalArguments().isEmpty() || parser.isSet(QStringLiteral("cwd"));
     if (parser.isSet(QStringLiteral("socket")) &&
@@ -158,8 +174,11 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
                              ? lapis::session::AgentMode::codex
                              : lapis::session::AgentMode::terminal,
             };
-        } else if (parser.isSet(QStringLiteral("cwd"))) {
-            options.launch = lapis::session::shell_launch(parser.value(QStringLiteral("cwd")));
+        } else if (parser.isSet(QStringLiteral("development-shell")) ||
+                   parser.isSet(QStringLiteral("smoke-input"))) {
+            options.launch = lapis::session::shell_launch(
+                parser.isSet(QStringLiteral("cwd")) ? parser.value(QStringLiteral("cwd"))
+                                                    : QString::fromUtf8(LAPIS_PROJECT_ROOT));
         }
     }
     return options;
@@ -232,7 +251,10 @@ int main(int argc, char** argv) {
                                    .screen = parser.isSet(QStringLiteral("screen"))
                                                  ? parser.value(QStringLiteral("screen"))
                                                  : qEnvironmentVariable("LAPIS_SCREEN"),
-                                   .keymap = &keymap});
+                                   .keymap = &keymap,
+                                   .persistGeometry = !isolated && !options.launch &&
+                                                      options.endpoint.isEmpty() &&
+                                                      !parser.isSet(QStringLiteral("capture"))});
         view.setSystemReducedMotion(system_reduced_motion());
         view.setReducedMotion(parser.isSet(QStringLiteral("reduced-motion")));
         QObject::connect(&app, &QGuiApplication::applicationStateChanged, &view,
@@ -242,6 +264,10 @@ int main(int argc, char** argv) {
                          });
         QObject::connect(&view, &UiPreview::windowChanged, &view, [&](QQuickWindow* window) {
             wire_window(*window, view, workspace, parser);
+            const auto update_chrome = [window] { style_window_chrome(*window); };
+            QObject::connect(window, &QQuickWindow::colorChanged, window, update_chrome);
+            QObject::connect(window, &QWindow::visibilityChanged, window, update_chrome);
+            update_chrome();
         });
         if (!view.load())
             return 1;

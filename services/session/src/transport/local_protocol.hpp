@@ -24,7 +24,10 @@ enum class Kind : quint8 {
     history_page,
     attention_snapshot,
     attention_decision,
-    attention_retry
+    attention_retry,
+    // Client request to end the agent's process; the service answers with the
+    // ordinary `ended` status once the process has exited.
+    terminate
 };
 // Identities introduced in v3 and retained in v4/v6: two nonzero 16-byte UUIDs and a BE u64
 // generation.

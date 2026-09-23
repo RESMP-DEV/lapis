@@ -142,8 +142,8 @@ void envelope_messages() {
         [&] { static_cast<void>(wire::decode_snapshot_message(encoded_snapshot_message + 'x')); });
 
     const QByteArray payload = QByteArrayLiteral("input");
-    for (const auto kind :
-         {wire::Kind::text, wire::Kind::paste, wire::Kind::key, wire::Kind::resize}) {
+    for (const auto kind : {wire::Kind::text, wire::Kind::paste, wire::Kind::key,
+                            wire::Kind::resize, wire::Kind::terminate}) {
         const wire::ControlMessage message{attachment, payload};
         require(wire::frame(kind, wire::encode_control(message))[4] == static_cast<char>(kind));
         const QByteArray encoded_control = wire::encode_control(message);
@@ -233,7 +233,11 @@ int main() {
         rejects([&] { static_cast<void>(wire::encode_snapshot(invalid)); });
         const QByteArray framed = wire::frame(wire::Kind::text, QByteArrayLiteral("x"));
         require(framed.size() == 6);
-        for (const auto* hex : {"00000000", "00800001", "0000000100"}) {
+        // Kind 15 (terminate) is the last defined kind; 16 is unknown.
+        auto terminate = QByteArray::fromHex("000000010f");
+        require(wire::take_frame(terminate, frame) && frame.kind == wire::Kind::terminate &&
+                frame.payload.isEmpty());
+        for (const auto* hex : {"00000000", "00800001", "0000000100", "0000000110"}) {
             auto malformed = QByteArray::fromHex(hex);
             rejects([&] { static_cast<void>(wire::take_frame(malformed, frame)); });
         }

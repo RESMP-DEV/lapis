@@ -352,30 +352,32 @@ coordination. For renderer changes, run `terminal-render` against the previous
 renderer and the proposed change: a valid baseline failure must identify a
 pixel/layout assertion after window and snapshot preconditions pass.
 
-Window tests open on the laptop panel by default. `--screen <text>` selects the
-QScreen whose Qt name contains that text, and `LAPIS_SCREEN` supplies a default
-for direct app invocations. The launcher sets `LAPIS_SCREEN=built-in` and prints
-the chosen screen and geometry, so a capture cannot silently land on an external
-display. Pass `--screen ""` or `LAPIS_SCREEN=` to keep platform placement.
+Normal launch restores machine-local window geometry and does not force a screen.
+`--screen <text>` is an explicit capture/qualification override. Routine GUI tests
+run on anvil through `uv run --no-project python scripts/lapis.py linux-gui`.
+Do not use the user's Mac as an automatic GUI-testing fallback.
 
 ### Keybindings and layout
 
-`lapis.json` at the project root holds keybindings and appearance settings. Edit it
-and press Ctrl-R in the running window, or choose
-"Reload keybindings" from the Preview tools menu; no rebuild is needed. The
-defaults are:
+`lapis.json` stores appearance and optional keybinding overrides. Empty overrides
+use platform defaults. Command-R on macOS reloads it. The product has one terminal
+stage, category navigation and the category's agent strip under the stage; no
+tab row, tiling or preview layout picker. `previewsVisible` hides the strip
+(default on); the `togglePreviews` action has no default key.
 
-| Action | Default | Purpose |
-| --- | --- | --- |
-| Quit | Ctrl+Q | Exit lapis |
-| Detach window | Ctrl+W | Hide the window and leave sessions running |
-| Next / previous session | Ctrl+Tab / Ctrl+Shift+Tab | Move through the flat session list |
-| Session 1-4 | Ctrl+1 to Ctrl+4 | Jump straight to a session |
-| Next / previous window | Ctrl+Shift+] / Ctrl+Shift+[ | Move through sessions |
-| Focus left / right | Ctrl+Left / Ctrl+Right | Step one session |
-| Cycle layout | Ctrl+L | Cycle focus, columns, blocks and stack; save the selection |
-| Appearance | Ctrl+, / Meta+, (Command-comma on macOS) | Open theme, layout and density settings |
-| Reload config | Ctrl+R | Re-read `lapis.json` |
+- macOS: Command-Option-left/right or Command-Shift-up/down changes category;
+  Command-Shift-[ / ] moves through the category's agents. Command-1 through 4
+  selects a category.
+- Command-N starts the new-agent form; Command-Shift-N starts the category form.
+  Command-Shift-P opens the searchable, scrollable Commands palette. Command-B
+  toggles the sidebar; `sidebarVisible` persists in `lapis.json`. Command-V remains paste.
+  Command-comma opens Appearance. Command-W (`closeAgent`) closes the focused
+  agent, confirming first while it may be running. Command-Q quits the GUI and
+  the window's close button detaches it; neither stops service-owned agents.
+  `detachWindow` still works when configured but has no default key.
+- Linux uses Control-Shift-based counterparts, with Alt added for the category
+  arrows and new-category creation. Bare terminal Control chords remain
+  terminal input.
 
 Each action takes a string or a list of strings, so several chords can share one
 action. Qt names the macOS Command key `Meta`; write `Meta+` (or `Ctrl+` for
@@ -388,20 +390,19 @@ multi-chord sequences, but `openSettings` accepts only single chords because its
 modal-safe event filter handles one key press at a time. Workspace navigation,
 layout toggles, and config reload shortcuts are disabled while Appearance is open.
 
-Appearance settings offer four layouts: `focus` keeps one large pane and a
-preview strip, `columns` places previews beside the pane, `blocks` uses a wrapping
-grid, and `stack` shows the selected session alone. Six themes and three card
-densities change the window chrome; terminal cell colors remain session-owned.
-Appearance choices persist atomically in `lapis.json`, preserving shortcut strings
-and other JSON values; malformed files remain untouched and show a diagnostic.
-Ctrl-L cycles through focus, columns, blocks and stack in that order and saves the
-selection using the same path as the Appearance dialog. The session cards still
-include fixtures; navigation does not create additional live service sessions.
-Category grouping is not implemented. The legacy action names `nextCategory`,
-`previousCategory`, and `category1` through `category4` remain accepted keybinding
-names for flat session navigation; an old `categories` field is preserved on save
-but is not used. Use `Meta+` for Command shortcuts on this macOS build, which
-deliberately disables Qt's default Control/Command swapping.
+Appearance settings offer coordinated palettes (including OLED black, whose
+resting surfaces are all `#000000`), border/motion treatments,
+three chrome densities and the terminal font. The Command color theme is the
+default. `terminalFont` holds an optional `family` and a `size` of 10–32 pixels
+(default 16); omitting `family` uses the platform fixed-width font, and an
+unavailable or proportional family falls back to it. The same family is used for
+machine readouts in the window. These choices persist
+atomically in `lapis.json`; category/session identities and window geometry live
+in private local runtime files. Legacy layout values can still be read for config
+compatibility but do not reintroduce preview panes or change the single stage.
+Category bindings now operate on categories; agent bindings operate only within
+the selected category. Opening a modal, composing text or pasting prevents
+workspace navigation from redirecting the input.
 
 Command-Left and Command-Right inside the terminal move to the start and end of
 the line, matching macOS editing. The terminal translates them to the Ctrl-A and

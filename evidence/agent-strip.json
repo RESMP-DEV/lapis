@@ -1,0 +1,90 @@
+{
+  "recorded_at": "2026-09-23T03:37:17.982276+00:00",
+  "source_state": "uncommitted working tree on feature/agent-workspace (base 79be97a)",
+  "request": "Command-W closes an agent; no tiling; the preview strip replaces the tab row with scrolloff navigation; harness status with a pulse until the agent is selected; agents never inherit parent-agent markers; OLED black theme",
+  "source_sha256": {
+    "apps/desktop/src/workspace.hpp": "bd8a4dca640783f27fd0daf1b2a3966a8ad983ee34ac13ee2b75fdf14b73df39",
+    "apps/desktop/src/workspace.cpp": "34afc985ac7c6df573d40389115a4dca836ebb268f361e22e3a93654bfd2e960",
+    "apps/desktop/src/attention_view.cpp": "c3e6268e13353c348ccd8035e2beb8679960e20ab24da3b07c622ca45f590993",
+    "apps/desktop/src/live_connection.cpp": "fb71c7d0837774a7e2047fedbb7c0c9b099885ac10dc20b6d3f256d2145f523e",
+    "apps/desktop/src/keymap.hpp": "231b71df4016e52ecaa5ae77b8cd0cfd4f30ade05bf55f17031478bec324c874",
+    "apps/desktop/src/keymap.cpp": "65a18b5523dfd56d242820507d0af6e0fc67cb2459e08da3743ddac7f0d781fd",
+    "apps/desktop/src/terminal_surface.hpp": "aeac0b34e76969256d7b01204d9b052cf13c6de82094953039a2113eed7e0943",
+    "apps/desktop/src/terminal_surface.cpp": "29c8aa1503578ecdae098125c65f9eedf1260577642ce023e977a057939d18c4",
+    "apps/desktop/qml/Main.qml": "32b96b2177629546a979e30e97df375a380c1b9a404cfa1751a18cba90a5967e",
+    "apps/desktop/tests/workspace_test.cpp": "f51b0893468241974d9c3d715964be2b76b054065394136eb6be904af5b7ee71",
+    "apps/desktop/tests/ui_preview_test.cpp": "e3ecec92aa37f0613259ed73bd35485b8acf98c8a8741ca078f2a1e39eacdbfb",
+    "apps/desktop/tests/keymap_test.cpp": "49372ba9c29f7eb34980688e68cad221effdab6dab88efff46dba2aa3ce89c0c",
+    "services/session/src/session_service.cpp": "ce8f8a4597c59c13c53fc73d7aa3c68416428ca14ebfd49c6cec5dfb24797bc1",
+    "services/session/src/transport/local_protocol.hpp": "83a348d1feedf98f72ad2385914210ba6ba33e82c77a09b906f644ebfc4153d6",
+    "services/session/src/transport/local_protocol.cpp": "fd6fbb39bad427618ed57f389e9fc0f9236def0695493628d630efaaec1f81be",
+    "services/session/src/platform/posix/pty_process.hpp": "eddc077d225a8bae937d615d9b2d0412fb82f933feeb66f76612710b614ef0e1",
+    "services/session/src/platform/posix/pty_process.cpp": "ce26e3412d6f3f17d50750757cb81ab5d82c2e3341da4b430e23e9b21a88916e",
+    "services/session/tests/local_protocol_test.cpp": "bf5139fc75e1d0fad35d1fbb5c10993f497cc4a21fd8d646ec503bbb00960ffb"
+  },
+  "changes": [
+    "Split panes built earlier the same day were removed at the user's request, including the pane_tree module and registry pane groups",
+    "No tab row: the strip of live previews under the stage is the category's navigation, with sidescrolloff-style scrolling and a trailing new-agent card",
+    "Preview cards never take input or resize a PTY, redraw at most every 250 ms and show the rows ending at the cursor at half scale",
+    "Unseen agents (finished or needing a response while another was selected) pulse on their card and category until selected",
+    "Status sources: Codex observer; Claude --settings hooks writing a private activity file; output estimate labelled Output active/Quiet for other harnesses",
+    "Command-W closes the focused agent through the session service terminate frame (SIGHUP, SIGTERM at 1.5 s, SIGKILL at 3 s); unreachable agents need an explicit abandon",
+    "The session service clears parent-agent session markers before starting agents",
+    "OLED black theme; live agents' placeholder screens use engine defaults instead of the sample palette",
+    "Categories: Command-Option-left/right and Command-Shift-up/down"
+  ],
+  "validation": {
+    "anvil_full_gate": {
+      "passed": true,
+      "checks": 51,
+      "ctest_suites": 20,
+      "seconds": 40,
+      "includes": "build, clang-format, cppcheck, clang-tidy shards, all CTest suites under Xvfb"
+    },
+    "anvil_asan_leaks": {
+      "passed": true,
+      "suites": [
+        "workspace",
+        "ui-preview",
+        "keymap"
+      ]
+    },
+    "mac_headless": {
+      "passed": true,
+      "suites": [
+        "workspace",
+        "keymap"
+      ]
+    },
+    "claude_hook_probe": "Claude Code 2.1.280, claude -p --model haiku --settings <generated file>: SessionStart, UserPromptSubmit, Stop fired in order (idle, working, finished)",
+    "gui_strip_assertions": "no tab row, cards below stage, click selects, non-interactive throttled cards, scrolloff both directions, pulse rules and colors, category dot, short window, hide preference, Command-W on ended agent, new-agent card",
+    "mac_native_input_requalified": false,
+    "mac_built_opened_and_visually_checked": true,
+    "agents_preserved": true
+  },
+  "limitations": [
+    "Native macOS key delivery was not re-run; GUI tests use synthetic Qt events on Linux",
+    "Claude PreToolUse and Notification hooks were exercised through /bin/sh with the generated commands, not through a live permission prompt",
+    "Claude agents created before this change have no hooks and use the output estimate until recreated",
+    "The output estimate is advisory; a TUI that redraws without working, or works silently, will read wrongly",
+    "Agents started by earlier service builds cannot be ended from lapis until restarted"
+  ],
+  "screenshots": [
+    "build/tiling/cap/ui-1400x960.png",
+    "build/tiling/cap/ui-640x480.png",
+    "build/tiling/cap/ui-close-unreachable.png",
+    "build/tiling/cap/ui-harnesses.png",
+    "build/tiling/cap/ui-previews.png",
+    "build/tiling/cap/ui-split-four-640.png",
+    "build/tiling/cap/ui-split-four.png",
+    "build/tiling/cap/ui-split-picker.png",
+    "build/tiling/cap/ui-split-right.png",
+    "build/tiling/cap/ui-split-three.png",
+    "build/tiling/cap/ui-split-zoomed.png",
+    "build/tiling/cap/ui-strip-end.png",
+    "build/tiling/cap/ui-strip.png",
+    "build/tiling/cap/ui-unseen.png"
+  ],
+  "binary_sha256": "4b22192cd36dfe51ac3c8e6aad22878d8132fa2b74fd92dc873e5cdfa542e511",
+  "service_sha256": "62be39140582a95a9910e9693f14861aed009fe88e7e57f36e82693d76c9c9a8"
+}

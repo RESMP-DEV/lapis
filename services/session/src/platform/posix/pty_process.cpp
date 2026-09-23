@@ -22,6 +22,16 @@ QString system_error(const char* operation) {
     return QString::fromLatin1(operation) + QStringLiteral(": ") +
            QString::fromStdString(std::error_code(errno, std::generic_category()).message());
 }
+int resolve_pty_name(int descriptor, std::array<char, 128>& name) {
+#ifdef __APPLE__
+    return ::ioctl(descriptor, TIOCPTYGNAME, name.data());
+#else
+    const int status = ::ptsname_r(descriptor, name.data(), name.size());
+    if (status != 0)
+        errno = status;
+    return status;
+#endif
+}
 } // namespace
 PtyProcess::PtyProcess(QObject* parent) : QObject(parent) {
     connect(&process_, &QProcess::started, this, [this] {
@@ -90,13 +100,7 @@ void PtyProcess::start(const PtyLaunch& launch) {
         return;
     }
     std::array<char, 128> name{};
-#ifdef __APPLE__
-    const int name_status = ::ioctl(master_.get(), TIOCPTYGNAME, name.data());
-#else
-    const int name_status = ::ptsname_r(master_.get(), name.data(), name.size());
-    if (name_status != 0)
-        errno = name_status;
-#endif
+    const int name_status = resolve_pty_name(master_.get(), name);
     if (name_status != 0) {
         emit failure(system_error("Resolve PTY"));
         master_.reset();
@@ -183,14 +187,30 @@ bool PtyProcess::writeBytes(const QByteArray& bytes) {
         writeReady();
     return true;
 }
-bool PtyProcess::terminateProcessGroup() {
+bool PtyProcess::terminateProcessGroup() { return signalProcessGroup(SIGKILL); }
+// Resolve the leader from the live QProcess each time: once it is reaped,
+// processId() is zero, so a later escalation cannot reach a reused PID.
+bool PtyProcess::signalProcessGroup(int signal) {
+    if (process_.state() == QProcess::NotRunning)
+        return false;
     const qint64 process_id = process_.processId();
     if (process_id <= 0 || process_id > std::numeric_limits<pid_t>::max())
         return false;
     const pid_t child = static_cast<pid_t>(process_id);
     if (::getsid(child) != child)
         return false;
-    return ::kill(-child, SIGKILL) == 0;
+    return ::kill(-child, signal) == 0;
+}
+bool PtyProcess::hangup() {
+    if (!signalProcessGroup(SIGHUP))
+        return false;
+    constexpr int terminate_after_ms = 1500;
+    constexpr int kill_after_ms = 3000;
+    QTimer::singleShot(terminate_after_ms, this,
+                       [this] { static_cast<void>(signalProcessGroup(SIGTERM)); });
+    QTimer::singleShot(kill_after_ms, this,
+                       [this] { static_cast<void>(signalProcessGroup(SIGKILL)); });
+    return true;
 }
 void PtyProcess::clearPendingWrite() {
     pending_write_.clear();

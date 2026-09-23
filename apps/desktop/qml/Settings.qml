@@ -2,53 +2,67 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// Appearance settings, opened with the configured openSettings shortcut.
-//
-// Every control writes straight through to the keymap, which applies the change
-// to the live window and persists it to lapis.json, so the effect is visible
-// behind the dialog and survives a restart. Validation lives in C++: an unknown
-// name is rejected there rather than silently accepted here.
+// Appearance. Themes, density and the terminal font come from the keymap and
+// apply immediately. There is one workspace stage, so this dialog does not
+// offer a layout or preview picker. Font controls live only here.
 Dialog {
     id: settings
 
     required property var themeModel
-    required property var layoutModel
     required property var densityModel
     required property string currentTheme
-    required property string currentLayout
     required property string currentDensity
     required property string configPath
     required property string configDiagnostic
     required property string shortcutHint
+    required property var fontFamilies
+    // Configured family; empty selects the platform's fixed-width font.
+    required property string fontFamily
+    required property string resolvedFontFamily
+    required property int fontSize
+    required property int fontSizeMinimum
+    required property int fontSizeMaximum
+    required property int fontSizeDefault
+    required property int motionDuration
+    required property bool motionEnabled
 
     signal themeChosen(string name)
-    signal layoutChosen(string name)
     signal densityChosen(string name)
+    signal fontFamilyChosen(string name)
+    signal fontSizeChosen(int pixels)
+
+    readonly property int uiFont: {
+        if (font.pixelSize > 0)
+            return Math.max(12, font.pixelSize)
+        if (font.pointSize > 0)
+            return Math.max(12, Math.round(font.pointSize * 96 / 72))
+        return 13
+    }
+
+    readonly property var currentAppearance: themeByName(currentTheme)
+    readonly property int chromeRadius: currentAppearance ? currentAppearance.cornerRadius : 2
+    readonly property int readoutFont: Math.max(11, uiFont - 2)
+    font.family: currentAppearance && currentAppearance.monoChrome ? resolvedFontFamily : Qt.application.font.family
 
     objectName: "settingsDialog"
     title: qsTr("Appearance")
     modal: true
+    focus: true
     anchors.centerIn: parent
-    width: 620
-    height: 560
+    width: Math.min(560, Math.max(300, (parent ? parent.width : 640) - 24))
+    height: Math.min(560, Math.max(280, (parent ? parent.height : 480) - 24))
     padding: 0
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
-    background: Rectangle {
-        color: settings.paletteWindow
-        radius: 10
-        border.width: 1
-        border.color: settings.paletteBorder
-    }
-
-    // The dialog renders in the scheme it is choosing, so a theme reads the
-    // same way here as it will in the window behind.
-    property var paletteWindow: "#111927"
-    property var paletteSurface: "#151c29"
-    property var paletteBorder: "#2b3546"
-    property var paletteText: "#f2f3ea"
-    property var paletteMuted: "#98a0ae"
-    property var paletteAccent: "#6a76e8"
+    property color paletteWindow: "#070b10"
+    property color paletteSurface: "#101820"
+    property color paletteBorder: "#243140"
+    property color paletteText: "#e7eef4"
+    property color paletteMuted: "#8ea0b3"
+    property color paletteAccent: "#7ddec8"
+    property color paletteSelected: "#193638"
+    property color paletteHover: "#1b303e"
+    property color paletteFault: "#ee7a8a"
 
     function themeByName(name) {
         for (let i = 0; i < themeModel.length; ++i) {
@@ -58,30 +72,91 @@ Dialog {
         return null
     }
 
-    onCurrentThemeChanged: {
-        const t = themeByName(currentTheme)
-        if (!t)
+    function applyTheme(name) {
+        const theme = themeByName(name)
+        if (!theme)
             return
-        paletteWindow = t.surface
-        paletteSurface = t.card
-        paletteBorder = t.border
-        paletteText = t.text
-        paletteMuted = t.mutedText
-        paletteAccent = t.focusedBorder
+        paletteWindow = theme.surface
+        paletteSurface = theme.card
+        paletteBorder = theme.border
+        paletteText = theme.text
+        paletteMuted = theme.mutedText
+        paletteAccent = theme.focusedBorder
+        paletteSelected = theme.focused
+        paletteHover = theme.hoveredCard
+        paletteFault = theme.fault
     }
 
-    component SectionLabel: Label {
+    Component.onCompleted: applyTheme(currentTheme)
+    onCurrentThemeChanged: applyTheme(currentTheme)
+
+    background: Rectangle {
+        color: settings.paletteWindow
+        radius: settings.chromeRadius
+        border.width: 1
+        border.color: settings.paletteBorder
+    }
+
+    header: Item {
+        implicitHeight: 0
+    }
+
+    component PlainLabel: Label { textFormat: Text.PlainText }
+
+    // Shared control feedback: hover and press wash, selection fill with a
+    // focus edge. Color changes only, within the theme's motion duration.
+    component ChoiceSurface: Rectangle {
+        id: surface
+        property bool marked: false
+        property bool hovered: false
+        property bool pressed: false
+        radius: settings.chromeRadius
+        color: marked || pressed ? settings.paletteSelected :
+               hovered ? settings.paletteHover : settings.paletteWindow
+        border.width: marked ? 2 : 1
+        border.color: marked ? settings.paletteAccent :
+                      hovered ? settings.paletteMuted : settings.paletteBorder
+        Behavior on color {
+            enabled: settings.motionEnabled
+            ColorAnimation { duration: settings.motionDuration; easing.type: Easing.OutCubic }
+        }
+        Behavior on border.color {
+            enabled: settings.motionEnabled
+            ColorAnimation { duration: settings.motionDuration; easing.type: Easing.OutCubic }
+        }
+    }
+
+    component StepButton: Button {
+        id: stepButton
+        focusPolicy: Qt.NoFocus
+        hoverEnabled: true
+        font.family: settings.resolvedFontFamily
+        font.pixelSize: Math.max(12, settings.uiFont)
+        implicitWidth: Math.max(36, implicitContentWidth + 20)
+        implicitHeight: Math.max(32, settings.uiFont + 18)
+        contentItem: PlainLabel {
+            text: stepButton.text
+            font: stepButton.font
+            color: stepButton.enabled ? settings.paletteText : settings.paletteMuted
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+        }
+        background: ChoiceSurface {
+            hovered: stepButton.hovered && stepButton.enabled
+            pressed: stepButton.down
+        }
+    }
+
+    component SectionLabel: PlainLabel {
         color: settings.paletteMuted
-        font.pixelSize: 11
-        font.capitalization: Font.AllUppercase
-        font.letterSpacing: 0.6
+        font.pixelSize: Math.max(12, settings.uiFont - 1)
+        font.bold: true
     }
 
     component ChoiceRow: ColumnLayout {
         id: row
 
         required property string label
-        required property string hint
         required property var names
         required property string selected
         required property var describe
@@ -90,157 +165,167 @@ Dialog {
         spacing: 8
         Layout.fillWidth: true
 
-        ColumnLayout {
+        PlainLabel {
+            text: row.label
+            color: settings.paletteText
+            font.pixelSize: settings.uiFont
+        }
+        PlainLabel {
             Layout.fillWidth: true
-            spacing: 2
-
-            Label {
-                text: row.label
-                color: settings.paletteText
-                font.pixelSize: 13
-            }
-            Label {
-                Layout.fillWidth: true
-                text: row.describe(row.selected)
-                color: settings.paletteMuted
-                font.pixelSize: 11
-                // The description is the only explanation of what a layout does,
-                // so wrap rather than cut it off mid-word beside the buttons.
-                wrapMode: Text.WordWrap
-            }
+            text: row.describe(row.selected)
+            color: settings.paletteMuted
+            font.pixelSize: Math.max(12, settings.uiFont - 1)
+            wrapMode: Text.WordWrap
         }
 
-        RowLayout {
-            Layout.alignment: Qt.AlignLeft
+        Flow {
+            Layout.fillWidth: true
             spacing: 6
 
             Repeater {
                 model: row.names
 
                 delegate: Button {
+                    id: choiceButton
                     required property string modelData
+                    readonly property bool marked: modelData === row.selected
                     objectName: "choice-" + modelData
-                    checked: modelData === row.selected
-                    checkable: false
-                    text: modelData === "focus" ? qsTr("Focus") :
-                          modelData === "columns" ? qsTr("Columns") :
-                          modelData === "blocks" ? qsTr("Blocks") :
-                          modelData === "stack" ? qsTr("Stack") :
-                          modelData === "comfortable" ? qsTr("Comfortable") :
+                    text: modelData === "comfortable" ? qsTr("Comfortable") :
                           modelData === "compact" ? qsTr("Compact") :
                           modelData === "minimal" ? qsTr("Minimal") : modelData
-                    font.pixelSize: 11
+                    font.pixelSize: Math.max(12, settings.uiFont - 1)
                     focusPolicy: Qt.NoFocus
+                    hoverEnabled: true
                     onClicked: row.picked(modelData)
+
+                    contentItem: PlainLabel {
+                        text: choiceButton.text
+                        font: choiceButton.font
+                        color: settings.paletteText
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: ChoiceSurface {
+                        marked: choiceButton.marked
+                        hovered: choiceButton.hovered
+                        pressed: choiceButton.down
+                    }
                 }
             }
         }
     }
 
-    // The header is drawn by this dialog, not by the style, so the title is not
-    // repeated: the default title bar is suppressed with a zero-height one.
-    header: Item {
-        implicitHeight: 0
-    }
-
     contentItem: ColumnLayout {
         spacing: 0
 
-        // Header
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: 52
+            implicitHeight: Math.max(48, settings.uiFont + 32)
             color: settings.paletteSurface
-            topLeftRadius: 10
-            topRightRadius: 10
 
-            Label {
-                anchors.left: parent.left
-                anchors.leftMargin: 18
-                anchors.verticalCenter: parent.verticalCenter
-                text: qsTr("Appearance")
-                color: settings.paletteText
-                font.pixelSize: 15
-                font.bold: true
-            }
-            Label {
-                anchors.right: parent.right
-                anchors.rightMargin: 18
-                anchors.verticalCenter: parent.verticalCenter
-                text: settings.shortcutHint
-                color: settings.paletteMuted
-                font.pixelSize: 11
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 16
+                anchors.rightMargin: 16
+                spacing: 12
+
+                PlainLabel {
+                    text: qsTr("Appearance")
+                    color: settings.paletteText
+                    font.pixelSize: settings.uiFont + 2
+                    font.bold: true
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                }
+                PlainLabel {
+                    text: settings.shortcutHint
+                    color: settings.paletteMuted
+                    font.family: settings.resolvedFontFamily
+                    font.pixelSize: settings.readoutFont
+                    elide: Text.ElideRight
+                }
             }
         }
 
         Flickable {
+            id: settingsFlick
             objectName: "settingsScroll"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.margins: 18
+            Layout.margins: 16
+            contentWidth: width
             contentHeight: body.implicitHeight
-            ScrollBar.vertical: ScrollBar {}
             clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar {
+                policy: ScrollBar.AsNeeded
+            }
 
             ColumnLayout {
                 id: body
-                width: parent.width
-                spacing: 18
+                width: settingsFlick.width
+                spacing: 16
 
-                SectionLabel { text: qsTr("Theme") }
+                SectionLabel {
+                    text: qsTr("Theme")
+                }
 
                 GridLayout {
                     Layout.fillWidth: true
-                    columns: 3
-                    columnSpacing: 10
-                    rowSpacing: 10
+                    columns: settings.width < 460 ? 2 : 3
+                    columnSpacing: 8
+                    rowSpacing: 8
 
                     Repeater {
                         model: settings.themeModel
 
                         delegate: Button {
+                            id: themeButton
                             required property var modelData
                             objectName: "theme-" + modelData.name
                             Layout.fillWidth: true
-                            implicitHeight: 62
+                            implicitHeight: Math.max(64, settings.uiFont * 4)
                             focusPolicy: Qt.NoFocus
                             padding: 0
                             hoverEnabled: true
-                            checked: modelData.name === settings.currentTheme
-                            ToolTip.visible: hovered
-                            ToolTip.text: modelData.label
                             onClicked: settings.themeChosen(modelData.name)
 
                             background: Rectangle {
-                                radius: 7
-                                color: modelData.card
+                                radius: settings.chromeRadius
+                                color: themeButton.hovered ? modelData.hoveredCard : modelData.card
                                 border.width: modelData.name === settings.currentTheme ? 2 : 1
-                                border.color: modelData.name === settings.currentTheme ?
-                                                  modelData.focusedBorder : modelData.border
+                                border.color: modelData.name === settings.currentTheme ? modelData.focusedBorder :
+                                              themeButton.hovered ? modelData.mutedText : modelData.border
+                                Behavior on color {
+                                    enabled: settings.motionEnabled
+                                    ColorAnimation { duration: settings.motionDuration; easing.type: Easing.OutCubic }
+                                }
 
                                 ColumnLayout {
                                     anchors.fill: parent
                                     anchors.margins: 8
-                                    spacing: 4
+                                    spacing: 6
 
-                                    Label {
+                                    PlainLabel {
                                         text: modelData.label
                                         color: modelData.text
-                                        font.pixelSize: 11
+                                        font.pixelSize: Math.max(12, settings.uiFont - 1)
                                         elide: Text.ElideRight
                                         Layout.fillWidth: true
                                     }
                                     RowLayout {
-                                        spacing: 3
-                                        Layout.alignment: Qt.AlignLeft
+                                        spacing: 4
                                         Repeater {
-                                            model: [modelData.text, modelData.mutedText,
-                                                    modelData.focusedBorder, modelData.attention]
+                                            // Focus, activity, pending request and fault.
+                                            model: [modelData.focusedBorder, modelData.activity,
+                                                    modelData.attention, modelData.fault]
                                             delegate: Rectangle {
                                                 required property var modelData
-                                                width: 14
-                                                height: 8
-                                                radius: 2
+                                                implicitWidth: 16
+                                                implicitHeight: 8
+                                                Layout.preferredWidth: 16
+                                                Layout.preferredHeight: 8
+                                                radius: 1
                                                 color: modelData
                                             }
                                         }
@@ -257,33 +342,18 @@ Dialog {
                     color: settings.paletteBorder
                 }
 
-                SectionLabel { text: qsTr("Layout") }
-
-                ChoiceRow {
-                    label: qsTr("Session arrangement")
-                    hint: qsTr("Ctrl-L cycles layouts without opening this dialog.")
-                    names: settings.layoutModel
-                    selected: settings.currentLayout
-                    describe: function(name) {
-                        return name === "focus" ? qsTr("One large pane with a preview strip below.") :
-                               name === "columns" ? qsTr("Previews in a left channel beside the pane.") :
-                               name === "blocks" ? qsTr("Every session gets an equal tile.") :
-                               name === "stack" ? qsTr("One session at a time, filling the window.") : ""
-                    }
-                    onPicked: function(name) { settings.layoutChosen(name) }
+                SectionLabel {
+                    text: qsTr("Density")
                 }
 
-                SectionLabel { text: qsTr("Preview size") }
-
                 ChoiceRow {
-                    label: qsTr("Card density")
-                    hint: qsTr("Applies to the preview cards, not the terminal text.")
+                    label: qsTr("Chrome")
                     names: settings.densityModel
                     selected: settings.currentDensity
                     describe: function(name) {
-                        return name === "comfortable" ? qsTr("Tallest cards, most terminal visible.") :
-                               name === "compact" ? qsTr("Shorter cards, more of them on screen.") :
-                               name === "minimal" ? qsTr("Thumbnails only, most sessions at once.") : ""
+                        return name === "comfortable" ? qsTr("Wider category rail and tabs. Terminal text is unchanged.") :
+                               name === "compact" ? qsTr("Tighter categories and tabs. Terminal text is unchanged.") :
+                               name === "minimal" ? qsTr("Smallest chrome. The terminal stays the main surface.") : ""
                     }
                     onPicked: function(name) { settings.densityChosen(name) }
                 }
@@ -294,30 +364,194 @@ Dialog {
                     color: settings.paletteBorder
                 }
 
-                SectionLabel { text: qsTr("Configuration") }
+                SectionLabel {
+                    text: qsTr("Terminal font")
+                }
 
-                Label {
+                PlainLabel {
+                    Layout.fillWidth: true
+                    text: qsTr("Used by the terminal and by paths, shortcuts and states in the window.")
+                    color: settings.paletteMuted
+                    font.pixelSize: Math.max(12, settings.uiFont - 1)
+                    wrapMode: Text.WordWrap
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    ComboBox {
+                        id: familyChoice
+                        objectName: "fontFamilyChoice"
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 120
+                        implicitHeight: Math.max(32, settings.uiFont + 18)
+                        font.pixelSize: Math.max(12, settings.uiFont - 1)
+                        // Index 0 is the platform default; the rest are installed
+                        // fixed-pitch families. A configured name that is not
+                        // installed is still listed so the selection stays visible.
+                        model: {
+                            const names = [""].concat(settings.fontFamilies)
+                            if (settings.fontFamily.length > 0 && names.indexOf(settings.fontFamily) < 0)
+                                names.splice(1, 0, settings.fontFamily)
+                            return names
+                        }
+                        currentIndex: Math.max(0, model.indexOf(settings.fontFamily))
+                        displayText: currentIndex <= 0 ? qsTr("System default · %1").arg(settings.resolvedFontFamily) :
+                                                         currentText
+                        onActivated: function(index) {
+                            settings.fontFamilyChosen(model[index])
+                            // Activation assigns currentIndex; follow the saved value again.
+                            currentIndex = Qt.binding(() => Math.max(0, model.indexOf(settings.fontFamily)))
+                        }
+
+                        contentItem: PlainLabel {
+                            text: familyChoice.displayText
+                            font.family: settings.resolvedFontFamily
+                            font.pixelSize: familyChoice.font.pixelSize
+                            color: settings.paletteText
+                            elide: Text.ElideRight
+                            verticalAlignment: Text.AlignVCenter
+                            leftPadding: 10
+                            rightPadding: 24
+                        }
+                        indicator: PlainLabel {
+                            x: familyChoice.width - width - 8
+                            y: (familyChoice.height - height) / 2
+                            text: "▾"
+                            color: settings.paletteMuted
+                        }
+                        background: ChoiceSurface {
+                            hovered: familyChoice.hovered
+                            pressed: familyChoice.pressed
+                        }
+                        delegate: ItemDelegate {
+                            id: familyOption
+                            required property var modelData
+                            required property int index
+                            width: familyChoice.width
+                            hoverEnabled: true
+                            // Each family previews in its own face.
+                            contentItem: PlainLabel {
+                                text: familyOption.modelData.length > 0 ? familyOption.modelData : qsTr("System default")
+                                font.family: familyOption.modelData.length > 0 ? familyOption.modelData :
+                                                                                 settings.resolvedFontFamily
+                                font.pixelSize: familyChoice.font.pixelSize
+                                color: settings.paletteText
+                                elide: Text.ElideRight
+                                leftPadding: 8
+                            }
+                            background: Rectangle {
+                                color: familyOption.index === familyChoice.currentIndex ? settings.paletteSelected :
+                                       familyOption.hovered ? settings.paletteHover : settings.paletteSurface
+                            }
+                        }
+                        popup.background: Rectangle {
+                            color: settings.paletteSurface
+                            border.color: settings.paletteBorder
+                        }
+                        popup.onAboutToShow: {
+                            const limit = Math.max(120, settings.height - 80)
+                            familyChoice.popup.height = Math.min(familyChoice.popup.implicitHeight, limit)
+                        }
+                    }
+
+                    StepButton {
+                        objectName: "fontSmaller"
+                        text: "−"
+                        Accessible.name: qsTr("Smaller terminal text")
+                        enabled: settings.fontSize > settings.fontSizeMinimum
+                        onClicked: settings.fontSizeChosen(settings.fontSize - 1)
+                    }
+                    PlainLabel {
+                        objectName: "fontSizeValue"
+                        text: qsTr("%1 px").arg(settings.fontSize)
+                        color: settings.paletteText
+                        font.family: settings.resolvedFontFamily
+                        font.pixelSize: Math.max(12, settings.uiFont - 1)
+                        horizontalAlignment: Text.AlignHCenter
+                        Layout.preferredWidth: Math.max(implicitWidth, settings.uiFont * 3.5)
+                    }
+                    StepButton {
+                        objectName: "fontLarger"
+                        text: "+"
+                        Accessible.name: qsTr("Larger terminal text")
+                        enabled: settings.fontSize < settings.fontSizeMaximum
+                        onClicked: settings.fontSizeChosen(settings.fontSize + 1)
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    PlainLabel {
+                        objectName: "fontPreview"
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        text: "~/lapis $ codex   0O 1lI {}[] ->"
+                        color: settings.paletteText
+                        font.family: settings.resolvedFontFamily
+                        font.pixelSize: settings.fontSize
+                        elide: Text.ElideRight
+                    }
+                    StepButton {
+                        objectName: "fontReset"
+                        text: qsTr("Default")
+                        font.family: Qt.application.font.family
+                        font.pixelSize: Math.max(12, settings.uiFont - 1)
+                        enabled: settings.fontFamily.length > 0 || settings.fontSize !== settings.fontSizeDefault
+                        onClicked: {
+                            if (settings.fontFamily.length > 0)
+                                settings.fontFamilyChosen("")
+                            if (settings.fontSize !== settings.fontSizeDefault)
+                                settings.fontSizeChosen(settings.fontSizeDefault)
+                        }
+                    }
+                }
+
+                PlainLabel {
+                    objectName: "fontUnavailable"
+                    Layout.fillWidth: true
+                    visible: settings.fontFamily.length > 0 && settings.fontFamily !== settings.resolvedFontFamily
+                    text: qsTr("%1 is not an installed fixed-width font; using %2.")
+                          .arg(settings.fontFamily).arg(settings.resolvedFontFamily)
+                    color: settings.paletteFault
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: Math.max(12, settings.uiFont - 1)
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: 1
+                    color: settings.paletteBorder
+                }
+
+                SectionLabel {
+                    text: qsTr("Configuration")
+                }
+
+                PlainLabel {
                     Layout.fillWidth: true
                     text: settings.configPath
                     color: settings.paletteMuted
-                    font.pixelSize: 11
-                    font.family: "Menlo"
+                    font.family: settings.resolvedFontFamily
+                    font.pixelSize: settings.readoutFont
                     elide: Text.ElideMiddle
                 }
-                Label {
+                PlainLabel {
                     Layout.fillWidth: true
                     visible: settings.configDiagnostic.length > 0
                     text: settings.configDiagnostic
                     color: settings.paletteText
                     wrapMode: Text.WordWrap
-                    font.pixelSize: 11
-                    font.family: "Menlo"
+                    font.pixelSize: Math.max(11, settings.uiFont - 2)
                 }
-                Label {
+                PlainLabel {
                     Layout.fillWidth: true
-                    text: qsTr("Selections are written here immediately. Ctrl-R reloads the file from disk.")
+                    text: qsTr("Changes are saved to this file immediately.")
                     color: settings.paletteMuted
-                    font.pixelSize: 11
+                    font.pixelSize: Math.max(11, settings.uiFont - 2)
                     wrapMode: Text.WordWrap
                 }
             }

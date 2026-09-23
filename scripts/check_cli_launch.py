@@ -396,6 +396,8 @@ for line in sys.stdin:
 
 def run_capture(desktop, options, artifacts, name, expect_success=True):
     options = list(options)
+    if "--ui-preview" not in options and "--codex" not in options:
+        options.insert(0, "--development-shell")
     if (
         expect_success
         and "--socket" in options
@@ -992,7 +994,11 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
                     remaining = deadline - time.monotonic()
                     require(remaining > 0, "Backpressured client did not disconnect")
                     client.socket.settimeout(remaining)
-                    chunk = client.socket.recv(65536)
+                    try:
+                        chunk = client.socket.recv(65536)
+                    except ConnectionResetError:
+                        # Linux may reset a peer closed with unread request bytes.
+                        break
                     if not chunk:
                         break
                     received_bytes += len(chunk)
@@ -1244,7 +1250,7 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     artifacts = Path(tempfile.mkdtemp(prefix="run-", dir=args.output.parent))
     runtime_root = ROOT / "runtime"
-    runtime_root.mkdir(exist_ok=True)
+    runtime_root.mkdir(mode=0o700, exist_ok=True)
     receipt = {
         "schema": "lapis.cli-launch-check/1",
         "recorded_at": datetime.now(timezone.utc).isoformat(),

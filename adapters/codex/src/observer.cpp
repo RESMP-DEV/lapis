@@ -49,7 +49,7 @@ std::optional<RequestId> request_id(const QJsonValue& value) {
 }
 QJsonValue json_id(const RequestId& id) {
     if (const auto* number = std::get_if<std::int64_t>(&id))
-        return QJsonValue(*number);
+        return QJsonValue(static_cast<qint64>(*number));
     return QString::fromStdString(std::get<std::string>(id));
 }
 QByteArray json(const QJsonObject& value) {
@@ -647,7 +647,7 @@ Observer::~Observer() = default;
 // Updating this pin requires the live requalification procedure in
 // adapters/codex/README.md; a version string alone is insufficient.
 QString Observer::qualifiedBinarySha256() {
-    return QStringLiteral("f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9");
+    return QStringLiteral("8eaf1ad12fe6bf89b1710330f58900014322c7c5af677e43be116d8ac5fc0a9e");
 }
 void Observer::start(const QString& socket, const QString& hash) { impl_->start(socket, hash); }
 void Observer::reconnect() { impl_->reconnect(); }
