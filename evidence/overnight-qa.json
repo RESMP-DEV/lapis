@@ -1,0 +1,137 @@
+{
+  "schema": "lapis.qa-receipt/1",
+  "recorded_at": "2026-09-23T09:24:00Z",
+  "scope": "Overnight break-it QA of the category workspace and agent strip after merging PR #10, with the fixes and features it produced",
+  "source": {
+    "base": "6df2196 (feature/agent-strip, pushed)",
+    "tested_head": "0a646cd (qa/overnight, local)",
+    "commits": [
+      "95bde78 Fix stale committed keybindings and overnight QA findings",
+      "d3fcdc1 Treat Claude idle notices as advisory and select cards from accessibility",
+      "7a2a74a Add mouse selection, copy and wheel history to the terminal stage",
+      "28a1789 Add a Dock attention badge and per-harness launch arguments",
+      "badd477 Correct the Codex backend cleanup observation",
+      "3c3bccb Return to the live screen when typing on a history page",
+      "8bdfd88 Open web links with Command-click in the terminal",
+      "f2ebb50 Jump to the agent that needs you; stop a focus warning per dialog",
+      "b609f96 Exercise selection, wheel history and next-attention in the break-it run",
+      "0a646cd Keep history pages interactive; badge only on macOS"
+    ]
+  },
+  "hosts": {
+    "anvil": "Linux 7.0.0-31-generic x86_64, 32 CPUs, Qt 6.11.2, clang 22, Xvfb + openbox + Mesa lavapipe (software Vulkan)",
+    "mac": "macOS 26.5.1 arm64, Homebrew Qt, compile-only builds plus two Codex Computer Use sessions on an isolated copy"
+  },
+  "tools": {
+    "codex": "codex-cli 0.155.1",
+    "claude_code": "2.1.280"
+  },
+  "checks": [
+    {
+      "name": "full desktop gate on anvil (linux-gui: build, 21 CTest suites, clang-tidy, format, cppcheck)",
+      "tree": "0a646cd",
+      "result": "54/54 checks passed"
+    },
+    {
+      "name": "desktop ASan on anvil, changed and lifecycle suites",
+      "tree": "0a646cd",
+      "result": "10/10 passed (terminal-input, workspace, keymap, ui-preview, window-state, appearance-input, live-connection, local-protocol, pty-process, claude-observer)"
+    },
+    {
+      "name": "desktop ASan on anvil, all 21 suites",
+      "tree": "6df2196",
+      "result": "21/21 passed"
+    },
+    {
+      "name": "desktop TSan on anvil, all 21 suites",
+      "tree": "6df2196",
+      "result": "15/21 passed; history-store, window-state, ui-preview, appearance-input, terminal-input and terminal-render report races on Qt's uninstrumented threads. The pre-merge base 79be97a fails the same five pre-existing suites with the same signatures (window-state did not exist there). TSan remains a macOS qualification."
+    },
+    {
+      "name": "ui-check and cli-check on anvil",
+      "tree": "0a646cd",
+      "result": "both passed; cli-check 15/15 cases",
+      "note": "cli-check needs umask 022 and non-group-writable checkout directories on anvil; with the default umask 002 every service refuses its endpoint path."
+    },
+    {
+      "name": "quality (ruff, format, unit tests) on macOS",
+      "tree": "0a646cd",
+      "result": "passed"
+    }
+  ],
+  "breakit": {
+    "harness": "tools/qa/breakit.py with tools/qa/fake_agent.py on a private PATH; synthetic X11 input via python-xlib XTEST inside lapis.py linux-gui",
+    "scenarios": [
+      "empty",
+      "create",
+      "type_and_switch",
+      "finish_pulse",
+      "flood_while_typing",
+      "categories",
+      "close_running",
+      "close_hung",
+      "crash_then_close",
+      "gui_kill_restore",
+      "rapid_fire",
+      "resizes",
+      "select_and_wheel",
+      "next_attention",
+      "service_kill",
+      "quit_restore"
+    ],
+    "final_run": "16/16 scenarios passed on 0a646cd with no GUI warnings (build/qa/final4/receipt.json on anvil)",
+    "observations": [
+      "close_hung: an agent ignoring SIGHUP and SIGTERM ended 3.9 s after Ctrl+Shift+W (SIGKILL at 3 s)",
+      "flood_while_typing: 32 characters typed while a neighbour printed 20000 lines were delivered intact",
+      "gui_kill_restore and quit_restore: agent PIDs unchanged across GUI SIGKILL and quit; registry unchanged",
+      "window sizes 640x480, 700x900, 980x700, 1400x960 and 1580x1150 checked by screenshot"
+    ]
+  },
+  "soak": {
+    "command": "tools/qa/breakit.py --soak 60",
+    "tree": "6df2196 plus the first overnight fixes",
+    "agents": 32,
+    "categories": 4,
+    "burst": "3 s of output every 20 s per agent",
+    "duration_s": 3740,
+    "samples": 225,
+    "agents_alive_throughout": true,
+    "gui_rss_mib": {
+      "start": 363,
+      "after_10_min": 503,
+      "peak": 536,
+      "end": 524
+    },
+    "services_rss_mib_total": {
+      "start": 782,
+      "after_10_min": 886,
+      "end": 906
+    },
+    "gui_cpu_lifetime_percent_end": 197,
+    "services_cpu_lifetime_percent_end": 3.2,
+    "note": "Memory plateaued after warm-up. CPU is lavapipe software rendering on anvil and says nothing about Mac GPU cost; profile the snapshot path before drawing conclusions."
+  },
+  "codex_computer_use": {
+    "sessions": 2,
+    "target": "isolated macOS copy (bundle dev.lapis.desktop.qa, own runtime, fake Responses/Messages server)",
+    "approval": "Allow for this session, answered through a driven interactive TUI",
+    "incident": "In session 1 the tester quit and reopened the copy; Computer Use relaunched it without the fake-model environment, so one Claude prompt reached a real model (the Claude terminal showed $0.35) before the tester stopped. Codex agents in that copy received no prompts. After adding LSEnvironment, a distinct bundle identity and a guard that kills services without the fake environment, the guard stopped three further environment-less relaunches in session 2 before any service started.",
+    "findings_fixed": [
+      "Codex cards read Status pending on every new agent (now Awaiting first prompt)",
+      "Preview card accessibility press did not select the agent",
+      "Claude idle notice showed as Needs your response with an unanswerable request"
+    ],
+    "setup_artifacts_not_bugs": [
+      "workspace permission error from a runtime directory created with mode 755",
+      "Codex question fixture needs Plan mode",
+      "Claude banner showed its default model name before the fake model name was set"
+    ]
+  },
+  "limitations": [
+    "Native macOS keyboard, IME, selection, wheel, link opening, Dock badge and bounce were built and compiled on the Mac but exercised only through Qt tests and the Linux harness",
+    "Wheel history shows the service's archived pages; after a fast flood a page can hold a single row, so each step shows a sliver rather than continuous scrollback",
+    "Hebrew order and emoji skin-tone modifiers render per cell (known cross-cell shaping gap)",
+    "anvil timing and CPU figures are software-rendered",
+    "The tracked-config unit test reads HEAD:lapis.json and fails in the anvil checkout, whose HEAD is the old base commit"
+  ]
+}
