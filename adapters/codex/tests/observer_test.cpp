@@ -710,6 +710,12 @@ int run(int argc, char** argv) {
     Observer observer{state};
     bool initialized_signal = false;
     QObject::connect(&observer, &Observer::initialized, [&]() { initialized_signal = true; });
+    // Once the thread is known to have no rollout, retries keep that diagnostic.
+    QStringList diagnostics;
+    QObject::connect(&observer, &Observer::changed, [&]() {
+        if (diagnostics.isEmpty() || diagnostics.back() != observer.diagnostic())
+            diagnostics.append(observer.diagnostic());
+    });
 
     observer.start(source.path(), QStringLiteral("wrong"));
     require(!initialized_signal && !state.connected(), "wrong hash must fail closed");
@@ -741,6 +747,13 @@ int run(int argc, char** argv) {
             "no-rollout retry resumes the same thread");
     require(wait_for([&] { return state.ready() && state.pending().size() == 1; }),
             "resume/read replay");
+    {
+        const auto waiting =
+            diagnostics.indexOf(QStringLiteral("Waiting for Codex thread history"));
+        require(waiting >= 0, "a missing rollout is reported");
+        require(!diagnostics.mid(waiting).contains(QStringLiteral("Reconciling Codex requests")),
+                "retries for a missing rollout keep its diagnostic");
+    }
     const RequestId identifier{std::numeric_limits<std::int64_t>::max()};
     const auto pending = state.pending().find(identifier);
     require(pending != state.pending().end(), "full signed int64 request identity");

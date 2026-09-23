@@ -86,10 +86,7 @@ QString SessionPreview::statusLabel() const {
         return QStringLiteral("Ended");
     if (harnessId() != QStringLiteral("codex") && input_ready_)
         return QStringLiteral("Connected");
-    // A new Codex session has no persistent thread until its first prompt; the
-    // observer is connected and has nothing to report yet.
-    if (attention_ && attention_->connected && !attention_->ready &&
-        attention_->diagnostic == QLatin1String("Waiting for a persistent Codex thread"))
+    if (attention_ && attention_->connected && !attention_->ready && awaiting_first_prompt_)
         return QStringLiteral("Awaiting first prompt");
     if (attention_ && attention_->connected && !attention_->ready)
         return QStringLiteral("Status pending");
@@ -158,6 +155,16 @@ void SessionPreview::applyAttention(session::wire::AttentionSnapshot snapshot) {
             arrived = true;
     }
     submitted_attention_.intersect(current);
+    // A new Codex session has no thread rollout until its first prompt (Codex
+    // 0.155.1 answers resume with "no rollout found"). Services built before
+    // the observer kept that diagnostic briefly report reconciliation on each
+    // one-second retry; that does not end the wait.
+    const auto& diagnostic = snapshot.diagnostic;
+    const bool waiting = diagnostic == QLatin1String("Waiting for Codex thread history") ||
+                         diagnostic == QLatin1String("Waiting for a persistent Codex thread");
+    const bool retrying = diagnostic == QLatin1String("Reconciling Codex requests");
+    awaiting_first_prompt_ =
+        snapshot.connected && !snapshot.ready && (waiting || (retrying && awaiting_first_prompt_));
     attention_ = std::move(snapshot);
     if (arrived)
         ++attention_serial_;

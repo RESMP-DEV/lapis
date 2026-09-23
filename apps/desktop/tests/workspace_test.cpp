@@ -404,7 +404,8 @@ void truthfulStatus() {
     require(item.attentionCount() == 1, "stale requests remain visible for reconciliation");
     lapis::session::wire::AttentionSnapshot fresh;
     fresh.available = fresh.connected = true;
-    fresh.diagnostic = QStringLiteral("Waiting for a persistent Codex thread");
+    // The live Codex 0.155.1 observer reports this until the first turn.
+    fresh.diagnostic = QStringLiteral("Waiting for Codex thread history");
     lapis::desktop::SessionPreview first(QStringLiteral("Codex"), {}, {}, QColor{}, "");
     first.applyAttention(fresh);
     require(first.statusLabel() == QStringLiteral("Awaiting first prompt"),
@@ -422,8 +423,12 @@ void truthfulStatus() {
             "an idle notice after a finished turn is not a pending request");
     fresh.diagnostic = QStringLiteral("Reconciling Codex requests");
     first.applyAttention(fresh);
-    require(first.statusLabel() == QStringLiteral("Status pending"),
-            "reconciliation still reads as pending");
+    require(first.statusLabel() == QStringLiteral("Awaiting first prompt"),
+            "an older service's one-second retry does not end the wait");
+    lapis::desktop::SessionPreview reconnecting(QStringLiteral("Codex"), {}, {}, QColor{}, "");
+    reconnecting.applyAttention(fresh);
+    require(reconnecting.statusLabel() == QStringLiteral("Status pending"),
+            "reconciliation alone still reads as pending");
     require(item.statusKind() == QStringLiteral("unknown"), "stale activity must not look current");
 }
 

@@ -340,7 +340,10 @@ class Observer::Impl final : public QObject {
         // binding the persistent thread, before issuing resume/read.
         replay_.clear();
         replay_bytes_ = 0;
-        diagnostic_ = "Reconciling Codex requests";
+        // Retries for a thread without a rollout (no first turn yet) keep that
+        // diagnostic instead of alternating with this one every second.
+        if (diagnostic_ != QLatin1String("Waiting for Codex thread history"))
+            diagnostic_ = "Reconciling Codex requests";
         rpc("thread/resume", {{"threadId", thread_}, {"excludeTurns", true}});
         emit owner_.changed();
     }

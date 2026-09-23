@@ -167,6 +167,7 @@ class SessionPreview final : public QObject {
     std::optional<session::wire::AttentionSnapshot> attention_;
     QSet<QString> submitted_attention_;
     quint32 attention_serial_{};
+    bool awaiting_first_prompt_{};
     bool live_snapshot_ready_{};
     bool live_snapshot_received_{};
     bool closing_{};
