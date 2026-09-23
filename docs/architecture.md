@@ -1638,7 +1638,7 @@ Decisions from these runs:
 - A new Codex 0.155.1 agent has a thread but no rollout until its first turn;
   `thread/resume` answers "no rollout found" and the observer retries each
   second. The observer keeps "Waiting for Codex thread history" through those
-  retries, and the card reads **Awaiting first prompt** (held across an older
+  retries, and the card reads **No prompt yet** (held across an older
   service's retry messages). Other reconciliation still reads **Status pending**.
   Verified with a fresh agent against the fake model, not only from source.
 - Ended or unreachable agents get a stage bar with the service's reason and the

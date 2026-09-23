@@ -175,7 +175,7 @@ request, then explicitly approve, decline, cancel or send answers. Opening or
 selecting never approves. Stale sources disable responses. **Turn finished**
 means the agent finished a turn, not that the task or process ended. Claude
 Code's idle reminder after a finished turn is not a request. A new Codex agent
-reads **Awaiting first prompt** until its first turn. Agents
+reads **No prompt yet** until its first turn. Agents
 started in the same folder are numbered in cards and menus.
 
 Command-click (Control-click on Linux) a web link in agent output to open it,

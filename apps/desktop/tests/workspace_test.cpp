@@ -408,7 +408,7 @@ void truthfulStatus() {
     fresh.diagnostic = QStringLiteral("Waiting for Codex thread history");
     lapis::desktop::SessionPreview first(QStringLiteral("Codex"), {}, {}, QColor{}, "");
     first.applyAttention(fresh);
-    require(first.statusLabel() == QStringLiteral("Awaiting first prompt"),
+    require(first.statusLabel() == QStringLiteral("No prompt yet"),
             "a new Codex session without a thread is not a pending status");
     lapis::session::wire::AttentionSnapshot idle;
     idle.available = idle.connected = idle.ready = true;
@@ -423,7 +423,7 @@ void truthfulStatus() {
             "an idle notice after a finished turn is not a pending request");
     fresh.diagnostic = QStringLiteral("Reconciling Codex requests");
     first.applyAttention(fresh);
-    require(first.statusLabel() == QStringLiteral("Awaiting first prompt"),
+    require(first.statusLabel() == QStringLiteral("No prompt yet"),
             "an older service's one-second retry does not end the wait");
     lapis::desktop::SessionPreview reconnecting(QStringLiteral("Codex"), {}, {}, QColor{}, "");
     reconnecting.applyAttention(fresh);
