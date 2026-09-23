@@ -1,10 +1,10 @@
 {
   "schema": "lapis.qa-receipt/1",
-  "recorded_at": "2026-09-23T09:24:00Z",
+  "recorded_at": "2026-09-23T09:45:00Z",
   "scope": "Overnight break-it QA of the category workspace and agent strip after merging PR #10, with the fixes and features it produced",
   "source": {
     "base": "6df2196 (feature/agent-strip, pushed)",
-    "tested_head": "0a646cd (qa/overnight, local)",
+    "tested_head": "93ff318 (qa/overnight, local)",
     "commits": [
       "95bde78 Fix stale committed keybindings and overnight QA findings",
       "d3fcdc1 Treat Claude idle notices as advisory and select cards from accessibility",
@@ -15,7 +15,9 @@
       "8bdfd88 Open web links with Command-click in the terminal",
       "f2ebb50 Jump to the agent that needs you; stop a focus warning per dialog",
       "b609f96 Exercise selection, wheel history and next-attention in the break-it run",
-      "0a646cd Keep history pages interactive; badge only on macOS"
+      "0a646cd Keep history pages interactive; badge only on macOS",
+      "b813031 Record the overnight QA receipt",
+      "93ff318 Show Awaiting first prompt for new Codex agents, verified live"
     ]
   },
   "hosts": {
@@ -29,13 +31,18 @@
   "checks": [
     {
       "name": "full desktop gate on anvil (linux-gui: build, 21 CTest suites, clang-tidy, format, cppcheck)",
-      "tree": "0a646cd",
+      "tree": "93ff318",
       "result": "54/54 checks passed"
     },
     {
       "name": "desktop ASan on anvil, changed and lifecycle suites",
       "tree": "0a646cd",
       "result": "10/10 passed (terminal-input, workspace, keymap, ui-preview, window-state, appearance-input, live-connection, local-protocol, pty-process, claude-observer)"
+    },
+    {
+      "name": "desktop ASan on anvil after the Codex label fix",
+      "tree": "93ff318",
+      "result": "4/4 passed (codex-observer, workspace, terminal-input, ui-preview)"
     },
     {
       "name": "desktop ASan on anvil, all 21 suites",
@@ -117,7 +124,7 @@
     "approval": "Allow for this session, answered through a driven interactive TUI",
     "incident": "In session 1 the tester quit and reopened the copy; Computer Use relaunched it without the fake-model environment, so one Claude prompt reached a real model (the Claude terminal showed $0.35) before the tester stopped. Codex agents in that copy received no prompts. After adding LSEnvironment, a distinct bundle identity and a guard that kills services without the fake environment, the guard stopped three further environment-less relaunches in session 2 before any service started.",
     "findings_fixed": [
-      "Codex cards read Status pending on every new agent (now Awaiting first prompt)",
+      "Codex cards read Status pending on every new agent: the first fix matched a diagnostic the live binary never sends; a standalone probe of a fresh agent showed 'Waiting for Codex thread history' alternating with 'Reconciling Codex requests' every second. Fixed in the observer and the desktop (93ff318).",
       "Preview card accessibility press did not select the agent",
       "Claude idle notice showed as Needs your response with an unanswerable request"
     ],

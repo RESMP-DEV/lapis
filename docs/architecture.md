@@ -1635,8 +1635,12 @@ Decisions from these runs:
   `idle` requests, so a finished Claude turn reads **Turn finished** and pulses
   once instead of showing a request with no response. The adapter still reports
   it; other clients may rank it.
-- A Codex observer waiting for its first persistent thread labels the agent
-  **Awaiting first prompt**; reconciliation still reads **Status pending**.
+- A new Codex 0.155.1 agent has a thread but no rollout until its first turn;
+  `thread/resume` answers "no rollout found" and the observer retries each
+  second. The observer keeps "Waiting for Codex thread history" through those
+  retries, and the card reads **Awaiting first prompt** (held across an older
+  service's retry messages). Other reconciliation still reads **Status pending**.
+  Verified with a fresh agent against the fake model, not only from source.
 - Ended or unreachable agents get a stage bar with the service's reason and the
   close key. Agents sharing a default title are numbered. Narrow cards drop the
   status text; the new-agent card drops its hint rather than overflow. A card's
