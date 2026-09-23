@@ -1652,6 +1652,10 @@ Decisions from these runs:
   unseen or have an actionable request, across categories. A new request while
   the window is inactive calls `QWindow::alert(1000)`: one bounce, not a
   persistent alert; finished turns only update the badge.
+- `nextAttention` (Command-J) is the manual half of the attention queue: it walks
+  categories and strips from the selected agent, taking pending requests before
+  unseen finished turns. Pinning, snoozing, aging and the opt-in carousel remain
+  unported from the flat supervisor.
 - `harnessArguments` in `lapis.json` is explicit user configuration for new
   agents (shell aliases do not reach lapis launches). The registry saves each
   agent's full argument list, since arguments are part of the launch

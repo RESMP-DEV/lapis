@@ -150,7 +150,9 @@ restarting it. Attention counts do not reorder categories or steal input.
 
 On macOS, Command-Option-left/right or Command-Shift-up/down changes category;
 Command-Shift-[ and ] moves through the category's agents. Command-1 through 4
-selects a category. Command-W closes the focused agent: a running agent is
+selects a category. Command-J jumps to the next agent, in any category, with a
+pending request, or else one that finished while you were elsewhere.
+Command-W closes the focused agent: a running agent is
 confirmed, then ended by its session service.
 Command-Shift-P opens Commands; Command-B hides or shows the category sidebar
 and remembers that choice. Command-V remains paste. Command-N creates an agent

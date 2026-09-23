@@ -380,6 +380,7 @@ void KeyMap::apply_defaults() {
         {QStringLiteral("openSettings"), default_settings_shortcuts()},
         {QStringLiteral("reloadConfig"), {modifier + QStringLiteral("R")}},
         {QStringLiteral("newAgent"), {modifier + QStringLiteral("N")}},
+        {QStringLiteral("nextAttention"), {modifier + QStringLiteral("J")}},
         {QStringLiteral("toggleSidebar"), {modifier + QStringLiteral("B")}},
     };
 #ifdef Q_OS_MACOS

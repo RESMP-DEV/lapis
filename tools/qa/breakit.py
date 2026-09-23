@@ -33,7 +33,7 @@ FAKE_NAMES = ("omp", "grok", "kimi", "opencode", "gemini", "agy")
 CATALOG = ("codex", "claude", "omp", "grok", "kimi", "opencode", "gemini", "agy")
 WARNING = re.compile(
     r"qml|TypeError|ReferenceError|Binding loop|Unable to assign|QQmlComponent|"
-    r"ASSERT|Segmentation|terminate called|QObject::|QThread|undefined",
+    r"ASSERT|Segmentation|terminate called|QObject::|QThread|QQuick|undefined|Cannot ",
     re.IGNORECASE,
 )
 SYMBOLS = {

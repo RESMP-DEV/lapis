@@ -496,6 +496,10 @@ void unseenFollowsTurnsAndSelection() {
     require(checks->unseen(), "a new request marks its agent");
     require(arrivals == 1, "a new request is announced once");
     require(count("general") == 1, "one unseen agent after the earlier one was selected");
+    // Jumping to the waiting agent goes to the request first and clears it as seen.
+    require(workspace.nextAttention() && workspace.focusedSession() == checks,
+            "the next waiting agent is selected");
+    require(!checks->unseen(), "jumping to an agent is looking at it");
 }
 
 // Claude agents run under the service's Claude Code adapter and read their

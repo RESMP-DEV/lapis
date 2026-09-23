@@ -261,6 +261,9 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool moveSessionBy(const QString& id, int delta);
     Q_INVOKABLE bool removeSession(const QString& id);
     Q_INVOKABLE void nextSession(int delta = 1);
+    // Selects the next agent, in any category, with a pending request, or else
+    // one that finished while unseen; false when none is waiting.
+    Q_INVOKABLE bool nextAttention();
     [[nodiscard]] QVariantList sessions() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;

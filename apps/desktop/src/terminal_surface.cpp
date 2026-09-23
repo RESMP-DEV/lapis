@@ -690,7 +690,10 @@ void TerminalSurface::setInteractive(bool enabled) {
     }
     setFlag(ItemAcceptsInputMethod, enabled);
     setAcceptedMouseButtons(enabled ? Qt::LeftButton : Qt::NoButton);
-    setActiveFocusOnTab(enabled);
+    // A dialog disables the stage while it still holds focus; Qt refuses to
+    // drop tab focus from the focused item, so that waits for focusOutEvent.
+    if (enabled || !hasActiveFocus())
+        setActiveFocusOnTab(enabled);
     requestResize();
     emit interactiveChanged();
 }
@@ -727,6 +730,8 @@ void TerminalSurface::focusOutEvent(QFocusEvent* event) {
     QQuickItem::focusOutEvent(event);
     if (hasActiveFocus())
         return;
+    if (!interactive_ && activeFocusOnTab())
+        setActiveFocusOnTab(false);
     ++ime_epoch_;
     resetInputContext();
 }
