@@ -9,22 +9,30 @@
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QDragEnterEvent>
 #include <QEvent>
+#include <QEventPoint>
 #include <QFile>
 #include <QGuiApplication>
 #include <QImage>
+#include <QInputDevice>
 #include <QInputMethodEvent>
 #include <QJsonArray>
 #include <QKeyEvent>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QObject>
 #include <QPair>
+#include <QPoint>
+#include <QPointF>
 #include <QPointer>
+#include <QPointingDevice>
 #include <QQuickWindow>
 #include <QRect>
 #include <QSGRendererInterface>
 #include <QScreen>
 #include <QTemporaryDir>
+#include <QTouchEvent>
 #include <QUrl>
 
 #include <array>
@@ -35,6 +43,8 @@
 #include <string_view>
 
 namespace {
+
+void pump(int milliseconds);
 
 void require(bool condition, const char* expression, int line) {
     if (!condition)
@@ -247,11 +257,32 @@ int run_ui_tests() {
                              "width: 481; height: 313; visible: false\nfunction reloadNow() { "
                              "preview.reload(); return 7; }\n}"));
     QPointer<QQuickWindow> old_window(window);
+    QPointingDevice touch_device(
+        QStringLiteral("lapis-test-touch"), 1, QInputDevice::DeviceType::TouchScreen,
+        QPointingDevice::PointerType::Finger, QInputDevice::Capability::Position, 1, 0);
+    QEventPoint touch_point(1, QEventPoint::State::Pressed, QPointF(24, 24), QPointF(26, 26));
+    QTouchEvent touch_begin(QEvent::TouchBegin, &touch_device, Qt::NoModifier,
+                            QList<QEventPoint>{touch_point});
+    QMimeData drag_data;
+    drag_data.setText(QStringLiteral("reload gesture fixture"));
+    QDragEnterEvent drag_enter(QPoint(24, 24), Qt::CopyAction, &drag_data, Qt::LeftButton,
+                               Qt::NoModifier);
+    QMouseEvent pointer_press(QEvent::MouseButtonPress, QPointF(24, 24), QPointF(26, 26),
+                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &pointer_press);
+    QCoreApplication::sendEvent(window, &touch_begin);
+    QCoreApplication::sendEvent(window, &drag_enter);
+    CHECK(workspace.interactionBlocked());
+    workspace.setFocusedIndex(1);
+    CHECK(workspace.focusedIndex() == 0); // Keyboard ownership waits for the gesture.
     CHECK(QMetaObject::invokeMethod(window, "reloadNow"));
     CHECK(preview.window() != nullptr);
     CHECK(preview.window() != old_window.data());
+    CHECK(!workspace.interactionBlocked());
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     CHECK(!old_window);
+    pump(10);
+    CHECK(workspace.focusedIndex() == 1); // Reload cannot strand the pending focus.
     CHECK(preview.window()->objectName() == QStringLiteral("preview-root"));
     CHECK(preview.window()->geometry() == preserved_geometry);
     write_qml(directory, QStringLiteral("valid.qml"),
@@ -431,7 +462,9 @@ int run_attention_dialog_tests() {
     CHECK(answer != nullptr);
     answer->forceActiveFocus();
     QKeyEvent letter(QEvent::KeyPress, Qt::Key_B, Qt::NoModifier, QStringLiteral("Blue"));
+    QKeyEvent letter_release(QEvent::KeyRelease, Qt::Key_B, Qt::NoModifier);
     QCoreApplication::sendEvent(window, &letter);
+    QCoreApplication::sendEvent(window, &letter_release);
     CHECK(answer->property("text").toString() == QStringLiteral("Blue"));
     QInputMethodEvent compose(QStringLiteral("仮"), {});
     QCoreApplication::sendEvent(window, &compose);
@@ -450,7 +483,9 @@ int run_attention_dialog_tests() {
     QInputMethodEvent cancel;
     QCoreApplication::sendEvent(window, &cancel);
     QKeyEvent navigate(QEvent::KeyPress, Qt::Key_Tab, Qt::ControlModifier);
+    QKeyEvent navigate_release(QEvent::KeyRelease, Qt::Key_Tab, Qt::ControlModifier);
     QCoreApplication::sendEvent(window, &navigate);
+    QCoreApplication::sendEvent(window, &navigate_release);
     CHECK(workspace.focusedIndex() == 0);
     CHECK(preview.openSettings());
     CHECK(!window->findChild<QObject*>(QStringLiteral("settingsDialog"))
@@ -487,7 +522,9 @@ int run_attention_dialog_tests() {
     CHECK(answer != nullptr && answer->property("text").toString().isEmpty());
     answer->forceActiveFocus();
     QKeyEvent neighborLetter(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier, QStringLiteral("Amber"));
+    QKeyEvent neighbor_letter_release(QEvent::KeyRelease, Qt::Key_A, Qt::NoModifier);
     QCoreApplication::sendEvent(window, &neighborLetter);
+    QCoreApplication::sendEvent(window, &neighbor_letter_release);
     CHECK(answer->property("text").toString() == QStringLiteral("Amber"));
     CHECK(QMetaObject::invokeMethod(dialog, "close"));
     wait_popup(*dialog, false);
@@ -797,6 +834,22 @@ ColoredArea colored_area(const QImage& image, QRgb color) {
     }
     return area;
 }
+
+QImage wait_for_cursor_capture(QQuickWindow& window, QRgb expected, bool expected_present,
+                               const QImage& previous, std::string_view label) {
+    QElapsedTimer deadline;
+    deadline.start();
+    while (deadline.elapsed() < 2000) {
+        const QImage image = window.grabWindow();
+        const bool changed = previous.isNull() || image != previous;
+        const bool present = colored_area(image, expected).pixels > 0;
+        if (!image.isNull() && changed && present == expected_present)
+            return image;
+        pump(10);
+    }
+    throw std::runtime_error(std::string(label) + " did not reach its expected rendered pixels");
+}
+
 void check_cursor_rendering(lapis::desktop::SessionPreview& document, QQuickWindow& window) {
     using namespace lapis::session;
     TerminalSnapshot snapshot;
@@ -806,13 +859,23 @@ void check_cursor_rendering(lapis::desktop::SessionPreview& document, QQuickWind
     snapshot.foreground_rgb = 0x445566U;
     snapshot.cursor_rgb = 0xff0000U;
     snapshot.cursor = {.column = 1, .row = 0, .in_viewport = true, .visible = true};
+    QImage previous_capture;
     const auto capture = [&](CursorShape shape, QRgb expected = qRgb(255, 0, 0)) {
         snapshot.cursor.shape = shape;
         ++snapshot.revision;
         document.applySnapshot(snapshot);
-        pump(150); // Include the bounded noninteractive preview refresh and presentation.
-        const auto image = window.grabWindow();
-        CHECK(!image.isNull());
+        QImage image =
+            wait_for_cursor_capture(window, expected, true, previous_capture, "cursor rendering");
+        previous_capture = image;
+        return colored_area(image, expected);
+    };
+    const auto capture_absence = [&](CursorShape shape, QRgb expected) {
+        snapshot.cursor.shape = shape;
+        ++snapshot.revision;
+        document.applySnapshot(snapshot);
+        QImage image =
+            wait_for_cursor_capture(window, expected, false, previous_capture, "cursor absence");
+        previous_capture = image;
         return colored_area(image, expected);
     };
     const auto block = capture(CursorShape::block);
@@ -835,10 +898,11 @@ void check_cursor_rendering(lapis::desktop::SessionPreview& document, QQuickWind
     snapshot.cursor_rgb.reset();
     CHECK(capture(CursorShape::block, qRgb(0x44, 0x55, 0x66)).pixels > 0);
     snapshot.cursor.visible = false;
-    CHECK(capture(CursorShape::block, qRgb(0x44, 0x55, 0x66)).pixels == 0);
+    CHECK(capture_absence(CursorShape::block, qRgb(0x44, 0x55, 0x66)).pixels == 0);
     snapshot.cursor.visible = true;
+    CHECK(capture(CursorShape::block, qRgb(0x44, 0x55, 0x66)).pixels > 0);
     snapshot.cursor.in_viewport = false;
-    CHECK(capture(CursorShape::block, qRgb(0x44, 0x55, 0x66)).pixels == 0);
+    CHECK(capture_absence(CursorShape::block, qRgb(0x44, 0x55, 0x66)).pixels == 0);
 }
 int run_surface_tests() {
     using namespace lapis::desktop;

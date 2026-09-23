@@ -44,7 +44,7 @@ def fingerprint(program, arguments, directory, *, codex=False, claude=False):
     data = qt_string(os.path.abspath(program)) + struct.pack(">I", len(arguments))
     data += b"".join(qt_string(argument) for argument in arguments)
     data += qt_string(Path(directory).resolve())
-    require(not (codex and claude), "Expected one agent mode")
+    require(not (codex and claude), "Expected at most one agent mode")
     if claude:
         data = b"lapis-claude-v1\0" + data
     if codex:
@@ -316,6 +316,7 @@ class Service:
         codex=False,
         claude=False,
     ):
+        require(not (codex and claude), "Expected at most one agent mode")
         self.endpoint = runtime / (name + ".sock")
         self.program, self.arguments, self.directory = program, arguments, directory
         self.child_pid = None

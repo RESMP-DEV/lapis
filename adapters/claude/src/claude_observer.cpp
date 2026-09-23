@@ -1,4 +1,5 @@
 #include "claude_observer.hpp"
+#include "hook_relay.hpp"
 #include <QCryptographicHash>
 #include <QFile>
 #include <QHash>
@@ -19,15 +20,16 @@
 namespace lapis::claude {
 namespace {
 namespace attention = session::attention;
-constexpr qsizetype frame_limit = qsizetype{16} * 1024;
 constexpr qsizetype connection_limit = 8;
+constexpr std::uint32_t connection_overflow_report_limit = 1024;
 constexpr qsizetype prompt_limit = 1024;
 constexpr qsizetype retired_source_limit = 1024;
+constexpr qsizetype completed_tool_limit = qsizetype{16} * 1024;
 const QStringList& hook_events() {
     static const QStringList names{
         "SessionStart", "UserPromptSubmit", "PermissionRequest",  "Notification",
         "PreToolUse",   "PostToolUse",      "PostToolUseFailure", "Stop",
-        "StopFailure",  "SessionEnd"};
+        "SessionEnd"};
     return names;
 }
 attention::Tick now() {
@@ -40,11 +42,10 @@ QString quote(QString value) {
     return QLatin1Char('\'') + value + QLatin1Char('\'');
 }
 bool valid_event(const QJsonObject& event) {
-    const QStringList fields{"hook_event_name", "session_id",        "prompt_id", "tool_name",
-                             "tool_use_id",     "notification_type", "source",    "reason"};
     for (auto it = event.begin(); it != event.end(); ++it)
-        if (!fields.contains(it.key()) || !it.value().isString() ||
-            it.value().toString().toUtf8().size() > 256 ||
+        if (std::none_of(relay_identity_fields.begin(), relay_identity_fields.end(),
+                         [key = it.key()](const auto& field) { return key.compare(field) == 0; }) ||
+            !it.value().isString() || it.value().toString().toUtf8().size() > 256 ||
             it.value().toString().contains(QChar::Null))
             return false;
     return hook_events().contains(event.value("hook_event_name").toString()) &&
@@ -96,6 +97,18 @@ class Observer::Impl {
         diagnostic_ = QStringLiteral("Claude hook observation stopped");
         notify();
     }
+    void connection_overflow() {
+        // A refused connection is unauthenticated. Report degraded observation,
+        // but never let local connection spam desynchronize the attention state.
+        if (failed_ || connection_overflows_ == connection_overflow_report_limit)
+            return;
+        ++connection_overflows_;
+        diagnostic_ =
+            QStringLiteral(
+                "Claude hook connection limit exceeded (at least %1); hooks may be missing")
+                .arg(connection_overflows_);
+        notify();
+    }
     QStringList launch(const QStringList& original, const QString& executable) {
         if (stopped_ || executable.isEmpty() || executable.contains(QChar::Null))
             throw std::invalid_argument("Claude hook receiver is unavailable");
@@ -119,11 +132,13 @@ class Observer::Impl {
     void accept() {
         while (auto* client = server_.nextPendingConnection()) {
             if (stopped_ || clients_.size() >= connection_limit) {
+                if (!stopped_)
+                    connection_overflow();
                 delete client;
                 continue;
             }
             client->setParent(&server_);
-            client->setReadBufferSize(frame_limit + 1);
+            client->setReadBufferSize(relay_frame_limit + 1);
             clients_.insert(client, {});
             QObject::connect(client, &QLocalSocket::readyRead, &server_,
                              [this, client] { read(client); });
@@ -142,8 +157,8 @@ class Observer::Impl {
         auto found = clients_.find(client);
         if (found == clients_.end())
             return;
-        found.value() += client->read(frame_limit + 1 - found.value().size());
-        if (found.value().size() > frame_limit) {
+        found.value() += client->read(relay_frame_limit + 1 - found.value().size());
+        if (found.value().size() > relay_frame_limit) {
             client->abort();
             return;
         }
@@ -195,12 +210,16 @@ class Observer::Impl {
             static_cast<void>(pending);
             ids.push_back(id);
         }
-        for (const auto& id : ids)
-            if (applied(state_.resolve(next(), id)))
-                details_.erase(id);
+        for (const auto& id : ids) {
+            if (!applied(state_.resolve(next(), id)))
+                return;
+            details_.erase(id);
+        }
     }
     void request(const QJsonObject& event, bool exact, bool input, bool idle = false) {
         const auto tool = event.value("tool_use_id").toString();
+        if (exact && completed_tools_.contains(tool))
+            return;
         const auto id =
             exact ? tool.toStdString()
                   : ((idle ? QStringLiteral("idle:") : QStringLiteral("permission:")) +
@@ -301,6 +320,11 @@ class Observer::Impl {
         if (failed_)
             return;
         begin(); // A new known turn resets bounded tombstones only after exact retirement.
+        if (failed_)
+            return;
+        // Only a successfully applied prompt boundary may forget completed IDs.
+        // Duplicate and failed boundaries retain them for delayed-event rejection.
+        completed_tools_.clear();
         prompts_.insert(prompt);
         prompt_ = prompt;
         completed_ = false;
@@ -316,16 +340,34 @@ class Observer::Impl {
             return;
         request(event, !event.value("tool_use_id").toString().isEmpty(), false);
     }
+    void complete_tool(const QString& tool) {
+        const auto id = tool.toStdString();
+        if (completed_tools_.contains(tool))
+            return;
+        if (completed_tools_.size() >= completed_tool_limit) {
+            loss(QStringLiteral("Claude completed tool identity bound exceeded"));
+            return;
+        }
+        completed_tools_.insert(tool);
+        // Ordinary completions are adapter-local tombstones. Resolve only
+        // an exact attention request so ordinary traffic cannot consume
+        // State's shared retired-ID budget.
+        if (state_.pending().contains(id)) {
+            if (!applied(state_.resolve(next(), id)))
+                return;
+            details_.erase(id);
+        }
+    }
     void turn_event(const QJsonObject& event) {
         const auto name = event.value("hook_event_name").toString();
-        if (name == QLatin1String("Stop") || name == QLatin1String("StopFailure")) {
+        if (name == QLatin1String("Stop")) {
             if (completed_)
                 return;
             clear();
+            if (failed_)
+                return;
             completed_ = true;
-            applied(state_.activity(next(), name == QLatin1String("Stop")
-                                                ? attention::Activity::turn_completed
-                                                : attention::Activity::unknown));
+            applied(state_.activity(next(), attention::Activity::turn_completed));
         } else if (name == QLatin1String("Notification") &&
                    event.value("notification_type") == QLatin1String("idle_prompt")) {
             request(event, false, false, true);
@@ -346,8 +388,7 @@ class Observer::Impl {
             else if ((name == QLatin1String("PostToolUse") ||
                       name == QLatin1String("PostToolUseFailure")) &&
                      !tool.isEmpty()) {
-                if (applied(state_.resolve(next(), tool.toStdString())))
-                    details_.erase(tool.toStdString());
+                complete_tool(tool);
             }
         }
     }
@@ -362,8 +403,10 @@ class Observer::Impl {
     QString prompt_;
     QSet<QString> prompts_;
     QSet<QString> retired_sources_;
+    QSet<QString> completed_tools_;
     std::map<attention::RequestId, QJsonObject> details_;
     QString diagnostic_{QStringLiteral("Waiting for a Claude session hook; hooks may be disabled")};
+    std::uint32_t connection_overflows_{};
     std::uint64_t sequence_{};
     bool notification_pending_{};
     bool stopped_{};

@@ -438,7 +438,13 @@ bool UiPreview::loadCandidate() {
     const QPointer<QQuickWindow> acceptedWindow = candidateWindow;
     setDiagnostics(candidateDiagnostics);
 
+    // Once window_ is reassigned, events from the retiring window are ignored.
+    // An unfinished gesture on that window therefore has no matching release,
+    // touch end, or drop that can clear its interaction block.
+    supervisor_->setWindowActive(false);
     clearHeldKeys();
+    for (const auto* reason : {kPointerBlock, kTouchBlock, kDragBlock})
+        workspace_.setInteractionBlocked(QString::fromLatin1(reason), false);
     workspace_.setInteractionBlocked(QString::fromLatin1(kModalBlock),
                                      candidateWindow->property("inputBlocked").toBool());
     std::swap(engine_, candidate);

@@ -72,3 +72,16 @@ class EntryPointTests(unittest.TestCase):
                 receipt = json.loads(output.read_text())
                 self.assertEqual(result, int(failure is not None))
                 self.assertEqual(receipt["passed"], failure is None)
+
+    def test_main_does_not_launder_keyboard_interrupt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "receipt.json"
+            fixture = AsyncMock(side_effect=KeyboardInterrupt)
+            with (
+                patch("check_claude_hooks.exercise", fixture),
+                patch("builtins.print"),
+                self.assertRaises(KeyboardInterrupt),
+            ):
+                main(["--output", str(output)])
+            fixture.assert_awaited_once()
+            self.assertFalse(output.exists())

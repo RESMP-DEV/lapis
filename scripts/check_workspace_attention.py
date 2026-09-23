@@ -114,6 +114,20 @@ def report_cleanup_errors(receipt, original_error, failures):
     raise CheckError("; ".join(messages))
 
 
+def raise_concurrent_start_failures(failures):
+    if not failures:
+        return
+    primary, *siblings = failures
+    for sibling in siblings:
+        primary.add_note(
+            "concurrent source start also failed: "
+            + (str(sibling) or type(sibling).__name__)
+        )
+        for note in getattr(sibling, "__notes__", ()):
+            primary.add_note(f"concurrent source start cleanup: {note}")
+    raise primary
+
+
 async def start_source(args, binary, runtime, artifacts, role, prompt):
     home = runtime / f"{role}-home"
     cwd = runtime / f"{role}-cwd"
@@ -442,7 +456,7 @@ async def exercise(args, receipt):
                 result for result in results if isinstance(result, BaseException)
             ]
             if failures:
-                raise failures[0]
+                raise_concurrent_start_failures(failures)
             structured = next(source for source in sources if source.role == "input")
             await question_turn(structured.owner, structured.thread, "color")
             sessions = [

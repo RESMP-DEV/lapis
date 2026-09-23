@@ -668,6 +668,23 @@ Hook and process-lifetime changes also require the affected desktop-enabled
 ASan/UBSan and TSan cases. Tests must preserve the user's existing global settings
 and hook definitions, and must not adopt or type into unrelated live sessions.
 
+For the installed binary's failure-hook contract, run separately:
+
+```sh
+python3 scripts/probe_claude_failure_hooks.py \
+  --output build/claude-hooks/failure-contract.json
+```
+
+This probe uses disposable settings and a loopback Anthropic API with synthetic
+replies; it needs no external provider credentials. It verifies a failed Read
+and records hook names and payload field types, then checks an HTTP-error turn.
+A successful probe means the controlled cases ran as specified; each event's
+observed/not-observed result is reported separately. `PostToolUseFailure` is
+qualified on 2.1.280; `StopFailure` was not observed for this print-mode API error
+and is not registered by the adapter. This probe does not replace the real-provider
+permission/input, terminal or GUI checks above. Keep failed receipts in a separate
+output directory when diagnosing a rerun.
+
 ### Selecting checks and reusing results
 
 Select the required commands before running them:

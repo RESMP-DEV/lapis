@@ -121,7 +121,10 @@ void click_item(QQuickWindow& window, QQuickItem* target) {
 }
 
 void click(QQuickWindow& window, const QString& name) {
-    click_item(window, visual(window.contentItem(), name));
+    auto* target = visual(window.contentItem(), name);
+    require(target && target->isVisible() && target->isEnabled(),
+            "Control is not actionable: " + name.toStdString());
+    click_item(window, target);
 }
 
 void send_key(QQuickItem& item, int key, bool press) {
@@ -153,20 +156,6 @@ void send_paste(QQuickItem& item) {
                       QString());
     QCoreApplication::sendEvent(&item, &press);
     QCoreApplication::sendEvent(&item, &release);
-}
-
-QQuickItem* item_with_text(QQuickItem* parent, const QString& text) {
-    if (parent->property("text").toString().contains(text, Qt::CaseInsensitive) &&
-        parent->isVisible() && parent->isEnabled())
-        return parent;
-    for (auto* child : parent->childItems())
-        if (auto* found = item_with_text(child, text))
-            return found;
-    return nullptr;
-}
-
-void click_text(QQuickWindow& window, const QString& text) {
-    click_item(window, item_with_text(window.contentItem(), text));
 }
 
 void click_setting(QQuickWindow& window, const QString& name) {
@@ -394,10 +383,24 @@ class WorkspaceProbe {
         auto* endpoint_field =
             visual(window().contentItem(), QStringLiteral("sessionEndpointField"));
         require(directory_field && endpoint_field, "Session fields are missing");
+        const auto count = workspace().sessions().size();
+        if (count == 0) {
+            const auto missing = QDir(directory).filePath(QStringLiteral("missing-directory"));
+            const auto endpoint = QDir(directory).filePath(QStringLiteral("kept-endpoint.sock"));
+            directory_field->setProperty("text", missing);
+            endpoint_field->setProperty("text", endpoint);
+            click(window(), QStringLiteral("createSessionButton"));
+            require(!workspace().status().isEmpty(), "Failed creation did not report an error");
+            require(dialog->property("opened").toBool(), "Failed creation closed the dialog");
+            require(directory_field->property("text").toString() == missing &&
+                        endpoint_field->property("text").toString() == endpoint,
+                    "Failed creation discarded the session fields");
+            require(workspace().sessions().size() == count,
+                    "Failed creation unexpectedly added a session");
+        }
         directory_field->setProperty("text", directory);
         endpoint_field->setProperty("text", QString());
-        const auto count = workspace().sessions().size();
-        click_text(window(), QStringLiteral("OK"));
+        click(window(), QStringLiteral("createSessionButton"));
         until([&] { return !dialog->property("visible").toBool(); },
               "Session dialog did not close after creation");
         until([&] { return workspace().sessions().size() > count; },
@@ -555,6 +558,9 @@ QJsonObject guarded_carousel_acceptance(WorkspaceProbe& probe, qint64& injected_
     require(!supervisor->enabled(), "Automatic checkbox did not disable the supervisor");
     click(probe.window(), QStringLiteral("workspaceQueueClose"));
     wait_popup(*controls, false);
+    const bool reactivated_after_controls = !probe.window().isActive();
+    if (reactivated_after_controls)
+        lapis::desktop::test::activate_test_window(probe.window());
     until(
         [&] {
             return probe.window().isActive() && !workspace.interactionBlocked() &&
@@ -741,6 +747,7 @@ QJsonObject guarded_carousel_acceptance(WorkspaceProbe& probe, qint64& injected_
     return {{"cases", cases},
             {"automatic_default_enabled", false},
             {"production_controls_exercised", true},
+            {"reactivated_after_controls", reactivated_after_controls},
             {"injected_clock", true},
             {"session_count", 2},
             {"real_window_activation", true}};
@@ -982,7 +989,7 @@ int run_probe(const ProbeOptions& options) {
         require(QFileInfo{default_directory}.isAbsolute() &&
                     !default_directory.startsWith(QStringLiteral("file:")),
                 "Empty workspace dialog default is not a native absolute path");
-        click_text(probe.window(), QStringLiteral("Cancel"));
+        click(probe.window(), QStringLiteral("cancelSessionButton"));
         wait_popup(*initial_dialog, false);
         report.insert("empty_dialog_default_directory", QJsonObject{{"native", true}});
 

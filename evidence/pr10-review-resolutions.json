@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema_version": 1,
   "recorded_at": "2026-09-22T21:59:37.491287+00:00",
   "base_revision": "27ca95374f7ebb18fbd97e05ef0db84acb340bea",
   "scope": "PR10: all 25 OpenCodeReview threads; reviewed repairs, supported cleanups, explicit save recovery, and evidence-backed non-changes. No merge.",
@@ -44,7 +44,7 @@
     {
       "command": "just quality",
       "passed": true,
-      "python_cases": 96,
+      "python_tests": 96,
       "log": "build/pr10-address/quality-final.log"
     },
     {

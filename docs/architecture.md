@@ -1218,6 +1218,22 @@ requests with an exact tool ID can be retired by the matching `PostToolUse` or
 `PostToolUseFailure`. Permission/idle notifications are advisory; silence and
 absence of post-tool events do not establish approval, denial or task completion.
 
+Ordinary tool completions use a separate adapter-local set capped at 16,384 distinct
+IDs per valid prompt epoch. Only exact pending attention requests consume the
+shared reducer's retired-request budget. Delayed input or permission hooks for a
+completed tool cannot resurrect it; duplicate boundaries retain those IDs. A new
+verified prompt resets them, and exhaustion reports loss of observation rather
+than silently evicting identities. The eight-connection listener reports refused
+connections without treating unauthenticated traffic as a source-state reset.
+
+The installed 2.1.280 binary emitted `PostToolUseFailure` for a controlled failed
+Read against a temporary missing file. This check used synthetic model replies
+from a loopback API, separately from the real-provider permission/input probe.
+A controlled HTTP 400 in print mode did not emit `StopFailure`; that event is not
+registered until its delivery is qualified. This does not establish its absence
+in every CLI mode. The nine registered events retain the existing terminal-only
+response policy. See the [review follow-up receipt](../evidence/pr10-review-followup.json).
+
 All Claude notices have empty response choices and instruct the user to answer
 in the originating terminal. The supervisor separately tracks attention
 eligibility and response availability, so a current terminal-only notice can

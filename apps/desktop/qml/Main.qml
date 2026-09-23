@@ -491,8 +491,17 @@ ApplicationWindow {
         anchors.centerIn: parent
         width: 480
         footer: DialogButtonBox {
-            standardButtons: Dialog.Cancel | Dialog.Ok
-            onAccepted: window.createSession()
+            Button {
+                objectName: "cancelSessionButton"
+                text: qsTr("Cancel")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+            Button {
+                objectName: "createSessionButton"
+                text: qsTr("OK")
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: window.createSession()
+            }
             onRejected: sessionDialog.close()
         }
 

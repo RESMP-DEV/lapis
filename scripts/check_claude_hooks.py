@@ -327,6 +327,14 @@ async def exercise(args, receipt):
                 all(r["id"] != before["id"] for r in view.attention["requests"]),
                 "New prompt did not retire the prior advisory notice",
             )
+            require(
+                view.attention["diagnostic"]
+                == "Claude hooks observe attention only; answer in the terminal",
+                "Rejected decision masked the subsequent observer diagnostic",
+            )
+            receipt["checks"].append(
+                "observer diagnostic refreshed after rejected decision"
+            )
             receipt["question_notice"] = question
             await view.wait(
                 lambda: (
@@ -438,7 +446,7 @@ def main(argv=None):
     try:
         asyncio.run(bounded_exercise(args, receipt))
         receipt["passed"] = True
-    except BaseException as error:
+    except Exception as error:
         receipt["error"] = f"{type(error).__name__}: {error}"
         receipt["error_details"] = getattr(error, "__notes__", [])
     receipt["elapsed_seconds"] = round(time.monotonic() - started, 3)

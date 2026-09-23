@@ -1,0 +1,525 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-23T00:13:54.513354+00:00",
+  "scope": "PR10 follow-up: 28 OpenCodeReview threads and two CodeRabbit outside-diff findings",
+  "source": {
+    "baseline": "f97d64a8369ec24ba12513efe443a2e4e117313d",
+    "branch": "feature/claude-code-hooks",
+    "sha256": {
+      "adapters/claude/src/claude_observer.cpp": "44b56a330ef842d446171087226f4739c7399084ad34784350a53169c1ccaf5b",
+      "adapters/claude/src/hook_relay.cpp": "3b4df3e8c56a61708eefbdf3bebce54a81562aaf05d52bc4ed5b53b7ef401026",
+      "adapters/claude/src/hook_relay.hpp": "7014543b9d6959fe94cbc5965c5e504d41e2cf0869bd34149662f5beb46f0cf1",
+      "adapters/claude/tests/claude_observer_test.cpp": "5e26c758d03ca13300e1ac9bed2fa8ea0c8df95f76b75f912d60f0b485a16ba0",
+      "apps/desktop/qml/Main.qml": "a641026ea8ddbef5a591af0b3aa2e8efecbd25291fb28a48ed63622aa09698ff",
+      "apps/desktop/src/ui_preview.cpp": "836bac598f571ff2f9be3e0a66c0d901a827bc16f5f709d6996b240825ca19b6",
+      "apps/desktop/src/workspace_registry.cpp": "52d6bd9a8b24d1adb6a8dd364fde12b7676552bed98e0fc0455e07d3cba1c0ca",
+      "apps/desktop/tests/terminal_render_test.cpp": "4d3ee80d1e4bff743666c10712f9f3097aac3afd28eed5ab26547baeb4530c54",
+      "apps/desktop/tests/ui_preview_test.cpp": "6591b5e3e0df5161ddd6ea562a623544a71ccac5f6d9cdecd3f97f30dac1d3ad",
+      "apps/desktop/tests/workspace_attention_ui_probe.cpp": "cfd89059cf0c2004f875fb3ac184599f499cbb0d4f038166403384f828de486b",
+      "apps/desktop/tests/workspace_ui_probe.cpp": "007cab1d66842d874d74306bf8263e8a0ecbdc8a44472308112161c41e49b2bd",
+      "scripts/check_claude_hooks.py": "94957e276ecc1b8cdf365632c6456f3a2152e64ca19ce7aa6a2602082fb8b957",
+      "scripts/check_cli_launch.py": "30871d6f5cc4f978a60187d8138f4880b8e60717a83fcfcc47b72a249f5efdeb",
+      "scripts/check_workspace_attention.py": "074852b99d4401a2f03d3a472c22e7f0508af2a56556b4bc19e52388e0bee8e2",
+      "scripts/lapis.py": "f2b9aa9b20c7e22ee273c9830a066438f2fd6b1a824cd6c0713965daba9c52a3",
+      "scripts/probe_claude_failure_hooks.py": "618d7b982c4b627c2bc45ba6177eb80457b40c81ff439b3db84b8d8b50c9561a",
+      "scripts/tests/test_check_claude_hooks.py": "e3d54ff92dc8b2ec864b543899d53c61941c6785361ce97656dfb3434be82b50",
+      "scripts/tests/test_check_workspace_attention.py": "23c1fba1d4e732c23e62200be10c0240c59b5c07bedf5127195df829c99c2a8a",
+      "scripts/tests/test_lapis.py": "d711d6e7591e9632a1504fe91978a18899d9b3e2f2e6581b67f63d9d6dc8d64b",
+      "services/session/src/session_service.cpp": "135021fbad7df5846bea3844d15ce21bc7797cf685f0fc82e155a2c21c430205"
+    },
+    "unrelated_work_excluded": [
+      "README.md",
+      "adapters/codex/README.md",
+      "IDE-context sections of docs/architecture.md",
+      "evidence/ide-context.json",
+      "scripts/probe_ide_context.py"
+    ]
+  },
+  "changes": [
+    "Ordinary Claude completions have a separate 16384-ID prompt-epoch bound; delayed exact permission/input events cannot resurrect completed tools. Shared retired-request capacity is reserved for real attention.",
+    "Hook overload is observable without unauthenticated desynchronization; failed retirement/begin stops further mutation. Relay frame and field constants are shared.",
+    "PostToolUseFailure is verified on the installed Claude binary. Unqualified StopFailure registration/handling is removed.",
+    "Reload releases retired-window gesture blocks; tests use concrete input events and paired key releases. Positive pixel waits observe the expected changed capture.",
+    "Failed session creation keeps directory and endpoint fields visible for retry. Both footer buttons are explicit; Cancel rejects and OK closes only on successful creation.",
+    "New Claude events replace stale decision errors with current observer diagnostics. Attention decision handling is extracted to meet the existing complexity check.",
+    "Bare-program launcher compatibility, startup validation, cancellation semantics and concurrent startup cleanup diagnostics are corrected.",
+    "Small diagnostic, constness and evidence-key cleanups; optional style/optimization changes have explicit dispositions."
+  ],
+  "validation": {
+    "environment": {
+      "platform": "macOS 26.7.0 ARM64",
+      "render_loop": "threaded",
+      "gui_checks": "serial; fixture-owned activation only"
+    },
+    "quality": {
+      "command": "just quality",
+      "passed": true,
+      "python_tests": 101,
+      "receipt": "build/reports/quality/receipt.json"
+    },
+    "desktop": {
+      "command": "QSG_RENDER_LOOP=threaded just desktop",
+      "passed": true,
+      "ctest_suites": 22,
+      "static_checks": [
+        "clang-format",
+        "clang-tidy",
+        "cppcheck"
+      ],
+      "receipt": "build/reports/desktop/receipt.json"
+    },
+    "sanitizers": {
+      "passed": true,
+      "builds": [
+        "desktop-asan (ASan/UBSan)",
+        "desktop-tsan"
+      ],
+      "suites": [
+        "launch-spec",
+        "claude-observer",
+        "workspace",
+        "workspace-registry",
+        "live-connection",
+        "ui-preview",
+        "terminal-render"
+      ],
+      "logs": [
+        "build/pr10-followup/asan.log",
+        "build/pr10-followup/tsan.log"
+      ],
+      "final_qml_refresh": [
+        "build/pr10-followup/asan-ui-final.log",
+        "build/pr10-followup/tsan-ui-final.log"
+      ],
+      "vendor_libraries_instrumented": false
+    },
+    "cli": {
+      "command": "QSG_RENDER_LOOP=threaded just cli-check",
+      "passed": true,
+      "cases": 15,
+      "receipt": "build/cli-launch-check/receipt.json"
+    },
+    "ui": {
+      "command": "QSG_RENDER_LOOP=threaded just ui-check",
+      "passed": true,
+      "cases": 12,
+      "receipt": "build/ui-preview-check/receipt.json"
+    },
+    "native": {
+      "passed": true,
+      "cases": 23,
+      "receipt": "build/pr10-followup/native-final.json",
+      "clipboard_and_input_sources_restored": true
+    },
+    "workspace_gui": {
+      "passed": true,
+      "receipt": "build/pr10-followup/workspace-ui-final.json",
+      "coverage": [
+        "failed creation preserves fields; successful retry and explicit Cancel",
+        "two real shells",
+        "four layouts",
+        "manual and automatic input-ownership guards",
+        "same-child reopen",
+        "clean child exit"
+      ],
+      "reactivated_after_controls": false,
+      "timings": "dated observation only; no performance improvement claimed"
+    },
+    "claude_live": {
+      "passed": true,
+      "checks": [
+        "unsupported Claude decision rejected with exact token and attachment retained",
+        "same child and pending notice after detach/reattach",
+        "observer diagnostic refreshed after rejected decision",
+        "terminal answer retired question and turn completed",
+        "permission remained terminal-only",
+        "new prompt retired prior permission advisory",
+        "live AskUserQuestion has exact tool identity",
+        "same Claude child delivered fresh permission attention after /clear"
+      ],
+      "version": "2.1.280",
+      "binary_sha256": "387a5c5dcdbb815085edf0baf79591f9d8894efe922bceaf3d75b1b08055229d",
+      "service_sha256": "a80b31a4953eeb44cd23f1cacc69aeacf97c7bf89cad68676099ebb0b20b0440",
+      "global_settings_unchanged": true,
+      "receipt": "build/pr10-followup/claude-live.json",
+      "reuse_scope": "Final footer-only change does not alter this tested hook/service/diagnostic path; final QML checked separately."
+    },
+    "codex_live": {
+      "passed": true,
+      "checks": [
+        "safe approval and structured-input fixtures validated before answering",
+        "two service-owned sources remained live while the GUI attached",
+        "two real managed sources were concurrently pending",
+        "production dialogs answered the exact source requests",
+        "both real turns continued successfully after matching responses"
+      ],
+      "binary_sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+      "binary_path": "/Users/kearm/.local/lib/alphaheng/packages/20260918-0034-256a74f9-dirty/bin/codex",
+      "source_count": 2,
+      "fixture_only_path_override": true,
+      "default_installation_changed": false,
+      "receipt": "build/pr10-followup/workspace-attention-qualified/receipt.json"
+    }
+  },
+  "failure_hook_runtime": {
+    "probe": "scripts/probe_claude_failure_hooks.py",
+    "probe_sha256": "618d7b982c4b627c2bc45ba6177eb80457b40c81ff439b3db84b8d8b50c9561a",
+    "receipt": "build/pr10-followup/hook-contract-final/receipt.json",
+    "binary": {
+      "path": "/Users/kearm/.local/share/claude/versions/2.1.280",
+      "version": "2.1.280 (Claude Code)",
+      "sha256": "387a5c5dcdbb815085edf0baf79591f9d8894efe922bceaf3d75b1b08055229d"
+    },
+    "model_replies": "synthetic local Anthropic SSE; no external inference",
+    "candidate_events": [
+      "SessionStart",
+      "UserPromptSubmit",
+      "PermissionRequest",
+      "Notification",
+      "PreToolUse",
+      "PostToolUse",
+      "PostToolUseFailure",
+      "Stop",
+      "StopFailure",
+      "SessionEnd"
+    ],
+    "post_tool_failure": {
+      "fixture_valid": true,
+      "exit_code": 0,
+      "observed_events": [
+        "SessionStart",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUseFailure",
+        "Stop",
+        "SessionEnd"
+      ],
+      "exact_synthetic_read_correlated": true,
+      "payload_types": {
+        "session_id": "string",
+        "transcript_path": "string",
+        "cwd": "string",
+        "prompt_id": "string",
+        "permission_mode": "string",
+        "hook_event_name": "string",
+        "tool_name": "string",
+        "tool_input": "object",
+        "tool_use_id": "string",
+        "error": "string",
+        "is_interrupt": "boolean",
+        "duration_ms": "number"
+      }
+    },
+    "api_error": {
+      "fixture_valid": true,
+      "exit_code": 1,
+      "http_status": 400,
+      "observed_events": [
+        "SessionStart",
+        "UserPromptSubmit",
+        "SessionEnd"
+      ],
+      "StopFailure": "not observed in this print-mode case; not registered in production"
+    },
+    "production_event_count": 9
+  },
+  "review_dispositions": [
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y6s",
+      "comment_id": 4077347604,
+      "path": "adapters/claude/src/claude_observer.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347604",
+      "disposition": "fixed-and-runtime-verified",
+      "evidence": "Installed Claude 2.1.280 emitted PostToolUseFailure for an actual failed Read driven by a synthetic loopback model reply. The HTTP400 print-mode control did not emit StopFailure, so production no longer registers or handles that unqualified event. All candidate settings permitted known hooks to fire. This is runtime evidence for the exercised paths, not a claim about every CLI mode."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y66",
+      "comment_id": 4077347626,
+      "path": "adapters/claude/src/claude_observer.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347626",
+      "disposition": "not-applicable",
+      "evidence": "Managed launches already call launch_spec validation before launchArguments. That validation rejects --settings (including equals form), --bare and --safe-mode; launch-spec regression cases cover these conflicts. Adding the same parser again inside the observer would duplicate the existing boundary."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y7D",
+      "comment_id": 4077347636,
+      "path": "adapters/claude/src/claude_observer.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347636",
+      "disposition": "fixed",
+      "evidence": "The ninth active hook connection now reports a bounded saturating overload count without desynchronizing authenticated state. The overload diagnostic cannot overwrite a latched fatal observation failure. Regression confirms visible refusal and successful subsequent attention."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y7I",
+      "comment_id": 4077347645,
+      "path": "adapters/claude/src/claude_observer.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347645",
+      "disposition": "fixed",
+      "evidence": "clear() returns immediately on the first failed retirement. Stop processing also bails after a failed clear, preserving the original loss state."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y7L",
+      "comment_id": 4077347650,
+      "path": "adapters/claude/src/claude_observer.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347650",
+      "disposition": "fixed",
+      "evidence": "new_prompt() returns after a failed begin before recording the prompt or issuing another activity update."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y7M",
+      "comment_id": 4077347654,
+      "path": "adapters/claude/src/claude_observer.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347654",
+      "disposition": "fixed",
+      "evidence": "Ordinary completions use a separate bounded 16384-ID set per valid prompt epoch; only exact pending attention consumes shared retired-request capacity. Duplicates and late PreToolUse or exact PermissionRequest cannot resurrect completed IDs. Regression exercises >1024 ordinary completions, genuine request/retirement, full capacity/duplicate/overflow, and valid-versus-duplicate prompt reset. Exhaustion is explicit loss, not eviction or unbounded storage."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y7R",
+      "comment_id": 4077347662,
+      "path": "adapters/claude/src/hook_relay.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347662",
+      "disposition": "fixed",
+      "evidence": "Relay and observer consume the same relay_frame_limit from hook_relay.hpp."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y7W",
+      "comment_id": 4077347670,
+      "path": "adapters/claude/src/hook_relay.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347670",
+      "disposition": "fixed",
+      "evidence": "Relay filtering and observer validation consume the same relay_identity_fields list in hook_relay.hpp."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y7a",
+      "comment_id": 4077347677,
+      "path": "apps/desktop/src/attention_view.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347677",
+      "disposition": "not-applicable",
+      "evidence": "RequestId is exactly variant<int64_t,string>; neither wire parsing nor this code can create a third alternative. Returning an empty token on an unknown alternative would hide an incompatible identity contract and risk token collisions. Keep exhaustive current identity handling; a future type change requires its own reviewed wire/version tests."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y7h",
+      "comment_id": 4077347683,
+      "path": "apps/desktop/src/ui_preview.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347683",
+      "disposition": "fixed",
+      "evidence": "Reload clears the retiring window held-key, pointer, touch and drag blocks before switching windows and applies the replacement modal state. Regression delivers concrete mouse/touch/drag events, verifies deferred focus, reloads, and verifies pending navigation resumes."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y7j",
+      "comment_id": 4077347688,
+      "path": "apps/desktop/src/workspace_registry.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347688",
+      "disposition": "fixed",
+      "evidence": "Changed misleading private regular directory diagnostic to private directory; owner/type/mode checks remain intact."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y7k",
+      "comment_id": 4077347691,
+      "path": "apps/desktop/src/workspace_supervisor.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347691",
+      "disposition": "retained-defensive-teardown",
+      "evidence": "The explicit disconnect runs before derived members are destroyed; QObject receiver teardown happens later in the base destructor. Keeping early disconnection gives callbacks no opportunity to access partially destroyed sources_/requests_. No demonstrated defect or enforced style rule requires removing it."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y7s",
+      "comment_id": 4077347702,
+      "path": "apps/desktop/src/workspace_supervisor.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347702",
+      "disposition": "deferred-optional-optimization",
+      "evidence": "The queue is bounded to eight sources and 128 requests each. Ordinary terminal output emits snapshotChanged, which is not connected to synchronize; the 250 ms timer stops when automatic policy and snoozes are inactive. Revision/cache invalidation would add state across snooze expiry, title/readiness changes and source removal. No measured regression supports that expansion in this repair batch; no performance improvement is claimed."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y70",
+      "comment_id": 4077347711,
+      "path": "apps/desktop/src/workspace.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347711",
+      "disposition": "optional-style-no-change",
+      "evidence": "These searches are bounded to eight sessions and already correct. CONTRIBUTING defines no mandatory find_if convention, and index-producing loops are directly useful here. Keep the small loops instead of mixing a preference-only rewrite into behavioral repairs."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y75",
+      "comment_id": 4077347718,
+      "path": "apps/desktop/tests/terminal_render_test.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347718",
+      "disposition": "fixed",
+      "evidence": "Terminal-render waits for an observable non-null changed capture with expected pixels within a bounded deadline, replacing the positive fixed150ms wait. Existing detailed pixel assertions remain."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y7_",
+      "comment_id": 4077347726,
+      "path": "apps/desktop/tests/ui_preview_test.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347726",
+      "disposition": "fixed",
+      "evidence": "Attention-dialog tests now pair Key_B, Control-Tab and Key_A presses with releases, allowing the focus-restoration path to run without a stranded held-key block."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y8J",
+      "comment_id": 4077347740,
+      "path": "apps/desktop/tests/ui_preview_test.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347740",
+      "disposition": "fixed",
+      "evidence": "Cursor captures poll expected color presence/absence with a bounded deadline. A visible capture separates the two absence cases, so each negative assertion follows a real visible-to-hidden transition."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y8L",
+      "comment_id": 4077347744,
+      "path": "apps/desktop/tests/workspace_attention_ui_probe.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347744",
+      "disposition": "fixed",
+      "evidence": "Read emplace(...).second directly; no unused structured binding."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y8O",
+      "comment_id": 4077347749,
+      "path": "evidence/pr10-review-resolutions.json",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347749",
+      "disposition": "fixed",
+      "evidence": "Standardized the current PR10 followup receipt on schema_version."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y8Y",
+      "comment_id": 4077347764,
+      "path": "evidence/pr10-review-resolutions.json",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347764",
+      "disposition": "fixed",
+      "evidence": "Standardized the Python test-count key on python_tests, consistent with other receipts."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y8a",
+      "comment_id": 4077347769,
+      "path": "scripts/check_claude_hooks.py",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347769",
+      "disposition": "not-applicable",
+      "evidence": "The synchronous version/Git calls run before the fixture service, View pump, or monitor tasks are created. There is no concurrent loop work at that point to starve. Retained bounded subprocess helpers instead of adding speculative offloading for a future ordering change."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y8j",
+      "comment_id": 4077347780,
+      "path": "scripts/check_claude_hooks.py",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347780",
+      "disposition": "fixed",
+      "evidence": "The live harness catches Exception, preserving KeyboardInterrupt/SystemExit cancellation semantics. Focused test verifies KeyboardInterrupt propagates; ordinary timeout/failure receipt tests remain."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y8q",
+      "comment_id": 4077347786,
+      "path": "scripts/check_cli_launch.py",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347786",
+      "disposition": "fixed",
+      "evidence": "Service rejects both agent flags before opening its log or spawning a subprocess. Both validation sites now say at most one agent mode. Regression verifies no Popen call."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y82",
+      "comment_id": 4077347803,
+      "path": "scripts/check_workspace_attention.py",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347803",
+      "disposition": "fixed",
+      "evidence": "Concurrent startup failures copy sibling messages AND their cleanup notes onto the raised primary exception. Regression asserts the actual raised exception retains both sources cleanup diagnostics."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y9D",
+      "comment_id": 4077347817,
+      "path": "scripts/lapis.py",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347817",
+      "disposition": "fixed",
+      "evidence": "Launcher recognizes bare positional programs while skipping desktop option values. run zsh receives the explicit-session socket default. Parameterized regressions cover bare programs and all value-taking options."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y9G",
+      "comment_id": 4077347822,
+      "path": "services/session/src/session_service.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347822",
+      "disposition": "fixed",
+      "evidence": "attention_state() now returns const attention::State*; all callers only inspect state."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y9N",
+      "comment_id": 4077347828,
+      "path": "services/session/src/session_service.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347828",
+      "disposition": "fixed",
+      "evidence": "The Claude observer changed callback clears the previous decision error before publishing current source diagnostics. Live regression will verify terminal-only guidance after a rejected decision and a new source event."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k8y9T",
+      "comment_id": 4077347836,
+      "path": "services/session/src/session_service.cpp",
+      "url": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077347836",
+      "disposition": "fixed",
+      "evidence": "Removed the unused Claude-path assignment to the Codex-only pty_requested_ flag."
+    }
+  ],
+  "outside_diff_dispositions": [
+    {
+      "reviewer": "CodeRabbit",
+      "marker": "cr-comment:v1:1e94ba516ecc69c223096f91",
+      "path": "scripts/check_claude_hooks.py",
+      "disposition": "not-applicable",
+      "evidence": "View.wait returns synchronously once its predicate is true; no await or loop yield intervenes before the notice lookup. The concurrent View pump cannot run between these statements."
+    },
+    {
+      "reviewer": "CodeRabbit",
+      "marker": "cr-comment:v1:551d64bff9cda21d741f87f3",
+      "path": "apps/desktop/qml/Main.qml",
+      "disposition": "fixed",
+      "evidence": "Explicit action-role OK invokes creation without accepting the dialog; only successful creation closes it. A failed-directory GUI test preserves both fields, then succeeds. Cancel remains an explicit reject-role button."
+    }
+  ],
+  "independent_review": {
+    "route_at_launch": "zai,glm-5.3",
+    "receipt": "build/pr10-followup/workers/integration-review.txt.status.json",
+    "completed_before_flashx_instruction": true,
+    "findings": [
+      {
+        "disposition": "strengthened verification",
+        "detail": "Correlate exact synthetic Read ID in hook and failed tool result; final runtime probe passed."
+      },
+      {
+        "disposition": "no functional defect",
+        "detail": "A queued observer update may supersede a decision status before its snapshot, but exact rejection is delivered in attention_retry and the observer keeps the same terminal-only guidance or a newer source diagnostic. No response acknowledgement is lost."
+      }
+    ]
+  },
+  "failed_attempts_retained": [
+    {
+      "logs": [
+        "build/pr10-followup/build-initial.log",
+        "build/pr10-followup/build-corrected.log"
+      ],
+      "cause": "Worker-patch compile errors corrected before successful assembled checks."
+    },
+    {
+      "log": "build/pr10-followup/desktop.log",
+      "cause": "New reset regression used the old prompt ID; corrected to the new epoch. QImage const-reference warnings and service-handler complexity were corrected; final 22 suites and static checks pass."
+    },
+    {
+      "logs": [
+        "build/pr10-followup/workspace-ui.log",
+        "build/pr10-followup/workspace-ui-diagnostic.log"
+      ],
+      "cause": "Standard Cancel button missing from custom footer; explicit footer buttons and named control checks now pass."
+    },
+    {
+      "log": "build/pr10-followup/workspace-ui-corrected.log",
+      "cause": "One run failed the eligible-live-window predicate. The fixture can explicitly reacquire its own foreground and records whether it did; final pass did not need reacquisition. Intermittent GUI eligibility instability is not claimed fixed."
+    },
+    {
+      "receipt": "build/pr10-followup/workspace-attention/receipt.json",
+      "cause": "Installed Codex hash 81f1d50b0153837534552c7033f203c99a34d2e1fb3fdadc4ec6002fd834180c is outside the qualified pin. Rerun used retained hash-verified f066af4e binary without changing installation."
+    },
+    {
+      "logs": [
+        "build/pr10-followup/workers/hook-contract.events.jsonl",
+        "build/pr10-followup/hook-contract-consolidated.log"
+      ],
+      "cause": "Initial synthetic HTTP fixture and consolidation diagnostics corrected; final exact-ID-correlated runtime probe passes."
+    }
+  ],
+  "limits": [
+    "macOS only; no Linux UI or 32-session qualification",
+    "Newer default Codex binary remains unqualified; retained supported binary used for live acceptance",
+    "Claude remains observation-only, with terminal responses and no authoritative hook-history reconciliation",
+    "Optional Codex reviewer remains quota-unavailable until September 23 America/Los_Angeles",
+    "No merge; fresh PR-head review remains separate from these local checks"
+  ]
+}

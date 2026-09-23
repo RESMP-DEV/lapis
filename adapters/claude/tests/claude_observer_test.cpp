@@ -9,6 +9,7 @@
 #include <QLocalSocket>
 #include <QProcess>
 #include <QTimer>
+#include <array>
 #include <iostream>
 #include <source_location>
 #include <stdexcept>
@@ -64,7 +65,8 @@ struct Fixture {
         QFile settings(arguments[1]);
         require(settings.open(QIODevice::ReadOnly));
         const auto hooks = QJsonDocument::fromJson(settings.readAll()).object()["hooks"].toObject();
-        require(hooks.size() == 10);
+        require(hooks.size() == 9);
+        require(!hooks.contains(QStringLiteral("StopFailure")));
         command = hooks["SessionStart"]
                       .toArray()[0]
                       .toObject()["hooks"]
@@ -192,6 +194,75 @@ void exact_retirement() {
     f.send(event("SessionStart"));
     require(!f.state.connected());
 }
+
+void completed_tool_bounds() {
+    Fixture f;
+    f.begin();
+
+    // More ordinary completions than State's shared retired-ID bound must remain
+    // adapter-local and leave room for later genuine attention.
+    for (qsizetype index = 0; index < 1025; ++index)
+        f.send(event("PostToolUse", "Bash", QStringLiteral("ordinary-%1").arg(index)));
+    require(f.state.ready());
+
+    f.send(event("PreToolUse", "AskUserQuestion", "ordinary-0"));
+    f.send(event("PermissionRequest", "Bash", "ordinary-0"));
+    require(f.state.ready() && f.state.pending().empty());
+
+    f.send(event("PreToolUse", "AskUserQuestion", "genuine"));
+    require(f.state.ready() && f.state.pending().contains(std::string{"genuine"}));
+
+    f.send(event("PostToolUse", "AskUserQuestion", "genuine"));
+    require(f.state.ready() && f.state.pending().empty());
+    // One genuine completion plus 16,383 ordinary IDs fill the explicit bound.
+    for (qsizetype index = 1025; index < 16383; ++index)
+        f.send(event("PostToolUse", "Bash", QStringLiteral("ordinary-%1").arg(index)));
+    require(f.state.ready());
+    f.send(event("PostToolUse", "Bash", "ordinary-0")); // Duplicate at the bound is harmless.
+    require(f.state.ready());
+    f.send(event("PostToolUse", "Bash", "one-too-many"));
+    require(!f.state.ready());
+    require(f.observer.diagnostic().contains(
+        QLatin1String("Claude completed tool identity bound exceeded")));
+}
+
+void completed_tools_reset_at_prompt_epoch() {
+    Fixture f;
+    f.begin();
+    f.send(event("PostToolUse", "AskUserQuestion", "tool"));
+    f.send(event("UserPromptSubmit")); // Duplicate boundary must not reset identity.
+    f.send(event("PreToolUse", "AskUserQuestion", "tool"));
+    require(f.state.pending().empty());
+    f.send(event("UserPromptSubmit", {}, {}, "turn-2"));
+    f.send(event("PreToolUse", "AskUserQuestion", "tool", "turn-2"));
+    require(f.state.pending().contains(std::string{"tool"}));
+}
+
+void connection_overflow_is_observable() {
+    Fixture f;
+    f.begin();
+    std::array<QLocalSocket, 8> clients;
+    for (auto& client : clients) {
+        client.connectToServer(f.socket);
+        require(client.waitForConnected(1000));
+        QCoreApplication::processEvents();
+    }
+    QLocalSocket overflow;
+    overflow.connectToServer(f.socket);
+    require(overflow.waitForConnected(1000));
+    QCoreApplication::processEvents();
+    require(f.state.ready());
+    require(f.observer.diagnostic().contains(
+        QLatin1String("Claude hook connection limit exceeded (at least 1)")));
+
+    overflow.disconnectFromServer();
+    for (auto& client : clients)
+        client.disconnectFromServer();
+    QCoreApplication::processEvents();
+    f.send(event("PreToolUse", "AskUserQuestion", "after-overload"));
+    require(f.state.ready() && f.state.pending().contains(std::string{"after-overload"}));
+}
+
 void session_replacement() {
     Fixture f;
     f.begin();
@@ -261,9 +332,13 @@ int main(int argc, char** argv) {
         callback_destruction();
         identities_and_boundaries();
         exact_retirement();
+        completed_tool_bounds();
+        completed_tools_reset_at_prompt_epoch();
+        connection_overflow_is_observable();
         session_replacement();
         privacy_bounds_and_transport();
-        std::cout << "Claude live relay, identity, retirement, privacy and deadline cases passed\n";
+        std::cout << "Claude live relay, identity, retirement, bounds, privacy and deadline cases "
+                     "passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

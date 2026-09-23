@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from check_cli_launch import CheckError
+from check_cli_launch import CheckError, Service
 import check_workspace_attention
 from check_workspace_attention import request_by_role
 
@@ -164,6 +164,51 @@ class CleanupTests(unittest.IsolatedAsyncioTestCase):
         wait.assert_awaited_once_with(frozenset({201}))
         self.assertTrue(receipt["services_reaped"])
         self.assertTrue(receipt["process_groups_cleaned"])
+
+
+class StartupFailureTests(unittest.TestCase):
+    def test_concurrent_start_failure_retains_sibling_and_cleanup_notes(self):
+        primary = RuntimeError("approval failed")
+        primary.add_note("approval service cleanup: stop failed")
+        sibling = TimeoutError("input failed")
+        sibling.add_note("input service cleanup: stop failed")
+
+        with self.assertRaises(RuntimeError) as raised:
+            check_workspace_attention.raise_concurrent_start_failures(
+                [primary, sibling]
+            )
+
+        self.assertIs(raised.exception, primary)
+        self.assertIn(
+            "approval service cleanup: stop failed", raised.exception.__notes__
+        )
+        self.assertIn(
+            "concurrent source start also failed: input failed",
+            raised.exception.__notes__,
+        )
+        self.assertIn(
+            "concurrent source start cleanup: input service cleanup: stop failed",
+            raised.exception.__notes__,
+        )
+
+    def test_conflicting_agent_modes_fail_before_service_spawn(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch("check_cli_launch.subprocess.Popen") as popen:
+                with self.assertRaisesRegex(CheckError, "at most one agent mode"):
+                    Service(
+                        root / "service",
+                        root / "runtime",
+                        root / "artifacts",
+                        "conflicted",
+                        "program",
+                        [],
+                        root,
+                        codex=True,
+                        claude=True,
+                    )
+
+        popen.assert_not_called()
 
 
 if __name__ == "__main__":

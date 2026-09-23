@@ -266,7 +266,7 @@ class WorkspaceFixture {
                 throw std::runtime_error("Source lost its verified reconnect identity");
             const QString verified_id = temporary.sessionId();
             require(!verified_id.isEmpty(), "Verified source identity is missing");
-            const auto [identity, inserted] = verified_sessions_.emplace(source.role, verified_id);
+            const bool inserted = verified_sessions_.emplace(source.role, verified_id).second;
             require(inserted, "Verified source identities collided");
             entries.push_back(*entry);
         }

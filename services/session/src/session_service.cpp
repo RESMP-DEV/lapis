@@ -172,7 +172,7 @@ class SessionService final : public QObject {
     }
 
   private:
-    attention::State* attention_state() const {
+    const attention::State* attention_state() const {
         return codex_state_ ? codex_state_.get() : claude_state_.get();
     }
     void start_claude(const LaunchSpec& launch) {
@@ -180,6 +180,7 @@ class SessionService final : public QObject {
             identity_.session_id.toHex().toStdString(), "claude-code");
         claude_observer_ = std::make_unique<lapis::claude::Observer>(*claude_state_);
         connect(claude_observer_.get(), &lapis::claude::Observer::changed, this, [this] {
+            decision_error_.clear();
             attention_dirty_ = true;
             schedule_attention();
         });
@@ -187,7 +188,6 @@ class SessionService final : public QObject {
         terminal.agent = AgentMode::terminal;
         terminal.arguments = claude_observer_->launchArguments(
             launch.arguments, QCoreApplication::applicationFilePath());
-        pty_requested_ = true;
         pty_.start(terminal);
     }
     void schedule_attention() {
@@ -826,6 +826,27 @@ class SessionService final : public QObject {
             client_->write(bytes) != bytes.size())
             throw std::runtime_error("Decision rejection queue failed");
     }
+    void decide_attention(const QByteArray& payload) {
+        if (!attention_state())
+            throw std::runtime_error("Attention decisions are unsupported for terminal sessions");
+        const auto decision = wire::decode_attention_decision(payload);
+        if (claude_observer_) {
+            allow_decision_retry(decision);
+            decision_error_ = QStringLiteral("Answer Claude requests in the terminal");
+            attention_dirty_ = true;
+            schedule_attention();
+            return;
+        }
+        if (!codex_observer_->decide(decision.source_epoch, decision.request_id, decision.revision,
+                                     decision.choice, decision.answers)) {
+            allow_decision_retry(decision);
+            decision_error_ =
+                QStringLiteral("Request changed or response is unsupported; refresh attention");
+            attention_dirty_ = true;
+            schedule_attention();
+        }
+        return;
+    }
     void handle(const wire::Frame& frame) {
         if (!process_started_ || stopping_)
             throw std::runtime_error("Session is not ready for input");
@@ -840,28 +861,9 @@ class SessionService final : public QObject {
             throw std::runtime_error("Input message too large");
         QByteArray bytes;
         switch (frame.kind) {
-        case wire::Kind::attention_decision: {
-            if (!attention_state())
-                throw std::runtime_error(
-                    "Attention decisions are unsupported for terminal sessions");
-            const auto decision = wire::decode_attention_decision(control.payload);
-            if (claude_observer_) {
-                allow_decision_retry(decision);
-                decision_error_ = QStringLiteral("Answer Claude requests in the terminal");
-                attention_dirty_ = true;
-                schedule_attention();
-                return;
-            }
-            if (!codex_observer_->decide(decision.source_epoch, decision.request_id,
-                                         decision.revision, decision.choice, decision.answers)) {
-                allow_decision_retry(decision);
-                decision_error_ =
-                    QStringLiteral("Request changed or response is unsupported; refresh attention");
-                attention_dirty_ = true;
-                schedule_attention();
-            }
+        case wire::Kind::attention_decision:
+            decide_attention(control.payload);
             return;
-        }
         case wire::Kind::history_request:
             request_history(control.payload);
             return;

@@ -105,7 +105,7 @@ std::vector<WorkspaceEntry> validate_entries(const std::vector<WorkspaceEntry>& 
 void validate_directory_status(const struct stat& status) {
     if (!S_ISDIR(status.st_mode) || status.st_uid != ::getuid() ||
         (status.st_mode & 07777U) != 0700U)
-        fail("Workspace owner directory must be a private regular directory");
+        fail("Workspace owner directory must be a private directory");
 }
 
 void ensure_private_owner_directory(const QString& path) {

@@ -141,6 +141,41 @@ class LauncherTests(unittest.TestCase):
                 self.assertNotIn("--workspace", command)
                 self.assertEqual(self.runtime.stat().st_mode & 0o777, 0o700)
 
+    def test_bare_positional_program_injects_private_socket(self):
+        cases = [
+            ["zsh"],
+            ["--screen", "built-in", "zsh"],
+            ["--screen=built-in", "zsh"],
+            ["--capture", str(self.temporary_root / "capture.png"), "zsh"],
+        ]
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                _, run = self.launch(arguments)
+
+                command = run.call_args.args[0]
+                self.assertIn("--socket", command)
+                self.assertIn(str(self.runtime / "desktop-v6.sock"), command)
+                self.assertNotIn("--workspace", command)
+                self.assertEqual(self.runtime.stat().st_mode & 0o777, 0o700)
+
+    def test_value_taking_options_do_not_look_like_programs(self):
+        screen = str(self.temporary_root / "screen")
+        cases = [
+            ["--screen", screen],
+            ["--qml", str(self.temporary_root / "Main.qml")],
+            ["--scenario", "arrival"],
+            ["--capture", str(self.temporary_root / "capture.png")],
+            ["--capture-delay", "500"],
+            ["--trace", str(self.temporary_root / "trace.json")],
+        ]
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                _, run = self.launch(arguments)
+
+                command = run.call_args.args[0]
+                self.assertIn("--workspace", command)
+                self.assertNotIn("--socket", command)
+
     def test_explicit_workspace_argument_is_preserved(self):
         workspace = self.temporary_root / "explicit-workspace.json"
         cases = [
