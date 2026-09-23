@@ -2,6 +2,7 @@
 #include <QScopeGuard>
 
 #include <QClipboard>
+#include <QDesktopServices>
 #include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QGuiApplication>
@@ -10,11 +11,13 @@
 #include <QMatrix4x4>
 #include <QMouseEvent>
 #include <QQuickWindow>
+#include <QRegularExpression>
 #include <QSGSimpleRectNode>
 #include <QSGTextNode>
 #include <QStringList>
 #include <QTextCharFormat>
 #include <QTextLayout>
+#include <QUrl>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -782,6 +785,22 @@ void TerminalSurface::mousePressEvent(QMouseEvent* event) {
         return;
     }
     forceActiveFocus(Qt::MouseFocusReason);
+#ifdef Q_OS_MACOS
+    const auto link_modifier = Qt::MetaModifier;
+#else
+    const auto link_modifier = Qt::ControlModifier;
+#endif
+    if (event->button() == Qt::LeftButton && event->modifiers() == link_modifier && document_) {
+        // Command-click (Control-click elsewhere) opens a web link in the browser.
+        const auto cell = cellAt(event->position());
+        const QUrl url(terminal_url_at(document_->snapshot(), cell.x(), cell.y()),
+                       QUrl::StrictMode);
+        if (url.isValid() &&
+            (url.scheme() == QLatin1String("https") || url.scheme() == QLatin1String("http")))
+            QDesktopServices::openUrl(url);
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::LeftButton) {
         clearSelection();
         press_cell_ = cellAt(event->position());
@@ -957,6 +976,74 @@ bool TerminalSurface::copySelection(const QKeyEvent& event) {
         QGuiApplication::clipboard()->setText(selection_text_);
     return true;
 }
+namespace {
+// One screen row as text, with the column where each character starts.
+struct RowText {
+    QString text;
+    QList<int> columns;
+};
+RowText row_text(const session::TerminalSnapshot& snapshot, int row) {
+    RowText result;
+    const int columns = snapshot.size.columns;
+    for (int column = 0; column < columns; ++column) {
+        const auto index = static_cast<std::size_t>(row) * static_cast<std::size_t>(columns) +
+                           static_cast<std::size_t>(column);
+        const auto kind = snapshot.cells[index].kind;
+        if (kind == session::CellKind::wide_tail || kind == session::CellKind::wrap_spacer)
+            continue;
+        const auto text = snapshot.text(index);
+        const auto value =
+            text.empty() ? QStringLiteral(" ")
+                         : QString::fromUcs4(text.data(), static_cast<qsizetype>(text.size()));
+        for (qsizetype unit = 0; unit < value.size(); ++unit)
+            result.columns.append(column);
+        result.text += value;
+    }
+    return result;
+}
+} // namespace
+
+QString terminal_url_at(const session::TerminalSnapshot& snapshot, int column, int row) {
+    const int rows = snapshot.size.rows;
+    if (row < 0 || row >= rows || column < 0 || column >= snapshot.size.columns)
+        return {};
+    // A row that runs to the last column is treated as wrapping onto the next
+    // one, which is how agents print long links in a narrow terminal.
+    const auto fills = [&](const RowText& line) { return !line.text.endsWith(QLatin1Char(' ')); };
+    int first = row;
+    while (first > 0 && fills(row_text(snapshot, first - 1)))
+        --first;
+    QString joined;
+    qsizetype target = -1;
+    for (int current = first; current < rows; ++current) {
+        const auto line = row_text(snapshot, current);
+        if (current == row)
+            for (qsizetype unit = 0; unit < line.columns.size(); ++unit)
+                if (line.columns[unit] == column) {
+                    target = joined.size() + unit;
+                    break;
+                }
+        joined += line.text;
+        if (current >= row && !fills(line))
+            break;
+    }
+    if (target < 0)
+        return {};
+    static const QRegularExpression pattern(QStringLiteral(R"(https?://[^\s<>"'`]+)"));
+    for (auto matches = pattern.globalMatch(joined); matches.hasNext();) {
+        const auto match = matches.next();
+        auto url = match.captured();
+        // Sentence punctuation and unbalanced closing brackets end the link.
+        while (!url.isEmpty() && QStringLiteral(".,;:!?)]}").contains(url.back()) &&
+               !(url.back() == QLatin1Char(')') &&
+                 url.count(QLatin1Char('(')) > url.count(QLatin1Char(')')) - 1))
+            url.chop(1);
+        if (target >= match.capturedStart() && target < match.capturedStart() + url.size())
+            return url;
+    }
+    return {};
+}
+
 QByteArray terminal_text_key(const QKeyEvent& event) {
     const auto mods = event.modifiers();
     if (mods.testFlag(Qt::MetaModifier))

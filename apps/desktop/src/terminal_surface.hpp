@@ -20,6 +20,10 @@ namespace lapis::desktop {
 
 // Legacy printable-key encoding; native text/IME remains Unicode.
 [[nodiscard]] QByteArray terminal_text_key(const QKeyEvent& event);
+// The http(s) URL covering a screen cell, following rows it wraps onto; empty
+// when the cell is not part of one.
+[[nodiscard]] QString terminal_url_at(const session::TerminalSnapshot& snapshot, int column,
+                                      int row);
 
 class TerminalSurface : public QQuickItem {
     Q_OBJECT

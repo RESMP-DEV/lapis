@@ -328,6 +328,20 @@ void input_contract(bool background) {
     require(!surface.inputMethodQuery(Qt::ImEnabled).toBool(),
             "Disconnected terminal retained IME ownership");
 }
+// Links are found across the rows they wrap onto, without sentence punctuation.
+void links_follow_wrapped_rows() {
+    lapis::session::Terminal terminal({20, 3});
+    terminal.feed("see https://example.com/a_very_long/path. ok");
+    const auto snapshot = terminal.snapshot();
+    const QString expected = QStringLiteral("https://example.com/a_very_long/path");
+    require(lapis::desktop::terminal_url_at(snapshot, 6, 0) == expected,
+            "Link was not found on its first row");
+    require(lapis::desktop::terminal_url_at(snapshot, 5, 1) == expected,
+            "Link was not followed from its wrapped row");
+    require(lapis::desktop::terminal_url_at(snapshot, 1, 0).isEmpty() &&
+                lapis::desktop::terminal_url_at(snapshot, 2, 2).isEmpty(),
+            "Plain text was treated as a link");
+}
 // Dragging selects screen text and double-clicking selects a word. The copy
 // chord copies without sending input, typing clears the selection, and the
 // wheel asks for older history on the normal screen.
@@ -424,11 +438,13 @@ int main(int argc, char** argv) {
                 "Offscreen input tests require explicit --background mode");
         input_contract(background);
         selection_and_scroll();
+        links_follow_wrapped_rows();
         if (background)
             std::cout << "Background Qt/software mode; native macOS input and GPU not exercised\n";
-        std::cout << "Qt IME commit/cancel, replacement rejection, paste, selection/copy, wheel, "
-                     "history, focus, document "
-                     "and disconnect ownership passed\n";
+        std::cout
+            << "Qt IME commit/cancel, replacement rejection, paste, selection/copy, wheel, links, "
+               "history, focus, document "
+               "and disconnect ownership passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

@@ -61,7 +61,7 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
 | PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS | Recovery after service loss and later Linux qualification |
 | Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect | Recovery after service failure/reboot |
-| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy and wheel history paging (Qt tests on anvil) | Cross-cell contextual shaping, rectangular/multi-click selection, clickable links and accessibility; native Mac selection not yet exercised; Linux GUI port is deferred |
+| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging and link opening (Qt tests on anvil) | Cross-cell contextual shaping, rectangular/multi-click selection, link hover feedback and accessibility; native Mac selection not yet exercised; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
 | UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation | Automatic carousel and larger session-count qualification |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
@@ -176,7 +176,9 @@ Code's idle reminder after a finished turn is not a request. A new Codex agent
 reads **Awaiting first prompt** until its first turn creates a thread. Agents
 started in the same folder are numbered in cards and menus.
 
-Drag across the terminal to select text, or double-click a word; Command-C
+Command-click (Control-click on Linux) a web link in agent output to open it,
+including links that wrap across rows. Drag across the terminal to select text,
+or double-click a word; Command-C
 (Control-Shift-C on Linux) copies it, and typing clears it. The mouse wheel pages
 through history (read-only; scrolling past the newest page or typing returns to
 the live screen, and the typed key reaches the agent), or sends arrow keys to a
