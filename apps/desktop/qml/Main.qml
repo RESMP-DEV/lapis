@@ -473,7 +473,7 @@ ApplicationWindow {
         closeAgentDialog.harnessId = session.harnessId
         closeAgentDialog.agentName = session.agentName
         closeAgentDialog.place = workspace.displayPath(session.directory)
-        closeAgentDialog.reachable = session.inputReady
+        closeAgentDialog.reachable = session.reachable
         openFresh(closeAgentDialog)
     }
 

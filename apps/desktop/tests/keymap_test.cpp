@@ -384,6 +384,14 @@ void default_settings_chords_are_shared() {
     const QStringList custom = keymap.actionSequences(QStringLiteral("openSettings"));
     require(custom == QStringList{QStringLiteral("Alt+F4")},
             "custom bindings must replace defaults exactly, with only surrounding space trimmed");
+    using lapis::desktop::shifted_punctuation;
+    const auto control_shift = Qt::ControlModifier | Qt::ShiftModifier;
+    require(shifted_punctuation(QKeyCombination(control_shift, Qt::Key_Comma)) ==
+                QKeyCombination(control_shift, Qt::Key_Less),
+            "X11's Ctrl+Shift+< is the Ctrl+Shift+, chord");
+    require(!shifted_punctuation(QKeyCombination(Qt::ControlModifier, Qt::Key_Comma)) &&
+                !shifted_punctuation(QKeyCombination(control_shift, Qt::Key_P)),
+            "only Shift with punctuation has a shifted form");
 }
 
 void navigation_defaults_preserve_terminal_editing() {

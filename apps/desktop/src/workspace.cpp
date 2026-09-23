@@ -930,7 +930,7 @@ bool Workspace::closeSession(const QString& id, bool abandon) {
     if (!item)
         return false;
     if (!item->live() || item->connectionState() == QStringLiteral("ended") ||
-        (abandon && !item->inputReady()))
+        (abandon && !item->reachable()))
         return discardSession(id);
     if (item->closing())
         return true;

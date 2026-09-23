@@ -9,6 +9,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPointer>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUuid>
@@ -693,6 +694,36 @@ void agentsStartWithoutParentSessionMarkers() {
     }
 }
 
+// Closing an agent while a history page shows ends it: the page hides input,
+// not the service, so the agent must not be abandoned while still running.
+void closeOnHistoryPageEndsTheAgent() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "service directory");
+    WorkspaceOptions options;
+    options.endpoint = QDir(QFileInfo(directory.path()).canonicalFilePath())
+                           .filePath(QStringLiteral("agent.sock"));
+    options.launch =
+        lapis::session::LaunchSpec{QStringLiteral("/bin/sh"),
+                                   {QStringLiteral("-c"), QStringLiteral("exec sleep 600")},
+                                   directory.path(),
+                                   {80, 24},
+                                   lapis::session::AgentMode::terminal};
+    options.mode = lapis::session::wire::AttachMode::create;
+    Workspace workspace(WorkspaceMode::live, options);
+    auto* agent = workspace.focusedSession();
+    require(agent != nullptr, "service-backed agent");
+    require(waitFor([agent] { return agent->inputReady(); }, 10000), "agent session ready");
+    agent->beginHistoryRequest();
+    require(!agent->inputReady() && agent->reachable(),
+            "a history page hides input but the agent stays reachable");
+    const QPointer<lapis::desktop::SessionPreview> guarded(agent);
+    require(workspace.closeSession(agent->sessionId(), true) && !workspace.sessions().isEmpty() &&
+                guarded && guarded->closing(),
+            "closing from a history page ends the agent instead of abandoning it");
+    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "the tab closes once the process has exited");
+}
+
 // The session service ends the agent's process group; the tab closes after.
 void closeEndsTheAgent(const char* script, int minimum_ms) {
     QTemporaryDir directory;
@@ -742,6 +773,7 @@ int main(int argc, char** argv) {
         closeEndsTheAgent("exec sleep 600", 0);
         // An agent that ignores SIGHUP is ended by the SIGTERM escalation.
         closeEndsTheAgent("trap '' HUP; exec sleep 600", 1200);
+        closeOnHistoryPageEndsTheAgent();
         std::cout << "workspace categories, identity, persistence, status and closing passed\n";
         return 0;
     } catch (const std::exception& error) {

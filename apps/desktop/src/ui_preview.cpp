@@ -174,8 +174,15 @@ void UiPreview::refreshSettingsShortcuts() {
                               ? options_.keymap->sequences(QStringLiteral("openSettings"))
                               : default_settings_shortcuts();
     parsed_settings_shortcuts_.clear();
-    for (const auto& text : settings_shortcuts_)
-        parsed_settings_shortcuts_.append(QKeySequence(text));
+    for (const auto& text : settings_shortcuts_) {
+        const QKeySequence sequence(text);
+        parsed_settings_shortcuts_.append(sequence);
+#ifndef Q_OS_MACOS
+        if (sequence.count() == 1)
+            if (const auto shifted = shifted_punctuation(sequence[0]))
+                parsed_settings_shortcuts_.append(QKeySequence(*shifted));
+#endif
+    }
     emit settingsShortcutsChanged();
 }
 
