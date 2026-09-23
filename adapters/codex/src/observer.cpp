@@ -186,21 +186,28 @@ class Observer::Impl final : public QObject {
         retired_.clear();
         pending_details_bytes_ = 0;
         if (hash != Observer::qualifiedBinarySha256()) {
+            unsupported_source_ = true;
             diagnostic_ = "Unsupported Codex binary hash";
             emit owner_.changed();
             return;
         }
+        unsupported_source_ = false;
         path_ = socket;
         reconnect();
     }
     void stop() {
         close();
+        unsupported_source_ = false;
         path_.clear();
         diagnostic_ = "Codex observer stopped";
         emit owner_.changed();
     }
     void reconnect() {
         close();
+        if (unsupported_source_) {
+            emit owner_.changed();
+            return;
+        }
         if (path_.isEmpty() || state_.epoch() == std::numeric_limits<quint64>::max()) {
             fail("Codex source cannot reconnect");
             return;
@@ -625,6 +632,7 @@ class Observer::Impl final : public QObject {
     QString thread_;
     QString diagnostic_;
     QString waiting_;
+    bool unsupported_source_{};
     qint64 rpc_id_{};
     quint64 sequence_{};
     bool initialized_{};
@@ -647,7 +655,7 @@ Observer::~Observer() = default;
 // Updating this pin requires the live requalification procedure in
 // adapters/codex/README.md; a version string alone is insufficient.
 QString Observer::qualifiedBinarySha256() {
-    return QStringLiteral("f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9");
+    return QStringLiteral("81f1d50b0153837534552c7033f203c99a34d2e1fb3fdadc4ec6002fd834180c");
 }
 void Observer::start(const QString& socket, const QString& hash) { impl_->start(socket, hash); }
 void Observer::reconnect() { impl_->reconnect(); }

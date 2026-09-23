@@ -465,7 +465,7 @@ python3 scripts/check_cli_launch.py --desktop --codex \
 
 The optional test waits for the owned PTY to disable canonical input and echo
 before sending navigation input; its early banner alone is not a readiness signal.
-It uses the current Codex configuration with no extra launch flags (Codex 0.154.0 removed the older `--no-daemon`), types
+It uses the current Codex configuration with no extra backend-selection flags and types
 only an unsubmitted test marker, exercises navigation/paste/resize, captures normal
 and compact windows, reattaches to the same child, clears the draft with Ctrl-C,
 and quits from the empty composer with Ctrl-D.
@@ -845,6 +845,22 @@ commands with any sanitized receipt committed to `evidence/`.
 
 ### Codex attention qualification
 
+When the installed Codex digest changes, keep unknown binaries gated until the
+new runtime is exercised. Record the full executable SHA-256 and reported version,
+inspect the same-thread resume/read serialization and replay implementation, then
+run the no-turn inventory and shared-server probes, the live protocol/TUI probe,
+`check_service_attention.py --live-glm --desktop`, and
+`check_workspace_attention.py --live-glm`. Run GUI probes serially. Apply the
+adapter pin only with passing integration evidence and the affected compiled and
+sanitizer checks; retain failed attempts and previous receipts as dated evidence.
+See [the current binary receipt](evidence/codex-binary-update.json).
+
+Protocol, service and workspace fixtures create a new private Codex home and
+write trust for only their disposable working directory. The shared helper refuses
+to overwrite an existing configuration. They do not confirm arbitrary terminal
+prompts or modify global trust settings. This avoids depending on the TUI's
+folder-trust wording while preserving the fixture's explicit approval policy.
+
 The attention core is a standalone C++20 library, used by the managed Codex
 session service. Run `just check`, `just asan` and `just tsan` for its normal/static and
 separate sanitizer checks. `attention-state` is registered in all build modes;
@@ -941,8 +957,8 @@ a nonzero exit and JSON receipt rather than synthetic success.
 
 `--with-tui` starts the ordinary Codex TUI in a private PTY, checks that it displays
 the real question/approval, and keeps it attached while the observer responds.
-The only automated TUI confirmation is trust for the fixture's empty directory,
-stored in its disposable Codex home. No global hooks/configuration, user's daemon,
+Trust for the fixture's empty directory is written only to its fresh disposable
+Codex home before launch. No global hooks/configuration, user's daemon,
 clipboard or desktop focus is changed. This is not the lapis GPU/Qt input path;
 use the existing CLI and native-input procedures when integrating that path.
 

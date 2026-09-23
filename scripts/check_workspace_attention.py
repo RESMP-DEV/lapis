@@ -19,9 +19,9 @@ from check_codex_attention import (
     Client,
     approved_fixture,
     probe_configuration_arguments,
+    trust_fixture_directory,
 )
 from check_service_attention import (
-    TEXT,
     View,
     finished_turn,
     question_turn,
@@ -133,6 +133,7 @@ async def start_source(args, binary, runtime, artifacts, role, prompt):
     cwd = runtime / f"{role}-cwd"
     home.mkdir(mode=0o700)
     cwd.mkdir(mode=0o700)
+    trust_fixture_directory(home, cwd)
     service = Service(
         args.build_dir / "services/session/lapis_session_service",
         runtime,
@@ -153,8 +154,6 @@ async def start_source(args, binary, runtime, artifacts, role, prompt):
     try:
         view = View(await asyncio.to_thread(service.connect))
         await view.wait(lambda: view.attention is not None, 15)
-        if "Press enter to continue" in view.screen:
-            view.client.send(TEXT, b"\r")
         owner = Client(
             await UnixWebSocketTransport.connect(Path(str(service.endpoint) + ".codex"))
         )
@@ -164,8 +163,6 @@ async def start_source(args, binary, runtime, artifacts, role, prompt):
                 loaded = await owner.rpc("thread/loaded/list", {"limit": 2})
                 if loaded.get("data"):
                     break
-                if "Press enter to continue" in view.screen:
-                    view.client.send(TEXT, b"\r")
                 await asyncio.sleep(0.1)
         persistent = []
         for candidate in loaded["data"]:

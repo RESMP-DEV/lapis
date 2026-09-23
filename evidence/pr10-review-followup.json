@@ -154,7 +154,7 @@
         "both real turns continued successfully after matching responses"
       ],
       "binary_sha256": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
-      "binary_path": "/Users/kearm/.local/lib/alphaheng/packages/20260918-0034-256a74f9-dirty/bin/codex",
+      "binary_path": "~/.local/lib/alphaheng/packages/20260918-0034-256a74f9-dirty/bin/codex",
       "source_count": 2,
       "fixture_only_path_override": true,
       "default_installation_changed": false,
@@ -166,7 +166,7 @@
     "probe_sha256": "618d7b982c4b627c2bc45ba6177eb80457b40c81ff439b3db84b8d8b50c9561a",
     "receipt": "build/pr10-followup/hook-contract-final/receipt.json",
     "binary": {
-      "path": "/Users/kearm/.local/share/claude/versions/2.1.280",
+      "path": "~/.local/share/claude/versions/2.1.280",
       "version": "2.1.280 (Claude Code)",
       "sha256": "387a5c5dcdbb815085edf0baf79591f9d8894efe922bceaf3d75b1b08055229d"
     },

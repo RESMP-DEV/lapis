@@ -944,6 +944,14 @@ Update README's status table only as those capabilities land. Linux desktop,
 fresh presentation-latency targets are outside this phase. Packaging/notices/SBOM
 remain an independent prerequisite for binary distribution.
 
+The [2026-09-22 Codex qualification](../evidence/codex-binary-update.json)
+updates the single production binary pin to `81f1d50b…`. The dedicated backend,
+ordinary TUI and observer boundaries are unchanged. The newer binary retains the
+resume/read reconciliation contract; live service and two-session desktop checks
+exercise its response path. Unknown hashes remain disabled and keep their explicit
+failure reason across reconnect attempts. Qualification trusts each disposable
+fixture in its private Codex home; it does not change the user's trust settings.
+
 ### Milestone 3: supervising two live sessions on macOS
 
 **All three checkpoints qualified together on macOS; evidence is recorded in

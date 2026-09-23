@@ -21,7 +21,6 @@ from check_cli_launch import (
     ATTENTION_SNAPSHOT,
     SNAPSHOT,
     STATUS,
-    TEXT,
     VERSION,
     CheckError,
     Service,
@@ -33,6 +32,7 @@ from check_codex_attention import (
     Client,
     approved_fixture,
     probe_configuration_arguments,
+    trust_fixture_directory,
 )
 from codex_probe_transport import UnixWebSocketTransport
 from probe_codex_attention import initialize
@@ -416,6 +416,7 @@ async def exercise(args, receipt):
         home, cwd = runtime / "home", runtime / "cwd"
         home.mkdir()
         cwd.mkdir()
+        trust_fixture_directory(home, cwd)
         options = probe_configuration_arguments()
         options += [
             "-c",
@@ -454,17 +455,6 @@ async def exercise(args, receipt):
                 "Expected independently guarded TUI and backend groups",
             )
             await view.wait(lambda: view.attention is not None, 15)
-            # Only this newly created empty fixture can receive trust confirmation.
-            await view.wait(
-                lambda: (
-                    "Press enter to continue" in view.screen
-                    or "context left" in view.screen
-                    or "Codex" in view.screen
-                ),
-                15,
-            )
-            if "Press enter to continue" in view.screen:
-                view.client.send(TEXT, b"\r")
             owner = Client(
                 await UnixWebSocketTransport.connect(
                     Path(str(service.endpoint) + ".codex")
@@ -476,8 +466,6 @@ async def exercise(args, receipt):
                     loaded = await owner.rpc("thread/loaded/list", {"limit": 2})
                     if loaded.get("data"):
                         break
-                    if "Press enter to continue" in view.screen:
-                        view.client.send(TEXT, b"\r")
                     await asyncio.sleep(0.1)
             persistent = []
             for candidate in loaded["data"]:
