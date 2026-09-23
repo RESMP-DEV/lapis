@@ -9,6 +9,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QStringView>
 #include <QUuid>
 
 #include <algorithm>
@@ -19,6 +20,7 @@
 
 #include <cerrno>
 #include <stdexcept>
+#include <string>
 #include <system_error>
 #include <utility>
 
@@ -37,7 +39,21 @@ constexpr auto agent_key = "agent";
 constexpr qsizetype max_json_bytes = qsizetype{64} * 1024;
 constexpr qsizetype max_text_bytes = 4096;
 
-[[noreturn]] void fail(const char* message) { throw std::runtime_error(message); }
+[[noreturn]] void fail(const QString& message) { throw std::runtime_error(message.toStdString()); }
+
+[[noreturn]] void fail_path(const QString& path, const QString& message) {
+    fail(path + QStringLiteral(": ") + message);
+}
+
+[[noreturn]] void fail_errno(QStringView message, const QString& path = {}) {
+    // Build the text only after saving errno; QString and std::generic_category
+    // can both make system calls or otherwise alter the thread-local value.
+    const int error = errno;
+    QString detail = message.toString();
+    if (!path.isEmpty())
+        detail += QStringLiteral(": ") + path;
+    throw std::system_error(error, std::generic_category(), detail.toStdString());
+}
 
 bool valid_utf8(const QString& value) {
     if (value.toUtf8().size() > max_text_bytes || value.contains(QChar::Null))
@@ -57,7 +73,7 @@ bool valid_utf8(const QString& value) {
 
 QString normalized_endpoint(const QString& endpoint) {
     if (endpoint.contains(QChar::Null))
-        fail("Workspace endpoint contains a null byte");
+        fail(QStringLiteral("Workspace endpoint contains a null byte"));
     const QString normalized = session::posix::prepare_endpoint(endpoint);
     return normalized;
 }
@@ -74,7 +90,7 @@ bool valid_agent(session::AgentMode agent) {
 
 std::vector<WorkspaceEntry> validate_entries(const std::vector<WorkspaceEntry>& entries) {
     if (entries.size() > WorkspaceRegistry::maximum_entries)
-        fail("Workspace registry contains too many entries");
+        fail(QStringLiteral("Workspace registry contains too many entries"));
     std::vector<QString> endpoints;
     std::vector<QByteArray> session_ids;
     endpoints.reserve(entries.size());
@@ -84,38 +100,41 @@ std::vector<WorkspaceEntry> validate_entries(const std::vector<WorkspaceEntry>& 
         entry.endpoint = normalized_endpoint(entry.endpoint);
         endpoints.push_back(entry.endpoint);
         if (!session::wire::valid_identity(entry.identity))
-            fail("Workspace identity is invalid");
+            fail(QStringLiteral("Workspace identity is invalid"));
         if (entry.fingerprint.size() != 32)
-            fail("Workspace fingerprint must contain 32 bytes");
+            fail(QStringLiteral("Workspace fingerprint must contain 32 bytes"));
         if (!valid_utf8(entry.title) || !valid_utf8(entry.directory))
-            fail("Workspace title or directory is invalid");
+            fail(QStringLiteral("Workspace title or directory is invalid"));
         if (!valid_agent(entry.agent))
-            fail("Workspace agent mode is unknown");
+            fail(QStringLiteral("Workspace agent mode is unknown"));
         session_ids.push_back(entry.identity.session_id);
     }
     std::sort(endpoints.begin(), endpoints.end());
     if (std::adjacent_find(endpoints.begin(), endpoints.end()) != endpoints.end())
-        fail("Workspace endpoints must be unique");
+        fail(QStringLiteral("Workspace endpoints must be unique"));
     std::sort(session_ids.begin(), session_ids.end());
     if (std::adjacent_find(session_ids.begin(), session_ids.end()) != session_ids.end())
-        fail("Workspace session IDs must be unique");
+        fail(QStringLiteral("Workspace session IDs must be unique"));
     return normalized;
 }
 
-void validate_directory_status(const struct stat& status) {
+void validate_directory_status(const struct stat& status, const QString& path) {
     if (!S_ISDIR(status.st_mode) || status.st_uid != ::getuid() ||
         (status.st_mode & 07777U) != 0700U)
-        fail("Workspace owner directory must be a private directory");
+        fail(QStringLiteral("%1 must be a private owner directory "
+                            "(mode=%2, uid=%3)")
+                 .arg(path, QString::number(status.st_mode & 07777U, 8),
+                      QString::number(status.st_uid)));
 }
 
 void ensure_private_owner_directory(const QString& path) {
     const auto native = QFile::encodeName(path);
     if (::mkdir(native.constData(), 0700) != 0 && errno != EEXIST)
-        fail("Could not create private workspace directory");
+        fail_errno(QStringLiteral("Could not create private workspace directory"), path);
     struct stat status{};
     if (::lstat(native.constData(), &status) != 0)
-        fail("Could not inspect workspace owner directory");
-    validate_directory_status(status);
+        fail_errno(QStringLiteral("Could not inspect workspace owner directory"), path);
+    validate_directory_status(status, path);
 }
 
 posix::UniqueFd open_private_regular_file(const QString& path, int flags) {
@@ -125,11 +144,16 @@ posix::UniqueFd open_private_regular_file(const QString& path, int flags) {
         0600);
     posix::UniqueFd result{descriptor};
     struct stat status{};
-    if (!result || ::fstat(result.get(), &status) != 0)
-        fail("Could not open private workspace regular file");
+    if (!result)
+        fail_errno(QStringLiteral("Could not open workspace file"), path);
+    if (::fstat(result.get(), &status) != 0)
+        fail_errno(QStringLiteral("Could not inspect workspace file"), path);
     if (!S_ISREG(status.st_mode) || status.st_uid != ::getuid() ||
         (status.st_mode & 07777U) != 0600U || status.st_nlink != 1)
-        fail("Workspace storage must be a private regular file with one link");
+        fail(QStringLiteral("%1 must be a private 0600 regular file with one link "
+                            "(mode=%2, uid=%3, nlink=%4)")
+                 .arg(path, QString::number(status.st_mode & 07777U, 8),
+                      QString::number(status.st_uid), QString::number(status.st_nlink)));
     return result;
 }
 
@@ -137,10 +161,17 @@ void fsync_directory(const QString& path) {
     posix::UniqueFd directory{::open(QFile::encodeName(path).constData(),
                                      O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)};
     struct stat status{};
-    if (!directory || ::fstat(directory.get(), &status) != 0 || !S_ISDIR(status.st_mode) ||
-        status.st_uid != ::getuid() || (status.st_mode & 07777U) != 0700U ||
-        ::fsync(directory.get()) != 0)
-        fail("Could not synchronize workspace owner directory");
+    if (!directory)
+        fail_errno(QStringLiteral("Could not open workspace owner directory"), path);
+    if (::fstat(directory.get(), &status) != 0)
+        fail_errno(QStringLiteral("Could not inspect workspace owner directory"), path);
+    if (!S_ISDIR(status.st_mode) || status.st_uid != ::getuid() ||
+        (status.st_mode & 07777U) != 0700U)
+        fail(QStringLiteral("%1 must be a private owner directory (mode=%2, uid=%3)")
+                 .arg(path, QString::number(status.st_mode & 07777U, 8),
+                      QString::number(status.st_uid)));
+    if (::fsync(directory.get()) != 0)
+        fail_errno(QStringLiteral("Could not synchronize workspace owner directory"), path);
 }
 
 QByteArray encode_entries(const std::vector<WorkspaceEntry>& entries) {
@@ -166,16 +197,19 @@ QByteArray encode_entries(const std::vector<WorkspaceEntry>& entries) {
     document.insert(QLatin1String(entries_key), std::move(array));
     const QByteArray bytes = QJsonDocument{document}.toJson(QJsonDocument::Compact);
     if (bytes.size() > max_json_bytes)
-        fail("Workspace registry document exceeds 64 KiB");
+        fail(QStringLiteral("Workspace registry document exceeds 64 KiB"));
     return bytes;
 }
 
 QByteArray read_all(const QString& path) {
     auto file = open_private_regular_file(path, O_RDONLY);
     struct stat status{};
-    if (::fstat(file.get(), &status) != 0 || status.st_size < 0 ||
-        status.st_size > max_json_bytes || status.st_nlink != 1)
-        fail("Workspace registry exceeds 64 KiB or is hard-linked");
+    if (::fstat(file.get(), &status) != 0)
+        fail_errno(QStringLiteral("Could not inspect workspace registry"), path);
+    if (status.st_size < 0 || status.st_size > max_json_bytes || status.st_nlink != 1)
+        fail(QStringLiteral("Workspace registry exceeds 64 KiB or is hard-linked "
+                            "(size=%1, nlink=%2)")
+                 .arg(QString::number(status.st_size), QString::number(status.st_nlink)));
     QByteArray bytes;
     bytes.resize(static_cast<qsizetype>(status.st_size));
     qint64 offset = 0;
@@ -185,47 +219,53 @@ QByteArray read_all(const QString& path) {
         if (count < 0) {
             if (errno == EINTR)
                 continue;
-            fail("Could not read workspace registry");
+            fail_errno(QStringLiteral("Could not read workspace registry"), path);
         }
         if (count == 0)
-            fail("Workspace registry changed while it was being read");
+            fail_path(path, QStringLiteral("Workspace registry changed while it was being read"));
         offset += count;
     }
-    if (::fstat(file.get(), &status) != 0 || status.st_size != bytes.size() || status.st_nlink != 1)
-        fail("Workspace registry changed while it was being read");
+    if (::fstat(file.get(), &status) != 0)
+        fail_errno(QStringLiteral("Could not inspect workspace registry"), path);
+    if (status.st_size != bytes.size() || status.st_nlink != 1)
+        fail(QStringLiteral("Workspace registry changed while it was being read "
+                            "(size=%1, nlink=%2)")
+                 .arg(QString::number(status.st_size), QString::number(status.st_nlink)));
     return bytes;
 }
 
-std::vector<WorkspaceEntry> decode_entries(const QByteArray& bytes) {
+std::vector<WorkspaceEntry> decode_entries(const QByteArray& bytes, const QString& path = {}) {
     QJsonParseError error{};
     const QJsonDocument document = QJsonDocument::fromJson(bytes, &error);
     if (error.error != QJsonParseError::NoError || !document.isObject())
-        fail("Workspace registry JSON is corrupt");
+        fail_path(path, QStringLiteral("Workspace registry JSON is corrupt"));
     const QJsonObject root = document.object();
     if (root.size() != 2 || !root.contains(QLatin1String(schema_key)) ||
         !root.contains(QLatin1String(entries_key)))
-        fail("Workspace registry contains unknown fields");
+        fail_path(path, QStringLiteral("Workspace registry contains unknown fields"));
     if (root.value(QLatin1String(schema_key)) != QJsonValue{1})
-        fail("Workspace registry schema version is unsupported");
+        fail_path(path, QStringLiteral("Workspace registry schema version is unsupported"));
     const QJsonValue entries_value = root.value(QLatin1String(entries_key));
     if (!entries_value.isArray())
-        fail("Workspace registry entries are corrupt");
+        fail_path(path, QStringLiteral("Workspace registry entries are corrupt"));
     const QJsonArray array = entries_value.toArray();
     if (static_cast<std::size_t>(array.size()) > WorkspaceRegistry::maximum_entries)
-        fail("Workspace registry contains too many entries");
+        fail_path(path, QStringLiteral("Workspace registry contains too many entries"));
     std::vector<WorkspaceEntry> entries;
     entries.reserve(static_cast<std::size_t>(array.size()));
     for (const auto& value : array) {
         if (!value.isObject())
-            fail("Workspace registry entry is corrupt");
+            fail_path(path, QStringLiteral("Workspace registry entry is corrupt"));
         const QJsonObject object = value.toObject();
         if (object.size() != 7)
-            fail("Workspace registry entry contains unknown or missing fields");
+            fail_path(path, QStringLiteral(
+                                "Workspace registry entry contains unknown or missing fields"));
         WorkspaceEntry entry;
-        const auto string_field = [&object](const char* key) {
+        const auto string_field = [&object, &path](const char* key) {
             const QJsonValue value = object.value(QLatin1String(key));
             if (!value.isString())
-                fail("Workspace registry string field is missing or corrupt");
+                fail_path(path,
+                          QStringLiteral("Workspace registry string field is missing or corrupt"));
             return value.toString();
         };
         entry.endpoint = string_field(endpoint_key);
@@ -233,7 +273,8 @@ std::vector<WorkspaceEntry> decode_entries(const QByteArray& bytes) {
             const auto encoded = string_field(key);
             const auto decoded = QByteArray::fromHex(encoded.toLatin1());
             if (QString::fromLatin1(decoded.toHex()) != encoded)
-                fail("Workspace identity fields require canonical lowercase hex");
+                fail_path(path, QStringLiteral(
+                                    "Workspace identity fields require canonical lowercase hex"));
             return decoded;
         };
         entry.identity = {hex_field(session_id_key), hex_field(epoch_key)};
@@ -248,15 +289,10 @@ std::vector<WorkspaceEntry> decode_entries(const QByteArray& bytes) {
         else if (agent == QLatin1String("claude"))
             entry.agent = session::AgentMode::claude;
         else
-            fail("Workspace agent mode is unknown");
+            fail_path(path, QStringLiteral("Workspace agent mode is unknown"));
         entries.push_back(std::move(entry));
     }
     return validate_entries(entries);
-}
-
-[[noreturn]] void fail_errno(const char* message) {
-    const int error = errno;
-    throw std::system_error(error, std::generic_category(), message);
 }
 
 class TemporaryFile {
@@ -281,15 +317,18 @@ void validate_existing_storage(const QString& path) {
         static_cast<void>(open_private_regular_file(path, O_RDONLY));
 }
 
-void write_exact(int descriptor, const QByteArray& bytes) {
+void write_exact(int descriptor, const QByteArray& bytes, const QString& path) {
     qint64 offset = 0;
     while (offset < bytes.size()) {
         const ssize_t count = ::write(descriptor, bytes.constData() + offset,
                                       static_cast<std::size_t>(bytes.size() - offset));
-        if (count < 0 && errno == EINTR)
-            continue;
-        if (count <= 0)
-            fail("Could not write workspace registry");
+        if (count < 0) {
+            if (errno == EINTR)
+                continue;
+            fail_errno(QStringLiteral("Could not write workspace registry"), path);
+        }
+        if (count == 0)
+            fail_path(path, QStringLiteral("Workspace registry write made no progress"));
         offset += count;
     }
 }
@@ -299,30 +338,31 @@ class WorkspaceRegistry::Impl final {
   public:
     explicit Impl(const QString& path) {
         if (path.isEmpty() || path.contains(QChar::Null) || QFileInfo(path).isRelative())
-            fail("Workspace registry path must be absolute");
+            fail(QStringLiteral("Workspace registry path must be absolute"));
         const QFileInfo info{path};
         if (info.fileName().isEmpty() || info.fileName() == QLatin1String(".") ||
             info.fileName() == QLatin1String("..") || info.isSymLink())
-            fail("Workspace registry filename is unsafe");
+            fail_path(path, QStringLiteral("Workspace registry filename is unsafe"));
         owner_directory_ = info.absolutePath();
         ensure_private_owner_directory(owner_directory_);
         owner_directory_ = session::posix::canonical_trusted_directory(owner_directory_);
         storage_path_ = QDir(owner_directory_).filePath(info.fileName());
         validate_existing_storage(storage_path_);
-        lock_ = open_private_regular_file(lock_path(), O_RDWR | O_CREAT);
+        const auto locked_path = lock_path();
+        lock_ = open_private_regular_file(locked_path, O_RDWR | O_CREAT);
         while (::flock(lock_.get(), LOCK_EX | LOCK_NB) != 0) {
             if (errno == EINTR)
                 continue;
             if (errno == EWOULDBLOCK)
-                fail("Workspace registry is already locked");
-            fail_errno("Could not lock workspace registry");
+                fail(QStringLiteral("Workspace registry is already locked: ") + locked_path);
+            fail_errno(QStringLiteral("Could not lock workspace registry"), locked_path);
         }
     }
 
     [[nodiscard]] std::vector<WorkspaceEntry> read() const {
         if (!QFileInfo::exists(storage_path_) && !QFileInfo{storage_path_}.isSymLink())
             return {};
-        return decode_entries(read_all(storage_path_));
+        return decode_entries(read_all(storage_path_), storage_path_);
     }
 
     void write(const std::vector<WorkspaceEntry>& entries) {
@@ -330,17 +370,18 @@ class WorkspaceRegistry::Impl final {
         const QByteArray bytes = encode_entries(normalized);
         // Preserve external corruption and dangling symlinks rather than replacing them.
         if (QFileInfo::exists(storage_path_) || QFileInfo{storage_path_}.isSymLink())
-            static_cast<void>(decode_entries(read_all(storage_path_)));
+            static_cast<void>(decode_entries(read_all(storage_path_), storage_path_));
         const QString temporary_path =
             owner_directory_ + QStringLiteral("/.registry.") +
             QString::fromLatin1(QUuid::createUuid().toRfc4122().toHex()) + QStringLiteral(".tmp");
         TemporaryFile temporary{temporary_path};
-        write_exact(temporary.get(), bytes);
+        write_exact(temporary.get(), bytes, temporary_path);
         if (::fsync(temporary.get()) != 0)
-            fail("Could not synchronize temporary workspace registry");
+            fail_errno(QStringLiteral("Could not synchronize temporary workspace registry"),
+                       temporary_path);
         if (::rename(QFile::encodeName(temporary_path).constData(),
                      QFile::encodeName(storage_path_).constData()) != 0)
-            fail("Could not commit workspace registry");
+            fail_errno(QStringLiteral("Could not commit workspace registry"), storage_path_);
         temporary.release();
         fsync_directory(owner_directory_);
     }

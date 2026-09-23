@@ -219,7 +219,7 @@
         "UserPromptSubmit",
         "SessionEnd"
       ],
-      "StopFailure": "not observed in this print-mode case; not registered in production"
+      "stop_failure": "not observed in this print-mode case; not registered in production"
     },
     "production_event_count": 9
   },

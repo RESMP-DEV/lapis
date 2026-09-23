@@ -73,7 +73,7 @@
     {
       "name": "repository/Python quality",
       "passed": true,
-      "unit_tests": 92,
+      "python_tests": 92,
       "receipt": "build/reports/quality/receipt.json",
       "log": "build/m3-continuation/quality-acceptance.log"
     },
@@ -1094,7 +1094,7 @@
         "sha256": "759c2678653603d0a2f53ac4d40b76a3c1ccd77153df566eade33a27302f0b83"
       },
       "passed": true,
-      "case_count": 23,
+      "cases": 23,
       "clipboard_restored": true,
       "input_source_restored": true,
       "enabled_sources_restored": true

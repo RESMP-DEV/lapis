@@ -7,13 +7,9 @@
 #include <QTemporaryDir>
 #include <QtGlobal>
 
-#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include <cerrno>
-#include <cstring>
-#include <fcntl.h>
 #include <iostream>
 #include <source_location>
 #include <stdexcept>
@@ -23,10 +19,11 @@ namespace {
 using lapis::desktop::WorkspaceEntry;
 namespace session = lapis::session;
 constexpr qsizetype max_text_bytes = 4096;
-void require(bool value, std::source_location where = std::source_location::current()) {
+void require(bool value, const char* message = "condition",
+             std::source_location where = std::source_location::current()) {
     if (!value)
-        throw std::runtime_error("Workspace registry expectation failed at line " +
-                                 std::to_string(where.line()));
+        throw std::runtime_error(std::string("Workspace registry expectation failed: ") + message +
+                                 " at line " + std::to_string(where.line()));
 }
 
 template <typename Operation> void rejects(Operation operation) {
@@ -36,6 +33,15 @@ template <typename Operation> void rejects(Operation operation) {
         return;
     }
     throw std::runtime_error("Invalid workspace registry state was accepted");
+}
+
+template <typename Operation> std::string rejected_message(Operation operation) {
+    try {
+        operation();
+    } catch (const std::exception& error) {
+        return error.what();
+    }
+    throw std::runtime_error("Expected failure diagnostic was not produced");
 }
 
 WorkspaceEntry entry(const QTemporaryDir& directory, int index,
@@ -133,7 +139,11 @@ int main(int argc, char** argv) {
         {
             WorkspaceRegistry registry{path};
             require(registry.read().size() == 8);
-            rejects([&] { static_cast<void>(WorkspaceRegistry{path}); });
+            const auto locked_message =
+                rejected_message([&] { static_cast<void>(WorkspaceRegistry{path}); });
+            require(locked_message.find("already locked") != std::string::npos &&
+                        locked_message.find(lock_path.toStdString()) != std::string::npos,
+                    "Lock diagnostic omitted contention and path");
         }
 
         {
@@ -184,7 +194,9 @@ int main(int argc, char** argv) {
 
         {
             WorkspaceRegistry registry{path};
-            rejects([&] { registry.write({}); });
+            const auto corrupt_message = rejected_message([&] { registry.write({}); });
+            require(corrupt_message.find(path.toStdString()) != std::string::npos,
+                    "Corrupt-write diagnostic omitted the storage path");
             require(QFileInfo(path).size() == QByteArrayLiteral("{\"schema\":2}").size());
         }
         {
@@ -195,7 +207,11 @@ int main(int argc, char** argv) {
 
         const QString link = root + QStringLiteral("/linked.json");
         require(QFile::link(path, link));
-        rejects([&] { static_cast<void>(WorkspaceRegistry{link}); });
+        const auto symlink_message =
+            rejected_message([&] { static_cast<void>(WorkspaceRegistry{link}); });
+        require(symlink_message.find(link.toStdString()) != std::string::npos &&
+                    symlink_message.find("filename is unsafe") != std::string::npos,
+                "Symlink diagnostic omitted path or validation reason");
         require(QFileInfo(link).isSymLink());
         QFile::remove(link);
 
@@ -221,11 +237,19 @@ int main(int argc, char** argv) {
             const QString hard_link = temporary.filePath(QStringLiteral("hard.json"));
             require(::link(QFile::encodeName(path).constData(),
                            QFile::encodeName(hard_link).constData()) == 0);
-            rejects([&] { registry.write({entry(temporary, 1, QByteArray{1, '\x01'})}); });
+            const auto hard_link_message = rejected_message(
+                [&] { registry.write({entry(temporary, 1, QByteArray{1, '\x01'})}); });
+            require(hard_link_message.find(path.toStdString()) != std::string::npos &&
+                        hard_link_message.find("nlink=2") != std::string::npos,
+                    "Hard-link diagnostic omitted path and identity metadata");
             require(QFileInfo(path).size() == original.size());
             require(QFile::remove(hard_link));
             set_mode(path, 0644);
-            rejects([&] { registry.write({entry(temporary, 1, QByteArray{1, '\x01'})}); });
+            const auto mode_message = rejected_message(
+                [&] { registry.write({entry(temporary, 1, QByteArray{1, '\x01'})}); });
+            require(mode_message.find(path.toStdString()) != std::string::npos &&
+                        mode_message.find("mode=644") != std::string::npos,
+                    "Permission diagnostic omitted path and mode");
             require(QFileInfo(path).size() == original.size());
             set_mode(path, 0600);
             rejects([&] {
@@ -236,10 +260,18 @@ int main(int argc, char** argv) {
         }
 
         set_mode(lock_path, 0644);
-        rejects([&] { static_cast<void>(WorkspaceRegistry{path}); });
+        const auto lock_mode_message =
+            rejected_message([&] { static_cast<void>(WorkspaceRegistry{path}); });
+        require(lock_mode_message.find(lock_path.toStdString()) != std::string::npos &&
+                    lock_mode_message.find("mode=644") != std::string::npos,
+                "Lock-permission diagnostic omitted path and mode");
         set_mode(lock_path, 0600);
         set_mode(root, 0755);
-        rejects([&] { static_cast<void>(WorkspaceRegistry{path}); });
+        const auto directory_mode_message =
+            rejected_message([&] { static_cast<void>(WorkspaceRegistry{path}); });
+        require(directory_mode_message.find(root.toStdString()) != std::string::npos &&
+                    directory_mode_message.find("mode=755") != std::string::npos,
+                "Directory-permission diagnostic omitted path and mode");
         set_mode(root, 0700);
 
         std::cout

@@ -11,7 +11,6 @@
 namespace lapis::claude {
 namespace {
 constexpr qsizetype input_limit = qsizetype{1024} * 1024;
-constexpr int deadline_ms = 1000;
 bool read_input(QByteArray& input, QDeadlineTimer& deadline) {
     std::array<char, 16384> chunk{};
     while (!deadline.hasExpired()) {
@@ -42,7 +41,7 @@ int run_hook_relay(const QString& socket, const QString& nonce) noexcept {
         if (!socket.startsWith(QLatin1Char('/')) || socket.size() > 100 || nonce.size() != 36 ||
             socket.contains(QChar::Null))
             return 0;
-        QDeadlineTimer deadline(deadline_ms);
+        QDeadlineTimer deadline(relay_deadline_ms);
         QByteArray input;
         if (!read_input(input, deadline))
             return 0;

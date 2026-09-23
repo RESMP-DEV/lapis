@@ -1,5 +1,6 @@
 #include "clipboard_backup.hpp"
 #include "platform/window_activation.hpp"
+#include "probe_support.hpp"
 #include "terminal_surface.hpp"
 #include "ui_preview.hpp"
 #include "workspace_supervisor.hpp"
@@ -10,21 +11,17 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
-#include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QInputMethodEvent>
 #include <QJsonArray>
-#include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
 #include <QKeySequence>
-#include <QMouseEvent>
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
-#include <QRegularExpression>
 #include <QSysInfo>
 #include <QTemporaryDir>
 #include <QThread>
@@ -33,99 +30,20 @@
 #include <mach/mach.h>
 
 #include <algorithm>
-#include <cerrno>
 #include <chrono>
-#include <cstring>
 #include <functional>
 #include <iostream>
 #include <memory>
 #include <numeric>
-#include <signal.h>
-#include <source_location>
 #include <stdexcept>
 #include <string>
 #include <sys/resource.h>
 #include <vector>
 
-#ifdef Q_OS_MACOS
-#include <libproc.h>
-#include <sys/proc_info.h>
-#include <unistd.h>
-#endif
-
 namespace {
 using namespace lapis::desktop;
 using namespace lapis::session;
-
-constexpr int default_timeout_ms = 30000;
-
-void require(bool condition, const char* message,
-             std::source_location where = std::source_location::current()) {
-    if (!condition)
-        throw std::runtime_error(std::string(message) + " at line " + std::to_string(where.line()));
-}
-
-void require(bool condition, const std::string& message,
-             std::source_location where = std::source_location::current()) {
-    require(condition, message.c_str(), where);
-}
-
-void pump(int milliseconds = 10) {
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
-    while (std::chrono::steady_clock::now() < deadline) {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
-        QThread::msleep(1);
-    }
-}
-
-template <typename Predicate>
-void until(Predicate predicate, const char* message, int timeout = default_timeout_ms,
-           std::source_location where = std::source_location::current()) {
-    QElapsedTimer elapsed;
-    elapsed.start();
-    while (!predicate()) {
-        if (elapsed.elapsed() >= timeout)
-            require(false, message, where);
-        pump(5);
-    }
-}
-
-QQuickItem* visual(QQuickItem* parent, const QString& name) {
-    if (parent->objectName() == name)
-        return parent;
-    for (auto* child : parent->childItems())
-        if (auto* found = visual(child, name))
-            return found;
-    return nullptr;
-}
-
-QPointF actionable_center(QQuickWindow& window, QQuickItem* target) {
-    require(target && target->isVisible() && target->isEnabled(), "Control is not actionable");
-    const QPointF center(target->width() / 2, target->height() / 2);
-    const QPointF scene = target->mapToScene(center);
-    require(window.contentItem()->contains(scene), "Control is outside the window");
-    return scene;
-}
-
-void click_item(QQuickWindow& window, QQuickItem* target) {
-    const QPointF position = actionable_center(window, target);
-    const QPointF global = window.mapToGlobal(position);
-    QMouseEvent press(QEvent::MouseButtonPress, position, global, Qt::LeftButton, Qt::LeftButton,
-                      Qt::NoModifier);
-    QMouseEvent release(QEvent::MouseButtonRelease, position, global, Qt::LeftButton, Qt::NoButton,
-                        Qt::NoModifier);
-    QCoreApplication::sendEvent(&window, &press);
-    QCoreApplication::sendEvent(&window, &release);
-    pump(20);
-}
-
-void click(QQuickWindow& window, const QString& name) {
-    auto* target = visual(window.contentItem(), name);
-    require(target && target->isVisible() && target->isEnabled(),
-            "Control is not actionable: " + name.toStdString());
-    click_item(window, target);
-}
+using namespace lapis::desktop::test;
 
 void send_key(QQuickItem& item, int key, bool press) {
     QKeyEvent event(press ? QEvent::KeyPress : QEvent::KeyRelease, key, Qt::NoModifier);
@@ -177,126 +95,11 @@ void wait_popup(QObject& popup, bool opened) {
     pump(30);
 }
 
-QString screen(const SessionPreview& session) {
-    const auto& snapshot = session.snapshot();
-    QString result;
-    for (std::size_t row = 0; row < snapshot.size.rows; ++row) {
-        for (std::size_t column = 0; column < snapshot.size.columns; ++column) {
-            const auto grapheme = snapshot.text(row * snapshot.size.columns + column);
-            result += QString::fromUcs4(grapheme.data(), static_cast<qsizetype>(grapheme.size()));
-        }
-        result += QLatin1Char('\n');
-    }
-    return result;
-}
-
-void send(SessionPreview& session, const QByteArray& command) {
-    require(session.inputReady(), "Session input is not ready");
-    session.sendText(command + '\r');
-}
-
-struct ChildProcesses {
-    qint64 shell{};
-    qint64 service{};
-    bool operator==(const ChildProcesses&) const = default;
-};
-
-ChildProcesses process_probe(SessionPreview& session, const QByteArray& marker) {
-    send(session, "PS1=; PS2=; unset PROMPT_COMMAND; stty -echo; printf '\\033[2J\\033[H" + marker +
-                      ":%s:%s:END\\n' \"$$\" \"$PPID\"");
-    const QRegularExpression ids(QLatin1String("^") +
-                                     QRegularExpression::escape(QString::fromLatin1(marker)) +
-                                     QStringLiteral(":(\\d+):(\\d+):END$"),
-                                 QRegularExpression::MultilineOption);
-    QRegularExpressionMatch match;
-    until(
-        [&] {
-            match = ids.match(screen(session));
-            return match.hasMatch();
-        },
-        "Observed shell process IDs timed out");
-    return {match.captured(1).toLongLong(), match.captured(2).toLongLong()};
-}
-
-bool process_gone(qint64 pid) {
-    return pid != 0 && ::kill(static_cast<pid_t>(pid), 0) == -1 && errno == ESRCH;
-}
-
-bool terminate(qint64 pid) { return pid != 0 && ::kill(static_cast<pid_t>(pid), SIGTERM) == 0; }
-
-bool kill(qint64 pid) { return pid != 0 && ::kill(static_cast<pid_t>(pid), SIGKILL) == 0; }
-
 struct SessionRecord {
     QString id;
     ChildProcesses child;
+    ProcessIdentity service;
 };
-
-#ifdef Q_OS_MACOS
-std::vector<qint64> socket_owner_pids(const QString& endpoint) {
-    std::vector<qint64> owners;
-    std::vector<pid_t> pids(8192);
-    const int pid_count =
-        ::proc_listallpids(pids.data(), static_cast<int>(pids.size() * sizeof(pid_t)));
-    if (pid_count <= 0)
-        return owners;
-    pids.resize(static_cast<std::size_t>(pid_count));
-    const QByteArray wanted = QFile::encodeName(endpoint);
-    std::vector<struct proc_fdinfo> descriptors;
-    for (pid_t pid : pids) {
-        char executable[PROC_PIDPATHINFO_MAXSIZE]{};
-        if (pid == ::getpid() || ::proc_pidpath(pid, executable, sizeof(executable)) <= 0 ||
-            !QByteArray(executable).endsWith("/lapis_session_service"))
-            continue;
-        int byte_count = ::proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nullptr, 0);
-        if (byte_count <= 0)
-            continue;
-        const auto descriptor_count = static_cast<std::size_t>(byte_count) / sizeof(descriptors[0]);
-        if (descriptor_count > 4096)
-            continue;
-        descriptors.assign(descriptor_count, {});
-        byte_count = ::proc_pidinfo(pid, PROC_PIDLISTFDS, 0, descriptors.data(),
-                                    static_cast<int>(descriptors.size() * sizeof(descriptors[0])));
-        if (byte_count <= 0)
-            continue;
-        const auto returned = static_cast<std::size_t>(byte_count) / sizeof(descriptors[0]);
-        for (std::size_t index = 0; index < returned; ++index) {
-            if (descriptors[index].proc_fdtype != PROX_FDTYPE_SOCKET)
-                continue;
-            struct socket_fdinfo socket{};
-            if (::proc_pidfdinfo(pid, descriptors[index].proc_fd, PROC_PIDFDSOCKETINFO, &socket,
-                                 sizeof(socket)) != sizeof(socket) ||
-                socket.psi.soi_kind != SOCKINFO_UN)
-                continue;
-            const auto* bound = &socket.psi.soi_proto.pri_un.unsi_addr.ua_sun;
-            if (QByteArray::fromRawData(bound->sun_path,
-                                        static_cast<qsizetype>(::strnlen(
-                                            bound->sun_path, sizeof(bound->sun_path)))) == wanted) {
-                owners.push_back(pid);
-                break;
-            }
-        }
-    }
-    return owners;
-}
-#endif
-
-void terminate_all(const std::vector<qint64>& processes) {
-    bool signaled = false;
-    for (qint64 process : processes)
-        signaled |= terminate(process);
-    if (!signaled)
-        return;
-    QElapsedTimer elapsed;
-    elapsed.start();
-    while (elapsed.elapsed() < 3000) {
-        if (std::all_of(processes.begin(), processes.end(), process_gone))
-            return;
-        pump(20);
-    }
-    for (qint64 process : processes)
-        kill(process);
-    pump(500);
-}
 
 class WorkspaceProbe {
   public:
@@ -318,12 +121,13 @@ class WorkspaceProbe {
             close();
 #ifdef Q_OS_MACOS
             for (const auto& endpoint : endpoints)
-                terminate_all(socket_owner_pids(endpoint));
+                terminate_all(socket_owner_identities(endpoint));
 #endif
-            std::vector<qint64> services;
+            std::vector<ProcessIdentity> services;
             services.reserve(observed_.size());
             for (const auto& record : observed_)
-                services.push_back(record.child.service);
+                if (!record.service.executable.isEmpty())
+                    services.push_back(record.service);
             terminate_all(services);
         } catch (const std::exception& error) {
             std::cerr << "Workspace fixture cleanup failed: " << error.what() << '\n';
@@ -415,7 +219,19 @@ class WorkspaceProbe {
         const auto entry = session.reconnectEntry();
         if (!entry)
             throw std::runtime_error("Live session endpoint was not retained");
-        observed_.push_back({session.sessionId(), process_probe(session, marker)});
+        const auto child = process_probe(session, marker);
+        const auto service = observed_service_identity(entry->endpoint, child);
+        if (!service)
+            throw std::runtime_error(
+                "Could not tie the observed service PID to its creation identity");
+        observed_.push_back({session.sessionId(), child, *service});
+#ifdef Q_OS_MACOS
+        auto stale = *service;
+        ++stale.start_seconds;
+        require(!signal_verified(stale, SIGTERM) && !signal_verified(stale, SIGKILL) &&
+                    process_matches(*service),
+                "Cleanup must reject a stale birth identity even for the same executable and PID");
+#endif
     }
 
     void close_session_at(int index) {
@@ -426,9 +242,8 @@ class WorkspaceProbe {
         send(*session, QByteArrayLiteral("exit"));
         until([&] { return session->connectionState() == QStringLiteral("ended"); },
               "Shell exit did not end the session");
-        until(
-            [&] { return process_gone(observed_[static_cast<std::size_t>(index)].child.service); },
-            "Detached service did not exit");
+        until([&] { return process_gone(observed_[static_cast<std::size_t>(index)].service); },
+              "Detached service did not exit");
     }
 
   private:
@@ -940,16 +755,6 @@ ProbeOptions parse_options(const QGuiApplication& app) {
     parser.addOptions({json_option, image_option});
     parser.process(app);
     return {parser.value(json_option), parser.value(image_option)};
-}
-
-bool write_json(const QString& path, const QJsonObject& report) {
-    if (path.isEmpty())
-        return true;
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
-        return false;
-    const QByteArray bytes = QJsonDocument(report).toJson(QJsonDocument::Indented);
-    return file.write(bytes) == bytes.size() && file.flush();
 }
 
 int run_probe(const ProbeOptions& options) {

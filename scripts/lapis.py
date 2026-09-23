@@ -35,6 +35,8 @@ DEFAULT_SOCKET = RUNTIME_DIR / "desktop-v6.sock"
 # Window tests belong on the laptop panel, not a large external display. Override
 # with LAPIS_SCREEN, or pass --screen to the app directly.
 DEFAULT_SCREEN = "built-in"
+# This must mirror every value-taking desktop option declared by add_options()
+# in apps/desktop/src/main.cpp. Qt owns the parser; there is no shared manifest.
 VALUE_OPTIONS = frozenset(
     {
         "--capture",
@@ -174,14 +176,12 @@ def validate_runtime_directory(runtime_stat):
 
 
 def has_positional_program(arguments):
-    """Mirror the desktop parser's treatment of bare program arguments."""
+    """Mirror the desktop parser for arguments before its ``--`` delimiter."""
     expecting_value = False
     for argument in arguments:
         if expecting_value:
             expecting_value = False
             continue
-        if argument == "--":
-            return False
         if argument.startswith("--"):
             name, separator, _ = argument.partition("=")
             expecting_value = not separator and name in VALUE_OPTIONS

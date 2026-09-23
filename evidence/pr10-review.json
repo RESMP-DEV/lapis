@@ -22,29 +22,29 @@
   },
   "findings": [
     {
-      "thread": "PRRT_kwDOUfkyeM6k6n7h",
+      "thread_id": "PRRT_kwDOUfkyeM6k6n7h",
       "result": "fixed",
       "behavior": "SessionEnd retires notices and keeps listener alive for a fresh SessionStart. Retired source IDs are bounded and cannot rebind; explicit stop/process exit still closes the listener.",
       "regression": "New replay case failed before the repair; live installed Claude /clear reproduced observation stopping and then passed with a new source identity."
     },
     {
-      "thread": "PRRT_kwDOUfkyeM6k6n74",
+      "thread_id": "PRRT_kwDOUfkyeM6k6n74",
       "result": "fixed",
       "behavior": "QML receives native C++ QStandardPaths home string; no URL decoding in QML.",
       "regression": "Production empty-workspace dialog default is left untouched, matches native property, and is absolute rather than file: URL; fixture then cancels before launching controlled shells in its private directory."
     },
     {
-      "thread": "PRRT_kwDOUfkyeM6k6n79",
+      "thread_id": "PRRT_kwDOUfkyeM6k6n79",
       "result": "fixed",
       "behavior": "CTest table includes claude-observer; both current desktop/sanitizer inventory counts are 22; preview inventory updated to 12 cases."
     },
     {
-      "thread": "PRRT_kwDOUfkyeM6k6n7_",
+      "thread_id": "PRRT_kwDOUfkyeM6k6n7_",
       "result": "fixed",
       "behavior": "Milestone 2 paragraph describes its dated scope and refers to completed Milestone 3 qualification."
     },
     {
-      "thread": "PRRT_kwDOUfkyeM6k6n8B",
+      "thread_id": "PRRT_kwDOUfkyeM6k6n8B",
       "result": "fixed",
       "behavior": "Standalone workspace-attention test discovery inserts scripts/ before imports.",
       "regression": "Reproduced ModuleNotFoundError before fix; standalone discovery passed all seven tests afterward."
@@ -117,7 +117,7 @@
         "ASan/UBSan",
         "TSan"
       ],
-      "cases_each": [
+      "ctest_cases_each": [
         "claude-observer",
         "workspace"
       ],

@@ -902,12 +902,27 @@ keep structured responses disabled. Only the `--desktop` variant exercises the d
 
 ### Reading qualification receipts
 
-Receipts are dated observations, not current-source declarations. Check `schema`,
-source identity, per-check timestamps, pass/fail results and explicit limits before
+Receipts are dated observations, not current-source declarations. Check the schema
+identifier, source identity, per-check timestamps, pass/fail results and explicit limits before
 reusing one. Source hashes identify working-tree inputs when the final commit did
 not yet exist. `recorded_at` records assembly (or a documented upper bound), and
 must not precede the results it includes. A newer wire version does not invalidate
 or silently rewrite the protocol version exercised by an older receipt.
+
+Two identifier families are intentional: namespaced `schema` strings such as
+`lapis.workspace/2` select a specific contract, while `schema_version` integers
+version the self-contained review receipts. Preserve historical identifiers;
+standardizing a field within one family does not migrate every receipt to that
+family. New receipts should follow the closest existing contract and record any
+schema change explicitly.
+
+For equivalent summary fields, use `python_tests` for a Python test count, `cases`
+for a CLI/native case count, and `thread_id` for a GitHub review-thread ID.
+Keep shapes distinct: `static_checks` lists check names, `static_check_count`
+counts checks, and `static_analysis_passed` records a Boolean outcome.
+`ctest_cases_each` lists sanitizer suite names; `suites_per_build` counts them.
+Consumers must interpret the declared schema instead of treating counts, lists
+and pass/fail fields as interchangeable.
 
 The two Milestone 2 receipt schemas have these equivalent fields:
 

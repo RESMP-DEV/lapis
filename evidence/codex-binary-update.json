@@ -138,7 +138,7 @@
     "cli": {
       "command": "QSG_RENDER_LOOP=threaded python3 scripts/check_cli_launch.py --desktop --codex --output build/codex-update/cli/receipt.json",
       "passed": true,
-      "case_count": 16,
+      "cases": 16,
       "includes_installed_tui": true
     },
     "quality": {

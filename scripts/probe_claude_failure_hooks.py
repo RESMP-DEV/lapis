@@ -409,6 +409,7 @@ async def scenario(binary, output, scenario_name, prompt, timeout):
             ]
             started = time.monotonic()
             timed_out = False
+            completed = None
             try:
                 completed = await run_claude(binary, environment, arguments, timeout)
                 stderr = completed.stderr
@@ -427,7 +428,7 @@ async def scenario(binary, output, scenario_name, prompt, timeout):
             "scenario": scenario_name,
             "elapsed_seconds": elapsed,
             "timed_out": timed_out,
-            "exit_code": None if timed_out else completed.returncode,
+            "exit_code": None if completed is None else completed.returncode,
             "stderr_bytes": len(stderr),
             "observed_hook_names": names,
             "hook_payload_inventory": events,
@@ -440,11 +441,14 @@ async def scenario(binary, output, scenario_name, prompt, timeout):
                 if scenario_name == "post_tool_failure"
                 else [f"{SYNTHETIC_PREFIX}: intentional HTTP 400"]
             ),
-            "fixture_valid": not timed_out and bool(known_names),
+            "fixture_valid": completed is not None
+            and not timed_out
+            and bool(known_names),
         }
         if scenario_name == "post_tool_failure":
             result["fixture_valid"] = (
                 result["fixture_valid"]
+                and completed is not None
                 and completed.returncode == 0
                 and any(
                     event["hookEventName"] == "PostToolUseFailure"
@@ -471,6 +475,7 @@ async def scenario(binary, output, scenario_name, prompt, timeout):
             result["fixture_valid"] = (
                 result["fixture_valid"]
                 and bool(endpoint.requests)
+                and completed is not None
                 and completed.returncode == 1
             )
             result["stopFailureObserved"] = "StopFailure" in names

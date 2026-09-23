@@ -68,7 +68,7 @@
       "command": "python3 scripts/lapis.py build",
       "passed": true,
       "ctest_suites": 22,
-      "static_analysis_checks": 62,
+      "static_check_count": 62,
       "receipt": "build/reports/desktop/receipt.json"
     },
     "quality": {

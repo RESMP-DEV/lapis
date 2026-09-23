@@ -146,7 +146,7 @@ class Observer::Impl {
                 clients_.remove(client);
                 client->deleteLater();
             });
-            QTimer::singleShot(1000, client, [client] {
+            QTimer::singleShot(relay_deadline_ms, client, [client] {
                 client->abort();
                 client->deleteLater();
             });
@@ -370,6 +370,10 @@ class Observer::Impl {
             applied(state_.activity(next(), attention::Activity::turn_completed));
         } else if (name == QLatin1String("Notification") &&
                    event.value("notification_type") == QLatin1String("idle_prompt")) {
+            // Idle notices are one deterministic notice per prompt. After the
+            // turn ends and retires that ID, a delayed duplicate cannot be
+            // distinguished from a genuine reissue, so it must not resurrect
+            // stale advisory state.
             request(event, false, false, true);
         } else if (!completed_) {
             const auto tool = event.value("tool_use_id").toString();

@@ -187,7 +187,7 @@ LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
 LiveConnection::LiveConnection(SessionPreview& document, const WorkspaceEntry& entry)
     : document_(document), endpoint_(entry.endpoint), fingerprint_(entry.fingerprint),
       expected_identity_(entry.identity), verified_entry_(entry), agent_(entry.agent),
-      wanted_size_{100, 30}, reconnect_only_{true} {
+      reconnect_only_{true} {
     initialize(entry.agent == session::AgentMode::codex ? codex_sync_timeout_ms
                                                         : terminal_sync_timeout_ms,
                wire::AttachMode::reconnect);
@@ -256,7 +256,6 @@ void LiveConnection::begin(wire::AttachMode mode) {
             request_.expected = *saved;
         } else if (mode == wire::AttachMode::create) {
             request_.expected.session_id = wire::new_id();
-            document_.setSessionId(QString::fromLatin1(request_.expected.session_id.toHex()));
             QProcess service;
             service.setProgram(QStringLiteral(LAPIS_SESSION_SERVICE_PATH));
             service.setArguments(
@@ -268,6 +267,9 @@ void LiveConnection::begin(wire::AttachMode mode) {
             service.setStandardErrorFile(log, QIODevice::Append);
             if (!service.startDetached())
                 throw std::runtime_error("Could not start session service");
+            // Publish only after spawn succeeds. A failed detached launch leaves
+            // the card without an identity it never actually attached to.
+            document_.setSessionId(QString::fromLatin1(request_.expected.session_id.toHex()));
         }
         connectSocket();
     } catch (const std::exception& error) {
@@ -440,7 +442,7 @@ void LiveConnection::acceptHello(const wire::Hello& hello) {
         return;
     }
     attachment_ = hello.attachment;
-    if ((request_.mode == wire::AttachMode::create || request_.mode == wire::AttachMode::discover))
+    if (request_.mode == wire::AttachMode::create || request_.mode == wire::AttachMode::discover)
         document_.setSessionId(QString::fromLatin1(attachment_->identity.session_id.toHex()));
     document_.setServiceIdentity(attachment_->identity.session_id);
     document_.setConnection(QStringLiteral("synchronizing"), false);

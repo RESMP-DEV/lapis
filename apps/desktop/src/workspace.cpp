@@ -84,40 +84,50 @@ bool Workspace::canAddSessions() const {
 }
 
 bool Workspace::canRetrySave() const {
-    return !registry_ready_ && storage_ && storage_->registry && !storage_->writing;
+    return !registry_ready_ && storage_ && !loading_ && !storage_->writing &&
+           (storage_->registry || sessions_.empty());
 }
 
 void Workspace::retrySave() {
-    if (canRetrySave())
+    if (!canRetrySave())
+        return;
+    if (storage_->registry)
         persistRegistry(true);
+    else
+        loadRegistry();
 }
 
 void Workspace::loadRegistry() {
-    storage_ = std::make_unique<Storage>();
-    connect(&storage_->load, &QFutureWatcher<LoadedWorkspace>::finished, this, [this] {
-        const auto loaded = storage_->load.result();
-        loading_ = false;
-        if (!loaded.error.isEmpty()) {
-            status_ = loaded.error;
+    if (!storage_) {
+        storage_ = std::make_unique<Storage>();
+        connect(&storage_->load, &QFutureWatcher<LoadedWorkspace>::finished, this, [this] {
+            const auto loaded = storage_->load.result();
+            loading_ = false;
+            if (!loaded.error.isEmpty()) {
+                status_ = loaded.error;
+                emit workspaceChanged();
+                return;
+            }
+            storage_->registry = loaded.registry;
+            storage_->written = loaded.entries;
+            for (const auto& entry : loaded.entries) {
+                auto item = std::make_unique<SessionPreview>(entry.title, entry.directory,
+                                                             QStringLiteral("Connecting"),
+                                                             QColor{"#87cbac"}, "");
+                item->setSessionId(QString::fromLatin1(entry.identity.session_id.toHex()));
+                auto* document = item.get();
+                appendSession(std::move(item));
+                document->restoreLive(entry);
+            }
+            registry_ready_ = true;
+            status_ = sessions_.empty() ? QStringLiteral("Create a session to begin.") : QString{};
+            emit sessionsChanged();
+            emit focusChanged();
             emit workspaceChanged();
-            return;
-        }
-        storage_->registry = loaded.registry;
-        storage_->written = loaded.entries;
-        for (const auto& entry : loaded.entries) {
-            auto item = std::make_unique<SessionPreview>(
-                entry.title, entry.directory, QStringLiteral("Connecting"), QColor{"#87cbac"}, "");
-            item->setSessionId(QString::fromLatin1(entry.identity.session_id.toHex()));
-            auto* document = item.get();
-            appendSession(std::move(item));
-            document->restoreLive(entry);
-        }
-        registry_ready_ = true;
-        status_ = sessions_.empty() ? QStringLiteral("Create a session to begin.") : QString{};
-        emit sessionsChanged();
-        emit focusChanged();
-        emit workspaceChanged();
-    });
+        });
+    }
+    loading_ = true;
+    emit workspaceChanged();
     storage_->load.setFuture(background<LoadedWorkspace>([path = manifest_] {
         LoadedWorkspace result;
         try {

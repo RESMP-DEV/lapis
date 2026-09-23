@@ -1153,14 +1153,15 @@ after service death or reboot, new terminal selection/accessibility/shaping
 features, renderer replacement, packaging and binary distribution. Preserve
 portable boundaries and existing terminal behavior while these remain deferred.
 
-A failed registry save pauses further registry mutations and reports the failure;
-live sessions remain attached. **Session → Retry saving workspace** performs one
-explicit save attempt after the cause is corrected. Retry revalidates ownership,
-permissions, file type and existing contents through the normal atomic-write path.
-Persistent corruption remains untouched, and controls remain disabled until a save
-succeeds. There is no timed retry loop or automatic recovery from a failed initial
-manifest load. The workspace tests exercise repeated failure, corruption refusal,
-repair and successful persistence without restarting the live service.
+A failed registry load or save pauses registry mutations and reports the failure;
+live sessions remain attached after save failures. **Session → Retry workspace**
+performs one explicit attempt after the cause is corrected: it reloads a manifest
+that has not loaded successfully, or retries saving the retained session entries.
+Retry revalidates ownership, permissions, file type and existing contents through
+the normal read or atomic-write path. Persistent corruption remains untouched, and
+controls stay disabled until the operation succeeds. There is no timed retry loop.
+The workspace tests exercise lock contention, repeated failure, corruption refusal,
+repair and successful persistence without restarting live services.
 
 #### Claude Code hooks: an observation-only extension
 

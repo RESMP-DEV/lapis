@@ -267,8 +267,15 @@ async def exercise(args, receipt):
         groups = set()
         try:
             view = View(await asyncio.to_thread(service.connect))
-            groups = await asyncio.to_thread(process_groups, service.child_pid)
             await wait_initial_hook(view)
+            # The child itself leads the setsid group. process_groups(parent)
+            # finds only child leaders; the unfiltered query includes all members,
+            # including orphaned members after the leader exits during cleanup.
+            groups = {service.child_pid}
+            require(
+                groups <= await asyncio.to_thread(process_groups),
+                "Expected the Claude child process group after its first hook",
+            )
             before = await wait_notice(view, "Bash")
             require(not before["item"], "PermissionRequest unexpectedly has a tool ID")
             receipt["permission_notice"] = before
@@ -393,6 +400,10 @@ async def exercise(args, receipt):
                         receipt["optional_screen_error"] = str(error)
                     await view.close()
             finally:
+                # A failed attachment or first-hook wait can still leave a known
+                # child group; verify its cleanup even before the success check.
+                if service.child_pid is not None:
+                    groups.add(service.child_pid)
                 await cleanup_service(
                     service, groups, receipt, original_error or sys.exception()
                 )

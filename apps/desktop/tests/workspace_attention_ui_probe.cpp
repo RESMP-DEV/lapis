@@ -1,4 +1,5 @@
 #include "platform/window_activation.hpp"
+#include "probe_support.hpp"
 #include "terminal_surface.hpp"
 #include "ui_preview.hpp"
 #include "workspace.hpp"
@@ -8,30 +9,22 @@
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDir>
-#include <QElapsedTimer>
-#include <QEventLoop>
-#include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonArray>
-#include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
 #include <QMetaObject>
-#include <QMouseEvent>
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSet>
-#include <QThread>
 #include <QThreadPool>
 
-#include <chrono>
 #include <iostream>
 #include <map>
 #include <memory>
-#include <source_location>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -40,68 +33,7 @@
 namespace {
 using namespace lapis::desktop;
 using namespace lapis::session;
-
-constexpr int default_timeout_ms = 30000;
-
-void require(bool condition, const char* message,
-             std::source_location where = std::source_location::current()) {
-    if (!condition)
-        throw std::runtime_error(std::string(message) + " at line " + std::to_string(where.line()));
-}
-
-void pump(int milliseconds = 10) {
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
-    while (std::chrono::steady_clock::now() < deadline) {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
-        QThread::msleep(1);
-    }
-}
-
-template <typename Predicate>
-void until(Predicate predicate, const char* message, int timeout = default_timeout_ms,
-           std::source_location where = std::source_location::current()) {
-    QElapsedTimer elapsed;
-    elapsed.start();
-    while (!predicate()) {
-        if (elapsed.elapsed() >= timeout)
-            require(false, message, where);
-        pump(5);
-    }
-}
-
-QQuickItem* visual(QQuickItem* parent, const QString& name) {
-    if (parent->objectName() == name)
-        return parent;
-    for (auto* child : parent->childItems())
-        if (auto* found = visual(child, name))
-            return found;
-    return nullptr;
-}
-
-QPointF actionable_center(QQuickWindow& window, QQuickItem* target) {
-    require(target && target->isVisible() && target->isEnabled(), "Control is not actionable");
-    const QPointF center(target->width() / 2, target->height() / 2);
-    const QPointF scene = target->mapToScene(center);
-    require(window.contentItem()->contains(scene), "Control is outside the window");
-    return scene;
-}
-
-void click_item(QQuickWindow& window, QQuickItem* target) {
-    const QPointF position = actionable_center(window, target);
-    const QPointF global = window.mapToGlobal(position);
-    QMouseEvent press(QEvent::MouseButtonPress, position, global, Qt::LeftButton, Qt::LeftButton,
-                      Qt::NoModifier);
-    QMouseEvent release(QEvent::MouseButtonRelease, position, global, Qt::LeftButton, Qt::NoButton,
-                        Qt::NoModifier);
-    QCoreApplication::sendEvent(&window, &press);
-    QCoreApplication::sendEvent(&window, &release);
-    pump(20);
-}
-
-void click(QQuickWindow& window, const QString& name) {
-    click_item(window, visual(window.contentItem(), name));
-}
+using namespace lapis::desktop::test;
 
 QString preferred_label(const QVariantMap& question) {
     // Keep the fixture contract aligned with selected_question_answers in the
@@ -159,22 +91,6 @@ void select_combo_option(QQuickWindow& window, QObject* dialog, const QVariantMa
         "Question control did not update answer");
 }
 
-QJsonValue read_json(const QString& path) {
-    QFile file(path);
-    require(file.open(QIODevice::ReadOnly), "Could not open GUI fixture config");
-    const auto document = QJsonDocument::fromJson(file.readAll());
-    require(document.isObject(), "GUI fixture config is not an object");
-    return document.object();
-}
-
-bool write_json(const QString& path, const QJsonObject& report) {
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
-        return false;
-    const QByteArray bytes = QJsonDocument(report).toJson(QJsonDocument::Indented);
-    return file.write(bytes) == bytes.size() && file.flush();
-}
-
 struct SourceConfig {
     QString name;
     QString role;
@@ -198,12 +114,15 @@ ProbeOptions parse_options() {
     const QCommandLineOption config_option(QStringList{"config"},
                                            QStringLiteral("Private fixture JSON path."),
                                            QStringLiteral("path"));
+    parser.addHelpOption();
     parser.addOption(config_option);
     parser.process(QCoreApplication::arguments());
-    const auto root = read_json(parser.value(config_option)).toObject();
+    const auto config_path = parser.value(config_option);
+    require(parser.isSet(config_option) && !config_path.isEmpty(), "--config <path> is required");
+    const auto root = read_json(config_path, "GUI fixture config").toObject();
     require(root.value(QStringLiteral("version")).toInt() == 1, "Unsupported fixture schema");
     ProbeOptions result;
-    result.config_path = parser.value(config_option);
+    result.config_path = config_path;
     result.manifest = root.value(QStringLiteral("manifest")).toString();
     result.output_path = root.value(QStringLiteral("output")).toString();
     require(!result.manifest.isEmpty() && !result.output_path.isEmpty(),

@@ -134,6 +134,22 @@ void callback_destruction() {
     require(!f.owned_observer);
     QCoreApplication::processEvents();
 }
+void idle_notice_retirement() {
+    Fixture f;
+    f.begin();
+    auto idle = event("Notification");
+    idle.insert("notification_type", "idle_prompt");
+    f.send(idle);
+    require(f.state.pending().size() == 1);
+    f.send(event("Stop"));
+    require(f.state.pending().empty());
+    f.send(idle); // Same-prompt duplicates cannot resurrect a retired notice.
+    require(f.state.pending().empty());
+    f.send(event("UserPromptSubmit", {}, {}, "next-prompt"));
+    idle.insert("prompt_id", "next-prompt");
+    f.send(idle);
+    require(f.state.pending().size() == 1);
+}
 void identities_and_boundaries() {
     Fixture f;
     f.send(event("PermissionRequest", "Bash"));
@@ -331,6 +347,7 @@ int main(int argc, char** argv) {
         callback_shutdown();
         callback_destruction();
         identities_and_boundaries();
+        idle_notice_retirement();
         exact_retirement();
         completed_tool_bounds();
         completed_tools_reset_at_prompt_epoch();

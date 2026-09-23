@@ -757,7 +757,7 @@ ApplicationWindow {
                     }
                     MenuItem {
                         objectName: "retryWorkspaceSaveAction"
-                        text: qsTr("Retry saving workspace")
+                        text: qsTr("Retry workspace")
                         visible: workspace.canRetrySave
                         enabled: workspace.canRetrySave
                         onTriggered: workspace.retrySave()

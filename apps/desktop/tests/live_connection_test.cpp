@@ -4,6 +4,7 @@
 #include "workspace.hpp"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
@@ -427,6 +428,23 @@ void reconnect_only_rejects_replacement_and_other_modes() {
     require(!f.server.hasPendingConnections(),
             "Reconnect-only entry created or discovered another session");
 }
+
+void failed_create_does_not_publish_identity() {
+    Fixture f;
+    const QString endpoint = f.directory.filePath(QStringLiteral("spawn-failure.sock"));
+    require(QDir{endpoint + QStringLiteral(".log")}.mkpath(QStringLiteral(".")),
+            "Could not create the detached-spawn failure fixture");
+    f.document.startLive(endpoint, f.launch, wire::AttachMode::create);
+    until([&] {
+        return f.document.activity().contains(QStringLiteral("Could not start session service"));
+    });
+    require(f.document.connectionState() == QStringLiteral("disconnected") &&
+                f.document.sessionId().isEmpty(),
+            "A failed detached create published a generated session identity");
+    settle();
+    require(!f.server.hasPendingConnections(), "A failed create attached to the test server");
+}
+
 void direct_reconnect_only_rejection() {
     Fixture f;
     lapis::desktop::LiveConnection connection(f.document, workspace_entry(f, f.identity));
@@ -592,6 +610,7 @@ int main(int argc, char** argv) {
         missing_and_replaced();
         reconnect_only_workspace_entry();
         reconnect_only_rejects_replacement_and_other_modes();
+        failed_create_does_not_publish_identity();
         direct_reconnect_only_rejection();
         attention_routing_and_reconnect();
         lost_before_screen();
