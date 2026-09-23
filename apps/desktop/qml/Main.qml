@@ -235,6 +235,8 @@ ApplicationWindow {
         add("nextWindow", qsTr("Next agent in category"), "nextWindow", workspace.categorySessions.length > 1, qsTr("This category needs another agent"), () => workspace.nextSession())
         add("previousWindow", qsTr("Previous agent in category"), "previousWindow", workspace.categorySessions.length > 1, qsTr("This category needs another agent"), () => workspace.nextSession(-1))
         add("closeAgent", qsTr("Close agent"), "closeAgent", hasAgent, needAgent, () => window.closeFocusedAgent())
+        const stopped = hasAgent && agent.live && (agent.connectionState === "ended" || agent.connectionState === "disconnected")
+        add("restartAgent", qsTr("Restart agent"), "", stopped, qsTr("Only an ended or unreachable agent restarts"), () => workspace.restartAgent(agent.sessionId))
         add("nextCategory", qsTr("Next category"), "nextCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory())
         add("previousCategory", qsTr("Previous category"), "previousCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory(-1))
         for (let i = 0; i < Math.min(4, workspace.categories.length); ++i) {
@@ -2139,6 +2141,7 @@ ApplicationWindow {
                             const close = window.shortcutText("closeAgent")
                             const head = endedBar.connection === "ended" ? qsTr("Agent ended") : qsTr("Agent unreachable")
                             return head + (reason.length > 0 ? " · " + reason : "")
+                                + " · " + qsTr("Restart agent in Commands resumes it")
                                 + (close.length > 0 ? " · " + qsTr("%1 closes it").arg(close) : "")
                         }
                     }

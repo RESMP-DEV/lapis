@@ -33,6 +33,11 @@ class CheckpointScanner {
 // unsafe or malformed files; writing replaces the file atomically and throws
 // on failure.
 [[nodiscard]] std::optional<ResumeRecord> read_resume_record(const QString& endpoint);
+
+// The Codex thread whose rollout a Codex app-server holds open, from its
+// `lsof -Fn` listing. Codex keeps the rollout of each loaded thread open; the
+// earliest one is the conversation (later ones are its subagents).
+[[nodiscard]] std::optional<QString> codex_thread_from_open_files(const QString& listing);
 void write_resume_record(const QString& endpoint, const ResumeRecord& record);
 } // namespace lapis::session
 #endif

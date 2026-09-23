@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QSysInfo>
 #include <algorithm>
@@ -112,6 +113,24 @@ std::optional<ResumeRecord> CheckpointScanner::scan(QByteArrayView output) {
             newest = std::move(record);
         from = end + 1;
     }
+}
+
+std::optional<QString> codex_thread_from_open_files(const QString& listing) {
+    static const QRegularExpression rollout(
+        QStringLiteral(R"(^n\S*/sessions/\S*/(rollout-[^/]*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-)"
+                       R"([0-9a-f]{4}-[0-9a-f]{12}))\.jsonl$)"),
+        QRegularExpression::MultilineOption);
+    std::optional<QString> earliest;
+    QString earliest_name;
+    for (auto matches = rollout.globalMatch(listing); matches.hasNext();) {
+        const auto match = matches.next();
+        // Rollout names start with their creation time, so they sort by it.
+        if (!earliest || match.captured(1) < earliest_name) {
+            earliest_name = match.captured(1);
+            earliest = match.captured(2);
+        }
+    }
+    return earliest;
 }
 
 std::optional<ResumeRecord> read_resume_record(const QString& endpoint) {

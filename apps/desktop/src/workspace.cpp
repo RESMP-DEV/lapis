@@ -10,8 +10,10 @@
 #include <QJsonObject>
 #include <QLocalSocket>
 #include <QPointer>
+#include <QProcess>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QThreadPool>
 #include <QUuid>
 #include <algorithm>
 #include <array>
@@ -805,7 +807,40 @@ QString resumeOption(const QString& harness) {
         return QStringLiteral("-r");
     if (harness == QLatin1String("opencode") || harness == QLatin1String("kimi"))
         return QStringLiteral("--session");
+    if (harness == QLatin1String("agy"))
+        return QStringLiteral("--conversation");
     return {};
+}
+// Services built before resume records keep none. A Codex agent's app-server,
+// found by the backend socket it listens on, still holds its rollout open.
+std::optional<QString> openCodexThread(const QString& endpoint) {
+    const auto lsof = QStandardPaths::findExecutable(
+        QStringLiteral("lsof"), {QStringLiteral("/usr/sbin"), QStringLiteral("/usr/bin")});
+    if (lsof.isEmpty())
+        return std::nullopt;
+    QProcess list;
+    list.start(QStringLiteral("/bin/ps"),
+               {QStringLiteral("-axo"), QStringLiteral("pid=,command=")});
+    if (!list.waitForFinished(3000))
+        return std::nullopt;
+    const auto listen =
+        QStringLiteral("app-server --listen unix://") + endpoint + QStringLiteral(".codex");
+    QString pid;
+    for (const auto& line : QString::fromUtf8(list.readAllStandardOutput()).split('\n')) {
+        const auto row = line.trimmed();
+        if (row.endsWith(listen) || row.contains(listen + QLatin1Char(' '))) {
+            if (!pid.isEmpty())
+                return std::nullopt;
+            pid = row.section(QLatin1Char(' '), 0, 0);
+        }
+    }
+    if (pid.isEmpty())
+        return std::nullopt;
+    QProcess files;
+    files.start(lsof, {QStringLiteral("-p"), pid, QStringLiteral("-Fn")});
+    if (!files.waitForFinished(5000))
+        return std::nullopt;
+    return session::codex_thread_from_open_files(QString::fromUtf8(files.readAllStandardOutput()));
 }
 // Hooks report a conversation at session start, before anything is saved; a
 // conversation without a transcript cannot be resumed, so it starts fresh.
@@ -833,6 +868,49 @@ bool conversationSaved(const session::ResumeRecord& record) {
     return true;
 }
 } // namespace
+void Workspace::recordConversations() {
+    QStringList endpoints;
+    for (const auto& agent : std::as_const(agents_))
+        if (agent.harness == QLatin1String("codex") && !session::read_resume_record(agent.endpoint))
+            endpoints.append(agent.endpoint);
+    if (endpoints.isEmpty() || probing_->exchange(true))
+        return;
+    // Process listing is slow enough to keep off the GUI thread; the worker
+    // touches only files beside each endpoint.
+    QThreadPool::globalInstance()->start([endpoints, busy = probing_] {
+        for (const auto& endpoint : endpoints)
+            if (const auto thread = openCodexThread(endpoint))
+                try {
+                    session::write_resume_record(endpoint, {QStringLiteral("codex"), *thread});
+                } catch (const std::exception& error) {
+                    qWarning().noquote() << "Resume record not saved:" << error.what();
+                }
+        busy->store(false);
+    });
+}
+// Restart an ended or unreachable agent in its card, resuming its conversation.
+bool Workspace::restartAgent(const QString& id) {
+    if (!mutableRegistry())
+        return false;
+    const auto entry = agents_.find(id);
+    auto* item = session(id);
+    if (entry == agents_.end() || item == nullptr)
+        return fail(QStringLiteral("Unknown agent."));
+    if (serviceRunning(entry->endpoint))
+        return fail(QStringLiteral("This agent is still running."));
+    const auto launch = restoredLaunch(*entry);
+    if (!launch)
+        return fail(QStringLiteral("This agent's program or folder is no longer available."));
+    const auto previous = checkpoint();
+    entry->launch = *launch;
+    if (!save()) {
+        rollback(previous);
+        emit errorChanged();
+        return false;
+    }
+    item->startLive(entry->endpoint, entry->launch, session::wire::AttachMode::create);
+    return true;
+}
 bool Workspace::serviceRunning(const QString& endpoint) {
     if (!QFileInfo::exists(endpoint))
         return false;
@@ -997,6 +1075,12 @@ void Workspace::restore() {
         // Restarted agents have new launch arguments, part of their fingerprint.
         if (restarted && !save())
             throw std::runtime_error(error_.toStdString());
+        if (restore_agents_) {
+            conversation_timer_.setInterval(60000);
+            connect(&conversation_timer_, &QTimer::timeout, this, &Workspace::recordConversations);
+            conversation_timer_.start();
+            recordConversations();
+        }
     } catch (const std::exception& error) {
         sessions_.clear();
         agents_.clear();

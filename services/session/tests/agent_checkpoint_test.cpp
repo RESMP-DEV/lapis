@@ -111,6 +111,24 @@ void records_are_private() {
             "create a symlinked record");
     require(!lapis::session::read_resume_record(link_endpoint), "a symlinked record is ignored");
 }
+// An app-server's open files name its thread's rollout; subagent rollouts
+// opened later do not replace the conversation.
+void codex_threads_from_open_files() {
+    const QString listing =
+        QStringLiteral("p58543\nfcwd\nn/Users/me/project\nf12\n"
+                       "n/Users/me/.codex/sessions/2026/09/23/"
+                       "rollout-2026-09-23T16-20-11-01a0d055-9999-7581-be09-2abee03315ea.jsonl\n"
+                       "f13\nn/Users/me/.codex/sessions/2026/09/23/"
+                       "rollout-2026-09-23T16-13-58-01a0d055-2f25-7581-be09-2abee03315ea.jsonl\n"
+                       "f14\nn/Users/me/.codex/log/codex-tui.log\n");
+    require(lapis::session::codex_thread_from_open_files(listing) ==
+                QStringLiteral("01a0d055-2f25-7581-be09-2abee03315ea"),
+            "the earliest open rollout names the conversation");
+    require(!lapis::session::codex_thread_from_open_files(
+                 QStringLiteral("p1\nn/tmp/rollout-notes.jsonl\nn/Users/me/.codex/log/x\n"))
+                 .has_value(),
+            "files outside Codex sessions are not rollouts");
+}
 } // namespace
 
 int main() {
@@ -118,6 +136,7 @@ int main() {
         scanner_finds_checkpoints();
         scanner_rejects_unusable_checkpoints();
         records_are_private();
+        codex_threads_from_open_files();
         std::cout << "Agent checkpoints across reads, identity and host checks, and private "
                      "resume records passed\n";
         return 0;

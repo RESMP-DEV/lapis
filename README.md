@@ -166,15 +166,24 @@ reconnect the same agents and restore category selections and window
 placement. Closing the window does not stop agents; Command-W on an agent does.
 If an agent's session service is gone when lapis opens (after a reboot or a
 crash), lapis restarts it in its card, like a restored terminal tab: Codex,
-Claude, Grok, OpenCode, OMP and Kimi resume their saved conversation with their
-own resume option; other CLIs, or a conversation with no saved transcript yet,
-start fresh in the same folder. Each service records the conversation beside
-its endpoint (`<endpoint>.resume`) from the Codex observer, the Claude hook
-adapter, or the `agent_checkpoint` sequence that iTerm2 restore hooks print.
+Claude, Grok, OpenCode, OMP, Kimi and Antigravity resume their saved
+conversation with their own resume option; other CLIs, or a conversation with
+no saved transcript yet, start fresh in the same folder. Each service records
+the conversation beside its endpoint (`<endpoint>.resume`) from the Codex
+observer, the Claude hook adapter, or the `agent_checkpoint` sequence that
+iTerm2 restore hooks print. For Codex agents whose service predates these
+records, lapis reads the thread from the rollout its app-server holds open.
 Command-W is what removes an agent for good. Restore runs when lapis opens;
 add lapis to Login Items to have it happen at login.
 An agent that has ended or cannot be reached keeps its last screen, with a bar
-on the stage giving the reason and the key that closes it.
+on the stage giving the reason and the key that closes it. **Restart agent**
+in Commands starts it again in the same card, resuming its conversation the
+same way.
+
+Upgrading lapis does not disturb running agents: quit the old build and open
+the new one, and it reattaches to the same processes. Launch fingerprints,
+the service protocol, the workspace registry and resume records are kept
+compatible across builds, and a test pins the fingerprints.
 
 **Requests** appears when the selected agent needs a response. Open it, select a
 request, then explicitly approve, decline, cancel or send answers. Opening or

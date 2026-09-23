@@ -6,6 +6,7 @@
 #include <QTemporaryDir>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 void require(bool value) {
@@ -54,6 +55,28 @@ int main(int argc, char** argv) {
             rejects([&] { static_cast<void>(validate_launch(other)); });
             other.arguments.prepend(QStringLiteral("--"));
             require(validate_launch(other).arguments == other.arguments);
+        }
+        // Agents outlive builds. A new build must compute the same fingerprint
+        // for an existing agent's launch, or it cannot reattach to it: these
+        // values change only with a deliberate, migrated identity change.
+        const LaunchSpec pinned{.program = QStringLiteral("/bin/sh"),
+                                .arguments = {QStringLiteral("resume"), QStringLiteral("abc")},
+                                .directory = QStringLiteral("/")};
+        for (const auto& [mode, expected] :
+             {std::pair{AgentMode::terminal,
+                        "7843c56fa9e8312702dc9138b4738a8a380b6e911386f6baa62ac54787ab42d4"},
+              std::pair{AgentMode::codex,
+                        "3481055a2227832731bcea701d32fa2747c082778bda7712bea8b554ceb0f83d"},
+              std::pair{AgentMode::claude,
+                        "dd6176abd6e16ec30ef870d91a43209995ca94bcd7440c5f9f8474872b68ef17"}}) {
+            auto spec = pinned;
+            spec.agent = mode;
+            const auto actual = launch_fingerprint(spec).toHex();
+            if (actual != QByteArray(expected)) {
+                std::cerr << "fingerprint changed for mode " << static_cast<int>(mode) << ": "
+                          << actual.constData() << '\n';
+                require(false);
+            }
         }
         other.agent = static_cast<AgentMode>(99);
         rejects([&] { static_cast<void>(validate_launch(other)); });

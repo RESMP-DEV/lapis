@@ -1688,6 +1688,22 @@ A service is gone only when its socket refuses or is missing. Real Claude Code
 2.1.280 and Codex 0.155.1 were checked headless against the fake model: the
 record appeared, and the resumed agent showed the earlier exchange.
 
+Continuity across builds (September 23). Quitting one lapis build and opening
+another must leave running agents untouched, so these are compatibility
+contracts rather than implementation details: the launch fingerprint (pinned by
+known SHA-256 values in the `launch-spec` suite for terminal, Codex and Claude
+modes), service IPC version 6 with only additive frames, registry versions 1
+and 2 on read, the `LAPIS-S1` descriptor, resume record version 1, and the
+Claude hook relay's command line. Changing any of them needs a migration that
+still reattaches services started by the previous build. For Codex services
+started before resume records existed, the desktop recovers the thread every
+60 seconds: it finds the app-server by its exact `app-server --listen
+unix://<endpoint>.codex` command line and takes the earliest rollout it holds
+open (later ones are subagents); this was checked against real Codex 0.155.1
+with the fake model after deleting the record. Restart agent (Commands) applies
+the restore path to one ended or unreachable card and refuses while its service
+answers. Antigravity resumes with `agy --conversation`.
+
 Observed but not changed: Linux TSan reports frees and mutexes on Qt's uninstrumented
 threads in five GUI suites, identically on the pre-merge base, so TSan remains a
 macOS qualification. Native Mac selection, wheel and window-manager behavior are

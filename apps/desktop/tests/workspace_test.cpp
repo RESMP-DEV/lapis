@@ -699,14 +699,16 @@ void agentsStartWithoutParentSessionMarkers() {
 // lapis opens, resuming the conversation their service recorded, like a
 // restored terminal tab. Without the option nothing is restarted.
 void agentsRestoreAfterServiceLoss() {
-    QTemporaryDir directory;
+    // Unix socket paths are short (104 bytes on macOS): keep endpoints near /.
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-restore-XXXXXX"));
     require(directory.isValid(), "restore directory");
     const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
     const auto script = QDir(canonical).filePath(QStringLiteral("agent.sh"));
     {
+        // Runs until it reads a line.
         QFile file(script);
         require(file.open(QIODevice::WriteOnly), "write the agent script");
-        file.write("#!/bin/sh\nexec sleep 600\n");
+        file.write("#!/bin/sh\nread line\n");
     }
     require(QFile::setPermissions(script, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
             "make the agent script executable");
@@ -767,10 +769,72 @@ void agentsRestoreAfterServiceLoss() {
         require(waitFor([item] { return item->inputReady(); }, 10000),
                 "a restored agent runs under a new service");
     }
+    require(!workspace.restartAgent(resumed), "a running agent is not restarted");
+    workspace.clearError();
+    // An agent that ended restarts in its card without reopening lapis, once
+    // its service has exited.
+    auto* ended = workspace.session(fresh);
+    ended->sendText("done\r");
+    require(waitFor([ended] { return ended->connectionState() == QStringLiteral("ended"); }, 10000),
+            "the agent ends");
+    require(waitFor([&] { return workspace.restartAgent(fresh); }, 10000),
+            "an ended agent restarts");
+    workspace.clearError();
+    require(waitFor([ended] { return ended->inputReady(); }, 10000),
+            "the restarted agent runs again");
     for (const auto& id : {resumed, fresh, foreign})
         require(workspace.closeSession(id), "close a restored agent");
     require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
             "restored agents close");
+}
+
+// Opt-in, with LAPIS_TEST_CODEX_HOME naming a Codex home that uses a local
+// fake model: a Codex agent whose service keeps no resume record (built before
+// records) still gets one, from the rollout its app-server holds open.
+void codexConversationRecoveredWithoutRecord() {
+    const auto home = qEnvironmentVariable("LAPIS_TEST_CODEX_HOME");
+    if (home.isEmpty())
+        return;
+    qputenv("CODEX_HOME", home.toUtf8());
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-codex-XXXXXX"));
+    require(directory.isValid(), "codex recovery directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const auto project = QDir(canonical).filePath(QStringLiteral("project"));
+    require(QDir().mkpath(project), "project folder");
+    WorkspaceOptions options;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    QString id;
+    QString endpoint;
+    {
+        Workspace creator(WorkspaceMode::live, options);
+        require(creator.createAgent(project, QStringLiteral("codex"), QStringLiteral("codex")),
+                "create a Codex agent");
+        auto* item = creator.focusedSession();
+        id = item->sessionId();
+        endpoint = QDir(canonical).filePath(id + QStringLiteral(".sock"));
+        require(waitFor([item] { return item->inputReady(); }, 20000), "Codex is ready");
+        waitFor([] { return false; }, 3000);
+        item->sendText("hello there");
+        waitFor([] { return false; }, 300);
+        item->sendText("\r");
+        require(waitFor([&] { return lapis::session::read_resume_record(endpoint).has_value(); },
+                        20000),
+                "the current service records the thread itself");
+        waitFor([] { return false; }, 3000);
+    }
+    const auto expected = lapis::session::read_resume_record(endpoint);
+    require(QFile::remove(endpoint + QStringLiteral(".resume")), "act like an older service");
+    options.restoreAgents = true;
+    Workspace reopened(WorkspaceMode::live, options);
+    require(
+        waitFor([&] { return lapis::session::read_resume_record(endpoint).has_value(); }, 20000),
+        "lapis records the thread from the open rollout");
+    const auto recovered = lapis::session::read_resume_record(endpoint);
+    require(recovered && expected && recovered->session_id == expected->session_id,
+            "the recovered thread is the agent's conversation");
+    require(reopened.closeSession(id), "close the Codex agent");
+    require(waitFor([&reopened] { return reopened.sessions().isEmpty(); }, 15000),
+            "the Codex agent closes");
 }
 
 void closeEndsTheAgent(const char* script, int minimum_ms) {
@@ -819,6 +883,7 @@ int main(int argc, char** argv) {
         outputEstimate();
         agentsStartWithoutParentSessionMarkers();
         agentsRestoreAfterServiceLoss();
+        codexConversationRecoveredWithoutRecord();
         closeEndsTheAgent("exec sleep 600", 0);
         // An agent that ignores SIGHUP is ended by the SIGTERM escalation.
         closeEndsTheAgent("trap '' HUP; exec sleep 600", 1200);
