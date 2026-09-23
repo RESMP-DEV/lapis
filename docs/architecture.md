@@ -1658,8 +1658,11 @@ Decisions from these runs:
   fingerprint; adapters still reject conflicting flags such as Claude's
   `--settings`.
 
-Observed but not changed: a SIGKILLed Codex service leaves its `codex app-server`
-backend running; Linux TSan reports frees and mutexes on Qt's uninstrumented
+Each agent and each Codex backend runs under a group guard process that kills its
+group when the service's pipe closes; SIGKILL of the service alone removed the
+backend on anvil. Guards share the service's command line, so cleanup that kills
+every matching process also kills the guards and leaves backends running.
+Observed but not changed: Linux TSan reports frees and mutexes on Qt's uninstrumented
 threads in five GUI suites, identically on the pre-merge base, so TSan remains a
 macOS qualification. Native Mac selection, wheel and window-manager behavior are
 not yet exercised.
