@@ -990,6 +990,23 @@ request kinds. See the [Milestone 2 plan](docs/architecture.md#milestone-2-atten
 
 ### History and input qualification
 
+For routine terminal input logic, run the explicit background mode after building:
+
+```sh
+build/desktop/apps/desktop/lapis_terminal_input_tests --background
+```
+
+It selects Qt's offscreen platform and software backend, checks those selections,
+and exercises the same synthetic key, composition, paste, history and ownership
+assertions against the local protocol fixture. It uses virtual window focus and
+Qt's offscreen clipboard, without requesting macOS foreground access or moving
+the system pointer. Timeout diagnostics identify the calling assertion. This is
+logical Qt coverage; it does not qualify AppKit input, the system pasteboard,
+Apple IME, display rendering or GPU presentation. The ordinary CTest entry still
+requires the native desktop. Run the background mode while the desktop is in use;
+reserve short exclusive windows for the native checks below. Do not replace a
+failed native result with a background pass or relabel it as native acceptance.
+
 Build the current desktop first. Run these checks serially with other GUI work:
 
 ```sh

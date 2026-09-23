@@ -1,10 +1,17 @@
 #include "window_activation.hpp"
 #import <AppKit/AppKit.h>
+#include <QGuiApplication>
 #include <stdexcept>
 
 namespace lapis::desktop::test {
 void activate_test_window(QWindow& window) {
     window.show();
+    if (QGuiApplication::platformName() == QStringLiteral("offscreen")) {
+        // Logical Qt event tests can own a virtual window without taking the
+        // macOS foreground. This does not exercise native activation or input.
+        window.requestActivate();
+        return;
+    }
     // Test fixtures explicitly own desktop focus; product focus policy is unchanged.
     if (@available(macOS 14.0, *))
         [NSApp activate];

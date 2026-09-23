@@ -375,5 +375,79 @@
     "Linux UI, 32-session scaling and unqualified CLI binaries remain outside this repair.",
     "Unrelated IDE-context edits remain outside this commit."
   ],
-  "all_required_checks_passed": false
+  "all_required_checks_passed": false,
+  "background_followup": {
+    "baseline_revision": "cae4df24cb3021eb5e0b49c82dcc28624befa6a9",
+    "scope": "User-requested background logical input verification; native acceptance remains separate",
+    "source_sha256": {
+      "CONTRIBUTING.md": "e8e33637cfc1dbb3abb4b1caeb4cd2edc3dbffd4bb8bd69bd7369cdb5f3146a8",
+      "apps/desktop/tests/platform/window_activation.mm": "a21f25466a7517847282f18e41d6fe2b4303625dec17bed3079c5120113c5455",
+      "apps/desktop/tests/terminal_input_test.cpp": "1a762d4c635cc5231b7334626a2ff406387535cec1c245bde092016b703f85e2"
+    },
+    "command": "build/desktop/apps/desktop/lapis_terminal_input_tests --background",
+    "behavior": [
+      "Explicit offscreen platform and Software renderer selected and checked",
+      "Same Qt synthetic input/composition/paste/history/focus/document/disconnect assertions reused",
+      "Paste uses Qt platform-selected shortcut; timeout reports the calling assertion",
+      "Offscreen helper avoids AppKit activation; unknown arguments and implicit offscreen CTest invocation fail"
+    ],
+    "checks": {
+      "normal": {
+        "passed": true,
+        "log": "build/pr10-final-review/background-explicit.log"
+      },
+      "asan": {
+        "passed": true,
+        "log": "build/pr10-final-review/background-asan.log"
+      },
+      "tsan": {
+        "passed": true,
+        "log": "build/pr10-final-review/background-tsan.log"
+      },
+      "native_input_test": {
+        "passed": true,
+        "command": "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop -R '^terminal-input$' --output-on-failure --no-tests=error",
+        "elapsed_seconds": 1.59,
+        "log": "build/pr10-final-review/native-input-followup.log"
+      },
+      "argument_rejection": {
+        "passed": true,
+        "cases": 2,
+        "receipt": "build/pr10-final-review/background-options.json"
+      },
+      "quality": {
+        "passed": true,
+        "python_tests": 102,
+        "log": "build/pr10-final-review/background-quality.log"
+      },
+      "static": {
+        "passed": true,
+        "scope": "clang-format, changed test and activation helper clang-tidy, full Cppcheck",
+        "logs": [
+          "build/pr10-final-review/background-input-tidy.log",
+          "build/pr10-final-review/background-activation-tidy.log",
+          "build/pr10-final-review/background-cppcheck.log"
+        ]
+      }
+    },
+    "foreground_observation": {
+      "diagnostic": "During a failing native run, another application activated 0.844 seconds after the input fixture; the source of that activation was not established.",
+      "background_run": "No test activation observed; foreground application and system pasteboard change count remained unchanged.",
+      "pointer": "No native pointer-injection API is used by this mode. Pointer position changed between system snapshots; that movement was not attributed to any process.",
+      "logs": [
+        "build/pr10-final-review/focus-owner.log",
+        "build/pr10-final-review/background-focus-owner.log",
+        "build/pr10-final-review/background-system-state.json"
+      ]
+    },
+    "experiments": [
+      "Initial offscreen input failed at paste because the fixture hardcoded the macOS chord; platform-selected shortcut repaired it.",
+      "Whole UI software probe hit a pixel assertion. An exploratory logical-only UI flag was not retained; production Vulkan requirement remains intact."
+    ],
+    "limitations": [
+      "Background pass proves Qt logical behavior only; no native AppKit delivery, system pasteboard, Apple IME, GPU or display acceptance.",
+      "The native input rerun passed without external foreground assistance. Earlier whole-suite/UI-capture/TSan-UI focus failures remain recorded and are not claimed repaired.",
+      "Default native CTest registration and all required native/GPU checks are retained."
+    ]
+  }
 }
