@@ -122,6 +122,38 @@ class Keyboard:
         self.display.sync()
         time.sleep(0.2)
 
+    def drag(self, start, end, steps=12):
+        xtest.fake_input(self.display, X.MotionNotify, x=start[0], y=start[1])
+        xtest.fake_input(self.display, X.ButtonPress, 1)
+        self.display.sync()
+        for step in range(1, steps + 1):
+            x = start[0] + (end[0] - start[0]) * step // steps
+            y = start[1] + (end[1] - start[1]) * step // steps
+            xtest.fake_input(self.display, X.MotionNotify, x=x, y=y)
+            self.display.sync()
+            time.sleep(0.02)
+        xtest.fake_input(self.display, X.ButtonRelease, 1)
+        self.display.sync()
+        time.sleep(0.3)
+
+    def wheel(self, x, y, up=True, notches=1):
+        xtest.fake_input(self.display, X.MotionNotify, x=x, y=y)
+        button = 4 if up else 5
+        for _ in range(notches):
+            xtest.fake_input(self.display, X.ButtonPress, button)
+            xtest.fake_input(self.display, X.ButtonRelease, button)
+            self.display.sync()
+            time.sleep(0.15)
+        time.sleep(0.5)
+
+    def client_origin(self):
+        window = self.lapis_window()
+        if window is None:
+            raise Failure("no lapis window")
+        origin = window.translate_coords(self.display.screen().root, 0, 0)
+        geometry = window.get_geometry()
+        return -origin.x, -origin.y, geometry.width, geometry.height
+
     def lapis_window(self):
         def walk(window):
             try:
@@ -536,6 +568,35 @@ class Run:
         self.keys.combo("Escape", 0.2)
         return {"screenshot": self.shot("after-rapid-fire")}
 
+    def s_select_and_wheel(self):
+        """Drag-select the stage's first row, then wheel into history and type."""
+        x, y, width, _ = self.client_origin()
+        # The stage starts right of the sidebar; its first text row sits near the top.
+        row = y + 44
+        self.keys.drag((x + 225, row), (x + int(width * 0.45), row))
+        selected = self.shot("stage-selection")
+        self.keys.combo("ctrl+shift+c", 0.3)
+        self.send("flood")
+        time.sleep(2.0)
+        self.keys.wheel(x + width // 2, y + 300, up=True, notches=2)
+        time.sleep(1.5)
+        history = self.shot("wheel-history")
+        self.keys.type("z")
+        time.sleep(1.0)
+        return {"screenshots": [selected, history, self.shot("typed-back-to-live")]}
+
+    def s_next_attention(self):
+        """A finished agent elsewhere is one key away."""
+        self.new_agent("grok")
+        time.sleep(1.0)
+        self.send("slow")
+        time.sleep(1.0)
+        self.keys.combo("ctrl+shift+Up", 0.6)
+        time.sleep(24.0)
+        before = self.shot("before-next-attention")
+        self.keys.combo("ctrl+shift+j", 0.8)
+        return {"screenshots": [before, self.shot("after-next-attention")]}
+
     def s_quit_restore(self):
         fakes = {row["pid"] for row in self.fake_agents()}
         self.keys.combo("ctrl+shift+q", 1.0)
@@ -663,6 +724,8 @@ def main():
         ("gui_kill_restore", run.s_gui_kill_restore),
         ("rapid_fire", run.s_rapid_fire),
         ("resizes", run.s_resizes),
+        ("select_and_wheel", run.s_select_and_wheel),
+        ("next_attention", run.s_next_attention),
         ("service_kill", run.s_service_kill),
         ("quit_restore", run.s_quit_restore),
     ]
