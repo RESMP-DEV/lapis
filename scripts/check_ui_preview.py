@@ -194,6 +194,16 @@ def execute_checks(binary: Path, artifacts: Path) -> list[dict]:
     invalid.write_text("import QtQuick\nWindow { broken syntax ! }\n")
     cases = [
         (
+            "reject-claude-preview",
+            ["--claude"],
+            "--claude cannot be combined with --ui-preview",
+        ),
+        (
+            "reject-claude-preview-program",
+            ["--claude", "--", "claude"],
+            "--claude cannot be combined with --ui-preview",
+        ),
+        (
             "reject-codex-preview",
             ["--codex"],
             "--codex cannot be combined with --ui-preview",

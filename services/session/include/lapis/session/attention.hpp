@@ -63,6 +63,10 @@ class State {
     void connect(std::uint64_t epoch, Capabilities capabilities);
     void disconnect();
     void overflow();
+    // Start a fresh, observation-only ledger at a verified source boundary.
+    // This cannot restore a lost stream or replace pending requests. It grants
+    // neither response nor authoritative reconciliation capabilities.
+    Outcome begin_observation(Position position, Tick now);
     // Authoritative snapshots replace state atomically. Retired IDs persist for an epoch;
     // exhausting their bound requires a new epoch, never silent tombstone eviction.
     // A content-identical same-epoch entry retains its revision only when the state is

@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-22T21:28:41.779375+00:00",
+  "passed": true,
+  "scope": "PR10 review repairs on macOS: Claude conversation replacement, native default directory, current test documentation and standalone discovery",
+  "source": {
+    "base_revision": "1da531bf476e742b38cfbae8e334b17296d4957c",
+    "dirty": true,
+    "sha256": {
+      "CONTRIBUTING.md": "4a22361a6665375e667efd54851498474ad97d1f89478a5c8743e8096bc5521b",
+      "README.md": "1489f087fce15658c1b40c7c721bdadd8b944804eb18b2f43b53aa32daf637ca",
+      "adapters/claude/src/claude_observer.cpp": "123cae3b254474e77c0cf2de9836f43ae54a33660a916302ceb4e5658ab34ff2",
+      "adapters/claude/tests/claude_observer_test.cpp": "e1af3333d43bb4e3d417023baffa580f7df0dc85497b1a7d9fb8115d9b487f32",
+      "apps/desktop/qml/Main.qml": "482f2b324725a3022f752bfec4c6ebf5af524c4239ed04c0064b307a8777975b",
+      "apps/desktop/src/workspace.cpp": "da7e1ae355ee72301a6b1d1abdd60f50bb5c5a73f8064206f616b091835f45ba",
+      "apps/desktop/src/workspace.hpp": "c6d2bc58b470f53b84ea36e1f5fe60fc0b2d1bd9abb86aeae34b51451a660aee",
+      "apps/desktop/tests/workspace_ui_probe.cpp": "248a01b8d9b87497e9a124f07af6da99475b6efcbc268021256eba6a728ce98e",
+      "docs/architecture.md": "6dbcd8b11e68315fe4a18b43d9735bcf3d2e94c8843bd011a9fe083ed589a0ed",
+      "scripts/check_claude_hooks.py": "8ab7b3b347d782038272014f2a722f2df621b00625288a97174582fa1dede250",
+      "scripts/tests/test_check_workspace_attention.py": "4392019da0eeb2556dd0690e04c35e8ce999ea2e3b7bd70c35f8d005d96b2582"
+    }
+  },
+  "findings": [
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k6n7h",
+      "result": "fixed",
+      "behavior": "SessionEnd retires notices and keeps listener alive for a fresh SessionStart. Retired source IDs are bounded and cannot rebind; explicit stop/process exit still closes the listener.",
+      "regression": "New replay case failed before the repair; live installed Claude /clear reproduced observation stopping and then passed with a new source identity."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k6n74",
+      "result": "fixed",
+      "behavior": "QML receives native C++ QStandardPaths home string; no URL decoding in QML.",
+      "regression": "Production empty-workspace dialog default is left untouched, matches native property, and is absolute rather than file: URL; fixture then cancels before launching controlled shells in its private directory."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k6n79",
+      "result": "fixed",
+      "behavior": "CTest table includes claude-observer; both current desktop/sanitizer inventory counts are 22; preview inventory updated to 12 cases."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k6n7_",
+      "result": "fixed",
+      "behavior": "Milestone 2 paragraph describes its dated scope and refers to completed Milestone 3 qualification."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k6n8B",
+      "result": "fixed",
+      "behavior": "Standalone workspace-attention test discovery inserts scripts/ before imports.",
+      "regression": "Reproduced ModuleNotFoundError before fix; standalone discovery passed all seven tests afterward."
+    }
+  ],
+  "checks": {
+    "desktop": {
+      "command": "python3 scripts/lapis.py build",
+      "initial_exit_code": 1,
+      "initial_receipt": {
+        "path": "build/reports/desktop/receipt.json",
+        "sha256": "f441fcc3e94d8478bcb8648d2bf0c836615209be7fd4f37a7280c694d2b65eab"
+      },
+      "static_analysis_passed": true,
+      "initial_ctest_passed": 21,
+      "initial_ctest_failed": "terminal-input",
+      "diagnostic": "Event deadline expired at line 151 while awaiting text frames",
+      "focused_retry_command": "ctest --test-dir build/desktop -R '^terminal-input$' --output-on-failure --no-tests=error",
+      "retry": {
+        "path": "build/pr10-review/terminal-input-retry.log",
+        "sha256": "3342ee84d9f6f3f4863c004a89d2aac00d47560098a542c3deaa017e3127f100"
+      },
+      "combined_suites_passed": 22,
+      "reuse": "The other 21 suites passed on identical inputs; only the failed suite was repeated. The initial full command remains recorded as failed."
+    },
+    "quality": {
+      "command": "python3 scripts/lapis.py quality",
+      "passed": true,
+      "python_tests": 95,
+      "receipt": {
+        "path": "build/reports/quality/receipt.json",
+        "sha256": "cd2478cc6286bf815e1ba65b08c9be36589a26c9a0fbebd9d221a8a69894fc49"
+      }
+    },
+    "workspace_gui": {
+      "command": "build/desktop/apps/desktop/lapis_workspace_ui_probe --json-file build/pr10-review/workspace.json --output-dir build/pr10-review/workspace",
+      "passed": true,
+      "receipt": {
+        "path": "build/pr10-review/workspace.json",
+        "sha256": "427934dde94dd705cb0c7f0c45945ad418592a4d32e31836c7c6d09c1c1532b2"
+      },
+      "empty_dialog_default_directory": {
+        "native": true
+      },
+      "layouts": [
+        "focus",
+        "columns",
+        "blocks",
+        "stack"
+      ],
+      "guarded_attention": {
+        "disconnect_reconciled_live_state": true,
+        "history_read_only_guarded": true,
+        "obsolete_queue_not_replayed": true,
+        "obsolete_switch_rejected": true
+      },
+      "timing_scope": "Functional regression run only; no new performance claim."
+    },
+    "ui_preview": {
+      "command": "python3 scripts/check_ui_preview.py --artifacts build/pr10-review/ui",
+      "passed": true,
+      "cases": 12,
+      "receipt": {
+        "path": "build/pr10-review/ui/receipt.json",
+        "sha256": "e031343f8eee83892fa5ce1a694caa4756d9265e24a37d1fc07d2e652ea51ad8"
+      }
+    },
+    "sanitizers": {
+      "configurations": [
+        "ASan/UBSan",
+        "TSan"
+      ],
+      "ctest_cases_each": [
+        "claude-observer",
+        "workspace"
+      ],
+      "passed": true,
+      "logs": [
+        {
+          "path": "build/pr10-review/asan-tests.log",
+          "sha256": "78effb42cf0ee84d5c7b4b3951c0b08bb3de4aacc20913768766a6adf8f24c87"
+        },
+        {
+          "path": "build/pr10-review/tsan-tests.log",
+          "sha256": "443c02b8300d90518f44d88c365b13536eb46eeb125141e6c0d99c011270b813"
+        }
+      ]
+    },
+    "live_claude": {
+      "command": "python3 scripts/check_claude_hooks.py --output build/pr10-review/claude-fixed/receipt.json",
+      "passed": true,
+      "before_failure": {
+        "path": "build/pr10-review/claude-before/receipt.json",
+        "sha256": "03e48365160466b3aad8cdb6f6e97b50441f76d2fef9d06ba590f036e12715c9"
+      },
+      "before_error": "RuntimeError: Claude /clear did not start a fresh observation epoch: Claude session ended",
+      "after": {
+        "path": "build/pr10-review/claude-fixed/receipt.json",
+        "sha256": "1a0a9c506a8d69cd24d06db5043de21caa2e2fc46717cbd0f4317a3b94bbd07a"
+      },
+      "version": "2.1.280",
+      "binary_sha256": "387a5c5dcdbb815085edf0baf79591f9d8894efe922bceaf3d75b1b08055229d",
+      "checks": [
+        "same child and pending notice after detach/reattach",
+        "terminal answer retired question and turn completed",
+        "permission remained terminal-only",
+        "new prompt retired prior permission advisory",
+        "live AskUserQuestion has exact tool identity",
+        "same Claude child delivered fresh permission attention after /clear"
+      ],
+      "clear_epochs": [
+        3,
+        4
+      ],
+      "post_clear_source_changed": true,
+      "global_settings_unchanged": true,
+      "service_reaped": true
+    },
+    "reused": "CLI argument parsing, two-source Codex response routing and 23-case native input qualification retain the original scoped evidence from milestone-three-workspace.json; these behaviors are unchanged by the default-directory property and Claude-specific lifecycle fix."
+  },
+  "limits": [
+    "macOS only; no new capacity or Linux qualification",
+    "Claude remains observation-only with no history reconciliation",
+    "New source identity is required after SessionEnd; rebinding an already retired conversation is not qualified",
+    "Old receipts retain their original tested source; this repair receipt records the changed scope"
+  ]
+}

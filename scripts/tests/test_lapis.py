@@ -112,13 +112,88 @@ class LauncherTests(unittest.TestCase):
         self.assertFalse(any(str(part).startswith("--socket=") for part in command))
         self.assertFalse(self.runtime.exists())
 
-    def test_default_live_shell_injects_private_socket(self):
+    def test_default_live_shell_injects_private_workspace(self):
         _, run = self.launch([])
 
         command = run.call_args.args[0]
-        self.assertIn("--socket", command)
-        self.assertIn(str(self.runtime / "desktop-v6.sock"), command)
+        workspace = self.runtime / "workspace-v1.json"
+        self.assertIn("--workspace", command)
+        self.assertIn(str(workspace), command)
         self.assertEqual(self.runtime.stat().st_mode & 0o777, 0o700)
+
+    def test_explicit_session_arguments_inject_private_socket(self):
+        cases = [
+            ["--new-session"],
+            ["--discover"],
+            ["--cwd", str(self.temporary_root)],
+            [f"--cwd={self.temporary_root}"],
+            ["--codex"],
+            ["--claude"],
+            ["--smoke-input"],
+        ]
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                _, run = self.launch(arguments)
+
+                command = run.call_args.args[0]
+                self.assertIn("--socket", command)
+                self.assertIn(str(self.runtime / "desktop-v6.sock"), command)
+                self.assertNotIn("--workspace", command)
+                self.assertEqual(self.runtime.stat().st_mode & 0o777, 0o700)
+
+    def test_bare_positional_program_injects_private_socket(self):
+        cases = [
+            ["zsh"],
+            ["--screen", "built-in", "zsh"],
+            ["--screen=built-in", "zsh"],
+            ["--capture", str(self.temporary_root / "capture.png"), "zsh"],
+        ]
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                _, run = self.launch(arguments)
+
+                command = run.call_args.args[0]
+                self.assertIn("--socket", command)
+                self.assertIn(str(self.runtime / "desktop-v6.sock"), command)
+                self.assertNotIn("--workspace", command)
+                self.assertEqual(self.runtime.stat().st_mode & 0o777, 0o700)
+
+    def test_value_taking_options_do_not_look_like_programs(self):
+        screen = str(self.temporary_root / "screen")
+        cases = [
+            ["--screen", screen],
+            ["--qml", str(self.temporary_root / "Main.qml")],
+            ["--scenario", "arrival"],
+            ["--capture", str(self.temporary_root / "capture.png")],
+            ["--capture-delay", "500"],
+            ["--trace", str(self.temporary_root / "trace.json")],
+        ]
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                _, run = self.launch(arguments)
+
+                command = run.call_args.args[0]
+                self.assertIn("--workspace", command)
+                self.assertNotIn("--socket", command)
+
+    def test_explicit_workspace_argument_is_preserved(self):
+        workspace = self.temporary_root / "explicit-workspace.json"
+        cases = [
+            ["--workspace", str(workspace)],
+            [f"--workspace={workspace}"],
+        ]
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                _, run = self.launch(arguments)
+
+                command = run.call_args.args[0]
+                self.assertEqual(command[-len(arguments) :], arguments)
+                self.assertEqual(
+                    command.count("--workspace")
+                    + sum(str(part).startswith("--workspace=") for part in command),
+                    1,
+                )
+                self.assertFalse(self.runtime.exists())
 
     def test_new_runtime_directory_is_private(self):
         self.assertFalse(self.runtime.exists())

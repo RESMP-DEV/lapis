@@ -6,10 +6,12 @@
 #include "launch_spec.hpp"
 #include "transport/attention_protocol.hpp"
 #include "transport/local_protocol.hpp"
+#include "workspace_registry.hpp"
 
 #include <QColor>
 #include <QMap>
 #include <QObject>
+#include <QPointer>
 #include <QSet>
 #include <QString>
 #include <QVariantList>
@@ -24,7 +26,7 @@ class LiveConnection;
 
 class SessionPreview final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QString sessionId READ sessionId CONSTANT)
+    Q_PROPERTY(QString sessionId READ sessionId NOTIFY connectionChanged)
     Q_PROPERTY(bool attentionPending READ attentionPending NOTIFY attentionChanged)
     Q_PROPERTY(QString attentionReason READ attentionReason NOTIFY attentionChanged)
     Q_PROPERTY(quint32 attentionSerial READ attentionSerial NOTIFY attentionChanged)
@@ -51,6 +53,8 @@ class SessionPreview final : public QObject {
     ~SessionPreview() override;
     void startLive(const QString& endpoint, const session::LaunchSpec& launch,
                    session::wire::AttachMode mode = session::wire::AttachMode::reconnect);
+    void restoreLive(const WorkspaceEntry& entry);
+    [[nodiscard]] std::optional<WorkspaceEntry> reconnectEntry() const;
     Q_INVOKABLE void reconnect();
     Q_INVOKABLE void discoverSession();
     Q_INVOKABLE void startNewSession();
@@ -85,7 +89,12 @@ class SessionPreview final : public QObject {
     void sendText(const QByteArray& bytes, bool paste = false);
     void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
     void resizeTerminal(session::TerminalSize size);
-    void setSessionId(const QString& id) { session_id_ = id; }
+    void setSessionId(const QString& id) {
+        if (session_id_ != id) {
+            session_id_ = id;
+            emit connectionChanged();
+        }
+    }
     [[nodiscard]] const QString& sessionId() const { return session_id_; }
     [[nodiscard]] bool attentionPending() const { return attentionCount() != 0; }
     [[nodiscard]] QString attentionReason() const;
@@ -149,19 +158,48 @@ struct WorkspaceOptions {
     QString endpoint;
     std::optional<session::LaunchSpec> launch;
     session::wire::AttachMode mode{session::wire::AttachMode::reconnect};
+    QString manifest{}; // Empty retains the explicit single-session connection path.
 };
 
 class Workspace final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QVariantList sessions READ sessions CONSTANT)
+    Q_PROPERTY(QVariantList sessions READ sessions NOTIFY sessionsChanged)
+    Q_PROPERTY(bool registryEnabled READ registryEnabled CONSTANT)
+    Q_PROPERTY(bool loading READ loading NOTIFY workspaceChanged)
+    Q_PROPERTY(bool canAddSessions READ canAddSessions NOTIFY workspaceChanged)
+    Q_PROPERTY(bool canRetrySave READ canRetrySave NOTIFY workspaceChanged)
+    Q_PROPERTY(QString status READ status NOTIFY workspaceChanged)
+    Q_PROPERTY(QString defaultSessionDirectory READ defaultSessionDirectory CONSTANT)
     Q_PROPERTY(bool previewMode READ previewMode CONSTANT)
     Q_PROPERTY(int focusedIndex READ focusedIndex WRITE setFocusedIndex NOTIFY focusChanged)
     Q_PROPERTY(
         lapis::desktop::SessionPreview* focusedSession READ focusedSession NOTIFY focusChanged)
   public:
     explicit Workspace(WorkspaceMode mode = WorkspaceMode::live, WorkspaceOptions options = {});
+    ~Workspace() override;
+    [[nodiscard]] bool registryEnabled() const { return !manifest_.isEmpty(); }
+    [[nodiscard]] bool loading() const { return loading_; }
+    [[nodiscard]] bool canAddSessions() const;
+    [[nodiscard]] bool canRetrySave() const;
+    Q_INVOKABLE void retrySave();
+    [[nodiscard]] const QString& status() const { return status_; }
+    [[nodiscard]] const QString& defaultSessionDirectory() const {
+        return default_session_directory_;
+    }
+    Q_INVOKABLE bool addSession(bool codex, const QString& directory, const QString& endpoint = {});
+    Q_INVOKABLE bool addClaudeSession(const QString& directory, const QString& endpoint = {});
+    Q_INVOKABLE bool removeSession(const QString& id);
+    Q_INVOKABLE void setInteractionBlocked(const QString& reason, bool blocked);
+    [[nodiscard]] bool interactionBlocked() const { return !interaction_blocks_.isEmpty(); }
+    // Automatic requests are synchronous and never join the deferred manual queue.
+    bool focusAutomatically(const QString& id);
     [[nodiscard]] bool previewMode() const { return preview_mode_; }
     [[nodiscard]] SessionPreview* session(const QString& id) const;
+
+  private:
+    bool createSession(session::AgentMode agent, const QString& directory, const QString& endpoint);
+
+  public:
     // Development fixture v1 only. No calls are accepted in a live workspace.
     bool requestAttention(const PreviewRequest& request);
     bool resolveAttention(const PreviewRequest& request);
@@ -175,10 +213,27 @@ class Workspace final : public QObject {
     void setFocusedIndex(int index);
   signals:
     void focusChanged();
+    void sessionsChanged();
+    void workspaceChanged();
+    void interactionChanged();
+    void manualNavigationRequested();
 
   private:
     [[nodiscard]] static QString rootDirectory();
     [[nodiscard]] static QString defaultEndpoint();
+    class Storage;
+    std::unique_ptr<Storage> storage_;
+    void loadRegistry();
+    void persistRegistry(bool retry = false);
+    void appendSession(std::unique_ptr<SessionPreview> session);
+    void flushFocus();
+    QString manifest_;
+    QString status_;
+    QString default_session_directory_;
+    QPointer<SessionPreview> pending_focus_;
+    QSet<QString> interaction_blocks_;
+    bool loading_{};
+    bool registry_ready_{};
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
     int focused_index_{};
     bool preview_mode_{};

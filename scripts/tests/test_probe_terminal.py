@@ -4,6 +4,7 @@ import argparse
 import io
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -325,11 +326,16 @@ class ProbeTests(unittest.TestCase):
 
     def test_replay_timeout_keeps_partial_output_and_failure_receipt(self):
         sources, binary, args = self.configure_probe_fixture()
-        binary.write_text(
-            f"#!{sys.executable}\nimport sys,time\n"
+        interpreter = self.root / "python with spaces"
+        interpreter.symlink_to(sys.executable)
+        code = (
+            "import sys,time\n"
             "print('partial JSON',flush=True)\n"
             "print('partial diagnostic',file=sys.stderr,flush=True)\n"
             "time.sleep(30)\n"
+        )
+        binary.write_text(
+            f"#!/bin/sh\nexec {shlex.quote(str(interpreter))} -c {shlex.quote(code)}\n"
         )
         binary.chmod(0o700)
         run_replay = probe.run_replay

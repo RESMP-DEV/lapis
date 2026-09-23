@@ -31,6 +31,7 @@ endif()
 
 if(LAPIS_BUILD_DESKTOP)
     add_subdirectory(adapters/codex)
-    target_link_libraries(lapis_session_service PRIVATE lapis_codex_adapter)
+    add_subdirectory(adapters/claude)
+    target_link_libraries(lapis_session_service PRIVATE lapis_codex_adapter lapis_claude_adapter)
     add_subdirectory(apps/desktop)
 endif()

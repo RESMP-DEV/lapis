@@ -1,0 +1,226 @@
+{
+  "schema": "lapis.codex-binary-qualification/1",
+  "recorded_at": "2026-09-23T00:53:48.915473+00:00",
+  "passed": true,
+  "source": {
+    "baseline_revision": "dcdec7489a19d10e178c93106d103e27a3be4c96",
+    "sha256": {
+      "adapters/codex/src/observer.cpp": "e02bfe0d56e4c404afb2f233f439048e1bd4324da7a29df1003020d7f200e90f",
+      "adapters/codex/tests/observer_test.cpp": "161cdb61609c1cc429971533cf7b8c57fb5bc74e089ddc59222e93ae57ff3414",
+      "scripts/check_codex_attention.py": "b7c7dad6f3c8409ca2a3d18574483652f612025a829dd2a3a4c63874ce3278c4",
+      "scripts/check_service_attention.py": "b2ee57b2702a086b1fb26de1dc8234e790a25e21cedfdf521ee5e8e6c71d006b",
+      "scripts/check_workspace_attention.py": "15138203dd3e9a1be20500b44d1dbc53d2a8881b1f7be387e8a9bfc17646059a",
+      "scripts/tests/test_check_codex_attention.py": "01f7bb1897847a2fd2e21f544d98ef59aefc62df346638a1908757b01462f2bf"
+    }
+  },
+  "runtime": {
+    "binary_sha256": "81f1d50b0153837534552c7033f203c99a34d2e1fb3fdadc4ec6002fd834180c",
+    "previous_pin": "f066af4ed0662d5717b8f765e455b23f580ec79ab26917159329814ca5778ea9",
+    "reported_version": "codex-cli 0.0.0",
+    "platform": "macOS arm64",
+    "source_revision": "4546368945c81d4360856161d9c68c07ccc881d5",
+    "source_clean": true,
+    "retained_build_matches_installed_sha256": true,
+    "provenance_limit": "Matching local build artifact and clean source association; not a reproducible-build attestation.",
+    "inspected_contract_sha256": {
+      "codex-rs/app-server-protocol/src/protocol/common.rs": "4376db5b73c7cb2003120ce4ce88cdc4d6a69b16cdbf6d95c6b7a55dd4fe9680",
+      "codex-rs/app-server/src/request_serialization.rs": "b624a9bac63d16f786939f3e9d2c8916faf5d4bc499af7ed099b1e3803f4632a",
+      "codex-rs/app-server/src/request_processors/thread_processor.rs": "6cbb64f37da05dfe25ff7f82b5f8a32b727fd25fd79ca98f431d508b365475d1",
+      "codex-rs/app-server/src/request_processors/thread_lifecycle.rs": "204a9b470a4ee86fbc7cdbc6737291a8dea678c562220153df4ccd57f4545ea4",
+      "codex-rs/app-server/src/outgoing_message.rs": "686875697d32cebf61d965116bc1852f095d11b2d54680516d17c70523f259c8"
+    }
+  },
+  "changes": [
+    "Replace the single qualified Codex pin after live qualification of the installed executable.",
+    "Keep unsupported-binary diagnostics and disconnected response gating across reconnect; qualified restart recovers.",
+    "Trust only newly created disposable fixture directories through private Codex-home configuration; refuse to overwrite existing config.",
+    "Remove wording-dependent Enter injection from the protocol, service and workspace harnesses.",
+    "Redact two home-directory prefixes in the prior PR10 follow-up receipt."
+  ],
+  "contract_review": {
+    "same_thread_resume_read_exclusive_serialization": true,
+    "resume_awaits_pending_request_replay": true,
+    "request_id_types": "string or signed 64-bit integer",
+    "zero_turn_no_rollout_error": "Exact -32600 no-rollout error recognized by the live shared-server probe.",
+    "schema_files": 440,
+    "tracked_attention_methods_advertised": 10,
+    "no_daemon_advertised_in_live_help": true,
+    "new_schema_methods_do_not_expand_adapter_capabilities": true
+  },
+  "validation": {
+    "inventory": {
+      "command": "python3 scripts/probe_codex.py --output build/codex-update/inventory.json",
+      "passed": true,
+      "turns_started": 0
+    },
+    "shared_server": {
+      "command": "python3 scripts/probe_codex_attention.py --output build/codex-update/shared-server.json",
+      "passed": true,
+      "turns_started": 0,
+      "cleanup_complete": true
+    },
+    "protocol_tui": {
+      "command": "python3 scripts/check_codex_attention.py --live-glm --with-tui --output build/codex-update/protocol-live-trusted.json",
+      "passed": true,
+      "cases": [
+        {
+          "case": "input",
+          "effective_model": "zai,glm-5.3",
+          "effective_provider": "lapis_probe",
+          "passed": true,
+          "request_id_type": "int",
+          "owner_delivery": true,
+          "observer_resume_replay": true,
+          "reconnect_replay": true,
+          "pending_at_serialized_read_boundary": true,
+          "resolved_while_disconnected_absent_at_boundary": true,
+          "reconciled_idle_and_completed_turn": true,
+          "explicit_observer_response": true,
+          "matching_resolution": true,
+          "completed_turn": true,
+          "tui_displayed_request": true
+        },
+        {
+          "case": "approval",
+          "effective_model": "zai,glm-5.3",
+          "effective_provider": "lapis_probe",
+          "passed": true,
+          "request_id_type": "int",
+          "owner_delivery": true,
+          "observer_resume_replay": true,
+          "reconnect_replay": true,
+          "pending_at_serialized_read_boundary": true,
+          "resolved_while_disconnected_absent_at_boundary": true,
+          "reconciled_idle_and_completed_turn": true,
+          "explicit_observer_response": true,
+          "matching_resolution": true,
+          "completed_turn": true,
+          "tui_displayed_request": true
+        }
+      ],
+      "cleanup_complete": true
+    },
+    "service_desktop": {
+      "command": "QSG_RENDER_LOOP=threaded python3 scripts/check_service_attention.py --live-glm --desktop --output build/codex-update/service-live/receipt.json",
+      "passed": true,
+      "checks": [
+        "managed TUI startup and attention attachment",
+        "real command approval through desktop controls",
+        "real command approval over service IPC",
+        "pending request survives same-child reattachment",
+        "stale token rejected",
+        "source resolution and successful continuation",
+        "invalid answers rejected with an exact retry token",
+        "real user-input answer through desktop controls",
+        "real user-input answer over service IPC and successful continuation",
+        "archived source disables replies; restored source reconciles in a fresh epoch",
+        "new request after source recovery is cancelled by an observed turn interruption",
+        "two simultaneous real approvals retain distinct identities and resolve independently"
+      ],
+      "service_reaped": true,
+      "owned_process_groups_cleaned": true
+    },
+    "two_source_workspace": {
+      "command": "QSG_RENDER_LOOP=threaded python3 scripts/check_workspace_attention.py --live-glm --output build/codex-update/workspace-live/receipt.json",
+      "passed": true,
+      "checks": [
+        "safe approval and structured-input fixtures validated before answering",
+        "two service-owned sources remained live while the GUI attached",
+        "two real managed sources were concurrently pending",
+        "production dialogs answered the exact source requests",
+        "both real turns continued successfully after matching responses"
+      ],
+      "services_reaped": [
+        true,
+        true
+      ]
+    },
+    "cli": {
+      "command": "QSG_RENDER_LOOP=threaded python3 scripts/check_cli_launch.py --desktop --codex --output build/codex-update/cli/receipt.json",
+      "passed": true,
+      "cases": 16,
+      "includes_installed_tui": true
+    },
+    "quality": {
+      "command": "just quality",
+      "passed": true,
+      "python_tests": 102,
+      "raw_receipt": "build/codex-update/quality-receipt.json"
+    },
+    "desktop": {
+      "command": "QSG_RENDER_LOOP=threaded just desktop",
+      "passed": true,
+      "ctest_suites": 22,
+      "static_checks": [
+        "clang-format",
+        "clang-tidy",
+        "Cppcheck"
+      ],
+      "raw_receipt": "build/codex-update/desktop-receipt.json"
+    },
+    "sanitizers": {
+      "commands": [
+        "cmake --build build/desktop-asan --parallel 8",
+        "cmake --build build/desktop-tsan --parallel 8",
+        "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-asan -R '^(codex-observer|codex-transport)$' --output-on-failure --no-tests=error",
+        "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-tsan -R '^(codex-observer|codex-transport)$' --output-on-failure --no-tests=error"
+      ],
+      "passed": true,
+      "suites_per_build": 2,
+      "separate_instrumentation": [
+        "ASan/UBSan",
+        "TSan"
+      ]
+    }
+  },
+  "inference": {
+    "fixture_model": "zai,glm-5.3",
+    "fixture_provider": "lapis_probe through CCR loopback 3456; upstream zai success observed in router logs",
+    "delegated_workers": "zai,glm-5.3-flashx through native Responses listener 3457; actual direct routing and upstream success observed",
+    "fallback_used": false
+  },
+  "failed_attempts": [
+    {
+      "receipt": "build/codex-update/protocol-live.json",
+      "result": "Timeout waiting for TUI display; diagnostic rerun isolated the redesigned folder-trust screen. No protocol compatibility success claimed for this attempt.",
+      "repair": "Private fixture trust configuration; both live protocol/TUI cases subsequently passed."
+    },
+    {
+      "log": "build/codex-update/protocol-diagnostic.log",
+      "result": "Diagnostic rerun reached pending replay/read boundary then timed out at folder trust; private PTY capture retained under build/."
+    },
+    {
+      "log": "build/codex-update/quality-initial.log",
+      "result": "Two unused TEXT imports after removing trust Enter injection. Removed imports; quality rerun passed."
+    }
+  ],
+  "review_dispositions": [
+    {
+      "thread": "https://github.com/RESMP-DEV/lapis/pull/10#discussion_r4077893816",
+      "disposition": "fixed",
+      "evidence": "Two home prefixes replaced with ~/ in evidence/pr10-review-followup.json; binary digests and version fields unchanged."
+    },
+    {
+      "source": "independent source audit",
+      "finding": "Missing new-binary live evidence at audit time",
+      "disposition": "Resolved by the new protocol, compiled service/desktop and two-source workspace receipts assembled here; historical receipt remains dated."
+    },
+    {
+      "source": "independent source audit",
+      "finding": "Potential double rounding of arbitrary int64 request IDs",
+      "disposition": "Inapplicable to the current Qt implementation: existing request_id_and_answer_boundaries regression passed in normal and both sanitizer builds, preserving INT64_MIN/MAX and adjacent 2^53/2^53+1 IDs via toInteger."
+    },
+    {
+      "source": "independent integration review",
+      "disposition": "No actionable defects in the changed observer lifecycle or private trust fixtures. Parent live/runtime and compiled checks supply the validation not run by the reviewer."
+    }
+  ],
+  "limitations": [
+    "Only this exact executable digest is accepted; the older pin is retained in dated receipts, not the production allowlist.",
+    "Only command approvals and structured user input are response-qualified; new schema entries do not establish additional capabilities.",
+    "macOS only. No Linux UI, 32-session or latency-performance qualification.",
+    "No changes to the global Codex installation, provider configuration, daemon or user trust configuration.",
+    "No dependency manifest or lockfile changes; no packaging or redistribution clearance.",
+    "Native input and renderer implementations are unchanged; this update does not claim a new physical input or presentation-latency measurement."
+  ]
+}

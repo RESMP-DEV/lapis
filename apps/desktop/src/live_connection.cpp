@@ -25,6 +25,13 @@ void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpe
                                wire::AttachMode mode) {
     live_ = std::make_unique<LiveConnection>(*this, endpoint, launch, mode);
 }
+void SessionPreview::restoreLive(const WorkspaceEntry& entry) {
+    setSessionId(QString::fromLatin1(entry.identity.session_id.toHex()));
+    live_ = std::make_unique<LiveConnection>(*this, entry);
+}
+std::optional<WorkspaceEntry> SessionPreview::reconnectEntry() const {
+    return live_ ? live_->reconnectEntry() : std::nullopt;
+}
 void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
     live_snapshot_ = std::move(snapshot);
     live_snapshot_received_ = true;
@@ -131,12 +138,23 @@ void SessionPreview::reconnect() {
         live_->begin(wire::AttachMode::reconnect);
 }
 void SessionPreview::discoverSession() {
-    if (live_)
-        live_->begin(wire::AttachMode::discover);
+    if (!live_)
+        return;
+    if (live_->reconnectOnly()) {
+        setActivity(QStringLiteral("Cannot discover a reconnect-only workspace entry."));
+        return;
+    }
+    live_->begin(wire::AttachMode::discover);
 }
 void SessionPreview::startNewSession() {
-    if (live_)
-        live_->begin(wire::AttachMode::create);
+    if (!live_)
+        return;
+    if (live_->reconnectOnly()) {
+        setActivity(
+            QStringLiteral("Cannot create a session from a reconnect-only workspace entry."));
+        return;
+    }
+    live_->begin(wire::AttachMode::create);
 }
 void SessionPreview::setConnection(const QString& state, bool input_ready) {
     connection_state_ = state;
@@ -156,14 +174,29 @@ LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
     : document_(document), endpoint_(std::move(endpoint)),
       service_arguments_{QStringList{endpoint_, launch.directory, launch.program} +
                          launch.arguments},
-      fingerprint_(session::launch_fingerprint(launch)), wanted_size_(launch.size) {
+      fingerprint_(session::launch_fingerprint(launch)), agent_(launch.agent),
+      wanted_size_(launch.size) {
+    if (launch.agent == session::AgentMode::codex)
+        service_arguments_.prepend(QStringLiteral("--codex"));
+    else if (launch.agent == session::AgentMode::claude)
+        service_arguments_.prepend(QStringLiteral("--claude"));
+    initialize(launch.agent == session::AgentMode::codex ? codex_sync_timeout_ms
+                                                         : terminal_sync_timeout_ms,
+               mode);
+}
+LiveConnection::LiveConnection(SessionPreview& document, const WorkspaceEntry& entry)
+    : document_(document), endpoint_(entry.endpoint), fingerprint_(entry.fingerprint),
+      expected_identity_(entry.identity), verified_entry_(entry), agent_(entry.agent),
+      reconnect_only_{true} {
+    initialize(entry.agent == session::AgentMode::codex ? codex_sync_timeout_ms
+                                                        : terminal_sync_timeout_ms,
+               wire::AttachMode::reconnect);
+}
+void LiveConnection::initialize(int synchronization_timeout, wire::AttachMode mode) {
     retry_.setSingleShot(true);
     retry_.setInterval(100);
     handshake_.setSingleShot(true);
-    handshake_.setInterval(launch.agent == session::AgentMode::codex ? codex_sync_timeout_ms
-                                                                     : terminal_sync_timeout_ms);
-    if (launch.agent == session::AgentMode::codex)
-        service_arguments_.prepend(QStringLiteral("--codex"));
+    handshake_.setInterval(synchronization_timeout);
     connect(&handshake_, &QTimer::timeout, this,
             [this] { fail(QStringLiteral("Session synchronization timed out")); });
     connect(&retry_, &QTimer::timeout, this, [this] { connectSocket(); });
@@ -191,6 +224,11 @@ LiveConnection::~LiveConnection() {
 void LiveConnection::begin(wire::AttachMode mode) {
     if (!failed_)
         return;
+    if (reconnect_only_ && mode != wire::AttachMode::reconnect) {
+        report(
+            QStringLiteral("A reconnect-only workspace entry cannot create or discover sessions."));
+        return;
+    }
     failed_ = false;
     connected_ = false;
     ready_ = false;
@@ -206,7 +244,9 @@ void LiveConnection::begin(wire::AttachMode mode) {
     try {
         endpoint_ = session::posix::prepare_endpoint(endpoint_);
         request_ = {.mode = mode, .fingerprint = fingerprint_, .expected = {}};
-        if (mode == wire::AttachMode::reconnect) {
+        if (mode == wire::AttachMode::reconnect && expected_identity_) {
+            request_.expected = *expected_identity_;
+        } else if (mode == wire::AttachMode::reconnect) {
             const auto saved = session::read_descriptor(endpoint_, fingerprint_);
             if (!saved) {
                 fail(QStringLiteral(
@@ -227,6 +267,9 @@ void LiveConnection::begin(wire::AttachMode mode) {
             service.setStandardErrorFile(log, QIODevice::Append);
             if (!service.startDetached())
                 throw std::runtime_error("Could not start session service");
+            // Publish only after spawn succeeds. A failed detached launch leaves
+            // the card without an identity it never actually attached to.
+            document_.setSessionId(QString::fromLatin1(request_.expected.session_id.toHex()));
         }
         connectSocket();
     } catch (const std::exception& error) {
@@ -338,6 +381,7 @@ bool LiveConnection::send(wire::Kind kind, const QByteArray& payload) {
     return true;
 }
 void LiveConnection::resize(session::TerminalSize size) {
+    wanted_size_requested_ = true;
     if (size == wanted_size_)
         return;
     wanted_size_ = size;
@@ -349,7 +393,10 @@ void LiveConnection::resize(session::TerminalSize size) {
     send(wire::Kind::resize, bytes);
 }
 
-void LiveConnection::setWantedSize(session::TerminalSize size) { wanted_size_ = size; }
+void LiveConnection::setWantedSize(session::TerminalSize size) {
+    wanted_size_requested_ = true;
+    wanted_size_ = size;
+}
 
 void LiveConnection::applyWantedSize() {
     const auto wanted = wanted_size_;
@@ -395,6 +442,8 @@ void LiveConnection::acceptHello(const wire::Hello& hello) {
         return;
     }
     attachment_ = hello.attachment;
+    if (request_.mode == wire::AttachMode::create || request_.mode == wire::AttachMode::discover)
+        document_.setSessionId(QString::fromLatin1(attachment_->identity.session_id.toHex()));
     document_.setServiceIdentity(attachment_->identity.session_id);
     document_.setConnection(QStringLiteral("synchronizing"), false);
     report(QStringLiteral("Restoring terminal screen"));
@@ -405,6 +454,8 @@ void LiveConnection::acceptSnapshot(wire::SnapshotMessage message) {
         throw std::runtime_error("Stale or mismatched terminal snapshot");
     const bool initial = last_sequence_ == 0;
     last_sequence_ = message.sequence;
+    if (initial && !wanted_size_requested_)
+        wanted_size_ = message.snapshot.size;
     document_.setSnapshotTiming(
         {{QStringLiteral("sequence"), QVariant::fromValue(message.sequence)},
          {QStringLiteral("pty_read_ns"), QVariant::fromValue(message.timing.pty_read_ns)},
@@ -442,6 +493,10 @@ void LiveConnection::acceptHistoryReply(wire::HistoryReply reply) {
 void LiveConnection::persistIdentity() {
     if (!attachment_)
         throw std::runtime_error("Cannot persist an unbound session");
+    if (reconnect_only_) {
+        finishSynchronization();
+        return;
+    }
     const auto expected = *attachment_;
     const auto sequence = last_sequence_;
     descriptor_write_ = std::make_unique<QFutureWatcher<QString>>();
@@ -484,6 +539,10 @@ void LiveConnection::finishSynchronization() {
         wire::frame(wire::Kind::ready, wire::encode_ready({*attachment_, last_sequence_}));
     if (socket_->write(ack) != ack.size())
         throw std::runtime_error("Could not acknowledge restored screen");
+    verified_entry_ = WorkspaceEntry{endpoint_,         attachment_->identity, fingerprint_,
+                                     document_.title(), document_.directory(), agent_};
+    expected_identity_ = attachment_->identity;
+    document_.setSessionId(QString::fromLatin1(attachment_->identity.session_id.toHex()));
     ready_ = true;
     handshake_.stop();
     document_.setConnection(QStringLiteral("ready"), true);

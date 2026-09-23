@@ -209,7 +209,6 @@ class Tui:
         self.process = None
         self.output = bytearray()
         self.tail = b""
-        self.trusted = False
 
     async def start(self, arguments, environment, cwd):
         self.master, slave = pty.openpty()
@@ -257,10 +256,6 @@ class Tui:
     async def wait(self, needle):
         async with asyncio.timeout(15):
             while needle not in self.output:
-                if not self.trusted and b"Press enter to continue" in self.output:
-                    # Trust only this runner's empty, disposable directory/private home.
-                    os.write(self.master, b"\r")
-                    self.trusted = True
                 if self.process.returncode is not None:
                     raise RuntimeError(
                         "Fixture TUI exited before displaying its request"
@@ -278,7 +273,16 @@ class Tui:
                 self.master = None
 
 
-def server_arguments(binary, socket):
+def trust_fixture_directory(home, cwd):
+    """Trust one disposable fixture in its new private Codex home."""
+    with (home / "config.toml").open("x") as config:
+        config.write(
+            f'[projects.{json.dumps(str(cwd.resolve()))}]\ntrust_level = "trusted"\n'
+        )
+
+
+def probe_configuration_arguments():
+    """Shared isolated GLM route for app-server and ordinary-TUI fixtures."""
     config = {
         "model": MODEL,
         "model_provider": "lapis_probe",
@@ -298,10 +302,19 @@ def server_arguments(binary, socket):
         "skills.include_instructions": False,
         "analytics.enabled": False,
     }
-    arguments = [str(binary), "app-server", "--listen", "unix://" + str(socket)]
+    arguments = []
     for key, value in config.items():
         arguments.extend(["-c", key + "=" + json.dumps(value)])
     return arguments
+
+
+def server_arguments(binary, socket):
+    return [
+        str(binary),
+        "app-server",
+        "--listen",
+        "unix://" + str(socket),
+    ] + probe_configuration_arguments()
 
 
 async def roundtrip(case, owner, observer, connect, cwd, receipt, tui_arguments):
@@ -487,6 +500,7 @@ async def run(args, receipt):
         home, cwd = root / "home", root / "fixture"
         home.mkdir()
         cwd.mkdir()
+        trust_fixture_directory(home, cwd)
         environment = {
             **os.environ,
             "CODEX_HOME": str(home),

@@ -10,8 +10,13 @@ Dialog {
     // invalidate its token, but must never replace a draft or an IME composition.
     property var draft: null
     property var answers: ({})
+    property var answerModes: ({})
     property string feedback: ""
     property bool responseQueued: false
+    property string lastDraftSessionId: ""
+    property string lastDraftToken: ""
+    property var draftCache: ({})
+    readonly property int maximumDrafts: 64
     readonly property var requests: session ? session.attentionRequests : []
     readonly property var current: {
         if (draft) {
@@ -23,6 +28,8 @@ Dialog {
         return null
     }
     readonly property bool canRespond: current !== null && current.enabled
+    readonly property bool terminalOnly: draft !== null &&
+                                         draft.details.responseLocation === "terminal"
     readonly property bool answersComplete: {
         const questions = draft ? (draft.details.questions || []) : []
         for (const question of questions) {
@@ -32,24 +39,132 @@ Dialog {
         return true
     }
 
-    function showSession(value) {
+    function draftKey(sessionId, token) {
+        return JSON.stringify([sessionId, token])
+    }
+
+    function rememberDraft() {
+        if (!session || !draft || !requestExists(session, draft.token))
+            return
+        const key = draftKey(session.sessionId, draft.token)
+        const retained = {}
+        retained[key] = {
+            sessionId: session.sessionId,
+            token: draft.token,
+            draft: draft,
+            answers: answers,
+            answerModes: answerModes,
+            feedback: feedback,
+            responseQueued: responseQueued
+        }
+        for (const existingKey of Object.keys(draftCache)) {
+            if (Object.keys(retained).length >= maximumDrafts)
+                break
+            if (existingKey !== key)
+                retained[existingKey] = draftCache[existingKey]
+        }
+        draftCache = retained
+        lastDraftSessionId = session.sessionId
+        lastDraftToken = draft.token
+    }
+
+    function restoreDraft(sessionId, token) {
+        const cached = draftCache[draftKey(sessionId, token)]
+        if (!cached)
+            return false
+        draft = cached.draft
+        answers = cached.answers
+        answerModes = cached.answerModes
+        feedback = cached.feedback
+        responseQueued = cached.responseQueued
+        lastDraftSessionId = sessionId
+        lastDraftToken = token
+        return true
+    }
+
+    function requestExists(value, token) {
+        if (!value)
+            return false
+        for (const request of value.attentionRequests) {
+            if (request.token === token)
+                return true
+        }
+        return false
+    }
+
+    function pruneDrafts(activeSessions) {
+        const retained = {}
+        for (const key of Object.keys(draftCache)) {
+            const cached = draftCache[key]
+            let alive = false
+            for (const value of activeSessions) {
+                if (value && value.sessionId === cached.sessionId &&
+                        requestExists(value, cached.token)) {
+                    alive = true
+                    break
+                }
+            }
+            if (alive)
+                retained[key] = cached
+        }
+        draftCache = retained
+        // A changed request disables its open form without destroying typed text.
+        // Removing the entire session invalidates the dialog owner instead.
+        if (session && !activeSessions.some(value => value === session))
+            close()
+    }
+
+    function showSession(value, preferredToken) {
+        rememberDraft()
+        const restoreSessionId = value && lastDraftSessionId === value.sessionId ?
+                    lastDraftSessionId : ""
+        const restoreToken = restoreSessionId ? lastDraftToken : ""
         session = value
         draft = null
         answers = ({})
+        answerModes = ({})
         feedback = ""
         responseQueued = false
         open()
+        const targetToken = preferredToken ? preferredToken : restoreToken
+        if (targetToken)
+            selectExactRequest(targetToken)
     }
     function selectRequest(value) {
-        draft = value
-        answers = ({})
-        feedback = ""
-        responseQueued = false
+        if (!session || !value)
+            return
+        rememberDraft()
+        if (!restoreDraft(session.sessionId, value.token)) {
+            draft = value
+            answers = ({})
+            answerModes = ({})
+            feedback = ""
+            responseQueued = false
+        }
+        rememberDraft()
+    }
+    function selectExactRequest(token) {
+        if (!session)
+            return false
+        for (const request of requests) {
+            if (request.token === token) {
+                selectRequest(request)
+                return true
+            }
+        }
+        return false
     }
     function setAnswer(id, value) {
+        updateAnswer(id, value, false)
+    }
+    function updateAnswer(id, value, fromOption) {
         const updated = Object.assign({}, answers)
+        const modes = Object.assign({}, answerModes)
+        modes[id] = fromOption === true
+        answerModes = modes
         updated[id] = {answers: [value]}
         answers = updated
+        rememberDraft()
     }
     function respond(choice) {
         if (!canRespond || !answersComplete)
@@ -57,6 +172,7 @@ Dialog {
         responseQueued = session.respondAttention(draft.token, {choice: choice, answers: answers})
         feedback = responseQueued ? ""
             : qsTr("Request changed or the connection is unavailable. Select the current request.")
+        rememberDraft()
     }
     function choiceLabel(choice) {
         if (choice === "accept") return qsTr("Approve command")
@@ -78,7 +194,22 @@ Dialog {
     }
     standardButtons: Dialog.Close
     closePolicy: Popup.CloseOnEscape
-    onClosed: { draft = null; answers = ({}); session = null; responseQueued = false }
+    onClosed: {
+        rememberDraft()
+        if (draft && session) {
+            lastDraftSessionId = session.sessionId
+            lastDraftToken = draft.token
+        }
+        draft = null
+        answers = ({})
+        answerModes = ({})
+        responseQueued = false
+        session = null
+    }
+    onRequestsChanged: {
+        if (typeof workspace !== "undefined")
+            pruneDrafts(workspace.sessions)
+    }
 
     contentItem: ScrollView {
         clip: true
@@ -112,7 +243,7 @@ Dialog {
             ColumnLayout {
                 Layout.fillWidth: true
                 visible: dialog.draft !== null
-                enabled: dialog.canRespond
+                enabled: dialog.canRespond || dialog.terminalOnly
                 Label {
                     Layout.fillWidth: true
                     text: dialog.draft ? dialog.draft.summary : ""
@@ -141,12 +272,23 @@ Dialog {
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                 }
+                Label {
+                    Layout.fillWidth: true
+                    objectName: "terminalOnlyNotice"
+                    visible: dialog.terminalOnly
+                    text: qsTr("Answer in the originating terminal.")
+                    font.weight: Font.Medium
+                    wrapMode: Text.Wrap
+                }
                 Repeater {
                     model: dialog.draft ? (dialog.draft.details.questions || []) : []
                     delegate: ColumnLayout {
                         id: questionForm
                         required property var modelData
                         readonly property var options: modelData.options || []
+                        readonly property string savedAnswer: dialog.answers[modelData.id]
+                            ? dialog.answers[modelData.id].answers[0] : ""
+                        readonly property bool optionSelected: dialog.answerModes[modelData.id] === true
                         Layout.fillWidth: true
                         Label {
                             Layout.fillWidth: true
@@ -161,11 +303,11 @@ Dialog {
                             visible: questionForm.options.length > 0
                             model: questionForm.options
                             textRole: "label"
-                            currentIndex: -1
+                            currentIndex: questionForm.optionSelected
+                                ? questionForm.options.findIndex(option => option.label === questionForm.savedAnswer) : -1
                             displayText: currentIndex < 0 ? qsTr("Choose an answer") : currentText
                             onActivated: {
-                                freeAnswer.text = ""
-                                dialog.setAnswer(questionForm.modelData.id, currentText)
+                                dialog.updateAnswer(questionForm.modelData.id, currentText, true)
                             }
                         }
                         Label {
@@ -183,8 +325,8 @@ Dialog {
                             placeholderText: qsTr("Type an answer")
                             maximumLength: 8192
                             echoMode: questionForm.modelData.isSecret === true ? TextInput.Password : TextInput.Normal
+                            text: questionForm.optionSelected ? "" : questionForm.savedAnswer
                             onTextEdited: {
-                                optionChoice.currentIndex = -1
                                 dialog.setAnswer(questionForm.modelData.id, text)
                             }
                         }

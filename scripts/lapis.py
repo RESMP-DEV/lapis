@@ -35,6 +35,21 @@ DEFAULT_SOCKET = RUNTIME_DIR / "desktop-v6.sock"
 # Window tests belong on the laptop panel, not a large external display. Override
 # with LAPIS_SCREEN, or pass --screen to the app directly.
 DEFAULT_SCREEN = "built-in"
+# This must mirror every value-taking desktop option declared by add_options()
+# in apps/desktop/src/main.cpp. Qt owns the parser; there is no shared manifest.
+VALUE_OPTIONS = frozenset(
+    {
+        "--capture",
+        "--capture-delay",
+        "--cwd",
+        "--qml",
+        "--scenario",
+        "--screen",
+        "--socket",
+        "--trace",
+        "--workspace",
+    }
+)
 
 
 class SetupError(RuntimeError):
@@ -160,24 +175,62 @@ def validate_runtime_directory(runtime_stat):
         raise SetupError(f"Runtime directory must have mode 0700: {RUNTIME_DIR}")
 
 
+def has_positional_program(arguments):
+    """Mirror the desktop parser for arguments before its ``--`` delimiter."""
+    expecting_value = False
+    for argument in arguments:
+        if expecting_value:
+            expecting_value = False
+            continue
+        if argument.startswith("--"):
+            name, separator, _ = argument.partition("=")
+            expecting_value = not separator and name in VALUE_OPTIONS
+            continue
+        if argument.startswith("-") and argument != "-":
+            continue
+        return True
+    return False
+
+
 def launch(arguments):
     """Exec the desktop app, passing through any extra arguments."""
     arguments = list(arguments)
     separator = arguments.index("--") if "--" in arguments else len(arguments)
     app_arguments = arguments[:separator]
-    has_program = separator < len(arguments) - 1
+    separator_program = separator < len(arguments) - 1
     if not any(a == "--screen" or a.startswith("--screen=") for a in app_arguments):
         screen = os.environ.get("LAPIS_SCREEN", DEFAULT_SCREEN)
         if screen:
             arguments[:0] = ["--screen", screen]
     command = [desktop_binary(), *arguments]
     if (
-        not has_program
+        not separator_program
         and "--ui-preview" not in app_arguments
-        and not any(a == "--socket" or a.startswith("--socket=") for a in app_arguments)
+        and not any(
+            a in ("--socket", "--workspace")
+            or a.startswith(("--socket=", "--workspace="))
+            for a in app_arguments
+        )
     ):
         private_runtime_dir()
-        command[1:1] = ["--socket", str(DEFAULT_SOCKET)]
+        explicit_session = any(
+            a
+            in (
+                "--new-session",
+                "--discover",
+                "--cwd",
+                "--codex",
+                "--claude",
+                "--smoke-input",
+            )
+            or a.startswith("--cwd=")
+            for a in app_arguments
+        ) or has_positional_program(app_arguments)
+        command[1:1] = (
+            ["--socket", str(DEFAULT_SOCKET)]
+            if explicit_session
+            else ["--workspace", str(RUNTIME_DIR / "workspace-v1.json")]
+        )
     os.environ.update(environment())
     return _run(command, check=False).returncode
 

@@ -2,6 +2,9 @@
 
 import asyncio
 import unittest
+import tempfile
+import tomllib
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 from scripts.check_codex_attention import (
@@ -9,6 +12,7 @@ from scripts.check_codex_attention import (
     approved_fixture,
     matches,
     resume_snapshot,
+    trust_fixture_directory,
 )
 
 
@@ -32,6 +36,21 @@ class FakeTransport:
 
 
 class DecisionTests(unittest.TestCase):
+    def test_trust_is_scoped_and_cannot_overwrite_config(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            cwd = home / 'fixture with "quotes"'
+            trust_fixture_directory(home, cwd)
+            config = home / "config.toml"
+            self.assertEqual(
+                tomllib.loads(config.read_text()),
+                {"projects": {str(cwd.resolve()): {"trust_level": "trusted"}}},
+            )
+            original = config.read_bytes()
+            with self.assertRaises(FileExistsError):
+                trust_fixture_directory(home, home / "another")
+            self.assertEqual(config.read_bytes(), original)
+
     def test_exact_command_only(self):
         for command in (
             'python3 -c "print(123456789)"',

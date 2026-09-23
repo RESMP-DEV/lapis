@@ -11,10 +11,17 @@ namespace {
 QString token(const session::wire::AttentionSnapshot& snapshot,
               const session::attention::Pending& pending) {
     const auto& attachment = snapshot.attachment;
+    const auto* number = std::get_if<std::int64_t>(&pending.request.id);
+    const auto request_id =
+        number
+            ? QStringLiteral("n") + QString::number(*number)
+            : QStringLiteral("s") +
+                  QString::fromLatin1(
+                      QByteArray::fromStdString(std::get<std::string>(pending.request.id)).toHex());
     return QString::fromLatin1(attachment.identity.session_id.toHex()) + ':' +
            QString::fromLatin1(attachment.identity.epoch.toHex()) + ':' +
            QString::number(attachment.generation) + ':' + QString::number(pending.source_epoch) +
-           ':' + QString::number(pending.revision);
+           ':' + QString::number(pending.revision) + ':' + request_id;
 }
 } // namespace
 bool SessionPreview::hasAttentionSource() const { return attention_ && attention_->available; }
@@ -43,19 +50,19 @@ QVariantList SessionPreview::attentionRequests() const {
         const auto& pending = item.pending;
         const auto key = token(*attention_, pending);
         const bool responding = pending.submitted || submitted_attention_.contains(key);
+        const bool eligible = attentionReady() && !responding &&
+                              pending.status == session::attention::RequestStatus::pending;
         QStringList choices;
         for (const auto& choice : pending.request.choices)
             choices.append(QString::fromStdString(choice));
-        values.append(QVariantMap{
-            {"token", key},
-            {"reason", QString::fromStdString(pending.request.reason)},
-            {"summary", QString::fromStdString(pending.request.summary)},
-            {"choices", choices},
-            {"details", item.details.toVariantMap()},
-            {"responding", responding},
-            {"enabled", attentionReady() && !responding &&
-                            pending.status == session::attention::RequestStatus::pending &&
-                            !choices.isEmpty()}});
+        values.append(QVariantMap{{"token", key},
+                                  {"reason", QString::fromStdString(pending.request.reason)},
+                                  {"summary", QString::fromStdString(pending.request.summary)},
+                                  {"choices", choices},
+                                  {"details", item.details.toVariantMap()},
+                                  {"responding", responding},
+                                  {"attentionEligible", eligible},
+                                  {"enabled", eligible && !choices.isEmpty()}});
     }
     return values;
 }

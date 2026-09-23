@@ -5,7 +5,7 @@ Repository: [RESMP-DEV/lapis](https://github.com/RESMP-DEV/lapis).
 lapis is an early-stage project for a desktop workspace that supervises live CLI
 agents. The direction is persistent sessions, fast switching, GPU rendering and
 an opt-in attention carousel. macOS and Codex are the active target; a Linux
-desktop port is deferred. A macOS terminal window is now available for a visual checkpoint.
+desktop port is deferred. The macOS workspace supports two retained sessions.
 
 The priority is **responsiveness, then ergonomics, then visuals**. Design for
 high-end M-series hardware and high-refresh displays; use generous, bounded RAM
@@ -18,74 +18,54 @@ to that same file so Codex and Claude Code share one set of project instructions
 
 ## Current status
 
-The macOS preview has a **live terminal in the enlarged pane** (shell by default) and a horizontal
-strip of five placeholder sessions plus the live preview below it. The cards provide manual navigation through the live session and development
-fixtures; they do not start additional live processes. **Milestone 1 is
-implemented and qualified on macOS.** Milestone 2 is also qualified for one managed
-Codex session: service attention, explicit desktop decisions and source recovery.
+The macOS workspace retains live terminal, Codex and Claude Code sessions in one window. It
+supports manual switching, identity-checked reconnection and detached services.
+**Milestone 1 is qualified on macOS.** Milestone 2 is qualified for one managed
+Codex session. **Milestone 3 is qualified for two sessions on macOS:** retained
+terminals, a shared attention queue, source-bound decisions, and an opt-in guarded
+carousel. The assembled qualification and measurement limits are recorded in the
+[workspace receipt](evidence/milestone-three-workspace.json), including the
+two-session integration checks repeated after the Claude hook addition.
 
 | Component | Exercised | Remaining |
 | --- | --- | --- |
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
 | PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS | Recovery after service loss and later Linux qualification |
-| Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect | Automatic recovery policy and multi-session registry |
-| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK | Cross-cell contextual shaping, selection and accessibility; Linux GUI port is deferred |
+| Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues, explicit reconnect and retained workspace entries | Automatic recovery policy after service loss |
+| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, guarded manual focus switching, 10 Hz background previews, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK | Cross-cell contextual shaping, selection and accessibility; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
-| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation | Live multi-session routing and automatic carousel |
-| Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Workspace-wide aggregation |
-| Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals | Broader binary and request-kind qualification |
+| Retained workspace | Two real shells, GUI creation, four layouts, independent input/history/geometry, shared archive quotas/failure, same-child GUI reopen, removal/adoption and native IME switching; aggregate attention and guarded carousel | Larger workloads and automatic service recovery |
+| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating, per-request drafts, shared queue, pin/pause/snooze controls | Broader request-kind qualification |
+| Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards, deterministic workspace ordering and quiet-session fairness | Larger-workload profiling |
+| Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect, `/clear` continuation and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
+| Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals; [installed binary qualification](evidence/codex-binary-update.json) | Broader binary and request-kind qualification |
 
-[Desktop evidence](evidence/desktop-preview.json),
-[UI refinement evidence](evidence/ui-preview.json),
-[reconciled UI and test evidence](evidence/reconciliation.json) and
-[adapter evidence](evidence/terminal-adapter.json) delimit these observations.
-Dependency packaging remains unfinished; this is a local developer build.
-The [two UI refinements](docs/architecture.md#ui-refinement-checkpoint) are
-implemented for visual review: an isolated preview/debugging workflow and a compact
-header with replayable red attention cues. Configurable navigation, layouts, themes
-and card densities are available. Managed Codex sessions now surface real requests;
-automatic carousel behavior remains later work. The completed attention state
-and verified Codex request handling are described in the
-[Milestone 2 plan](docs/architecture.md#milestone-2-attention-and-codex-plan)
-with its route decision, implementation slices and acceptance checks.
-The first checkpoint implemented the standalone attention core and exercised real
-Codex request round trips. [Milestone 2 evidence](evidence/milestone-two.json) now
-records assembled service/desktop acceptance on macOS. The
-[PR #7 review receipt](evidence/pr7-review.json) covers subsequent lifecycle,
-startup, queue-boundary and multi-question fixes. Its
-[follow-up receipt](evidence/pr7-review-followup.json) records request-ID and
-reconciliation fixes, order-independent question checks and refreshed validation.
-The [thread-repair receipt](evidence/pr7-thread-repairs.json) records initial-thread
-classification, config separator validation, preserved cleanup diagnostics and
-the disposition of the remaining review threads.
-The [latest PR #7 receipt](evidence/pr7-classification-repairs.json) records
-post-binding thread isolation, transport and fixture cleanup, backend exit
-diagnostics, and the evidence-based disposition of the new review batch.
-Following the quality cleanup in PR #6, Milestone 2
-now includes the production Codex adapter, session-service integration and explicit
-desktop response controls. Request arrival never moves keyboard focus. See the
-[attention test procedure](CONTRIBUTING.md#codex-attention-qualification).
-Latency and warm-switch targets remain provisional.
+The [architecture](docs/architecture.md#milestone-3-supervising-two-live-sessions-on-macos)
+owns milestone scope and acceptance. Milestone 3 exercises two real shells and two
+managed Codex sources with simultaneous approval and structured-input requests.
+It retains the UI layouts and the corrections merged in PRs #7, #8 and #9.
+Automatic navigation starts off, including after reopening, and request arrival
+alone never moves keyboard focus or approves a request.
 
-Explicit CLI launch is now implemented through the existing service-owned PTY.
-The [launch receipt](evidence/cli-launch.json) records the exercised macOS scope and
-dated sanitizer limitations. The [PR #2 repair](evidence/pr2-review.json) resolves
-the renderer TSan reports and records subsequent review fixes. The
-[merge preparation receipt](evidence/pr2-merge.json) covers cursor presentation,
-descendant cleanup and contributor/test procedures. The [session reconnect receipt](evidence/session-reconnect.json) records identity binding,
-input readiness and failure-boundary checks. The [terminal fidelity receipt](evidence/terminal-fidelity.json)
-records native GPU regression checks for cell positioning, fallback glyphs,
-decorations, resize and cursor repaint. Milestone 1 now includes bounded disk history,
-input-context lifecycle checks and an opt-in correlated timing probe. The
-[milestone qualification receipt](evidence/milestone-one.json) records the assembled
-checks, including automated Option-key, paste and native text-composition
-acceptance using the built-in Japanese input method as a test fixture.
-The [review-fix receipt](evidence/pr3-review.json) covers bounded error-shutdown
-draining, storage retry status and commit-only input regressions.
-The [ordered plan](docs/architecture.md#persistent-terminal-acceptance) records
-the completed scope and later work.
-The [Codex route comparison](adapters/codex/README.md#integration-route-comparison)
+Qualification history remains in [Milestone 1](evidence/milestone-one.json),
+[Milestone 2](evidence/milestone-two.json), the
+[PR #7 repairs](evidence/pr7-classification-repairs.json), and the dated receipts
+under [evidence/](evidence/). These distinguish terminal behavior, native input,
+GPU pixel checks, real adapter traffic, and timing measurements. The
+[Codex route comparison](adapters/codex/README.md#integration-route-comparison)
 separates terminal operation from attention delivery.
+
+Latency targets remain provisional. Two sessions do not qualify 32-session
+capacity, Linux UI, or full response/reconciliation support for another adapter.
+Selection, accessibility, cross-cell shaping and automatic recovery after service death remain later work.
+Dependency packaging and redistribution notices remain unfinished; this is a
+local developer build.
+
+Claude Code can be selected when adding a session. Its permission and input
+notices appear in the shared queue; answer them in Claude's terminal. Lapis does
+not change Claude's approval policy or install global hooks. The
+[Claude hook receipt](evidence/claude-code-hooks.json) records runtime qualification.
+See the [hook contract and limitations](docs/architecture.md#claude-code-hooks-an-observation-only-extension).
 
 ## Run the window on macOS
 
@@ -98,7 +78,7 @@ python3 scripts/lapis.py bootstrap # build the pinned Ghostty terminal library (
 python3 scripts/lapis.py quality   # repository/Python quality checks (no GUI)
 python3 scripts/lapis.py check     # compile, lint, format-check and run CTest
 python3 scripts/lapis.py build     # build the desktop app and run its checks
-python3 scripts/lapis.py run       # open the live shell window
+python3 scripts/lapis.py run       # open runtime/workspace-v1.json
 python3 scripts/lapis.py ui        # isolated fixture, source-QML reload and attention replay
 python3 scripts/lapis.py ui-debug  # launch the isolated fixture in LLDB
 python3 scripts/lapis.py ui-check  # bounded preview captures and failure cases
@@ -107,24 +87,43 @@ python3 scripts/lapis.py cli-check # CLI/service/GUI acceptance fixtures
 
 `just` recipes with the same names wrap the same launcher (`just run`,
 `just ui-check`, and so on), and `python3 scripts/lapis.py` alone lists every
-command. The launcher locates the bootstrapped terminal dependency, supplies the
-socket path, and opens windows on the laptop panel. `just native-input` runs the
-automated macOS keyboard, clipboard and Japanese IME checks.
+command. The launcher locates the bootstrapped terminal dependency and opens
+windows on the laptop panel. `just run` uses `runtime/workspace-v1.json`;
+pass `--workspace /absolute/path.json` explicitly for another registry. Pass
+`--socket`, `--cwd` or an explicit `-- program` only for the legacy single-session
+mode. `just native-input` runs the automated macOS keyboard, clipboard and
+Japanese IME checks.
 
-On first use, choose **Session → Start new session**. The shell starts in this
-checkout. Closing the window detaches it; reopening verifies the saved identity
-and restores the same service-owned shell. Input stays disabled until its screen
-is restored. The pane starts your login shell: `$SHELL` when set, otherwise the
-account's shell from the user database, so a launch from an agent or script with
-an empty environment does not silently fall back to `/bin/sh` and a `sh-3.2$`
-prompt. Type `exit` to end the shell. An additional window replaces the previous
-attachment; there is still one attached window per socket.
+An empty workspace offers **Session → Create or adopt…** for a shell, Codex or Claude Code.
+Closing the window detaches every live child; removing a workspace entry detaches
+that entry without terminating it. Reopening reconnects only: it verifies the
+recorded identity and restores the screen, never relaunching a dead service or
+replaying input. Input stays disabled until a screen is restored and is guarded
+during paste and IME composition while focus changes manually. The pane starts
+your login shell: `$SHELL` when set, otherwise the account's shell from the user
+database. Type `exit` to end a shell. One GUI may attach per endpoint.
 
-The Session menu offers Reconnect, Discover existing session, and Start new
-session after disconnection. Reconnect never starts another process or replays
-unsent input. If the old service ended or the endpoint now belongs to another
-session, choose an explicit action. Builds stay under `build/`; private sockets,
-logs and the bounded `.session` identity hint stay under `runtime/`.
+Entries become durable after their first verified connection; wait for Live terminal
+before closing a newly created session. The registry is private, owner-locked, atomically written and bounded to 64 KiB
+and eight entries. Its reconnect-only JSON stores endpoint, identity,
+fingerprint, title, directory and agent—never commands, transcripts or
+credentials. Endpoints are exported in canonical form, and identity fields use
+lowercase hex. If saving fails, the workspace reports the error and disables
+registry changes; after correcting the cause, use **Session → Retry saving
+workspace**. Each explicit retry validates the existing storage again and never
+overwrites corrupt content. Live terminals remain usable. The single-session menu keeps explicit reconnect/discover/new-session
+actions; the workspace menu separates create/adopt and remove/detach. Builds stay
+under `build/`; private sockets, logs and bounded workspace/identity files stay
+under `runtime/`.
+
+Use the **Workspace** button to inspect attention from every retained session and
+open its source-bound response form. Drafts stay with their exact request while
+you move between forms, with the 64 most recent drafts retained in memory. Reviewing a request does not switch the terminal or
+approve it. The same panel provides **Automatic**, **Paused**, **Pinned**,
+and per-request **Snooze** controls. Automatic switching waits for an active window
+and idle input; typing, held keys, paste, composition, dialogs and dragging guard
+the current owner. Manual navigation takes precedence. Carousel settings and
+snoozes are not persisted.
 
 Use **Older**, **Newer**, and **Live** above the terminal to browse archived
 output. History is read only: keys, paste and terminal resize resume only after
@@ -155,12 +154,13 @@ cancel or send its answers. Sending does not clear it; source resolution does.
 Unsupported request kinds must be answered in the terminal. Lost or unqualified
 sources disable the controls; reattachment reconciles before enabling them.
 
-Omit `--codex` for plain terminal launch, which forwards Codex options literally.
+Omit `--codex` and `--claude` for plain terminal launch, which forwards agent options literally.
 That mode retains the upstream CLI's backend ownership. Other executables and literal arguments work after
 `--`. Explicit programs or `--cwd` require a socket, which the launcher supplies
 by default; a launch mismatch is rejected before replacing the existing window.
-No hooks or approval settings are changed. There is still one live pane per
-window; its other cards remain fixtures.
+Plain terminal mode installs no attention hooks or approval settings. The explicit
+socket path opens one live session; the default workspace retains multiple live
+sessions, while `ui` uses fixture cards.
 
 The default socket is `runtime/desktop-v6.sock`. Older v1/v2/v3/v4/v5 sessions are not
 migrated or terminated by this build. See the

@@ -5,7 +5,10 @@ This is the single implementation plan for lapis. See the
 macOS is the active target. Milestones 1 and 2 are qualified for the recorded
 single-session scope: a persistent terminal and managed Codex attention with
 explicit desktop responses. The quality baseline from PR #6 remains in force.
-Multi-session routing and carousel work belong to Milestone 3.
+[Milestone 3](#milestone-3-supervising-two-live-sessions-on-macos) has
+retained entries, workspace attention and guarded opt-in navigation assembled on
+macOS. Its two-session acceptance and measurement limits are recorded in the
+[workspace receipt](../evidence/milestone-three-workspace.json).
 A Linux desktop port is deferred; the headless engine has
 already been exercised on Linux, but the session service and desktop have not.
 
@@ -56,7 +59,7 @@ promoting any number to an acceptance threshold.
 | Session service | Processes, PTYs, terminal state/history, adapter connections and session lifecycle | Runs independently of the desktop; keeps consuming output while detached |
 | Terminal-engine adapter | Existing engine's parsing, reflow and mode-aware input encoding | Inside the service; upstream types stay behind a small lapis interface |
 | Agent adapters | Tool-specific activity, attention requests, responses and reconciliation | Service-owned; capabilities verified per tool/version |
-| Attention policy | Pending requests, queue ordering, aging, cooldowns and snoozing | Service-owned state; requests never directly change keyboard focus |
+| Attention policy | Service-owned pending requests; desktop aggregation, navigation aging/cooldowns and presentation snooze | Source state stays authoritative in each service; only desktop focus policy assigns keyboard ownership |
 | Desktop | Layout, navigation, keyboard ownership, IME, selection and accessibility | Receives snapshots; explicitly targets input and decisions to a session |
 | Renderer | Glyph/texture caches, terminal drawing and previews | Desktop render thread; consumes snapshots, never mutable parser objects |
 
@@ -90,8 +93,8 @@ for ownership, shared contracts and integration checks across large changes.
 | Desktop | C++20 and Qt 6.11.2 Quick with public QSGTextNode terminal drawing | macOS Vulkan visual checkpoint exercised; macOS performance qualification remains |
 | Engine | Pinned Ghostty `libghostty-vt` selected for the first adapter | Eight-case macOS/Linux replay passes; isolate unstable C API and resolve dependency-notice gaps |
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
-| Transport | Version 4 local framing with session/epoch/generation identity, readiness and bounded owned snapshots | Automatic recovery policy and multi-session registry remain |
-| Codex mode | Keep the ordinary TUI under a PTY first; evaluate hooks or attachment to its actual server for attention | Installed CLI advertises remote/daemon options; qualify delivery and response ownership before choosing a route |
+| Transport | Version 6 local framing with session/epoch/generation identity, readiness, history paging, attention messages and retained workspace entries | Automatic service recovery remains deferred |
+| Codex mode | Managed ordinary TUI with a dedicated service-owned backend and observer; desktop responses qualified in Milestone 2 | Milestone 3 qualifies routing across two independent sessions; other binaries and request kinds need separate evidence |
 
 The [research receipt](../evidence/terminal-research.json) retains pinned upstream
 sources. Contour is the closest structural reference; WezTerm supplies service/GUI
@@ -187,11 +190,18 @@ desktop executable is advertised as an application.
 The desktop starts a separate Qt Core service on a private local socket. That
 service owns QProcess, a nonblocking POSIX PTY, and the Ghostty terminal. Closing
 the GUI only detaches the local socket: the service continues draining output.
-The enlarged pane is a live terminal; the remaining cards are labeled placeholders.
-One GUI may attach per endpoint. A matching attachment replaces the previous
-connection; a mismatched launch is rejected first. The default socket identifies
-this checkout's shell, and explicit launches choose their own endpoint. Stable session IDs, service epochs and attachment generations bind each
-connection; a multi-session registry and automatic recovery remain later work. This wire format is internal and provisional.
+The enlarged pane and previews represent live workspace entries; the isolated
+preview retains labeled fixtures. One GUI may attach per endpoint. A matching
+attachment replaces the previous connection; a mismatched launch is rejected
+first. The default workspace registry is `runtime/workspace-v1.json`, and an
+explicit `--workspace` path selects another registry. Registry paths are validated
+as private trusted filesystem paths, without importing Unix socket length or
+file-type constraints. Actual service endpoints still obey platform socket limits.
+Exported endpoints are canonical (including macOS `/tmp` aliases), and manifest
+identity fields use canonical lowercase hex. Explicit `--socket` or
+program flags retain the legacy single-session path. Stable session IDs, service
+epochs and attachment generations bind each connection; automatic recovery
+remains later work. This wire format is internal and provisional.
 
 Qt event loops own their respective objects. PTY reads yield after 64 KiB and
 input dispatch after 64 frames. Writes have a 1 MiB queue; text messages are at
@@ -272,9 +282,10 @@ Tab or a Tab chord remains a candidate, not a selected default: plain Tab belong
 to shell completion/TUIs unless explicitly rebound. Keep positions stable and never
 split paste/IME operations. Selecting a session never sends a response.
 
-Keep real attention adapters, automatic carousel movement, multiple live sessions
-and prompt/approval routing out of this fixture. Complete persistent-terminal
-acceptance before expanding the live macOS workspace.
+Keep real attention adapters, automatic carousel movement and workspace-wide
+prompt/approval routing out of this fixture. Multiple live sessions and guarded
+manual navigation are qualified for checkpoint 3A in the
+[workspace receipt](../evidence/milestone-three-workspace.json).
 
 For parallel changes, commit the shared contract first and assign disjoint files
 with one coordinator/build owner. Preview hosting lives in `ui_preview.*`, layout
@@ -823,8 +834,8 @@ epoch; no response is retransmitted.
 **Outcome:** a real Codex session can request attention, receive an explicit
 decision through a verified route, and continue. lapis retains the exact request
 identity, distinguishes disconnection from completion, and prevents stale replies.
-Start with one live terminal and a minimal attention view. Two retained live
-panes, workspace navigation and the automatic carousel remain Milestone 3.
+Start with one live terminal and a minimal attention view. Workspace-wide
+attention aggregation and the guarded automatic carousel remain Milestone 3.
 
 #### Ordered implementation slices
 
@@ -926,25 +937,335 @@ and answer controls, exact rejection/retry, pending reattachment, archive/restor
 reconciliation, a new request cancelled after recovery, and two simultaneous real
 approvals resolved independently. Normal, ASan/UBSan and TSan suites, CLI checks,
 preview captures and native macOS input pass. This qualifies the one-session
-Milestone 2 scope on the recorded binary; Milestone 3 remains unimplemented.
+Milestone 2 scope on its recorded binary. The Milestone 3 section below records
+the completed multi-session qualification and consolidated evidence.
 Update README's status table only as those capabilities land. Linux desktop,
 32-session load, second adapters, selection/accessibility/contextual shaping and
 fresh presentation-latency targets are outside this phase. Packaging/notices/SBOM
 remain an independent prerequisite for binary distribution.
 
+The [2026-09-22 Codex qualification](../evidence/codex-binary-update.json)
+updates the single production binary pin to `81f1d50b…`. The dedicated backend,
+ordinary TUI and observer boundaries are unchanged. The newer binary retains the
+resume/read reconciliation contract; live service and two-session desktop checks
+exercise its response path. Unknown hashes remain disabled and keep their explicit
+failure reason across reconnect attempts. Qualification trusts each disposable
+fixture in its private Codex home; it does not change the user's trust settings.
+
+### Milestone 3: supervising two live sessions on macOS
+
+**All three checkpoints qualified together on macOS; evidence is recorded in
+the [workspace receipt](../evidence/milestone-three-workspace.json).**
+Its consolidation record refreshes the retained-workspace, two-source Codex and
+native-input checks after the Claude hook extension; the original checkpoint
+receipts remain dated evidence with their tested source hashes.
+The outcome is one desktop workspace that retains and supervises two real
+sessions: both continue running and consuming output, manual navigation sends
+input only to the selected session, and attention from either session can be
+reviewed and answered explicitly. The guarded, opt-in carousel uses the same keyboard ownership policy.
+
+The branch retains the Milestone 2 corrections and UI repairs merged in PRs
+#7, #8 and #9. Use the three sequential checkpoints below; passing the first
+checkpoint does not mean the entire milestone is complete.
+
+#### Scope and design decisions
+
+- Qualify **two live sessions in one macOS window**. Use two controlled shells
+  for deterministic input/lifecycle tests and two managed Codex sessions for
+  real cross-session attention. Two sessions is the acceptance workload, not
+  evidence of 32-session capacity.
+- Keep one existing service process, PTY, terminal engine, history store and
+  optional Codex observer per session. A workspace registry discovers and
+  remembers these services; it does not take ownership of their child processes.
+  No service multiplexing rewrite or always-running workspace daemon is needed.
+  Preserve the explicit `--socket` launch/reconnect path and require explicit
+  adoption of older single-session endpoints; never silently migrate their state.
+- Add a bounded, versioned, owner-only workspace manifest under `runtime/`, with
+  atomic writes and a single writer. Record stable lapis session IDs, endpoints,
+  expected service identities, launch fingerprints, display metadata and card
+  order. Do not store prompts, environment secrets or arbitrary command lines.
+  Reuse the service session ID as the stable lapis ID when creating or adopting
+  an entry; do not identify a session by its PID. Separate fresh-launch arguments
+  from the metadata needed to reconnect. The manifest and existing `.session`
+  hints are not proof that a service is alive.
+  Persist a verified identity only after accepting its initial attachment/screen.
+  Reject duplicate endpoints, conflicting identities and corrupt manifests without
+  creating replacement processes or discarding the usable neighboring session.
+- Reuse v6 per-session IPC unless a demonstrated missing field requires a
+  separately reviewed version change. Keep lapis identity, service epoch,
+  attachment generation and adapter source epoch distinct. Route through stable
+  session identities, never a mutable card index or title.
+- Keep a connection and retained screen/history model for each live session.
+  Selecting another card must not detach its predecessor or recreate its process.
+  Make the session collection observable and handle an empty workspace, failed
+  launch and removal of the selected entry without dangling focus or dialog targets.
+- Preserve current layouts, themes, density controls, keybindings and the isolated
+  QML preview workflow. Live mode shows real session entries; fixture cards remain
+  in preview mode. This milestone does not redesign the interface.
+- The service remains authoritative for each source's pending requests and
+  response validity. Desktop workspace policy combines those requests for display
+  and navigation; viewing, pinning, snoozing or changing focus cannot resolve or
+  approve one. Queue identity includes the session and typed source request ID,
+  with epoch/revision checks on actions.
+
+#### Checkpoint 3A: retained sessions and manual switching
+
+Checkpoint 3A passed the two-session functional checks recorded in the
+[workspace receipt](../evidence/milestone-three-workspace.json). The implemented slice is:
+
+1. Create, explicitly adopt and reconnect individual entries. Start new shell or
+   managed Codex sessions using the existing launch validation and approval-policy
+   inheritance. Reopening the workspace reconnects recorded identities; it never
+   automatically replaces a dead service, launches a new child or resends input.
+2. Replace the hard-coded live-plus-fixture list with actual session entries and
+   wire existing card clicks and navigation bindings to the selected identity.
+   Closing the workspace detaches all connections and leaves services running.
+   Removing an entry detaches it; it does not terminate its CLI. Process exit or
+   service loss remains visible with an explicit reconnect/new-session choice.
+3. Centralize keyboard ownership before enabling switching. A key sequence,
+   paste or composition stays with its originating session. Defer a switch during
+   an in-flight paste or held-key sequence; handle manual composition changes with
+   an explicit finish/cancel boundary so late IME events cannot reach the new
+   session. Preserve each session's history position and retained live screen.
+   History views stay read only until the user explicitly returns to Live.
+4. Resize only the selected interactive terminal to the active pane. Background
+   sessions retain their last geometry; scaled previews never resize their PTYs.
+   Continue consuming background output with bounded updates, throttle visible
+   previews and stop drawing hidden surfaces. Preserve per-session bounds and
+   account for the combined workspace snapshots, queues and render caches.
+
+**Exit evidence:** two distinct service identities and child PIDs; output from
+both while switching; targeted key/paste/resize traffic; retained history positions;
+GUI close/reopen restores both same children; failure of either session leaves
+the other usable. Exercise simultaneous archive writes and eviction under the
+shared history-root quota, including contention/failure without losing either
+retained live screen. Keep automatic switching disabled for this checkpoint.
+The receipt records two real shells, production QML creation and all four layouts,
+separate service/child identities across GUI reopen, shared-quota archive writes
+and failure isolation, and native IME commit followed by a guarded switch.
+Entries are persisted only after the first verified handshake; closing during
+initial connection is outside this retention guarantee. The eight-entry storage
+bound is not an eight-session qualification. Cross-session Codex requests and
+workspace latency/memory baselines are qualified by checkpoints 3B and 3C below.
+
+#### Checkpoint 3B: workspace attention and explicit decisions
+
+Aggregate requests without moving cards or keyboard focus. Show per-session
+counts and an inspectable workspace queue; select a request explicitly to open
+its session-bound dialog. Keep drafts and provisional-send state attached to the
+originating request. A modal dialog blocks navigation that would invalidate its
+input owner; source loss disables submission and a session removal safely closes
+or invalidates the target.
+
+Use a bounded deterministic queue, a monotonic clock and explicit tie-breaking.
+Do not compare undocumented clock epochs from different service processes.
+`WorkspaceSupervisor` owns this GUI-thread aggregate, with at most eight sources
+and 128 requests per source. It observes the existing session models and routes
+review/snooze by stable session ID plus the complete opaque request token. Service
+IPC remains v6. The supervisor supplies queue display and navigation policy; the
+originating session still validates and sends every explicit decision. Dialog
+drafts are retained only for their exact source/request token, never a card index.
+Reconnect must reconcile a session before enabling replies, and cannot erase a
+healthy neighbor's queue entries. Keep the service's exact token checks for every
+response; matching numeric or string request IDs in different sessions are distinct.
+
+**Exit evidence:** simultaneous real requests from two Codex sessions, including
+approval and structured user input; each explicit response reaches only its
+originating source and receives matching resolution/continuation. Deterministic
+cases cover colliding IDs, duplicate delivery, cancellation, stale decisions,
+reconnect and removal while a dialog or draft exists. Pending background attention
+never changes the current typing destination.
+
+#### Checkpoint 3C: guarded, opt-in carousel
+
+Enable automatic navigation only after 3A and 3B pass. Keep it off by default and
+off after reopening the workspace. Add pin-current-session, request snooze and
+explicit pause/resume controls. Pinning blocks automatic departure without
+reordering cards or preventing manual navigation; snoozing suppresses automatic
+surfacing until its deadline without dismissing or approving the source request.
+
+One focus policy arbitrates manual and automatic navigation. Automatic changes
+require an active lapis window and an idle interaction state: no recent typing,
+held keys, paste, composition, modal work, drag or selection gesture. Manual
+navigation takes precedence and starts a cooldown. Recheck destination identity,
+readiness and interaction state at execution; automatic switches are never queued
+or replayed after reconnect. Use aging and cooldowns to
+avoid repeated requests from one session starving the other, including a quiet
+eligible session with no pending request. Respect reduced
+motion, and never wait for an animation before accepting input.
+
+The supervisor uses the local steady clock, with an injected clock for
+deterministic qualification. Initial policy intervals are 1.5 seconds of input
+quiet, a 3-second manual-navigation cooldown, a 5-second minimum dwell, and a
+15-second fairness interval for eligible quiet sessions. These are navigation
+defaults, not performance gates. The window host reports activation and user
+interaction; the existing workspace focus owner applies automatic requests
+synchronously after checking readiness and interaction blocks. Only manual
+requests can enter the deferred focus queue. Carousel state and snoozes are
+ephemeral, so reopening never enables automatic navigation.
+
+**Exit evidence:** deterministic clock-driven ordering, aging, snooze, pin and
+cooldown cases plus actual macOS GUI tests while typing, holding keys, pasting,
+composing, opening a response dialog and leaving lapis inactive. Neither output
+nor an incoming request can steal another application's OS focus or split input
+between sessions. Disabled and paused carousel modes leave manual operation intact.
+
+#### Integration, verification and completion
+
+The existing seams are `Workspace`/`SessionPreview`, `LiveConnection`,
+`TerminalSurface`, the attention view/dialog and the per-session descriptor API.
+Define the manifest v1 and session/focus routing contracts before parallel edits.
+Contributors share the milestone; assign temporary file scopes per task, one
+integration coordinator and one build owner per build directory. Independent
+registry, UI investigation and verification work can proceed concurrently; focus,
+attention and registry integration share one reviewed contract.
+
+Apply the [required-check matrix](../CONTRIBUTING.md#checks), including
+the `workspace`, `workspace-registry` and `workspace-supervisor` CTest suites in the normal desktop run.
+On macOS, run the opt-in workspace UI probe serially with other GUI checks:
+
+```sh
+build/desktop/apps/desktop/lapis_workspace_ui_probe \
+  --json-file build/workspace-ui.json --output-dir build/workspace-ui
+```
+
+The [workspace test procedure](../CONTRIBUTING.md#checks) also specifies the
+two-source live Codex probe and measurement limits. Native input includes the
+workspace composition and paste guards in
+`just native-input`. Also run relevant ASan/UBSan and TSan suites, quality
+checks for Python, and affected CLI/UI probes. Keep GUI runs serial. Automated
+macOS key, Option, paste and native IME checks are required; physical typing is
+not a completion gate. Replay tests supplement, and do not replace, the two live
+session sources required for the milestone.
+
+Record two-session warm-switch and input/frame timing distributions, retained
+memory and idle/background activity with the existing profiling procedure. These
+establish a baseline; provisional latency targets are not new pass/fail gates.
+State workload, output rates, source revision, display rate, binary/provider
+identity and instrumentation endpoints. Store sanitized assembled evidence under
+`evidence/`, raw logs under `build/`, and update README only as each behavior lands.
+
+The milestone completes only when all three checkpoints pass together on the
+same assembled source. The original three-checkpoint qualification excludes
+Linux UI, a second CLI adapter,
+32-session qualification, multi-window/multi-client attachment, automatic recovery
+after service death or reboot, new terminal selection/accessibility/shaping
+features, renderer replacement, packaging and binary distribution. Preserve
+portable boundaries and existing terminal behavior while these remain deferred.
+
+A failed registry load or save pauses registry mutations and reports the failure;
+live sessions remain attached after save failures. **Session → Retry workspace**
+performs one explicit attempt after the cause is corrected: it reloads a manifest
+that has not loaded successfully, or retries saving the retained session entries.
+Retry revalidates ownership, permissions, file type and existing contents through
+the normal read or atomic-write path. Persistent corruption remains untouched, and
+controls stay disabled until the operation succeeds. There is no timed retry loop.
+The workspace tests exercise lock contention, repeated failure, corruption refusal,
+repair and successful persistence without restarting live services.
+
+#### Claude Code hooks: an observation-only extension
+
+Claude Code sessions use the same retained terminal, workspace queue and guarded
+carousel. Choose **Claude** when adding a session, or launch an explicit session:
+
+```sh
+python3 scripts/lapis.py run --claude --socket runtime/claude.sock \
+  --cwd /absolute/project -- claude
+```
+
+The internal agent-mode enum adds `claude`; workspace manifest v1 stores that
+name and launch fingerprints use a separate
+`lapis-claude-v1` domain. Service IPC remains v6.
+
+The session service owns a private local hook listener and temporary settings
+file for the life of its Claude PTY. It passes those hooks using `--settings`,
+preserving normal user/project settings and permission policy. Explicit
+`--settings`, `--bare` and `--safe-mode` arguments are rejected for managed
+launches because they conflict with this contract. Globally disabled hooks or
+managed policy may prevent delivery; no observed session boundary means attention
+is unavailable, while the terminal remains usable. Existing independently
+launched Claude processes are not automatically observed.
+
+Command hooks send only bounded event and identity metadata through the private
+socket. They never return decisions, permission changes, prompt context or stdout;
+transport failure returns successfully to Claude. No raw prompt, tool input,
+output or transcript enters the attention ledger. Hook commands use a fixed
+quoted executable/socket/token; event contents never become shell commands.
+The listener and ledger survive desktop detach. Reopening the GUI restores that
+service's ledger, not a reconstructed Claude event history.
+
+`SessionEnd` retires the conversation's notices without closing the service-owned
+listener. A subsequent `SessionStart` with a fresh source identity begins a new
+observation epoch, so `/clear` can continue in the same Claude process. Delayed
+hooks from retired sources cannot rebind them. The observer remembers up to 1024
+retired sources and stops observation on overflow. Reopening an already retired
+conversation is not qualified; start a new managed session for that case. Process
+exit or explicit observer shutdown still closes the listener. State changes are
+immediate; observer notifications are coalesced onto the service event loop after
+transport callbacks return. A notification receiver may stop or destroy the
+observer safely, and repeated stop calls are inert. The
+[PR #10 repair receipt](../evidence/pr10-review.json) records the reproduced
+failure, live `/clear` recovery and retired-source regression cases.
+
+The adapter declares observation only: response and authoritative reconciliation
+are unsupported. A well-formed unsupported decision from a wire client
+is rejected with a terminal-only diagnostic while preserving its attachment.
+Only an exact pending source/epoch/request/revision receives a retry token; no
+decision is forwarded to Claude. Malformed and stale-attachment frames retain
+the normal protocol rejection behavior. A verified initial `SessionStart` or `UserPromptSubmit` boundary
+starts an empty observation ledger; the shared reducer cannot use that operation
+to replace stale pending requests. Local delivery order is not an upstream
+sequence or proof that no hook was missed. Service restart and delivery loss
+cannot recover unobserved requests automatically.
+
+Claude 2.1.280's actual `PermissionRequest` payload has `session_id`, `prompt_id`
+and `tool_name`, but no `tool_use_id`. An `AskUserQuestion` input notice already
+covers its accompanying permission hook, so that hook adds no duplicate row.
+Other imprecise notices are session/turn scoped and remain advisory until a new prompt or completion boundary. A neighboring tool's
+completion cannot resolve them. `PreToolUse` for `AskUserQuestion` and any
+requests with an exact tool ID can be retired by the matching `PostToolUse` or
+`PostToolUseFailure`. Permission/idle notifications are advisory; silence and
+absence of post-tool events do not establish approval, denial or task completion.
+
+Ordinary tool completions use a separate adapter-local set capped at 16,384 distinct
+IDs per valid prompt epoch. Only exact pending attention requests consume the
+shared reducer's retired-request budget. Delayed input or permission hooks for a
+completed tool cannot resurrect it; duplicate boundaries retain those IDs. A new
+verified prompt resets them, and exhaustion reports loss of observation rather
+than silently evicting identities. The eight-connection listener reports refused
+connections without treating unauthenticated traffic as a source-state reset.
+
+The installed 2.1.280 binary emitted `PostToolUseFailure` for a controlled failed
+Read against a temporary missing file. This check used synthetic model replies
+from a loopback API, separately from the real-provider permission/input probe.
+A controlled HTTP 400 in print mode did not emit `StopFailure`; that event is not
+registered until its delivery is qualified. This does not establish its absence
+in every CLI mode. The nine registered events retain the existing terminal-only
+response policy. See the [review follow-up receipt](../evidence/pr10-review-followup.json).
+
+All Claude notices have empty response choices and instruct the user to answer
+in the originating terminal. The supervisor separately tracks attention
+eligibility and response availability, so a current terminal-only notice can
+receive carousel priority without enabling GUI approval. Arrival, review,
+snoozing and focus never send an answer. The existing typing, paste, IME, modal
+and inactive-window guards still apply.
+
+This extension does not claim Milestone 5's independent response/reconciliation
+qualification or Linux UI support. Runtime qualification uses a disposable Claude
+configuration and an explicitly selected test provider; normal launches inherit
+the user's configuration. The
+[Claude hook receipt](../evidence/claude-code-hooks.json) records separate runtime
+and GUI evidence; reproducible procedures are in CONTRIBUTING.
+
 ### Following milestones
 
-Follow [AGENTS.md](../AGENTS.md): **2. attention state and real Codex qualification
-→ 3. full desktop, guarded keyboard ownership and carousel → 4. measured 32-session
-workload → 5. second CLI and platform qualification.** The minimal view in
-milestone 1 proves persistence; milestone 3 assembles the supervising workspace.
-A later Linux port still needs actual input, rendering and lifecycle evidence.
-The following sequence is planned, not implemented by the launch slice:
+With the two-session workspace assembled, the next qualification stages are
+scale, another independent adapter, and platform completion. A later Linux port
+still needs actual input, rendering and lifecycle evidence. These stages remain
+planned; they are not implied by Milestone 3 passing.
 
 | Milestone | Dependency and owner | Exit evidence |
 | --- | --- | --- |
-| 2: attention and Codex | Stable session/source/attachment identities; service policy and adapter owners | Deterministic replay of duplicates, gaps, cancellation and simultaneous requests; real input/approval, explicit response, continuation and reconnect reconciliation against a hashed Codex binary |
-| 3: supervising desktop | Qualified macOS terminal and milestone 2; desktop owner | Two real retained sessions first, rebindable manual navigation, pin/snooze, guarded opt-in carousel, and actual typing/held-key/paste/IME/modal/inactive-window focus cases |
 | 4: scale and responsiveness | Working multi-session desktop; verification owner | Controlled 32-session output/TUI workload, p50/p95/p99 input/switch/frame results, memory growth and idle CPU/GPU; distinguish synthetic replay from real agents |
 | 5: independent adapter and platform completion | Stable adapter capability contract; separate adapter/platform owners | Second CLI independently exercises observation/response/reconciliation; macOS and named Linux backends have actual lifecycle, native input and rendering evidence |
 
@@ -970,7 +1291,8 @@ activity change, attention requested/resolved and reconciled snapshots. Requests
 include reason, bounded summary and source confidence. Turn completion is not
 process exit or task completion; silence is unknown. Use monotonic time for
 scheduling, aging and cooldowns; wall-clock time for presentation/auditing.
-The wire format remains open.
+The current per-session desktop wire format is v6; extend it only through a
+reviewed contract change.
 
 **Two reconciliation boundaries.** Source transport loss makes its requests stale
 and disables replies until reconciliation. GUI detachment does not invalidate a
@@ -987,8 +1309,10 @@ local endpoints, stay bounded/nonblocking and cannot silently change execution o
 approval policy. Probe dispatch, payload and return semantics before installation.
 Structured Codex success does not establish ordinary CLI attention coverage.
 
-**Attention versus focus.** The service orders requests by priority/arrival with
-aging and cooldowns. Desktop session positions remain stable; support manual
+**Attention versus focus.** Each service maintains its source request state and
+ordering. Desktop policy combines sources for navigation, aging, cooldowns and
+presentation snooze without changing their response authority. Desktop session
+positions remain stable; support manual
 navigation, pinning, snoozing and an opt-in carousel without starving quiet sessions.
 Only desktop focus policy assigns keyboard ownership. Typing, held keys, paste,
 IME, selection, dragging and modal work defer automatic changes. Automatic

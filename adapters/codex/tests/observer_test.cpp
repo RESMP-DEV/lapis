@@ -349,6 +349,37 @@ void reconnect_during_initialization_and_start_new_source() {
             "fresh start must not retain the previous thread binding");
 }
 
+void unsupported_hash_survives_reconnect_until_qualified_restart() {
+    State state{"unsupported-hash", "codex"};
+    Source source;
+    source.start();
+    Observer observer{state};
+    bool initialized_signal = false;
+    QObject::connect(&observer, &Observer::initialized, [&] { initialized_signal = true; });
+
+    observer.start(source.path(), QStringLiteral("wrong"));
+    require(!initialized_signal && !state.connected() && !state.ready(),
+            "unsupported start leaves responses disabled");
+    require(observer.diagnostic() == QStringLiteral("Unsupported Codex binary hash"),
+            "unsupported start is explicit");
+
+    const auto received_before_reconnect = source.received.size();
+    observer.reconnect();
+    // Negative observation: this also proves reconnect created no source traffic.
+    pump(50);
+    require(source.received.size() == received_before_reconnect,
+            "unsupported reconnect does not contact the source");
+    require(!state.connected() && !state.ready(), "unsupported reconnect remains disabled");
+    require(observer.diagnostic() == QStringLiteral("Unsupported Codex binary hash"),
+            "unsupported reconnect preserves the source failure reason");
+
+    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    require(wait_for([&] { return state.ready(); }),
+            "qualified restart recovers after unsupported reconnect");
+    require(initialized_signal, "qualified restart initializes the source");
+    observer.stop();
+}
+
 QJsonObject large_approval(std::int64_t id) {
     return {{"id", id},
             {"method", "item/commandExecution/requestApproval"},
@@ -664,6 +695,7 @@ int run(int argc, char** argv) {
     post_binding_unknown_budget(false);
     post_binding_unknown_budget(true);
     reconnect_during_initialization_and_start_new_source();
+    unsupported_hash_survives_reconnect_until_qualified_restart();
     pending_details_budget();
     request_id_and_answer_boundaries();
     implicit_retirement_survives_replay();

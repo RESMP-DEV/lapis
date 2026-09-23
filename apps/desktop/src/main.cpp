@@ -19,9 +19,15 @@
 namespace {
 void add_options(QCommandLineParser& parser) {
     parser.addHelpOption();
+    parser.addOption({QStringLiteral("workspace"),
+                      QStringLiteral("Open a retained multi-session workspace"),
+                      QStringLiteral("path")});
     parser.addOption(
         {QStringLiteral("codex"),
          QStringLiteral("Use managed Codex attention (requires an explicit Codex executable)")});
+    parser.addOption({QStringLiteral("claude"),
+                      QStringLiteral("Use Claude Code terminal attention (requires an explicit "
+                                     "Claude executable)")});
     parser.addOption({QStringLiteral("new-session"),
                       QStringLiteral("Explicitly start a new session on an unused endpoint")});
     parser.addOption({QStringLiteral("discover"),
@@ -66,8 +72,15 @@ void add_options(QCommandLineParser& parser) {
                                  QStringLiteral("[PROGRAM ARG...]"));
 }
 bool valid_connection_options(const QCommandLineParser& parser) {
-    if (parser.isSet(QStringLiteral("codex")) && parser.positionalArguments().isEmpty()) {
-        qCritical("--codex requires a Codex executable after --");
+    const bool codex = parser.isSet(QStringLiteral("codex"));
+    const bool claude = parser.isSet(QStringLiteral("claude"));
+    if (codex && claude) {
+        qCritical("--codex and --claude are mutually exclusive");
+        return false;
+    }
+    if ((codex || claude) && parser.positionalArguments().isEmpty()) {
+        qCritical().noquote() << (codex ? "--codex requires a Codex executable after --"
+                                        : "--claude requires a Claude executable after --");
         return false;
     }
     const bool create = parser.isSet(QStringLiteral("new-session"));
@@ -82,12 +95,31 @@ bool valid_connection_options(const QCommandLineParser& parser) {
     }
     return true;
 }
-bool valid_options(const QCommandLineParser& parser) {
+bool valid_workspace_options(const QCommandLineParser& parser) {
     const bool preview = parser.isSet(QStringLiteral("ui-preview"));
-    if (preview && parser.isSet(QStringLiteral("codex"))) {
-        qCritical("--codex cannot be combined with --ui-preview");
+    const bool agent =
+        parser.isSet(QStringLiteral("codex")) || parser.isSet(QStringLiteral("claude"));
+    if (preview && agent) {
+        qCritical("%s cannot be combined with --ui-preview",
+                  parser.isSet(QStringLiteral("codex")) ? "--codex" : "--claude");
         return false;
     }
+    if (parser.isSet(QStringLiteral("workspace")) &&
+        (preview || parser.value(QStringLiteral("workspace")).isEmpty() ||
+         parser.isSet(QStringLiteral("socket")) || parser.isSet(QStringLiteral("cwd")) ||
+         parser.isSet(QStringLiteral("new-session")) || parser.isSet(QStringLiteral("discover")) ||
+         agent || parser.isSet(QStringLiteral("smoke-input")) ||
+         !parser.positionalArguments().isEmpty())) {
+        qCritical("--workspace requires a path and cannot be combined with explicit session or "
+                  "preview options");
+        return false;
+    }
+    return true;
+}
+bool valid_options(const QCommandLineParser& parser) {
+    if (!valid_workspace_options(parser))
+        return false;
+    const bool preview = parser.isSet(QStringLiteral("ui-preview"));
     const bool explicit_launch =
         !parser.positionalArguments().isEmpty() || parser.isSet(QStringLiteral("cwd"));
     if (parser.isSet(QStringLiteral("socket")) &&
@@ -140,6 +172,11 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
                                                    bool isolated) {
     lapis::desktop::WorkspaceOptions options;
     if (!isolated) {
+        if (parser.isSet(QStringLiteral("workspace"))) {
+            options.manifest =
+                QFileInfo(parser.value(QStringLiteral("workspace"))).absoluteFilePath();
+            return options;
+        }
         if (parser.isSet(QStringLiteral("new-session")))
             options.mode = lapis::session::wire::AttachMode::create;
         else if (parser.isSet(QStringLiteral("discover")))
@@ -154,8 +191,9 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
                 .directory = parser.isSet(QStringLiteral("cwd"))
                                  ? parser.value(QStringLiteral("cwd"))
                                  : QString::fromUtf8(LAPIS_PROJECT_ROOT),
-                .agent = parser.isSet(QStringLiteral("codex"))
-                             ? lapis::session::AgentMode::codex
+                .agent = parser.isSet(QStringLiteral("codex")) ? lapis::session::AgentMode::codex
+                         : parser.isSet(QStringLiteral("claude"))
+                             ? lapis::session::AgentMode::claude
                              : lapis::session::AgentMode::terminal,
             };
         } else if (parser.isSet(QStringLiteral("cwd"))) {
@@ -169,10 +207,6 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
 // UiPreview creates. Lives outside main() to keep main's branching flat.
 void wire_window(QQuickWindow& window, lapis::desktop::UiPreview& view,
                  lapis::desktop::Workspace& workspace, const QCommandLineParser& parser) {
-    QObject::connect(&window, &QQuickWindow::activeChanged, &view, [&view, &window] {
-        if (window.isActive())
-            view.assignTerminalFocus();
-    });
     if (parser.isSet(QStringLiteral("capture")))
         capture_window(window, workspace, view,
                        {.image_path = parser.value(QStringLiteral("capture")),

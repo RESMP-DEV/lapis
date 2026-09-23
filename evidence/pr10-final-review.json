@@ -1,0 +1,526 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-23",
+  "scope": "PR 10 review repairs on macOS; current acceptance remains incomplete due GUI focus failures",
+  "baseline_revision": "2307118f7f3d29c6eba888e8573b893b57abb88d",
+  "source_scope": "Baseline plus owned source hashes; architecture hash excludes concurrent IDE-context edits; generated receipt excluded from its own hash inventory",
+  "source_sha256": {
+    "CONTRIBUTING.md": "95376e7991ad429cd1fc643765368455316e49722dc34139c5b0944d2d1bbb52",
+    "adapters/claude/src/claude_observer.cpp": "892b2bd07093d40d9f7b1c2e452b195b649b9d31d806b31790d0371456679ca8",
+    "adapters/claude/src/hook_relay.cpp": "e4204c03bb8954ab020cedd4a0c564b6fa3aaa750893705282343e0c435a3cd0",
+    "adapters/claude/src/hook_relay.hpp": "ea4a4ad642b71c2f34c748fef7dd5eec0b75f247a47c113dd0feac51d147a5d9",
+    "adapters/claude/tests/claude_observer_test.cpp": "fd5987a874b7a7be8a3723d3c093ea936af802d3a7970502fe0c0f345445ea7f",
+    "apps/desktop/qml/Main.qml": "d79283b50af39e88fbedd8d9c833bb0bd16251252299312d7b46adafd76ee3bf",
+    "apps/desktop/src/live_connection.cpp": "f9bbb3e0abaaae1fa6c86e49fc64d06c4036a07faea6390d336a9c10c38ff1f1",
+    "apps/desktop/src/workspace.cpp": "70ed98604cb1db54de75b0a47d4aa5de564b6e1caeab1e4919aae5c29da47bb7",
+    "apps/desktop/src/workspace_registry.cpp": "f5f804044b71de2c5a652e31b473172c252d44c1f1e289929ff58ee64e3ba387",
+    "apps/desktop/tests/live_connection_test.cpp": "72d9aab45b5d1878274dcbc382e42fe162d36833fc6c214191120c209a428199",
+    "apps/desktop/tests/workspace_attention_ui_probe.cpp": "3a8e6010c0a8c4ca17552d94117b62f1d8d1df11b17f2e65be57561b90d4910c",
+    "apps/desktop/tests/workspace_registry_test.cpp": "ac75e0afb024c6d3b2699952a763d761436ded8494f7306e533b8fea679ca0aa",
+    "apps/desktop/tests/workspace_test.cpp": "210e0102cb4c24458721129958e9e1d7cefb0619c0666a96f0b22a4a9a4ec975",
+    "apps/desktop/tests/workspace_ui_probe.cpp": "b4f5ebbaf5900cf687e7261d11a25537c1be4e6c671938381e3f5fbfcb0668bb",
+    "docs/architecture.md": "389455a8e4127e29678828a78713a4269c2a571ed599981f7f3c5ae06d93228e",
+    "evidence/claude-code-hooks.json": "9a54e19605e4617c81ac0e6807b2235e373fc55f54d3381f21fb7795a123fba9",
+    "evidence/codex-binary-update.json": "0a1435663597e99f2e919420f396f1017c238353ec2749d911d4282e269236bd",
+    "evidence/milestone-three-workspace.json": "472892f160c44137925a686b1ddf5467a72602fc56c9b8e653c068382f64548a",
+    "evidence/pr10-review-followup.json": "f51ef4d93fcec0bdfd9ac21aaa5328668eea194907278d7ef5b456b6b3bdcb9e",
+    "evidence/pr10-review.json": "99a384c46374435e8fae28ae2bad2e80c2965bcfb3ac06572eab3acb974a986c",
+    "scripts/check_claude_hooks.py": "1c3ea43d8eaf00ec06127867a007010f945035c673e70ecc4cec5c8ff9df30b7",
+    "scripts/lapis.py": "6c503a0746d0a37928418112d81b0041cd489efbe1fd4d3fc7613f08ee6d4b62",
+    "scripts/probe_claude_failure_hooks.py": "d858edb5acaf4f4d08ba13dfffa2ec440ca84bbd6e9a2e56272657e6c876fffb",
+    "scripts/tests/test_probe_terminal.py": "926632d4aa5b9aaa1149974afb352ded7546e6d314e1c8304e2facc48fe35b27",
+    "apps/desktop/tests/probe_support.hpp": "c6d31861aed69ae831196d30096770fdb55592c40f07e327aaa561e967a35872"
+  },
+  "review_threads": [
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N2a",
+      "path": "adapters/claude/src/claude_observer.cpp",
+      "disposition": "fixed",
+      "response": "Use one relay_deadline_ms constant in the relay and observer; preserve the existing one-second budget."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N2d",
+      "path": "adapters/claude/src/claude_observer.cpp",
+      "disposition": "clarified",
+      "response": "Idle notices are intentionally deduplicated once per prompt. The new idle_notice_retirement case proves a delayed duplicate cannot resurrect a retired request and a new prompt can create a fresh notice."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N2j",
+      "path": "apps/desktop/src/live_connection.cpp",
+      "disposition": "fixed",
+      "response": "Remove the redundant wanted_size initializer and retain the member default."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N2u",
+      "path": "apps/desktop/src/live_connection.cpp",
+      "disposition": "fixed",
+      "response": "Publish the generated identity after successful startDetached. The live-connection test forces actual log-redirection failure and verifies no identity is exposed."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N2z",
+      "path": "apps/desktop/src/live_connection.cpp",
+      "disposition": "fixed",
+      "response": "Remove the redundant condition parentheses."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N25",
+      "path": "apps/desktop/src/terminal_surface.cpp",
+      "disposition": "not-applicable",
+      "response": "The paste block is observed through synchronous interactionChanged signals; the native-input probe calls supervisor.tick during the block and verifies whole-paste ownership. Keep the guard and immediate clear."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N3B",
+      "path": "apps/desktop/src/workspace_registry.cpp",
+      "disposition": "fixed",
+      "response": "Include affected paths and actual mode/owner/link count in registry errors. Syscall errors retain errno through std::system_error; prepare the lock path before flock. Behavioral tests cover the validation diagnostics."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N3I",
+      "path": "apps/desktop/src/workspace_supervisor.cpp",
+      "disposition": "deferred-preference",
+      "response": "Duplicate of the prior measured-performance disposition. Queue size is bounded; ordinary terminal output does not synchronize it. No measured regression warrants a cache whose invalidation must also cover time-based expiry/cooldowns."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N3N",
+      "path": "apps/desktop/src/workspace.cpp",
+      "disposition": "fixed",
+      "response": "Reuse the registry load watcher for explicit retry after initial load failure. The Session menu now says Retry workspace. Tests exercise a real held lock, release/retry, corruption-preserving refusal, repair, and successful retry."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N3S",
+      "path": "apps/desktop/src/workspace.cpp",
+      "disposition": "not-applicable",
+      "response": "Same-owner manual selection intentionally cancels deferred navigation and starts cooldown. Existing workspace-supervisor interaction_and_fairness explicitly asserts it; preserve that keyboard-ownership contract."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N3Y",
+      "path": "apps/desktop/tests/terminal_render_test.cpp",
+      "disposition": "not-applicable",
+      "response": "Cursor moves retain the same expected color/pixel count, so accepting an unchanged image can return the stale cursor before the later geometry assertion. All previous-image call sites require a visual transition; keep the changed-frame guard."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N3g",
+      "path": "apps/desktop/tests/workspace_attention_ui_probe.cpp",
+      "disposition": "fixed",
+      "response": "Move shared GUI probe helpers into test-only probe_support.hpp. Preserve fixture ownership in each probe."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N3n",
+      "path": "apps/desktop/tests/workspace_attention_ui_probe.cpp",
+      "disposition": "fixed",
+      "response": "Provide --help and reject missing or empty --config before reading the attention fixture."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N3p",
+      "path": "apps/desktop/tests/workspace_registry_test.cpp",
+      "disposition": "fixed",
+      "response": "Remove unused registry test headers."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N3x",
+      "path": "apps/desktop/tests/workspace_test.cpp",
+      "disposition": "fixed",
+      "response": "Give asynchronous workspace assertions named timeout diagnostics and retain the default eight-second deadline."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N36",
+      "path": "apps/desktop/tests/workspace_ui_probe.cpp",
+      "disposition": "fixed",
+      "response": "Record the service executable, PID, and microsecond process birth identity; verify them before TERM and KILL. Match the connected endpoint peer with macOS LOCAL_PEERPID because atomic listener rename leaves proc_pidfdinfo with the old bound pathname. The live probe rejects stale birth identities for both signals."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N4B",
+      "path": "evidence/claude-code-hooks.json",
+      "disposition": "fixed",
+      "response": "Rename the numeric static-analysis count to static_check_count; document its distinction from a list of static_checks and Boolean static_analysis_passed. The historical count remains 62."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N4K",
+      "path": "evidence/codex-binary-update.json",
+      "disposition": "clarified",
+      "response": "Retain the namespaced lapis.codex-binary-qualification/1 identifier. CONTRIBUTING now explicitly permits namespaced schema and local schema_version families; do not discard contract identity."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N4R",
+      "path": "evidence/codex-binary-update.json",
+      "disposition": "fixed",
+      "response": "Use cases for the CLI count while retaining the actual 16 installed-TUI-inclusive checks."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N4Y",
+      "path": "evidence/milestone-three-workspace.json",
+      "disposition": "clarified",
+      "response": "Retain lapis.workspace/2 and the nested lapis.workspace/1 checkpoint; document both identifier families instead of erasing schema-specific history."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N4c",
+      "path": "evidence/milestone-three-workspace.json",
+      "disposition": "fixed",
+      "response": "Rename the Python count unit_tests to python_tests without changing its historical value of 92."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N4g",
+      "path": "evidence/milestone-three-workspace.json",
+      "disposition": "fixed",
+      "response": "Use cases for the consolidation native-input count, preserving its value of 23 and restoration results."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N4l",
+      "path": "evidence/pr10-review-followup.json",
+      "disposition": "fixed",
+      "response": "Use stop_failure for the repository summary field; keep exact upstream StopFailure event spellings in candidate/observed event arrays."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N4p",
+      "path": "evidence/pr10-review.json",
+      "disposition": "fixed",
+      "response": "Use thread_id for the PRRT review-thread identifiers; preserve the exact referenced threads."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N43",
+      "path": "evidence/pr10-review.json",
+      "disposition": "fixed",
+      "response": "Use ctest_cases_each for the sanitizer suite-name list. Document that suites_per_build is a count, not the same data shape."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N46",
+      "path": "scripts/check_claude_hooks.py",
+      "disposition": "fixed",
+      "response": "Require the known Claude child process group to exist after the first hook using the shared unfiltered process-group query, which also observes orphan group members. Cleanup waits for the group even if initial attachment or hook observation fails."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N49",
+      "path": "scripts/lapis.py",
+      "disposition": "clarified",
+      "response": "Document that VALUE_OPTIONS mirrors add_options in desktop main.cpp. Keep Qt as parser owner; avoid a brittle source-parser test or a new manifest for this small option set."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N5A",
+      "path": "scripts/lapis.py",
+      "disposition": "fixed",
+      "response": "Remove the unreachable delimiter branch and document the pre-delimiter argument contract enforced by launch."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6k_N5D",
+      "path": "scripts/probe_claude_failure_hooks.py",
+      "disposition": "fixed",
+      "response": "Initialize completed to None and guard all result access explicitly. A real Claude startup timeout produced a timeout receipt with no exit code and fixture_valid false."
+    }
+  ],
+  "additional_repairs": [
+    "Reproduced Kimi sandbox Python timeout-fixture failure when the interpreter path contains spaces. Quote the interpreter and code through a shell fixture; existing regression now explicitly uses a spaced interpreter symlink.",
+    "Independent review caught early Claude attachment-failure cleanup and errno preservation while formatting the flock path; both repaired.",
+    "Live cleanup probe caught atomic listener rename invalidating pathname matching in proc_pidfdinfo. Use macOS LOCAL_PEERPID on the connected fixture endpoint and recheck executable/PID/birth identity before each signal."
+  ],
+  "checks": {
+    "quality": {
+      "passed": true,
+      "python_tests": 102,
+      "command": "just quality",
+      "log": "build/pr10-final-review/quality-final-source.log"
+    },
+    "cpp_static": {
+      "passed": true,
+      "static_check_count": 59,
+      "scope": "clang-format, 57 clang-tidy translation units, Cppcheck; changed probe consumers and Cppcheck rechecked after peer-PID fix",
+      "receipt": "build/pr10-final-review/desktop-static.json",
+      "followup_logs": [
+        "workspace-tidy.log",
+        "attention-tidy.log",
+        "cppcheck-final.log"
+      ]
+    },
+    "desktop_ctest": {
+      "passed": false,
+      "cases": 22,
+      "passed_cases": 19,
+      "command": "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop --parallel 1 --output-on-failure --no-tests=error",
+      "log": "build/pr10-final-review/ctest-isolated.log",
+      "failed_cases": [
+        "ui-preview",
+        "appearance-input",
+        "terminal-input"
+      ],
+      "diagnostic": "Window/item focus and input eligibility were lost; serial execution did not eliminate it. Earlier desktop-final.log passed 22 on the preceding local revision, not the final source."
+    },
+    "sanitizers": {
+      "ctest_cases_each": [
+        "claude-observer",
+        "workspace-supervisor",
+        "workspace",
+        "workspace-registry",
+        "live-connection",
+        "ui-preview"
+      ],
+      "asan": {
+        "passed": true,
+        "cases": 6,
+        "log": "build/pr10-final-review/asan-ctest.log"
+      },
+      "tsan": {
+        "passed": false,
+        "passed_cases": 5,
+        "failed_cases": [
+          "ui-preview"
+        ],
+        "diagnostic": "terminal->hasActiveFocus assertion; no TSan race diagnostic observed",
+        "log": "build/pr10-final-review/tsan-ctest.log"
+      }
+    },
+    "cli": {
+      "passed": true,
+      "cases": 15,
+      "command": "QSG_RENDER_LOOP=threaded python3 scripts/check_cli_launch.py --desktop --output build/pr10-final-review/cli/receipt.json"
+    },
+    "ui_capture": {
+      "passed": false,
+      "cases": 12,
+      "passed_cases": 11,
+      "log": "build/pr10-final-review/ui-check.log",
+      "diagnostic": "compact capture timed out with active=false; other captures and negative cases passed"
+    },
+    "workspace_gui": {
+      "normal": {
+        "passed": false,
+        "log": "build/pr10-final-review/workspace-peer-ui.log",
+        "diagnostic": "Reached all four layouts and stale-birth signal rejection; modal-release automatic switching assertion failed; owned fixtures were cleaned"
+      },
+      "asan": {
+        "passed": true,
+        "status": "passed-clean",
+        "layouts": [
+          "focus",
+          "columns",
+          "blocks",
+          "stack"
+        ],
+        "receipt": "build/pr10-final-review/workspace-asan.json"
+      },
+      "tsan": {
+        "passed": false,
+        "log": "build/pr10-final-review/workspace-tsan.log",
+        "diagnostic": "Production window did not activate; stopped before creating sessions"
+      }
+    },
+    "claude_live": {
+      "passed": true,
+      "version": "2.1.280",
+      "binary_sha256": "387a5c5dcdbb815085edf0baf79591f9d8894efe922bceaf3d75b1b08055229d",
+      "checks": [
+        "unsupported Claude decision rejected with exact token and attachment retained",
+        "same child and pending notice after detach/reattach",
+        "observer diagnostic refreshed after rejected decision",
+        "terminal answer retired question and turn completed",
+        "permission remained terminal-only",
+        "new prompt retired prior permission advisory",
+        "live AskUserQuestion has exact tool identity",
+        "same Claude child delivered fresh permission attention after /clear"
+      ],
+      "service_reaped": true,
+      "owned_process_groups_cleaned": true,
+      "global_settings_unchanged": true,
+      "receipt": "build/pr10-final-review/claude-live.json"
+    },
+    "workspace_attention": {
+      "passed": true,
+      "source_count": 2,
+      "codex_sha256": "81f1d50b0153837534552c7033f203c99a34d2e1fb3fdadc4ec6002fd834180c",
+      "checks": [
+        "safe approval and structured-input fixtures validated before answering",
+        "two service-owned sources remained live while the GUI attached",
+        "two real managed sources were concurrently pending",
+        "production dialogs answered the exact source requests",
+        "both real turns continued successfully after matching responses"
+      ],
+      "fixtures_cleaned": true,
+      "receipt": "build/pr10-final-review/workspace-attention/receipt.json"
+    },
+    "failure_hooks": {
+      "passed": true,
+      "receipt": "build/pr10-final-review/failure-hooks.json",
+      "scope": "Actual Claude binary against local synthetic API; PostToolUseFailure observed, StopFailure absence remains qualified to this scenario"
+    },
+    "failure_hook_timeout": {
+      "passed": true,
+      "receipt": "build/pr10-final-review/failure-timeout/receipt.json",
+      "scope": "Actual Claude startup killed at 0.01-second bound; timed_out true, exit_code null, fixture_valid false"
+    },
+    "attention_probe_arguments": {
+      "passed": true,
+      "cases": 3,
+      "receipt": "build/pr10-final-review/probe-arguments.json"
+    }
+  },
+  "reused_evidence": {
+    "revision": "dcdec7489a19d10e178c93106d103e27a3be4c96",
+    "receipt": "evidence/pr10-review-followup.json",
+    "scope": "Unchanged native macOS paste/IME ownership coverage; synchronous paste guard remains intentionally retained. Not a claim that current GUI qualification passed."
+  },
+  "failed_attempts": {
+    "integration": "Initial compile/test/format findings corrected; retained desktop-initial, desktop-corrected, desktop-build-fixed, desktop-verified, quality logs under build/pr10-final-review.",
+    "python_spaced_interpreter": "spaced-python-before.log reproduces KeyError; spaced-python-after.log passes after fixture repair.",
+    "endpoint_cleanup": "workspace-ui.log records stale bound-path mismatch; peer-PID repair exercised by successful ASan workspace and two-Codex GUI probes. Owned leaked service was identified by private fixture endpoint and executable/birth identity and terminated.",
+    "gui_focus": "desktop-accepted, desktop-errno-fixed, ctest-isolated, ui-check, workspace-peer-ui, tsan-ctest and workspace-tsan failures remain failures. ASan GUI success does not erase them."
+  },
+  "delegation": {
+    "model": "zai,glm-5.3-flashx",
+    "routing": "CCR native Responses listener; provider routing corroborated in local router log",
+    "completed_workers": 6,
+    "integration_owner": "parent",
+    "result_policy": "Worker drafts inspected and corrected; parent owned builds and GUI runs"
+  },
+  "limitations": [
+    "Current GUI acceptance is incomplete. Need uninterrupted foreground qualification or diagnosis of the remaining activation instability before merge acceptance. External foreground interference is suspected, not established.",
+    "No merge performed; reviewer refresh belongs to the new committed head.",
+    "Linux UI, 32-session scaling and unqualified CLI binaries remain outside this repair.",
+    "Unrelated IDE-context edits remain outside this commit."
+  ],
+  "all_required_checks_passed": false,
+  "background_followup": {
+    "baseline_revision": "cae4df24cb3021eb5e0b49c82dcc28624befa6a9",
+    "scope": "User-requested background logical input verification; native acceptance remains separate",
+    "source_sha256": {
+      "CONTRIBUTING.md": "e8e33637cfc1dbb3abb4b1caeb4cd2edc3dbffd4bb8bd69bd7369cdb5f3146a8",
+      "apps/desktop/tests/platform/window_activation.mm": "a21f25466a7517847282f18e41d6fe2b4303625dec17bed3079c5120113c5455",
+      "apps/desktop/tests/terminal_input_test.cpp": "1a762d4c635cc5231b7334626a2ff406387535cec1c245bde092016b703f85e2"
+    },
+    "command": "build/desktop/apps/desktop/lapis_terminal_input_tests --background",
+    "behavior": [
+      "Explicit offscreen platform and Software renderer selected and checked",
+      "Same Qt synthetic input/composition/paste/history/focus/document/disconnect assertions reused",
+      "Paste uses Qt platform-selected shortcut; timeout reports the calling assertion",
+      "Offscreen helper avoids AppKit activation; unknown arguments and implicit offscreen CTest invocation fail"
+    ],
+    "checks": {
+      "normal": {
+        "passed": true,
+        "log": "build/pr10-final-review/background-explicit.log"
+      },
+      "asan": {
+        "passed": true,
+        "log": "build/pr10-final-review/background-asan.log"
+      },
+      "tsan": {
+        "passed": true,
+        "log": "build/pr10-final-review/background-tsan.log"
+      },
+      "native_input_test": {
+        "passed": true,
+        "command": "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop -R '^terminal-input$' --output-on-failure --no-tests=error",
+        "elapsed_seconds": 1.59,
+        "log": "build/pr10-final-review/native-input-followup.log"
+      },
+      "argument_rejection": {
+        "passed": true,
+        "cases": 2,
+        "receipt": "build/pr10-final-review/background-options.json"
+      },
+      "quality": {
+        "passed": true,
+        "python_tests": 102,
+        "log": "build/pr10-final-review/background-quality.log"
+      },
+      "static": {
+        "passed": true,
+        "scope": "clang-format, changed test and activation helper clang-tidy, full Cppcheck",
+        "logs": [
+          "build/pr10-final-review/background-input-tidy.log",
+          "build/pr10-final-review/background-activation-tidy.log",
+          "build/pr10-final-review/background-cppcheck.log"
+        ]
+      }
+    },
+    "foreground_observation": {
+      "diagnostic": "During a failing native run, another application activated 0.844 seconds after the input fixture; the source of that activation was not established.",
+      "background_run": "No test activation observed; foreground application and system pasteboard change count remained unchanged.",
+      "pointer": "No native pointer-injection API is used by this mode. Pointer position changed between system snapshots; that movement was not attributed to any process.",
+      "logs": [
+        "build/pr10-final-review/focus-owner.log",
+        "build/pr10-final-review/background-focus-owner.log",
+        "build/pr10-final-review/background-system-state.json"
+      ]
+    },
+    "experiments": [
+      "Initial offscreen input failed at paste because the fixture hardcoded the macOS chord; platform-selected shortcut repaired it.",
+      "Whole UI software probe hit a pixel assertion. An exploratory logical-only UI flag was not retained; production Vulkan requirement remains intact."
+    ],
+    "limitations": [
+      "Background pass proves Qt logical behavior only; no native AppKit delivery, system pasteboard, Apple IME, GPU or display acceptance.",
+      "The native input rerun passed without external foreground assistance. Earlier whole-suite/UI-capture/TSan-UI focus failures remain recorded and are not claimed repaired.",
+      "Default native CTest registration and all required native/GPU checks are retained."
+    ]
+  },
+  "coderabbit_followup": {
+    "baseline_revision": "0d56a4bd7af7cd28003fdeb80f09f891eb8d1a7f",
+    "review_id": 5286499355,
+    "source_sha256": {
+      "apps/desktop/tests/workspace_test.cpp": "9a9b041717b4c95598742cb5536793a288dc51f16995f4d789d9b32c7ca88f30",
+      "CONTRIBUTING.md": "ffdf4d8feaf97b99b4a8201981f196361efdf3e59454049bed0fda382f407218"
+    },
+    "dispositions": [
+      {
+        "thread_id": "PRRT_kwDOUfkyeM6lAJ_D",
+        "disposition": "fixed",
+        "evidence": "After the first Workspace scope, wait up to eight seconds for the global pool to release promise/result references before the independent corrupt-load phase takes the same registry lock. Failure has an explicit diagnostic. This changes fixture sequencing only; product code is unchanged."
+      },
+      {
+        "review_comment": "outside-diff CONTRIBUTING.md:557",
+        "disposition": "fixed",
+        "evidence": "Correct five captures plus five expected failures to five captures plus seven expected failures. Verified the actual execute_checks scenario lists in scripts/check_ui_preview.py; twelve total cases."
+      },
+      {
+        "review_comment": "Betterleaks generic-api-key alert at evidence/pr10-final-review.json:29",
+        "disposition": "false-positive",
+        "evidence": "The source_sha256 entry for scripts/lapis.py equals the independently recomputed SHA-256 of that source file. It is a provenance digest."
+      },
+      {
+        "review_comment": "session-dialog retry qualification in merge-risk summary",
+        "disposition": "existing-evidence",
+        "evidence": "The earlier build/pr10-final-review/workspace-asan.json status is passed-clean. The unchanged add_shell fixture exercises invalid-directory rejection, preservation of both fields, successful retry, and dialog close before the rest of that passing GUI run. This does not clear separate native focus failures."
+      }
+    ],
+    "checks": {
+      "quality": {
+        "passed": true,
+        "python_tests": 102,
+        "command": "just quality",
+        "log": "build/pr10-small-review/quality.log"
+      },
+      "workspace": {
+        "ctest_cases_each": [
+          "workspace"
+        ],
+        "normal": {
+          "passed": true,
+          "elapsed_seconds": 1.32,
+          "log": "build/pr10-small-review/normal-ctest.log"
+        },
+        "asan": {
+          "passed": true,
+          "elapsed_seconds": 2.07,
+          "log": "build/pr10-small-review/asan-ctest.log"
+        },
+        "tsan": {
+          "passed": true,
+          "elapsed_seconds": 12.39,
+          "log": "build/pr10-small-review/tsan-ctest.log"
+        },
+        "command_template": "ctest --test-dir build/{desktop,desktop-asan,desktop-tsan} -R '^workspace$' --output-on-failure --no-tests=error"
+      },
+      "static": {
+        "passed": true,
+        "scope": "clang-format and clang-tidy for workspace_test.cpp, Cppcheck filtered to that translation unit",
+        "logs": [
+          "build/pr10-small-review/clang-tidy.log",
+          "build/pr10-small-review/cppcheck.log"
+        ]
+      }
+    },
+    "limitations": [
+      "No native GUI tests were repeated for these documentation and fixture-only changes.",
+      "Earlier whole-suite/native-UI focus failures and incomplete native GUI acceptance remain recorded.",
+      "The lock lifetime defect was established by source/lifetime inspection; these passing runs are not a deterministic reproduction of the former scheduling race.",
+      "Optional reviewer availability and current-head review completion must be reported separately from these test results."
+    ]
+  }
+}

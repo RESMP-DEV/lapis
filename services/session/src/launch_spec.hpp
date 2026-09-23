@@ -10,7 +10,7 @@
 namespace lapis::session {
 // Internal launch contract v1. Arguments are passed literally, never interpreted
 // by a shell. Initial geometry is not part of attachment identity.
-enum class AgentMode : std::uint8_t { terminal, codex };
+enum class AgentMode : std::uint8_t { terminal, codex, claude };
 struct LaunchSpec {
     QString program;
     QStringList arguments;

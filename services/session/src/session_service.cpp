@@ -1,4 +1,6 @@
+#include "claude_observer.hpp"
 #include "history_worker.hpp"
+#include "hook_relay.hpp"
 #include "observer.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "platform/posix/process_group_guard.hpp"
@@ -147,6 +149,8 @@ class SessionService final : public QObject {
                 });
         if (launch.agent == AgentMode::codex)
             start_codex(endpoint, launch);
+        else if (launch.agent == AgentMode::claude)
+            start_claude(launch);
         else
             pty_.start(launch);
     }
@@ -154,6 +158,8 @@ class SessionService final : public QObject {
     ~SessionService() override {
         stopping_ = true;
         stop_codex();
+        if (claude_observer_)
+            claude_observer_->stop();
         disconnect(&pty_, nullptr, this, nullptr);
         disconnect(&server_, nullptr, this, nullptr);
         disconnect(&timer_, nullptr, this, nullptr);
@@ -166,30 +172,52 @@ class SessionService final : public QObject {
     }
 
   private:
+    const attention::State* attention_state() const {
+        return codex_state_ ? codex_state_.get() : claude_state_.get();
+    }
+    void start_claude(const LaunchSpec& launch) {
+        claude_state_ = std::make_unique<attention::State>(
+            identity_.session_id.toHex().toStdString(), "claude-code");
+        claude_observer_ = std::make_unique<lapis::claude::Observer>(*claude_state_);
+        connect(claude_observer_.get(), &lapis::claude::Observer::changed, this, [this] {
+            decision_error_.clear();
+            attention_dirty_ = true;
+            schedule_attention();
+        });
+        auto terminal = launch;
+        terminal.agent = AgentMode::terminal;
+        terminal.arguments = claude_observer_->launchArguments(
+            launch.arguments, QCoreApplication::applicationFilePath());
+        pty_.start(terminal);
+    }
     void schedule_attention() {
-        if (codex_state_ && attention_dirty_ && client_ && ready_ && !stopping_ &&
+        if (attention_state() && attention_dirty_ && client_ && ready_ && !stopping_ &&
             !attention_timer_.isActive())
             attention_timer_.start();
     }
     void publish_attention() {
-        if (!codex_state_ || !codex_observer_ || !client_ || !ready_ || stopping_)
+        const auto* state = attention_state();
+        if (!state || !client_ || !ready_ || stopping_)
             return;
         QLocalSocket* const destination = client_;
         const auto owner = attachment_;
         try {
-            wire::AttentionSnapshot snapshot{
-                .attachment = owner,
-                .available = true,
-                .connected = codex_state_->connected(),
-                .ready = codex_state_->ready(),
-                .source_epoch = codex_state_->epoch(),
-                .activity = codex_state_->activity(),
-                .diagnostic = !decision_error_.isEmpty() ? decision_error_
-                              : !codex_error_.isEmpty()  ? codex_error_
-                                                         : codex_observer_->diagnostic(),
-                .requests = {}};
-            for (const auto& [id, pending] : codex_state_->pending())
-                snapshot.requests.push_back({pending, codex_observer_->details(id)});
+            wire::AttentionSnapshot snapshot{.attachment = owner,
+                                             .available = true,
+                                             .connected = state->connected(),
+                                             .ready = state->ready(),
+                                             .source_epoch = state->epoch(),
+                                             .activity = state->activity(),
+                                             .diagnostic =
+                                                 !decision_error_.isEmpty() ? decision_error_
+                                                 : !codex_error_.isEmpty()  ? codex_error_
+                                                 : codex_observer_ ? codex_observer_->diagnostic()
+                                                                   : claude_observer_->diagnostic(),
+                                             .requests = {}};
+            for (const auto& [id, pending] : state->pending())
+                snapshot.requests.push_back({pending, codex_observer_
+                                                          ? codex_observer_->details(id)
+                                                          : claude_observer_->details(id)});
             const auto bytes = wire::frame(wire::Kind::attention_snapshot,
                                            wire::encode_attention_snapshot(snapshot));
             if (destination->bytesToWrite() + bytes.size() > wire::max_frame_bytes ||
@@ -555,6 +583,8 @@ class SessionService final : public QObject {
             return;
         stopping_ = true;
         stop_codex();
+        if (claude_observer_)
+            claude_observer_->stop();
         pty_.pauseOutput(true);
         timer_.stop();
         ack_timer_.stop();
@@ -776,11 +806,11 @@ class SessionService final : public QObject {
         schedule();
     }
     void allow_decision_retry(wire::AttentionDecision decision) {
-        if (!codex_state_ || !codex_state_->ready() ||
-            codex_state_->epoch() != decision.source_epoch)
+        const auto* state = attention_state();
+        if (!state || !state->ready() || state->epoch() != decision.source_epoch)
             return;
-        const auto found = codex_state_->pending().find(decision.request_id);
-        if (found == codex_state_->pending().end())
+        const auto found = state->pending().find(decision.request_id);
+        if (found == state->pending().end())
             return;
         const auto& pending = found->second;
         if (pending.revision != decision.revision || pending.submitted ||
@@ -796,6 +826,27 @@ class SessionService final : public QObject {
             client_->write(bytes) != bytes.size())
             throw std::runtime_error("Decision rejection queue failed");
     }
+    void decide_attention(const QByteArray& payload) {
+        if (!attention_state())
+            throw std::runtime_error("Attention decisions are unsupported for terminal sessions");
+        const auto decision = wire::decode_attention_decision(payload);
+        if (claude_observer_) {
+            allow_decision_retry(decision);
+            decision_error_ = QStringLiteral("Answer Claude requests in the terminal");
+            attention_dirty_ = true;
+            schedule_attention();
+            return;
+        }
+        if (!codex_observer_->decide(decision.source_epoch, decision.request_id, decision.revision,
+                                     decision.choice, decision.answers)) {
+            allow_decision_retry(decision);
+            decision_error_ =
+                QStringLiteral("Request changed or response is unsupported; refresh attention");
+            attention_dirty_ = true;
+            schedule_attention();
+        }
+        return;
+    }
     void handle(const wire::Frame& frame) {
         if (!process_started_ || stopping_)
             throw std::runtime_error("Session is not ready for input");
@@ -810,21 +861,9 @@ class SessionService final : public QObject {
             throw std::runtime_error("Input message too large");
         QByteArray bytes;
         switch (frame.kind) {
-        case wire::Kind::attention_decision: {
-            if (!codex_observer_)
-                throw std::runtime_error(
-                    "Attention decisions are unsupported for terminal sessions");
-            const auto decision = wire::decode_attention_decision(control.payload);
-            if (!codex_observer_->decide(decision.source_epoch, decision.request_id,
-                                         decision.revision, decision.choice, decision.answers)) {
-                allow_decision_retry(decision);
-                decision_error_ =
-                    QStringLiteral("Request changed or response is unsupported; refresh attention");
-                attention_dirty_ = true;
-                schedule_attention();
-            }
+        case wire::Kind::attention_decision:
+            decide_attention(control.payload);
             return;
-        }
         case wire::Kind::history_request:
             request_history(control.payload);
             return;
@@ -957,6 +996,8 @@ class SessionService final : public QObject {
     std::optional<TerminalSize> pending_resize_;
     TerminalSize current_size_;
     wire::SnapshotTiming timing_;
+    std::unique_ptr<attention::State> claude_state_;
+    std::unique_ptr<lapis::claude::Observer> claude_observer_;
     std::unique_ptr<attention::State> codex_state_;
     std::unique_ptr<lapis::codex::Observer> codex_observer_;
     QProcess codex_backend_;
@@ -977,6 +1018,11 @@ int main(int argc, char** argv) {
         arguments.append(QString::fromLocal8Bit(argv[index]));
     int application_argc = 1;
     QCoreApplication app(application_argc, argv);
+    if (arguments.value(1) == QStringLiteral("--claude-hook")) {
+        if (arguments.size() != 4)
+            return 0;
+        return lapis::claude::run_hook_relay(arguments.at(2), arguments.at(3));
+    }
     try {
         QByteArray session_id;
         auto agent = AgentMode::terminal;
@@ -987,10 +1033,11 @@ int main(int argc, char** argv) {
                 if (!session_id.isEmpty() || socket_index + 1 >= arguments.size())
                     throw std::invalid_argument("Expected one --session-id HEX32");
                 session_id = parse_session_id(arguments.at(++socket_index));
-            } else if (option == QStringLiteral("--codex")) {
-                if (agent == AgentMode::codex)
-                    throw std::invalid_argument("Duplicate --codex option");
-                agent = AgentMode::codex;
+            } else if (option == QStringLiteral("--codex") ||
+                       option == QStringLiteral("--claude")) {
+                if (agent != AgentMode::terminal)
+                    throw std::invalid_argument("Expected one agent mode");
+                agent = option == QStringLiteral("--codex") ? AgentMode::codex : AgentMode::claude;
             } else {
                 break;
             }
@@ -998,7 +1045,7 @@ int main(int argc, char** argv) {
         }
         if (arguments.size() - socket_index < 3)
             throw std::invalid_argument(
-                "Usage: lapis_session_service [--session-id HEX32] [--codex] "
+                "Usage: lapis_session_service [--session-id HEX32] [--codex | --claude] "
                 "SOCKET DIRECTORY PROGRAM [ARG ...]");
         if (session_id.isEmpty())
             session_id = wire::new_id();

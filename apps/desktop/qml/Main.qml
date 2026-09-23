@@ -90,7 +90,8 @@ ApplicationWindow {
     readonly property bool stackLayout: layoutMode === "stack"
     // The pane owns the keyboard only when it is the visible surface.
     readonly property bool settingsOpen: settingsDialog.visible
-    readonly property bool inputBlocked: settingsOpen || attentionDialog.visible
+    readonly property bool inputBlocked: settingsOpen || attentionDialog.visible ||
+                                         sessionDialog.visible || workspaceAttentionQueue.visible
     readonly property bool paneVisible: layoutMode === "focus" || columnsLayout
     readonly property int cardSpacing: densityMode === "minimal" ? 8 :
                                        densityMode === "compact" ? 10 : 14
@@ -226,6 +227,50 @@ ApplicationWindow {
             attentionDialog.showSession(workspace.focusedSession)
     }
 
+    readonly property var workspaceSupervisor: preview.supervisor
+    readonly property var workspaceAttentionRows:
+        workspaceSupervisor ? workspaceSupervisor.attentionQueue : []
+
+    function openWorkspaceAttentionQueue() {
+        if (!inputBlocked)
+            workspaceAttentionQueue.open()
+    }
+
+    function reviewWorkspaceRequest(sessionId, token) {
+        if (!workspaceSupervisor)
+            return
+        workspaceAttentionQueue.close()
+        workspaceSupervisor.review(sessionId, token)
+    }
+
+    function pruneAttentionDrafts() {
+        const activeSessions = []
+        for (const value of workspace.sessions)
+            activeSessions.push(value)
+        attentionDialog.pruneDrafts(activeSessions)
+    }
+
+    function workspaceStatus(fallback) {
+        if (workspace.status.length)
+            return workspace.status
+        if (workspace.focusedSession)
+            return workspace.focusedSession.activity
+        return fallback
+    }
+
+    function createSession() {
+        if (!workspace.canAddSessions)
+            return
+        const directory = sessionDirectoryField.text.trim()
+        if (!directory.length)
+            return
+        const endpoint = sessionEndpointField.text.trim()
+        if (sessionClaudeButton.checked ? workspace.addClaudeSession(directory, endpoint)
+                                        : workspace.addSession(sessionCodexButton.checked,
+                                                               directory, endpoint))
+            sessionDialog.close()
+    }
+
     AttentionDialog {
         id: attentionDialog
         palette.window: window.surfaceColor
@@ -238,6 +283,174 @@ ApplicationWindow {
         palette.highlight: window.focusedColor
         palette.highlightedText: window.textColor
         onClosed: preview.deferTerminalFocus()
+    }
+
+    Dialog {
+        id: workspaceAttentionQueue
+        objectName: "workspaceAttentionQueue"
+        title: qsTr("Workspace requests")
+        modal: true
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(560, window.width - 32)
+        height: Math.min(420, window.height - 32)
+        palette.window: window.surfaceColor
+        palette.windowText: window.textColor
+        palette.base: window.cardColor
+        palette.text: window.textColor
+        palette.button: window.cardColor
+        palette.buttonText: window.textColor
+        palette.mid: window.borderColor
+        palette.highlight: window.focusedColor
+        palette.highlightedText: window.textColor
+
+        onOpened: forceActiveFocus()
+        onClosed: preview.deferTerminalFocus()
+        background: Rectangle {
+            color: window.surfaceColor
+            radius: 10
+            border.color: window.borderColor
+        }
+        footer: DialogButtonBox {
+            onRejected: workspaceAttentionQueue.close()
+            Button {
+                objectName: "workspaceQueueClose"
+                text: qsTr("Close")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 10
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                Label {
+                    Layout.fillWidth: true
+                    text: workspaceSupervisor ? workspaceSupervisor.status : ""
+                    color: window.mutedTextColor
+                    font.pixelSize: 11
+                    elide: Text.ElideRight
+                }
+                CheckBox {
+                    objectName: "carouselEnabled"
+                    text: qsTr("Automatic")
+                    checked: workspaceSupervisor && workspaceSupervisor.enabled
+                    enabled: !preview.active
+                    onToggled: workspaceSupervisor.enabled = checked
+                }
+                CheckBox {
+                    objectName: "carouselPaused"
+                    text: qsTr("Paused")
+                    checked: workspaceSupervisor && workspaceSupervisor.paused
+                    enabled: workspaceSupervisor && workspaceSupervisor.enabled && !preview.active
+                    onToggled: workspaceSupervisor.paused = checked
+                }
+                CheckBox {
+                    objectName: "carouselPinned"
+                    text: qsTr("Pinned")
+                    checked: workspaceSupervisor && workspaceSupervisor.pinned
+                    enabled: !preview.active
+                    onToggled: workspaceSupervisor.pinned = checked
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                visible: workspaceAttentionRows.length === 0
+                text: qsTr("No pending requests.")
+                color: window.mutedTextColor
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+
+                ListView {
+                    implicitWidth: workspaceAttentionQueue.availableWidth
+                    model: workspaceAttentionRows
+                    spacing: 6
+                    clip: true
+
+                    delegate: RowLayout {
+                        id: requestRow
+                        required property int index
+                        required property var modelData
+                        readonly property var request: modelData
+                        readonly property bool terminalOnly:
+                            request.details.responseLocation === "terminal"
+                        width: ListView.view.width
+                        spacing: 8
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.minimumHeight: 44
+                            Layout.preferredHeight: requestLabels.implicitHeight + 16
+                            radius: 6
+                            color: window.cardColor
+                            border.color: requestRow.request.responding || requestRow.request.snoozed ?
+                                              window.borderColor : window.attentionColor
+                            border.width: 1
+
+                            ColumnLayout {
+                                id: requestLabels
+                                anchors.fill: parent
+                                anchors.margins: 8
+                                spacing: 3
+
+                                PreviewLabel {
+                                    Layout.fillWidth: true
+                                    text: requestRow.request.sessionTitle || requestRow.request.sessionId
+                                    font.pixelSize: 11
+                                    font.weight: Font.Medium
+                                    elide: Text.ElideRight
+                                }
+                                PreviewLabel {
+                                    Layout.fillWidth: true
+                                    text: requestRow.request.summary || requestRow.request.reason
+                                    font.pixelSize: 10
+                                    elide: Text.ElideMiddle
+                                }
+                                PreviewLabel {
+                                    Layout.fillWidth: true
+                                    visible: !requestRow.request.enabled || requestRow.request.responding ||
+                                             requestRow.request.snoozed
+                                    text: requestRow.request.responding ? qsTr("Response sent") :
+                                          requestRow.request.snoozed ? qsTr("Snoozed") :
+                                          requestRow.terminalOnly ? qsTr("Answer in terminal") :
+                                          qsTr("Response unavailable")
+                                    font.pixelSize: 9
+                                    elide: Text.ElideRight
+                                }
+                            }
+                        }
+
+                        Button {
+                            objectName: "workspaceRequest-" + requestRow.index
+                            Layout.preferredWidth: 64
+                            text: qsTr("Open")
+                            onClicked: window.reviewWorkspaceRequest(
+                                           requestRow.request.sessionId,
+                                           requestRow.request.token)
+                        }
+
+                        Button {
+                            objectName: "workspaceSnooze-" + requestRow.index
+                            Layout.preferredWidth: 74
+                            text: qsTr("Snooze")
+                            enabled: workspaceSupervisor &&
+                                     !requestRow.request.responding
+                            onClicked: workspaceSupervisor.snooze(
+                                           requestRow.request.sessionId,
+                                           requestRow.request.token)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Settings {
@@ -269,6 +482,77 @@ ApplicationWindow {
         }
     }
 
+    Dialog {
+        id: sessionDialog
+        objectName: "sessionDialog"
+        title: qsTr("Session")
+        modal: true
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: 480
+        footer: DialogButtonBox {
+            Button {
+                objectName: "cancelSessionButton"
+                text: qsTr("Cancel")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+            Button {
+                objectName: "createSessionButton"
+                text: qsTr("OK")
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: window.createSession()
+            }
+            onRejected: sessionDialog.close()
+        }
+
+        onOpened: sessionDirectoryField.forceActiveFocus()
+        onClosed: preview.deferTerminalFocus()
+
+        contentItem: ColumnLayout {
+            spacing: 10
+
+            ButtonGroup {
+                id: sessionKindGroup
+            }
+
+            RadioButton {
+                id: sessionShellButton
+                ButtonGroup.group: sessionKindGroup
+                checked: true
+                text: qsTr("Shell")
+            }
+            RadioButton {
+                id: sessionCodexButton
+                ButtonGroup.group: sessionKindGroup
+                text: qsTr("Codex")
+            }
+            RadioButton {
+                id: sessionClaudeButton
+                ButtonGroup.group: sessionKindGroup
+                text: qsTr("Claude")
+            }
+            TextField {
+                id: sessionDirectoryField
+                objectName: "sessionDirectoryField"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Directory")
+                onAccepted: window.createSession()
+            }
+            TextField {
+                id: sessionEndpointField
+                objectName: "sessionEndpointField"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Optional existing endpoint")
+                onAccepted: window.createSession()
+            }
+            PreviewLabel {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: qsTr("Leave the endpoint empty to create the selected session kind. Provide it to discover an existing session.")
+            }
+        }
+    }
+
     // The isolated QML preview has no keymap, so these literals keep the dialog
     // usable there and double as the documented set of valid names.
     readonly property var layoutChoices: typeof keymap !== "undefined" && keymap !== null ?
@@ -281,6 +565,10 @@ ApplicationWindow {
     // layout switch re-runs it so focus never lands on a hidden pane.
     onActiveChanged: if (active) keyboardOwnershipReady()
     onLayoutModeChanged: keyboardOwnershipReady()
+    onInputBlockedChanged: {
+        workspace.setInteractionBlocked(preview.modalBlockReason, inputBlocked)
+        preview.deferTerminalFocus()
+    }
 
     signal keyboardOwnershipReady()
 
@@ -313,6 +601,23 @@ ApplicationWindow {
             // change handler cannot reset a previously paused pulse.
             if (preview.reducedMotion)
                 window.resetDecorativeAnimation();
+        }
+    }
+
+    Connections {
+        target: preview.supervisor
+
+        function onReviewRequested(session, token) {
+            workspaceAttentionQueue.close()
+            attentionDialog.showSession(session, token)
+        }
+    }
+
+    Connections {
+        target: workspace
+
+        function onSessionsChanged() {
+            window.pruneAttentionDrafts()
         }
     }
 
@@ -385,10 +690,24 @@ ApplicationWindow {
 
             PreviewLabel {
                 Layout.fillWidth: true
+                objectName: "workspaceStatus"
                 text: preview.active ? qsTr("Sample sessions") :
-                      workspace.focusedSession ? workspace.focusedSession.activity : qsTr("Disconnected")
+                      workspace.loading ? qsTr("Loading workspace…") : workspaceStatus(qsTr("No sessions"))
                 font.pixelSize: 10
                 elide: Text.ElideRight
+            }
+
+            Button {
+                objectName: "workspaceRequests"
+                visible: !preview.active && workspaceSupervisor
+                enabled: !window.inputBlocked
+                Layout.preferredHeight: 18
+                focusPolicy: Qt.NoFocus
+                font.pixelSize: 10
+                topPadding: 0
+                bottomPadding: 0
+                text: workspaceSupervisor ? qsTr("Workspace (%1)").arg(workspaceSupervisor.pendingCount) : ""
+                onClicked: window.openWorkspaceAttentionQueue()
             }
 
             Button {
@@ -406,6 +725,7 @@ ApplicationWindow {
 
             Button {
                 id: sessionTools
+                objectName: "sessionTools"
                 visible: !preview.active
                 Layout.preferredHeight: 18
                 focusPolicy: Qt.NoFocus
@@ -416,24 +736,57 @@ ApplicationWindow {
                 onClicked: sessionMenu.open()
                 Menu {
                     id: sessionMenu
-                    readonly property bool available: workspace.focusedSession &&
+                    objectName: "sessionMenu"
+                    readonly property bool available: workspace.canAddSessions
+                    readonly property bool focusedAvailable: workspace.focusedSession &&
                         workspace.focusedSession.connectionState !== "connecting" &&
                         workspace.focusedSession.connectionState !== "synchronizing" &&
                         !workspace.focusedSession.inputReady
                     MenuItem {
+                        objectName: "createSessionAction"
+                        text: qsTr("Create or adopt…")
+                        enabled: workspace.canAddSessions
+                        visible: workspace.registryEnabled
+                        onTriggered: {
+                            sessionDirectoryField.text = workspace.focusedSession ?
+                                        workspace.focusedSession.directory :
+                                        workspace.defaultSessionDirectory
+                            sessionEndpointField.text = ""
+                            sessionDialog.open()
+                        }
+                    }
+                    MenuItem {
+                        objectName: "retryWorkspaceSaveAction"
+                        text: qsTr("Retry workspace")
+                        visible: workspace.canRetrySave
+                        enabled: workspace.canRetrySave
+                        onTriggered: workspace.retrySave()
+                    }
+                    MenuSeparator {}
+                    MenuItem {
                         text: qsTr("Reconnect")
-                        enabled: sessionMenu.available
+                        enabled: sessionMenu.focusedAvailable
                         onTriggered: workspace.focusedSession.reconnect()
                     }
                     MenuItem {
                         text: qsTr("Discover existing session")
-                        enabled: sessionMenu.available
+                        visible: !workspace.registryEnabled
+                        enabled: sessionMenu.focusedAvailable
                         onTriggered: workspace.focusedSession.discoverSession()
                     }
                     MenuItem {
                         text: qsTr("Start new session")
-                        enabled: sessionMenu.available
+                        visible: !workspace.registryEnabled
+                        enabled: sessionMenu.focusedAvailable
                         onTriggered: workspace.focusedSession.startNewSession()
+                    }
+                    MenuSeparator {}
+                    MenuItem {
+                        text: qsTr("Remove / detach")
+                        visible: workspace.registryEnabled
+                        enabled: workspace.focusedSession != null
+                        onTriggered: if (workspace.focusedSession)
+                                         workspace.removeSession(workspace.focusedSession.sessionId)
                     }
                 }
             }
@@ -566,7 +919,7 @@ ApplicationWindow {
                 anchors.margins: 10
                 height: 32
                 spacing: 8
-                property var session: workspace.focusedSession
+                property SessionPreview session: workspace.focusedSession
                 visible: session && session.live
                 Button {
                     text: qsTr("Older")
@@ -605,7 +958,8 @@ ApplicationWindow {
                 anchors.margins: 18
                 anchors.topMargin: historyBar.visible ? 54 : 18
                 document: workspace.focusedSession
-// Input requires both the session being ready and this pane owning
+                focusWorkspace: workspace
+                // Input requires both the session being ready and this pane owning
                 // the keyboard, which blocks layout gives to a tile instead.
                 interactive: (preview.active || (document && document.inputReady))
                              && window.paneVisible && !window.inputBlocked
@@ -832,6 +1186,7 @@ ApplicationWindow {
                             // only when blocks mode makes this tile the pane.
                             objectName: "cardTerminal_" + sessionCard.modelData.sessionId
                             document: sessionCard.modelData
+                            focusWorkspace: workspace
                             enabled: !window.paneVisible
                                      && workspace.focusedIndex === sessionCard.index
                                      && sessionCard.modelData.live

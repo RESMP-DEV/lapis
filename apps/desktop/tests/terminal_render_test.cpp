@@ -102,11 +102,18 @@ void require_pixels(const ColorArea& area, std::string_view label, int minimum_p
                                  " has too few pixels: " + describe_area(area));
 }
 
-QImage render(TerminalSurface& surface) {
-    pump(80);
-    const QImage image = surface.window()->grabWindow();
-    CHECK(!image.isNull());
-    return image;
+QImage render(TerminalSurface& surface, std::uint32_t expected_rgb, int minimum_pixels,
+              std::string_view label, const QImage& previous = {}) {
+    QElapsedTimer deadline;
+    deadline.start();
+    while (deadline.elapsed() < 2000) {
+        const QImage image = surface.window()->grabWindow();
+        const bool changed = previous.isNull() || image != previous;
+        if (!image.isNull() && changed && color_area(image, expected_rgb).pixels >= minimum_pixels)
+            return image;
+        pump(10);
+    }
+    throw std::runtime_error(std::string(label) + " did not reach its expected rendered pixels");
 }
 
 QFont terminal_font() {
@@ -435,7 +442,7 @@ int run_renderer_regression() {
     check_snapshot_contract(snapshot);
 
     RenderFixture fixture(snapshot);
-    const QImage initial = render(fixture.surface);
+    const QImage initial = render(fixture.surface, page_background, 200, "initial Ghostty page");
     const ColorArea initial_page = color_area(initial, page_background);
     require_pixels(initial_page, "initial Ghostty page", 200);
     const RenderGeometry initial_geometry(snapshot, fixture.surface.size(), initial.width(),
@@ -455,7 +462,8 @@ int run_renderer_regression() {
     session::TerminalSnapshot decorations = decoration_snapshot();
     check_decoration_contract(decorations);
     RenderFixture decoration_fixture(decorations);
-    const QImage decoration_image = render(decoration_fixture.surface);
+    const QImage decoration_image =
+        render(decoration_fixture.surface, page_background, 200, "decoration Ghostty page");
     const ColorArea decoration_page = color_area(decoration_image, page_background);
     require_pixels(decoration_page, "decoration page", 200);
     const RenderGeometry decoration_geometry(
@@ -517,7 +525,8 @@ int run_renderer_regression() {
     CHECK((resized.size == session::TerminalSize{12, 3}));
     CHECK(resized.cells.size() == 36);
     fixture.apply(resized, resized.revision + 1);
-    const QImage resized_image = render(fixture.surface);
+    const QImage resized_image =
+        render(fixture.surface, page_background, 150, "actual resized Ghostty page", initial);
     const ColorArea resized_page = color_area(resized_image, page_background);
     require_pixels(resized_page, "actual resized Ghostty page", 150);
     const RenderGeometry resized_geometry(resized, fixture.surface.size(), resized_image.width(),
@@ -529,7 +538,8 @@ int run_renderer_regression() {
     CHECK((blank.size == session::TerminalSize{12, 3}));
     CHECK(blank.cells.size() == 36);
     fixture.apply(blank, blank.revision + 1);
-    const QImage blank_image = render(fixture.surface);
+    const QImage blank_image =
+        render(fixture.surface, page_background, 200, "blank page", resized_image);
     const ColorArea blank_page = color_area(blank_image, page_background);
     require_pixels(blank_page, "blank page", 200);
     const RenderGeometry blank_geometry(blank, fixture.surface.size(), blank_image.width(),
@@ -547,7 +557,7 @@ int run_renderer_regression() {
     cursor_snapshot.cursor = {.column = 2, .row = 1, .in_viewport = true, .visible = true};
     cursor_snapshot.revision = blank.revision + 2;
     fixture.document.applySnapshot(cursor_snapshot);
-    const QImage cursor_image = render(fixture.surface);
+    const QImage cursor_image = render(fixture.surface, 0xff0000U, 30, "block cursor", blank_image);
     const ColorArea first_cursor = color_area(cursor_image, 0xff0000U);
     require_pixels(first_cursor, "block cursor", 30);
     const CellRectangle first_rectangle = blank_geometry.cell({2, 1});
@@ -559,7 +569,8 @@ int run_renderer_regression() {
     cursor_snapshot.cursor.column = 8;
     cursor_snapshot.revision = blank.revision + 3;
     fixture.document.applySnapshot(cursor_snapshot);
-    const QImage moved_image = render(fixture.surface);
+    const QImage moved_image =
+        render(fixture.surface, 0xff0000U, 30, "repainted cursor", cursor_image);
     const ColorArea moved_cursor = color_area(moved_image, 0xff0000U);
     require_pixels(moved_cursor, "repainted cursor", 30);
     const CellRectangle moved_rectangle = blank_geometry.cell({8, 1});
@@ -570,7 +581,8 @@ int run_renderer_regression() {
     cursor_snapshot.cursor = {.column = 1, .row = 2, .in_viewport = true, .visible = true};
     cursor_snapshot.revision = blank.revision + 4;
     fixture.document.applySnapshot(cursor_snapshot);
-    const QImage next_row_image = render(fixture.surface);
+    const QImage next_row_image =
+        render(fixture.surface, 0xff0000U, 30, "next-row cursor", moved_image);
     const ColorArea next_row_cursor = color_area(next_row_image, 0xff0000U);
     require_pixels(next_row_cursor, "next-row cursor", 30);
     const CellRectangle next_row_rectangle = blank_geometry.cell({1, 2});

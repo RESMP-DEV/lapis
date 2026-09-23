@@ -11,6 +11,7 @@
 #include <QGuiApplication>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QQuickWindow>
@@ -23,6 +24,7 @@
 #include <source_location>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace {
@@ -144,23 +146,26 @@ struct Fixture {
     }
 };
 
-QByteArray text_frames(Peer& peer, qsizetype minimum = 0) {
+QByteArray text_frames(Peer& peer, qsizetype minimum = 0,
+                       std::source_location where = std::source_location::current()) {
     if (minimum == 0)
         settle();
     QByteArray text;
-    until([&] {
-        peer.bytes += peer.socket->readAll();
-        wire::Frame frame;
-        while (wire::take_frame(peer.bytes, frame)) {
-            if (frame.kind == wire::Kind::text || frame.kind == wire::Kind::paste)
-                text += wire::decode_control(frame.payload).payload;
-            else
-                require(frame.kind == wire::Kind::resize ||
-                            frame.kind == wire::Kind::history_request,
-                        "Unexpected input frame");
-        }
-        return text.size() >= minimum;
-    });
+    until(
+        [&] {
+            peer.bytes += peer.socket->readAll();
+            wire::Frame frame;
+            while (wire::take_frame(peer.bytes, frame)) {
+                if (frame.kind == wire::Kind::text || frame.kind == wire::Kind::paste)
+                    text += wire::decode_control(frame.payload).payload;
+                else
+                    require(frame.kind == wire::Kind::resize ||
+                                frame.kind == wire::Kind::history_request,
+                            "Unexpected input frame");
+            }
+            return text.size() >= minimum;
+        },
+        where);
     return text;
 }
 void composition(lapis::desktop::TerminalSurface& surface, QStringView preedit,
@@ -169,14 +174,36 @@ void composition(lapis::desktop::TerminalSurface& surface, QStringView preedit,
     event.setCommitString(commit, replace, replace == 0 ? 0 : 1);
     QCoreApplication::sendEvent(&surface, &event);
 }
-void input_contract() {
+void check_surface_blockers(lapis::desktop::TerminalSurface& occupied,
+                            lapis::desktop::TerminalSurface& other, Peer& peer) {
+    lapis::desktop::Workspace workspace(lapis::desktop::WorkspaceMode::preview);
+    occupied.setFocusWorkspace(&workspace);
+    other.setFocusWorkspace(&workspace);
+    composition(occupied, QStringLiteral("blocked"));
+    workspace.setFocusedIndex(1);
+    require(workspace.focusedIndex() == 0, "Composition did not defer switching");
+    // Clearing an unrelated surface must not release the occupied surface's guard.
+    other.setFocusWorkspace(nullptr);
+    require(workspace.focusedIndex() == 0, "Other surface released composition ownership");
+    composition(occupied, {}, QStringLiteral("G"));
+    require(text_frames(peer, 1) == QByteArray("G"), "Composition committed to wrong source");
+    until([&] { return workspace.focusedIndex() == 1; });
+    occupied.setFocusWorkspace(nullptr);
+}
+void input_contract(bool background) {
     Fixture f;
     QQuickWindow window;
+    require(window.rendererInterface()->graphicsApi() ==
+                (background ? QSGRendererInterface::Software : QSGRendererInterface::Vulkan),
+            "Input test selected the wrong rendering backend");
     window.setGeometry(100, 100, 640, 360);
     lapis::desktop::TerminalSurface surface(window.contentItem());
+    lapis::desktop::TerminalSurface other_surface(window.contentItem());
     surface.setSize(QSizeF(640, 360));
     surface.setDocument(&f.document);
     surface.setInteractive(true);
+    other_surface.setDocument(&f.document);
+    other_surface.setInteractive(false);
     f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
     auto peer = f.accept();
     static_cast<void>(f.request(peer));
@@ -185,10 +212,15 @@ void input_contract() {
     window.show();
     until([&] { return window.isExposed(); });
     lapis::desktop::test::activate_test_window(window);
+    until([&] { return window.isActive(); });
     settle(); // Drain native activation events before beginning an IME transaction.
     surface.forceActiveFocus();
-    until([&] { return window.isActive() && surface.hasActiveFocus(); });
+    until([&] {
+        surface.forceActiveFocus();
+        return window.isActive() && surface.hasActiveFocus();
+    });
     static_cast<void>(text_frames(peer));
+    check_surface_blockers(surface, other_surface, peer);
     require(surface.inputMethodQuery(Qt::ImEnabled).toBool(), "Ready terminal disabled IME");
     const auto original = surface.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
     require(!original.isEmpty(), "IME candidate rectangle missing");
@@ -248,7 +280,8 @@ void input_contract() {
     composition(surface, QStringLiteral("before-paste"));
     const auto clipboard = QGuiApplication::clipboard()->text();
     QGuiApplication::clipboard()->setText(QStringLiteral("paste界\nsecond"));
-    QKeyEvent paste(QEvent::KeyPress, Qt::Key_V, Qt::MetaModifier);
+    const auto paste_shortcut = QKeySequence(QKeySequence::Paste)[0];
+    QKeyEvent paste(QEvent::KeyPress, paste_shortcut.key(), paste_shortcut.keyboardModifiers());
     QCoreApplication::sendEvent(&surface, &paste);
     QGuiApplication::clipboard()->setText(clipboard);
     const auto pasted = text_frames(peer, QStringLiteral("paste界\nsecond").toUtf8().size());
@@ -285,8 +318,14 @@ void input_contract() {
     // Model the user returning to the terminal before beginning a new
     // composition. Native focus restoration may complete on a later event.
     lapis::desktop::test::activate_test_window(window);
+    until([&] { return window.isActive(); });
     settle(); // Drain native activation events before beginning an IME transaction.
     surface.forceActiveFocus();
+    if (!surface.inputMethodQuery(Qt::ImEnabled).toBool())
+        std::cerr << "IME recovery: active=" << window.isActive()
+                  << " focus=" << surface.hasActiveFocus() << " ready=" << f.document.inputReady()
+                  << " interactive=" << surface.interactive()
+                  << " state=" << f.document.connectionState().toStdString() << '\n';
     until([&] { return surface.inputMethodQuery(Qt::ImEnabled).toBool(); });
     composition(surface, QStringLiteral("new"));
     composition(surface, {}, QStringLiteral("新"));
@@ -309,11 +348,26 @@ void input_contract() {
 }
 } // namespace
 int main(int argc, char** argv) {
-    QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
+    const bool background = argc == 2 && std::string_view(argv[1]) == "--background";
+    if (argc != 1 && !background) {
+        std::cerr << "Usage: lapis_terminal_input_tests [--background]\n";
+        return 2;
+    }
+    if (background) {
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+        QQuickWindow::setSceneGraphBackend(QStringLiteral("software"));
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
+    } else {
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
+    }
     QCoreApplication::setAttribute(Qt::AA_MacDontSwapCtrlAndMeta);
     QGuiApplication app(argc, argv);
     try {
-        input_contract();
+        require(background == (QGuiApplication::platformName() == QStringLiteral("offscreen")),
+                "Offscreen input tests require explicit --background mode");
+        input_contract(background);
+        if (background)
+            std::cout << "Background Qt/software mode; native macOS input and GPU not exercised\n";
         std::cout << "Qt IME commit/cancel, replacement rejection, paste, history, focus, document "
                      "and disconnect ownership passed\n";
     } catch (const std::exception& error) {

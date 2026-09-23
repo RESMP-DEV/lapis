@@ -3,6 +3,8 @@ find_package(Vulkan REQUIRED)
 set(CMAKE_AUTOMOC ON)
 add_library(lapis_desktop_view STATIC
     src/workspace.cpp src/workspace.hpp
+    src/workspace_registry.cpp src/workspace_registry.hpp
+    src/workspace_supervisor.cpp src/workspace_supervisor.hpp
     src/attention_view.cpp
     src/keymap.cpp src/keymap.hpp
     src/live_connection.cpp src/live_connection.hpp
@@ -28,6 +30,19 @@ set_target_properties(lapis_desktop PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER "dev.lapis.desktop")
 add_dependencies(lapis_desktop lapis_session_service)
 if(BUILD_TESTING)
+    add_executable(lapis_workspace_supervisor_tests tests/workspace_supervisor_test.cpp)
+    target_link_libraries(lapis_workspace_supervisor_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME workspace-supervisor COMMAND lapis_workspace_supervisor_tests)
+    set_tests_properties(workspace-supervisor PROPERTIES TIMEOUT 30)
+    add_executable(lapis_workspace_tests tests/workspace_test.cpp)
+    target_link_libraries(lapis_workspace_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_dependencies(lapis_workspace_tests lapis_session_service)
+    add_test(NAME workspace COMMAND lapis_workspace_tests)
+    set_tests_properties(workspace PROPERTIES TIMEOUT 60)
+    add_executable(lapis_workspace_registry_tests tests/workspace_registry_test.cpp)
+    target_link_libraries(lapis_workspace_registry_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME workspace-registry COMMAND lapis_workspace_registry_tests)
+    set_tests_properties(workspace-registry PROPERTIES TIMEOUT 20)
     add_executable(lapis_live_connection_tests tests/live_connection_test.cpp)
     target_link_libraries(lapis_live_connection_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME live-connection COMMAND lapis_live_connection_tests)
@@ -74,7 +89,7 @@ add_dependencies(lapis_terminal_latency_probe lapis_session_service)
 # Opt-in because posting events requires macOS Accessibility permission.
 if(APPLE)
     add_executable(lapis_native_input_probe tests/native_input_probe.cpp
-        tests/platform/native_input_driver.mm)
+        tests/platform/native_input_driver.mm tests/platform/window_activation.mm)
     target_link_libraries(lapis_native_input_probe PRIVATE lapis_project_options lapis_desktop_view
         "-framework AppKit" "-framework Carbon" "-framework CoreGraphics")
     target_compile_definitions(lapis_native_input_probe PRIVATE
@@ -85,6 +100,16 @@ endif()
 
 # Uses a private service fixture supplied by check_service_attention.py --desktop.
 if(APPLE)
+    add_executable(lapis_workspace_ui_probe tests/workspace_ui_probe.cpp tests/platform/window_activation.mm)
+    target_link_libraries(lapis_workspace_ui_probe PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2 "-framework AppKit")
+    target_compile_definitions(lapis_workspace_ui_probe PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
+    qt_add_resources(lapis_workspace_ui_probe workspace_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml)
+    add_dependencies(lapis_workspace_ui_probe lapis_session_service)
+    add_executable(lapis_workspace_attention_ui_probe tests/workspace_attention_ui_probe.cpp tests/platform/window_activation.mm)
+    target_link_libraries(lapis_workspace_attention_ui_probe PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2 "-framework AppKit")
+    target_compile_definitions(lapis_workspace_attention_ui_probe PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
+    qt_add_resources(lapis_workspace_attention_ui_probe workspace_attention_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml)
+    add_dependencies(lapis_workspace_attention_ui_probe lapis_session_service)
     add_executable(lapis_attention_ui_probe tests/attention_ui_probe.cpp tests/platform/window_activation.mm)
     target_link_libraries(lapis_attention_ui_probe PRIVATE lapis_project_options lapis_desktop_view
         Qt6::QuickControls2 "-framework AppKit")

@@ -32,6 +32,30 @@ enables input only after the first screen. Use `--new-session` for initial launc
 then omit it to reconnect; `--discover` explicitly adopts an existing matching
 service. These transport identities are separate from Codex thread/turn/request IDs.
 
+## Installed binary qualification (2026-09-22)
+
+The current adapter pin is
+`81f1d50b0153837534552c7033f203c99a34d2e1fb3fdadc4ec6002fd834180c`.
+The [qualification receipt](../../evidence/codex-binary-update.json) records
+live protocol/TUI replay and response checks, compiled service/desktop decisions,
+and simultaneous requests across two managed sessions. It replaces the older
+`f066af4e…` pin; earlier receipts remain observations of their recorded binaries.
+The executable reports `codex-cli 0.0.0`, so the full digest remains the identity
+check. Other hashes keep structured attention disabled; reconnect preserves the
+unsupported-binary diagnostic until a qualified source is started.
+
+Source inspection at `4546368945c81d4360856161d9c68c07ccc881d5` confirms that
+resume and read retain exclusive same-thread serialization and that resume awaits
+pending-request replay. Live checks independently verify pending identity and
+absence after resolution during disconnection. Schema additions do not extend
+lapis's response capabilities beyond command approvals and structured user input.
+
+The newer TUI changed its folder-trust screen. Qualification now trusts only the
+fresh fixture directory through its disposable Codex home's configuration, rather
+than sending Enter based on prompt wording. No shared configuration is changed.
+Use the [requalification procedure](../../CONTRIBUTING.md#codex-attention-qualification)
+for another binary; changing the pin alone is insufficient.
+
 ## Integration route comparison
 
 The first wiring slice preserves the ordinary CLI terminal interface. The

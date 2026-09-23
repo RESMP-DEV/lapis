@@ -1,0 +1,305 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-22T20:36:45.953396+00:00",
+  "passed": true,
+  "source": {
+    "baseline": "205d72709cd6032b057b0514ee571cac9b775e5a",
+    "branch": "feature/claude-code-hooks",
+    "tested_worktree_dirty": true,
+    "source_sha256": {
+      "CMakeLists.txt": "822736e75639d9948c9ce78afe51d5233ff5d0c17dd3a49bfe240b115f91fda1",
+      "adapters/claude/CMakeLists.txt": "4f10b4d65f3ff875b37fc06140b4bda12a12588355f686099247c9cee6f44b0f",
+      "adapters/claude/src/claude_observer.cpp": "689d7d13c907790688b2e292d7a617de6bb8513196c4a0ae41f0914c056e138a",
+      "adapters/claude/src/claude_observer.hpp": "c6b4e3e98b71c2673972aeaeab0c9a25b10e277c7533e4788e2ed76c2d11ad2f",
+      "adapters/claude/src/hook_relay.cpp": "2775a307fd4013b89d4543e5a2ceb7bfa5a2db84e91d4cdb9a10ab95a58589fa",
+      "adapters/claude/src/hook_relay.hpp": "d20477f02a2dbd3e36508bb26f27bb5f82addfcb12021947049d0f10df2d012e",
+      "adapters/claude/tests/claude_observer_test.cpp": "1882927a7aa5980edbb1e0152b446e04181cd1ddf10fb9fd1a5d16ab27b52ea1",
+      "apps/desktop/qml/AttentionDialog.qml": "074902cf35f29c0bf9dc8bf86bae21b15050f5ed6c079bdac3d0a08cf9bbe3d3",
+      "apps/desktop/qml/Main.qml": "f12e5ab2fe649e30e09ceb9c636f502642fdb5a8a7b859ca02ef23070563f5af",
+      "apps/desktop/src/attention_view.cpp": "b90740c7aeb5c260eb0293459ff1c47a33f8bf182a9b43de5a6acfed694f813c",
+      "apps/desktop/src/live_connection.cpp": "d39c81852b08fed3051c4bb85d5372b5d396d0cce4ee8d0ff822edae728c72ae",
+      "apps/desktop/src/main.cpp": "2ecc7ea0046a28b439f0eb53bfa48ee3ef4aae15745be80b74b22d2003e656e3",
+      "apps/desktop/src/workspace.cpp": "9d115f1919ac5ffcb4c10cb9d848d055ef0447932467ea83a17b004d7140ffe2",
+      "apps/desktop/src/workspace.hpp": "adcaeb790e4c075655bef3dcfe6b6f8768e1023cd1406a6f4aac17158cbe2271",
+      "apps/desktop/src/workspace_registry.cpp": "9e5ef1f984e050143c9197be8486c8b33b165d1300d55bf2d79db42cfcf55361",
+      "apps/desktop/src/workspace_supervisor.cpp": "a6af238bec3dbcf1aa6bf12d364dbf3e5fd98707f5a79453907fcbfd6dcd8492",
+      "apps/desktop/tests/ui_preview_test.cpp": "e3cb579fdc600b8620fbbc598e0dc0c2d88f38cbbe3ab23bad7764ec8ce35917",
+      "apps/desktop/tests/workspace_registry_test.cpp": "bbb9daa02ff077a66ae0cc2d59af7e54f48b8277aa59f09567e62baef36807a2",
+      "apps/desktop/tests/workspace_supervisor_test.cpp": "65bcceb1933999e06e8f0d14b6ab07a12adfbe6fc8886d2da01a873c94f3f036",
+      "scripts/check_claude_hooks.py": "c5a47f16a751393cf28125ae558eda8096cafff19c7155e78947350a35fff427",
+      "scripts/check_cli_launch.py": "2992ac9863d52c54ae608303fa2232c83cdfaa99c615fc9501dfaf72eb5ff38d",
+      "scripts/check_ui_preview.py": "22fc41a6e100ec1d98c21c84298ad80a04cf4c46463aa4c5b1218a83311bd491",
+      "scripts/lapis.py": "2f317aa09afc11b10c520caddeeb5d41f1cb9fc1ffbd490db330bb5af2055c07",
+      "scripts/tests/test_check_claude_hooks.py": "da805ad4038a73e4857666a1be03947c4e607daeafe3505bd5af417cdb5cb69b",
+      "scripts/tests/test_lapis.py": "85dc08404a2469de98524e5863e603175254efb7a8005c1256a583ddb1217b78",
+      "services/session/include/lapis/session/attention.hpp": "c04ff831607e816b1d54c07e9084305374a3e1982b171181018d48a357ecb815",
+      "services/session/src/attention.cpp": "9ac0f765215cf1e021497925e553304959bbecebe4142095f2253f9ddc7522cc",
+      "services/session/src/launch_spec.cpp": "6ea8a1442b5079e7bbb98f49d13589def5425bf61b497c13dfea6552538b9612",
+      "services/session/src/launch_spec.hpp": "7b8b9a99e942559fe24c27d396e1e97218871155787bf75b0ff6d0ce87f9c08f",
+      "services/session/src/session_service.cpp": "2b1ca6b30a2bdce7cd4db0bc67d2380e50ff8b69158e02d4309f51932f7d467a",
+      "services/session/tests/attention_test.cpp": "333b508f8d35c94861de0977ef5b5b639f25c5cea111ec938c52d8c8ccd971b3",
+      "services/session/tests/launch_spec_test.cpp": "92289a14f63534f698db19f4ec984908c19a59b449a19b69792f799ed968a2d3"
+    }
+  },
+  "claude_update": {
+    "method": "claude update",
+    "before": "2.1.278",
+    "after": "2.1.280",
+    "binary_sha256": "387a5c5dcdbb815085edf0baf79591f9d8894efe922bceaf3d75b1b08055229d",
+    "doctor": "No installation issues found"
+  },
+  "scope": {
+    "platform": "macOS ARM64",
+    "service_ipc_version": 6,
+    "workspace_manifest_version": 1,
+    "observation": true,
+    "adapter_response": false,
+    "authoritative_reconciliation": false,
+    "global_hook_installation": false
+  },
+  "checks": {
+    "headless": {
+      "command": "python3 scripts/check_cpp.py dev",
+      "passed": true,
+      "receipt": "build/claude-hooks/core-receipt.json",
+      "reuse": "Shared attention core and headless configuration unchanged since this check."
+    },
+    "desktop": {
+      "command": "python3 scripts/lapis.py build",
+      "passed": true,
+      "ctest_suites": 22,
+      "static_check_count": 62,
+      "receipt": "build/reports/desktop/receipt.json"
+    },
+    "quality": {
+      "command": "python3 scripts/check_quality.py",
+      "passed": true,
+      "python_tests": 95,
+      "receipt": "build/reports/quality/receipt.json"
+    },
+    "cli": {
+      "command": "python3 scripts/lapis.py cli-check",
+      "passed": true,
+      "cases": 15,
+      "receipt": "build/cli-launch-check/receipt.json"
+    },
+    "ui": {
+      "passed": true,
+      "cases": 12,
+      "initial_receipt": "build/ui-preview-check/receipt.json",
+      "initial_failed_case": "arrival",
+      "initial_diagnostic": "Capture timed out with window inactive",
+      "retry_receipt": "build/claude-hooks/ui-arrival-retry/receipt.json",
+      "reuse": "Other 11 cases passed on the same binary and were not repeated; the arrival case passed its identical capture/focus/geometry/attention assertions on retry."
+    },
+    "sanitizers": {
+      "passed": true,
+      "configurations": [
+        "ASan/UBSan",
+        "TSan"
+      ],
+      "ctest_cases_each": [
+        "attention-state",
+        "launch-spec",
+        "claude-observer",
+        "workspace-supervisor"
+      ],
+      "logs": [
+        "build/claude-hooks/asan-tests.log",
+        "build/claude-hooks/tsan-tests.log"
+      ]
+    }
+  },
+  "live_service_and_gui": {
+    "timestamp": "2026-09-22T20:34:31.210767+00:00",
+    "passed": true,
+    "checks": [
+      "same child and pending notice after detach/reattach",
+      "terminal answer retired question and turn completed",
+      "permission remained terminal-only",
+      "new prompt retired prior permission advisory",
+      "live AskUserQuestion has exact tool identity"
+    ],
+    "version": "2.1.280",
+    "binary_sha256": "387a5c5dcdbb815085edf0baf79591f9d8894efe922bceaf3d75b1b08055229d",
+    "service_sha256": "b69684daf71ac9a11a6146f2f6b628096e41b3c4ddf7aa756dd717ac847dd805",
+    "model": "zai,glm-5.3",
+    "fixture": {
+      "base_url": "http://127.0.0.1:3456",
+      "production_default": false,
+      "private_config": true,
+      "permission_mode": "default",
+      "project_permission_ask": [
+        "Bash"
+      ],
+      "setting_sources": [
+        "local"
+      ]
+    },
+    "source_revision": "205d72709cd6032b057b0514ee571cac9b775e5a",
+    "source_dirty": true,
+    "permission_notice": {
+      "id": "permission:7c206d92001a962c36441fdce84546c21af9fdc32992e84955be21c4478cb61c",
+      "thread": "6a677559-6515-4915-8bdd-bd18ad4b7a64",
+      "turn": "47adb0c1-fc23-4818-b882-060b8e2427d7",
+      "item": "",
+      "reason": "approval",
+      "summary": "Claude permission request",
+      "choices": [],
+      "priority": 3,
+      "details": {
+        "adapter": "claude-code",
+        "hookEvent": "PermissionRequest",
+        "observationOnly": true,
+        "responseLocation": "terminal",
+        "semantics": "advisory",
+        "toolName": "Bash"
+      },
+      "status": 0,
+      "revision": 1,
+      "arrived": 1731624454,
+      "not_before": 0,
+      "epoch": 2,
+      "submitted": false
+    },
+    "desktop_capture": "/Users/kearm/lapis/build/claude-hooks/claude-pending.png",
+    "question_notice": {
+      "id": "call_0ad49bbef0a84770aa9bf90a",
+      "thread": "6a677559-6515-4915-8bdd-bd18ad4b7a64",
+      "turn": "d171225a-fa96-4623-8757-244d89184616",
+      "item": "call_0ad49bbef0a84770aa9bf90a",
+      "reason": "input",
+      "summary": "Claude has a question",
+      "choices": [],
+      "priority": 3,
+      "details": {
+        "adapter": "claude-code",
+        "hookEvent": "PreToolUse",
+        "observationOnly": true,
+        "responseLocation": "terminal",
+        "semantics": "tool",
+        "toolName": "AskUserQuestion"
+      },
+      "status": 0,
+      "revision": 2,
+      "arrived": 1731632411,
+      "not_before": 0,
+      "epoch": 3,
+      "submitted": false
+    },
+    "question_retirement_activity": 1,
+    "service_reaped": true,
+    "global_settings_hashes": {
+      "before": "7c63b53401e76645597ae38468cc3f1dd62f2693a8f47e5088cf12f7217f6b32",
+      "after": "7c63b53401e76645597ae38468cc3f1dd62f2693a8f47e5088cf12f7217f6b32"
+    },
+    "global_settings_unchanged": true,
+    "elapsed_seconds": 12.908
+  },
+  "runtime_hook_contract": {
+    "payload_keys": {
+      "Notification": [
+        "cwd",
+        "hook_event_name",
+        "message",
+        "notification_type",
+        "prompt_id",
+        "session_id",
+        "transcript_path"
+      ],
+      "PermissionRequest": [
+        "cwd",
+        "effort",
+        "hook_event_name",
+        "permission_mode",
+        "permission_suggestions",
+        "prompt_id",
+        "session_id",
+        "tool_input",
+        "tool_name",
+        "transcript_path"
+      ],
+      "PostToolUse": [
+        "cwd",
+        "duration_ms",
+        "effort",
+        "hook_event_name",
+        "permission_mode",
+        "prompt_id",
+        "session_id",
+        "tool_input",
+        "tool_name",
+        "tool_response",
+        "tool_use_id",
+        "transcript_path"
+      ],
+      "PreToolUse": [
+        "cwd",
+        "effort",
+        "hook_event_name",
+        "permission_mode",
+        "prompt_id",
+        "session_id",
+        "tool_input",
+        "tool_name",
+        "tool_use_id",
+        "transcript_path"
+      ],
+      "SessionEnd": [
+        "cwd",
+        "hook_event_name",
+        "prompt_id",
+        "reason",
+        "session_id",
+        "transcript_path"
+      ],
+      "SessionStart": [
+        "cwd",
+        "hook_event_name",
+        "model",
+        "session_id",
+        "source",
+        "transcript_path"
+      ],
+      "Stop": [
+        "background_tasks",
+        "cwd",
+        "effort",
+        "hook_event_name",
+        "last_assistant_message",
+        "permission_mode",
+        "prompt_id",
+        "session_crons",
+        "session_id",
+        "stop_hook_active",
+        "transcript_path"
+      ],
+      "UserPromptSubmit": [
+        "cwd",
+        "hook_event_name",
+        "permission_mode",
+        "prompt",
+        "prompt_id",
+        "session_id",
+        "transcript_path"
+      ]
+    },
+    "permission_request_has_no_tool_id": true,
+    "question_matching_pre_post_id": true,
+    "identity_only": true,
+    "raw_logs_location": "build/claude-hooks/",
+    "idle_notification": "Replay coverage only; not live-qualified"
+  },
+  "preservation_observation": {
+    "earlier_attempt": "A global-settings hash changed during one attempt; its writer was not attributed. The current file was preserved, and the attempt remained failed.",
+    "failed_receipt": "build/claude-hooks/settings-change-receipt.json",
+    "final_attempt": "Identical before/after global-settings hashes; the disposable fixture uses its own explicit Bash ask rule."
+  },
+  "limitations": [
+    "Replies remain in the originating terminal; hooks never approve or deny.",
+    "No recovery of missed upstream hook history or unobserved requests after service restart.",
+    "Permission hooks without tool IDs are advisory until a verified turn boundary.",
+    "Actual qualification is one Claude session with permission/input turns and GUI reconnect; this does not qualify 32 sessions, Linux UI, or Milestone 5 response/reconciliation capabilities.",
+    "Runtime model routing used isolated CCR/GLM fixtures; normal launches inherit user policy and configuration."
+  ]
+}

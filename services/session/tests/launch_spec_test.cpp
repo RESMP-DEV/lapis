@@ -45,6 +45,16 @@ int main(int argc, char** argv) {
         rejects([&] { static_cast<void>(validate_launch(other)); });
         other.arguments = {QStringLiteral("--"), QStringLiteral("--remote=literal-prompt")};
         require(validate_launch(other).arguments == other.arguments);
+        const auto codex_fingerprint = launch_fingerprint(other);
+        other.agent = AgentMode::claude;
+        require(launch_fingerprint(validate_launch(other)) != codex_fingerprint);
+        require(launch_fingerprint(other) != fingerprint);
+        for (const auto* option : {"--settings", "--settings={}", "--bare", "--safe-mode"}) {
+            other.arguments = {QString::fromLatin1(option)};
+            rejects([&] { static_cast<void>(validate_launch(other)); });
+            other.arguments.prepend(QStringLiteral("--"));
+            require(validate_launch(other).arguments == other.arguments);
+        }
         other.agent = static_cast<AgentMode>(99);
         rejects([&] { static_cast<void>(validate_launch(other)); });
         rejects([&] { static_cast<void>(launch_fingerprint(other)); });

@@ -41,7 +41,7 @@ verify-tools:
 desktop:
     python3 scripts/lapis.py build
 
-# Open the live shell window; its session service survives window closure.
+# Open the retained workspace; its session services survive window closure.
 run:
     python3 scripts/lapis.py run
 
