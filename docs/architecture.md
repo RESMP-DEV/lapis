@@ -1704,6 +1704,43 @@ with the fake model after deleting the record. Restart agent (Commands) applies
 the restore path to one ended or unreachable card and refuses while its service
 answers. Antigravity resumes with `agy --conversation`.
 
+Phone access (September 23, requested for use on the go without signing in).
+A prototype, deliberately simpler than the SSH design first proposed:
+
+- `apps/remote/lapis_remote.py` is a standard-library gateway on the Mac. It
+  reads `runtime/workspace.json` and attaches to an agent's service only while
+  the phone shows that agent, in discover mode with the registry's launch
+  fingerprint (checked against the pinned `launch-spec` values). Services
+  still accept one client, so this retires the desktop's attachment for that
+  agent (its card reads replaced; Reconnect agent takes it back and re-sends
+  the stage size), and the desktop taking it back ends the phone view with that
+  explanation. Screens go out as server-sent events of styled runs, at most one
+  per 50 ms; input comes back as POSTed text, paste, named keys (encoded by the
+  service for the terminal's modes) and resize. The phone's grid is applied to
+  the PTY; the software keyboard covering the screen does not resize it.
+- Admission replaces keys or pairing: the gateway binds only the Mac's
+  Tailscale address and serves a request only when `tailscale whois` gives the
+  Mac owner's login on an iOS device, or the Mac itself. The Mac's tailnet is
+  shared with other people and tagged servers; of its 64 peers on
+  September 23 none was admitted, only the Mac itself. Requests with an Origin header,
+  without `X-Lapis-Client`, or with an unknown Host are refused, so a web page
+  on the phone cannot drive an agent. Plain HTTP relies on WireGuard; the app's
+  transport exception is limited to `ts.net` names and local addresses.
+- `apps/ios` is a SwiftUI app (iOS 17+) with categories and agents, an agent
+  screen drawing the cell grid, a key bar and a message field that pastes and
+  presses Enter. `scripts/check_ios_remote.py` compiles it and its UI tests
+  directly and runs them in a headless simulator against disposable services;
+  `scripts/install_ios_app.py` signs a device build with the development
+  profile and installs it with `devicectl`. Both bypass Xcode's build service,
+  which deadlocked on this Mac: the kernel's pipe memory was exhausted by
+  long-running agent processes, leaving new pipes 512 bytes deep.
+- Not yet: structured requests and approvals on the phone (agents' own prompts
+  are answered through the key bar), watch-only attachments so the phone and
+  desktop can show an agent together, push notifications, and restoring agents
+  without the desktop open. These need services to accept watch-only
+  attachments beside one controlling client, and a per-user background
+  process; both remain proposed.
+
 Observed but not changed: Linux TSan reports frees and mutexes on Qt's uninstrumented
 threads in five GUI suites, identically on the pre-merge base, so TSan remains a
 macOS qualification. Native Mac selection, wheel and window-manager behavior are

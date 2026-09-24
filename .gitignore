@@ -30,6 +30,11 @@ Testing/
 *.dSYM/
 *.app/
 
+# The iPhone app's generated Xcode project and per-Mac settings.
+/apps/ios/Lapis.xcodeproj/
+/apps/ios/Config/Local.xcconfig
+xcuserdata/
+
 # Runtime/session data and profiling output. Sanitized evidence/ is tracked.
 /runtime/
 /.cache/

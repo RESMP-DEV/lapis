@@ -1,0 +1,67 @@
+# XcodeGen spec for the lapis iPhone app. Generate with `xcodegen` here.
+name: Lapis
+options:
+  bundleIdPrefix: dev.lapis
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+configFiles:
+  Debug: Config/Lapis.xcconfig
+  Release: Config/Lapis.xcconfig
+targets:
+  Lapis:
+    type: application
+    platform: iOS
+    sources: [Lapis]
+    info:
+      path: Lapis/Info.plist
+      properties:
+        CFBundleDisplayName: lapis
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIUserInterfaceStyle: Dark
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        LapisDefaultHost: $(LAPIS_DEFAULT_HOST)
+        NSLocalNetworkUsageDescription: lapis connects to the gateway on your Mac over Tailscale.
+        # Plain HTTP only to Tailscale names and local addresses; WireGuard
+        # encrypts the tailnet path.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSExceptionDomains:
+            ts.net:
+              NSIncludesSubdomains: true
+              NSExceptionAllowsInsecureHTTPLoads: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.lapis.remote
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: NO
+  LapisUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [LapisUITests]
+    dependencies:
+      - target: Lapis
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.lapis.remote.uitests
+        TEST_TARGET_NAME: Lapis
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Lapis:
+    build:
+      targets:
+        Lapis: all
+        LapisUITests: [test]
+    test:
+      targets: [LapisUITests]

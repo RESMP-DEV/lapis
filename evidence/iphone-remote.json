@@ -1,0 +1,47 @@
+{
+  "schema": "lapis.qa-receipt/1",
+  "recorded_at": "2026-09-24T01:06:00Z",
+  "scope": "Prototype iPhone app and Mac gateway for using lapis agents over Tailscale",
+  "source": {
+    "base": "a4b0e33 (feature/session-continuity)",
+    "branch": "feature/phone-remote (local)"
+  },
+  "hosts": {
+    "mac": "Apple Silicon, macOS 26.5, Xcode 26.6, iOS 26.5 Simulator (iPhone 17 Pro)",
+    "anvil": "Linux, Python 3.14.4"
+  },
+  "tools": {
+    "codex": "codex-cli 0.155.1",
+    "claude_code": "2.1.281",
+    "models": "scripts/fake_models.py on 127.0.0.1:43110; no model usage"
+  },
+  "checks": [
+    {
+      "name": "gateway suite (scripts/tests/test_lapis_remote.py)",
+      "result": "8/8 on macOS (four consecutive runs) and on anvil: snapshot decoding, launch fingerprints equal to the pinned launch-spec values, registry reading, admission rules, browser refusal, and against a real session service: list, stream, paste and Enter, resize, a second view taking over, release when the phone leaves, and the desktop attachment receiving replaced"
+    },
+    {
+      "name": "iOS UI tests in a headless simulator (scripts/check_ios_remote.py --codex --claude)",
+      "result": "6/6: categories and a stopped agent listed; open, type, send and echo; key bar ^U clears a line typed without Enter; wide, emoji, right-to-left and box-drawing output; Settings connection check; another view taking the agent then Open here again; real Codex 0.155.1 (managed mode) and Claude Code 2.1.281 answering a prompt sent from the phone"
+    },
+    {
+      "name": "gateway on this Mac's Tailscale address (LaunchAgent)",
+      "result": "health and agent list answered for the Mac itself; requests without X-Lapis-Client or with an Origin header refused; the simulator app listed the real workspace through the MagicDNS name over HTTP (ts.net transport exception)"
+    },
+    {
+      "name": "admission against the real tailnet",
+      "result": "of 64 peers, none admitted: the owner's two Linux machines, 26 devices of other users (one an iPhone) and 36 tagged devices; only the Mac itself is admitted until the owner's iPhone joins"
+    },
+    {
+      "name": "device build (scripts/install_ios_app.py --build-only)",
+      "result": "signed with the team's wildcard development profile, whose one device is the paired iPhone 17 Pro (Developer Mode on); not installed because the phone was not reachable"
+    }
+  ],
+  "limitations": [
+    "Not yet run on the phone: install, Tailscale reachability over cellular, dictation and the real keyboard",
+    "The owner's iPhone was not on the Mac's tailnet under the owner's login on September 23",
+    "Opening an agent on the phone retires the desktop's attachment; Reconnect agent takes it back (the desktop's size restore is from code reading, not exercised)",
+    "No structured requests, push notifications, or restore without the desktop",
+    "Xcode's build service deadlocked on this Mac because kernel pipe memory was exhausted (new pipes held 512 bytes), so the app and tests are compiled directly with swiftc, actool and codesign"
+  ]
+}

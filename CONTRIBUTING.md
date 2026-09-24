@@ -637,6 +637,7 @@ union of the relevant checks; a check satisfying two rows runs once:
 | Test cases or other test harnesses | `just quality` for Python; affected build/CTest cases for C++; exercise the affected runtime probe when its harness behavior changes |
 | Disk history | `python3 scripts/check_history.py --disk-full` on macOS, plus desktop-enabled ASan/TSan; the disk-full fixture creates and removes its own 32 MiB disk image |
 | Python tooling | `just quality` (includes Ruff and Python unit tests), plus relevant runtime probes |
+| iPhone app or gateway (`apps/ios`, `apps/remote`) | `just quality` (includes the gateway suite, with a live service when the desktop is built) and `uv run --no-project python scripts/check_ios_remote.py --codex --claude` on macOS with an iOS Simulator runtime |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; run `just quality` for shared check/config/instruction changes; no unrelated C++ rebuild |
 
 ### Claude Code hook qualification
