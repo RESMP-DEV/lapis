@@ -640,8 +640,12 @@ def main():
         print(
             f"Mac client: saw the phone {mac.saw_phone}, closed {mac.closed or 'never'}"
         )
+        captures = sorted((runtime / "phone-captures").glob("*.png"))
+        print(f"phone captures saved: {len(captures)}")
         print(f"results {results}\nscreens {screens}")
         if mac.closed or (synced and not mac.saw_phone):
+            return 1
+        if (not args.only or args.only == "testSendScreenToMac") and not captures:
             return 1
         return outcome.returncode
     finally:

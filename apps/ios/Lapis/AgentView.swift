@@ -18,7 +18,10 @@ struct AgentView: View {
     var body: some View {
         VStack(spacing: 0) {
             GeometryReader { proxy in
-                TerminalScreen(frame: session.frame, metrics: metrics)
+                TerminalScreen(frame: session.frame, history: session.history,
+                               historyEnd: session.historyEnd, metrics: metrics) {
+                    await session.loadOlder()
+                }
                     .onAppear { fit(proxy.size) }
                     .onChange(of: proxy.size) { _, size in fit(size) }
                     .onChange(of: fontSize) { _, _ in fit(proxy.size, force: true) }
@@ -42,9 +45,13 @@ struct AgentView: View {
                     Button("Smaller text", systemImage: "textformat.size.smaller") {
                         fontSize = max(fontSize - 1, 8)
                     }
+                    Button("Send screen to Mac", systemImage: "camera.viewfinder") {
+                        Task { await sendScreen() }
+                    }
                 } label: {
-                    Image(systemName: "textformat.size")
+                    Image(systemName: "ellipsis.circle")
                 }
+                .accessibilityIdentifier("viewMenu")
             }
         }
         .onDisappear { session.close() }
@@ -72,6 +79,40 @@ struct AgentView: View {
         }
     }
 
+    // Saves a screenshot and the exact screen data on the Mac, where a
+    // rendering problem can be inspected (runtime/phone-captures).
+    private func sendScreen() async {
+        try? await Task.sleep(for: .milliseconds(450))  // let the menu close
+        guard let gateway = session.gateway,
+              let window = UIApplication.shared.connectedScenes
+                  .compactMap({ $0 as? UIWindowScene }).flatMap(\.windows).first(where: \.isKeyWindow)
+        else { return }
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
+        }
+        guard let png = image.pngData() else { return }
+        var body: [String: Any] = [
+            "png": png.base64EncodedString(),
+            "agent": session.agent.id,
+            "harness": session.agent.harness,
+            "fontSize": fontSize,
+            "cellWidth": metrics.cellWidth,
+            "lineHeight": metrics.lineHeight,
+            "scale": window.screen.scale,
+            "screen": [window.bounds.width, window.bounds.height],
+            "historyPages": session.history.count,
+        ]
+        if let json = session.lastFrameJSON, let frame = try? JSONSerialization.jsonObject(with: json) {
+            body["frame"] = frame
+        }
+        do {
+            let name = try await gateway.capture(body)
+            session.notice = "Sent to the Mac as \(name)."
+        } catch {
+            session.notice = describe(error)
+        }
+    }
+
     // The keyboard only covers the screen; the agent keeps its size. A new
     // width, or a new height with the keyboard down, resizes the terminal.
     private func fit(_ size: CGSize, force: Bool = false) {
@@ -81,8 +122,11 @@ struct AgentView: View {
             session.open(columns: grid.columns, rows: grid.rows)
             return
         }
-        if force || grid.columns != current.columns || (!keyboardShown && grid.rows != current.rows) {
-            session.resize(columns: grid.columns, rows: keyboardShown ? current.rows : grid.rows)
+        // Focus comes before the keyboard's notification, so either one means
+        // the keyboard is (about to be) up and the height change is not real.
+        let keyboard = keyboardShown || composing
+        if force || grid.columns != current.columns || (!keyboard && grid.rows != current.rows) {
+            session.resize(columns: grid.columns, rows: keyboard ? current.rows : grid.rows)
         }
     }
 

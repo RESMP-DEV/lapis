@@ -422,8 +422,6 @@ class SessionService final : public QObject {
             }
         };
         history_.received = [this](wire::HistoryReply reply) {
-            if (!client_ || !ready_ || reply.attachment != attachment_)
-                return;
             if (!history_error_.isEmpty())
                 reply.message = history_error_ + QStringLiteral(". ") + reply.message;
             send_history(reply);
@@ -547,16 +545,26 @@ class SessionService final : public QObject {
         }
         processing_output_ = false;
     }
+    // History replies go to whichever client or joined view asked.
     void send_history(const wire::HistoryReply& reply) {
-        if (!client_ || !ready_ || reply.attachment != attachment_)
+        const bool to_client = client_ && ready_ && reply.attachment == attachment_;
+        const auto* view = to_client ? nullptr : view_for(reply.attachment);
+        QLocalSocket* const destination =
+            to_client ? client_.data() : (view && view->ready ? view->socket.data() : nullptr);
+        if (!destination)
             return;
+        const auto view_id = view ? view->id : 0;
         try {
             auto bytes = wire::frame(wire::Kind::history_page, wire::encode_history_reply(reply));
-            if (client_->bytesToWrite() + bytes.size() > wire::max_frame_bytes)
+            if (destination->bytesToWrite() + bytes.size() > wire::max_frame_bytes)
                 throw std::runtime_error("History response queue full");
-            if (client_->write(bytes) != bytes.size())
+            if (destination->write(bytes) != bytes.size())
                 throw std::runtime_error("History response write failed");
         } catch (const std::exception& error) {
+            if (!to_client) {
+                drop_view(view_id, wire::StatusCode::overloaded, QString::fromUtf8(error.what()));
+                return;
+            }
             send_status(client_, wire::StatusCode::overloaded, QString::fromUtf8(error.what()));
             detach_client();
         }
@@ -568,10 +576,10 @@ class SessionService final : public QObject {
         if (archive_history(true) && history_.read(pending.first, pending.second))
             pending_history_.reset();
     }
-    void request_history(const QByteArray& payload) {
+    void request_history(const wire::Attachment& requester, const QByteArray& payload) {
         const auto request = wire::decode_history_request(payload);
         if (pending_history_) {
-            send_history({attachment_,
+            send_history({requester,
                           request.request_id,
                           0,
                           QStringLiteral("History is busy; try again"),
@@ -581,7 +589,7 @@ class SessionService final : public QObject {
         // Browsing retries storage after a recoverable filesystem failure.
         history_failed_ = false;
         history_error_.clear();
-        pending_history_ = std::pair{attachment_, request};
+        pending_history_ = std::pair{requester, request};
         try_pending_history();
     }
     void finish_session(const QString& message, int exit_code, int remaining = 120) {
@@ -908,7 +916,7 @@ class SessionService final : public QObject {
             decide_attention(control.payload);
             return;
         case wire::Kind::history_request:
-            request_history(control.payload);
+            request_history(attachment_, control.payload);
             return;
         case wire::Kind::terminate:
             end_agent(control.payload);
@@ -1038,6 +1046,12 @@ class SessionService final : public QObject {
     View* find_view(quint64 id) {
         const auto found = std::find_if(views_.begin(), views_.end(),
                                         [id](const auto& view) { return view->id == id; });
+        return found == views_.end() ? nullptr : found->get();
+    }
+    const View* view_for(const wire::Attachment& attachment) const {
+        const auto found = std::find_if(views_.begin(), views_.end(), [&](const auto& view) {
+            return view->attachment == attachment;
+        });
         return found == views_.end() ? nullptr : found->get();
     }
     void mark_dirty() {
@@ -1183,9 +1197,13 @@ class SessionService final : public QObject {
             request_resize(*view.wanted);
             return;
         }
+        if (frame.kind == wire::Kind::history_request) {
+            request_history(view.attachment, control.payload);
+            return;
+        }
         if (frame.kind != wire::Kind::text && frame.kind != wire::Kind::paste &&
             frame.kind != wire::Kind::key)
-            throw std::runtime_error("A joined view may only type and resize");
+            throw std::runtime_error("A joined view may only type, resize and page history");
         claim_size(view.wanted);
         write_input(frame.kind, control.payload);
     }

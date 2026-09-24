@@ -6,6 +6,7 @@ Commands typed at its prompt exercise terminal and lifecycle behavior:
 
   slow    print progress for 20 seconds, then return to the prompt
   flood   print 20000 long lines as fast as possible
+  count   print 120 numbered lines (scrollback for phone history tests)
   wide    print wide, combining and right-to-left text
   alt     draw on the alternate screen for 5 seconds
   title   set an unusual window title
@@ -51,7 +52,10 @@ def bursts(period):
 
 
 def run(command, line):
-    if command == "slow":
+    if command == "count":
+        for number in range(1, 121):
+            say(f"count {number}")
+    elif command == "slow":
         for step in range(20):
             say(f"working {step + 1}/20")
             time.sleep(1)

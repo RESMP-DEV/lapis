@@ -18,7 +18,9 @@ web page on the phone cannot drive an agent.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
+import itertools
 import json
 import os
 import select
@@ -41,6 +43,7 @@ GATEWAY_VERSION = 1
 # Wire protocol v6 (services/session/src/transport/local_protocol.hpp).
 WIRE_VERSION = 6
 HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
+HISTORY_REQUEST, HISTORY_PAGE = 10, 11
 STATUS_NAMES = {1: "rejected", 2: "ended", 3: "replaced", 4: "overloaded"}
 # Attach modes: discover takes the agent from its current client; join (added
 # within v6) shows it beside the desktop. Services started before join reject it.
@@ -71,6 +74,7 @@ KEYS = {
 }
 SHIFT, CONTROL, ALT = 1, 2, 4
 MAX_INPUT = 32 * 1024
+MAX_CAPTURE = 12 * 1024 * 1024
 
 # Run style bits sent to the phone.
 BOLD, ITALIC, FAINT, UNDERLINE, STRIKE, CURSOR = 1, 2, 4, 8, 16, 32
@@ -155,6 +159,46 @@ def load_workspace(path):
     }
 
 
+SHELL_HOSTS = ("ssh", "mosh", "et")
+SSH_VALUE_OPTIONS = set("bcDEeFIiJLlmOoPpQRSWw")
+
+
+def remote_machine(agent):
+    """The host an ssh, mosh or et launch runs on, or "" for this Mac."""
+    if Path(agent["program"]).name not in SHELL_HOSTS:
+        return ""
+    arguments = iter(agent["arguments"])
+    for argument in arguments:
+        if argument == "--":
+            argument = next(arguments, "")
+        elif argument.startswith("-"):
+            if len(argument) == 2 and argument[1] in SSH_VALUE_OPTIONS:
+                next(arguments, None)
+            continue
+        return argument.rsplit("@", 1)[-1]
+    return ""
+
+
+def display_place(agent):
+    """Where an agent runs, as the phone shows it: ~/dev/x here, anvil:~/x elsewhere."""
+    machine = remote_machine(agent)
+    if machine:
+        remote = next(
+            (
+                part.split("cd ", 1)[1].split("&&")[0].split(";")[0].strip()
+                for part in agent["arguments"]
+                if "cd " in part
+            ),
+            "",
+        )
+        return machine, f"{machine}:{remote}"
+    directory = agent["directory"]
+    home = str(Path.home())
+    if directory == home or directory.startswith(home + "/"):
+        directory = "~" + directory[len(home) :]
+    return "", directory
+
+
 def service_answers(endpoint, timeout=0.3):
     """True when a session service accepts connections at the endpoint."""
     probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -183,8 +227,13 @@ def resolve(kind, value, palette):
     return None
 
 
-def render_snapshot(payload):
-    """Decode a terminal snapshot into styled runs per row for the phone."""
+def render_snapshot(payload, show_cursor=True):
+    """Decode a terminal snapshot into styled runs per row for the phone.
+
+    Each run is [text, foreground, background, flags, column, width]: the
+    phone draws it at its column across its width in cells, so backgrounds fill
+    whole rows and wide characters keep their two cells.
+    """
     require(len(payload) >= POOL_OFFSET + 4, "Truncated snapshot")
     revision, columns, rows, cursor_x, cursor_y = struct.unpack_from(">QHHHH", payload)
     in_viewport, visible = payload[16], payload[17]
@@ -200,14 +249,16 @@ def render_snapshot(payload):
     offset += 4
     require(cells == columns * rows, "Invalid snapshot geometry")
     require(len(payload) == offset + cells * CELL.size, "Invalid cell payload")
-    cursor = (cursor_x, cursor_y) if in_viewport and visible else None
+    cursor = (cursor_x, cursor_y) if show_cursor and in_viewport and visible else None
     lines = []
     line = []
-    run_text, run_style = [], None
+    current = None  # [texts, style, column, width]
     for index, cell in enumerate(CELL.iter_unpack(payload[offset:])):
         start, length, kind, fg_kind, fg, bg_kind, bg, _, _, underline, flags = cell
         column, row = index % columns, index // columns
-        if kind != WIDE_TAIL:
+        if kind == WIDE_TAIL and current is not None:
+            current[3] += 1
+        elif kind != WIDE_TAIL:
             text = (
                 "".join(chr(point) for point in points[start : start + length])
                 if length and kind != WRAP_SPACER
@@ -228,16 +279,17 @@ def render_snapshot(payload):
             if cursor == (column, row):
                 style |= CURSOR
             key = (foreground, background, style)
-            if key != run_style and run_text:
-                line.append(run(run_text, run_style))
-                run_text = []
-            run_style = key
-            run_text.append(text)
+            if current is None or current[1] != key:
+                if current is not None:
+                    line.append(run(*current))
+                current = [[], key, column, 0]
+            current[0].append(text)
+            current[3] += 1
         if column == columns - 1:
-            if run_text:
-                line.append(run(run_text, run_style))
+            if current is not None:
+                line.append(run(*current))
             lines.append(line)
-            line, run_text, run_style = [], [], None
+            line, current = [], None
     return {
         "revision": revision,
         "columns": columns,
@@ -251,13 +303,15 @@ def render_snapshot(payload):
     }
 
 
-def run(texts, style):
+def run(texts, style, column, width):
     foreground, background, flags = style
     return [
         "".join(texts),
         None if foreground is None else hex_color(foreground),
         None if background is None else hex_color(background),
         flags,
+        column,
+        width,
     ]
 
 
@@ -281,6 +335,8 @@ class WireSession:
         # Set when another phone view is taking this agent, so its "replaced"
         # status is not reported as the Mac taking it back.
         self.superseded = False
+        self.history_ids = itertools.count(1)
+        self.history_waiters = {}
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.socket.settimeout(timeout)
         try:
@@ -366,6 +422,45 @@ class WireSession:
     def key(self, name, modifiers=0):
         require(name in KEYS, "Unknown key")
         self.send(KEY, bytes([KEYS[name], modifiers & 0x0F]))
+
+    def request_history(self, reference=0, timeout=10.0, newer=False):
+        """The archived page before `reference` (0: the newest page), or after it.
+
+        The stream's reader thread delivers the reply (deliver_history).
+        """
+        request_id = next(self.history_ids)
+        waiter = [threading.Event(), None]
+        with self.lock:
+            self.history_waiters[request_id] = waiter
+        try:
+            direction = 1 if newer else 0
+            self.send(
+                HISTORY_REQUEST, struct.pack(">QQB", request_id, reference, direction)
+            )
+            require(waiter[0].wait(timeout), "History did not answer")
+            return waiter[1]
+        finally:
+            with self.lock:
+                self.history_waiters.pop(request_id, None)
+
+    def deliver_history(self, data):
+        require(
+            len(data) >= 60 and data[:ATTACHMENT_BYTES] == self.attachment,
+            "Bad history reply",
+        )
+        request_id, page_id = struct.unpack_from(">QQ", data, ATTACHMENT_BYTES)
+        length = struct.unpack_from(">I", data, 56)[0]
+        message = data[60 : 60 + length].decode("utf-8", "replace")
+        snapshot = data[60 + length :]
+        with self.lock:
+            waiter = self.history_waiters.get(request_id)
+        if waiter is not None:
+            waiter[1] = {
+                "page": page_id,
+                "message": message,
+                "snapshot": snapshot or None,
+            }
+            waiter[0].set()
 
     def resize(self, columns, rows):
         require(10 <= columns <= 500 and 3 <= rows <= 300, "Terminal size out of range")
@@ -499,6 +594,10 @@ class Gateway:
             return self.sessions.get(identifier)
 
 
+def agent_route(parts, action):
+    return len(parts) == 4 and parts[:2] == ["api", "agents"] and parts[3] == action
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "lapis-remote"
     gateway: Gateway
@@ -557,10 +656,10 @@ class Handler(BaseHTTPRequestHandler):
             )
         elif parts == ["api", "agents"]:
             self.list_agents()
-        elif (
-            len(parts) == 4 and parts[:2] == ["api", "agents"] and parts[3] == "stream"
-        ):
+        elif agent_route(parts, "stream"):
             self.stream(parts[2])
+        elif agent_route(parts, "history"):
+            self.history(parts[2])
         else:
             self.fail(HTTPStatus.NOT_FOUND, "Not found")
 
@@ -568,8 +667,10 @@ class Handler(BaseHTTPRequestHandler):
         if not self.admitted():
             return
         parts = self.route()
-        if len(parts) == 4 and parts[:2] == ["api", "agents"] and parts[3] == "input":
+        if agent_route(parts, "input"):
             self.input(parts[2])
+        elif parts == ["api", "captures"]:
+            self.capture()
         else:
             self.fail(HTTPStatus.NOT_FOUND, "Not found")
 
@@ -589,6 +690,8 @@ class Handler(BaseHTTPRequestHandler):
                     "title": agent["title"],
                     "harness": agent["harness"],
                     "directory": agent["directory"],
+                    "machine": display_place(agent)[0],
+                    "place": display_place(agent)[1],
                     "running": service_answers(agent["endpoint"]),
                     "onPhone": self.gateway.session(agent["id"]) is not None,
                 }
@@ -680,6 +783,9 @@ class Handler(BaseHTTPRequestHandler):
                         "status", {"state": state, "message": status_message(data)}
                     )
                     return
+                if kind == HISTORY_PAGE:
+                    session.deliver_history(data)
+                    continue
                 snapshot = session.accept_snapshot(kind, data)
                 if snapshot is not None:
                     latest = snapshot
@@ -691,6 +797,69 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
                 last_ping = now
         self.event("status", {"state": "released", "message": "Opened elsewhere"})
+
+    def history(self, identifier):
+        """An archived page of the agent's output: ?before=N (0: newest) or ?after=N."""
+        session = self.gateway.session(identifier)
+        if session is None:
+            self.fail(HTTPStatus.CONFLICT, "This agent is not open on the phone")
+            return
+        try:
+            query = parse_qs(urlsplit(self.path).query)
+            if "after" in query:
+                after = int(query["after"][0])
+                require(after > 0, "after needs a page")
+                reply = session.request_history(after, newer=True)
+            else:
+                reply = session.request_history(
+                    max(0, int(query.get("before", ["0"])[0]))
+                )
+        except (ValueError, GatewayError, OSError) as error:
+            self.fail(HTTPStatus.BAD_GATEWAY, f"History unavailable: {error}")
+            return
+        body = {
+            "page": reply["page"],
+            "message": reply["message"],
+            "end": reply["page"] == 0 and "No more" in reply["message"],
+            "busy": reply["page"] == 0 and "busy" in reply["message"],
+        }
+        if reply["snapshot"]:
+            page = render_snapshot(reply["snapshot"], show_cursor=False)
+            body.update({"columns": page["columns"], "lines": page["lines"]})
+        self.log_message(
+            "history page %s, %s rows", body["page"], len(body.get("lines", []))
+        )
+        self.reply(HTTPStatus.OK, body)
+
+    def capture(self):
+        """Save what the phone shows, to debug rendering from the Mac."""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = -1
+        if not 0 < length <= MAX_CAPTURE:
+            self.fail(HTTPStatus.BAD_REQUEST, "Invalid capture size")
+            return
+        try:
+            body = json.loads(self.rfile.read(length))
+            image = base64.b64decode(body.pop("png"), validate=True)
+            require(image.startswith(b"\x89PNG\r\n\x1a\n"), "Not a PNG")
+        except (ValueError, KeyError, TypeError, GatewayError) as error:
+            self.fail(HTTPStatus.BAD_REQUEST, f"Invalid capture: {error}")
+            return
+        directory = self.gateway.registry.parent / "phone-captures"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        name = time.strftime("%Y%m%d-%H%M%S")
+        for suffix, data in (
+            (".png", image),
+            (".json", json.dumps(body, indent=1).encode()),
+        ):
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+            with os.fdopen(
+                os.open(directory / (name + suffix), flags, 0o600), "wb"
+            ) as out:
+                out.write(data)
+        self.reply(HTTPStatus.OK, {"saved": name})
 
     def input(self, identifier):
         session = self.gateway.session(identifier)

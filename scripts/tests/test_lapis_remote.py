@@ -1,5 +1,6 @@
 """The iPhone gateway: snapshots, launch identity, admission and a live service."""
 
+import base64
 import http.client
 import json
 import os
@@ -76,21 +77,34 @@ class SnapshotTests(unittest.TestCase):
         frame = remote.render_snapshot(payload)
         self.assertEqual((frame["columns"], frame["rows"]), (4, 2))
         self.assertTrue(frame["alternateScreen"] and frame["applicationCursor"])
+        # Runs carry their column and width in cells; the wide cell spans two.
         self.assertEqual(
             frame["lines"][0],
-            [["a", None, None, 0], ["b", "#ff0000", None, 0], ["漢", None, None, 0]],
+            [
+                ["a", None, None, 0, 0, 1],
+                ["b", "#ff0000", None, 0, 1, 1],
+                ["漢", None, None, 0, 2, 2],
+            ],
         )
         # Inverse swaps in the defaults; the cursor cell is its own run.
         self.assertEqual(
             frame["lines"][1],
             [
-                ["x", None, None, remote.BOLD],
-                ["y", "#111111", "#dddddd", remote.CURSOR],
-                [" ", None, None, 0],
-                ["z", None, "#00ff00", remote.UNDERLINE],
+                ["x", None, None, remote.BOLD, 0, 1],
+                ["y", "#111111", "#dddddd", remote.CURSOR, 1, 1],
+                [" ", None, None, 0, 2, 1],
+                ["z", None, "#00ff00", remote.UNDERLINE, 3, 1],
             ],
         )
         self.assertEqual(frame["cursor"], {"x": 1, "y": 1, "visible": True})
+
+    def test_history_pages_hide_the_cursor(self):
+        payload = snapshot(2, 1, [cell("a"), cell("b")], cursor=(0, 0))
+        self.assertEqual(
+            remote.render_snapshot(payload)["lines"][0][0][3], remote.CURSOR
+        )
+        page = remote.render_snapshot(payload, show_cursor=False)
+        self.assertEqual(page["lines"][0], [["ab", None, None, 0, 0, 2]])
 
     def test_malformed_snapshots_are_refused(self):
         payload = snapshot(2, 1, [cell("a"), cell("b")])
@@ -157,6 +171,26 @@ class IdentityTests(unittest.TestCase):
         )
         self.assertEqual(agents["c"]["mode"], "")
         self.assertEqual(agents["d"]["mode"], "")
+
+
+class PlaceTests(unittest.TestCase):
+    def test_places_read_like_paths(self):
+        home = str(Path.home())
+
+        def place(program, arguments, directory="/tmp"):
+            return remote.display_place(
+                {"program": program, "arguments": arguments, "directory": directory}
+            )
+
+        self.assertEqual(place("/bin/codex", [], home + "/dev/x"), ("", "~/dev/x"))
+        self.assertEqual(place("/bin/codex", [], "/opt/x"), ("", "/opt/x"))
+        self.assertEqual(
+            place(
+                "/usr/bin/ssh", ["-t", "-p", "22", "me@anvil", "cd ~/lapis && codex"]
+            ),
+            ("anvil", "anvil:~/lapis"),
+        )
+        self.assertEqual(place("/usr/bin/ssh", ["tetra"]), ("tetra", "tetra:"))
 
 
 def fake_tailscale(peers):
@@ -254,6 +288,23 @@ class Server:
         data = response.read()
         connection.close()
         return response.status, json.loads(data) if data else None
+
+
+class CaptureTests(unittest.TestCase):
+    def test_captures_are_saved_privately_beside_the_workspace(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+        with Server(self, "{}") as server:
+            status, reply = server.request(
+                "POST",
+                "/api/captures",
+                {"png": base64.b64encode(png).decode(), "frame": {"columns": 3}},
+            )
+            self.assertEqual(status, 200)
+            saved = server.directory / "phone-captures" / (reply["saved"] + ".png")
+            self.assertEqual(saved.read_bytes(), png)
+            self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
+            status, _ = server.request("POST", "/api/captures", {"png": "bm90IGEgcG5n"})
+            self.assertEqual(status, 400)
 
 
 class Events:
@@ -408,6 +459,38 @@ class LiveServiceTests(unittest.TestCase):
                 if text in screen_text(frame):
                     return frame
         self.fail(f"the Mac never showed {text}")
+
+    def test_the_phone_scrolls_back_through_history(self):
+        with Server(self, self.registry, self.runtime) as server:
+            path = f"/api/agents/{self.identifier}"
+            phone = Events(server, path + "/stream?columns=40&rows=8")
+            phone.until(lambda name, data: name == "frame")
+            lines = "".join(f"line{index}\r" for index in range(1, 41))
+            server.request("POST", path + "/input", {"text": lines})
+            phone.until(
+                lambda name, data: name == "frame" and "got:line40" in screen_text(data)
+            )
+            seen, before = [], 0
+            for _ in range(200):
+                status, page = server.request("GET", path + f"/history?before={before}")
+                self.assertEqual(status, 200)
+                if page["busy"]:
+                    time.sleep(0.1)
+                    continue
+                if page["end"]:
+                    break
+                seen.insert(
+                    0, "\n".join("".join(r[0] for r in line) for line in page["lines"])
+                )
+                before = page["page"]
+            rows = [row.rstrip() for row in "\n".join(seen).splitlines()]
+            self.assertEqual(rows[0], "ready")
+            self.assertIn("got:line1", rows)
+            # Newer pages follow on from a loaded page, for new output.
+            status, newer = server.request("GET", path + f"/history?after={before}")
+            self.assertEqual(status, 200)
+            self.assertTrue(newer["page"] > before or newer["end"] or newer["busy"])
+            phone.close()
 
     def test_mac_and_phone_stay_in_sync(self):
         with Server(self, self.registry, self.runtime) as server:

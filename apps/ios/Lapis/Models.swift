@@ -62,11 +62,21 @@ final class AgentSession {
     }
 
     let agent: Agent
-    private let gateway: Gateway?
+    let gateway: Gateway?
     var frame: ScreenFrame?
     var state: State = .connecting
     var notice: String?
     var shared = true
+    // Archived output above the live screen, oldest first and contiguous with
+    // it: pages archived after loading are fetched as newer pages.
+    var history: [HistoryChunk] = []
+    // The oldest page is loaded. Nothing archived yet is not the start: more
+    // output can still scroll off, so an empty history is retried.
+    var historyEnd = false
+    private var loadingHistory = false
+    private var lastEmptyCheck = Date.distantPast
+    private var newerTask: Task<Void, Never>?
+    private(set) var lastFrameJSON: Data?
     private var task: Task<Void, Never>?
     private(set) var size: (columns: Int, rows: Int)?
 
@@ -85,6 +95,8 @@ final class AgentSession {
         task?.cancel()
         size = (columns, rows)
         state = .connecting
+        history = []
+        historyEnd = false
         let events = gateway.stream(agent: agent.id, columns: columns, rows: rows)
         task = Task { [weak self] in
             do {
@@ -93,9 +105,11 @@ final class AgentSession {
                     switch event {
                     case let .attached(attached):
                         self.shared = attached.shared
-                    case let .frame(frame):
+                    case let .frame(frame, json):
                         self.frame = frame
+                        self.lastFrameJSON = json
                         self.state = .live
+                        self.followNewHistory()
                     case let .status(status):
                         self.state = .closed(AgentSession.explain(status), reopen: status.state == "disconnected")
                         return
@@ -149,6 +163,70 @@ final class AgentSession {
         }
     }
 
+    // Loads the page before the oldest one shown; the gateway archives what
+    // scrolled off the top of the agent's terminal.
+    func loadOlder() async {
+        guard let gateway, isLive, !historyEnd, !loadingHistory else { return }
+        loadingHistory = true
+        defer { loadingHistory = false }
+        // While nothing is archived, ask at most once a second, but always
+        // ask again after the latest output (callers repeat on new output).
+        if history.isEmpty {
+            let wait = 1 - Date().timeIntervalSince(lastEmptyCheck)
+            if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+        }
+        // Pages can hold only a few rows; gather more than a screen per load
+        // so the loaded rows move the top out of view until the next scroll.
+        var before = history.first?.page ?? 0
+        var gathered = 0
+        var attempts = 0
+        while gathered < 80 && attempts < 40 {
+            attempts += 1
+            guard let reply = try? await gateway.history(agent: agent.id, before: before) else { return }
+            if reply.busy {
+                try? await Task.sleep(for: .milliseconds(300))
+                continue
+            }
+            if let lines = reply.lines, let columns = reply.columns, reply.page != 0 {
+                history.insert(HistoryChunk(page: reply.page, columns: columns, lines: lines), at: 0)
+                gathered += lines.count
+                before = reply.page
+                continue
+            }
+            if history.isEmpty {
+                lastEmptyCheck = Date()
+            } else {
+                historyEnd = true
+            }
+            return
+        }
+    }
+
+    // While history is shown, pages archived since it loaded are appended so
+    // it stays contiguous with the live screen.
+    private func followNewHistory() {
+        guard !history.isEmpty, newerTask == nil else { return }
+        newerTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            await self?.loadNewer()
+            self?.newerTask = nil
+        }
+    }
+
+    private func loadNewer() async {
+        guard let gateway, isLive, let newest = history.last?.page, !loadingHistory else { return }
+        loadingHistory = true
+        defer { loadingHistory = false }
+        var after = newest
+        for _ in 0..<20 {
+            guard let reply = try? await gateway.history(agent: agent.id, after: after),
+                  !reply.busy, reply.page != 0, let lines = reply.lines, let columns = reply.columns
+            else { return }
+            history.append(HistoryChunk(page: reply.page, columns: columns, lines: lines))
+            after = reply.page
+        }
+    }
+
     // Paste the message and press Enter, as typing it would.
     func submit(_ message: String) {
         if message.isEmpty {
@@ -157,4 +235,11 @@ final class AgentSession {
             send(Input(paste: message, key: Key.enter.rawValue))
         }
     }
+}
+
+struct HistoryChunk: Identifiable {
+    let page: UInt64
+    let columns: Int
+    let lines: [[Run]]
+    var id: UInt64 { page }
 }

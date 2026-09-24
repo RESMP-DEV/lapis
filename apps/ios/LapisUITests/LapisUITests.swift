@@ -149,6 +149,37 @@ final class LapisUITests: XCTestCase {
         XCTAssertTrue(app.buttons["agent-echo agent"].waitForExistence(timeout: 10))
     }
 
+    // Output that scrolled off the top loads as the phone scrolls up.
+    func testScrollingBackLoadsHistory() throws {
+        let terminal = openAgent("echo agent")
+        waitFor(terminal, valueContaining: "new conversation")
+        clearLine()
+        submit("marker before count")
+        waitFor(terminal, valueContaining: "echo: marker before count")
+        submit("count")
+        waitFor(terminal, valueContaining: "count 120")
+        let marker = NSPredicate(format: "value CONTAINS %@", "echo: marker before count")
+        for _ in 0..<12 where !marker.evaluate(with: terminal) {
+            terminal.swipeDown(velocity: .fast)
+        }
+        snap("13-history-scrolled")
+        waitFor(terminal, valueContaining: "echo: marker before count", timeout: 10)
+        snap("13-history")
+    }
+
+    // "Send screen to Mac" saves a screenshot and the screen data on the Mac.
+    func testSendScreenToMac() throws {
+        let terminal = openAgent("echo agent")
+        waitFor(terminal, valueContaining: "new conversation")
+        let menu = app.buttons["viewMenu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        menu.tap()
+        app.buttons["Send screen to Mac"].tap()
+        let sent = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Sent to the Mac"))
+        XCTAssertTrue(sent.firstMatch.waitForExistence(timeout: 15), "the Mac saved the capture")
+        app.buttons["OK"].tap()
+    }
+
     // The Mac stays attached while the phone uses the agent, and what either
     // types shows on both. The harness's Mac-side client answers the phone.
     func testSyncedWithTheMac() throws {

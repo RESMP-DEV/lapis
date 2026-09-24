@@ -1714,15 +1714,20 @@ A prototype, deliberately simpler than the SSH design first proposed:
   against the pinned `launch-spec` values). It joins (attach mode 3): the
   service keeps the desktop attached and adds the phone as a view with its own
   attachment tuple, first-screen acknowledgement and input; at most four views,
-  which may type, paste, press keys and resize but not page history, answer
-  requests or end the agent. The desktop reattaching never retires a view. Each
+  which may type, paste, press keys, resize and page history (replies are
+  routed to the attachment that asked) but not answer requests or end the
+  agent. The phone loads older pages as it scrolls within a screen of the top,
+  gathering more than a screen of rows per load since pages can be small, and
+  appends newer pages while history is shown so it stays contiguous with the
+  live screen. The desktop reattaching never retires a view. Each
   client's last requested size is kept and typing from a client applies it,
   like tmux's `window-size latest`, so both devices always show the same screen
   at the size of the one in use. A service started before joining existed
   rejects the mode; the gateway then takes the agent over in discover mode (the
   desktop card reads replaced until Reconnect agent) and tells the phone.
-  Screens go out as server-sent events of styled runs, at most one
-  per 50 ms; input comes back as POSTed text, paste, named keys (encoded by the
+  Screens go out as server-sent events of styled runs (text,
+  colours, style, starting column and width in cells, so the phone fills whole
+  rows without seams), at most one per 50 ms; input comes back as POSTed text, paste, named keys (encoded by the
   service for the terminal's modes) and resize. The phone's grid is applied to
   the PTY; the software keyboard covering the screen does not resize it.
 - Admission replaces keys or pairing: the gateway binds only the Mac's
@@ -1739,7 +1744,9 @@ A prototype, deliberately simpler than the SSH design first proposed:
   directly and runs them in a headless simulator against disposable services,
   with a Mac-side client attached the way the desktop is, which must see the
   phone's typing, answer it and never be replaced;
-  `scripts/install_ios_app.py` signs a device build with the development
+  The agent menu's Send screen to Mac posts a screenshot and the frame it drew
+  to `runtime/phone-captures/` (owner-only files). `scripts/install_ios_app.py`
+  signs a device build with the development
   profile and installs it with `devicectl`. Both bypass Xcode's build service,
   which deadlocked on this Mac: the kernel's pipe memory was exhausted by
   long-running agent processes, leaving new pipes 512 bytes deep.

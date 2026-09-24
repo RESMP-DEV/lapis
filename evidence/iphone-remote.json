@@ -1,6 +1,6 @@
 {
   "schema": "lapis.qa-receipt/1",
-  "recorded_at": "2026-09-24T06:20:00Z",
+  "recorded_at": "2026-09-24T06:50:00Z",
   "scope": "Prototype iPhone app and Mac gateway for using lapis agents over Tailscale, with the phone joined beside the desktop so both stay in sync",
   "source": {
     "base": "a4b0e33 (feature/session-continuity)",
@@ -18,11 +18,11 @@
   "checks": [
     {
       "name": "gateway suite (scripts/tests/test_lapis_remote.py)",
-      "result": "9/9 on macOS (five consecutive runs) and on anvil: snapshot decoding, launch fingerprints equal to the pinned launch-spec values, registry reading, admission rules, browser refusal; against a real session service: list, stream, paste and Enter, resize, another phone view taking over, release when the phone leaves, a desktop-style client and the phone joined together with typing reaching both and the size following the device that typed, the phone surviving the desktop reattaching; and a stand-in pre-join service falling back to takeover"
+      "result": "13/13 on macOS and on anvil: snapshot decoding with run columns and widths, history pages without a cursor, launch fingerprints equal to the pinned launch-spec values, registry reading, path-style places (~ and ssh host prefixes), admission rules, browser refusal, private phone captures; against a real session service: list, stream, paste and Enter, resize, another phone view taking over, release when the phone leaves, scrolling back through archived history from a joined view and following newer pages, a desktop-style client and the phone joined together with typing reaching both and the size following the device that typed, the phone surviving the desktop reattaching; and a stand-in pre-join service falling back to takeover"
     },
     {
       "name": "iOS UI tests in a headless simulator (scripts/check_ios_remote.py --codex --claude)",
-      "result": "7/7 with a Mac-side client attached the way the desktop is for the whole run: categories and a stopped agent listed; open, type, send and echo; key bar ^U clears a line typed without Enter; wide, emoji, right-to-left and box-drawing output; Settings connection check; another phone view taking the agent then Open here again; the phone and the Mac typing to each other on one agent (the Mac client saw the phone and was never closed); real Codex 0.155.1 (managed mode) and Claude Code 2.1.281 answering a prompt sent from the phone"
+      "result": "9/9 with a Mac-side client attached the way the desktop is for the whole run: category cards with harness marks and a stopped agent; open, type, send and echo; key bar ^U; wide, emoji, right-to-left and box-drawing output; scrolling back loads history to a line from before 120 lines of output; Send screen to Mac saved a capture on the Mac; Settings connection check; another phone view taking the agent then Open here again; the phone and the Mac typing to each other on one agent; real Codex 0.155.1 and Claude Code 2.1.281 answering a prompt sent from the phone. Rows are drawn full height, so Codex's shaded prompt box shows no seams"
     },
     {
       "name": "desktop with a joined view (workspace suite, real Workspace and LiveConnection)",
@@ -30,7 +30,7 @@
     },
     {
       "name": "full desktop gate on anvil with joined views",
-      "result": "56/56 (build, CTest suites, clang-tidy, format, cppcheck)"
+      "result": "56/56 (build, CTest suites, clang-tidy, format, cppcheck), again after joined views gained history paging"
     },
     {
       "name": "desktop ASan on anvil",
@@ -50,7 +50,7 @@
     },
     {
       "name": "on the phone",
-      "result": "installed on the iPhone 17 Pro at 11:01 pm MT September 23 and updated at 12:15 am; after the phone joined the tailnet it listed the agents, opened one at 53 by 49 and sent input, all answered 200"
+      "result": "installed on the iPhone 17 Pro at 11:01 pm MT September 23, updated at 12:15 am and 12:48 am September 24; after the phone joined the tailnet it listed the agents, opened one at 53 by 49 and sent input, all answered 200"
     }
   ],
   "limitations": [

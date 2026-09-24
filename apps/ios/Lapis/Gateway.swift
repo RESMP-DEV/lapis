@@ -22,11 +22,12 @@ struct Agent: Decodable, Identifiable, Hashable {
     let directory: String
     let running: Bool
     let onPhone: Bool
+    // "" on this Mac; the ssh host otherwise. Older gateways send neither.
+    let machine: String?
+    // "~/dev/infinity" here, "anvil:~/lapis" on another machine.
+    let place: String?
 
-    var place: String {
-        let name = (directory as NSString).lastPathComponent
-        return name.isEmpty ? directory : name
-    }
+    var location: String { place ?? directory }
 }
 
 struct ScreenFrame: Decodable {
@@ -36,6 +37,7 @@ struct ScreenFrame: Decodable {
         let visible: Bool
     }
 
+    let revision: UInt64?
     let columns: Int
     let rows: Int
     let cursor: Cursor
@@ -58,6 +60,9 @@ struct Run: Decodable {
     let foreground: String?
     let background: String?
     let flags: Int
+    // Starting column and width in cells; absent from older gateways.
+    let column: Int?
+    let width: Int?
 
     init(from decoder: Decoder) throws {
         var values = try decoder.unkeyedContainer()
@@ -65,7 +70,19 @@ struct Run: Decodable {
         foreground = try values.decodeIfPresent(String.self)
         background = try values.decodeIfPresent(String.self)
         flags = try values.decode(Int.self)
+        column = values.isAtEnd ? nil : try values.decode(Int.self)
+        width = values.isAtEnd ? nil : try values.decode(Int.self)
     }
+}
+
+// An archived page of output above the live screen, oldest first on screen.
+struct HistoryPage: Decodable {
+    let page: UInt64
+    let message: String
+    let end: Bool
+    let busy: Bool
+    let columns: Int?
+    let lines: [[Run]]?
 }
 
 struct StreamStatus: Decodable {
@@ -81,7 +98,8 @@ struct Attached: Decodable {
 
 enum StreamEvent {
     case attached(Attached)
-    case frame(ScreenFrame)
+    // The decoded screen and the exact JSON it came from (sent with captures).
+    case frame(ScreenFrame, Data)
     case status(StreamStatus)
 }
 
@@ -183,6 +201,28 @@ struct Gateway {
         try Gateway.check(response, data)
     }
 
+    // The page before `before` (0: the newest), or with `after`, the page after it.
+    func history(agent: String, before: UInt64 = 0, after: UInt64? = nil) async throws -> HistoryPage {
+        let item = after.map { URLQueryItem(name: "after", value: String($0)) }
+            ?? URLQueryItem(name: "before", value: String(before))
+        let request = request("api/agents/\(agent)/history", query: [item])
+        let (data, response) = try await Gateway.requests.data(for: request)
+        try Gateway.check(response, data)
+        return try JSONDecoder().decode(HistoryPage.self, from: data)
+    }
+
+    // A screenshot and what the phone drew, saved on the Mac for debugging.
+    func capture(_ body: [String: Any]) async throws -> String {
+        var request = request("api/captures")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await Gateway.requests.data(for: request)
+        try Gateway.check(response, data)
+        let reply = try JSONDecoder().decode([String: String].self, from: data)
+        return reply["saved"] ?? ""
+    }
+
     // Server-sent events: each data line is one complete JSON event.
     func stream(agent: String, columns: Int, rows: Int) -> AsyncThrowingStream<StreamEvent, Error> {
         let request = request(
@@ -212,7 +252,7 @@ struct Gateway {
                             case "attached":
                                 continuation.yield(.attached(try decoder.decode(Attached.self, from: data)))
                             case "frame":
-                                continuation.yield(.frame(try decoder.decode(ScreenFrame.self, from: data)))
+                                continuation.yield(.frame(try decoder.decode(ScreenFrame.self, from: data), data))
                             case "status":
                                 continuation.yield(.status(try decoder.decode(StreamStatus.self, from: data)))
                             default:
