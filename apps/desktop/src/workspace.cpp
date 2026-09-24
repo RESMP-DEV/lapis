@@ -867,6 +867,24 @@ std::optional<QString> openCodexThread(const QString& endpoint) {
 // Hooks report a conversation at session start, before anything is saved; a
 // conversation without a transcript cannot be resumed, so it starts fresh.
 // CLIs whose storage is not known here are trusted to resume or say why not.
+// Depth is fixed at three: YYYY/MM/DD, with no symlink traversal.
+bool codexConversationSaved(const QDir& directory, const QString& conversation, int depth) {
+    if (depth == 0) {
+        QDirIterator rollouts(
+            directory.path(),
+            {QStringLiteral("rollout-*-") + conversation + QStringLiteral(".jsonl")},
+            QDir::Files | QDir::NoSymLinks, QDirIterator::NoIteratorFlags);
+        return rollouts.hasNext();
+    }
+    const auto pattern = QStringLiteral("[0-9]").repeated(depth == 3 ? 4 : 2);
+    const auto folders =
+        directory.entryList({pattern}, QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks,
+                            QDir::Name | QDir::Reversed);
+    return std::any_of(folders.begin(), folders.end(), [&](const QString& folder) {
+        return codexConversationSaved(QDir(directory.filePath(folder)), conversation, depth - 1);
+    });
+}
+
 bool conversationSaved(const session::ResumeRecord& record) {
     const auto& conversation = record.session_id;
     if (record.agent == QLatin1String("claude")) {
@@ -880,41 +898,10 @@ bool conversationSaved(const session::ResumeRecord& record) {
         });
     }
     if (record.agent == QLatin1String("codex")) {
-        const auto numeric = [](const QString& value, const int width) {
-            return value.size() == width &&
-                   std::all_of(value.begin(), value.end(), [](const QChar character) {
-                       return character >= QLatin1Char('0') && character <= QLatin1Char('9');
-                   });
-        };
-        // Codex stores rollouts as sessions/YYYY/MM/DD, so avoid an unbounded
-        // recursive scan of long-lived installs on the GUI thread. Wildcards
-        // are directory-listing filters; the file name is not a literal path.
         const QDir sessions(
             qEnvironmentVariable("CODEX_HOME", QDir::homePath() + QStringLiteral("/.codex")) +
             QStringLiteral("/sessions"));
-        const QDir::Filters directories = QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLink;
-        for (const auto& year : sessions.entryList(directories, QDir::Name | QDir::Reversed)) {
-            if (!numeric(year, 4))
-                continue;
-            const QDir months(sessions.filePath(year));
-            for (const auto& month : months.entryList(directories, QDir::Name | QDir::Reversed)) {
-                if (!numeric(month, 2))
-                    continue;
-                const QDir days(months.filePath(month));
-                for (const auto& day : days.entryList(directories, QDir::Name | QDir::Reversed)) {
-                    if (!numeric(day, 2))
-                        continue;
-                    const QDir date(days.filePath(day));
-                    QDirIterator rollouts(
-                        date.path(),
-                        {QStringLiteral("rollout-*-") + conversation + QStringLiteral(".jsonl")},
-                        QDir::Files | QDir::NoSymLink, QDirIterator::NoIteratorFlags);
-                    if (rollouts.hasNext())
-                        return true;
-                }
-            }
-        }
-        return false;
+        return codexConversationSaved(sessions, conversation, 3);
     }
     return true;
 }
@@ -951,9 +938,12 @@ bool Workspace::restartAgent(const QString& id) {
         return fail(QStringLiteral("This agent is still closing."));
     if (serviceRunning(entry->endpoint))
         return fail(QStringLiteral("This agent is still running."));
-    const auto launch = restoredLaunch(*entry);
+    QString diagnostic;
+    const auto launch = restoredLaunch(*entry, &diagnostic);
     if (!launch)
-        return fail(QStringLiteral("This agent's program or folder is no longer available."));
+        return fail(diagnostic.isEmpty()
+                        ? QStringLiteral("This agent's program or folder is no longer available.")
+                        : diagnostic);
     const auto previous = checkpoint();
     entry->launch = *launch;
     if (!save()) {
@@ -977,7 +967,8 @@ bool Workspace::serviceRunning(const QString& endpoint) {
     return probe.error() != QLocalSocket::ConnectionRefusedError &&
            probe.error() != QLocalSocket::ServerNotFoundError;
 }
-std::optional<session::LaunchSpec> Workspace::restoredLaunch(const Agent& agent) {
+std::optional<session::LaunchSpec> Workspace::restoredLaunch(const Agent& agent,
+                                                             QString* diagnostic) {
     auto launch = agent.launch;
     if (!QFileInfo(launch.program).isExecutable())
         if (const auto* harness = findHarness(agent.harness))
@@ -988,16 +979,15 @@ std::optional<session::LaunchSpec> Workspace::restoredLaunch(const Agent& agent)
     // Saved arguments do not identify which resume pair lapis appended. An
     // explicit option therefore belongs to the user and is authoritative.
     if (const auto record = session::read_resume_record(agent.endpoint);
-        !option.isEmpty() && record && record->agent == agent.harness &&
-        conversationSaved(*record)) {
-        if (launch.arguments.contains(option))
-            return launch;
+        !option.isEmpty() && !launch.arguments.contains(option) && record &&
+        record->agent == agent.harness && conversationSaved(*record))
         launch.arguments += QStringList{option, record->session_id};
-    }
     try {
         return session::validate_launch(launch);
     } catch (const std::exception& error) {
         qWarning().noquote() << "Agent restart rejected:" << error.what();
+        if (diagnostic)
+            *diagnostic = QString::fromUtf8(error.what());
         return std::nullopt;
     }
 }

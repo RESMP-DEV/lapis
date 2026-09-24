@@ -336,7 +336,8 @@ class Workspace final : public QObject {
     void finishClosing(SessionPreview* item);
     [[nodiscard]] static SessionPreview::StatusSource statusSource(const Agent& agent);
     [[nodiscard]] static QStringList savedArguments(const QJsonValue& value);
-    [[nodiscard]] static std::optional<session::LaunchSpec> restoredLaunch(const Agent& agent);
+    [[nodiscard]] static std::optional<session::LaunchSpec>
+    restoredLaunch(const Agent& agent, QString* diagnostic = nullptr);
     [[nodiscard]] static bool serviceRunning(const QString& endpoint);
     void noteStatus(SessionPreview* item);
     QHash<const SessionPreview*, QString> last_kind_;

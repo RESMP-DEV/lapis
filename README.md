@@ -168,7 +168,10 @@ If an agent's session service is gone when lapis opens (after a reboot or a
 crash), lapis restarts it in its card, like a restored terminal tab: Codex,
 Claude, Grok, OpenCode, OMP, Kimi and Antigravity resume their saved
 conversation with their own resume option; other CLIs, or a conversation with
-no saved transcript yet, start fresh in the same folder. Each service records
+no saved transcript yet, start fresh in the same folder. Explicit resume arguments
+remain authoritative; lapis adds a resume selection only when none is already
+present. Codex transcript lookup stays within the `sessions/YYYY/MM/DD` layout
+and does not follow directory symlinks. Each service records
 the conversation beside its endpoint (`<endpoint>.resume`) from the Codex
 observer, the Claude hook adapter, or the `agent_checkpoint` sequence that
 iTerm2 restore hooks print. For Codex agents whose service predates these
