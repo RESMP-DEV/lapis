@@ -517,6 +517,8 @@ class Server:
             length = int(headers.get("content-length", "0"))
             raw = await reader.readexactly(length) if length else b""
             body = json.loads(raw) if raw else {}
+            if not isinstance(body, dict):
+                raise ValueError("Request body must be a JSON object")
             path = target.split("?", 1)[0]
             self.record(method, path, body)
             if method == "POST" and path.endswith("/responses"):
@@ -538,6 +540,10 @@ class Server:
             self.record_error(error)
         finally:
             writer.close()
+            try:
+                await writer.wait_closed()
+            except OSError:
+                pass
 
 
 async def main():

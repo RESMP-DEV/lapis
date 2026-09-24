@@ -17,9 +17,11 @@
 #include <QQuickWindow>
 #include <QRect>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QScopedValueRollback>
 #include <QScreen>
 #include <QStringList>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -101,8 +103,10 @@ constexpr int kMaximumDiagnosticsLength = 4096;
     return true;
 }
 
-// Settings are local runtime state, never shared appearance configuration. Refuse
-// symlinks and permissive existing paths rather than changing someone else's files.
+// Settings are local runtime state, never shared appearance configuration.
+// Refuse symlinks, foreign-owned objects, and permissive existing files. A
+// current-user directory left permissive by project tooling is repaired only
+// when saving new geometry.
 [[nodiscard]] bool privateGeometryPath(const QString& path, bool create) {
     const QString directory = QFileInfo(path).absolutePath();
     if (create && !QFileInfo::exists(directory)) {
@@ -116,10 +120,30 @@ constexpr int kMaximumDiagnosticsLength = 4096;
                         QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner))
             return false;
     }
-    struct stat info{};
     const QByteArray directoryBytes = QFile::encodeName(directory);
-    if (::lstat(directoryBytes.constData(), &info) != 0 || !S_ISDIR(info.st_mode) ||
-        info.st_uid != ::getuid() || (info.st_mode & 0077U) != 0)
+    // Pin the directory inode before deciding whether it may be repaired. This
+    // rejects a symlink directly and keeps lstat/chmod from acting on a path
+    // that is renamed while permissions are being inspected.
+    const int directory_fd =
+        ::open(directoryBytes.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (directory_fd < 0)
+        return false;
+    const auto close_directory = qScopeGuard([directory_fd] { ::close(directory_fd); });
+    struct stat info{};
+    if (::fstat(directory_fd, &info) != 0 || !S_ISDIR(info.st_mode) || info.st_uid != ::getuid())
+        return false;
+    if ((info.st_mode & 0077U) != 0) {
+        // A project tool can legitimately create runtime/ with the umask's
+        // default mode. Repair only the save path and only this pinned, real,
+        // current-user directory; readers never mutate the checkout.
+        if (!create || ::fchmod(directory_fd, 0700) != 0)
+            return false;
+        if (::fstat(directory_fd, &info) != 0 || (info.st_mode & 0077U) != 0)
+            return false;
+    }
+    const struct stat pinned_directory = info;
+    if (::lstat(directoryBytes.constData(), &info) != 0 || info.st_dev != pinned_directory.st_dev ||
+        info.st_ino != pinned_directory.st_ino || (info.st_mode & 0077U) != 0)
         return false;
     const QByteArray pathBytes = QFile::encodeName(path);
     if (::lstat(pathBytes.constData(), &info) != 0)
