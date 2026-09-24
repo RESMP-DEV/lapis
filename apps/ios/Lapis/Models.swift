@@ -11,14 +11,44 @@ final class WorkspaceModel {
     }
     var listing: WorkspaceListing?
     var error: String?
+    // Fetched ahead in the background so the new-agent sheet never waits.
+    var harnesses: [Harness]?
+    var machines: [Machine] = []
+    var catalogs: [String: FolderCatalog] = [:] // by machine; "" is this Mac
+    var catalogErrors: [String: String] = [:]
+    private var fetched: [String: Date] = [:]
+    private var catalogLoads: Set<String> = []
+    private var prefetching = false
 
     init() {
         let saved = UserDefaults.standard.string(forKey: WorkspaceModel.hostKey)
         let bundled = Bundle.main.object(forInfoDictionaryKey: "LapisDefaultHost") as? String
         host = saved ?? bundled ?? ""
+        if UserDefaults.standard.bool(forKey: "resetCache") { DiskCache.clear() }
+        // The last known state shows at once; it is refreshed right after.
+        listing = DiskCache.load(WorkspaceListing.self, cacheName("listing"))
+        harnesses = DiskCache.load([Harness].self, cacheName("harnesses"))
+        machines = DiskCache.load([Machine].self, cacheName("machines")) ?? []
+        let names = [""] + machines.map(\.name)
+        let folders = names.compactMap { name in
+            DiskCache.load(FolderPayload.self, cacheName("folders-" + name)).map { (name, $0) }
+        }
+        Task { [weak self] in
+            let built = await Task.detached {
+                folders.map { FolderCatalog(machine: $0.0, payload: $0.1) }
+            }.value
+            for catalog in built where self?.catalogs[catalog.machine] == nil {
+                self?.catalogs[catalog.machine] = catalog
+            }
+        }
     }
 
     var gateway: Gateway? { try? Gateway(host: host) }
+
+    // Cached files belong to the Mac they came from.
+    private func cacheName(_ name: String) -> String {
+        String(host.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "_" }) + "-" + name
+    }
 
     func refresh() async {
         guard let gateway else {
@@ -26,13 +56,117 @@ final class WorkspaceModel {
             return
         }
         do {
-            listing = try await gateway.agents()
+            let current = try await gateway.agents()
+            listing = current
             error = nil
+            DiskCache.save(current, cacheName("listing"))
+            Task { await prefetch() }
         } catch is CancellationError {
         } catch let failure as URLError where failure.code == .cancelled {
         } catch {
             self.error = describe(error)
         }
+    }
+
+    private func due(_ key: String, _ age: TimeInterval) -> Bool {
+        fetched[key].map { Date().timeIntervalSince($0) > age } ?? true
+    }
+
+    // What the phone may need next: the Mac's CLIs, its ssh machines, folder
+    // indexes (this Mac's and the likeliest machines'), and each running
+    // agent's screen, so opening one shows it at once.
+    func prefetch() async {
+        guard let gateway, !prefetching else { return }
+        prefetching = true
+        defer { prefetching = false }
+        if due("harnesses", 600), let list = try? await gateway.harnesses() {
+            harnesses = list
+            fetched["harnesses"] = Date()
+            DiskCache.save(list, cacheName("harnesses"))
+        }
+        if due("machines", 120), let list = try? await gateway.machines() {
+            machines = list
+            fetched["machines"] = Date()
+            DiskCache.save(list, cacheName("machines"))
+        }
+        await loadCatalog("", olderThan: 300)
+        for machine in machines.filter(\.available).prefix(3) {
+            await loadCatalog(machine.name, olderThan: 600)
+        }
+        await prefetchScreens()
+    }
+
+    // A machine's folders; only a changed index is downloaded again.
+    func loadCatalog(_ machine: String, olderThan age: TimeInterval = 0) async {
+        let key = "folders-" + machine
+        guard let gateway, !catalogLoads.contains(machine), due(key, age) else { return }
+        catalogLoads.insert(machine)
+        defer { catalogLoads.remove(machine) }
+        do {
+            let payload = try await gateway.folders(machine: machine, have: catalogs[machine]?.version)
+            fetched[key] = Date()
+            catalogErrors[machine] = nil
+            if payload.unchanged == true { return }
+            let catalog = await Task.detached { FolderCatalog(machine: machine, payload: payload) }.value
+            catalogs[machine] = catalog
+            DiskCache.save(payload, cacheName(key))
+        } catch {
+            catalogErrors[machine] = describe(error)
+        }
+    }
+
+    private func prefetchScreens() async {
+        guard let gateway else { return }
+        let running = (listing?.categories.flatMap(\.agents) ?? []).filter(\.running)
+        for agent in running.prefix(8) where ScreenCache.shared.age(agent.id) > 20 {
+            if let frame = try? await gateway.screen(agent: agent.id) {
+                ScreenCache.shared.store(agent.id, frame)
+            }
+        }
+    }
+}
+
+// The last screen seen of each agent, shown at once when it is opened again
+// while the live screen connects.
+@MainActor
+final class ScreenCache {
+    static let shared = ScreenCache()
+    private var frames: [String: (frame: ScreenFrame, at: Date)] = [:]
+
+    func frame(_ agent: String) -> ScreenFrame? { frames[agent]?.frame }
+
+    func age(_ agent: String) -> TimeInterval {
+        frames[agent].map { Date().timeIntervalSince($0.at) } ?? .infinity
+    }
+
+    func store(_ agent: String, _ frame: ScreenFrame) { frames[agent] = (frame, Date()) }
+}
+
+// Small JSON files in Application Support, so a cold launch shows the last
+// known list and folder indexes without waiting for the Mac.
+enum DiskCache {
+    static let folder: URL = {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("cache", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base
+    }()
+
+    static func load<T: Decodable>(_ type: T.Type, _ name: String) -> T? {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent(name + ".json")) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
+
+    static func save<T: Encodable>(_ value: T, _ name: String) {
+        guard let data = try? JSONEncoder().encode(value) else { return }
+        try? data.write(to: folder.appendingPathComponent(name + ".json"), options: .atomic)
+    }
+
+    static func clear() {
+        try? FileManager.default.removeItem(at: folder)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     }
 }
 
@@ -43,6 +177,8 @@ extension WorkspaceModel {
         guard let gateway else { throw GatewayError.invalidHost }
         let started = try await gateway.start(new)
         progress(started.updating ? "Updating the CLI first…" : "Starting…")
+        // The folder now has one more agent; rank it again.
+        Task { await loadCatalog(new.machine ?? "") }
         let deadline = Date().addingTimeInterval(150)
         while Date() < deadline {
             try Task.checkCancellation()
@@ -55,17 +191,6 @@ extension WorkspaceModel {
             try await Task.sleep(for: .milliseconds(600))
         }
         throw GatewayError.refused(0, "The agent has not started yet. It is in the list on the Mac.")
-    }
-
-    // Folders of this Mac's agents, for starting another beside them.
-    var recentFolders: [String] {
-        var seen = Set<String>()
-        return (listing?.categories.flatMap(\.agents) ?? [])
-            .filter { ($0.machine ?? "").isEmpty && !$0.location.isEmpty }
-            .map(\.location)
-            .filter { seen.insert($0).inserted }
-            .prefix(6)
-            .map { $0 }
     }
 }
 
@@ -113,9 +238,13 @@ final class AgentSession {
     private var task: Task<Void, Never>?
     private(set) var size: (columns: Int, rows: Int)?
 
+    private var historyPrefetched = false
+
     init(agent: Agent, gateway: Gateway?) {
         self.agent = agent
         self.gateway = gateway
+        // The last screen seen shows at once while the live one connects.
+        frame = ScreenCache.shared.frame(agent.id)
     }
 
     var isLive: Bool { state == .live }
@@ -142,7 +271,13 @@ final class AgentSession {
                         self.frame = frame
                         self.lastFrameJSON = json
                         self.state = .live
+                        ScreenCache.shared.store(self.agent.id, frame)
                         self.followNewHistory()
+                        // The newest archived page, before the first scroll up asks.
+                        if !self.historyPrefetched {
+                            self.historyPrefetched = true
+                            Task { await self.loadOlder() }
+                        }
                     case let .status(status):
                         self.state = .closed(AgentSession.explain(status), reopen: status.state == "disconnected")
                         return

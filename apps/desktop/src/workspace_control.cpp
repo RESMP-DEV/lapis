@@ -85,27 +85,8 @@ QByteArray WorkspaceControl::answer(const QByteArray& line) {
         return reply({{QStringLiteral("ok"), true},
                       {QStringLiteral("harnesses"),
                        QJsonArray::fromVariantList(workspace_.availableHarnesses())}});
-    if (kind == QStringLiteral("createAgent")) {
-        for (const auto* field : {"category", "harness", "directory"})
-            if (!request.value(QLatin1String(field)).isString())
-                return refusal(QStringLiteral("Missing %1").arg(QLatin1String(field)));
-        const auto directory = request.value(QStringLiteral("directory")).toString().trimmed();
-        auto title = request.value(QStringLiteral("title")).toString().trimmed();
-        if (title.isEmpty()) {
-            // As the desktop form does: the project folder's name.
-            const auto parts = QDir::cleanPath(directory).split(QLatin1Char('/'));
-            title = parts.constLast().isEmpty() ? QStringLiteral("/") : parts.constLast();
-        }
-        const auto id = workspace_.startAgent(
-            request.value(QStringLiteral("category")).toString(), directory, title.left(80),
-            request.value(QStringLiteral("harness")).toString(), false);
-        if (id.isEmpty())
-            return refusal(workspace_.workspaceError());
-        const auto* item = workspace_.session(id);
-        return reply({{QStringLiteral("ok"), true},
-                      {QStringLiteral("id"), id},
-                      {QStringLiteral("updating"), item != nullptr && item->updating()}});
-    }
+    if (kind == QStringLiteral("createAgent"))
+        return create(request);
     if (kind == QStringLiteral("handover")) {
         if (!host_)
             return refusal(QStringLiteral("A lapis window keeps this workspace"));
@@ -114,6 +95,37 @@ QByteArray WorkspaceControl::answer(const QByteArray& line) {
         return reply({{QStringLiteral("ok"), true}});
     }
     return refusal(QStringLiteral("Unknown request"));
+}
+
+QByteArray WorkspaceControl::create(const QJsonObject& request) {
+    for (const auto* field : {"category", "harness", "directory"})
+        if (!request.value(QLatin1String(field)).isString())
+            return refusal(QStringLiteral("Missing %1").arg(QLatin1String(field)));
+    const auto directory = request.value(QStringLiteral("directory")).toString().trimmed();
+    auto title = request.value(QStringLiteral("title")).toString().trimmed();
+    if (title.isEmpty()) {
+        // As the desktop form does: the project folder's name.
+        const auto parts = QDir::cleanPath(directory).split(QLatin1Char('/'));
+        title = parts.constLast().isEmpty() ? QStringLiteral("/") : parts.constLast();
+    }
+    for (const auto* field : {"machine", "program", "title"})
+        if (request.contains(QLatin1String(field)) &&
+            !request.value(QLatin1String(field)).isString())
+            return refusal(QStringLiteral("Invalid %1").arg(QLatin1String(field)));
+    const auto id =
+        workspace_.startAgent({.category = request.value(QStringLiteral("category")).toString(),
+                               .directory = directory,
+                               .title = title.left(80),
+                               .harness = request.value(QStringLiteral("harness")).toString(),
+                               .machine = request.value(QStringLiteral("machine")).toString(),
+                               .program = request.value(QStringLiteral("program")).toString(),
+                               .select = false});
+    if (id.isEmpty())
+        return refusal(workspace_.workspaceError());
+    const auto* item = workspace_.session(id);
+    return reply({{QStringLiteral("ok"), true},
+                  {QStringLiteral("id"), id},
+                  {QStringLiteral("updating"), item != nullptr && item->updating()}});
 }
 
 bool WorkspaceControl::requestHandover(const QString& registry) {

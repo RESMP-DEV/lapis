@@ -9,7 +9,7 @@ final class LapisUITests: XCTestCase {
         continueAfterFailure = false
         let host = ProcessInfo.processInfo.environment["LAPIS_HOST"] ?? "127.0.0.1:7350"
         app = XCUIApplication()
-        app.launchArguments = ["-gatewayHost", host, "-terminalFontSize", "12"]
+        app.launchArguments = ["-gatewayHost", host, "-terminalFontSize", "12", "-resetCache", "1"]
         app.launch()
     }
 
@@ -194,13 +194,13 @@ final class LapisUITests: XCTestCase {
         XCTAssertTrue(grok.waitForExistence(timeout: 15), "the Mac's CLIs are offered")
         grok.tap()
         XCTAssertTrue(app.buttons["category-Later"].isSelected, "the tapped category is chosen")
-        let field = app.textFields["folder"]
-        XCTAssertTrue(field.waitForExistence(timeout: 5))
-        field.tap()
-        if let current = field.value as? String, current != field.placeholderValue {
-            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
-        }
-        field.typeText(folder)
+        let search = app.textFields["folderSearch"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText(folder)
+        let typed = app.buttons["useTyped"]
+        XCTAssertTrue(typed.waitForExistence(timeout: 5), "a typed path can be used as is")
+        typed.tap()
         snap("9-new-agent")
         app.buttons["startAgent"].tap()
         let terminal = app.descendants(matching: .any)["terminal"]
@@ -209,6 +209,45 @@ final class LapisUITests: XCTestCase {
         submit("started from the phone")
         waitFor(terminal, valueContaining: "echo: started from the phone")
         snap("10-new-agent-open")
+    }
+
+    // Folders come from the Mac's index: the most used ones first and marked,
+    // then the current folder's folders with hidden ones last; typing finds
+    // folders by their letters. Machines are ordered by how often ssh reached
+    // them.
+    func testFoldersAndMachines() throws {
+        try XCTSkipIf(ProcessInfo.processInfo.environment["LAPIS_FOLDER_FIXTURE"] == nil,
+                      "the check provides a folder fixture")
+        let plus = app.buttons["newAgent"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["agent-echo agent"].waitForExistence(timeout: 30))
+        plus.tap()
+        let frequent = app.buttons["frequent-b"]
+        XCTAssertTrue(frequent.waitForExistence(timeout: 20), "the most used folder is offered")
+        XCTAssertTrue(frequent.isSelected, "and chosen to start with")
+        XCTAssertTrue(app.buttons["frequent-dev/lapis"].exists)
+        XCTAssertLessThan(frequent.frame.minY, app.buttons["frequent-dev/lapis"].frame.minY,
+                          "more agents started there, higher in the list")
+        let beta = app.buttons["machine-beta"]
+        let alpha = app.buttons["machine-alpha"]
+        XCTAssertTrue(beta.waitForExistence(timeout: 10) && alpha.exists, "ssh machines are offered")
+        XCTAssertLessThan(beta.frame.minX, alpha.frame.minX, "the more used machine comes first")
+        app.buttons["folderUp"].tap()
+        let visible = app.buttons["folder-dev"]
+        let hidden = app.buttons["folder-.hidden"]
+        XCTAssertTrue(visible.waitForExistence(timeout: 5) && hidden.exists)
+        XCTAssertLessThan(app.buttons["folder-a"].frame.minY, visible.frame.minY, "alphabetical")
+        XCTAssertLessThan(visible.frame.minY, hidden.frame.minY, "hidden folders come last")
+        snap("11-folders")
+        let search = app.textFields["folderSearch"]
+        search.tap()
+        search.typeText("dvlp")
+        let found = app.buttons["result-dev/lapis"]
+        XCTAssertTrue(found.waitForExistence(timeout: 5), "fuzzy search finds the folder")
+        snap("12-folder-search")
+        found.tap()
+        XCTAssertTrue(app.staticTexts["currentFolder"].label.hasSuffix("~/dev/lapis"))
+        app.buttons["Cancel"].tap()
     }
 
     func testSyncedWithTheMac() throws {

@@ -23,11 +23,19 @@ from __future__ import annotations
 
 import argparse
 import base64
+import collections
+import concurrent.futures
+import glob
+import gzip
 import hashlib
+import inspect
 import itertools
 import json
 import os
+import re
 import select
+import shlex
+import shutil
 import socket
 import struct
 import subprocess
@@ -200,6 +208,578 @@ def desktop_request(registry, request, timeout=15.0):
     if not answer.get("ok"):
         raise GatewayError(str(answer.get("error") or "lapis on the Mac refused"))
     return answer
+
+
+# Folders -------------------------------------------------------------------
+
+# Listed but not descended into: generated, vendored or system trees.
+NO_DESCENT = {
+    "node_modules",
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".tox",
+    "target",
+    "build",
+    "dist",
+    ".next",
+    ".cache",
+    "DerivedData",
+    ".Trash",
+    "Pods",
+    ".gradle",
+    ".npm",
+    ".cargo",
+    ".rustup",
+    "site-packages",
+    ".pnpm-store",
+}
+# macOS packages look like folders but are opened as one thing.
+PACKAGES = (
+    ".app",
+    ".bundle",
+    ".framework",
+    ".photoslibrary",
+    ".musiclibrary",
+    ".xcodeproj",
+    ".xcworkspace",
+    ".xcassets",
+    ".sparsebundle",
+    ".dSYM",
+    ".lproj",
+)
+FOLDER_DEPTH = 4
+MAX_FOLDERS = 30000
+SESSION_NAME = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$"
+)
+
+
+def scan_folders(home, depth=FOLDER_DEPTH, limit=MAX_FOLDERS):
+    """Folders under home, relative to it and sorted; breadth first, so a cap
+    drops the deepest. Hidden folders are listed, and only home's are opened."""
+    found = []
+    queue = collections.deque([("", 0)])
+    while queue and len(found) < limit:
+        relative, level = queue.popleft()
+        try:
+            entries = list(os.scandir(os.path.join(home, relative)))
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+            except OSError:
+                continue
+            path = f"{relative}/{entry.name}" if relative else entry.name
+            found.append(path)
+            if len(found) >= limit:
+                break
+            if (
+                level + 1 < depth
+                and entry.name not in NO_DESCENT
+                and not entry.name.endswith(PACKAGES)
+                and not (entry.name.startswith(".") and level > 0)
+                and path != "Library"
+            ):
+                queue.append((path, level + 1))
+    return sorted(found)
+
+
+def first_json_line(path, limit=1 << 20):
+    with open(path, "rb") as stream:
+        return json.loads(stream.readline(limit))
+
+
+def codex_cwd(path):
+    """The folder of a Codex rollout's interactive main thread, else None."""
+    try:
+        meta = first_json_line(path).get("payload", {})
+    except (OSError, ValueError, AttributeError):
+        return None
+    source = meta.get("source")
+    if isinstance(source, dict) or meta.get("parent_thread_id") or source == "exec":
+        return None
+    cwd = meta.get("cwd")
+    return cwd if isinstance(cwd, str) else None
+
+
+def claude_cwd(session):
+    """The folder of an interactive Claude Code session, else None. Sessions
+    run with -p or the SDK (entrypoint sdk-*) are automation, not agents
+    someone opened."""
+    cwd = entry = None
+    try:
+        with open(session, "rb") as stream:
+            for line in itertools.islice(stream, 40):
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                cwd = cwd or record.get("cwd")
+                entry = entry or record.get("entrypoint")
+                if cwd and entry:
+                    break
+    except OSError:
+        return None
+    return cwd if entry == "cli" and isinstance(cwd, str) else None
+
+
+class AgentHistory:
+    """How many agents were started in each folder: Codex rollouts (interactive
+    main threads), interactive Claude Code sessions and the workspace's
+    current agents. What a file says is remembered, so later passes read only
+    new files. The root folder is never a project."""
+
+    def __init__(self, codex_home, claude_home):
+        self.codex_home = Path(codex_home)
+        self.claude_home = Path(claude_home)
+        self.codex = {}
+        self.claude = {}
+
+    def counts(self, registry):
+        counts = collections.Counter()
+        seen = {}
+        for rollout in (self.codex_home / "sessions").glob("*/*/*/rollout-*.jsonl"):
+            key = str(rollout)
+            cwd = self.codex[key] if key in self.codex else codex_cwd(rollout)
+            seen[key] = cwd
+            if cwd:
+                counts[cwd] += 1
+        self.codex = seen
+        projects = self.claude_home / "projects"
+        seen = {}
+        for project in projects.iterdir() if projects.is_dir() else []:
+            try:
+                sessions = [p for p in project.iterdir() if SESSION_NAME.match(p.name)]
+            except OSError:
+                continue
+            for session in sessions:
+                key = str(session)
+                cwd = self.claude[key] if key in self.claude else claude_cwd(session)
+                seen[key] = cwd
+                if cwd:
+                    counts[cwd] += 1
+        self.claude = seen
+        if registry is not None:
+            try:
+                for agent in load_workspace(registry)["agents"]:
+                    if agent["directory"] and not remote_machine(agent):
+                        counts[agent["directory"]] += 1
+            except (OSError, ValueError, GatewayError):
+                pass
+        counts.pop("/", None)
+        return counts
+
+
+# Where each agent CLI is found: PATH, then the per-user install folders the
+# desktop also searches.
+HARNESS_COMMANDS = (
+    "codex",
+    "claude",
+    "omp",
+    "grok",
+    "kimi",
+    "opencode",
+    "gemini",
+    "agy",
+)
+HARNESS_FOLDERS = (
+    "~/.local/bin",
+    "~/.bun/bin",
+    "~/.grok/bin",
+    "~/.kimi-code/bin",
+    "~/.opencode/bin",
+    "~/bin",
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+)
+
+
+def harness_paths():
+    search = os.pathsep.join(
+        [os.environ.get("PATH", "")] + [os.path.expanduser(p) for p in HARNESS_FOLDERS]
+    )
+    found = {}
+    for command in HARNESS_COMMANDS:
+        path = shutil.which(command, path=search)
+        if path:
+            found[command] = path
+    return found
+
+
+def phone_path(path, home):
+    """Relative to home when under it (the phone shows ~/...), else absolute."""
+    path = os.path.normpath(path)
+    if path == home:
+        return ""
+    if path.startswith(home + "/"):
+        return path[len(home) + 1 :]
+    return path
+
+
+class FolderIndex:
+    """This Mac's folders and the most used ones, rebuilt in the background so
+    the phone can browse and search without asking again for each step."""
+
+    REFRESH = 600
+    STALE = 60
+
+    def __init__(self, registry, home=None, codex_home=None, claude_home=None):
+        self.registry = registry
+        self.home = os.path.normpath(str(home or Path.home()))
+        self.history = AgentHistory(
+            codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex",
+            claude_home
+            or os.environ.get("CLAUDE_CONFIG_DIR")
+            or Path.home() / ".claude",
+        )
+        self.lock = threading.Lock()
+        self.ready = threading.Event()
+        self.wake = threading.Event()
+        self.built = 0.0
+        self.payload = None
+        self.compressed = b""
+        self.thread = None
+
+    def start(self):
+        with self.lock:
+            if self.thread is None:
+                self.thread = threading.Thread(target=self.run, daemon=True)
+                self.thread.start()
+
+    def run(self):
+        while True:
+            try:
+                self.build()
+            except Exception as error:  # a failed pass keeps the previous index
+                sys.stderr.write(f"folder index: {error}\n")
+            self.ready.set()
+            self.wake.wait(self.REFRESH)
+            self.wake.clear()
+
+    def build(self):
+        body = folder_report(self.home, self.history, self.registry)
+        version = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[
+            :16
+        ]
+        payload = {"version": version, **body}
+        compressed = gzip.compress(json.dumps(payload, separators=(",", ":")).encode())
+        with self.lock:
+            self.payload, self.compressed, self.built = (
+                payload,
+                compressed,
+                time.monotonic(),
+            )
+
+    def current(self, timeout=20.0):
+        """The newest index; an old one is served while a new one is built."""
+        self.start()
+        self.ready.wait(timeout)
+        with self.lock:
+            if self.payload is not None and time.monotonic() - self.built > self.STALE:
+                self.wake.set()
+            return self.payload, self.compressed
+
+    def refresh(self):
+        self.wake.set()
+
+
+def folder_report(home, history, registry=None, harnesses=False):
+    """What the phone needs to pick a folder on one machine."""
+    counts = history.counts(registry)
+    frequent = []
+    for path, count in counts.most_common():
+        if len(frequent) >= 12:
+            break
+        if os.path.isdir(path):
+            frequent.append({"path": phone_path(path, home), "count": count})
+    report = {"home": home, "folders": scan_folders(home), "frequent": frequent}
+    if harnesses:
+        report["harnesses"] = harness_paths()
+    return report
+
+
+# The same scan run on another machine over ssh: these definitions, then a
+# line of JSON after a marker (login shells may print first).
+REMOTE_MARKER = "LAPIS-FOLDERS "
+REMOTE_SCRIPT = "\n".join(
+    [
+        "import collections, itertools, json, os, re, shutil",
+        "from pathlib import Path",
+        f"NO_DESCENT = {sorted(NO_DESCENT)!r}",
+        f"PACKAGES = {PACKAGES!r}",
+        f"FOLDER_DEPTH = {FOLDER_DEPTH!r}",
+        f"MAX_FOLDERS = {MAX_FOLDERS!r}",
+        f"SESSION_NAME = re.compile({SESSION_NAME.pattern!r})",
+        f"HARNESS_COMMANDS = {HARNESS_COMMANDS!r}",
+        f"HARNESS_FOLDERS = {HARNESS_FOLDERS!r}",
+    ]
+    + [
+        inspect.getsource(item)
+        for item in (
+            scan_folders,
+            first_json_line,
+            codex_cwd,
+            claude_cwd,
+            AgentHistory,
+            harness_paths,
+            phone_path,
+            folder_report,
+        )
+    ]
+    + [
+        "home = os.path.normpath(str(Path.home()))",
+        "history = AgentHistory(os.environ.get('CODEX_HOME') or Path.home() / '.codex',"
+        " os.environ.get('CLAUDE_CONFIG_DIR') or Path.home() / '.claude')",
+        f"print({REMOTE_MARKER!r} + json.dumps(folder_report(home, history, None, True)))",
+    ]
+)
+
+
+def remote_folder_report(machine, timeout=60):
+    """folder_report on `machine`, through the user's ssh setup. Keys only:
+    BatchMode never waits on a password prompt."""
+    result = subprocess.run(
+        [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=8",
+            "--",
+            machine,
+            # An interactive login shell, so PATH matches the user's terminal.
+            'exec "${SHELL:-/bin/sh}" -lic "python3 -"',
+        ],
+        input=REMOTE_SCRIPT,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    for line in reversed(result.stdout.splitlines()):
+        if line.startswith(REMOTE_MARKER):
+            return json.loads(line[len(REMOTE_MARKER) :])
+    detail = (result.stderr.strip().splitlines() or ["no answer"])[-1]
+    raise GatewayError(f"{machine}: {detail[:200]}")
+
+
+# Machines ------------------------------------------------------------------
+
+MACHINE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+
+
+def ssh_config_hosts(path=None, seen=None):
+    """Named hosts in the user's ssh config and its includes (no patterns)."""
+    path = Path(path or Path.home() / ".ssh" / "config")
+    seen = seen if seen is not None else set()
+    if str(path) in seen:
+        return []
+    seen.add(str(path))
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return []
+    hosts = []
+    for line in text.splitlines():
+        try:
+            words = shlex.split(line, comments=True)
+        except ValueError:
+            continue
+        if not words:
+            continue
+        key = words[0].lower()
+        if key == "include":
+            for pattern in words[1:]:
+                pattern = os.path.expanduser(pattern)
+                if not os.path.isabs(pattern):
+                    pattern = str(Path.home() / ".ssh" / pattern)
+                for match in sorted(glob.glob(pattern)):
+                    hosts += ssh_config_hosts(match, seen)
+        elif key == "host":
+            hosts += [
+                name
+                for name in words[1:]
+                if not set(name) & set("*?!") and MACHINE_NAME.match(name)
+            ]
+    return hosts
+
+
+def ssh_target(words):
+    """The host of an ssh, mosh or et command line, without user@."""
+    arguments = iter(words[1:])
+    for argument in arguments:
+        if argument == "--":
+            argument = next(arguments, "")
+        elif argument.startswith("-"):
+            if len(argument) == 2 and argument[1] in SSH_VALUE_OPTIONS:
+                next(arguments, None)
+            continue
+        host = argument.rsplit("@", 1)[-1]
+        return host if MACHINE_NAME.match(host) else ""
+    return ""
+
+
+def history_hosts(paths=None):
+    """How often each host was reached with ssh, mosh or et in shell history."""
+    counts = collections.Counter()
+    paths = paths or [Path.home() / ".zsh_history", Path.home() / ".bash_history"]
+    for path in paths:
+        try:
+            text = Path(path).read_bytes().decode("utf-8", "replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if line.startswith(": ") and ";" in line:  # zsh extended history
+                line = line.split(";", 1)[1]
+            try:
+                words = shlex.split(line)
+            except ValueError:
+                words = line.split()
+            if words and words[0] in ("ssh", "mosh", "et", "autossh"):
+                host = ssh_target(words)
+                if host:
+                    counts[host] += 1
+    return counts
+
+
+def reachable(machine, timeout=1.5):
+    """Whether the host (or its first jump host) accepts TCP: no login, no key
+    use, so a hardware key never asks for a touch."""
+    try:
+        resolved = subprocess.run(
+            ["ssh", "-G", "--", machine], capture_output=True, text=True, timeout=5
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    settings = dict(line.split(" ", 1) for line in resolved.splitlines() if " " in line)
+    jump = settings.get("proxyjump", "none")
+    if jump != "none":
+        return reachable(jump.split(",")[0].rsplit("@", 1)[-1].split(":")[0], timeout)
+    if settings.get("proxycommand", "none") != "none":
+        return True  # cannot tell without running it
+    try:
+        with socket.create_connection(
+            (settings.get("hostname", machine), int(settings.get("port", "22"))),
+            timeout,
+        ):
+            return True
+    except (OSError, ValueError):
+        return False
+
+
+class MachineList:
+    """ssh hosts the phone can start agents on, most used first."""
+
+    STALE = 60
+
+    def __init__(self, registry, config=None, histories=None):
+        self.registry = registry
+        self.config = config
+        self.histories = histories
+        self.lock = threading.Lock()
+        self.machines = None
+        self.built = 0.0
+        self.building = False
+
+    def build(self):
+        counts = history_hosts(self.histories)
+        try:
+            for agent in load_workspace(self.registry)["agents"]:
+                host = remote_machine(agent)
+                if host:
+                    counts[host] += 5  # an agent kept in the workspace counts more
+        except (OSError, ValueError, GatewayError):
+            pass
+        configured = ssh_config_hosts(self.config)
+        seen = [h for h, n in counts.most_common(24) if n >= 3 and h not in configured]
+        names = list(dict.fromkeys(configured + seen))
+        with concurrent.futures.ThreadPoolExecutor(8) as pool:
+            online = dict(zip(names, pool.map(reachable, names)))
+        # Hosts known only from history (often gone cloud machines) are shown
+        # while they answer; reachable ones come first, most used first.
+        names = [n for n in names if n in configured or online[n]]
+        names.sort(key=lambda name: (not online[name], -counts[name], name))
+        machines = [
+            {"name": name, "uses": counts[name], "available": online[name]}
+            for name in names
+        ]
+        with self.lock:
+            self.machines, self.built, self.building = machines, time.monotonic(), False
+
+    def current(self, timeout=8.0):
+        with self.lock:
+            stale = time.monotonic() - self.built > self.STALE
+            start = stale and not self.building
+            if start:
+                self.building = True
+        if start:
+            thread = threading.Thread(target=self.build, daemon=True)
+            thread.start()
+            if self.machines is None:
+                thread.join(timeout)
+        with self.lock:
+            return self.machines
+
+
+class RemoteFolders:
+    """Folder reports for other machines, fetched over ssh when first asked
+    and again when older than ten minutes; the last one is served meanwhile."""
+
+    STALE = 600
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.reports = {}  # machine -> (payload, compressed, built)
+        self.building = set()
+        self.errors = {}
+
+    def build(self, machine):
+        try:
+            report = remote_folder_report(machine)
+            version = hashlib.sha256(
+                json.dumps(report, sort_keys=True).encode()
+            ).hexdigest()[:16]
+            payload = {"version": version, "machine": machine, **report}
+            compressed = gzip.compress(
+                json.dumps(payload, separators=(",", ":")).encode()
+            )
+            with self.lock:
+                self.reports[machine] = (payload, compressed, time.monotonic())
+                self.errors.pop(machine, None)
+        except (OSError, ValueError, subprocess.SubprocessError, GatewayError) as error:
+            with self.lock:
+                self.errors[machine] = str(error)
+        finally:
+            with self.lock:
+                self.building.discard(machine)
+
+    def current(self, machine, timeout=30.0):
+        with self.lock:
+            report = self.reports.get(machine)
+            stale = report is None or time.monotonic() - report[2] > self.STALE
+            start = stale and machine not in self.building
+            if start:
+                self.building.add(machine)
+        if start:
+            thread = threading.Thread(target=self.build, args=(machine,), daemon=True)
+            thread.start()
+            if report is None:
+                thread.join(timeout)
+        with self.lock:
+            report = self.reports.get(machine)
+            return (
+                (report[0], report[1]) if report else (None, self.errors.get(machine))
+            )
+
+    def program(self, machine, harness):
+        with self.lock:
+            report = self.reports.get(machine)
+        return report[0].get("harnesses", {}).get(harness, "") if report else ""
 
 
 SHELL_HOSTS = ("ssh", "mosh", "et")
@@ -596,12 +1176,15 @@ class TailnetAuth:
 
 
 class Gateway:
-    def __init__(self, registry, auth, port):
+    def __init__(self, registry, auth, port, folders=None, machines=None):
         self.registry = Path(registry)
         self.auth = auth
         self.port = port
         self.lock = threading.Lock()
         self.sessions = {}
+        self.folders = folders or FolderIndex(self.registry)
+        self.machines = machines or MachineList(self.registry)
+        self.remote = RemoteFolders()
 
     def workspace(self):
         return load_workspace(self.registry)
@@ -643,7 +1226,17 @@ def agent_route(parts, action):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "lapis-remote"
+    # Keep-alive saves the phone a connection set-up per request over
+    # Tailscale; idle connections close after a minute.
+    protocol_version = "HTTP/1.1"
+    timeout = 60
     gateway: Gateway
+
+    def handle(self):
+        try:
+            super().handle()
+        except (ConnectionResetError, BrokenPipeError):
+            pass  # the phone went away between requests
 
     def log_message(self, format, *args):
         # Paths and status only; never request bodies.
@@ -668,16 +1261,26 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def reply(self, status, body):
-        data = json.dumps(body, separators=(",", ":")).encode()
+    def reply(self, status, body, compressed=None):
+        """JSON, or the same JSON already gzipped when the phone accepts it."""
+        gzipped = compressed is not None and "gzip" in self.headers.get(
+            "Accept-Encoding", ""
+        )
+        data = (
+            compressed if gzipped else json.dumps(body, separators=(",", ":")).encode()
+        )
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        if gzipped:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
 
     def fail(self, status, message):
+        # A refused request's body may be unread; never reuse the connection.
+        self.close_connection = True
         self.reply(status, {"error": message})
 
     def route(self):
@@ -701,6 +1304,12 @@ class Handler(BaseHTTPRequestHandler):
             self.list_agents()
         elif parts == ["api", "harnesses"]:
             self.harnesses()
+        elif parts == ["api", "folders"]:
+            self.list_folders()
+        elif parts == ["api", "machines"]:
+            self.list_machines()
+        elif agent_route(parts, "screen"):
+            self.screen(parts[2])
         elif agent_route(parts, "stream"):
             self.stream(parts[2])
         elif agent_route(parts, "history"):
@@ -766,6 +1375,63 @@ class Handler(BaseHTTPRequestHandler):
         if answer is not None:
             self.reply(HTTPStatus.OK, {"harnesses": answer.get("harnesses", [])})
 
+    def list_machines(self):
+        machines = self.gateway.machines.current()
+        if machines is None:
+            self.fail(HTTPStatus.SERVICE_UNAVAILABLE, "Still looking for ssh machines")
+            return
+        self.reply(HTTPStatus.OK, {"machines": machines})
+
+    def list_folders(self):
+        """A machine's folder index (this Mac's without `machine`); `have`
+        names the version the phone already holds."""
+        query = parse_qs(urlsplit(self.path).query)
+        machine = query.get("machine", [""])[0]
+        if machine:
+            if not MACHINE_NAME.match(machine):
+                self.fail(HTTPStatus.BAD_REQUEST, "Invalid machine")
+                return
+            payload, compressed = self.gateway.remote.current(machine)
+            if payload is None:
+                self.fail(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    compressed or f"Still reading {machine}",
+                )
+                return
+        else:
+            payload, compressed = self.gateway.folders.current()
+            if payload is None:
+                self.fail(
+                    HTTPStatus.SERVICE_UNAVAILABLE, "Still reading this Mac's folders"
+                )
+                return
+        have = query.get("have", [""])[0]
+        if have == payload["version"]:
+            self.reply(HTTPStatus.OK, {"version": have, "unchanged": True})
+            return
+        self.reply(HTTPStatus.OK, payload, compressed)
+
+    def screen(self, identifier):
+        """The agent's current screen for the phone to show at once, read by
+        joining briefly without resizing; never takes an agent from the Mac."""
+        agent = self.gateway.agent(identifier)
+        if agent is None:
+            self.fail(HTTPStatus.NOT_FOUND, "No such agent")
+            return
+        try:
+            session = WireSession(agent, None, None, timeout=5.0, mode=JOIN)
+        except GatewayError as error:
+            self.fail(HTTPStatus.CONFLICT, f"Cannot view without taking it: {error}")
+            return
+        except (OSError, EOFError) as error:
+            self.fail(HTTPStatus.BAD_GATEWAY, f"Cannot attach: {error}")
+            return
+        try:
+            frame = render_snapshot(session.first)
+        finally:
+            session.close()
+        self.reply(HTTPStatus.OK, frame)
+
     def start_agent(self):
         """A new agent in a category, started by the Mac's lapis as a new tab."""
         try:
@@ -794,11 +1460,24 @@ class Handler(BaseHTTPRequestHandler):
             require(isinstance(title, str) and len(title) <= 80, "Invalid title")
             if title:
                 request["title"] = title
+            machine = body.get("machine", "")
+            require(
+                isinstance(machine, str)
+                and (not machine or MACHINE_NAME.match(machine)),
+                "Invalid machine",
+            )
+            if machine:
+                request["machine"] = machine
+                # The CLI's path there, when that machine's folder report found it.
+                program = self.gateway.remote.program(machine, request["harness"])
+                if program:
+                    request["program"] = program
         except (ValueError, GatewayError) as error:
             self.fail(HTTPStatus.BAD_REQUEST, str(error))
             return
         answer = self.ask_desktop(request)
         if answer is not None:
+            self.gateway.folders.refresh()  # the folder now has one more agent
             self.reply(
                 HTTPStatus.OK,
                 {
@@ -835,6 +1514,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-store")
+        # The stream has no length; it ends when either side closes it.
+        self.send_header("Connection", "close")
+        self.close_connection = True
         self.end_headers()
         try:
             self.event("attached", {"shared": shared})
@@ -1019,7 +1701,18 @@ def serve(args):
             sys.stderr.write(f"waiting for Tailscale: {error}\n")
             time.sleep(5)
     server.daemon_threads = True
-    Handler.gateway = Gateway(args.registry, auth, args.port)
+    Handler.gateway = Gateway(
+        args.registry,
+        auth,
+        args.port,
+        folders=FolderIndex(
+            args.registry,
+            home=args.folders_home,
+            codex_home=args.codex_home,
+            claude_home=args.claude_home,
+        ),
+        machines=MachineList(args.registry, args.ssh_config, args.shell_history),
+    )
     sys.stderr.write(f"lapis remote on {bind}:{args.port} for {auth.dns_name}\n")
     server.serve_forever()
 
@@ -1030,6 +1723,16 @@ def main(argv=None):
     parser.add_argument("--bind", help="address; defaults to this Mac's Tailscale IPv4")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--tailscale", default="tailscale")
+    # Fixtures for the simulator check; the defaults are this user's own.
+    parser.add_argument("--folders-home", help="folders the phone browses (tests)")
+    parser.add_argument("--codex-home", help="Codex history to rank folders by (tests)")
+    parser.add_argument("--claude-home", help="Claude Code history (tests)")
+    parser.add_argument("--ssh-config", help="ssh config to list machines from (tests)")
+    parser.add_argument(
+        "--shell-history",
+        action="append",
+        help="shell history to rank machines by (tests)",
+    )
     parser.add_argument(
         "--allow-local",
         action="store_true",

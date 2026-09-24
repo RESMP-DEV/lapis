@@ -29,6 +29,7 @@ enum Theme {
         case "claude": Color(red: 0.85, green: 0.47, blue: 0.34)
         case "kimi": Color(red: 0.40, green: 0.60, blue: 1.0)
         case "omp": Color(red: 0.55, green: 0.85, blue: 0.65)
+        case "agy": Color(red: 0.30, green: 0.55, blue: 1.0)
         case "codex", "grok", "opencode": Color(white: 0.9)
         default: accent
         }

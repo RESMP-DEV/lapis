@@ -1072,7 +1072,39 @@ void phoneStartsAnAgentInItsCategory() {
                                        entry[QStringLiteral("category")] == later;
                             }),
                 "the registry puts it in the chosen category");
-        for (const auto& closing : {desk->sessionId(), id})
+        // Over ssh: the CLI runs in the folder on that machine, in its login
+        // shell. A stand-in ssh prints what it was given.
+        QFile ssh(root.filePath(QStringLiteral("bin/ssh")));
+        require(ssh.open(QIODevice::WriteOnly), "write the stand-in ssh");
+        ssh.write("#!/bin/sh\nfor a in \"$@\"; do printf '[%s]\\n' \"$a\"; done\nexec sleep 600\n");
+        ssh.close();
+        require(ssh.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+                "make it executable");
+        auto remote =
+            createRequest(later, QStringLiteral("grok"), QStringLiteral("~/dev/some project"));
+        remote[QStringLiteral("machine")] = QStringLiteral("-oProxyCommand=touch");
+        require(!askWorkspace(registry, remote).value(QStringLiteral("ok")).toBool(),
+                "a machine name cannot be an ssh option");
+        remote[QStringLiteral("machine")] = QStringLiteral("anvil-test");
+        remote[QStringLiteral("program")] = QStringLiteral("/opt/grok/bin/grok");
+        const auto over_ssh = askWorkspace(registry, remote);
+        auto* far = workspace.session(over_ssh.value(QStringLiteral("id")).toString());
+        require(over_ssh.value(QStringLiteral("ok")).toBool() && far != nullptr &&
+                    far->title() == QStringLiteral("some project"),
+                "the phone starts an agent on another machine");
+        require(
+            waitFor(
+                [far] {
+                    const auto text = screenText(far->snapshot());
+                    return text.contains(QStringLiteral("[-t]")) &&
+                           text.contains(QStringLiteral("[anvil-test]")) &&
+                           text.contains(QStringLiteral(
+                               R"([cd ~/'dev/some project' && exec "${SHELL:-/bin/sh}" -lic /opt/grok/bin/grok])"));
+                },
+                10000) &&
+                waitFor([far] { return far->inputReady(); }, 10000),
+            "ssh runs the CLI in that machine's folder and login shell");
+        for (const auto& closing : {desk->sessionId(), id, far->sessionId()})
             require(workspace.closeSession(closing), "close the stand-in agents");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "the stand-in agents close");

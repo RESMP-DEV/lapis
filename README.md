@@ -282,9 +282,15 @@ says so. Restarting such an agent gives it a service that can. The Mac must be
 awake.
 
 **+** on a category (or in the toolbar) starts an agent from the phone: pick the
-CLI, a folder on the Mac (recent folders are offered) and the category, and it
+machine (this Mac, or an ssh host from your ssh config and shell history,
+reachable and most used first), the CLI, the category and a folder, and it
 opens as a new tab in that category in lapis on the Mac, then on the phone once
-it runs. A shown agent on the Mac keeps the stage. This needs lapis running on
+it runs. Folders are browsed from an index of the machine's folders (visible
+ones alphabetically, hidden ones last), with the folders where you have started
+the most Codex, Claude Code and lapis agents marked at the top, and searched by
+typing a few of their letters; both run on the phone. The list, the CLIs, the
+machines, the folder indexes and each running agent's screen are fetched in
+the background, so opening the sheet or an agent does not wait. A shown agent on the Mac keeps the stage. This needs lapis running on
 the Mac: an open window, or the login helper (`scripts/restore_at_login.py`),
 which after a restart keeps the workspace without a window until lapis opens.
 `uv run --no-project python scripts/check_ios_remote.py [--codex] [--claude]`

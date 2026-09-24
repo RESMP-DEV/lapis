@@ -14,6 +14,7 @@
 #include <QLocalSocket>
 #include <QPointer>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QThreadPool>
@@ -78,6 +79,28 @@ QString harnessExecutable(const Harness& harness) {
         paths.append(QDir::homePath() + QLatin1String(suffix));
     paths << QStringLiteral("/opt/homebrew/bin") << QStringLiteral("/usr/local/bin");
     return QStandardPaths::findExecutable(QLatin1String(harness.command), paths);
+}
+// One POSIX shell word, whatever it holds.
+QString shellWord(const QString& text) {
+    static const QRegularExpression plain(QStringLiteral(R"(^[A-Za-z0-9_./=:@%+,-]+$)"));
+    if (plain.match(text).hasMatch())
+        return text;
+    auto quoted = text;
+    quoted.replace(QLatin1Char('\''), QStringLiteral(R"('\'')"));
+    return QLatin1Char('\'') + quoted + QLatin1Char('\'');
+}
+// A folder on another machine; ~ stays that machine's home.
+QString remoteFolder(const QString& directory) {
+    if (directory == QStringLiteral("~"))
+        return directory;
+    if (directory.startsWith(QStringLiteral("~/")))
+        return QStringLiteral("~/") + shellWord(directory.mid(2));
+    return shellWord(directory);
+}
+// An ssh host name as ssh config and the phone name it; never an option.
+bool validMachine(const QString& machine) {
+    static const QRegularExpression name(QStringLiteral(R"(^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$)"));
+    return name.match(machine).hasMatch();
 }
 constexpr std::string_view kPreviewPalette =
     "\x1b]10;rgb:d9/de/e8\x1b\\\x1b]11;rgb:0d/13/1d\x1b\\"
@@ -706,63 +729,100 @@ QString Workspace::displayPath(const QString& directory) const {
 // explicit. NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool Workspace::createAgent(const QString& directory, const QString& title,
                             const QString& harness) {
-    return !startAgent(active_category_, directory, title, harness, true).isEmpty();
+    return !startAgent({.category = active_category_,
+                        .directory = directory,
+                        .title = title,
+                        .harness = harness,
+                        .machine = {},
+                        .program = {},
+                        .select = true})
+                .isEmpty();
 }
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters): validated boundary strings.
-QString Workspace::startAgent(const QString& categoryId, const QString& directory,
-                              const QString& title, const QString& harness, bool select) {
+std::optional<session::LaunchSpec> Workspace::agentLaunch(const AgentRequest& request) {
+    const auto refuse = [this](const QString& message) -> std::optional<session::LaunchSpec> {
+        fail(message);
+        return std::nullopt;
+    };
+    const auto* harness = findHarness(request.harness);
+    if (!harness)
+        return refuse(QStringLiteral("Unknown agent harness."));
+    const auto& directory = request.directory;
+    if (directory.isEmpty() || directory.size() > 4096 || directory.contains(QChar::Null) ||
+        directory.contains(QLatin1Char('\n')))
+        return refuse(QStringLiteral("Choose a project directory (at most 4096 characters)."));
+    const auto arguments =
+        defaultArguments(request.harness) + harness_arguments_.value(request.harness);
+    if (!request.machine.isEmpty()) {
+        // ssh runs the CLI in an interactive login shell there, so its PATH
+        // matches that machine's terminal.
+        const auto ssh = QStandardPaths::findExecutable(QStringLiteral("ssh"));
+        if (ssh.isEmpty())
+            return refuse(QStringLiteral("ssh is not available on this Mac."));
+        if (!validMachine(request.machine))
+            return refuse(QStringLiteral("Unknown machine name."));
+        if (request.program.contains(QChar::Null) || request.program.contains(QLatin1Char('\n')))
+            return refuse(QStringLiteral("Invalid program path."));
+        QStringList words{shellWord(
+            request.program.isEmpty() ? QString::fromLatin1(harness->command) : request.program)};
+        for (const auto& argument : arguments)
+            words << shellWord(argument);
+        const auto command = QStringLiteral(R"(cd %1 && exec "${SHELL:-/bin/sh}" -lic %2)")
+                                 .arg(remoteFolder(directory), shellWord(words.join(' ')));
+        return session::validate_launch({ssh,
+                                         {QStringLiteral("-t"), request.machine, command},
+                                         QDir::homePath(),
+                                         {100, 30},
+                                         session::AgentMode::terminal});
+    }
+    const QString project =
+        directory == QStringLiteral("~") || directory.startsWith(QStringLiteral("~/"))
+            ? QDir::homePath() + directory.mid(1)
+            : directory;
+    if (!QFileInfo(project).isDir())
+        return refuse(
+            QStringLiteral("Choose an existing project directory (at most 4096 characters)."));
+    const auto program = harnessExecutable(*harness);
+    if (program.isEmpty())
+        return refuse(QStringLiteral("%1 is not installed or is not available on PATH.")
+                          .arg(QString::fromLatin1(harness->label)));
+    // Codex and Claude Code have service-side observers; other CLIs run as
+    // plain terminal agents.
+    const auto mode = request.harness == QStringLiteral("codex")    ? session::AgentMode::codex
+                      : request.harness == QStringLiteral("claude") ? session::AgentMode::claude
+                                                                    : session::AgentMode::terminal;
+    return session::validate_launch({program, arguments, project, {100, 30}, mode});
+}
+QString Workspace::startAgent(const AgentRequest& request) {
     if (!mutableRegistry())
         return {};
     if (preview_mode_)
         return failed(QStringLiteral("Agent launch is disabled in the preview fixture."));
-    if (sessions_.size() >= 128 || !validName(title))
+    if (sessions_.size() >= 128 || !validName(request.title))
         return failed(QStringLiteral(
             "Use an agent name of 1–80 characters; at most 128 agents are supported."));
     if (std::none_of(categories_.begin(), categories_.end(),
-                     [&](const auto& category) { return category.id == categoryId; }))
+                     [&](const auto& category) { return category.id == request.category; }))
         return failed(QStringLiteral("Unknown category."));
     try {
-        const QString project =
-            directory == QStringLiteral("~") || directory.startsWith(QStringLiteral("~/"))
-                ? QDir::homePath() + directory.mid(1)
-                : directory;
-        if (project.isEmpty() || project.size() > 4096 || project.contains(QChar::Null) ||
-            !QFileInfo(project).isDir())
-            return failed(
-                QStringLiteral("Choose an existing project directory (at most 4096 characters)."));
-        const auto* selected = findHarness(harness);
-        if (!selected)
-            return failed(QStringLiteral("Unknown agent harness."));
-        const auto program = harnessExecutable(*selected);
-        if (program.isEmpty())
-            return failed(QStringLiteral("%1 is not installed or is not available on PATH.")
-                              .arg(QString::fromLatin1(selected->label)));
-        // Codex and Claude Code have service-side observers; other CLIs run as
-        // plain terminal agents.
-        const auto mode = harness == QStringLiteral("codex")    ? session::AgentMode::codex
-                          : harness == QStringLiteral("claude") ? session::AgentMode::claude
-                                                                : session::AgentMode::terminal;
+        const auto launch = agentLaunch(request);
+        if (!launch)
+            return {};
         auto id = newId();
         const auto endpoint = session::posix::prepare_endpoint(
             QDir(QFileInfo(storage_path_).absolutePath()).filePath(id + QStringLiteral(".sock")));
-        auto launch =
-            session::validate_launch({program,
-                                      defaultArguments(harness) + harness_arguments_.value(harness),
-                                      project,
-                                      {100, 30},
-                                      mode});
-        auto item = std::make_unique<SessionPreview>(title.trimmed(), launch.directory, QString{},
-                                                     QColor(QStringLiteral("#87cbac")), "");
+        auto item =
+            std::make_unique<SessionPreview>(request.title.trimmed(), launch->directory, QString{},
+                                             QColor(QStringLiteral("#87cbac")), "");
         item->setSessionId(id);
-        item->setHarnessId(harness);
-        const Agent agent{categoryId, endpoint, launch, harness};
+        item->setHarnessId(request.harness);
+        const Agent agent{request.category, endpoint, *launch, request.harness};
         item->setStatusSource(statusSource(agent));
         const auto previous = checkpoint();
         agents_.insert(id, agent);
         sessions_.push_back(std::move(item));
-        if (select)
+        if (request.select)
             for (auto& category : categories_)
-                if (category.id == categoryId)
+                if (category.id == request.category)
                     category.selected = id;
         restoreSelection();
         // Persist before starting a child, so a failed write cannot orphan a new agent.
@@ -773,8 +833,9 @@ QString Workspace::startAgent(const QString& categoryId, const QString& director
             return {};
         }
         watch(sessions_.back().get());
-        if (!deferForUpdate(id))
-            sessions_.back()->startLive(endpoint, launch, session::wire::AttachMode::create);
+        // Only this Mac's CLIs are updated first.
+        if (!request.machine.isEmpty() || !deferForUpdate(id))
+            sessions_.back()->startLive(endpoint, *launch, session::wire::AttachMode::create);
         changed();
         return id;
     } catch (const std::exception& error) {

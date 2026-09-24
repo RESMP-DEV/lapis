@@ -1390,7 +1390,9 @@ outside lapis because its configured credential broker is unreachable.
 Default new tabs and window titles show the home-relative project path; existing explicit names are retained.
 Marks identify the harness, not dynamically detected model-provider metadata.
 `qml/AgentMark.qml` reuses Penthouse's Codex, Claude, OMP, Grok, Kimi and OpenCode
-`assets/logos` paths; other harnesses use initials. The Codex asset cites
+`assets/logos` paths; the Antigravity arch is the path in CodexBar's
+`ProviderIcon-antigravity.svg`, matching Antigravity.app's icon; other
+harnesses use initials. The phone's `Mark-*` PDFs are the same paths. The Codex asset cites
 OpenAI's brand page and the Wikimedia 2025 symbol. These remain brand assets,
 not new software dependencies or endorsements. Redundant theme-name hover tooltips are removed; truncated tab paths
 can still reveal their full location.
@@ -1842,6 +1844,31 @@ A prototype, deliberately simpler than the SSH design first proposed:
   offers the Mac's installed CLIs, the folders of agents already there and the
   categories, then waits (up to 150 seconds) until the agent's service answers
   before opening it.
+- Folders, machines and prefetch (September 24, requested so the phone never
+  makes you type or wait). The gateway builds a folder index per machine in
+  the background: folders under home to depth four (generated and package
+  folders listed but not opened, hidden folders listed and opened only at
+  home), capped at 30,000, and the twelve most used folders, counted from
+  Codex rollouts (interactive main threads), Claude Code sessions per project
+  and the workspace's agents. Another machine's index comes from the same
+  code run over `ssh -o BatchMode=yes` in an interactive login shell, which
+  also reports where each CLI is; the absolute path goes into that agent's
+  launch. `GET /api/folders[?machine=][&have=version]` answers `unchanged`
+  when the phone holds the current version, and gzips otherwise. Machines
+  (`GET /api/machines`) are the ssh config's named hosts plus hosts reached
+  at least three times in zsh or bash history, ordered reachable first, then
+  by use; reachability is a TCP connection to the host or its first jump
+  host, never a login, so a hardware key is never asked for a touch. The
+  desktop starts a remote agent as `ssh -t <host> 'cd <folder> && exec
+  "${SHELL:-/bin/sh}" -lic <cli>'` with each word quoted, in terminal mode,
+  and never updates a remote CLI first. The phone keeps the list, CLIs,
+  machines and indexes on disk per Mac, refreshes them in the background,
+  and searches an index in memory, narrowing each keystroke from the last
+  query's matches. `GET /api/agents/<id>/screen` joins briefly without
+  resizing and never takes an agent over, so the phone can show each running
+  agent's screen the moment it is opened; the first history page is fetched
+  when the live screen arrives. The gateway keeps HTTP/1.1 connections alive
+  and closes any connection it refuses a request on.
 - The windowless host. With no window open nothing would own the workspace,
   so `lapis_desktop --serve` keeps it without a window (offscreen Qt
   platform), serving the same socket and leaving running services for a
@@ -1855,9 +1882,10 @@ A prototype, deliberately simpler than the SSH design first proposed:
   the real host, and `testStartAnAgentFromThePhone` in the simulator against
   the real host.
 - Not yet: structured requests and approvals on the phone (agents' own prompts
-  are answered through the key bar), push notifications, and serving the
-  phone after the window quits (only the login helper hosts without a
-  window); these remain proposed.
+  are answered through the key bar), push notifications, serving the phone
+  after the window quits (only the login helper hosts without a window), and
+  a machine choice in the desktop's own new-agent form; these remain
+  proposed.
 
 Observed but not changed: Linux TSan reports frees and mutexes on Qt's uninstrumented
 threads in five GUI suites, identically on the pre-merge base, so TSan remains a

@@ -221,6 +221,18 @@ struct PreviewRequest {
     QString reason;
 };
 
+// An agent to start: a CLI in a folder, in a category, on this Mac or over ssh.
+struct AgentRequest {
+    QString category;
+    QString directory; // on `machine`; ~ is that machine's home
+    QString title;
+    QString harness;
+    QString machine; // an ssh host; empty for this Mac
+    QString program; // the CLI's path on `machine`, when known
+    // Show it on the stage; otherwise the category's selection stays.
+    bool select{};
+};
+
 struct WorkspaceOptions {
     QString endpoint;
     std::optional<session::LaunchSpec> launch;
@@ -277,11 +289,10 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool selectSession(const QString& id);
     Q_INVOKABLE bool createAgent(const QString& directory, const QString& title,
                                  const QString& harness = QStringLiteral("codex"));
-    // Starts an agent in a category; returns its id, or "" with workspaceError().
-    // Without `select` the category's selection is left alone, so an agent
-    // started from another device never takes the stage from a shown agent.
-    QString startAgent(const QString& categoryId, const QString& directory, const QString& title,
-                       const QString& harness, bool select);
+    // Starts an agent; returns its id, or "" with workspaceError(). Without
+    // `select` the category's selection is left alone, so an agent started
+    // from another device never takes the stage from a shown agent.
+    QString startAgent(const AgentRequest& request);
     [[nodiscard]] const QString& storagePath() const { return storage_path_; }
     // Close an agent's tab. A reachable agent is ended through its
     // session service first and its tab closes once the process exits. An
@@ -356,6 +367,8 @@ class Workspace final : public QObject {
     QString error_;
     bool storage_failed_{};
     bool fail(const QString& message);
+    // The launch for a new agent, or nullopt with workspaceError().
+    std::optional<session::LaunchSpec> agentLaunch(const AgentRequest& request);
     QString failed(const QString& message) {
         fail(message);
         return {};

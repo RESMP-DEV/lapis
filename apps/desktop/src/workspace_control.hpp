@@ -1,6 +1,7 @@
 #ifndef LAPIS_DESKTOP_WORKSPACE_CONTROL_HPP
 #define LAPIS_DESKTOP_WORKSPACE_CONTROL_HPP
 #include <QByteArray>
+#include <QJsonObject>
 #include <QLocalServer>
 #include <QObject>
 #include <QString>
@@ -35,6 +36,7 @@ class WorkspaceControl final : public QObject {
   private:
     void accept();
     QByteArray answer(const QByteArray& line);
+    QByteArray create(const QJsonObject& request);
     Workspace& workspace_;
     bool host_;
     QLocalServer server_;

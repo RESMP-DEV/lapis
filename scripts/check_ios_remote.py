@@ -562,11 +562,43 @@ def main():
             if time.monotonic() > deadline:
                 raise SystemExit("the lapis host did not start")
             time.sleep(0.1)
+        # What the phone browses and ranks: a small home, Codex and Claude
+        # histories naming its folders, and ssh machines with a history.
+        fixture = runtime / "fixture"
+        home = fixture / "home"
+        for folder in ("a", "b", "dev/lapis", ".hidden"):
+            (home / folder).mkdir(parents=True)
+        day = fixture / "codex" / "sessions" / "2026" / "09" / "24"
+        day.mkdir(parents=True)
+        for index in range(2):
+            meta = {"cwd": str(home / "dev" / "lapis"), "source": "cli"}
+            (
+                day
+                / f"rollout-2026-09-24T12-00-0{index}-01a0d4b2-0000-7000-8000-00000000000{index}.jsonl"
+            ).write_text(json.dumps({"type": "session_meta", "payload": meta}) + "\n")
+        project = fixture / "claude" / "projects" / "-home-b"
+        project.mkdir(parents=True)
+        for index in range(3):
+            (project / f"0000000{index}-0000-4000-8000-000000000000.jsonl").write_text(
+                json.dumps({"cwd": str(home / "b"), "entrypoint": "cli"}) + "\n"
+            )
+        (fixture / "ssh_config").write_text("Host alpha beta\n")
+        (fixture / "history").write_text("ssh beta\n" * 3 + "ssh alpha\n")
         run.start(
             "gateway",
             [
                 python,
                 str(ROOT / "apps" / "remote" / "lapis_remote.py"),
+                "--folders-home",
+                str(home),
+                "--codex-home",
+                str(fixture / "codex"),
+                "--claude-home",
+                str(fixture / "claude"),
+                "--ssh-config",
+                str(fixture / "ssh_config"),
+                "--shell-history",
+                str(fixture / "history"),
                 "--registry",
                 str(registry),
                 "--bind",
@@ -621,6 +653,7 @@ def main():
                 "LAPIS_ECHO_ID": echo_id,
                 "LAPIS_MAC_CLIENT": "1",
                 "LAPIS_NEW_AGENT_FOLDER": str(new_folder),
+                "LAPIS_FOLDER_FIXTURE": "1",
             }
         )
         command = [
