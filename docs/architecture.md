@@ -1713,6 +1713,20 @@ with the fake model after deleting the record. Restart agent (Commands) applies
 the restore path to one ended or unreachable card and refuses while its service
 answers. Antigravity resumes with `agy --conversation`.
 
+CLI updates (September 24, requested so agents never open on an update
+prompt). Before a new agent starts, the desktop runs that CLI's own
+non-interactive update command (Claude `update`, OMP `update`, Grok `update`,
+Kimi `upgrade`, OpenCode `upgrade`, Antigravity `update`) with no input and a
+two-minute limit, at most every 30 minutes per CLI; the card shows Updating
+<CLI> and starts the agent when the update ends, whatever its outcome, and
+the output is logged beside the registry. Running agents keep their binary.
+Codex is not updated: the observer accepts only qualified binary digests, and
+an unqualified build loses turn status and requests, so lapis keeps the
+qualified build and launches Codex with `check_for_update_on_startup=false`.
+Automating Codex requalification (the probes against the fake model rather
+than a live one) is the step that would let Codex update too. Restored and
+reattached agents are not updated.
+
 Observed but not changed: Linux TSan reports frees and mutexes on Qt's uninstrumented
 threads in five GUI suites, identically on the pre-merge base, so TSan remains a
 macOS qualification. Native Mac selection, wheel and window-manager behavior are

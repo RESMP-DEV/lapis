@@ -183,6 +183,14 @@ on the stage giving the reason and the key that closes it. **Restart agent**
 in Commands starts it again in the same card, resuming its conversation the
 same way.
 
+A new agent's CLI updates itself first (`claude update`, `omp update`, `grok
+update`, `kimi upgrade`, `opencode upgrade`, `agy update`), at most every 30
+minutes per CLI; the card reads **Updating Claude…** until the agent starts on
+the new version, and results go to `runtime/harness-updates.log`. Codex is the
+exception: lapis observes only Codex builds it has qualified, so it keeps the
+qualified build and starts Codex with its update prompt turned off
+(`check_for_update_on_startup=false`).
+
 Upgrading lapis does not disturb running agents: quit the old build and open
 the new one, and it reattaches to the same processes. Launch fingerprints,
 the service protocol, the workspace registry and resume records are kept

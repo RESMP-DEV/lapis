@@ -206,6 +206,7 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
         }
         // The normal workspace restarts agents whose services are gone.
         options.restoreAgents = !options.launch && options.endpoint.isEmpty();
+        options.updateHarnesses = options.restoreAgents;
     }
     return options;
 }
