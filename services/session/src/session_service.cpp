@@ -930,7 +930,7 @@ class SessionService final : public QObject {
             return;
         case wire::Kind::resize:
             client_wanted_ = decode_size(control.payload);
-            request_resize(*client_wanted_);
+            claim_size(client_wanted_);
             return;
         default:
             throw std::runtime_error("Unexpected client message");
@@ -975,10 +975,14 @@ class SessionService final : public QObject {
         else
             apply_resize(size);
     }
-    // Several devices can show one agent; the one typing sets the size, as
-    // tmux does with window-size latest.
-    void claim_size(const std::optional<TerminalSize>& wanted) {
-        if (wanted && *wanted != pending_resize_.value_or(current_size_))
+    // Several devices can show one agent; the one that last resized or typed
+    // sets the size, as tmux does with window-size latest. `view` is 0 for
+    // the attached client.
+    void claim_size(const std::optional<TerminalSize>& wanted, quint64 view = 0) {
+        if (!wanted)
+            return;
+        size_view_ = view;
+        if (*wanted != pending_resize_.value_or(current_size_))
             request_resize(*wanted);
     }
     // Only an explicit close from an attached client ends the agent; detaching
@@ -1106,6 +1110,17 @@ class SessionService final : public QObject {
             return;
         const QPointer<QLocalSocket> socket = (*found)->socket;
         views_.erase(found);
+        // A phone that leaves hands the size back to the desktop.
+        if (size_view_ == id) {
+            size_view_ = 0;
+            if (client_ && ready_ && process_started_ && !stopping_) {
+                try {
+                    claim_size(client_wanted_);
+                } catch (const std::exception& error) {
+                    qWarning().noquote() << "Size not restored:" << error.what();
+                }
+            }
+        }
         if (!socket)
             return;
         disconnect(socket, nullptr, this, nullptr);
@@ -1198,7 +1213,7 @@ class SessionService final : public QObject {
             throw std::runtime_error("Input message too large");
         if (frame.kind == wire::Kind::resize) {
             view.wanted = decode_size(control.payload);
-            request_resize(*view.wanted);
+            claim_size(view.wanted, view.id);
             return;
         }
         if (frame.kind == wire::Kind::history_request) {
@@ -1208,7 +1223,7 @@ class SessionService final : public QObject {
         if (frame.kind != wire::Kind::text && frame.kind != wire::Kind::paste &&
             frame.kind != wire::Kind::key)
             throw std::runtime_error("A joined view may only type, resize and page history");
-        claim_size(view.wanted);
+        claim_size(view.wanted, view.id);
         write_input(frame.kind, control.payload);
     }
     void detach_client() {
@@ -1229,6 +1244,7 @@ class SessionService final : public QObject {
     QLocalServer server_;
     QPointer<QLocalSocket> client_;
     std::optional<TerminalSize> client_wanted_;
+    quint64 size_view_{}; // the joined view whose size applies; 0 for the client
     std::vector<std::unique_ptr<View>> views_;
     QSet<QLocalSocket*> pending_;
     QSet<QLocalSocket*> retired_;

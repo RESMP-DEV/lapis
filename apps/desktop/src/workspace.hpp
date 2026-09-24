@@ -125,6 +125,8 @@ class SessionPreview final : public QObject {
     void sendText(const QByteArray& bytes, bool paste = false);
     void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
     void resizeTerminal(session::TerminalSize size);
+    // Someone is at this window: take the size back from another device.
+    void claimTerminalSize();
     [[nodiscard]] QString statusLabel() const;
     [[nodiscard]] QString statusKind() const;
     [[nodiscard]] QString agentName() const;

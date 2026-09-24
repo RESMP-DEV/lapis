@@ -5,6 +5,7 @@
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include <QClipboard>
+#include <QDataStream>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
@@ -30,6 +31,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace {
 namespace wire = lapis::session::wire;
@@ -171,6 +173,23 @@ QByteArray text_frames(Peer& peer, qsizetype minimum = 0,
         },
         where);
     return text;
+}
+// Resize frames the desktop sent once events settle.
+std::vector<lapis::session::TerminalSize> resize_frames(Peer& peer) {
+    settle();
+    std::vector<lapis::session::TerminalSize> sizes;
+    peer.bytes += peer.socket->readAll();
+    wire::Frame frame;
+    while (wire::take_frame(peer.bytes, frame)) {
+        if (frame.kind != wire::Kind::resize)
+            continue;
+        QDataStream in(wire::decode_control(frame.payload).payload);
+        quint16 columns{};
+        quint16 rows{};
+        in >> columns >> rows;
+        sizes.push_back({columns, rows});
+    }
+    return sizes;
 }
 void composition(lapis::desktop::TerminalSurface& surface, QStringView preedit,
                  const QString& commit = {}, int replace = 0) {
@@ -343,6 +362,63 @@ void input_contract(bool background) {
             "Disconnected terminal retained IME ownership");
 }
 // Links are found across the rows they wrap onto, without sentence punctuation.
+// A joined phone may resize the agent. Coming back to this window takes the
+// stage's size back: moving the pointer over the terminal, activating the
+// window, or showing the agent on the stage. A hover repeated at a resting
+// pointer (Qt Quick sends them as the scene changes) does not, and one size
+// shown is claimed once.
+void size_returns_to_this_window() {
+    Fixture f;
+    QQuickWindow window;
+    window.setGeometry(100, 100, 640, 360);
+    lapis::desktop::TerminalSurface surface(window.contentItem());
+    surface.setSize(QSizeF(640, 360));
+    // The stage shows agents that are already live, so its grid is the size.
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    surface.setDocument(&f.document);
+    surface.setInteractive(true);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    const lapis::session::TerminalSize desk{
+        static_cast<std::uint16_t>(surface.gridSize().width()),
+        static_cast<std::uint16_t>(surface.gridSize().height())};
+    const lapis::session::TerminalSize phone{40, 20};
+    quint64 sequence = 1;
+    const auto shown = [&](lapis::session::TerminalSize size) {
+        f.terminal.resize(size);
+        peer.send(wire::Kind::snapshot, wire::encode_snapshot_message(
+                                            {{f.identity, 1}, ++sequence, f.terminal.snapshot()}));
+        until([&] { return f.document.snapshot().size == size; });
+    };
+    const auto hover = [&](QPointF global) {
+        QHoverEvent event(QEvent::HoverMove, QPointF(10, 10), global, QPointF(10, 10));
+        QCoreApplication::sendEvent(&surface, &event);
+    };
+    const std::vector<lapis::session::TerminalSize> claim{desk};
+    shown(desk);
+    hover(QPointF(200, 200));
+    require(resize_frames(peer).empty(), "The desktop's own size needs no claim");
+    shown(phone);
+    hover(QPointF(200, 200));
+    require(resize_frames(peer).empty(), "A resting pointer claimed the size");
+    hover(QPointF(210, 200));
+    require(resize_frames(peer) == claim, "Moving the pointer did not claim the size");
+    hover(QPointF(220, 200));
+    require(resize_frames(peer).empty(), "One size shown was claimed twice");
+    shown(desk);
+    shown(phone);
+    lapis::desktop::test::activate_test_window(window);
+    until([&] { return window.isActive(); });
+    require(resize_frames(peer) == claim, "Activating the window did not claim the size");
+    shown(desk);
+    shown(phone);
+    surface.setDocument(nullptr);
+    surface.setDocument(&f.document);
+    require(resize_frames(peer) == claim, "Showing the agent on the stage did not claim the size");
+}
+
 void links_follow_wrapped_rows() {
     lapis::session::Terminal terminal({20, 3});
     terminal.feed("see https://example.com/a_very_long/path. ok");
@@ -532,11 +608,12 @@ int main(int argc, char** argv) {
         input_contract(background);
         selection_and_scroll();
         links_follow_wrapped_rows();
+        size_returns_to_this_window();
         if (background)
             std::cout << "Background Qt/software mode; native macOS input and GPU not exercised\n";
         std::cout
             << "Qt IME commit/cancel, replacement rejection, paste, selection/copy, wheel, links, "
-               "history, focus, document "
+               "history, focus, document, size claims "
                "and disconnect ownership passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

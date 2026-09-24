@@ -4,7 +4,8 @@
 The gateway reads the desktop's workspace registry and attaches to an
 agent's session service only while the phone shows that agent. It joins the
 session beside the desktop, so both show the same screen and either can type;
-the device typing sets the terminal size. A service started before joining
+the device in use sets the terminal size, and the desktop's returns when the
+phone leaves. A service started before joining
 existed rejects it, and then the phone takes the agent from the desktop until
 Reconnect agent on the Mac. Agents keep running either way.
 
