@@ -19,6 +19,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace {
 using lapis::desktop::Workspace;
@@ -947,6 +948,171 @@ void agentsRestoreAfterServiceLoss() {
             "restored agents close");
 }
 
+void requireProcessArguments(const QJsonArray& arguments, const QString& directory) {
+    QByteArray expected_output;
+    for (const auto& value : arguments)
+        expected_output += value.toString().toUtf8() + '\n';
+    require(waitFor(
+                [&] {
+                    for (const auto& name :
+                         QDir(directory).entryList({QStringLiteral("args.*.txt")}, QDir::Files)) {
+                        QFile observed(QDir(directory).filePath(name));
+                        if (observed.open(QIODevice::ReadOnly) &&
+                            observed.readAll() == expected_output)
+                            return true;
+                    }
+                    return false;
+                },
+                10000),
+            "the restarted process received the saved resume arguments");
+}
+
+// Provenance, not an argument that merely looks like a resume option, says
+// which pair lapis owns. A later checkpoint therefore follows each restart,
+// while a user's explicit selection keeps its original identity.
+void managedResumeFollowsRecovery() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-managed-resume-XXXXXX"));
+    require(directory.isValid(), "managed-resume directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const auto script = QDir(canonical).filePath(QStringLiteral("agent.sh"));
+    {
+        QFile file(script);
+        require(file.open(QIODevice::WriteOnly), "write the managed-resume script");
+        file.write(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$(dirname \"$0\")/args.$$.txt\"\nread line\n");
+    }
+    require(QFile::setPermissions(script, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "make the managed-resume script executable");
+    const QString managed = uuid();
+    const QString explicit_agent = uuid();
+    WorkspaceOptions options;
+    options.restoreAgents = true;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    const auto endpoint = [&](const QString& id) {
+        return QDir(canonical).filePath(id + QStringLiteral(".sock"));
+    };
+    const auto record = [&](const QString& id, const QJsonArray& arguments) {
+        auto value = agentRecord(canonical, id, "general");
+        value.insert(QStringLiteral("program"), script);
+        value.insert(QStringLiteral("harness"), QStringLiteral("kimi"));
+        value.insert(QStringLiteral("arguments"), arguments);
+        return value;
+    };
+
+    // A stale index or identity cannot silently become launch provenance.
+    auto malformed = record(managed, QJsonArray{QStringLiteral("--flag")});
+    malformed.insert(QStringLiteral("managedResume"),
+                     QJsonObject{{"index", 9}, {"identity", "m-1"}});
+    const auto malformed_path = QDir(canonical).filePath(QStringLiteral("malformed.json"));
+    writeRegistry(
+        malformed_path,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                    {"agents", QJsonArray{malformed}}});
+    {
+        WorkspaceOptions bad_options;
+        bad_options.storagePath = malformed_path;
+        Workspace bad(WorkspaceMode::live, bad_options);
+        require(!bad.workspaceError().isEmpty(), "invalid managed-resume provenance is rejected");
+    }
+
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{
+            {"version", 2},
+            {"activeCategory", "general"},
+            {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+            {"agents", QJsonArray{record(managed, QJsonArray{QStringLiteral("--flag")}),
+                                  record(explicit_agent,
+                                         QJsonArray{QStringLiteral("--flag"),
+                                                    QStringLiteral("--session=user-original")})}}});
+    lapis::session::write_resume_record(endpoint(managed),
+                                        {QStringLiteral("kimi"), QStringLiteral("m-1")});
+    lapis::session::write_resume_record(endpoint(explicit_agent),
+                                        {QStringLiteral("kimi"), QStringLiteral("user-1")});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "load managed-resume registry");
+    auto* managed_item = workspace.session(managed);
+    auto* explicit_item = workspace.session(explicit_agent);
+    require(waitFor(
+                [managed_item, explicit_item] {
+                    return managed_item->inputReady() && explicit_item->inputReady();
+                },
+                10000),
+            "the first recovery cycle starts");
+
+    const auto saved_agent = [&](const QString& id) {
+        for (const auto& value : QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                     .object()
+                                     .value(QStringLiteral("agents"))
+                                     .toArray())
+            if (value.toObject().value(QStringLiteral("id")).toString() == id)
+                return value.toObject();
+        throw std::runtime_error("saved managed-resume agent is missing");
+    };
+    const auto check_cycle = [&](const QString& id, bool managed_provenance,
+                                 const QString& expected_identity) {
+        const auto agent = saved_agent(id);
+        const auto actual = agent.value(QStringLiteral("arguments")).toArray();
+        const auto expected =
+            managed_provenance
+                ? QJsonArray{QStringLiteral("--flag"), QStringLiteral("--session"),
+                             expected_identity}
+                : QJsonArray{QStringLiteral("--flag"), QStringLiteral("--session=user-original")};
+        require(actual == expected, "the recovery cycle preserves unrelated arguments");
+        requireProcessArguments(expected, canonical);
+        const auto provenance = agent.value(QStringLiteral("managedResume")).toObject();
+        if (!managed_provenance) {
+            require(provenance.isEmpty(), "an explicit resume pair remains user-owned");
+            return;
+        }
+        require(provenance.value(QStringLiteral("index")).toInt() == 1 &&
+                    provenance.value(QStringLiteral("identity")).toString() == expected_identity,
+                "managed provenance names the replaced resume pair");
+    };
+    check_cycle(managed, true, QStringLiteral("m-1"));
+    check_cycle(explicit_agent, false, {});
+
+    for (const auto& [identity, managed_identity] :
+         {std::pair{1, QStringLiteral("m-2")}, {2, QStringLiteral("m-3")}}) {
+        for (const auto& name :
+             QDir(canonical).entryList({QStringLiteral("args.*.txt")}, QDir::Files))
+            require(QFile::remove(QDir(canonical).filePath(name)), "remove prior argv receipts");
+        lapis::session::write_resume_record(endpoint(managed),
+                                            {QStringLiteral("kimi"), managed_identity});
+        lapis::session::write_resume_record(
+            endpoint(explicit_agent),
+            {QStringLiteral("kimi"), QStringLiteral("user-") + QString::number(identity + 1)});
+        managed_item->sendText("done\r");
+        explicit_item->sendText("done\r");
+        require(waitFor(
+                    [managed_item, explicit_item] {
+                        return managed_item->connectionState() == QStringLiteral("ended") &&
+                               explicit_item->connectionState() == QStringLiteral("ended");
+                    },
+                    10000),
+                "the recovery cycle ends");
+        require(waitFor([&] { return workspace.restartAgent(managed); }, 10000),
+                "restart the managed agent after its old service exits");
+        require(waitFor([&] { return workspace.restartAgent(explicit_agent); }, 10000),
+                "restart the explicit agent after its old service exits");
+        workspace.clearError();
+        require(waitFor(
+                    [managed_item, explicit_item] {
+                        return managed_item->inputReady() && explicit_item->inputReady();
+                    },
+                    10000),
+                "the recovery cycle restarts");
+        check_cycle(managed, true, managed_identity);
+        check_cycle(explicit_agent, false, {});
+    }
+    for (const auto& id : {managed, explicit_agent})
+        require(workspace.closeSession(id), "close a managed-resume agent");
+    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "managed-resume agents close");
+}
+
 // Exercise restore planning without substituting a shell for a real Codex
 // app-server. Destruction before the event loop cancels the queued launches.
 void codexResumeArguments() {
@@ -1111,6 +1277,7 @@ int main(int argc, char** argv) {
         agentsStartWithoutParentSessionMarkers();
         restartRefusesClosingAgent();
         agentsRestoreAfterServiceLoss();
+        managedResumeFollowsRecovery();
         restartReportsValidationFailures();
         const bool had_codex_home = qEnvironmentVariableIsSet("CODEX_HOME");
         const auto original_codex_home = qgetenv("CODEX_HOME");

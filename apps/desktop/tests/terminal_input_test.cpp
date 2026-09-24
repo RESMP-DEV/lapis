@@ -223,6 +223,13 @@ void input_contract(bool background) {
         for (const auto origin : {Qt::NoModifier, Qt::KeypadModifier}) {
             QKeyEvent command_key(QEvent::KeyPress, key, Qt::MetaModifier | origin);
             QCoreApplication::sendEvent(&surface, &command_key);
+#ifndef Q_OS_MACOS
+            if (key == Qt::Key_Backspace || key == Qt::Key_Delete) {
+                require(!command_key.isAccepted() && text_frames(peer).isEmpty(),
+                        "Non-macOS Super deletion chord reached the terminal");
+                continue;
+            }
+#endif
             require(command_key.isAccepted(), "Command chord did not claim terminal input");
             require(
                 text_frames(peer, 1) == QByteArray(1, expected),

@@ -1245,6 +1245,7 @@ void TerminalSurface::commandKey(QKeyEvent& event) {
         event.accept();
         return;
     }
+#ifdef Q_OS_MACOS
     // Command-Backspace deletes to the line start (Ctrl-U) and
     // Command-Delete to the line end (Ctrl-K), as in iTerm2's natural text
     // editing and the shells' emacs bindings.
@@ -1253,6 +1254,7 @@ void TerminalSurface::commandKey(QKeyEvent& event) {
         event.accept();
         return;
     }
+#endif
     // Every other Command combination stays available to the window for
     // navigation and menu shortcuts.
     event.ignore();

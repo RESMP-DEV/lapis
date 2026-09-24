@@ -63,13 +63,10 @@ std::optional<ResumeRecord> decode(QByteArrayView value) {
 QString record_path(const QString& endpoint) { return endpoint + QStringLiteral(".resume"); }
 
 // An existing record must be a private regular file owned by this user.
-bool safe_existing(const QString& path, bool* exists) {
+bool safe_existing(const QString& path) {
     struct stat info{};
-    if (::lstat(QFile::encodeName(path).constData(), &info) != 0) {
-        *exists = false;
+    if (::lstat(QFile::encodeName(path).constData(), &info) != 0)
         return errno == ENOENT;
-    }
-    *exists = true;
     return S_ISREG(info.st_mode) && info.st_uid == ::geteuid() && info.st_nlink == 1 &&
            (info.st_mode & 07777U) == 0600U && info.st_size <= max_record;
 }
@@ -176,18 +173,18 @@ std::optional<ResumeRecord> read_resume_record(const QString& endpoint) {
     ResumeRecord record;
     record.agent = object.value(QStringLiteral("agent")).toString().toLower();
     record.session_id = object.value(QStringLiteral("session_id")).toString();
-    if (!known_agent(record.agent) || !valid_resume_identity(record.session_id))
+    if (object.value(QStringLiteral("version")).toInt() != 1 || !known_agent(record.agent) ||
+        !valid_resume_identity(record.session_id))
         return std::nullopt;
     return record;
 }
 
 void write_resume_record(const QString& endpoint, const ResumeRecord& record) {
     const auto path = record_path(endpoint);
-    bool exists = false;
-    if (!safe_existing(path, &exists))
-        throw std::runtime_error("Unsafe resume record");
     if (!known_agent(record.agent) || !valid_resume_identity(record.session_id))
         throw std::invalid_argument("Invalid resume record");
+    if (!safe_existing(path))
+        throw std::runtime_error("Unsafe resume record");
     const QJsonObject object{
         {"version", 1}, {"agent", record.agent}, {"session_id", record.session_id}};
     QSaveFile file(path);

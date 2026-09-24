@@ -102,7 +102,7 @@ void records_are_private() {
     QFile foreign_case(record_path);
     require(foreign_case.open(QIODevice::WriteOnly | QIODevice::Truncate),
             "open the record for a foreign spelling");
-    const QJsonObject uppercase{{"agent", "Claude"}, {"session_id", "s-1"}};
+    const QJsonObject uppercase{{"version", 1}, {"agent", "Claude"}, {"session_id", "s-1"}};
     require(foreign_case.write(QJsonDocument(uppercase).toJson(QJsonDocument::Compact)) > 0 &&
                 foreign_case.setPermissions(QFile::ReadOwner | QFile::WriteOwner),
             "write a normalized-agent test record");
@@ -111,6 +111,18 @@ void records_are_private() {
     require(normalized && normalized->agent == QStringLiteral("claude") &&
                 normalized->session_id == QStringLiteral("s-1"),
             "record agents use the same lowercase spelling as checkpoints");
+    QFile wrong_version(record_path);
+    require(wrong_version.open(QIODevice::WriteOnly | QIODevice::Truncate),
+            "open the record for a version test");
+    const QJsonObject version_two{{"version", 2}, {"agent", "claude"}, {"session_id", "s-1"}};
+    require(wrong_version.write(QJsonDocument(version_two).toJson(QJsonDocument::Compact)) > 0 &&
+                wrong_version.setPermissions(QFile::ReadOwner | QFile::WriteOwner),
+            "write a wrong-version test record");
+    wrong_version.close();
+    require(!lapis::session::read_resume_record(endpoint),
+            "a record from another durable schema version is not trusted");
+    lapis::session::write_resume_record(endpoint,
+                                        {QStringLiteral("claude"), QStringLiteral("s-1")});
     struct stat info{};
     require(::stat(QFile::encodeName(endpoint + QStringLiteral(".resume")).constData(), &info) ==
                     0 &&
@@ -127,6 +139,9 @@ void records_are_private() {
         refused = true;
     }
     require(refused, "a shared record is not replaced");
+    require(::chmod(QFile::encodeName(record_path).constData(), 0600) == 0 &&
+                lapis::session::read_resume_record(endpoint).has_value(),
+            "restore a valid private target before testing symlink rejection");
     const auto link_endpoint = QDir(directory.path()).filePath(QStringLiteral("link.sock"));
     require(QFile::link(endpoint + QStringLiteral(".resume"),
                         link_endpoint + QStringLiteral(".resume")),

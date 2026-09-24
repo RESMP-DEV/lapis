@@ -311,6 +311,10 @@ class Workspace final : public QObject {
         QString endpoint;
         session::LaunchSpec launch;
         QString harness{QStringLiteral("codex")};
+        // The exact resume pair lapis appended, or no provenance for a
+        // user-authored launch. Existing unmarked records stay user-owned.
+        int managed_resume_index{-1};
+        QString managed_resume_identity{};
     };
     std::vector<Category> categories_;
     QMap<QString, Agent> agents_;
@@ -333,12 +337,18 @@ class Workspace final : public QObject {
     bool save(const QString& renamedId = {}, const QString& renamedTitle = {});
     void restore();
     void loadCategories(const QJsonArray& groups);
+    static void loadManagedResume(const QJsonValue& value, Agent& agent);
     void loadAgents(const QJsonArray& agents);
     void finishClosing(SessionPreview* item);
     [[nodiscard]] static SessionPreview::StatusSource statusSource(const Agent& agent);
     [[nodiscard]] static QStringList savedArguments(const QJsonValue& value);
-    [[nodiscard]] static std::optional<session::LaunchSpec>
-    restoredLaunch(const Agent& agent, QString* diagnostic = nullptr);
+    struct ResumeLaunch {
+        session::LaunchSpec launch;
+        int managed_resume_index{-1};
+        QString managed_resume_identity{};
+    };
+    [[nodiscard]] static std::optional<ResumeLaunch> restoredLaunch(const Agent& agent,
+                                                                    QString* diagnostic = nullptr);
     [[nodiscard]] static bool serviceRunning(const QString& endpoint);
     void noteStatus(SessionPreview* item);
     QHash<const SessionPreview*, QString> last_kind_;

@@ -60,6 +60,18 @@ SYMBOLS = {
 }
 
 
+def resumed_pairs(processes, bin_path):
+    """Pair observed argv with the fake harness that actually received it."""
+    fake_bins = {f"{bin_path}/{name}" for name in FAKE_NAMES}
+    seen = set()
+    for row in processes:
+        words = row["args"].split()
+        harness = next((Path(word).name for word in words if word in fake_bins), None)
+        if harness:
+            seen.update((harness, word) for word in words)
+    return seen
+
+
 def positive_minutes(value):
     """Reject unusable soak durations before constructing the GUI runtime."""
     try:
@@ -620,6 +632,7 @@ class Run:
                 "grok",
                 "opencode",
                 "omp",
+                "agy",
             ):
                 conversations[agent["id"]] = json.loads(record.read_text())[
                     "session_id"
@@ -635,16 +648,17 @@ class Run:
                 pass
         self.wait(lambda: not self.fake_agents(), 10, "every agent is gone")
         self.launch()
-        expected = {
-            conversation
-            for agent_id, conversation in conversations.items()
-            if any(agent["id"] == agent_id for agent in self.agents())
+        harness_by_agent = {
+            agent["id"]: agent.get("harness") for agent in self.agents()
         }
+        expected = {
+            (harness_by_agent[agent_id], conversation)
+            for agent_id, conversation in conversations.items()
+            if agent_id in harness_by_agent
+        }
+
         self.wait(
-            lambda: (
-                expected
-                <= {word for row in self.fake_agents() for word in row["args"].split()}
-            ),
+            lambda: expected <= resumed_pairs(self.fake_agents(), self.bin),
             20,
             "restored agents resume their conversations",
         )
