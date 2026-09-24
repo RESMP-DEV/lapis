@@ -114,7 +114,16 @@ struct AgentView: View {
             .padding(10)
             .background(Theme.panel)
         case .live:
-            EmptyView()
+            if !session.shared {
+                Text("This agent started before sync, so the Mac shows it as taken over. Restarted agents stay in sync.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.quiet)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .padding(6)
+                    .background(Theme.panel)
+                    .accessibilityIdentifier("syncNotice")
+            }
         }
     }
 

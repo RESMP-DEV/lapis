@@ -1,7 +1,7 @@
 {
   "schema": "lapis.qa-receipt/1",
-  "recorded_at": "2026-09-24T01:06:00Z",
-  "scope": "Prototype iPhone app and Mac gateway for using lapis agents over Tailscale",
+  "recorded_at": "2026-09-24T06:20:00Z",
+  "scope": "Prototype iPhone app and Mac gateway for using lapis agents over Tailscale, with the phone joined beside the desktop so both stay in sync",
   "source": {
     "base": "a4b0e33 (feature/session-continuity)",
     "branch": "feature/phone-remote (local)"
@@ -18,11 +18,23 @@
   "checks": [
     {
       "name": "gateway suite (scripts/tests/test_lapis_remote.py)",
-      "result": "8/8 on macOS (four consecutive runs) and on anvil: snapshot decoding, launch fingerprints equal to the pinned launch-spec values, registry reading, admission rules, browser refusal, and against a real session service: list, stream, paste and Enter, resize, a second view taking over, release when the phone leaves, and the desktop attachment receiving replaced"
+      "result": "9/9 on macOS (five consecutive runs) and on anvil: snapshot decoding, launch fingerprints equal to the pinned launch-spec values, registry reading, admission rules, browser refusal; against a real session service: list, stream, paste and Enter, resize, another phone view taking over, release when the phone leaves, a desktop-style client and the phone joined together with typing reaching both and the size following the device that typed, the phone surviving the desktop reattaching; and a stand-in pre-join service falling back to takeover"
     },
     {
       "name": "iOS UI tests in a headless simulator (scripts/check_ios_remote.py --codex --claude)",
-      "result": "6/6: categories and a stopped agent listed; open, type, send and echo; key bar ^U clears a line typed without Enter; wide, emoji, right-to-left and box-drawing output; Settings connection check; another view taking the agent then Open here again; real Codex 0.155.1 (managed mode) and Claude Code 2.1.281 answering a prompt sent from the phone"
+      "result": "7/7 with a Mac-side client attached the way the desktop is for the whole run: categories and a stopped agent listed; open, type, send and echo; key bar ^U clears a line typed without Enter; wide, emoji, right-to-left and box-drawing output; Settings connection check; another phone view taking the agent then Open here again; the phone and the Mac typing to each other on one agent (the Mac client saw the phone and was never closed); real Codex 0.155.1 (managed mode) and Claude Code 2.1.281 answering a prompt sent from the phone"
+    },
+    {
+      "name": "desktop with a joined view (workspace suite, real Workspace and LiveConnection)",
+      "result": "passes on macOS (three runs) and in the anvil gate: typing from the joined view reaches the desktop card, the desktop's typing reaches the view, the desktop stays ready, and the view survives Reconnect agent"
+    },
+    {
+      "name": "full desktop gate on anvil with joined views",
+      "result": "56/56 (build, CTest suites, clang-tidy, format, cppcheck)"
+    },
+    {
+      "name": "desktop ASan on anvil",
+      "result": "4/4: local-protocol, workspace (joined view against the instrumented service), live-connection, terminal-input"
     },
     {
       "name": "gateway on this Mac's Tailscale address (LaunchAgent)",
@@ -35,13 +47,16 @@
     {
       "name": "device build (scripts/install_ios_app.py --build-only)",
       "result": "signed with the team's wildcard development profile, whose one device is the paired iPhone 17 Pro (Developer Mode on); not installed because the phone was not reachable"
+    },
+    {
+      "name": "on the phone",
+      "result": "installed on the iPhone 17 Pro at 11:01 pm MT September 23 and updated at 12:15 am; after the phone joined the tailnet it listed the agents, opened one at 53 by 49 and sent input, all answered 200"
     }
   ],
   "limitations": [
-    "Not yet run on the phone: install, Tailscale reachability over cellular, dictation and the real keyboard",
-    "The owner's iPhone was not on the Mac's tailnet under the owner's login on September 23",
-    "Opening an agent on the phone retires the desktop's attachment; Reconnect agent takes it back (the desktop's size restore is from code reading, not exercised)",
-    "No structured requests, push notifications, or restore without the desktop",
+    "Agents whose services started before joining existed (including the two running on September 24) are taken over by the phone instead of shared until they restart",
+    "Joined views do not page history, answer structured requests or end the agent",
+    "No push notifications, or restore without the desktop",
     "Xcode's build service deadlocked on this Mac because kernel pipe memory was exhausted (new pipes held 512 bytes), so the app and tests are compiled directly with swiftc, actool and codesign"
   ]
 }

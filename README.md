@@ -66,7 +66,7 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation | Automatic carousel and larger session-count qualification |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
 | Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect, `/clear` continuation and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
-| iPhone app (prototype) | Gateway on the Mac over Tailscale, admitting only the owner's iOS devices; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; UI tests in the iOS 26.5 Simulator against real services, fake agents, and real Codex and Claude Code on a fake model | On-device use; opening an agent takes it from the desktop until Reconnect; no structured requests, push notifications or restore without the desktop |
+| iPhone app (prototype) | Gateway on the Mac over Tailscale, admitting only the owner's iOS devices; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; the phone joins beside the desktop so both stay in sync (services started by this build); UI tests in the iOS 26.5 Simulator against real services with a Mac-side client attached, fake agents, and real Codex and Claude Code on a fake model; installed and used on an iPhone 17 Pro | Agents started before sync are taken over instead; no structured requests, push notifications or restore without the desktop |
 | Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals; [installed binary qualification](evidence/codex-binary-update.json) | Broader binary and request-kind qualification |
 
 [Desktop evidence](evidence/desktop-preview.json),
@@ -246,10 +246,13 @@ Tailscale name. To work on it in Xcode, run `xcodegen` in `apps/ios`
 
 The app lists categories and agents. Opening an agent shows its screen at phone
 width, with a key bar (esc, ^C, arrows, enter, backspace, tab, ^U, ^D) and a
-message field that pastes and presses Enter; dictation works there. Opening an
-agent on the phone takes it from the desktop, whose card offers **Reconnect
-agent** to take it back (and restore its size); the phone then shows that the
-Mac took the agent back. Agents keep running either way. The Mac must be awake.
+message field that pastes and presses Enter; dictation works there. The phone
+joins the agent beside the desktop: both show the same screen, either can type,
+and the terminal takes the size of whichever device typed last. Agents started
+before this build run services that cannot be joined; opening one on the phone
+takes it from the desktop (its card offers **Reconnect agent**), and the phone
+says so. Restarting such an agent gives it a service that can. The Mac must be
+awake.
 `uv run --no-project python scripts/check_ios_remote.py [--codex] [--claude]`
 runs the app's UI tests in a headless simulator against disposable services.
 

@@ -51,8 +51,8 @@ QByteArray encode_attach(const AttachRequest& request) {
     if (expected.epoch.isEmpty())
         expected.epoch = QByteArray(16, '\0');
     const auto mode = static_cast<quint8>(request.mode);
-    check(mode <= static_cast<quint8>(AttachMode::create));
-    if (request.mode == AttachMode::discover)
+    check(mode <= static_cast<quint8>(AttachMode::join));
+    if (request.mode == AttachMode::discover || request.mode == AttachMode::join)
         check(expected.session_id == QByteArray(16, '\0') &&
               expected.epoch == QByteArray(16, '\0'));
     else if (request.mode == AttachMode::reconnect)
@@ -75,12 +75,13 @@ AttachRequest decode_attach(const QByteArray& payload) {
     AttachRequest result;
     result.fingerprint = raw_bytes(cursor, 32);
     const auto mode = *cursor++;
-    check(mode <= static_cast<quint8>(AttachMode::create));
+    check(mode <= static_cast<quint8>(AttachMode::join));
     result.mode = static_cast<AttachMode>(mode);
     result.expected.session_id = raw_bytes(cursor, 16);
     result.expected.epoch = raw_bytes(cursor, 16);
     check(cursor == reinterpret_cast<const unsigned char*>(payload.constData()) + payload.size());
-    if (result.mode == AttachMode::discover)
+    const bool anonymous = result.mode == AttachMode::discover || result.mode == AttachMode::join;
+    if (anonymous)
         check(result.expected.session_id == QByteArray(16, '\0') &&
               result.expected.epoch == QByteArray(16, '\0'));
     else if (result.mode == AttachMode::reconnect)
@@ -88,7 +89,7 @@ AttachRequest decode_attach(const QByteArray& payload) {
     else
         check(result.expected.session_id != QByteArray(16, '\0') &&
               result.expected.epoch == QByteArray(16, '\0'));
-    if (result.mode == AttachMode::discover)
+    if (anonymous)
         result.expected.session_id.clear();
     if (result.mode != AttachMode::reconnect)
         result.expected.epoch.clear();

@@ -149,6 +149,22 @@ final class LapisUITests: XCTestCase {
         XCTAssertTrue(app.buttons["agent-echo agent"].waitForExistence(timeout: 10))
     }
 
+    // The Mac stays attached while the phone uses the agent, and what either
+    // types shows on both. The harness's Mac-side client answers the phone.
+    func testSyncedWithTheMac() throws {
+        guard ProcessInfo.processInfo.environment["LAPIS_MAC_CLIENT"] == "1" else {
+            throw XCTSkip("needs the harness's Mac-side client")
+        }
+        let terminal = openAgent("echo agent")
+        waitFor(terminal, valueContaining: "new conversation")
+        clearLine()
+        XCTAssertFalse(app.staticTexts["syncNotice"].exists, "the agent is shared, not taken over")
+        submit("ping from phone")
+        waitFor(terminal, valueContaining: "echo: pong from mac", timeout: 20)
+        XCTAssertFalse(app.staticTexts["closedReason"].exists, "the phone view stayed open")
+        snap("12-synced-with-mac")
+    }
+
     func testClaudeAgent() throws {
         let row = app.buttons["agent-claude fake"]
         guard row.waitForExistence(timeout: 20) else {

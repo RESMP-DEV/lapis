@@ -73,7 +73,14 @@ struct StreamStatus: Decodable {
     let message: String
 }
 
+struct Attached: Decodable {
+    // False when the agent's service predates joining, so the phone took the
+    // agent from the Mac instead of showing it alongside.
+    let shared: Bool
+}
+
 enum StreamEvent {
+    case attached(Attached)
     case frame(ScreenFrame)
     case status(StreamStatus)
 }
@@ -202,6 +209,8 @@ struct Gateway {
                         } else if line.hasPrefix("data: ") {
                             let data = Data(line.dropFirst(6).utf8)
                             switch name {
+                            case "attached":
+                                continuation.yield(.attached(try decoder.decode(Attached.self, from: data)))
                             case "frame":
                                 continuation.yield(.frame(try decoder.decode(ScreenFrame.self, from: data)))
                             case "status":

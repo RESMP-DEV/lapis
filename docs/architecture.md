@@ -494,7 +494,8 @@ Implemented contract:
   must not silently present a newly launched child as the old session.
 - Every successful attachment receives a new generation. Input, paste and resize
   identify the session, service epoch and attachment generation; the service
-  rejects stale tuples. A new attachment retires the previous client's authority.
+  rejects stale tuples. A new attachment retires the previous client's authority,
+  except a join (added within v6, September 24), which adds a view beside it.
 - The client distinguishes connecting, synchronizing, ready, disconnected and
   ended/replaced states. It enables terminal input only after applying a full
   snapshot for the accepted identity. An explicit reconnect action makes bounded
@@ -1709,12 +1710,18 @@ A prototype, deliberately simpler than the SSH design first proposed:
 
 - `apps/remote/lapis_remote.py` is a standard-library gateway on the Mac. It
   reads `runtime/workspace.json` and attaches to an agent's service only while
-  the phone shows that agent, in discover mode with the registry's launch
-  fingerprint (checked against the pinned `launch-spec` values). Services
-  still accept one client, so this retires the desktop's attachment for that
-  agent (its card reads replaced; Reconnect agent takes it back and re-sends
-  the stage size), and the desktop taking it back ends the phone view with that
-  explanation. Screens go out as server-sent events of styled runs, at most one
+  the phone shows that agent, with the registry's launch fingerprint (checked
+  against the pinned `launch-spec` values). It joins (attach mode 3): the
+  service keeps the desktop attached and adds the phone as a view with its own
+  attachment tuple, first-screen acknowledgement and input; at most four views,
+  which may type, paste, press keys and resize but not page history, answer
+  requests or end the agent. The desktop reattaching never retires a view. Each
+  client's last requested size is kept and typing from a client applies it,
+  like tmux's `window-size latest`, so both devices always show the same screen
+  at the size of the one in use. A service started before joining existed
+  rejects the mode; the gateway then takes the agent over in discover mode (the
+  desktop card reads replaced until Reconnect agent) and tells the phone.
+  Screens go out as server-sent events of styled runs, at most one
   per 50 ms; input comes back as POSTed text, paste, named keys (encoded by the
   service for the terminal's modes) and resize. The phone's grid is applied to
   the PTY; the software keyboard covering the screen does not resize it.
@@ -1729,17 +1736,17 @@ A prototype, deliberately simpler than the SSH design first proposed:
 - `apps/ios` is a SwiftUI app (iOS 17+) with categories and agents, an agent
   screen drawing the cell grid, a key bar and a message field that pastes and
   presses Enter. `scripts/check_ios_remote.py` compiles it and its UI tests
-  directly and runs them in a headless simulator against disposable services;
+  directly and runs them in a headless simulator against disposable services,
+  with a Mac-side client attached the way the desktop is, which must see the
+  phone's typing, answer it and never be replaced;
   `scripts/install_ios_app.py` signs a device build with the development
   profile and installs it with `devicectl`. Both bypass Xcode's build service,
   which deadlocked on this Mac: the kernel's pipe memory was exhausted by
   long-running agent processes, leaving new pipes 512 bytes deep.
 - Not yet: structured requests and approvals on the phone (agents' own prompts
-  are answered through the key bar), watch-only attachments so the phone and
-  desktop can show an agent together, push notifications, and restoring agents
-  without the desktop open. These need services to accept watch-only
-  attachments beside one controlling client, and a per-user background
-  process; both remain proposed.
+  are answered through the key bar), push notifications, and restoring agents
+  without the desktop open, which needs a per-user background process; these
+  remain proposed.
 
 Observed but not changed: Linux TSan reports frees and mutexes on Qt's uninstrumented
 threads in five GUI suites, identically on the pre-merge base, so TSan remains a

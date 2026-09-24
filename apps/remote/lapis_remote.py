@@ -2,9 +2,11 @@
 """Serve the lapis workspace's agents to the lapis iPhone app.
 
 The gateway reads the desktop's workspace registry and attaches to an
-agent's session service only while the phone shows that agent. Attaching
-retires the desktop's connection to that agent, as any new attachment does;
-Reconnect agent on the Mac takes it back. Agents keep running either way.
+agent's session service only while the phone shows that agent. It joins the
+session beside the desktop, so both show the same screen and either can type;
+the device typing sets the terminal size. A service started before joining
+existed rejects it, and then the phone takes the agent from the desktop until
+Reconnect agent on the Mac. Agents keep running either way.
 
 It listens on this Mac's Tailscale address. A request is served only when
 `tailscale whois` names the same login as this Mac and the peer is an iOS
@@ -40,6 +42,9 @@ GATEWAY_VERSION = 1
 WIRE_VERSION = 6
 HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
 STATUS_NAMES = {1: "rejected", 2: "ended", 3: "replaced", 4: "overloaded"}
+# Attach modes: discover takes the agent from its current client; join (added
+# within v6) shows it beside the desktop. Services started before join reject it.
+DISCOVER, JOIN = 0, 3
 MAX_FRAME = 8 * 1024 * 1024
 ATTACHMENT_BYTES = 40
 SNAPSHOT_HEADER = 72
@@ -266,7 +271,7 @@ def frame(kind, payload=b""):
 class WireSession:
     """One attachment to an agent's session service."""
 
-    def __init__(self, agent, columns=None, rows=None, timeout=5.0):
+    def __init__(self, agent, columns=None, rows=None, timeout=5.0, mode=JOIN):
         self.lock = threading.Lock()
         self.buffer = bytearray()
         self.attachment = None
@@ -283,11 +288,14 @@ class WireSession:
             launch = fingerprint(
                 agent["program"], agent["arguments"], agent["directory"], agent["mode"]
             )
-            # Discover: no expected session or epoch; the fingerprint must match.
+            # No expected session or epoch; the fingerprint must match.
             self.socket.sendall(
                 frame(
                     ATTACH,
-                    struct.pack(">I", WIRE_VERSION) + launch + b"\0" + bytes(32),
+                    struct.pack(">I", WIRE_VERSION)
+                    + launch
+                    + bytes([mode])
+                    + bytes(32),
                 )
             )
             kind, data = self.receive(timeout)
@@ -370,6 +378,16 @@ class WireSession:
             self.socket.close()
         except OSError:
             pass
+
+
+def open_session(agent, columns=None, rows=None):
+    """Join the agent's session, or take it over when its service predates joining."""
+    try:
+        return WireSession(agent, columns, rows, mode=JOIN), True
+    except GatewayError as error:
+        if not str(error).startswith("rejected"):
+            raise
+    return WireSession(agent, columns, rows, mode=DISCOVER), False
 
 
 def status_message(data):
@@ -602,7 +620,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.gateway.supersede(identifier)
         try:
-            session = WireSession(agent, columns or None, rows or None)
+            session, shared = open_session(agent, columns or None, rows or None)
         except (OSError, EOFError, GatewayError) as error:
             self.gateway.supersede(identifier, False)
             self.fail(HTTPStatus.BAD_GATEWAY, f"Cannot attach: {error}")
@@ -613,6 +631,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         try:
+            self.event("attached", {"shared": shared})
             self.pump(session)
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass

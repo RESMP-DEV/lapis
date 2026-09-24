@@ -4,6 +4,7 @@ import http.client
 import json
 import os
 import shutil
+import socket
 import struct
 import subprocess
 import sys
@@ -392,21 +393,117 @@ class LiveServiceTests(unittest.TestCase):
             status, _ = server.request("POST", path + "/input", {"text": "x"})
             self.assertEqual(status, 409)
 
-    def test_the_desktop_attachment_is_replaced(self):
+    def desktop_sees(self, desktop, text, timeout=10):
+        """Read the Mac-side client's screens until one shows the text."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            received = desktop.receive(0.5)
+            if received is None:
+                continue
+            kind, data = received
+            self.assertNotEqual(kind, remote.STATUS, remote.status_message(data))
+            snapshot = desktop.accept_snapshot(kind, data)
+            if snapshot is not None:
+                frame = remote.render_snapshot(snapshot)
+                if text in screen_text(frame):
+                    return frame
+        self.fail(f"the Mac never showed {text}")
+
+    def test_mac_and_phone_stay_in_sync(self):
         with Server(self, self.registry, self.runtime) as server:
             agent = remote.load_workspace(server.registry)["agents"][0]
-            desktop = remote.WireSession(agent)
+            # The desktop attaches the way lapis does and asks for its size.
+            desktop = remote.WireSession(agent, 90, 30, mode=remote.DISCOVER)
             self.addCleanup(desktop.close)
-            events = Events(server, f"/api/agents/{self.identifier}/stream")
-            events.until(lambda name, data: name == "frame")
-            deadline = time.monotonic() + 5
-            replaced = None
-            while replaced is None and time.monotonic() < deadline:
-                received = desktop.receive(0.5)
-                if received and received[0] == remote.STATUS:
-                    replaced = remote.status_message(received[1])
-            self.assertTrue(replaced and replaced.startswith("replaced"))
-            events.close()
+            path = f"/api/agents/{self.identifier}"
+            phone = Events(server, path + "/stream?columns=40&rows=12")
+            _, attached = phone.until(lambda name, data: name == "attached")
+            self.assertTrue(attached["shared"])
+
+            # Typing on the phone reaches the Mac, at the phone's size.
+            server.request(
+                "POST", path + "/input", {"paste": "from phone", "key": "enter"}
+            )
+            frame = self.desktop_sees(desktop, "got:from phone")
+            self.assertEqual(frame["columns"], 40)
+
+            # Typing on the Mac reaches the phone, at the Mac's size.
+            desktop.text(b"from mac\r")
+            phone.until(
+                lambda name, data: (
+                    name == "frame"
+                    and data["columns"] == 90
+                    and "got:from mac" in screen_text(data)
+                )
+            )
+
+            # The desktop reattaching (a restart) leaves the phone attached.
+            desktop.close()
+            again = remote.WireSession(agent, 90, 30, mode=remote.DISCOVER)
+            self.addCleanup(again.close)
+            server.request("POST", path + "/input", {"text": "still here\r"})
+            phone.until(
+                lambda name, data: (
+                    name == "frame" and "got:still here" in screen_text(data)
+                )
+            )
+            self.desktop_sees(again, "got:still here")
+            phone.close()
+
+
+class OldServiceTests(unittest.TestCase):
+    """A service started before joining existed rejects it; the phone takes over."""
+
+    def test_the_phone_takes_over_an_old_service(self):
+        runtime = Path(tempfile.mkdtemp(prefix="lr-", dir="/tmp"))
+        self.addCleanup(shutil.rmtree, runtime, True)
+        endpoint = runtime / "old.sock"
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(str(endpoint))
+        listener.listen(2)
+        self.addCleanup(listener.close)
+        modes = []
+
+        def serve():
+            for _ in range(2):
+                connection, _ = listener.accept()
+                request = connection.recv(74)
+                modes.append(request[5 + 4 + 32])
+                if modes[-1] != remote.DISCOVER:
+                    message = b"Invalid attachment request"
+                    connection.sendall(
+                        remote.frame(remote.STATUS, bytes([1]) + message)
+                    )
+                    connection.close()
+                    continue
+                attachment = b"S" * 16 + b"E" * 16 + struct.pack(">Q", 1)
+                connection.sendall(
+                    remote.frame(
+                        remote.HELLO,
+                        struct.pack(">I", remote.WIRE_VERSION)
+                        + attachment
+                        + struct.pack(">Q", 9),
+                    )
+                )
+                screen = snapshot(2, 1, [cell("o"), cell("k")])
+                envelope = attachment + struct.pack(">Q", 1) + bytes(24)
+                connection.sendall(remote.frame(remote.SNAPSHOT, envelope + screen))
+                connection.recv(64)  # ready
+                self.addCleanup(connection.close)
+
+        threading.Thread(target=serve, daemon=True).start()
+        agent = {
+            "endpoint": str(endpoint),
+            "program": "/bin/sh",
+            "arguments": [],
+            "directory": "/",
+            "mode": "",
+        }
+        session, shared = remote.open_session(agent)
+        self.addCleanup(session.close)
+        self.assertFalse(shared)
+        self.assertEqual(modes, [remote.JOIN, remote.DISCOVER])
+        self.assertEqual(screen_text(remote.render_snapshot(session.first)), "ok")
 
 
 if __name__ == "__main__":

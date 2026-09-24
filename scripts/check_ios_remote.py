@@ -27,6 +27,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -120,6 +121,52 @@ class Run:
                 process.wait(10)
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL)
+
+
+class MacClient(threading.Thread):
+    """Stays attached to an agent the way the desktop does, and answers the phone.
+
+    When the phone's "ping from phone" reaches this screen, it types "pong from
+    mac"; the phone's UI test waits for that. It records whether it was ever
+    closed, which joining must never cause.
+    """
+
+    def __init__(self, agent):
+        super().__init__(daemon=True)
+        self.session = lapis_remote.WireSession(
+            agent, 100, 30, mode=lapis_remote.DISCOVER
+        )
+        self.stopping = threading.Event()
+        self.saw_phone = False
+        self.closed = None
+
+    def run(self):
+        while not self.stopping.is_set():
+            try:
+                received = self.session.receive(0.5)
+            except (OSError, EOFError, lapis_remote.GatewayError) as error:
+                if not self.stopping.is_set():
+                    self.closed = str(error)
+                return
+            if received is None:
+                continue
+            kind, data = received
+            if kind == lapis_remote.STATUS:
+                self.closed = lapis_remote.status_message(data)
+                return
+            snapshot = self.session.accept_snapshot(kind, data)
+            if snapshot is None or self.saw_phone:
+                continue
+            lines = lapis_remote.render_snapshot(snapshot)["lines"]
+            screen = "\n".join("".join(run[0] for run in line) for line in lines)
+            if "echo: ping from phone" in screen:
+                self.saw_phone = True
+                self.session.text(b"pong from mac\r")
+
+    def stop(self):
+        self.stopping.set()
+        self.join(5)
+        self.session.close()
 
 
 def agent(
@@ -501,6 +548,13 @@ def main():
             ],
         )
         time.sleep(1.5)
+        echo = next(
+            item
+            for item in lapis_remote.load_workspace(registry)["agents"]
+            if item["id"] == echo_id
+        )
+        mac = MacClient(echo)
+        mac.start()
 
         state = simulator(["list", "devices", "available", "-j"]).stdout
         devices = [
@@ -533,7 +587,11 @@ def main():
         results = BUILD / "results" / (stamp + ".xcresult")
         results.parent.mkdir(parents=True, exist_ok=True)
         xctestrun = write_xctestrun(
-            {"LAPIS_HOST": f"127.0.0.1:{PORT}", "LAPIS_ECHO_ID": echo_id}
+            {
+                "LAPIS_HOST": f"127.0.0.1:{PORT}",
+                "LAPIS_ECHO_ID": echo_id,
+                "LAPIS_MAC_CLIENT": "1",
+            }
         )
         command = [
             "xcodebuild",
@@ -577,7 +635,14 @@ def main():
             if "Test Case" in line or "error:" in line or "** TEST" in line
         ]
         print("\n".join(summary[-40:]))
+        mac.stop()
+        synced = not args.only or args.only == "testSyncedWithTheMac"
+        print(
+            f"Mac client: saw the phone {mac.saw_phone}, closed {mac.closed or 'never'}"
+        )
         print(f"results {results}\nscreens {screens}")
+        if mac.closed or (synced and not mac.saw_phone):
+            return 1
         return outcome.returncode
     finally:
         run.stop()

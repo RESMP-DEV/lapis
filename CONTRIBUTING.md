@@ -621,6 +621,7 @@ Run from the repository root:
 | `just ui-check` | Bounded isolated captures, attention state and expected failures |
 | `just cli-check` | Isolated live service/CLI and shell GUI acceptance |
 | `just native-input` | Automated macOS keyboard/clipboard and real Japanese IME through the PTY |
+| `just ios-check` | iPhone app UI tests in a headless simulator, synced with a Mac-side client, including real Codex and Claude Code on a fake model |
 
 Required coverage accumulates when a change touches multiple areas. Take the
 union of the relevant checks; a check satisfying two rows runs once:
@@ -638,6 +639,7 @@ union of the relevant checks; a check satisfying two rows runs once:
 | Disk history | `python3 scripts/check_history.py --disk-full` on macOS, plus desktop-enabled ASan/TSan; the disk-full fixture creates and removes its own 32 MiB disk image |
 | Python tooling | `just quality` (includes Ruff and Python unit tests), plus relevant runtime probes |
 | iPhone app or gateway (`apps/ios`, `apps/remote`) | `just quality` (includes the gateway suite, with a live service when the desktop is built) and `uv run --no-project python scripts/check_ios_remote.py --codex --claude` on macOS with an iOS Simulator runtime |
+| Before a release (Mac and iPhone together) | The full anvil gate (`lapis.py linux-gui`, whose workspace suite joins a view beside the real desktop connection and types both ways) and, on the Mac, `just quality` plus `just ios-check`, whose Mac-side client stays attached through every UI test and must see and answer the phone |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; run `just quality` for shared check/config/instruction changes; no unrelated C++ rebuild |
 
 ### Claude Code hook qualification

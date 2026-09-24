@@ -49,8 +49,9 @@ func describe(_ error: Error) -> String {
     return error.localizedDescription
 }
 
-// One agent shown on the phone. Showing it attaches to its session, which
-// takes it from the Mac's window until Reconnect agent there.
+// One agent shown on the phone. Showing it joins the agent's session beside
+// the Mac, so both stay in sync; a session started before joining existed is
+// taken from the Mac instead, until Reconnect agent there.
 @MainActor
 @Observable
 final class AgentSession {
@@ -65,6 +66,7 @@ final class AgentSession {
     var frame: ScreenFrame?
     var state: State = .connecting
     var notice: String?
+    var shared = true
     private var task: Task<Void, Never>?
     private(set) var size: (columns: Int, rows: Int)?
 
@@ -89,6 +91,8 @@ final class AgentSession {
                 for try await event in events {
                     guard let self else { return }
                     switch event {
+                    case let .attached(attached):
+                        self.shared = attached.shared
                     case let .frame(frame):
                         self.frame = frame
                         self.state = .live
