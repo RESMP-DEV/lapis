@@ -14,6 +14,7 @@
 #include <memory>
 
 class QQmlApplicationEngine;
+class QQmlError;
 class QQuickWindow;
 
 namespace lapis::desktop {
@@ -75,6 +76,7 @@ class UiPreview final : public QObject {
   private:
     bool eventFilter(QObject* watched, QEvent* event) override;
     bool loadCandidate();
+    void publishWarnings(const QList<QQmlError>& warnings);
     void configureGeometry(QQuickWindow& target, bool reloading);
     void rememberGeometry();
     void refreshSettingsShortcuts();
@@ -89,6 +91,7 @@ class UiPreview final : public QObject {
     QString diagnostics_;
     QStringList settings_shortcuts_;
     QList<QKeySequence> parsed_settings_shortcuts_;
+    bool publishing_diagnostics_{};
     bool shutting_down_{};
     bool reduced_motion_{};
     bool system_reduced_motion_{};

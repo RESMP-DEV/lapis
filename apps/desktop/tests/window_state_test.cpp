@@ -101,7 +101,7 @@ void remembered_geometry_and_offscreen_restore(Workspace& workspace, const QTemp
     require(read(path) == closed_registry, "destruction cannot overwrite the saved close geometry");
     require(QFileInfo::exists(path), "normal workspace writes geometry");
     struct stat info{};
-    require(::stat(QFile::encodeName(path).constData(), &info) == 0 && (info.st_mode & 0077) == 0,
+    require(::stat(QFile::encodeName(path).constData(), &info) == 0 && (info.st_mode & 0077U) == 0,
             "saved geometry is private");
     {
         UiPreview restored(workspace, options(path));

@@ -489,6 +489,20 @@ class Server:
         with self.log.open("a") as stream:
             stream.write(json.dumps(entry) + "\n")
 
+    def record_error(self, error):
+        with self.log.open("a") as stream:
+            stream.write(
+                json.dumps(
+                    {
+                        "time": time.strftime("%H:%M:%S"),
+                        # Exception text can include raw request data (e.g. a
+                        # malformed Content-Length). Log only its safe category.
+                        "error": type(error).__name__,
+                    }
+                )
+                + "\n"
+            )
+
     async def handle(self, reader, writer):
         try:
             head = await reader.readuntil(b"\r\n\r\n")
@@ -520,8 +534,8 @@ class Server:
             ValueError,
             asyncio.IncompleteReadError,
             asyncio.LimitOverrunError,
-        ):
-            pass
+        ) as error:
+            self.record_error(error)
         finally:
             writer.close()
 

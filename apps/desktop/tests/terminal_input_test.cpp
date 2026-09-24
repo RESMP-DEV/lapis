@@ -1,6 +1,6 @@
+#include "clipboard_backup.hpp"
 #include "session_descriptor.hpp"
 #include "transport/local_protocol.hpp"
-#include "workspace.hpp"
 
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
@@ -9,12 +9,14 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QGuiApplication>
+#include <QInputMethod>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QMouseEvent>
+#include <QObject>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QTemporaryDir>
@@ -228,7 +230,11 @@ void input_contract(bool background) {
                                          Qt::MetaModifier | origin | modifier);
                 QCoreApplication::sendEvent(&surface, &modified_arrow);
                 require(!modified_arrow.isAccepted(), "Modified Command-arrow was consumed");
-                require(text_frames(peer).isEmpty(), "Modified Command-arrow sent terminal input");
+                const auto unexpected = text_frames(peer);
+                if (!unexpected.isEmpty())
+                    throw std::runtime_error("Modified Command-arrow sent terminal input: " +
+                                             unexpected.toHex().toStdString() + " modifier " +
+                                             std::to_string(modifier));
             }
         }
     }
@@ -260,12 +266,11 @@ void input_contract(bool background) {
     composition(surface, {}, QStringLiteral("must-not-delete"), -1);
     require(text_frames(peer).isEmpty(), "Unsupported replacement mutated PTY input");
     composition(surface, QStringLiteral("before-paste"));
-    const auto clipboard = QGuiApplication::clipboard()->text();
+    const lapis::desktop::test::ClipboardBackup clipboard;
     QGuiApplication::clipboard()->setText(QStringLiteral("paste界\nsecond"));
     const auto paste_shortcut = QKeySequence(QKeySequence::Paste)[0];
     QKeyEvent paste(QEvent::KeyPress, paste_shortcut.key(), paste_shortcut.keyboardModifiers());
     QCoreApplication::sendEvent(&surface, &paste);
-    QGuiApplication::clipboard()->setText(clipboard);
     const auto pasted = text_frames(peer, QStringLiteral("paste界\nsecond").toUtf8().size());
     if (pasted != QStringLiteral("paste界\nsecond").toUtf8()) {
         std::cerr << "paste=" << pasted.toHex().toStdString()
@@ -341,6 +346,20 @@ void links_follow_wrapped_rows() {
     require(lapis::desktop::terminal_url_at(snapshot, 1, 0).isEmpty() &&
                 lapis::desktop::terminal_url_at(snapshot, 2, 2).isEmpty(),
             "Plain text was treated as a link");
+
+    lapis::session::Terminal spoof({40, 2});
+    spoof.feed("https://example.com\x1b[8m.evil.example/path\x1b[0m ok");
+    const auto spoof_snapshot = spoof.snapshot();
+    const QString visible_url = QStringLiteral("https://example.com");
+    require(lapis::desktop::terminal_url_at(spoof_snapshot, 0, 0) == visible_url,
+            "Invisible link text changed the URL offered to the user");
+    require(lapis::desktop::terminal_url_at(spoof_snapshot, 20, 0).isEmpty(),
+            "An invisible cell was treated as part of a visible link");
+
+    lapis::session::Terminal zero_width({40, 2});
+    zero_width.feed("https://example.com\xE2\x80\x8B/ ok");
+    require(lapis::desktop::terminal_url_at(zero_width.snapshot(), 0, 0).isEmpty(),
+            "A zero-width format character was allowed in an opened URL");
 }
 // Dragging selects screen text and double-clicking selects a word. The copy
 // chord copies without sending input, typing clears the selection, and the
@@ -368,6 +387,22 @@ void selection_and_scroll() {
         return surface.hasActiveFocus();
     });
     static_cast<void>(text_frames(peer));
+    surface.setFrameInterval(20);
+    int cursor_updates = 0;
+    const QMetaObject::Connection cursor_update_connection =
+        QObject::connect(QGuiApplication::inputMethod(), &QInputMethod::cursorRectangleChanged,
+                         [&cursor_updates] { ++cursor_updates; });
+    const auto initial_cursor = surface.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
+    const int initial_updates = cursor_updates;
+    f.terminal.feed("\x1b[1;4H");
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 2, f.terminal.snapshot()}));
+    until([&] {
+        return cursor_updates > initial_updates &&
+               surface.inputMethodQuery(Qt::ImCursorRectangle).toRectF() != initial_cursor;
+    });
+    QObject::disconnect(cursor_update_connection);
+    surface.setFrameInterval(0);
     const auto mouse = [&](QEvent::Type type, QPointF at, Qt::MouseButton button) {
         const Qt::MouseButtons held =
             type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::MouseButtons(Qt::LeftButton);
@@ -378,9 +413,36 @@ void selection_and_scroll() {
     // The fixture screen is four columns: "scre" above "en".
     mouse(QEvent::MouseButtonPress, surface.cellRect(0, 0).center(), Qt::LeftButton);
     mouse(QEvent::MouseMove, surface.cellRect(3, 0).center(), Qt::NoButton);
+    require(surface.selectedText() == QStringLiteral("scre"), "Drag did not start its selection");
+    surface.setInteractive(false);
+    mouse(QEvent::MouseMove, surface.cellRect(1, 0).center(), Qt::NoButton);
+    require(surface.selectedText() == QStringLiteral("scre"),
+            "A non-interactive surface kept changing its selection");
+    surface.setInteractive(true);
+    mouse(QEvent::MouseMove, surface.cellRect(1, 0).center(), Qt::NoButton);
+    require(surface.selectedText() == QStringLiteral("scre"),
+            "Re-enabling input resumed an old drag");
+    mouse(QEvent::MouseButtonPress, surface.cellRect(0, 0).center(), Qt::LeftButton);
+    mouse(QEvent::MouseMove, surface.cellRect(3, 0).center(), Qt::NoButton);
+    f.terminal.feed("\x1b[1;1Hxxxx");
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 3, f.terminal.snapshot()}));
+    settle();
+    require(surface.selectedText().isEmpty(),
+            "Changed screen did not clear its invalidated selection");
+    mouse(QEvent::MouseMove, surface.cellRect(2, 0).center(), Qt::NoButton);
+    require(surface.selectedText() == QStringLiteral("xxx"),
+            "A cleared highlight canceled the active selection gesture");
+    mouse(QEvent::MouseButtonRelease, surface.cellRect(2, 0).center(), Qt::LeftButton);
+    f.terminal.feed("\x1b[1;1Hscre\x1b[2;1Hen");
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 4, f.terminal.snapshot()}));
+    settle();
+    mouse(QEvent::MouseButtonPress, surface.cellRect(0, 0).center(), Qt::LeftButton);
+    mouse(QEvent::MouseMove, surface.cellRect(3, 0).center(), Qt::NoButton);
     mouse(QEvent::MouseButtonRelease, surface.cellRect(3, 0).center(), Qt::LeftButton);
     require(surface.selectedText() == QStringLiteral("scre"), "Drag did not select the row");
-    const auto clipboard = QGuiApplication::clipboard()->text();
+    const lapis::desktop::test::ClipboardBackup clipboard;
 #ifdef Q_OS_MACOS
     const Qt::KeyboardModifiers copy_modifiers = Qt::MetaModifier;
 #else
@@ -389,7 +451,6 @@ void selection_and_scroll() {
     QKeyEvent copy(QEvent::KeyPress, Qt::Key_C, copy_modifiers, QStringLiteral("c"));
     QCoreApplication::sendEvent(&surface, &copy);
     const auto copied = QGuiApplication::clipboard()->text();
-    QGuiApplication::clipboard()->setText(clipboard);
     require(copied == QStringLiteral("scre"), "Copy chord did not copy the selection");
     require(text_frames(peer).isEmpty(), "Copy chord reached the terminal");
     const auto word = surface.cellRect(1, 1).center();

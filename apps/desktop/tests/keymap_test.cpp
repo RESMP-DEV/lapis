@@ -15,6 +15,8 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QKeySequence>
+#include <QList>
+#include <QPair>
 #include <QTemporaryDir>
 #include <array>
 #include <iostream>
@@ -595,7 +597,13 @@ void sidebar_preference_and_commands() {
     KeyMap keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load() && keymap.sidebarVisible(), "sidebar defaults visible");
+    QList<QPair<bool, bool>> observed;
+    QObject::connect(&keymap, &KeyMap::changed, &keymap,
+                     [&] { observed.append({keymap.sidebarVisible(), keymap.previewsVisible()}); });
     require(keymap.setSidebarVisible(false), "hide sidebar persists");
+    require(keymap.setPreviewsVisible(false), "hide previews persists");
+    require(observed == QList<QPair<bool, bool>>{{false, true}, {false, false}},
+            "successful visibility saves emit each settled state once");
     KeyMap restored;
     restored.setSourcePathForTesting(path);
     require(restored.load() && !restored.sidebarVisible(), "hidden sidebar survives restart");
@@ -612,9 +620,18 @@ void sidebar_preference_and_commands() {
         for (const auto& binding : bindings)
             require(QKeySequence(binding)[0] != paste, "workspace shortcuts must not steal paste");
     }
+    require(!restored.previewsVisible(), "hidden previews survive restart");
+    observed.clear();
+    QObject::connect(&restored, &KeyMap::changed, &restored, [&] {
+        observed.append({restored.sidebarVisible(), restored.previewsVisible()});
+    });
     static_cast<void>(write_config(QDir(directory.path()), "{broken"));
     require(!restored.setSidebarVisible(true) && !restored.sidebarVisible(),
             "failed sidebar save rolls back");
+    require(!restored.setPreviewsVisible(true) && !restored.previewsVisible(),
+            "failed preview save rolls back");
+    require(observed == QList<QPair<bool, bool>>{{false, false}, {false, false}},
+            "failed visibility saves never publish tentative values");
 }
 
 // The terminal font is validated, written immediately, restored on restart and

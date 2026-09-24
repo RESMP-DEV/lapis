@@ -133,7 +133,7 @@ class ProviderOptionsTests(unittest.TestCase):
                     side_effect=AssertionError("credentials must not be read"),
                 ),
             ):
-                options = fixture_options(args, Path("codex"), runtime)
+                options = fixture_options(args, runtime)
             link = runtime / "home" / "auth.json"
             self.assertTrue(link.is_symlink())
             self.assertEqual(link.readlink(), auth)
@@ -160,7 +160,7 @@ class ProviderOptionsTests(unittest.TestCase):
             (root / "home").mkdir()
             with patch("check_service_attention.Path.home", return_value=root):
                 with self.assertRaisesRegex(CheckError, "existing.*auth.json login"):
-                    fixture_options(parse_args(["--live-openai"]), Path("codex"), root)
+                    fixture_options(parse_args(["--live-openai"]), root)
             self.assertFalse((root / "home" / "auth.json").exists())
 
     def test_glm_and_no_turn_do_not_access_auth(self):
@@ -172,9 +172,7 @@ class ProviderOptionsTests(unittest.TestCase):
                     side_effect=AssertionError("unexpected auth access"),
                 ),
             ):
-                options = fixture_options(
-                    parse_args(arguments), Path("codex"), Path("fixture")
-                )
+                options = fixture_options(parse_args(arguments), Path("fixture"))
                 self.assertIn('model_provider="lapis_probe"', options)
 
     def test_runtime_provider_and_model_must_match(self):

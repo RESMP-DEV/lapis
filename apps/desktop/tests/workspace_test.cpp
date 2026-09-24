@@ -27,6 +27,30 @@ void require(bool condition, const char* message) {
     if (!condition)
         throw std::runtime_error(message);
 }
+void explicitAgentIdentity() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "private explicit-attach directory");
+    using lapis::desktop::SessionPreview;
+    using lapis::session::AgentMode;
+    for (const auto mode : {AgentMode::terminal, AgentMode::codex, AgentMode::claude}) {
+        WorkspaceOptions options;
+        options.endpoint = QDir(QFileInfo(directory.path()).canonicalFilePath())
+                               .filePath(QStringLiteral("absent.sock"));
+        options.mode = lapis::session::wire::AttachMode::reconnect;
+        options.launch = lapis::session::LaunchSpec{
+            QStringLiteral("/usr/bin/true"), {}, directory.path(), {80, 24}, mode};
+        Workspace workspace(WorkspaceMode::live, options);
+        const auto* item = workspace.focusedSession();
+        const QString expected = mode == AgentMode::codex    ? QStringLiteral("codex")
+                                 : mode == AgentMode::claude ? QStringLiteral("claude")
+                                                             : QString{};
+        require(item && item->harnessId() == expected, "explicit attach retains harness identity");
+        require(item->statusSource() == (mode == AgentMode::terminal
+                                             ? SessionPreview::StatusSource::output
+                                             : SessionPreview::StatusSource::observer),
+                "explicit attach selects the correct status source");
+    }
+}
 void projectPaths() {
     Workspace workspace(WorkspaceMode::preview);
     const auto home = QDir::homePath();
@@ -184,7 +208,7 @@ void restoreAgentIdentity() {
                                   {"category", "general"},
                                   {"endpoint", QDir(QFileInfo(directory.path()).canonicalFilePath())
                                                    .filePath(id + QStringLiteral(".sock"))},
-                                  {"program", "/bin/true"},
+                                  {"program", "/usr/bin/true"},
                                   {"harness", id == second ? "claude" : "codex"},
                                   {"directory", directory.path()}});
     WorkspaceOptions options;
@@ -253,7 +277,7 @@ void failedWritesPreserveState() {
                         {"title", id},
                         {"category", "general"},
                         {"endpoint", QDir(canonical).filePath(id + QStringLiteral(".sock"))},
-                        {"program", "/bin/true"},
+                        {"program", "/usr/bin/true"},
                         {"directory", canonical}});
     WorkspaceOptions options;
     options.storagePath = QDir(original).filePath(QStringLiteral("workspace.json"));
@@ -340,6 +364,11 @@ void failedWritesPreserveState() {
                 "write recovers when directory returns");
         require(first_object->title() == QStringLiteral("Committed") && notifications == 1,
                 "successful rename publishes exactly one identity change");
+        const QPointer<lapis::desktop::SessionPreview> removed(first_object);
+        require(workspace.removeSession(first), "remove ended agent after save recovers");
+        require(removed && !workspace.session(first), "removed tab survives the QML call stack");
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        require(removed.isNull(), "removed tab is eventually destroyed");
     }
 }
 void malformedAgentRegistry() {
@@ -450,7 +479,7 @@ QJsonObject agentRecord(const QString& directory, const QString& id, const char*
                        {"title", id},
                        {"category", category},
                        {"endpoint", QDir(directory).filePath(id + QStringLiteral(".sock"))},
-                       {"program", "/bin/true"},
+                       {"program", "/usr/bin/true"},
                        {"directory", directory}};
 }
 
@@ -621,7 +650,7 @@ void outputEstimate() {
     QTemporaryDir directory;
     require(directory.isValid(), "estimate directory");
     item.startLive(directory.filePath(QStringLiteral("absent.sock")),
-                   {QStringLiteral("/bin/true"), {}, directory.path()},
+                   {QStringLiteral("/usr/bin/true"), {}, directory.path()},
                    lapis::session::wire::AttachMode::reconnect);
     waitFor([] { return false; }, 300);
     require(item.connectionState() == QStringLiteral("disconnected"), "no service in fixture");
@@ -639,6 +668,14 @@ void outputEstimate() {
     require(waitFor([&] { return item.statusKind() == QStringLiteral("idle"); }, 2000) &&
                 item.statusLabel() == QStringLiteral("Quiet"),
             "silence after activity reads as quiet, not finished");
+    item.setConnection(QStringLiteral("disconnected"), false);
+    for (int frame = 0; frame < 3; ++frame)
+        item.applySnapshot(snapshot);
+    item.setConnection(QStringLiteral("ready"), true);
+    for (int frame = 0; frame < 3; ++frame)
+        item.applySnapshot(snapshot);
+    require(item.statusKind() != QStringLiteral("working"),
+            "a later reconnect replay must not count as fresh output");
 }
 
 // An agent is a top-level session even when lapis itself was opened from
@@ -758,6 +795,7 @@ int main(int argc, char** argv) {
     try {
         categoriesAndIdentity();
         projectPaths();
+        explicitAgentIdentity();
         categoryCountsChangeOnlyWhenNeeded();
         persistence();
         restoreAgentIdentity();

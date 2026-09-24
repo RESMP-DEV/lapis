@@ -393,10 +393,6 @@ void KeyMap::apply_defaults() {
     bindings_ = {
         {QStringLiteral("quit"), {modifier + QStringLiteral("Q")}},
         {QStringLiteral("closeAgent"), {modifier + QStringLiteral("W")}},
-        {QStringLiteral("nextCategory"),
-         {modifier + QStringLiteral("Alt+Right"), modifier + QStringLiteral("Down")}},
-        {QStringLiteral("previousCategory"),
-         {modifier + QStringLiteral("Alt+Left"), modifier + QStringLiteral("Up")}},
         {QStringLiteral("category1"), {modifier + QStringLiteral("1")}},
         {QStringLiteral("category2"), {modifier + QStringLiteral("2")}},
         {QStringLiteral("category3"), {modifier + QStringLiteral("3")}},
@@ -417,6 +413,10 @@ void KeyMap::apply_defaults() {
     bindings_.insert(QStringLiteral("newCategory"), {QStringLiteral("Meta+Shift+N")});
     bindings_.insert(QStringLiteral("openCommands"), {QStringLiteral("Meta+Shift+P")});
 #else
+    bindings_.insert(QStringLiteral("nextCategory"),
+                     {modifier + QStringLiteral("Alt+Right"), modifier + QStringLiteral("Down")});
+    bindings_.insert(QStringLiteral("previousCategory"),
+                     {modifier + QStringLiteral("Alt+Left"), modifier + QStringLiteral("Up")});
     bindings_.insert(QStringLiteral("nextWindow"), {QStringLiteral("Ctrl+Shift+]")});
     bindings_.insert(QStringLiteral("previousWindow"), {QStringLiteral("Ctrl+Shift+[")});
     bindings_.insert(QStringLiteral("newCategory"), {QStringLiteral("Ctrl+Shift+Alt+N")});
@@ -542,10 +542,17 @@ void KeyMap::load_harness_arguments(const QJsonValue& value) {
                 arguments.append(text);
                 return true;
             });
-        if (!valid || harness_arguments_.size() >= 16) {
+        if (!valid) {
             append_diagnostic(&diagnostic_,
                               QStringLiteral("Ignoring harnessArguments for '%1': use a list of "
                                              "up to 32 non-empty strings")
+                                  .arg(it.key().left(32)));
+            continue;
+        }
+        if (harness_arguments_.size() >= 16) {
+            append_diagnostic(&diagnostic_,
+                              QStringLiteral("Ignoring harnessArguments for '%1': at most 16 "
+                                             "harnesses are kept")
                                   .arg(it.key().left(32)));
             continue;
         }
@@ -713,7 +720,7 @@ bool KeyMap::setSidebarVisible(bool visible) {
         return true;
     const bool previous = sidebar_visible_;
     sidebar_visible_ = visible;
-    if (!save()) {
+    if (!save_without_tentative_change()) {
         sidebar_visible_ = previous;
         emit changed();
         return false;
@@ -727,7 +734,7 @@ bool KeyMap::setPreviewsVisible(bool visible) {
         return true;
     const bool previous = previews_visible_;
     previews_visible_ = visible;
-    if (!save()) {
+    if (!save_without_tentative_change()) {
         previews_visible_ = previous;
         emit changed();
         return false;

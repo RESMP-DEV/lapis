@@ -916,7 +916,10 @@ class SessionService final : public QObject {
     // Only an explicit close from an attached client ends the agent; detaching
     // or GUI exit never does. The ordinary exit path then reports `ended`.
     void end_agent(const QByteArray& payload) {
-        if (!payload.isEmpty() || !pty_.hangup())
+        if (!payload.isEmpty())
+            throw std::runtime_error("Terminate message must be empty");
+        // Reaped children may still be draining output/history before `ended`.
+        if (pty_.processId() != 0 && !pty_.hangup())
             throw std::runtime_error("Agent process could not be ended");
     }
     void apply_resize(TerminalSize size) {

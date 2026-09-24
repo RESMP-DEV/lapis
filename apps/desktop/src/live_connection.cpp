@@ -149,6 +149,7 @@ void SessionPreview::setConnection(const QString& state, bool input_ready) {
         ready_since_ = QDateTime::currentMSecsSinceEpoch();
     input_ready_ = input_ready;
     if (!input_ready) {
+        ready_since_ = 0;
         live_snapshot_ready_ = false;
         invalidateAttention();
     }
