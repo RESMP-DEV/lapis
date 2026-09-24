@@ -83,9 +83,10 @@ class OwnedProcesses {
     }
     void inspect() {
         const auto all = processes();
+        const auto service = QStringLiteral(LAPIS_SESSION_SERVICE_PATH);
         for (const auto& process : all)
-            if (process.command.contains(runtime_) &&
-                process.command.contains(QStringLiteral("lapis_session_service")))
+            if (process.command.startsWith(service + QLatin1Char(' ')) &&
+                process.command.contains(runtime_))
                 owned_.insert(process.pid, process.command);
         bool changed = true;
         while (changed) {

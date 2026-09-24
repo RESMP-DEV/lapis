@@ -210,9 +210,10 @@ class SessionService final : public QObject {
         if (!valid_resume_identity(session_id) ||
             (resume_.agent == agent && resume_.session_id == session_id))
             return;
-        resume_ = {agent, session_id};
+        const ResumeRecord candidate{agent, session_id};
         try {
-            write_resume_record(resume_endpoint_, resume_);
+            write_resume_record(resume_endpoint_, candidate);
+            resume_ = candidate;
         } catch (const std::exception& error) {
             qWarning().noquote() << "Resume record not saved:" << error.what();
         }
@@ -983,7 +984,10 @@ class SessionService final : public QObject {
     // Only an explicit close from an attached client ends the agent; detaching
     // or GUI exit never does. The ordinary exit path then reports `ended`.
     void end_agent(const QByteArray& payload) {
-        if (!payload.isEmpty() || !pty_.hangup())
+        if (!payload.isEmpty())
+            throw std::runtime_error("Terminate message must be empty");
+        // Reaped children may still be draining output/history before `ended`.
+        if (pty_.processId() != 0 && !pty_.hangup())
             throw std::runtime_error("Agent process could not be ended");
     }
     void apply_resize(TerminalSize size) {

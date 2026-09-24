@@ -438,7 +438,7 @@ def fixture_trust_prompt(screen, directory):
     )
 
 
-def fixture_options(args, binary, runtime):
+def fixture_options(args, runtime):
     """Keep the subscriber's configuration private; share only the auth-file path."""
     if not args.live_openai:
         return probe_configuration_arguments()
@@ -491,7 +491,7 @@ async def exercise(args, receipt):
         home.mkdir()
         cwd.mkdir()
         trust_fixture_directory(home, cwd)
-        options = fixture_options(args, binary, runtime)
+        options = fixture_options(args, runtime)
         options += [
             "-c",
             'approval_policy="on-request"',

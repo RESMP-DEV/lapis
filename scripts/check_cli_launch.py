@@ -1135,6 +1135,8 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
                     program,
                 ],
                 ["--socket", ""],
+                ["--new-session"],
+                ["--discover"],
             ]
         ):
             run_capture(

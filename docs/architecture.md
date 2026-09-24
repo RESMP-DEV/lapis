@@ -1560,8 +1560,12 @@ Window placement belongs to the user and OS. Normal launch should restore valid
 geometry or let the OS place a new window. Explicit screen overrides remain for
 qualification. Restore against currently available displays and recover an
 accessible frame after a display is removed. Window geometry is machine-local
-runtime state, not a reason to rewrite tracked project configuration. Native
-window-manager positioning should work without a dedicated Raycast integration
+runtime state, not a reason to rewrite tracked project configuration. Saving geometry
+may tighten a current-user-owned real runtime directory to mode 0700 when a project
+tool created it with the default umask. The repair uses an open directory descriptor
+and rechecks its identity; symlinked or foreign-owned directories and permissive
+existing geometry files remain rejected. Restoring geometry does not change permissions.
+Native window-manager positioning should work without a dedicated Raycast integration
 or changes to global shortcuts.
 
 The original review suggested retaining layout choices. The later category-first
@@ -1680,11 +1684,16 @@ agent. Each service keeps `<endpoint>.resume` (owner-only JSON: agent and
 conversation) from the Codex observer's thread, the Claude adapter's session, or
 OSC 1337 `SetUserVar=agent_checkpoint=<base64 JSON>` in PTY output, the sequence
 the user's `iterm-agent-checkpoint` session-start hooks already print. Remote
-hosts, unknown agents and identities that could be options are refused. On
-restore the previous resume option is replaced (`codex resume`, `claude
---resume`, `omp --resume`, `grok -r`, `opencode --session`, `kimi --session`);
-Claude and Codex resume only when their transcript or rollout exists, since
-hooks report a conversation before anything is saved. Other CLIs restart fresh.
+hosts, unknown agents, unsupported resume-record versions and identities that
+could be options are refused. When lapis adds a resume option, the registry records
+the argument index and identity as optional `managedResume` provenance. Later
+restores update only that recorded pair from a newer checkpoint (`codex resume`,
+`claude --resume`, `omp --resume`, `grok -r`, `opencode --session`, `kimi --session`,
+`agy --conversation`). Explicit user arguments, including `--option=value`, remain
+authoritative. Older records without provenance retain their arguments as user
+owned. Claude and Codex resume only when their transcript or rollout exists,
+since hooks report a conversation before anything is saved. Without a usable
+checkpoint or an explicit resume argument, the CLI starts fresh.
 A service is gone only when its socket refuses or is missing. Real Claude Code
 2.1.280 and Codex 0.155.1 were checked headless against the fake model: the
 record appeared, and the resumed agent showed the earlier exchange.

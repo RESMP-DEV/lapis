@@ -1,3 +1,4 @@
+#include "clipboard_backup.hpp"
 #include "platform/native_input_driver.hpp"
 #include "terminal_surface.hpp"
 #include <QClipboard>
@@ -57,16 +58,7 @@ void until(const std::function<bool()>& condition,
         pump(5);
     }
 }
-struct ClipboardBackup {
-    std::unique_ptr<QMimeData> saved{std::make_unique<QMimeData>()};
-    ClipboardBackup() {
-        const auto* current = QGuiApplication::clipboard()->mimeData();
-        if (current)
-            for (const auto& type : current->formats())
-                saved->setData(type, current->data(type));
-    }
-    ~ClipboardBackup() { QGuiApplication::clipboard()->setMimeData(saved.release()); }
-};
+using lapis::desktop::test::ClipboardBackup;
 struct Observations final : QObject {
     QStringList preedits, commits;
     bool composing{false};

@@ -31,6 +31,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <sys/stat.h>
+#include <unistd.h>
 
 namespace {
 using namespace lapis::desktop;
@@ -101,7 +102,7 @@ void remembered_geometry_and_offscreen_restore(Workspace& workspace, const QTemp
     require(read(path) == closed_registry, "destruction cannot overwrite the saved close geometry");
     require(QFileInfo::exists(path), "normal workspace writes geometry");
     struct stat info{};
-    require(::stat(QFile::encodeName(path).constData(), &info) == 0 && (info.st_mode & 0077) == 0,
+    require(::stat(QFile::encodeName(path).constData(), &info) == 0 && (info.st_mode & 0077U) == 0,
             "saved geometry is private");
     {
         UiPreview restored(workspace, options(path));
@@ -174,15 +175,28 @@ void unsafe_paths_are_preserved(Workspace& workspace, const QTemporaryDir& temp)
     require(QFileInfo(link).isSymbolicLink() && read(target) == sentinel,
             "geometry save preserves a symlink and its target");
 
-    const QString directory = temp.filePath(QStringLiteral("shared"));
-    require(QDir().mkdir(directory), "create nonprivate directory");
+    // Project scripts commonly create runtime/ with the process umask. Saving
+    // may tighten only that current-user-owned real directory; a permissive
+    // existing geometry file still stays untouched.
+    const QString directory = temp.filePath(QStringLiteral("runtime"));
+    require(QDir().mkdir(directory), "create default-mode runtime directory");
     require(QFile::setPermissions(directory, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
                                                  QFileDevice::ExeOwner | QFileDevice::ReadGroup |
-                                                 QFileDevice::ExeGroup),
-            "make nonprivate geometry directory");
-    const QString shared_path = QDir(directory).filePath(QStringLiteral("window.json"));
-    save_normal_window(workspace, shared_path);
-    require(!QFileInfo::exists(shared_path), "reject nonprivate directory without changing it");
+                                                 QFileDevice::ExeGroup | QFileDevice::ReadOther |
+                                                 QFileDevice::ExeOther),
+            "make a current-user directory with default read and traverse bits");
+    const QString geometry_path = QDir(directory).filePath(QStringLiteral("window.json"));
+    save_normal_window(workspace, geometry_path);
+    struct stat repaired_directory{};
+    struct stat repaired_file{};
+    require(::lstat(QFile::encodeName(directory).constData(), &repaired_directory) == 0 &&
+                S_ISDIR(repaired_directory.st_mode) && repaired_directory.st_uid == ::getuid() &&
+                (repaired_directory.st_mode & 0077U) == 0,
+            "saving repairs a current-user runtime directory to 0700");
+    require(::lstat(QFile::encodeName(geometry_path).constData(), &repaired_file) == 0 &&
+                S_ISREG(repaired_file.st_mode) && repaired_file.st_uid == ::getuid() &&
+                (repaired_file.st_mode & 0077U) == 0,
+            "the repaired directory receives private geometry");
 
     require(QFile::setPermissions(target, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
                                               QFileDevice::ReadGroup),

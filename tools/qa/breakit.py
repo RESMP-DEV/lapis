@@ -13,6 +13,7 @@ warnings under build/qa/<run>/; receipt.json summarizes pass/fail.
 
 import argparse
 import json
+import math
 import os
 import re
 import signal
@@ -57,6 +58,29 @@ SYMBOLS = {
     ")": "parenright",
     "\n": "Return",
 }
+
+
+def resumed_pairs(processes, bin_path):
+    """Pair observed argv with the fake harness that actually received it."""
+    fake_bins = {f"{bin_path}/{name}" for name in FAKE_NAMES}
+    seen = set()
+    for row in processes:
+        words = row["args"].split()
+        harness = next((Path(word).name for word in words if word in fake_bins), None)
+        if harness:
+            seen.update((harness, word) for word in words)
+    return seen
+
+
+def positive_minutes(value):
+    """Reject unusable soak durations before constructing the GUI runtime."""
+    try:
+        minutes = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a number") from error
+    if not math.isfinite(minutes) or minutes <= 0:
+        raise argparse.ArgumentTypeError("must be a positive number")
+    return minutes
 
 
 class Failure(Exception):
@@ -229,15 +253,15 @@ class Run:
     def launch(self):
         with self.gui_log.open("a") as log:
             log.write(f"\n=== launch {time.strftime('%H:%M:%S')} ===\n")
-        log = self.gui_log.open("a")
-        self.gui = subprocess.Popen(
-            [str(BINARY)],
-            env=self.environment(),
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            cwd=str(ROOT),
-            start_new_session=True,
-        )
+        with self.gui_log.open("a") as log:
+            self.gui = subprocess.Popen(
+                [str(BINARY)],
+                env=self.environment(),
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                cwd=str(ROOT),
+                start_new_session=True,
+            )
         self.wait(
             lambda: self.keys.lapis_window() is not None, 20, "lapis window appears"
         )
@@ -608,6 +632,7 @@ class Run:
                 "grok",
                 "opencode",
                 "omp",
+                "agy",
             ):
                 conversations[agent["id"]] = json.loads(record.read_text())[
                     "session_id"
@@ -623,16 +648,17 @@ class Run:
                 pass
         self.wait(lambda: not self.fake_agents(), 10, "every agent is gone")
         self.launch()
-        expected = {
-            conversation
-            for agent_id, conversation in conversations.items()
-            if any(agent["id"] == agent_id for agent in self.agents())
+        harness_by_agent = {
+            agent["id"]: agent.get("harness") for agent in self.agents()
         }
+        expected = {
+            (harness_by_agent[agent_id], conversation)
+            for agent_id, conversation in conversations.items()
+            if agent_id in harness_by_agent
+        }
+
         self.wait(
-            lambda: (
-                expected
-                <= {word for row in self.fake_agents() for word in row["args"].split()}
-            ),
+            lambda: expected <= resumed_pairs(self.fake_agents(), self.bin),
             20,
             "restored agents resume their conversations",
         )
@@ -711,6 +737,8 @@ class Run:
             if not self.gui_alive():
                 raise Failure("GUI exited during soak")
             time.sleep(15)
+        if not samples:
+            raise Failure("soak collected no samples; pass a positive --soak duration")
         first, last = samples[0], samples[-1]
         return {
             "agents": agents,
@@ -751,7 +779,10 @@ def main():
     )
     parser.add_argument("--only", nargs="*", help="scenario names to run")
     parser.add_argument(
-        "--soak", type=float, default=0, help="minutes of 32-agent soak"
+        "--soak",
+        type=positive_minutes,
+        default=0,
+        help="minutes of 32-agent soak",
     )
     args = parser.parse_args()
     run = Run(args.output.resolve(), args.keep)

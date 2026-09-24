@@ -1,0 +1,39 @@
+{
+  "recorded_at": "2026-09-24T06:37:41.984069+00:00",
+  "scope": "PR 12 session continuity review fixes on macOS",
+  "initial_revision": "a4b0e338402d284f00055b542726b0d8cedcf22c",
+  "integrated_base_revision": "03da59ce000c601c516c9539c38875908f5843d2",
+  "source_revision": "e934ed9ba65d4813d779b35f0525588e8eced009",
+  "source_dirty": true,
+  "source_diff_sha256": "286218937d959bd2acf0cc39ccc01f4962f20be61035a8a3020fa9362f85036e",
+  "findings": {
+    "fixed": 15,
+    "explained": 1
+  },
+  "checks": {
+    "quality": "120 Python tests and repository checks pass",
+    "desktop": "22 CTests, compiler warnings, format, clang-tidy and Cppcheck pass",
+    "cli": "launch, transport, recovery, desktop capture and invalid-option cases pass",
+    "ui_preview": "isolated UI capture and rejection cases pass",
+    "asan": "9 affected lifecycle, checkpoint and protocol suites pass",
+    "tsan": "9 affected lifecycle, checkpoint and protocol suites pass"
+  },
+  "coverage": [
+    "Malformed checkpoint followed by a valid marker",
+    "Descriptor-based private record reads, including symlink and FIFO rejection",
+    "Mixed-case agent normalization and unsupported pi rejection",
+    "Validated launch fingerprint compatibility",
+    "Pending-close restart rejection and actual validation diagnostics",
+    "Dated Codex transcript lookup without directory symlink traversal",
+    "Explicit resume arguments preserved with and without a saved replacement",
+    "Exact CODEX_HOME restoration",
+    "Real service loss, restart, and close lifecycle"
+  ],
+  "limitations": [
+    "Codex lookup is bounded in depth, not in filesystem latency.",
+    "The opt-in real Codex transcript-recovery probe was not run; deterministic adapter, checkpoint, and workspace fixtures were run.",
+    "The native input driver is unchanged from the PR 11 batch; its dated native probe evidence is reused, including its initial timeout and successful diagnostic rerun.",
+    "No Linux GUI qualification or merge was performed."
+  ],
+  "details": "build/pr-bot-comments/"
+}

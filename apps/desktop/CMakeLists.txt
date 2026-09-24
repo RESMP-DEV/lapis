@@ -77,6 +77,8 @@ endif()
 # Opt-in real Codex workspace lifecycle; no GUI or model turn is submitted.
 add_executable(lapis_workspace_live_probe tests/workspace_live_probe.cpp)
 target_link_libraries(lapis_workspace_live_probe PRIVATE lapis_project_options lapis_desktop_view)
+target_compile_definitions(lapis_workspace_live_probe PRIVATE
+    LAPIS_SESSION_SERVICE_PATH="$<TARGET_FILE:lapis_session_service>")
 add_dependencies(lapis_workspace_live_probe lapis_session_service)
 
 # Opt-in measurement, not a timing gate in CTest.
@@ -91,7 +93,7 @@ add_dependencies(lapis_terminal_latency_probe lapis_session_service)
 # Opt-in because posting events requires macOS Accessibility permission.
 if(APPLE)
     add_executable(lapis_native_input_probe tests/native_input_probe.cpp
-        tests/platform/native_input_driver.mm)
+        tests/platform/native_input_driver.mm tests/platform/window_activation.mm)
     target_link_libraries(lapis_native_input_probe PRIVATE lapis_project_options lapis_desktop_view
         "-framework AppKit" "-framework Carbon" "-framework CoreGraphics")
     target_compile_definitions(lapis_native_input_probe PRIVATE

@@ -56,7 +56,8 @@ class SessionPreview final : public QObject {
     Q_PROPERTY(bool historyRequestPending READ historyRequestPending NOTIFY historyChanged)
     Q_PROPERTY(QString historyMessage READ historyMessage NOTIFY historyChanged)
     Q_PROPERTY(QColor accent READ accent CONSTANT)
-    // Set between an explicit close request and the process ending.
+    // True while a close request waits for the process to end; cleared if the
+    // service rejects the close and the agent remains attached.
     Q_PROPERTY(bool closing READ closing NOTIFY statusChanged)
     // Finished a turn or started needing a response while another agent was
     // selected; cleared when this agent is selected.
@@ -310,6 +311,10 @@ class Workspace final : public QObject {
         QString endpoint;
         session::LaunchSpec launch;
         QString harness{QStringLiteral("codex")};
+        // The exact resume pair lapis appended, or no provenance for a
+        // user-authored launch. Existing unmarked records stay user-owned.
+        int managed_resume_index{-1};
+        QString managed_resume_identity{};
     };
     std::vector<Category> categories_;
     QMap<QString, Agent> agents_;
@@ -323,7 +328,7 @@ class Workspace final : public QObject {
         std::vector<Category> categories;
         QMap<QString, Agent> agents;
         QString active;
-        int focused;
+        int focused{-1};
     };
     [[nodiscard]] RegistryState checkpoint() const;
     void rollback(const RegistryState& previous);
@@ -332,11 +337,18 @@ class Workspace final : public QObject {
     bool save(const QString& renamedId = {}, const QString& renamedTitle = {});
     void restore();
     void loadCategories(const QJsonArray& groups);
+    static void loadManagedResume(const QJsonValue& value, Agent& agent);
     void loadAgents(const QJsonArray& agents);
     void finishClosing(SessionPreview* item);
     [[nodiscard]] static SessionPreview::StatusSource statusSource(const Agent& agent);
     [[nodiscard]] static QStringList savedArguments(const QJsonValue& value);
-    [[nodiscard]] static std::optional<session::LaunchSpec> restoredLaunch(const Agent& agent);
+    struct ResumeLaunch {
+        session::LaunchSpec launch;
+        int managed_resume_index{-1};
+        QString managed_resume_identity{};
+    };
+    [[nodiscard]] static std::optional<ResumeLaunch> restoredLaunch(const Agent& agent,
+                                                                    QString* diagnostic = nullptr);
     [[nodiscard]] static bool serviceRunning(const QString& endpoint);
     void noteStatus(SessionPreview* item);
     QHash<const SessionPreview*, QString> last_kind_;

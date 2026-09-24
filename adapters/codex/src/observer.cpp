@@ -26,6 +26,7 @@ constexpr qsizetype message_limit = qsizetype{64} * 1024;
 constexpr qsizetype details_limit = qsizetype{16} * 1024;
 constexpr qsizetype aggregate_details_limit = qsizetype{512} * 1024;
 constexpr int rpc_timeout = 10000;
+constexpr auto waiting_for_history = QLatin1String("Waiting for Codex thread history");
 quint64 now() {
     return static_cast<quint64>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::steady_clock::now().time_since_epoch())
@@ -342,7 +343,7 @@ class Observer::Impl final : public QObject {
         replay_bytes_ = 0;
         // Retries for a thread without a rollout (no first turn yet) keep that
         // diagnostic instead of alternating with this one every second.
-        if (diagnostic_ != QLatin1String("Waiting for Codex thread history"))
+        if (diagnostic_ != waiting_for_history)
             diagnostic_ = "Reconciling Codex requests";
         rpc("thread/resume", {{"threadId", thread_}, {"excludeTurns", true}});
         emit owner_.changed();
@@ -573,7 +574,7 @@ class Observer::Impl final : public QObject {
                 recovering_ = false;
                 replay_.clear();
                 replay_bytes_ = 0;
-                diagnostic_ = "Waiting for Codex thread history";
+                diagnostic_ = waiting_for_history;
                 retry_.start(1000);
                 emit owner_.changed();
                 return;

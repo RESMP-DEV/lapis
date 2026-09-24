@@ -15,6 +15,8 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QKeySequence>
+#include <QList>
+#include <QPair>
 #include <QTemporaryDir>
 #include <array>
 #include <iostream>
@@ -531,6 +533,7 @@ void malformed_values_fall_back() {
 void harness_arguments_are_literal_lists() {
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
+    const QDir dir(directory.path());
     const QString path = write_config(
         QDir(directory.path()),
         R"({"theme": "oled", "harnessArguments": {"claude": ["--dangerously-skip-permissions"],)"
@@ -555,6 +558,28 @@ void harness_arguments_are_literal_lists() {
                     .toArray()
                     .size() == 1,
             "saving appearance keeps the harness arguments");
+
+    const QString long_name(40, QLatin1Char('n'));
+    const QString invalid_name = write_config(
+        dir,
+        QStringLiteral(R"({"harnessArguments":{"%1":["--qualified"]}})").arg(long_name).toUtf8());
+    KeyMap overlong_name;
+    overlong_name.setSourcePathForTesting(invalid_name);
+    require(overlong_name.load(), "an overlong harness name still loads other defaults");
+    require(overlong_name.harnessArguments().isEmpty(), "an overlong harness name is dropped");
+    require(overlong_name.diagnostic().contains(QStringLiteral("at most 32 characters")),
+            "the diagnostic names the harness-name bound");
+
+    const QString long_argument = QStringLiteral("--%1").arg(QString(1025, QLatin1Char('x')));
+    const QString invalid_argument = write_config(
+        dir,
+        QStringLiteral(R"({"harnessArguments":{"claude":["%1"]}})").arg(long_argument).toUtf8());
+    KeyMap overlong_argument;
+    overlong_argument.setSourcePathForTesting(invalid_argument);
+    require(overlong_argument.load(), "an overlong argument still loads other defaults");
+    require(overlong_argument.harnessArguments().isEmpty(), "an overlong argument is dropped");
+    require(overlong_argument.diagnostic().contains(QStringLiteral("at most 1024 characters")),
+            "the diagnostic names the argument bound");
 }
 
 // The dialog builds its controls from these lists, so they must agree with the
@@ -595,7 +620,13 @@ void sidebar_preference_and_commands() {
     KeyMap keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load() && keymap.sidebarVisible(), "sidebar defaults visible");
+    QList<QPair<bool, bool>> observed;
+    QObject::connect(&keymap, &KeyMap::changed, &keymap,
+                     [&] { observed.append({keymap.sidebarVisible(), keymap.previewsVisible()}); });
     require(keymap.setSidebarVisible(false), "hide sidebar persists");
+    require(keymap.setPreviewsVisible(false), "hide previews persists");
+    require(observed == QList<QPair<bool, bool>>{{false, true}, {false, false}},
+            "successful visibility saves emit each settled state once");
     KeyMap restored;
     restored.setSourcePathForTesting(path);
     require(restored.load() && !restored.sidebarVisible(), "hidden sidebar survives restart");
@@ -612,9 +643,18 @@ void sidebar_preference_and_commands() {
         for (const auto& binding : bindings)
             require(QKeySequence(binding)[0] != paste, "workspace shortcuts must not steal paste");
     }
+    require(!restored.previewsVisible(), "hidden previews survive restart");
+    observed.clear();
+    QObject::connect(&restored, &KeyMap::changed, &restored, [&] {
+        observed.append({restored.sidebarVisible(), restored.previewsVisible()});
+    });
     static_cast<void>(write_config(QDir(directory.path()), "{broken"));
     require(!restored.setSidebarVisible(true) && !restored.sidebarVisible(),
             "failed sidebar save rolls back");
+    require(!restored.setPreviewsVisible(true) && !restored.previewsVisible(),
+            "failed preview save rolls back");
+    require(observed == QList<QPair<bool, bool>>{{false, false}, {false, false}},
+            "failed visibility saves never publish tentative values");
 }
 
 // The terminal font is validated, written immediately, restored on restart and

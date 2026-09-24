@@ -38,6 +38,18 @@ constexpr std::array harness_catalog{
     Harness{"kimi", "Kimi", "kimi"},       Harness{"opencode", "OpenCode", "opencode"},
     Harness{"gemini", "Gemini", "gemini"}, Harness{"agy", "Antigravity", "agy"}};
 
+QString harness_id(session::AgentMode mode) {
+    switch (mode) {
+    case session::AgentMode::codex:
+        return QStringLiteral("codex");
+    case session::AgentMode::claude:
+        return QStringLiteral("claude");
+    case session::AgentMode::terminal:
+        return {};
+    }
+    return {};
+}
+
 const Harness* findHarness(const QString& id) {
     const auto found = std::find_if(harness_catalog.begin(), harness_catalog.end(),
                                     [&](const auto& item) { return id == QLatin1String(item.id); });
@@ -112,7 +124,11 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
                                                : session::shell_launch(rootDirectory());
             add("Agent", launch.directory.toUtf8().constData(), "Connecting", "#87cbac", "");
             sessions_.front()->setSessionId(QStringLiteral("shell"));
-            agents_.insert(QStringLiteral("shell"), {active_category_, options.endpoint, launch});
+            const auto harness = harness_id(launch.agent);
+            const Agent agent{active_category_, options.endpoint, launch, harness};
+            sessions_.front()->setHarnessId(harness);
+            sessions_.front()->setStatusSource(statusSource(agent));
+            agents_.insert(QStringLiteral("shell"), agent);
             sessions_.front()->startLive(session::posix::prepare_endpoint(options.endpoint.isEmpty()
                                                                               ? defaultEndpoint()
                                                                               : options.endpoint),
@@ -590,9 +606,14 @@ bool Workspace::discardSession(const QString& id) {
     const auto* item = session(id);
     if (!item)
         return false;
+    const auto item_category = agents_.value(id).category;
     const auto previous = checkpoint();
-    // A closed agent hands focus to its right neighbor, or its left one at the end.
-    const auto list = categorySessions();
+    // A closed agent hands focus to its right neighbor in its own category, or
+    // to its left one at that category's end, even while another strip is shown.
+    QVariantList list;
+    for (const auto& candidate : sessions_)
+        if (agents_.value(candidate->sessionId()).category == item_category)
+            list.append(QVariant::fromValue(candidate.get()));
     for (qsizetype i = 0; i < list.size(); ++i) {
         if (list[i].value<SessionPreview*>() != item)
             continue;
@@ -604,7 +625,6 @@ bool Workspace::discardSession(const QString& id) {
             if (category.selected == id)
                 category.selected = next;
     }
-    last_kind_.remove(item);
     const auto position = std::find_if(sessions_.begin(), sessions_.end(),
                                        [&](const auto& value) { return value.get() == item; });
     const auto index = std::distance(sessions_.begin(), position);
@@ -618,7 +638,10 @@ bool Workspace::discardSession(const QString& id) {
         emit errorChanged();
         return false;
     }
+    last_kind_.remove(item);
     changed();
+    // QML delegates can still hold the removed object during this call stack.
+    retained.release()->deleteLater();
     return true;
 }
 QString Workspace::homeDirectory() const { return QDir::homePath(); }
@@ -747,7 +770,7 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
                                     agent.launch.arguments.front() == QStringLiteral("resume")
                                 ? agent.launch.arguments.at(1)
                                 : QString{};
-        agents.append(QJsonObject{
+        auto serialized = QJsonObject{
             {"id", item->sessionId()},
             {"title", item->sessionId() == renamedId ? renamedTitle : item->title()},
             {"category", agent.category},
@@ -758,7 +781,13 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
                                                                       : QString()},
             {"resumeThread", resume},
             {"arguments", QJsonArray::fromStringList(agent.launch.arguments)},
-            {"directory", agent.launch.directory}});
+            {"directory", agent.launch.directory}};
+        if (agent.managed_resume_index >= 0 &&
+            agent.managed_resume_index + 1 < agent.launch.arguments.size())
+            serialized.insert(QStringLiteral("managedResume"),
+                              QJsonObject{{"index", agent.managed_resume_index},
+                                          {"identity", agent.managed_resume_identity}});
+        agents.append(serialized);
     }
     QSaveFile file(storage_path_);
     if (!file.open(QIODevice::WriteOnly))
@@ -816,11 +845,15 @@ QString resumeOption(const QString& harness) {
 std::optional<QString> openCodexThread(const QString& endpoint) {
     const auto lsof = QStandardPaths::findExecutable(
         QStringLiteral("lsof"), {QStringLiteral("/usr/sbin"), QStringLiteral("/usr/bin")});
-    if (lsof.isEmpty())
+    const auto ps = QStandardPaths::findExecutable(
+        QStringLiteral("ps"), {QStringLiteral("/bin"), QStringLiteral("/usr/bin")});
+    if (lsof.isEmpty() || ps.isEmpty())
+        return std::nullopt;
+    // No backend socket means no app-server can still hold a rollout open.
+    if (!QFileInfo::exists(endpoint + QStringLiteral(".codex")))
         return std::nullopt;
     QProcess list;
-    list.start(QStringLiteral("/bin/ps"),
-               {QStringLiteral("-axo"), QStringLiteral("pid=,command=")});
+    list.start(ps, {QStringLiteral("-axo"), QStringLiteral("pid=,command=")});
     if (!list.waitForFinished(3000))
         return std::nullopt;
     const auto listen =
@@ -845,6 +878,24 @@ std::optional<QString> openCodexThread(const QString& endpoint) {
 // Hooks report a conversation at session start, before anything is saved; a
 // conversation without a transcript cannot be resumed, so it starts fresh.
 // CLIs whose storage is not known here are trusted to resume or say why not.
+// Depth is fixed at three: YYYY/MM/DD, with no symlink traversal.
+bool codexConversationSaved(const QDir& directory, const QString& conversation, int depth) {
+    if (depth == 0) {
+        QDirIterator rollouts(
+            directory.path(),
+            {QStringLiteral("rollout-*-") + conversation + QStringLiteral(".jsonl")},
+            QDir::Files | QDir::NoSymLinks, QDirIterator::NoIteratorFlags);
+        return rollouts.hasNext();
+    }
+    const auto pattern = QStringLiteral("[0-9]").repeated(depth == 3 ? 4 : 2);
+    const auto folders =
+        directory.entryList({pattern}, QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks,
+                            QDir::Name | QDir::Reversed);
+    return std::any_of(folders.begin(), folders.end(), [&](const QString& folder) {
+        return codexConversationSaved(QDir(directory.filePath(folder)), conversation, depth - 1);
+    });
+}
+
 bool conversationSaved(const session::ResumeRecord& record) {
     const auto& conversation = record.session_id;
     if (record.agent == QLatin1String("claude")) {
@@ -858,12 +909,10 @@ bool conversationSaved(const session::ResumeRecord& record) {
         });
     }
     if (record.agent == QLatin1String("codex")) {
-        QDirIterator rollouts(
+        const QDir sessions(
             qEnvironmentVariable("CODEX_HOME", QDir::homePath() + QStringLiteral("/.codex")) +
-                QStringLiteral("/sessions"),
-            {QStringLiteral("rollout-*-") + conversation + QStringLiteral(".jsonl")}, QDir::Files,
-            QDirIterator::Subdirectories);
-        return rollouts.hasNext();
+            QStringLiteral("/sessions"));
+        return codexConversationSaved(sessions, conversation, 3);
     }
     return true;
 }
@@ -896,13 +945,20 @@ bool Workspace::restartAgent(const QString& id) {
     auto* item = session(id);
     if (entry == agents_.end() || item == nullptr)
         return fail(QStringLiteral("Unknown agent."));
+    if (item->closing())
+        return fail(QStringLiteral("This agent is still closing."));
     if (serviceRunning(entry->endpoint))
         return fail(QStringLiteral("This agent is still running."));
-    const auto launch = restoredLaunch(*entry);
+    QString diagnostic;
+    const auto launch = restoredLaunch(*entry, &diagnostic);
     if (!launch)
-        return fail(QStringLiteral("This agent's program or folder is no longer available."));
+        return fail(diagnostic.isEmpty()
+                        ? QStringLiteral("This agent's program or folder is no longer available.")
+                        : diagnostic);
     const auto previous = checkpoint();
-    entry->launch = *launch;
+    entry->launch = launch->launch;
+    entry->managed_resume_index = launch->managed_resume_index;
+    entry->managed_resume_identity = launch->managed_resume_identity;
     if (!save()) {
         rollback(previous);
         emit errorChanged();
@@ -924,24 +980,49 @@ bool Workspace::serviceRunning(const QString& endpoint) {
     return probe.error() != QLocalSocket::ConnectionRefusedError &&
            probe.error() != QLocalSocket::ServerNotFoundError;
 }
-std::optional<session::LaunchSpec> Workspace::restoredLaunch(const Agent& agent) {
+auto Workspace::restoredLaunch(const Agent& agent, QString* diagnostic)
+    -> std::optional<ResumeLaunch> {
     auto launch = agent.launch;
     if (!QFileInfo(launch.program).isExecutable())
         if (const auto* harness = findHarness(agent.harness))
             launch.program = harnessExecutable(*harness);
     if (launch.program.isEmpty() || !QFileInfo(launch.directory).isDir())
         return std::nullopt;
-    // Drop the previous resume option; keep the user's own arguments.
     const auto option = resumeOption(agent.harness);
-    const auto at = option.isEmpty() ? -1 : launch.arguments.indexOf(option);
-    if (at >= 0 && at + 1 < launch.arguments.size())
-        launch.arguments.remove(at, 2);
+    ResumeLaunch plan{std::move(launch), agent.managed_resume_index, agent.managed_resume_identity};
     if (const auto record = session::read_resume_record(agent.endpoint);
-        !option.isEmpty() && record && record->agent == agent.harness && conversationSaved(*record))
-        launch.arguments += QStringList{option, record->session_id};
+        !option.isEmpty() && record && record->agent == agent.harness &&
+        conversationSaved(*record)) {
+        if (plan.managed_resume_index >= 0) {
+            // Replace only the pair whose provenance the registry recorded.
+            // A newer service checkpoint, including one after /clear, wins.
+            if (plan.managed_resume_index + 1 < plan.launch.arguments.size() &&
+                plan.launch.arguments.at(plan.managed_resume_index) == option &&
+                plan.launch.arguments.at(plan.managed_resume_index + 1) ==
+                    plan.managed_resume_identity) {
+                plan.launch.arguments[plan.managed_resume_index + 1] = record->session_id;
+                plan.managed_resume_identity = record->session_id;
+            }
+        } else if (std::none_of(plan.launch.arguments.cbegin(), plan.launch.arguments.cend(),
+                                [&option](const QString& argument) {
+                                    return argument == option ||
+                                           (option.startsWith(QLatin1Char('-')) &&
+                                            argument.startsWith(option + QLatin1Char('=')));
+                                })) {
+            // No provenance means any matching argument is user-owned. Add a
+            // managed pair only when the user supplied no such option at all.
+            plan.managed_resume_index = static_cast<int>(plan.launch.arguments.size());
+            plan.managed_resume_identity = record->session_id;
+            plan.launch.arguments += QStringList{option, record->session_id};
+        }
+    }
     try {
-        return session::validate_launch(launch);
-    } catch (const std::exception&) {
+        plan.launch = session::validate_launch(plan.launch);
+        return plan;
+    } catch (const std::exception& error) {
+        qWarning().noquote() << "Agent restart rejected:" << error.what();
+        if (diagnostic)
+            *diagnostic = QString::fromUtf8(error.what());
         return std::nullopt;
     }
 }
@@ -957,6 +1038,19 @@ QStringList Workspace::savedArguments(const QJsonValue& value) {
         arguments.append(text);
     }
     return arguments;
+}
+void Workspace::loadManagedResume(const QJsonValue& value, Agent& agent) {
+    const auto managed = value.toObject();
+    const auto index = managed.value(QStringLiteral("index")).toInt(-1);
+    const auto identity = managed.value(QStringLiteral("identity")).toString();
+    const auto option = resumeOption(agent.harness);
+    if (index < 0 || index >= agent.launch.arguments.size() - 1 ||
+        !session::valid_resume_identity(identity) || option.isEmpty() ||
+        agent.launch.arguments.at(index) != option ||
+        agent.launch.arguments.at(index + 1) != identity)
+        throw std::runtime_error("Invalid managed resume provenance");
+    agent.managed_resume_index = index;
+    agent.managed_resume_identity = identity;
 }
 void Workspace::loadAgents(const QJsonArray& agents) {
     QMap<QString, Agent> metadata;
@@ -991,6 +1085,8 @@ void Workspace::loadAgents(const QJsonArray& agents) {
         // service was launched with; it is part of the launch fingerprint.
         if (object.contains(QStringLiteral("arguments")))
             agent.launch.arguments = savedArguments(object.value(QStringLiteral("arguments")));
+        if (object.contains(QStringLiteral("managedResume")))
+            loadManagedResume(object.value(QStringLiteral("managedResume")), agent);
         // Claude agents saved before the service adapter ran as terminals; the
         // launch must match the one their running service was created with.
         if (harness == QStringLiteral("claude") &&
@@ -1064,7 +1160,9 @@ void Workspace::restore() {
             // like a restored terminal tab; Command-W is what removes an agent.
             if (restore_agents_ && !serviceRunning(agent.endpoint))
                 if (const auto launch = restoredLaunch(agent)) {
-                    agent.launch = *launch;
+                    agent.launch = launch->launch;
+                    agent.managed_resume_index = launch->managed_resume_index;
+                    agent.managed_resume_identity = launch->managed_resume_identity;
                     item->startLive(agent.endpoint, agent.launch,
                                     session::wire::AttachMode::create);
                     restarted = true;

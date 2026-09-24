@@ -21,7 +21,8 @@ so a soak can keep many agents moderately busy without typing.
 
 At start it reports a conversation the way agent session hooks do for terminal
 restore tools (OSC 1337 SetUserVar=agent_checkpoint), reusing the one passed
-with --session, --resume or -r so a restored agent can say what it resumed.
+with --session, --resume, -r or --conversation so a restored agent can say what
+it resumed.
 """
 
 import base64
@@ -96,10 +97,10 @@ def run(command, line):
 
 
 def checkpoint():
-    """Report the conversation as a session-start hook would; return its id."""
+    """Emit a session-start checkpoint; return its identity and resumed state."""
     arguments = sys.argv[1:]
     resumed = None
-    for flag in ("--session", "--resume", "-r"):
+    for flag in ("--session", "--resume", "-r", "--conversation"):
         if flag in arguments and arguments.index(flag) + 1 < len(arguments):
             resumed = arguments[arguments.index(flag) + 1]
     conversation = resumed or str(uuid.uuid4())

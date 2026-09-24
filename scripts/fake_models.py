@@ -489,6 +489,20 @@ class Server:
         with self.log.open("a") as stream:
             stream.write(json.dumps(entry) + "\n")
 
+    def record_error(self, error):
+        with self.log.open("a") as stream:
+            stream.write(
+                json.dumps(
+                    {
+                        "time": time.strftime("%H:%M:%S"),
+                        # Exception text can include raw request data (e.g. a
+                        # malformed Content-Length). Log only its safe category.
+                        "error": type(error).__name__,
+                    }
+                )
+                + "\n"
+            )
+
     async def handle(self, reader, writer):
         try:
             head = await reader.readuntil(b"\r\n\r\n")
@@ -503,6 +517,8 @@ class Server:
             length = int(headers.get("content-length", "0"))
             raw = await reader.readexactly(length) if length else b""
             body = json.loads(raw) if raw else {}
+            if not isinstance(body, dict):
+                raise ValueError("Request body must be a JSON object")
             path = target.split("?", 1)[0]
             self.record(method, path, body)
             if method == "POST" and path.endswith("/responses"):
@@ -520,10 +536,14 @@ class Server:
             ValueError,
             asyncio.IncompleteReadError,
             asyncio.LimitOverrunError,
-        ):
-            pass
+        ) as error:
+            self.record_error(error)
         finally:
             writer.close()
+            try:
+                await writer.wait_closed()
+            except OSError:
+                pass
 
 
 async def main():
