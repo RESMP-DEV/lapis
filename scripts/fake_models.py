@@ -486,6 +486,9 @@ class Server:
                 for item in body.get("input", [])
                 if isinstance(item, dict)
             ]
+            # How much conversation a Messages request carries (restore checks).
+            if isinstance(body.get("messages"), list):
+                entry["messages"] = len(body["messages"])
         with self.log.open("a") as stream:
             stream.write(json.dumps(entry) + "\n")
 

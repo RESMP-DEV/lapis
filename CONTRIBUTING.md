@@ -635,6 +635,7 @@ union of the relevant checks; a check satisfying two rows runs once:
 | QML, rendering or desktop input | `just desktop` and `just ui-check`; live input changes also need `just cli-check` and `just native-input` on the qualified Mac |
 | C++ verification runner, compiler/analyzer flags or toolchain | `just verify-tools` plus affected positive check/build paths |
 | Test cases or other test harnesses | `just quality` for Python; affected build/CTest cases for C++; exercise the affected runtime probe when its harness behavior changes |
+| Session restore, resume records or the registry lock | `uv run --no-project python scripts/check_restore.py` on macOS with the installed Codex and Claude Code; it uses the fake model and leaves nothing running |
 | Disk history | `python3 scripts/check_history.py --disk-full` on macOS, plus desktop-enabled ASan/TSan; the disk-full fixture creates and removes its own 32 MiB disk image |
 | Python tooling | `just quality` (includes Ruff and Python unit tests), plus relevant runtime probes |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; run `just quality` for shared check/config/instruction changes; no unrelated C++ rebuild |

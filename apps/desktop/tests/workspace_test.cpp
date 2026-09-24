@@ -10,15 +10,18 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLockFile>
 #include <QPointer>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUuid>
 #include <algorithm>
+#include <chrono>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 namespace {
@@ -782,6 +785,46 @@ QString screenText(const lapis::session::TerminalSnapshot& snapshot) {
     return text;
 }
 
+// The login helper (lapis_desktop --restore-agents) holds the workspace only while it restarts
+// agents: a window opened meanwhile waits for it; a second window, and a
+// helper finding a window open, fail at once.
+void windowWaitsForTheRestoreHelper() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-lock-XXXXXX"));
+    require(directory.isValid(), "lock directory");
+    WorkspaceOptions options;
+    options.storagePath = QDir(QFileInfo(directory.path()).canonicalFilePath())
+                              .filePath(QStringLiteral("workspace.json"));
+    // The helper's lock and marker, as lapis_desktop --restore-agents keeps them.
+    QLockFile helper(options.storagePath + QStringLiteral(".lock"));
+    require(helper.tryLock(0), "the helper holds the workspace");
+    QFile marker(options.storagePath + QStringLiteral(".restoring"));
+    require(marker.open(QIODevice::WriteOnly) &&
+                marker.write(QByteArray::number(QCoreApplication::applicationPid())) > 0,
+            "the helper names itself");
+    marker.close();
+    // The helper exits: its marker goes with its lock.
+    std::thread release([&helper, &options] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(800));
+        QFile::remove(options.storagePath + QStringLiteral(".restoring"));
+        helper.unlock();
+    });
+    QElapsedTimer clock;
+    clock.start();
+    Workspace window(WorkspaceMode::live, options);
+    release.join();
+    require(window.workspaceError().isEmpty() && clock.elapsed() >= 700,
+            "a window waits for the login helper");
+    clock.restart();
+    Workspace second(WorkspaceMode::live, options);
+    require(!second.workspaceError().isEmpty() && clock.elapsed() < 1000,
+            "a second window does not wait");
+    auto restoring = options;
+    restoring.restoreAgents = true;
+    restoring.restoreOnly = true;
+    Workspace late(WorkspaceMode::live, restoring);
+    require(!late.workspaceError().isEmpty(), "the helper leaves an open window's workspace alone");
+}
+
 // A new agent's CLI updates itself first, so the agent never opens on an
 // update prompt; another agent within 30 minutes starts without updating.
 void harnessesUpdateBeforeNewAgents() {
@@ -1372,6 +1415,7 @@ int main(int argc, char** argv) {
         closeEndsTheAgent("trap '' HUP; exec sleep 600", 1200);
         closeOnHistoryPageEndsTheAgent();
         harnessesUpdateBeforeNewAgents();
+        windowWaitsForTheRestoreHelper();
         std::cout << "workspace categories, identity, persistence, status and closing passed\n";
         return 0;
     } catch (const std::exception& error) {

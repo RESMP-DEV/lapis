@@ -1713,6 +1713,36 @@ with the fake model after deleting the record. Restart agent (Commands) applies
 the restore path to one ended or unreachable card and refuses while its service
 answers. Antigravity resumes with `agy --conversation`.
 
+Restore at login and after power loss (September 24, requested because losing
+agents to a reboot is the user's main pain point). `lapis_desktop
+--restore-agents` runs the restore path without a window (offscreen Qt
+platform): it restarts only cards whose services are gone, waits up to 90
+seconds for each to accept input, and exits, leaving services it did not start
+for a window to reattach. `scripts/restore_at_login.py` installs it as the
+`dev.lapis.restore` LaunchAgent with the installing shell's PATH, since agents
+inherit the helper's environment. The helper and a window share the registry
+lock. The helper writes its process ID to `<registry>.restoring` (owner-only)
+while it holds the lock, because QLockFile records the process name rather
+than the application name; a window finding that marker waits up to two
+minutes for the lock (longer than the helper's own limit), while a second window, or a helper finding a window,
+fails at once. Two gaps found by simulated power loss are closed in the
+service. A Codex build the observer has not qualified reports no thread, so
+the service also reads the rollout its app-server holds open (`lsof` on macOS,
+`/proc/<pid>/fd` on Linux) every 5 seconds until it finds one, then every
+minute, and records it. Codex 0.156 listens through a symlink it removes only
+on a clean exit; a dead link at the service's own `.codex` path is removed,
+while one that still answers is refused. `scripts/check_restore.py` qualifies
+this end to end on macOS: real Codex and Claude Code against the fake model
+and fake stand-ins for Grok, Kimi, OpenCode and OMP, started by the helper,
+then two rounds of SIGKILL on every process with stale sockets left behind,
+each followed by the helper, the second time as a launchd job with the
+LaunchAgent's minimal environment (launchd kills a job's process group when it
+exits; services leave it through `startDetached`'s new session). Every agent
+must show its earlier exchange,
+accept a follow-up, and keep its conversation identity with exactly one resume
+argument; the model must receive the growing conversation. A final helper run
+with everything alive must restart nothing.
+
 CLI updates (September 24, requested so agents never open on an update
 prompt). Before a new agent starts, the desktop runs that CLI's own
 non-interactive update command (Claude `update`, OMP `update`, Grok `update`,

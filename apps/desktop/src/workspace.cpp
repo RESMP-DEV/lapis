@@ -3,6 +3,7 @@
 #include "live_connection.hpp"
 #include "platform/posix/local_endpoint.hpp"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QFile>
 #include <QJsonArray>
@@ -115,9 +116,14 @@ QString Workspace::defaultEndpoint() {
     return QDir{rootDirectory()}.filePath(QStringLiteral("runtime/desktop-v6.sock"));
 }
 
+Workspace::~Workspace() {
+    if (restore_only_ && registry_lock_ && registry_lock_->isLocked())
+        QFile::remove(storage_path_ + QStringLiteral(".restoring"));
+}
+
 Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
     : restore_agents_(options.restoreAgents), update_harnesses_(options.updateHarnesses),
-      preview_mode_(mode == WorkspaceMode::preview) {
+      restore_only_(options.restoreOnly), preview_mode_(mode == WorkspaceMode::preview) {
     // Selecting an agent is looking at it.
     connect(this, &Workspace::focusChanged, this, [this] {
         if (auto* focused = focusedSession())
@@ -1131,6 +1137,30 @@ void Workspace::loadAgents(const QJsonArray& agents) {
     agents_ = std::move(metadata);
     sessions_ = std::move(restored);
 }
+void Workspace::lockRegistry() {
+    registry_lock_ = std::make_unique<QLockFile>(storage_path_ + QStringLiteral(".lock"));
+    // This lock lasts for the window lifetime; elapsed time cannot steal it.
+    registry_lock_->setStaleLockTime(0);
+    QFile marker(storage_path_ + QStringLiteral(".restoring"));
+    if (!registry_lock_->tryLock(0)) {
+        // The login helper holds the workspace only while it restarts agents
+        // and names itself in a marker holding its process ID; a window opened
+        // meanwhile waits for it.
+        qint64 holder{};
+        QString host;
+        QString name;
+        const bool helper = registry_lock_->getLockInfo(&holder, &host, &name) &&
+                            marker.open(QIODevice::ReadOnly) &&
+                            marker.read(32).trimmed().toLongLong() == holder;
+        marker.close();
+        if (!helper || restore_only_ || !registry_lock_->tryLock(120000))
+            throw std::runtime_error("This workspace is already open in another lapis window");
+    }
+    if (restore_only_ && marker.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        marker.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
+        marker.write(QByteArray::number(QCoreApplication::applicationPid()));
+    }
+}
 void Workspace::restore() {
     try {
         // The endpoint helper validates private ownership and every ancestor.
@@ -1139,11 +1169,7 @@ void Workspace::restore() {
                                                  .filePath(QStringLiteral("registry-check.sock")));
         storage_path_ =
             QDir(QFileInfo(validated).absolutePath()).filePath(QFileInfo(storage_path_).fileName());
-        registry_lock_ = std::make_unique<QLockFile>(storage_path_ + QStringLiteral(".lock"));
-        // This lock lasts for the window lifetime; elapsed time cannot steal it.
-        registry_lock_->setStaleLockTime(0);
-        if (!registry_lock_->tryLock(0))
-            throw std::runtime_error("This workspace is already open in another lapis window");
+        lockRegistry();
         if (QFileInfo(storage_path_).isSymLink())
             throw std::runtime_error("Workspace registry cannot be a symlink");
         QFile file(storage_path_);
@@ -1187,12 +1213,14 @@ void Workspace::restore() {
                     restarted = true;
                     continue;
                 }
+            if (restore_only_)
+                continue; // running services are the window's to reattach
             item->startLive(agent.endpoint, agent.launch, session::wire::AttachMode::reconnect);
         }
         // Restarted agents have new launch arguments, part of their fingerprint.
         if (restarted && !save())
             throw std::runtime_error(error_.toStdString());
-        if (restore_agents_) {
+        if (restore_agents_ && !restore_only_) {
             conversation_timer_.setInterval(60000);
             connect(&conversation_timer_, &QTimer::timeout, this, &Workspace::recordConversations);
             conversation_timer_.start();

@@ -59,8 +59,8 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | Component | Exercised | Remaining |
 | --- | --- | --- |
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
-| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS | Recovery after service loss and later Linux qualification |
-| Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect | Recovery after service failure/reboot |
+| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS; after a simulated power loss (SIGKILL of every process), the login helper restarts agents resuming their conversations ([check](scripts/check_restore.py)) | An actual reboot through the login helper, and later Linux qualification |
+| Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect; stale sockets left by a simulated power loss are replaced | Qualification across an actual reboot |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging and link opening (Qt tests on anvil) | Cross-cell contextual shaping, rectangular/multi-click selection, link hover feedback and accessibility; native Mac selection not yet exercised; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
 | UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation | Automatic carousel and larger session-count qualification |
@@ -176,8 +176,13 @@ the conversation beside its endpoint (`<endpoint>.resume`) from the Codex
 observer, the Claude hook adapter, or the `agent_checkpoint` sequence that
 iTerm2 restore hooks print. For Codex agents whose service predates these
 records, lapis reads the thread from the rollout its app-server holds open.
-Command-W is what removes an agent for good. Restore runs when lapis opens;
-add lapis to Login Items to have it happen at login.
+Command-W is what removes an agent for good. Restore runs when lapis opens.
+To have agents come back at login without opening a window, install the login
+helper once with `uv run --no-project python scripts/restore_at_login.py
+install`. It runs `lapis_desktop --restore-agents`, restarts the agents whose
+services died with the Mac (restart, crash, power cut) and exits; a window
+opened meanwhile waits for it, and it leaves agents that are still running
+alone. It needs a logged-in user session.
 An agent that has ended or cannot be reached keeps its last screen, with a bar
 on the stage giving the reason and the key that closes it. **Restart agent**
 in Commands starts it again in the same card, resuming its conversation the
