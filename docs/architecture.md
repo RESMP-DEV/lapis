@@ -1740,7 +1740,10 @@ A prototype, deliberately simpler than the SSH design first proposed:
   transport exception is limited to `ts.net` names and local addresses.
 - `apps/ios` is a SwiftUI app (iOS 17+) with categories and agents, an agent
   screen drawing the cell grid, a key bar and a message field that pastes and
-  presses Enter. `scripts/check_ios_remote.py` compiles it and its UI tests
+  presses Enter. Block elements and box drawing are drawn as cell shapes, as
+  terminals draw them, so logos and borders join across rows; rows wider than
+  the phone (history archived at a desktop size) wrap instead of scrolling
+  sideways. `scripts/check_ios_remote.py` compiles it and its UI tests
   directly and runs them in a headless simulator against disposable services,
   with a Mac-side client attached the way the desktop is, which must see the
   phone's typing, answer it and never be replaced;

@@ -73,7 +73,7 @@ final class AgentSession {
     // The oldest page is loaded. Nothing archived yet is not the start: more
     // output can still scroll off, so an empty history is retried.
     var historyEnd = false
-    private var loadingHistory = false
+    private(set) var loadingHistory = false
     private var lastEmptyCheck = Date.distantPast
     private var newerTask: Task<Void, Never>?
     private(set) var lastFrameJSON: Data?

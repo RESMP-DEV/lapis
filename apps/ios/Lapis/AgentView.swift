@@ -19,7 +19,9 @@ struct AgentView: View {
         VStack(spacing: 0) {
             GeometryReader { proxy in
                 TerminalScreen(frame: session.frame, history: session.history,
-                               historyEnd: session.historyEnd, metrics: metrics) {
+                               historyEnd: session.historyEnd,
+                               loadingHistory: session.loadingHistory,
+                               fitColumns: metrics.grid(for: proxy.size).columns, metrics: metrics) {
                     await session.loadOlder()
                 }
                     .onAppear { fit(proxy.size) }

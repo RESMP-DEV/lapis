@@ -1,6 +1,6 @@
 {
   "schema": "lapis.qa-receipt/1",
-  "recorded_at": "2026-09-24T06:50:00Z",
+  "recorded_at": "2026-09-24T07:20:00Z",
   "scope": "Prototype iPhone app and Mac gateway for using lapis agents over Tailscale, with the phone joined beside the desktop so both stay in sync",
   "source": {
     "base": "a4b0e33 (feature/session-continuity)",
@@ -22,7 +22,7 @@
     },
     {
       "name": "iOS UI tests in a headless simulator (scripts/check_ios_remote.py --codex --claude)",
-      "result": "9/9 with a Mac-side client attached the way the desktop is for the whole run: category cards with harness marks and a stopped agent; open, type, send and echo; key bar ^U; wide, emoji, right-to-left and box-drawing output; scrolling back loads history to a line from before 120 lines of output; Send screen to Mac saved a capture on the Mac; Settings connection check; another phone view taking the agent then Open here again; the phone and the Mac typing to each other on one agent; real Codex 0.155.1 and Claude Code 2.1.281 answering a prompt sent from the phone. Rows are drawn full height, so Codex's shaded prompt box shows no seams"
+      "result": "9/9 with a Mac-side client attached the way the desktop is for the whole run: category cards with harness marks and a stopped agent; open, type, send and echo; key bar ^U; wide, emoji, right-to-left and box-drawing output; scrolling back loads history to a line from before 120 lines of output; Send screen to Mac saved a capture on the Mac; Settings connection check; another phone view taking the agent then Open here again; the phone and the Mac typing to each other on one agent; real Codex 0.155.1 and Claude Code 2.1.281 answering a prompt sent from the phone. Rows are drawn full height and block and box characters as cell shapes, so Codex's shaded prompt box and Claude Code's logo show no seams; rows wider than the phone wrap"
     },
     {
       "name": "desktop with a joined view (workspace suite, real Workspace and LiveConnection)",

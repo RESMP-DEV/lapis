@@ -64,6 +64,11 @@ struct Run: Decodable {
     let column: Int?
     let width: Int?
 
+    init(text: String, foreground: String?, background: String?, flags: Int, column: Int?, width: Int?) {
+        (self.text, self.foreground, self.background, self.flags, self.column, self.width) =
+            (text, foreground, background, flags, column, width)
+    }
+
     init(from decoder: Decoder) throws {
         var values = try decoder.unkeyedContainer()
         text = try values.decode(String.self)

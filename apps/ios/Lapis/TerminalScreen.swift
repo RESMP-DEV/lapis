@@ -28,6 +28,7 @@ struct TerminalRow: View {
     let metrics: TerminalMetrics
     let foreground: Color
     let background: Color
+    @Environment(\.displayScale) private var scale
 
     var body: some View {
         Canvas { context, size in
@@ -36,31 +37,61 @@ struct TerminalRow: View {
                 let column = run.column ?? next
                 let cells = run.width ?? run.text.count
                 next = column + cells
-                let x = CGFloat(column) * metrics.cellWidth
                 var ink = run.foreground.flatMap(Color.init(hex:)) ?? foreground
                 var paper = run.background.flatMap(Color.init(hex:))
                 if run.flags & Run.cursor != 0 {
                     (ink, paper) = (paper ?? background, ink)
                 }
                 if let paper {
-                    // Overlap by a hair so neighbouring runs never show a gap.
-                    let rect = CGRect(x: x, y: 0, width: CGFloat(cells) * metrics.cellWidth + 0.5,
-                                      height: size.height)
-                    context.fill(Path(rect), with: .color(paper))
+                    let rect = CGRect(x: CGFloat(column) * metrics.cellWidth, y: 0,
+                                      width: CGFloat(cells) * metrics.cellWidth, height: size.height)
+                    context.fill(Path(CellGlyphs.snapped(rect, scale)), with: .color(paper))
                 }
                 if run.text.allSatisfy({ $0 == " " }) { continue }
                 if run.flags & Run.faint != 0 { ink = ink.opacity(0.55) }
-                var text = Text(run.text)
-                    .font(.system(size: metrics.fontSize, weight: run.flags & Run.bold != 0 ? .bold : .regular,
-                                  design: .monospaced))
-                    .foregroundStyle(ink)
-                if run.flags & Run.italic != 0 { text = text.italic() }
-                if run.flags & Run.underline != 0 { text = text.underline() }
-                if run.flags & Run.strike != 0 { text = text.strikethrough() }
-                context.draw(text, at: CGPoint(x: x, y: size.height / 2), anchor: .leading)
+                draw(run, at: column, cells: cells, ink: ink, height: size.height, in: context)
             }
         }
         .frame(width: CGFloat(columns) * metrics.cellWidth, height: metrics.lineHeight)
+    }
+
+    // Text is drawn in stretches; block and box characters as cell shapes.
+    private func draw(_ run: Run, at column: Int, cells: Int, ink: Color, height: CGFloat,
+                      in context: GraphicsContext) {
+        let characters = Array(run.text)
+        guard characters.count == cells, characters.contains(where: CellGlyphs.isDrawn) else {
+            drawText(run.text, run: run, at: column, ink: ink, height: height, in: context)
+            return
+        }
+        var pending = ""
+        var pendingColumn = column
+        for (offset, character) in characters.enumerated() {
+            if CellGlyphs.isDrawn(character) {
+                drawText(pending, run: run, at: pendingColumn, ink: ink, height: height, in: context)
+                pending = ""
+                let cell = CGRect(x: CGFloat(column + offset) * metrics.cellWidth, y: 0,
+                                  width: metrics.cellWidth, height: height)
+                CellGlyphs.draw(character, in: cell, color: ink, scale: scale, context: context)
+                pendingColumn = column + offset + 1
+            } else {
+                pending.append(character)
+            }
+        }
+        drawText(pending, run: run, at: pendingColumn, ink: ink, height: height, in: context)
+    }
+
+    private func drawText(_ string: String, run: Run, at column: Int, ink: Color, height: CGFloat,
+                          in context: GraphicsContext) {
+        guard !string.isEmpty, !string.allSatisfy({ $0 == " " }) else { return }
+        var text = Text(string)
+            .font(.system(size: metrics.fontSize, weight: run.flags & Run.bold != 0 ? .bold : .regular,
+                          design: .monospaced))
+            .foregroundStyle(ink)
+        if run.flags & Run.italic != 0 { text = text.italic() }
+        if run.flags & Run.underline != 0 { text = text.underline() }
+        if run.flags & Run.strike != 0 { text = text.strikethrough() }
+        context.draw(text, at: CGPoint(x: CGFloat(column) * metrics.cellWidth, y: height / 2),
+                     anchor: .leading)
     }
 }
 
@@ -68,6 +99,9 @@ struct TerminalScreen: View {
     let frame: ScreenFrame?
     let history: [HistoryChunk]
     let historyEnd: Bool
+    let loadingHistory: Bool
+    // Columns that fit the phone; wider rows wrap instead of scrolling sideways.
+    let fitColumns: Int
     let metrics: TerminalMetrics
     let loadOlder: () async -> Void
     @State private var nearTop = false
@@ -80,25 +114,66 @@ struct TerminalScreen: View {
 
     private var rows: [Row] {
         var rows: [Row] = []
+        func add(_ line: [Run], id: String, columns: Int) {
+            let pieces = TerminalScreen.wrap(line, columns: columns, limit: fitColumns)
+            for (part, runs) in pieces.enumerated() {
+                rows.append(Row(id: "\(id).\(part)", runs: runs, columns: min(columns, fitColumns)))
+            }
+        }
         for chunk in history {
             for (index, line) in chunk.lines.enumerated() {
-                rows.append(Row(id: "h\(chunk.page)-\(index)", runs: line, columns: chunk.columns))
+                add(line, id: "h\(chunk.page)-\(index)", columns: chunk.columns)
             }
         }
         if let frame {
             for (index, line) in frame.lines.enumerated() {
-                rows.append(Row(id: "live-\(index)", runs: line, columns: frame.columns))
+                add(line, id: "live-\(index)", columns: frame.columns)
             }
         }
         return rows
     }
 
-    // Rows are drawn lazily, so the stack is sized to the widest row
-    // (history may be wider than the live screen) and pinned to the left.
-    private var contentWidth: CGFloat {
-        let columns = max(frame?.columns ?? 0, history.map(\.columns).max() ?? 0)
-        return CGFloat(columns) * metrics.cellWidth + 8
+    // Splits a row wider than the phone into rows of `limit` cells, the way a
+    // terminal reflows, dropping trailing blank cells first.
+    static func wrap(_ line: [Run], columns: Int, limit: Int) -> [[Run]] {
+        guard columns > limit, limit > 0 else { return [line] }
+        var runs = line
+        while let last = runs.last, last.background == nil, last.flags & Run.cursor == 0,
+              last.text.allSatisfy({ $0 == " " }) {
+            runs.removeLast()
+        }
+        var rows: [[Run]] = [[]]
+        var next = 0
+        for run in runs {
+            var column = run.column ?? next
+            let cells = run.width ?? run.text.count
+            next = column + cells
+            var characters = Array(run.text)
+            // Wide characters: keep the run whole on the row it starts in.
+            guard characters.count == cells else {
+                place(run, text: run.text, column: column, width: cells, limit: limit, into: &rows)
+                continue
+            }
+            while !characters.isEmpty {
+                let room = limit - column % limit
+                let piece = String(characters.prefix(room))
+                place(run, text: piece, column: column, width: piece.count, limit: limit, into: &rows)
+                characters.removeFirst(min(room, characters.count))
+                column += room
+            }
+        }
+        return rows.isEmpty ? [[]] : rows
     }
+
+    private static func place(_ run: Run, text: String, column: Int, width: Int, limit: Int,
+                              into rows: inout [[Run]]) {
+        let row = column / limit
+        while rows.count <= row { rows.append([]) }
+        rows[row].append(Run(text: text, foreground: run.foreground, background: run.background,
+                             flags: run.flags, column: column % limit, width: width))
+    }
+
+    private var contentWidth: CGFloat { CGFloat(fitColumns) * metrics.cellWidth + 8 }
 
     private var accessibleText: String {
         let earlier = history.flatMap(\.lines).map { $0.map(\.text).joined() }
@@ -108,7 +183,7 @@ struct TerminalScreen: View {
     var body: some View {
         let background = frame.flatMap { Color(hex: $0.background) } ?? Theme.background
         let foreground = frame.flatMap { Color(hex: $0.foreground) } ?? .white
-        ScrollView([.vertical, .horizontal]) {
+        ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if frame != nil {
                     historyEdge
@@ -143,11 +218,14 @@ struct TerminalScreen: View {
                 .foregroundStyle(Theme.quiet)
                 .frame(height: 24)
         } else {
+            // Only while a page loads; an empty archive shows nothing.
             HStack(spacing: 6) {
-                ProgressView().controlSize(.mini)
-                Text("Earlier output")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(Theme.quiet)
+                if loadingHistory {
+                    ProgressView().controlSize(.mini)
+                    Text("Earlier output")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(Theme.quiet)
+                }
             }
             .frame(height: 24, alignment: .leading)
             .modifier(LoadsOnAppear(key: history.count, loadOlder: loadOlder))
@@ -194,10 +272,10 @@ private struct FollowsBottom: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
             content
-                .defaultScrollAnchor(.bottomLeading, for: .initialOffset)
-                .defaultScrollAnchor(.bottomLeading, for: .sizeChanges)
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .defaultScrollAnchor(.bottom, for: .sizeChanges)
         } else {
-            content.defaultScrollAnchor(.bottomLeading)
+            content.defaultScrollAnchor(.bottom)
         }
     }
 }
