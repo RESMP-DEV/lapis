@@ -4,4 +4,5 @@ reviews:
   auto_review:
     enabled: true
     base_branches:
-      - [lapis]
+      - main
+      - feature/agent-strip
