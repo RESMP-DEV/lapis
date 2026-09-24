@@ -6,6 +6,7 @@ and includes the phone. The app's default gateway is this Mac's Tailscale
 name. Without --device, the one paired iPhone that devicectl can reach is used.
 
     uv run --no-project python scripts/install_ios_app.py [--device ID] [--build-only]
+        [--wait MINUTES]
 """
 
 import argparse
@@ -16,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -213,11 +215,21 @@ def main():
         "--host", help="gateway host; defaults to this Mac's Tailscale name"
     )
     parser.add_argument("--build-only", action="store_true")
+    parser.add_argument(
+        "--wait",
+        type=float,
+        default=0,
+        help="minutes to wait for the phone to become reachable",
+    )
     args = parser.parse_args()
     app = build(args.host or mac_host())
     if args.build_only:
         return 0
+    deadline = time.monotonic() + args.wait * 60
     device = args.device or reachable_phone()
+    while device is None and time.monotonic() < deadline:
+        time.sleep(30)
+        device = reachable_phone()
     if device is None:
         raise SystemExit(
             "No iPhone is reachable. Unlock it on the same Wi-Fi as this Mac (or connect "
