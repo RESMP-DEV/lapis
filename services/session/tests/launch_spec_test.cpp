@@ -71,7 +71,11 @@ int main(int argc, char** argv) {
                         "dd6176abd6e16ec30ef870d91a43209995ca94bcd7440c5f9f8474872b68ef17"}}) {
             auto spec = pinned;
             spec.agent = mode;
-            const auto actual = launch_fingerprint(spec).toHex();
+            // Production fingerprints canonicalized launches. Exercise the
+            // same contract here so a canonicalization regression changes the
+            // pinned identity instead of hiding behind an already-canonical
+            // literal.
+            const auto actual = launch_fingerprint(validate_launch(spec)).toHex();
             if (actual != QByteArray(expected)) {
                 std::cerr << "fingerprint changed for mode " << static_cast<int>(mode) << ": "
                           << actual.constData() << '\n';

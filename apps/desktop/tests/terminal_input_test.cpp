@@ -219,18 +219,17 @@ void input_contract(bool background) {
          std::array{std::pair{Qt::Key_Left, '\x01'}, std::pair{Qt::Key_Right, '\x05'},
                     std::pair{Qt::Key_Backspace, '\x15'}, std::pair{Qt::Key_Delete, '\x0b'}}) {
         for (const auto origin : {Qt::NoModifier, Qt::KeypadModifier}) {
-            QKeyEvent command_arrow(QEvent::KeyPress, key, Qt::MetaModifier | origin);
-            QCoreApplication::sendEvent(&surface, &command_arrow);
-            require(command_arrow.isAccepted(), "Command-arrow did not claim terminal input");
+            QKeyEvent command_key(QEvent::KeyPress, key, Qt::MetaModifier | origin);
+            QCoreApplication::sendEvent(&surface, &command_key);
+            require(command_key.isAccepted(), "Command chord did not claim terminal input");
             require(
                 text_frames(peer, 1) == QByteArray(1, expected),
-                "Command-arrow must send Control-A/E (and Command-Backspace/Delete Control-U/K)");
+                "Command chord must send Control-A/E (and Command-Backspace/Delete Control-U/K)");
             for (const auto modifier : {Qt::ShiftModifier, Qt::AltModifier, Qt::ControlModifier}) {
-                QKeyEvent modified_arrow(QEvent::KeyPress, key,
-                                         Qt::MetaModifier | origin | modifier);
-                QCoreApplication::sendEvent(&surface, &modified_arrow);
-                require(!modified_arrow.isAccepted(), "Modified Command-arrow was consumed");
-                require(text_frames(peer).isEmpty(), "Modified Command-arrow sent terminal input");
+                QKeyEvent modified_key(QEvent::KeyPress, key, Qt::MetaModifier | origin | modifier);
+                QCoreApplication::sendEvent(&surface, &modified_key);
+                require(!modified_key.isAccepted(), "Modified Command chord was consumed");
+                require(text_frames(peer).isEmpty(), "Modified Command chord sent terminal input");
             }
         }
     }

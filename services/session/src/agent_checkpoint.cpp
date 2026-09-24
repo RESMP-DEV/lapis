@@ -1,7 +1,7 @@
 #include "agent_checkpoint.hpp"
 
+#include "platform/posix/unique_fd.hpp"
 #include <QFile>
-#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <fcntl.h>
 #include <stdexcept>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -19,8 +20,8 @@ namespace {
 constexpr QByteArrayView marker{"\x1b]1337;SetUserVar=agent_checkpoint="};
 constexpr qsizetype max_sequence = 8192;
 constexpr qsizetype max_record = 4096;
-constexpr std::array known_agents{"claude", "codex",  "grok", "opencode", "omp",
-                                  "kimi",   "gemini", "agy",  "pi"};
+constexpr std::array known_agents{"claude", "codex", "grok",   "opencode",
+                                  "omp",    "kimi",  "gemini", "agy"};
 
 bool known_agent(const QString& agent) {
     return std::any_of(known_agents.begin(), known_agents.end(),
@@ -72,6 +73,21 @@ bool safe_existing(const QString& path, bool* exists) {
     return S_ISREG(info.st_mode) && info.st_uid == ::geteuid() && info.st_nlink == 1 &&
            (info.st_mode & 07777U) == 0600U && info.st_size <= max_record;
 }
+
+// Open the record itself without following a final symlink, then trust only
+// the open descriptor: a path checked with lstat can be swapped before QFile
+// opens it.
+bool safe_open_record(const QString& path, posix::UniqueFd& descriptor) {
+    descriptor.reset(::open(QFile::encodeName(path).constData(),
+                            O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK));
+    if (!descriptor)
+        return false;
+    struct stat info{};
+    if (::fstat(descriptor.get(), &info) != 0)
+        return false;
+    return S_ISREG(info.st_mode) && info.st_uid == ::geteuid() && info.st_nlink == 1 &&
+           (info.st_mode & 07777U) == 0600U && info.st_size <= max_record;
+}
 } // namespace
 
 bool valid_resume_identity(const QString& value) {
@@ -103,6 +119,15 @@ std::optional<ResumeRecord> CheckpointScanner::scan(QByteArrayView output) {
         const auto bell = data.indexOf('\x07', value_start);
         const auto terminator = data.indexOf(QByteArrayView("\x1b\\"), value_start);
         const auto end = bell >= 0 && (terminator < 0 || bell < terminator) ? bell : terminator;
+        // A base64 value cannot contain the escape that starts another marker.
+        // If one appears first, this sequence has no valid terminator; rescan
+        // at that marker instead of gluing the values together and skipping
+        // both when decoding fails.
+        if (const auto next = data.indexOf(marker, value_start);
+            next >= 0 && (end < 0 || next < end)) {
+            from = next;
+            continue;
+        }
         if (end < 0) {
             // Incomplete: keep it unless it has grown beyond any real checkpoint.
             carry_ = data.size() - start > max_sequence ? QByteArray()
@@ -135,18 +160,21 @@ std::optional<QString> codex_thread_from_open_files(const QString& listing) {
 
 std::optional<ResumeRecord> read_resume_record(const QString& endpoint) {
     const auto path = record_path(endpoint);
-    bool exists = false;
-    if (!safe_existing(path, &exists) || !exists)
+    posix::UniqueFd descriptor;
+    if (!safe_open_record(path, descriptor))
         return std::nullopt;
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly))
+    QFile file;
+    if (!file.open(descriptor.get(), QIODevice::ReadOnly, QFileDevice::DontCloseHandle))
         return std::nullopt;
-    const auto document = QJsonDocument::fromJson(file.read(max_record + 1));
+    const auto bytes = file.read(max_record + 1);
+    if (bytes.isEmpty() || bytes.size() > max_record)
+        return std::nullopt;
+    const auto document = QJsonDocument::fromJson(bytes);
     if (!document.isObject())
         return std::nullopt;
     const auto object = document.object();
     ResumeRecord record;
-    record.agent = object.value(QStringLiteral("agent")).toString();
+    record.agent = object.value(QStringLiteral("agent")).toString().toLower();
     record.session_id = object.value(QStringLiteral("session_id")).toString();
     if (!known_agent(record.agent) || !valid_resume_identity(record.session_id))
         return std::nullopt;

@@ -46,6 +46,13 @@ void scanner_finds_checkpoints() {
     require(found && found->agent == QStringLiteral("codex") &&
                 found->session_id == QStringLiteral("second"),
             "the newest checkpoint in a read wins, with either terminator");
+    // A lost first terminator must not glue its value to the next checkpoint.
+    const auto terminated = sequence({{"agent", "kimi"}, {"session_id", "recover"}});
+    CheckpointScanner recovered;
+    const auto recovered_record = recovered.scan(terminated.chopped(1) + terminated);
+    require(recovered_record && recovered_record->agent == QStringLiteral("kimi") &&
+                recovered_record->session_id == QStringLiteral("recover"),
+            "a marker without a terminator does not hide the next checkpoint");
     require(!scanner.scan("plain output without any checkpoint"), "plain output has none");
 }
 
@@ -55,6 +62,8 @@ void scanner_rejects_unusable_checkpoints() {
             "an identity that looks like an option is refused");
     require(!scanner.scan(sequence({{"agent", "vim"}, {"session_id", "abc"}})),
             "an unknown agent is refused");
+    require(!scanner.scan(sequence({{"agent", "pi"}, {"session_id", "abc"}})),
+            "an agent without a lapis resume route is refused");
     require(!scanner.scan(sequence({{"agent", "claude"}, {"session_id", "has space"}})),
             "an identity with whitespace is refused");
     require(!scanner.scan(sequence(
@@ -89,6 +98,19 @@ void records_are_private() {
     require(record && record->agent == QStringLiteral("claude") &&
                 record->session_id == QStringLiteral("s-1"),
             "a written record reads back");
+    const auto record_path = endpoint + QStringLiteral(".resume");
+    QFile foreign_case(record_path);
+    require(foreign_case.open(QIODevice::WriteOnly | QIODevice::Truncate),
+            "open the record for a foreign spelling");
+    const QJsonObject uppercase{{"agent", "Claude"}, {"session_id", "s-1"}};
+    require(foreign_case.write(QJsonDocument(uppercase).toJson(QJsonDocument::Compact)) > 0 &&
+                foreign_case.setPermissions(QFile::ReadOwner | QFile::WriteOwner),
+            "write a normalized-agent test record");
+    foreign_case.close();
+    const auto normalized = lapis::session::read_resume_record(endpoint);
+    require(normalized && normalized->agent == QStringLiteral("claude") &&
+                normalized->session_id == QStringLiteral("s-1"),
+            "record agents use the same lowercase spelling as checkpoints");
     struct stat info{};
     require(::stat(QFile::encodeName(endpoint + QStringLiteral(".resume")).constData(), &info) ==
                     0 &&
@@ -110,6 +132,12 @@ void records_are_private() {
                         link_endpoint + QStringLiteral(".resume")),
             "create a symlinked record");
     require(!lapis::session::read_resume_record(link_endpoint), "a symlinked record is ignored");
+    const auto fifo_endpoint = QDir(directory.path()).filePath(QStringLiteral("pipe.sock"));
+    require(::mkfifo(QFile::encodeName(fifo_endpoint + QStringLiteral(".resume")).constData(),
+                     0600) == 0,
+            "create a non-regular record");
+    require(!lapis::session::read_resume_record(fifo_endpoint),
+            "opening an untrusted FIFO does not block waiting for a writer");
 }
 // An app-server's open files name its thread's rollout; subagent rollouts
 // opened later do not replace the conversation.

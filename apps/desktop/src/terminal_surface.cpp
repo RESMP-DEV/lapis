@@ -1210,8 +1210,8 @@ void TerminalSurface::commandKey(QKeyEvent& event) {
     // implement that as Ctrl-A and Ctrl-E, so translate rather than
     // reimplement line editing inside the terminal.
     // AppKit also marks physical arrow keys as keypad keys.
-    if ((event.modifiers() & ~Qt::KeypadModifier) == Qt::MetaModifier &&
-        (event.key() == Qt::Key_Left || event.key() == Qt::Key_Right)) {
+    const bool bare_command = (event.modifiers() & ~Qt::KeypadModifier) == Qt::MetaModifier;
+    if (bare_command && (event.key() == Qt::Key_Left || event.key() == Qt::Key_Right)) {
         const bool line_start = event.key() == Qt::Key_Left;
         document_->sendText(QByteArray(1, line_start ? '\x01' : '\x05'));
         event.accept();
@@ -1220,8 +1220,7 @@ void TerminalSurface::commandKey(QKeyEvent& event) {
     // Command-Backspace deletes to the line start (Ctrl-U) and
     // Command-Delete to the line end (Ctrl-K), as in iTerm2's natural text
     // editing and the shells' emacs bindings.
-    if ((event.modifiers() & ~Qt::KeypadModifier) == Qt::MetaModifier &&
-        (event.key() == Qt::Key_Backspace || event.key() == Qt::Key_Delete)) {
+    if (bare_command && (event.key() == Qt::Key_Backspace || event.key() == Qt::Key_Delete)) {
         document_->sendText(QByteArray(1, event.key() == Qt::Key_Backspace ? '\x15' : '\x0b'));
         event.accept();
         return;

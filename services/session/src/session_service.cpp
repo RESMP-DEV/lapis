@@ -205,9 +205,10 @@ class SessionService final : public QObject {
         if (!valid_resume_identity(session_id) ||
             (resume_.agent == agent && resume_.session_id == session_id))
             return;
-        resume_ = {agent, session_id};
+        const ResumeRecord candidate{agent, session_id};
         try {
-            write_resume_record(resume_endpoint_, resume_);
+            write_resume_record(resume_endpoint_, candidate);
+            resume_ = candidate;
         } catch (const std::exception& error) {
             qWarning().noquote() << "Resume record not saved:" << error.what();
         }

@@ -10,6 +10,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLoggingCategory>
 #include <QPointer>
 #include <QTemporaryDir>
 #include <QThread>
@@ -446,6 +447,28 @@ bool waitFor(const std::function<bool()>& condition, int milliseconds) {
 
 QString uuid() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
 
+class ScopedEnvironmentValue {
+  public:
+    ScopedEnvironmentValue(const char* name, const QByteArray& value)
+        : name_(name), had_previous_(!qEnvironmentVariableIsEmpty(name)),
+          previous_(qEnvironmentVariable(name)) {
+        qputenv(name_, value);
+    }
+    ~ScopedEnvironmentValue() {
+        if (had_previous_)
+            qputenv(name_, previous_.toUtf8());
+        else
+            qunsetenv(name_);
+    }
+    ScopedEnvironmentValue(const ScopedEnvironmentValue&) = delete;
+    ScopedEnvironmentValue& operator=(const ScopedEnvironmentValue&) = delete;
+
+  private:
+    const char* name_;
+    bool had_previous_;
+    QString previous_;
+};
+
 QJsonObject agentRecord(const QString& directory, const QString& id, const char* category) {
     return QJsonObject{{"id", id},
                        {"title", id},
@@ -725,6 +748,68 @@ void closeOnHistoryPageEndsTheAgent() {
             "the tab closes once the process has exited");
 }
 
+// Restart must not replace a connection while its close request is in flight;
+// doing so would erase the ended transition and make the tab impossible to close.
+void restartRefusesClosingAgent() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "closing-agent directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QString id = uuid();
+    WorkspaceOptions options;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    auto record = agentRecord(canonical, id, "general");
+    record.insert(QStringLiteral("harness"), QStringLiteral("gemini"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                    {"agents", QJsonArray{record}}});
+    Workspace workspace(WorkspaceMode::live, options);
+    auto* agent = workspace.session(id);
+    require(agent != nullptr, "closing-agent fixture loads");
+    agent->setClosing(true);
+    require(!workspace.restartAgent(id), "a closing agent is not restarted");
+    require(workspace.workspaceError() == QStringLiteral("This agent is still closing."),
+            "the restart error names the pending close");
+}
+
+// validate_launch owns detailed constraints; restart must retain that cause in
+// the log instead of translating every rejection into a missing program.
+void restartLogsValidationFailures() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "validation directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QString id = uuid();
+    WorkspaceOptions options;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    auto record = agentRecord(canonical, id, "general");
+    record.insert(QStringLiteral("harness"), QStringLiteral("gemini"));
+    QStringList arguments;
+    for (int index = 0; index < 64; ++index)
+        arguments.append(QString(4096, QLatin1Char('x')));
+    record.insert(QStringLiteral("arguments"), QJsonArray::fromStringList(arguments));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                    {"agents", QJsonArray{record}}});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "oversized-argument fixture loads");
+    QString warning;
+    const auto previous_handler = qInstallMessageHandler(
+        [&warning](QtMsgType type, const QMessageLogContext&, const QString& message) {
+            if (type == QtWarningMsg)
+                warning = message;
+        });
+    const bool accepted = workspace.restartAgent(id);
+    qInstallMessageHandler(previous_handler);
+    require(!accepted, "an invalid restored launch is rejected");
+    require(warning.contains(QStringLiteral("Launch values exceed 64 KiB")),
+            "validation failure records its actual cause");
+}
+
 // The session service ends the agent's process group; the tab closes after.
 // Agents whose session service is gone (a reboot or crash) come back when
 // lapis opens, resuming the conversation their service recorded, like a
@@ -746,6 +831,34 @@ void agentsRestoreAfterServiceLoss() {
     const QString resumed = uuid();
     const QString fresh = uuid();
     const QString foreign = uuid();
+    const QString codex_auto = uuid();
+    const QString codex_explicit_saved = uuid();
+    const QString codex_explicit_missing = uuid();
+    const QString codex_symlink = uuid();
+    const auto previous_codex_home = qEnvironmentVariable("CODEX_HOME");
+    const auto codex_home = QDir(canonical).filePath(QStringLiteral("codex-home"));
+    const auto codex_sessions = QDir(codex_home).filePath(QStringLiteral("sessions"));
+    const auto bounded_folder = QDir(codex_sessions).filePath(QStringLiteral("2026/09/23"));
+    const auto symlink_folder = QDir(codex_sessions).filePath(QStringLiteral("2026/09/24"));
+    const auto outside_folder =
+        QDir(canonical).filePath(QStringLiteral("codex-outside/2026/09/24"));
+    require(QDir().mkpath(bounded_folder), "create bounded Codex date folder");
+    require(QDir().mkpath(outside_folder), "create symlinked rollout target");
+    const auto write_rollout = [&](const QString& path) {
+        QFile file(path);
+        require(file.open(QIODevice::WriteOnly), "write Codex rollout fixture");
+    };
+    const auto rollout = [&](const QString& folder, const QString& id) {
+        write_rollout(QDir(folder).filePath(QStringLiteral("rollout-2026-09-23T10-30-00-") + id +
+                                            QStringLiteral(".jsonl")));
+    };
+    rollout(bounded_folder, codex_auto);
+    rollout(bounded_folder, codex_explicit_saved);
+    rollout(outside_folder, codex_symlink);
+    require(QFile::link(outside_folder, symlink_folder),
+            "link an outside directory from a numeric date folder");
+    write_rollout(QDir(codex_sessions).filePath(QStringLiteral("rollout-root-only.jsonl")));
+    ScopedEnvironmentValue codex_home_scope("CODEX_HOME", codex_home.toUtf8());
     const auto record = [&](const QString& id, const char* harness, const QJsonArray& arguments) {
         auto value = agentRecord(canonical, id, "general");
         value.insert(QStringLiteral("program"), script);
@@ -762,8 +875,13 @@ void agentsRestoreAfterServiceLoss() {
             {"activeCategory", "general"},
             {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
             {"agents",
-             QJsonArray{record(resumed, "kimi", {"--yolo", "--session", "old-conversation"}),
-                        record(fresh, "gemini", {"--yolo"}), record(foreign, "kimi", {})}}});
+             QJsonArray{
+                 record(resumed, "kimi", {"--yolo", "--session", "old-conversation"}),
+                 record(fresh, "gemini", {"--yolo"}), record(foreign, "kimi", {}),
+                 record(codex_auto, "codex", {"--user"}),
+                 record(codex_explicit_saved, "codex", {"--user", "resume", "old-saved"}),
+                 record(codex_explicit_missing, "codex", {"--user", "resume", "old-missing"}),
+                 record(codex_symlink, "codex", {})}}});
     const auto endpoint = [&](const QString& id) {
         return QDir(canonical).filePath(id + QStringLiteral(".sock"));
     };
@@ -771,6 +889,14 @@ void agentsRestoreAfterServiceLoss() {
                                         {QStringLiteral("kimi"), QStringLiteral("k-123")});
     lapis::session::write_resume_record(endpoint(foreign),
                                         {QStringLiteral("claude"), QStringLiteral("c-9")});
+    lapis::session::write_resume_record(endpoint(codex_auto),
+                                        {QStringLiteral("codex"), codex_auto});
+    lapis::session::write_resume_record(endpoint(codex_explicit_saved),
+                                        {QStringLiteral("codex"), codex_explicit_saved});
+    lapis::session::write_resume_record(endpoint(codex_explicit_missing),
+                                        {QStringLiteral("codex"), codex_explicit_missing});
+    lapis::session::write_resume_record(endpoint(codex_symlink),
+                                        {QStringLiteral("codex"), codex_symlink});
     {
         Workspace untouched(WorkspaceMode::live, options);
         require(untouched.workspaceError().isEmpty(), "load without restoring");
@@ -785,17 +911,28 @@ void agentsRestoreAfterServiceLoss() {
         return QJsonArray{};
     };
     require(arguments(resumed) == QJsonArray{"--yolo", "--session", "old-conversation"},
-            "restore is off unless the app asks for it");
+            "restore is off unless the app asks for it; its resume argv is unchanged");
     options.restoreAgents = true;
     Workspace workspace(WorkspaceMode::live, options);
     require(workspace.workspaceError().isEmpty(), "restore agents");
-    require(arguments(resumed) == QJsonArray{"--yolo", "--session", "k-123"},
-            "the recorded conversation replaces the previous one; the user's flag stays");
+    require(arguments(resumed) == QJsonArray{"--yolo", "--session", "old-conversation"},
+            "a saved record cannot replace the user's explicit resume argv");
     require(arguments(fresh) == QJsonArray{"--yolo"},
             "a harness without a known resume option restarts fresh");
     require(arguments(foreign) == QJsonArray{},
             "a conversation recorded by another CLI is not passed on");
-    for (const auto& id : {resumed, fresh, foreign}) {
+    require(qEnvironmentVariable("CODEX_HOME") == codex_home,
+            "the test's CODEX_HOME override is active");
+    require(arguments(codex_auto) == QJsonArray{"--user", "resume", codex_auto},
+            "a saved dated rollout is appended only without a user resume token");
+    require(arguments(codex_explicit_saved) == QJsonArray{"--user", "resume", "old-saved"},
+            "a user resume token wins even when a saved replacement exists");
+    require(arguments(codex_explicit_missing) == QJsonArray{"--user", "resume", "old-missing"},
+            "a user resume token wins when no saved replacement exists");
+    require(arguments(codex_symlink).isEmpty(),
+            "a rollout behind a symlinked date directory is not adopted");
+    for (const auto& id : {resumed, fresh, foreign, codex_auto, codex_explicit_saved,
+                           codex_explicit_missing, codex_symlink}) {
         auto* item = workspace.session(id);
         require(waitFor([item] { return item->inputReady(); }, 10000),
                 "a restored agent runs under a new service");
@@ -813,10 +950,13 @@ void agentsRestoreAfterServiceLoss() {
     workspace.clearError();
     require(waitFor([ended] { return ended->inputReady(); }, 10000),
             "the restarted agent runs again");
-    for (const auto& id : {resumed, fresh, foreign})
+    for (const auto& id : {resumed, fresh, foreign, codex_auto, codex_explicit_saved,
+                           codex_explicit_missing, codex_symlink})
         require(workspace.closeSession(id), "close a restored agent");
     require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
             "restored agents close");
+    require(qEnvironmentVariable("CODEX_HOME") == previous_codex_home,
+            "the test restores the previous CODEX_HOME");
 }
 
 // Opt-in, with LAPIS_TEST_CODEX_HOME naming a Codex home that uses a local
@@ -826,7 +966,8 @@ void codexConversationRecoveredWithoutRecord() {
     const auto home = qEnvironmentVariable("LAPIS_TEST_CODEX_HOME");
     if (home.isEmpty())
         return;
-    qputenv("CODEX_HOME", home.toUtf8());
+    const auto previous_home = qEnvironmentVariable("CODEX_HOME");
+    ScopedEnvironmentValue codex_home_scope("CODEX_HOME", home.toUtf8());
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-codex-XXXXXX"));
     require(directory.isValid(), "codex recovery directory");
     const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
@@ -866,6 +1007,8 @@ void codexConversationRecoveredWithoutRecord() {
     require(reopened.closeSession(id), "close the Codex agent");
     require(waitFor([&reopened] { return reopened.sessions().isEmpty(); }, 15000),
             "the Codex agent closes");
+    require(qEnvironmentVariable("CODEX_HOME") == previous_home,
+            "the Codex recovery test restores the previous CODEX_HOME");
 }
 
 void closeEndsTheAgent(const char* script, int minimum_ms) {
@@ -913,7 +1056,9 @@ int main(int argc, char** argv) {
         agentArgumentsPersist();
         outputEstimate();
         agentsStartWithoutParentSessionMarkers();
+        restartRefusesClosingAgent();
         agentsRestoreAfterServiceLoss();
+        restartLogsValidationFailures();
         codexConversationRecoveredWithoutRecord();
         closeEndsTheAgent("exec sleep 600", 0);
         // An agent that ignores SIGHUP is ended by the SIGTERM escalation.
