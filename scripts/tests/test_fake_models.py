@@ -27,10 +27,16 @@ class ProtocolDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
                     reader, writer = await asyncio.open_connection(
                         *server.sockets[0].getsockname()
                     )
-                    writer.write(raw)
-                    await writer.drain()
-                    writer.close()
-                    await writer.wait_closed()
+                    try:
+                        writer.write(raw)
+                        writer.write_eof()
+                        await writer.drain()
+                        # Server.handle logs before closing its side. Client
+                        # closure alone does not establish that completion.
+                        self.assertEqual(await asyncio.wait_for(reader.read(), 2), b"")
+                    finally:
+                        writer.close()
+                        await writer.wait_closed()
                 reader, writer = await asyncio.open_connection(
                     *server.sockets[0].getsockname()
                 )

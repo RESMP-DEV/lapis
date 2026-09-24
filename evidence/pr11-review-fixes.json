@@ -26,5 +26,11 @@
   "summaries": [
     "Added a direct QDir include to live_connection_test.cpp.",
     "Exercised every qualified Codex binary digest in the observer fixture."
-  ]
+  ],
+  "followup": {
+    "recorded_at": "2026-09-24T06:41:40.996604+00:00",
+    "reviewed_revision": "03da59ce000c601c516c9539c38875908f5843d2",
+    "finding": "Await server EOF before asserting malformed-request log entries",
+    "validation": "120 Python tests and all common quality checks pass; compiled code unchanged"
+  }
 }
