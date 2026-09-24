@@ -3,6 +3,7 @@
 #include "workspace.hpp"
 
 #include <QCoreApplication>
+#include <QDataStream>
 #include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
@@ -838,6 +839,15 @@ class JoinedView {
         socket_.write(wire::frame(wire::Kind::text, wire::encode_control({attachment_, bytes})));
         socket_.flush();
     }
+    void resize(quint16 columns, quint16 rows) {
+        namespace wire = lapis::session::wire;
+        QByteArray bytes;
+        QDataStream out(&bytes, QIODevice::WriteOnly);
+        out << columns << rows;
+        socket_.write(wire::frame(wire::Kind::resize, wire::encode_control({attachment_, bytes})));
+        socket_.flush();
+    }
+    void leave() { socket_.disconnectFromServer(); }
 
   private:
     QLocalSocket socket_;
@@ -996,6 +1006,47 @@ void harnessesUpdateBeforeNewAgents() {
                 "the stand-in agents close");
     }
     qputenv("PATH", path);
+}
+
+// The phone's size lasts only while someone uses the phone: coming back to the
+// desktop takes the size back, and so does the phone leaving.
+void phoneSizeYieldsToTheDesktop() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-size-XXXXXX"));
+    require(directory.isValid(), "service directory");
+    WorkspaceOptions options;
+    options.endpoint = QDir(QFileInfo(directory.path()).canonicalFilePath())
+                           .filePath(QStringLiteral("agent.sock"));
+    options.launch = lapis::session::LaunchSpec{
+        QStringLiteral("/bin/sh"),
+        {QStringLiteral("-c"), QStringLiteral("while read line; do echo \"got:$line\"; done")},
+        directory.path(),
+        {80, 24},
+        lapis::session::AgentMode::terminal};
+    options.mode = lapis::session::wire::AttachMode::create;
+    Workspace workspace(WorkspaceMode::live, options);
+    auto* agent = workspace.focusedSession();
+    require(agent != nullptr && waitFor([agent] { return agent->inputReady(); }, 10000),
+            "the desktop is attached");
+    const lapis::session::TerminalSize desk{100, 30};
+    const lapis::session::TerminalSize phone_size{40, 20};
+    const auto shows = [agent](lapis::session::TerminalSize size) {
+        return waitFor([agent, size] { return agent->snapshot().size == size; }, 5000);
+    };
+    agent->resizeTerminal(desk);
+    require(shows(desk), "the desktop sets its size");
+    JoinedView phone(options.endpoint, lapis::session::validate_launch(*options.launch));
+    require(phone.waitForText(QString(), 5000), "the phone joins");
+    phone.resize(phone_size.columns, phone_size.rows);
+    require(shows(phone_size), "the phone takes the size when it opens the agent");
+    agent->claimTerminalSize();
+    require(shows(desk), "coming back to the desktop takes the size back");
+    phone.resize(phone_size.columns, phone_size.rows);
+    require(shows(phone_size), "the phone takes it again");
+    phone.leave();
+    require(shows(desk), "the phone leaving hands the size back to the desktop");
+    require(workspace.closeSession(agent->sessionId()) &&
+                waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "the size fixture closes");
 }
 
 // Closing an agent while a history page shows ends it: the page hides input,
@@ -1521,6 +1572,7 @@ int main(int argc, char** argv) {
         joinedViewStaysInSync();
         harnessesUpdateBeforeNewAgents();
         windowWaitsForTheRestoreHelper();
+        phoneSizeYieldsToTheDesktop();
         std::cout << "workspace categories, identity, persistence, status and closing passed\n";
         return 0;
     } catch (const std::exception& error) {

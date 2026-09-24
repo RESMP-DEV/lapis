@@ -1784,9 +1784,16 @@ A prototype, deliberately simpler than the SSH design first proposed:
   gathering more than a screen of rows per load since pages can be small, and
   appends newer pages while history is shown so it stays contiguous with the
   live screen. The desktop reattaching never retires a view. Each
-  client's last requested size is kept and typing from a client applies it,
-  like tmux's `window-size latest`, so both devices always show the same screen
-  at the size of the one in use. A service started before joining existed
+  client's last requested size is kept; a resize or typing from a client
+  applies it, like tmux's `window-size latest`, so both devices always show the
+  same screen at the size of the one in use. When the view whose size applies
+  leaves (the phone closes the agent or goes to the background), the service
+  applies the desktop's size again. The desktop also claims its size when
+  someone comes back to it without typing: the window activating, the agent
+  shown on the stage, or the pointer moving over it. It resends its size once
+  per size shown, and ignores hover events repeated at a resting pointer, which
+  Qt Quick sends as the scene changes, so a busy agent under an idle cursor
+  cannot take the size from the phone. A service started before joining existed
   rejects the mode; the gateway then takes the agent over in discover mode (the
   desktop card reads replaced until Reconnect agent) and tells the phone.
   Screens go out as server-sent events of styled runs (text,

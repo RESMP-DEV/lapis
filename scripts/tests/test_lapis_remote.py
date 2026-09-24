@@ -485,7 +485,8 @@ class LiveServiceTests(unittest.TestCase):
                 before = page["page"]
             rows = [row.rstrip() for row in "\n".join(seen).splitlines()]
             self.assertEqual(rows[0], "ready")
-            self.assertIn("got:line1", rows)
+            # Echo of the typed-ahead lines can share a row with the first reply.
+            self.assertTrue(any(row.endswith("got:line1") for row in rows), rows)
             # Newer pages follow on from a loaded page, for new output.
             status, newer = server.request("GET", path + f"/history?after={before}")
             self.assertEqual(status, 200)

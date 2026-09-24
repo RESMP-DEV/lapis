@@ -270,7 +270,10 @@ agent's earlier output from the service's archived history. **Send screen to
 Mac** in the agent's menu saves a screenshot and the exact screen data under
 `runtime/phone-captures/` for debugging what the phone drew. The phone
 joins the agent beside the desktop: both show the same screen, either can type,
-and the terminal takes the size of whichever device typed last. Agents started
+and the terminal takes the size of the device in use. Opening the agent on the
+phone gives it the phone's size; closing it or locking the phone, activating the
+lapis window, moving the pointer over the agent, or typing on the Mac gives it
+back. Agents started
 before this build run services that cannot be joined; opening one on the phone
 takes it from the desktop (its card offers **Reconnect agent**), and the phone
 says so. Restarting such an agent gives it a service that can. The Mac must be

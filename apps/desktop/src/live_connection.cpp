@@ -121,6 +121,10 @@ void SessionPreview::sendKey(session::TerminalKey key, session::KeyModifiers mod
     if (live_)
         live_->send(wire::Kind::key, bytes);
 }
+void SessionPreview::claimTerminalSize() {
+    if (live_ && !history_active_ && !history_request_pending_)
+        live_->claimSize();
+}
 void SessionPreview::resizeTerminal(session::TerminalSize size) {
     if (!live_)
         return;
@@ -360,6 +364,17 @@ void LiveConnection::resize(session::TerminalSize size) {
     send(wire::Kind::resize, bytes);
 }
 
+void LiveConnection::claimSize() {
+    if (!ready_ || !wanted_size_requested_ || shown_size_ == wanted_size_ ||
+        claimed_over_ == shown_size_)
+        return;
+    claimed_over_ = shown_size_;
+    QByteArray bytes;
+    QDataStream out(&bytes, QIODevice::WriteOnly);
+    out << quint16(wanted_size_.columns) << quint16(wanted_size_.rows);
+    send(wire::Kind::resize, bytes);
+}
+
 void LiveConnection::setWantedSize(session::TerminalSize size) {
     wanted_size_requested_ = true;
     wanted_size_ = size;
@@ -423,6 +438,10 @@ void LiveConnection::acceptSnapshot(wire::SnapshotMessage message) {
     // resizing a reattached agent to the launch default.
     if (initial && !wanted_size_requested_)
         wanted_size_ = message.snapshot.size;
+    if (message.snapshot.size != shown_size_) {
+        shown_size_ = message.snapshot.size;
+        claimed_over_.reset();
+    }
     document_.setSnapshotTiming(
         {{QStringLiteral("sequence"), QVariant::fromValue(message.sequence)},
          {QStringLiteral("pty_read_ns"), QVariant::fromValue(message.timing.pty_read_ns)},
