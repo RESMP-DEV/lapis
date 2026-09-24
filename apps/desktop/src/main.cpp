@@ -78,14 +78,19 @@ bool valid_connection_options(const QCommandLineParser& parser) {
         return false;
     }
     if ((codex || claude) && parser.positionalArguments().isEmpty()) {
-        qCritical(codex ? "--codex requires a Codex executable after --"
-                        : "--claude requires a Claude executable after --");
+        qCritical().noquote() << (codex ? "--codex requires a Codex executable after --"
+                                        : "--claude requires a Claude executable after --");
         return false;
     }
     const bool create = parser.isSet(QStringLiteral("new-session"));
     const bool discover = parser.isSet(QStringLiteral("discover"));
     if (create && discover) {
         qCritical("--new-session and --discover are mutually exclusive");
+        return false;
+    }
+    if ((create || discover) && !parser.isSet(QStringLiteral("socket")) &&
+        parser.positionalArguments().isEmpty()) {
+        qCritical("--new-session and --discover require --socket or an explicit program");
         return false;
     }
     if ((create || discover) && parser.isSet(QStringLiteral("ui-preview"))) {

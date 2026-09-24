@@ -1,0 +1,30 @@
+{
+  "recorded_at": "2026-09-24T06:22:48.054423+00:00",
+  "scope": "PR 11 bot review fixes on macOS",
+  "base_revision": "080fbdbdf8b9cf2c02299d4bfd5770b01ada075c",
+  "source_diff_sha256": "6e00155ce9425cbdc7b3800da20066d827e40b7af480ba14ed5951fa744362d9",
+  "findings": {
+    "inline_fixed": 26,
+    "inline_explained": 3,
+    "summary_fixed": 2
+  },
+  "checks": {
+    "quality": "120 Python tests; Ruff, format, symlink, ignore and diff checks pass",
+    "desktop": "21 CTests plus compiler warnings, clang-format, clang-tidy and Cppcheck pass",
+    "ui_preview": "isolated capture and invalid-option cases pass",
+    "cli": "explicit launch, lifecycle, recovery and desktop cases pass",
+    "asan": "8 affected lifecycle/protocol suites pass",
+    "tsan": "8 affected lifecycle/protocol suites pass",
+    "native_input": "diagnostic rerun passed all recorded cases, with clipboard and input sources restored"
+  },
+  "limitations": [
+    "The first native input run timed out before receiving printable input; both failure and successful diagnostic rerun remain under build/pr-bot-comments.",
+    "Linux GUI behavior was not qualified.",
+    "Dated evidence payload naming is preserved; python-xlib coordinate negation is correct for its method contract."
+  ],
+  "details": "build/pr-bot-comments/",
+  "summaries": [
+    "Added a direct QDir include to live_connection_test.cpp.",
+    "Exercised every qualified Codex binary digest in the observer fixture."
+  ]
+}

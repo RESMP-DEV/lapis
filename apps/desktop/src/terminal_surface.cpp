@@ -32,13 +32,13 @@ namespace {
 
 QColor color(std::uint32_t rgb) { return QColor::fromRgb(rgb | 0xff000000U); }
 
-// An empty family keeps the platform's fixed-width system font. Callers pass
-// only families already resolved as installed and fixed-pitch on the GUI thread.
 bool modifier_key(int key) {
     return key == Qt::Key_Shift || key == Qt::Key_Control || key == Qt::Key_Meta ||
            key == Qt::Key_Alt || key == Qt::Key_CapsLock;
 }
 
+// An empty family keeps the platform's fixed-width system font. Callers pass
+// only families already resolved as installed and fixed-pitch on the GUI thread.
 QFont terminal_font(const QString& family, int pixel_size) {
     QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     if (!family.isEmpty())
@@ -561,6 +561,7 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     if (document_)
         disconnect(document_, nullptr, this, nullptr);
     document_ = document;
+    selecting_ = false;
     clearSelection();
     if (document_) {
         connect(document_, &SessionPreview::snapshotChanged, this, [this] {
@@ -573,6 +574,7 @@ void TerminalSurface::setDocument(SessionPreview* document) {
                 // The first change opens the window; later ones share its frame.
                 if (!throttle_.isActive())
                     throttle_.start(frame_interval_);
+                updateInputContext(Qt::ImCursorRectangle);
                 return;
             }
             publishFrame(true);
@@ -588,6 +590,8 @@ void TerminalSurface::setDocument(SessionPreview* document) {
         });
         connect(document_, &QObject::destroyed, this, [this] {
             document_ = nullptr;
+            selecting_ = false;
+            clearSelection();
             ++ime_epoch_;
             resetInputContext();
             publishFrame(true);
@@ -689,6 +693,7 @@ void TerminalSurface::setInteractive(bool enabled) {
         return;
     interactive_ = enabled;
     if (!enabled) {
+        selecting_ = false;
         ++ime_epoch_;
         resetInputContext();
         publishFrame(false);
@@ -819,7 +824,7 @@ void TerminalSurface::mousePressEvent(QMouseEvent* event) {
     event->accept();
 }
 void TerminalSurface::mouseMoveEvent(QMouseEvent* event) {
-    if (!selecting_) {
+    if (!interactive_ || !selecting_) {
         event->ignore();
         return;
     }
@@ -962,7 +967,6 @@ void TerminalSurface::setSelection(QPoint anchor, QPoint head) {
     publishFrame(false);
 }
 void TerminalSurface::clearSelection() {
-    selecting_ = false;
     if (!selection_anchor_ && selection_text_.isEmpty())
         return;
     selection_anchor_.reset();
@@ -1012,13 +1016,18 @@ RowText row_text(const session::TerminalSnapshot& snapshot, int row) {
             continue;
         const auto text = snapshot.text(index);
         const auto value =
-            text.empty() ? QStringLiteral(" ")
-                         : QString::fromUcs4(text.data(), static_cast<qsizetype>(text.size()));
+            text.empty() || snapshot.cells[index].style.invisible
+                ? QStringLiteral(" ")
+                : QString::fromUcs4(text.data(), static_cast<qsizetype>(text.size()));
         for (qsizetype unit = 0; unit < value.size(); ++unit)
             result.columns.append(column);
         result.text += value;
     }
     return result;
+}
+
+bool printable_url_character(char32_t value) {
+    return QChar::isPrint(value) && QChar::category(value) != QChar::Other_Format;
 }
 } // namespace
 
@@ -1057,6 +1066,9 @@ QString terminal_url_at(const session::TerminalSnapshot& snapshot, int column, i
                !(url.back() == QLatin1Char(')') &&
                  url.count(QLatin1Char('(')) > url.count(QLatin1Char(')')) - 1))
             url.chop(1);
+        const auto codepoints = url.toUcs4();
+        if (!std::all_of(codepoints.cbegin(), codepoints.cend(), printable_url_character))
+            continue;
         if (target >= match.capturedStart() && target < match.capturedStart() + url.size())
             return url;
     }

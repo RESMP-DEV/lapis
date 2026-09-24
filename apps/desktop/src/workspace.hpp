@@ -323,7 +323,7 @@ class Workspace final : public QObject {
         std::vector<Category> categories;
         QMap<QString, Agent> agents;
         QString active;
-        int focused;
+        int focused{-1};
     };
     [[nodiscard]] RegistryState checkpoint() const;
     void rollback(const RegistryState& previous);

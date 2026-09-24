@@ -38,6 +38,18 @@ constexpr std::array harness_catalog{
     Harness{"kimi", "Kimi", "kimi"},       Harness{"opencode", "OpenCode", "opencode"},
     Harness{"gemini", "Gemini", "gemini"}, Harness{"agy", "Antigravity", "agy"}};
 
+QString harness_id(session::AgentMode mode) {
+    switch (mode) {
+    case session::AgentMode::codex:
+        return QStringLiteral("codex");
+    case session::AgentMode::claude:
+        return QStringLiteral("claude");
+    case session::AgentMode::terminal:
+        return {};
+    }
+    return {};
+}
+
 const Harness* findHarness(const QString& id) {
     const auto found = std::find_if(harness_catalog.begin(), harness_catalog.end(),
                                     [&](const auto& item) { return id == QLatin1String(item.id); });
@@ -112,7 +124,11 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
                                                : session::shell_launch(rootDirectory());
             add("Agent", launch.directory.toUtf8().constData(), "Connecting", "#87cbac", "");
             sessions_.front()->setSessionId(QStringLiteral("shell"));
-            agents_.insert(QStringLiteral("shell"), {active_category_, options.endpoint, launch});
+            const auto harness = harness_id(launch.agent);
+            const Agent agent{active_category_, options.endpoint, launch, harness};
+            sessions_.front()->setHarnessId(harness);
+            sessions_.front()->setStatusSource(statusSource(agent));
+            agents_.insert(QStringLiteral("shell"), agent);
             sessions_.front()->startLive(session::posix::prepare_endpoint(options.endpoint.isEmpty()
                                                                               ? defaultEndpoint()
                                                                               : options.endpoint),
@@ -604,7 +620,6 @@ bool Workspace::discardSession(const QString& id) {
             if (category.selected == id)
                 category.selected = next;
     }
-    last_kind_.remove(item);
     const auto position = std::find_if(sessions_.begin(), sessions_.end(),
                                        [&](const auto& value) { return value.get() == item; });
     const auto index = std::distance(sessions_.begin(), position);
@@ -618,7 +633,10 @@ bool Workspace::discardSession(const QString& id) {
         emit errorChanged();
         return false;
     }
+    last_kind_.remove(item);
     changed();
+    // QML delegates can still hold the removed object during this call stack.
+    retained.release()->deleteLater();
     return true;
 }
 QString Workspace::homeDirectory() const { return QDir::homePath(); }

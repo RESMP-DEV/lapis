@@ -690,6 +690,19 @@ void request_id_and_answer_boundaries() {
     }
 }
 
+void every_qualified_hash_is_accepted() {
+    for (const auto& hash : Observer::qualifiedBinarySha256s()) {
+        State state{"qualified-hashes", "codex"};
+        Source source;
+        source.start();
+        Observer observer{state};
+        observer.start(source.path(), hash);
+        require(wait_for([&] { return state.ready(); }),
+                "every qualified digest enables the observer");
+        observer.stop();
+    }
+}
+
 int run(int argc, char** argv) {
     QCoreApplication application(argc, argv);
     initial_binding_requires_persistent_metadata(true);
@@ -703,6 +716,7 @@ int run(int argc, char** argv) {
     pending_details_budget();
     request_id_and_answer_boundaries();
     implicit_retirement_survives_replay();
+    every_qualified_hash_is_accepted();
     State state{QStringLiteral("session").toStdString(), QStringLiteral("codex").toStdString()};
     Source source;
     source.fail_first_resume = true;

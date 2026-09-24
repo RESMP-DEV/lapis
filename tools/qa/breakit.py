@@ -13,6 +13,7 @@ warnings under build/qa/<run>/; receipt.json summarizes pass/fail.
 
 import argparse
 import json
+import math
 import os
 import re
 import signal
@@ -57,6 +58,17 @@ SYMBOLS = {
     ")": "parenright",
     "\n": "Return",
 }
+
+
+def positive_minutes(value):
+    """Reject unusable soak durations before constructing the GUI runtime."""
+    try:
+        minutes = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a number") from error
+    if not math.isfinite(minutes) or minutes <= 0:
+        raise argparse.ArgumentTypeError("must be a positive number")
+    return minutes
 
 
 class Failure(Exception):
@@ -229,15 +241,15 @@ class Run:
     def launch(self):
         with self.gui_log.open("a") as log:
             log.write(f"\n=== launch {time.strftime('%H:%M:%S')} ===\n")
-        log = self.gui_log.open("a")
-        self.gui = subprocess.Popen(
-            [str(BINARY)],
-            env=self.environment(),
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            cwd=str(ROOT),
-            start_new_session=True,
-        )
+        with self.gui_log.open("a") as log:
+            self.gui = subprocess.Popen(
+                [str(BINARY)],
+                env=self.environment(),
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                cwd=str(ROOT),
+                start_new_session=True,
+            )
         self.wait(
             lambda: self.keys.lapis_window() is not None, 20, "lapis window appears"
         )
@@ -711,6 +723,8 @@ class Run:
             if not self.gui_alive():
                 raise Failure("GUI exited during soak")
             time.sleep(15)
+        if not samples:
+            raise Failure("soak collected no samples; pass a positive --soak duration")
         first, last = samples[0], samples[-1]
         return {
             "agents": agents,
@@ -751,7 +765,10 @@ def main():
     )
     parser.add_argument("--only", nargs="*", help="scenario names to run")
     parser.add_argument(
-        "--soak", type=float, default=0, help="minutes of 32-agent soak"
+        "--soak",
+        type=positive_minutes,
+        default=0,
+        help="minutes of 32-agent soak",
     )
     args = parser.parse_args()
     run = Run(args.output.resolve(), args.keep)

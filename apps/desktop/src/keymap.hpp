@@ -31,21 +31,21 @@ enum class CardDensity : std::uint8_t { Comfortable, Compact, Minimal };
 // marks where keyboard input goes, activity marks a working agent, attention
 // marks pending requests only, and fault marks lost connections and errors.
 struct Theme {
-    const char* name;
-    const char* label;
-    const char* background;
-    const char* surface;
-    const char* card;
-    const char* hovered_card;
-    const char* focused;
-    const char* border;
-    const char* focused_border;
-    const char* text;
-    const char* muted_text;
-    const char* attention;
-    const char* attention_text;
-    const char* activity;
-    const char* fault;
+    const char* name{};
+    const char* label{};
+    const char* background{};
+    const char* surface{};
+    const char* card{};
+    const char* hovered_card{};
+    const char* focused{};
+    const char* border{};
+    const char* focused_border{};
+    const char* text{};
+    const char* muted_text{};
+    const char* attention{};
+    const char* attention_text{};
+    const char* activity{};
+    const char* fault{};
     int corner_radius{2};
     int motion_ms{100};
     bool mono_chrome{};

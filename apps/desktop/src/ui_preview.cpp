@@ -17,6 +17,7 @@
 #include <QQuickWindow>
 #include <QRect>
 #include <QSaveFile>
+#include <QScopedValueRollback>
 #include <QScreen>
 #include <QStringList>
 #include <sys/stat.h>
@@ -118,12 +119,12 @@ constexpr int kMaximumDiagnosticsLength = 4096;
     struct stat info{};
     const QByteArray directoryBytes = QFile::encodeName(directory);
     if (::lstat(directoryBytes.constData(), &info) != 0 || !S_ISDIR(info.st_mode) ||
-        info.st_uid != ::getuid() || (info.st_mode & 0077) != 0)
+        info.st_uid != ::getuid() || (info.st_mode & 0077U) != 0)
         return false;
     const QByteArray pathBytes = QFile::encodeName(path);
     if (::lstat(pathBytes.constData(), &info) != 0)
         return errno == ENOENT;
-    return S_ISREG(info.st_mode) && info.st_uid == ::getuid() && (info.st_mode & 0077) == 0;
+    return S_ISREG(info.st_mode) && info.st_uid == ::getuid() && (info.st_mode & 0077U) == 0;
 }
 
 [[nodiscard]] QRect visibleGeometry(QRect geometry, const QSize& minimum) {
@@ -425,6 +426,19 @@ void UiPreview::configureGeometry(QQuickWindow& target, bool reloading) {
     rememberGeometry();
 }
 
+void UiPreview::publishWarnings(const QList<QQmlError>& warnings) {
+    for (const QQmlError& warning : warnings)
+        qWarning().noquote() << warning.toString();
+    if (publishing_diagnostics_)
+        return;
+    const auto next = appendDiagnostics(diagnostics_, formatDiagnostics(warnings));
+    if (next == diagnostics_)
+        return;
+    const QScopedValueRollback guard(publishing_diagnostics_, true);
+    diagnostics_ = next;
+    emit diagnosticsChanged();
+}
+
 bool UiPreview::loadCandidate() {
     std::unique_ptr<QQmlApplicationEngine> candidate = std::make_unique<QQmlApplicationEngine>();
     candidate->rootContext()->setContextProperty(QStringLiteral("workspace"), &workspace_);
@@ -497,13 +511,7 @@ bool UiPreview::loadCandidate() {
         },
         Qt::DirectConnection);
     QObject::connect(candidate.get(), &QQmlApplicationEngine::warnings, this,
-                     [this](const QList<QQmlError>& warnings) {
-                         for (const QQmlError& warning : warnings)
-                             qWarning().noquote() << warning.toString();
-                         diagnostics_ =
-                             appendDiagnostics(diagnostics_, formatDiagnostics(warnings));
-                         emit diagnosticsChanged();
-                     });
+                     &UiPreview::publishWarnings);
 
     const QPointer<QQuickWindow> acceptedWindow = candidateWindow;
     setDiagnostics(candidateDiagnostics);

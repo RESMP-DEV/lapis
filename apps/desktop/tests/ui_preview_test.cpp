@@ -14,6 +14,7 @@
 #include <QClipboard>
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QDir>
 #include <QEvent>
 #include <QFile>
 #include <QGuiApplication>
@@ -24,7 +25,6 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QObject>
-#include <QPair>
 #include <QPointer>
 #include <QQuickWindow>
 #include <QRect>
@@ -40,9 +40,6 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
-#include <string_view>
-#include <utility>
-#include <vector>
 
 namespace {
 
@@ -582,7 +579,11 @@ int run_shortcut_focus_tests() {
     wait_popup(*dialog, true);
     CHECK(dialog->property("opened").toBool());
     CHECK(window->activeFocusItem() != terminal);
+#ifdef Q_OS_MACOS
+    CHECK(dialog->property("shortcutHint").toString() == QStringLiteral("⌃⌥T"));
+#else
     CHECK(dialog->property("shortcutHint").toString() == QStringLiteral("Ctrl+Alt+T"));
+#endif
     if (const auto path = qEnvironmentVariable("LAPIS_SETTINGS_CAPTURE"); !path.isEmpty())
         CHECK(window->grabWindow().save(path));
 
@@ -1031,6 +1032,18 @@ void check_category_alignment(QQuickWindow& window) {
                stage->mapToItem(window.contentItem(), QPointF()).y()) <= 1);
 }
 
+void wait_tab_visible(QQuickItem& tab, QQuickItem& view) {
+    const auto visible = [&] {
+        const auto position = tab.mapToItem(&view, QPointF());
+        return position.x() >= -1 && position.x() + tab.width() <= view.width() + 1;
+    };
+    QElapsedTimer deadline;
+    deadline.start();
+    while (!visible() && deadline.elapsed() < 2000)
+        pump(5);
+    CHECK(visible());
+}
+
 int run_attention_ui_tests() {
     using namespace lapis::desktop;
     Workspace workspace(WorkspaceMode::preview);
@@ -1123,8 +1136,15 @@ int run_attention_ui_tests() {
     for (const auto variant :
          {ChromeVariant{"comfortable", lapis::desktop::kTerminalFontSizeDefault},
           ChromeVariant{"minimal", 24}}) {
-        for (const auto& size : {QSize(640, 480), QSize(700, 900), QSize(980, 700),
-                                 QSize(1400, 960), QSize(2560, 1080)}) {
+        for (const auto& requested : {QSize(640, 480), QSize(700, 900), QSize(980, 700),
+                                      QSize(1400, 960), QSize(2560, 1080)}) {
+            // Native macOS windows are constrained to the screen work area.
+            // Exercise the actual available layout rather than an impossible size.
+            const auto margins = window->frameMargins();
+            const auto available =
+                window->screen()->availableGeometry().size() -
+                QSize(margins.left() + margins.right(), margins.top() + margins.bottom());
+            const auto size = requested.boundedTo(available);
             CHECK(keymap.setDensity(QString::fromLatin1(variant.density)));
             CHECK(keymap.setTerminalFontSize(variant.font_size));
             window->resize(size);
@@ -1143,9 +1163,7 @@ int run_attention_ui_tests() {
                                              QStringLiteral("agentTab_") + selected->sessionId());
             CHECK(tabs != nullptr && selected_tab != nullptr);
             check_category_alignment(*window);
-            const auto tab_position = selected_tab->mapToItem(tabs, QPointF());
-            CHECK(tab_position.x() >= -1);
-            CHECK(tab_position.x() + selected_tab->width() <= tabs->width() + 1);
+            wait_tab_visible(*selected_tab, *tabs);
             CHECK(preview.openSettings());
             auto* settings = window->findChild<QObject*>(QStringLiteral("settingsDialog"));
             CHECK(settings != nullptr);
@@ -1521,6 +1539,41 @@ int run_strip_ui_tests() {
 }
 } // namespace
 
+int run_diagnostics_reentrancy_test() {
+    QTemporaryDir directory;
+    CHECK(directory.isValid());
+    const auto path = write_qml(directory, QStringLiteral("warning.qml"), QStringLiteral(R"(
+import QtQuick
+Window {
+    id: warningWindow
+    visible: false
+    width: 200; height: 200
+    function warn() { throw new Error("runtime fixture warning") }
+    Connections {
+        target: preview
+        function onDiagnosticsChanged() { throw new Error("diagnostics fixture warning") }
+    }
+    Timer { interval: 1; running: true; onTriggered: warningWindow.warn() }
+}
+)"));
+    lapis::desktop::Workspace workspace(lapis::desktop::WorkspaceMode::preview);
+    lapis::desktop::UiPreview preview(
+        workspace, {.source = QUrl::fromLocalFile(path), .compact = true, .screen = QString()});
+    int notifications = 0;
+    QObject observation;
+    QObject::connect(&preview, &lapis::desktop::UiPreview::diagnosticsChanged, &observation,
+                     [&] { ++notifications; });
+    CHECK(preview.load());
+    QElapsedTimer deadline;
+    deadline.start();
+    while (preview.diagnostics().isEmpty() && deadline.elapsed() < 2000)
+        pump(5);
+    CHECK(preview.diagnostics().contains(QStringLiteral("runtime fixture warning")));
+    CHECK(notifications == 1);
+    CHECK(preview.diagnostics().size() <= 4096);
+    return EXIT_SUCCESS;
+}
+
 int main(int argc, char** argv) {
     QCoreApplication::setAttribute(Qt::AA_MacDontSwapCtrlAndMeta);
     QGuiApplication app(argc, argv);
@@ -1542,6 +1595,7 @@ int main(int argc, char** argv) {
         if (app.arguments().contains(QStringLiteral("--shortcuts-only")))
             return run_shortcut_focus_tests();
         if (run_workspace_tests() != EXIT_SUCCESS || run_ui_tests() != EXIT_SUCCESS ||
+            run_diagnostics_reentrancy_test() != EXIT_SUCCESS ||
             run_surface_tests() != EXIT_SUCCESS || run_attention_dialog_tests() != EXIT_SUCCESS ||
             run_attention_ui_tests() != EXIT_SUCCESS || run_strip_ui_tests() != EXIT_SUCCESS)
             return EXIT_FAILURE;
