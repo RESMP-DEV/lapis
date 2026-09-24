@@ -31,12 +31,25 @@ struct Harness {
     const char* id;
     const char* label;
     const char* command;
+    // The CLI's own non-interactive update command, if lapis runs it. Codex
+    // has none: its observer accepts only qualified binaries, so lapis keeps
+    // the qualified build and turns off Codex's update prompt instead.
+    const char* update;
 };
-constexpr std::array harness_catalog{
-    Harness{"codex", "Codex", "codex"},    Harness{"claude", "Claude", "claude"},
-    Harness{"omp", "OMP", "omp"},          Harness{"grok", "Grok", "grok"},
-    Harness{"kimi", "Kimi", "kimi"},       Harness{"opencode", "OpenCode", "opencode"},
-    Harness{"gemini", "Gemini", "gemini"}, Harness{"agy", "Antigravity", "agy"}};
+constexpr std::array harness_catalog{Harness{"codex", "Codex", "codex", nullptr},
+                                     Harness{"claude", "Claude", "claude", "update"},
+                                     Harness{"omp", "OMP", "omp", "update"},
+                                     Harness{"grok", "Grok", "grok", "update"},
+                                     Harness{"kimi", "Kimi", "kimi", "upgrade"},
+                                     Harness{"opencode", "OpenCode", "opencode", "upgrade"},
+                                     Harness{"gemini", "Gemini", "gemini", nullptr},
+                                     Harness{"agy", "Antigravity", "agy", "update"}};
+// Arguments lapis always gives a new agent of a CLI, before the user's own.
+QStringList defaultArguments(const QString& harness) {
+    if (harness == QLatin1String("codex"))
+        return {QStringLiteral("-c"), QStringLiteral("check_for_update_on_startup=false")};
+    return {};
+}
 
 QString harness_id(session::AgentMode mode) {
     switch (mode) {
@@ -103,7 +116,8 @@ QString Workspace::defaultEndpoint() {
 }
 
 Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
-    : restore_agents_(options.restoreAgents), preview_mode_(mode == WorkspaceMode::preview) {
+    : restore_agents_(options.restoreAgents), update_harnesses_(options.updateHarnesses),
+      preview_mode_(mode == WorkspaceMode::preview) {
     // Selecting an agent is looking at it.
     connect(this, &Workspace::focusChanged, this, [this] {
         if (auto* focused = focusedSession())
@@ -715,8 +729,12 @@ bool Workspace::createAgent(const QString& directory, const QString& title,
         const auto id = newId();
         const auto endpoint = session::posix::prepare_endpoint(
             QDir(QFileInfo(storage_path_).absolutePath()).filePath(id + QStringLiteral(".sock")));
-        auto launch = session::validate_launch(
-            {program, harness_arguments_.value(harness), project, {100, 30}, mode});
+        auto launch =
+            session::validate_launch({program,
+                                      defaultArguments(harness) + harness_arguments_.value(harness),
+                                      project,
+                                      {100, 30},
+                                      mode});
         auto item = std::make_unique<SessionPreview>(title.trimmed(), launch.directory, QString{},
                                                      QColor(QStringLiteral("#87cbac")), "");
         item->setSessionId(id);
@@ -738,7 +756,8 @@ bool Workspace::createAgent(const QString& directory, const QString& title,
             return false;
         }
         watch(sessions_.back().get());
-        sessions_.back()->startLive(endpoint, launch, session::wire::AttachMode::create);
+        if (!deferForUpdate(id))
+            sessions_.back()->startLive(endpoint, launch, session::wire::AttachMode::create);
         changed();
         return true;
     } catch (const std::exception& error) {
@@ -1189,6 +1208,95 @@ void Workspace::restore() {
         fail(QStringLiteral("Cannot restore workspace: ") + QString::fromUtf8(error.what()));
     }
 }
+void SessionPreview::setUpdating(const QString& label) {
+    if (updating_ == label)
+        return;
+    updating_ = label;
+    emit statusChanged();
+}
+
+bool Workspace::deferForUpdate(const QString& id) {
+    const auto entry = agents_.constFind(id);
+    if (entry == agents_.constEnd())
+        return false;
+    const auto harness = entry->harness;
+    const auto program = entry->launch.program;
+    const auto* selected = findHarness(harness);
+    if (!update_harnesses_ || !selected || !selected->update)
+        return false;
+    const bool running = harness_updates_.value(harness) != nullptr;
+    constexpr qint64 fresh_ms = qint64{30} * 60 * 1000;
+    if (!running &&
+        QDateTime::currentMSecsSinceEpoch() - harness_checked_ms_.value(harness, 0) < fresh_ms)
+        return false;
+    starts_after_update_[harness].append(id);
+    if (auto* item = session(id))
+        item->setUpdating(QStringLiteral("Updating %1…").arg(QLatin1String(selected->label)));
+    if (running)
+        return true;
+    auto* process = new QProcess(this);
+    harness_updates_.insert(harness, process);
+    process->setProgram(program);
+    process->setArguments({QString::fromLatin1(selected->update)});
+    process->setStandardInputFile(QProcess::nullDevice());
+    process->setProcessChannelMode(QProcess::MergedChannels);
+    connect(process, &QProcess::finished, this,
+            [this, harness, process](int code, QProcess::ExitStatus status) {
+                finishUpdate(harness, process,
+                             status == QProcess::NormalExit ? QStringLiteral("exit %1").arg(code)
+                                                            : QStringLiteral("crashed"));
+            });
+    connect(process, &QProcess::errorOccurred, this,
+            [this, harness, process](QProcess::ProcessError error) {
+                if (error == QProcess::FailedToStart)
+                    finishUpdate(harness, process, QStringLiteral("could not start"));
+            });
+    // A stuck update must not keep the agent from starting.
+    QTimer::singleShot(120000, process, [this, harness, process] {
+        if (process->state() == QProcess::NotRunning)
+            return;
+        process->kill();
+        finishUpdate(harness, process, QStringLiteral("stopped after 2 minutes"));
+    });
+    process->start();
+    return true;
+}
+
+void Workspace::finishUpdate(const QString& harness, QProcess* process, const QString& outcome) {
+    if (harness_updates_.value(harness) != process)
+        return;
+    harness_updates_.remove(harness);
+    harness_checked_ms_.insert(harness, QDateTime::currentMSecsSinceEpoch());
+    const auto output = QString::fromUtf8(process->readAll()).simplified().right(600);
+    logUpdate(
+        QStringLiteral("%1 %2 update: %3. %4")
+            .arg(QDateTime::currentDateTime().toString(Qt::ISODate), harness, outcome, output));
+    process->deleteLater();
+    for (const auto& id : starts_after_update_.take(harness)) {
+        auto* item = session(id);
+        const auto entry = agents_.constFind(id);
+        if (!item || entry == agents_.constEnd())
+            continue; // closed while waiting
+        item->setUpdating({});
+        item->startLive(entry->endpoint, entry->launch, session::wire::AttachMode::create);
+    }
+}
+
+// Beside the registry; the previous log is kept once it passes 256 KiB.
+void Workspace::logUpdate(const QString& line) const {
+    const auto path = QDir(QFileInfo(storage_path_).absolutePath())
+                          .filePath(QStringLiteral("harness-updates.log"));
+    if (QFileInfo(path).size() > qint64{256} * 1024) {
+        QFile::remove(path + QStringLiteral(".1"));
+        QFile::rename(path, path + QStringLiteral(".1"));
+    }
+    QFile file(path);
+    if (file.open(QIODevice::Append | QIODevice::Text)) {
+        file.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
+        file.write(line.toUtf8() + '\n');
+    }
+}
+
 void SessionPreview::setClosing(bool closing) {
     if (closing_ == closing)
         return;

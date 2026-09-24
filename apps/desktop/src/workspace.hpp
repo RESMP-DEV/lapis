@@ -14,6 +14,7 @@
 #include <QLockFile>
 #include <QMap>
 #include <QObject>
+#include <QPointer>
 #include <QSet>
 #include <QString>
 #include <QTimer>
@@ -23,6 +24,8 @@
 #include <memory>
 #include <optional>
 #include <vector>
+
+class QProcess;
 
 namespace lapis::desktop {
 
@@ -80,6 +83,8 @@ class SessionPreview final : public QObject {
     bool terminate();
     [[nodiscard]] bool closing() const { return closing_; }
     void setClosing(bool closing);
+    // Shown instead of the status while the agent's CLI updates before start.
+    void setUpdating(const QString& label);
     [[nodiscard]] bool unseen() const { return unseen_; }
     void setUnseen(bool unseen);
     // Where activity comes from: a service-side observer (the Codex app-server,
@@ -176,6 +181,7 @@ class SessionPreview final : public QObject {
     bool live_snapshot_ready_{};
     bool live_snapshot_received_{};
     bool closing_{};
+    QString updating_;
     bool unseen_{};
     StatusSource status_source_{StatusSource::observer};
     // Output estimate: several frames close together read as activity, and a
@@ -220,6 +226,9 @@ struct WorkspaceOptions {
     // Restart agents whose session service is gone (after a reboot or crash),
     // resuming each recorded conversation. Off unless the app asks for it.
     bool restoreAgents{};
+    // Run a CLI's own update command before a new agent of it starts, at most
+    // every 30 minutes per CLI, so agents never open on an update prompt.
+    bool updateHarnesses{};
 };
 
 class Workspace final : public QObject {
@@ -297,6 +306,14 @@ class Workspace final : public QObject {
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
     QHash<QString, QStringList> harness_arguments_;
     bool restore_agents_{};
+    bool update_harnesses_{};
+    QHash<QString, qint64> harness_checked_ms_;
+    QHash<QString, QPointer<QProcess>> harness_updates_;
+    QHash<QString, QStringList> starts_after_update_;
+    // True when the agent waits for its CLI's update and starts after it.
+    bool deferForUpdate(const QString& id);
+    void finishUpdate(const QString& harness, QProcess* process, const QString& outcome);
+    void logUpdate(const QString& line) const;
     // Records conversations for agents whose services do not.
     QTimer conversation_timer_;
     std::shared_ptr<std::atomic_bool> probing_{std::make_shared<std::atomic_bool>(false)};

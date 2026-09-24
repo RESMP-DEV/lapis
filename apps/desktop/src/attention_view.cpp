@@ -63,6 +63,8 @@ QString SessionPreview::statusKind() const {
     return QStringLiteral("unknown");
 }
 QString SessionPreview::statusLabel() const {
+    if (!updating_.isEmpty())
+        return updating_;
     const auto kind = statusKind();
     if (closing_ && kind != QStringLiteral("ended"))
         return QStringLiteral("Ending agent");

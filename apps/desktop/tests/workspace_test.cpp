@@ -886,6 +886,75 @@ void joinedViewStaysInSync() {
             "the joined fixture closes");
 }
 
+// A new agent's CLI updates itself first, so the agent never opens on an
+// update prompt; another agent within 30 minutes starts without updating.
+void harnessesUpdateBeforeNewAgents() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-update-XXXXXX"));
+    require(directory.isValid(), "update directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QDir root(canonical);
+    require(root.mkpath(QStringLiteral("bin")) && root.mkpath(QStringLiteral("project")),
+            "fixture folders");
+    const auto grok = root.filePath(QStringLiteral("bin/grok"));
+    QFile script(grok);
+    require(script.open(QIODevice::WriteOnly), "write the stand-in CLI");
+    script.write("#!/bin/sh\n"
+                 "log=\"$(dirname \"$0\")/updates\"\n"
+                 "if [ \"$1\" = update ]; then echo update >> \"$log\"; sleep 1; "
+                 "echo 'grok updated to 9.9'; exit 0; fi\n"
+                 "echo \"started after $(wc -l < \"$log\" | tr -d ' ') update\"\n"
+                 "exec sleep 600\n");
+    script.close();
+    require(script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "make it executable");
+    const auto path = qgetenv("PATH");
+    qputenv("PATH", QFile::encodeName(root.filePath(QStringLiteral("bin"))) + ':' + path);
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    options.updateHarnesses = true;
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        const auto project = root.filePath(QStringLiteral("project"));
+        require(workspace.createAgent(project, QStringLiteral("first"), QStringLiteral("grok")),
+                "create a Grok agent");
+        auto* first = workspace.focusedSession();
+        require(first->statusLabel() == QStringLiteral("Updating Grok…") && !first->live(),
+                "the card waits while the CLI updates");
+        require(waitFor([first] { return first->inputReady(); }, 15000),
+                "the agent starts after the update");
+        require(waitFor(
+                    [first] {
+                        return screenText(first->snapshot())
+                            .contains(QStringLiteral("started after 1 update"));
+                    },
+                    5000),
+                "the agent started on the updated CLI");
+        require(workspace.createAgent(project, QStringLiteral("second"), QStringLiteral("grok")),
+                "create another Grok agent");
+        auto* second = workspace.focusedSession();
+        require(second->statusLabel() != QStringLiteral("Updating Grok…"),
+                "a recent update is not repeated");
+        require(waitFor(
+                    [second] {
+                        return screenText(second->snapshot())
+                            .contains(QStringLiteral("started after 1 update"));
+                    },
+                    10000),
+                "the second agent started without another update");
+        QFile log(root.filePath(QStringLiteral("harness-updates.log")));
+        require(log.open(QIODevice::ReadOnly) &&
+                    log.readAll().contains("grok update: exit 0. grok updated to 9.9"),
+                "the update is logged");
+        require(waitFor([second] { return second->inputReady(); }, 10000),
+                "the second agent is ready");
+        for (const auto& id : {first->sessionId(), second->sessionId()})
+            require(workspace.closeSession(id), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in agents close");
+    }
+    qputenv("PATH", path);
+}
+
 // Closing an agent while a history page shows ends it: the page hides input,
 // not the service, so the agent must not be abandoned while still running.
 void closeOnHistoryPageEndsTheAgent() {
@@ -1407,6 +1476,7 @@ int main(int argc, char** argv) {
         closeEndsTheAgent("trap '' HUP; exec sleep 600", 1200);
         closeOnHistoryPageEndsTheAgent();
         joinedViewStaysInSync();
+        harnessesUpdateBeforeNewAgents();
         std::cout << "workspace categories, identity, persistence, status and closing passed\n";
         return 0;
     } catch (const std::exception& error) {
