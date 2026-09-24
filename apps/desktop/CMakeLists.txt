@@ -3,6 +3,7 @@ find_package(Vulkan REQUIRED)
 set(CMAKE_AUTOMOC ON)
 add_library(lapis_desktop_view STATIC
     src/workspace.cpp src/workspace.hpp
+    src/workspace_control.cpp src/workspace_control.hpp
     src/attention_view.cpp
     src/keymap.cpp src/keymap.hpp
     src/live_connection.cpp src/live_connection.hpp
@@ -36,8 +37,11 @@ if(BUILD_TESTING)
     set_tests_properties(window-state PROPERTIES TIMEOUT 30 RESOURCE_LOCK "qt_gui" ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
     add_executable(lapis_workspace_tests tests/workspace_test.cpp)
     target_link_libraries(lapis_workspace_tests PRIVATE lapis_project_options lapis_desktop_view)
-    # Closing an agent is exercised against the real session service.
-    add_dependencies(lapis_workspace_tests lapis_session_service)
+    # Closing an agent is exercised against the real session service, and the
+    # workspace handover against the real windowless host.
+    add_dependencies(lapis_workspace_tests lapis_session_service lapis_desktop)
+    target_compile_definitions(lapis_workspace_tests PRIVATE
+        LAPIS_DESKTOP_PATH="$<TARGET_FILE:lapis_desktop>")
     add_test(NAME workspace COMMAND lapis_workspace_tests)
     set_tests_properties(workspace PROPERTIES TIMEOUT 30)
     add_executable(lapis_live_connection_tests tests/live_connection_test.cpp)

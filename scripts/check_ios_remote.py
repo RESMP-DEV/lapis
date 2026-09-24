@@ -6,6 +6,8 @@ Starts, all disposable and on this Mac:
   scripts/fake_models.py, so no model usage is spent ("codex fake",
   "claude fake"),
 - a registry entry whose service is not running ("parked"),
+- the windowless lapis host (lapis_desktop --serve) owning the registry, with
+  fake_agent.py installed as grok, so the phone can start an agent through it,
 - the gateway (apps/remote/lapis_remote.py) on 127.0.0.1 with --allow-local.
 
 Then it runs the LapisUITests on a headless simulator (no Simulator window)
@@ -34,6 +36,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE = ROOT / "build" / "desktop" / "services" / "session" / "lapis_session_service"
+DESKTOP = (
+    ROOT / "build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop"
+)
 APP_SOURCES = ROOT / "apps" / "ios" / "Lapis"
 TEST_SOURCES = ROOT / "apps" / "ios" / "LapisUITests"
 BUILD = ROOT / "build" / "ios"
@@ -399,14 +404,15 @@ def main():
     )
     parser.add_argument("--only", help="one UI test method, e.g. testCodexAgent")
     args = parser.parse_args()
-    if not SERVICE.exists():
-        raise SystemExit(f"missing {SERVICE}; build the desktop first")
+    if not SERVICE.exists() or not DESKTOP.exists():
+        raise SystemExit("missing the desktop build; build the desktop first")
     sdk = tool("xcrun", "--sdk", "iphonesimulator", "--show-sdk-path")
     platform = tool("xcrun", "--sdk", "iphonesimulator", "--show-sdk-platform-path")
     build_app(sdk)
     build_ui_tests(sdk, platform)
 
-    runtime = Path(tempfile.mkdtemp(prefix="lapis-ios-", dir="/tmp"))
+    # Resolved: the lapis host writes endpoints under the real /private/tmp.
+    runtime = Path(tempfile.mkdtemp(prefix="lapis-ios-", dir="/tmp")).resolve()
     run = Run(runtime)
     booted_here = False
     try:
@@ -533,6 +539,29 @@ def main():
                 }
             )
         )
+        # The Mac's lapis, windowless: it owns the registry and starts the
+        # agents the phone asks for, with fake_agent.py as the grok CLI.
+        bin_dir = runtime / "bin"
+        bin_dir.mkdir()
+        shutil.copy2(fake, bin_dir / "grok")
+        (bin_dir / "grok").chmod(0o755)
+        new_folder = runtime / "phone-project"
+        new_folder.mkdir()
+        run.start(
+            "host",
+            [str(DESKTOP), "--serve", "--registry", str(registry)],
+            {
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "LAPIS_HISTORY_ROOT": str(runtime / "history"),
+            },
+        )
+        deadline = time.monotonic() + 20
+        while not lapis_remote.service_answers(
+            str(runtime / lapis_remote.CONTROL_NAME)
+        ):
+            if time.monotonic() > deadline:
+                raise SystemExit("the lapis host did not start")
+            time.sleep(0.1)
         run.start(
             "gateway",
             [
@@ -591,6 +620,7 @@ def main():
                 "LAPIS_HOST": f"127.0.0.1:{PORT}",
                 "LAPIS_ECHO_ID": echo_id,
                 "LAPIS_MAC_CLIENT": "1",
+                "LAPIS_NEW_AGENT_FOLDER": str(new_folder),
             }
         )
         command = [
@@ -647,9 +677,29 @@ def main():
             return 1
         if (not args.only or args.only == "testSendScreenToMac") and not captures:
             return 1
+        if not args.only or args.only == "testStartAnAgentFromThePhone":
+            started = [
+                item
+                for item in lapis_remote.load_workspace(registry)["agents"]
+                if item["category"] == "later"
+                and item["harness"] == "grok"
+                and Path(item["directory"]).resolve() == new_folder
+            ]
+            print(f"Mac: the phone started an agent in Later: {bool(started)}")
+            if not started:
+                return 1
         return outcome.returncode
     finally:
         run.stop()
+        # Agents the host started run in their own sessions.
+        for row in subprocess.run(
+            ["ps", "-axo", "pid=,command="], capture_output=True, text=True
+        ).stdout.splitlines():
+            if str(runtime) in row:
+                try:
+                    os.kill(int(row.split(None, 1)[0]), signal.SIGKILL)
+                except (ProcessLookupError, ValueError):
+                    pass
         if booted_here:
             simulator(["shutdown", "all"], check=False)
         shutil.rmtree(runtime, ignore_errors=True)

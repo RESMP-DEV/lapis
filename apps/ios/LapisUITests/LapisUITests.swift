@@ -182,6 +182,35 @@ final class LapisUITests: XCTestCase {
 
     // The Mac stays attached while the phone uses the agent, and what either
     // types shows on both. The harness's Mac-side client answers the phone.
+    // The phone starts an agent through the Mac's lapis: it opens as a new tab
+    // in the chosen category there, and on the phone once it runs.
+    func testStartAnAgentFromThePhone() throws {
+        let folder = ProcessInfo.processInfo.environment["LAPIS_NEW_AGENT_FOLDER"] ?? ""
+        try XCTSkipIf(folder.isEmpty, "the check provides a folder and the Mac's lapis")
+        let plus = app.buttons["newAgent-Later"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 30), "each category offers a new agent")
+        plus.tap()
+        let grok = app.buttons["harness-grok"]
+        XCTAssertTrue(grok.waitForExistence(timeout: 15), "the Mac's CLIs are offered")
+        grok.tap()
+        XCTAssertTrue(app.buttons["category-Later"].isSelected, "the tapped category is chosen")
+        let field = app.textFields["folder"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        if let current = field.value as? String, current != field.placeholderValue {
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
+        }
+        field.typeText(folder)
+        snap("9-new-agent")
+        app.buttons["startAgent"].tap()
+        let terminal = app.descendants(matching: .any)["terminal"]
+        XCTAssertTrue(terminal.waitForExistence(timeout: 60), "the new agent opens on the phone")
+        waitFor(terminal, valueContaining: "lapis fake agent")
+        submit("started from the phone")
+        waitFor(terminal, valueContaining: "echo: started from the phone")
+        snap("10-new-agent-open")
+    }
+
     func testSyncedWithTheMac() throws {
         guard ProcessInfo.processInfo.environment["LAPIS_MAC_CLIENT"] == "1" else {
             throw XCTSkip("needs the harness's Mac-side client")

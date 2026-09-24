@@ -21,6 +21,18 @@ sys.path.insert(0, str(ROOT / "apps" / "remote"))
 import lapis_remote as remote  # noqa: E402
 
 SERVICE = ROOT / "build" / "desktop" / "services" / "session" / "lapis_session_service"
+DESKTOP = next(
+    (
+        path
+        for path in (
+            ROOT
+            / "build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop",
+            ROOT / "build/desktop/apps/desktop/lapis_desktop",
+        )
+        if path.is_file()
+    ),
+    None,
+)
 
 
 def snapshot(columns, rows, cells, *, cursor=(0, 0), palette=None, alternate=False):
@@ -305,6 +317,226 @@ class CaptureTests(unittest.TestCase):
             self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
             status, _ = server.request("POST", "/api/captures", {"png": "bm90IGEgcG5n"})
             self.assertEqual(status, 400)
+
+
+class FakeDesktop:
+    """A stand-in for the lapis window's workspace-control socket."""
+
+    def __init__(self, directory, answer):
+        self.path = Path(directory) / remote.CONTROL_NAME
+        self.answer = answer
+        self.requests = []
+
+    def __enter__(self):
+        self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.listener.bind(str(self.path))
+        self.listener.listen()
+        threading.Thread(target=self.serve, daemon=True).start()
+        return self
+
+    def serve(self):
+        while True:
+            try:
+                connection, _ = self.listener.accept()
+            except OSError:
+                return
+            with connection:
+                data = b""
+                while not data.endswith(b"\n"):
+                    chunk = connection.recv(4096)
+                    if not chunk:
+                        break
+                    data += chunk
+                request = json.loads(data)
+                self.requests.append(request)
+                connection.sendall(json.dumps(self.answer(request)).encode() + b"\n")
+
+    def __exit__(self, *_):
+        self.listener.close()
+        self.path.unlink(missing_ok=True)
+
+
+class StartAgentTests(unittest.TestCase):
+    def answer(self, request):
+        if request["request"] == "harnesses":
+            return {
+                "ok": True,
+                "harnesses": [{"id": "codex", "name": "Codex", "installed": True}],
+            }
+        if request["category"] == "gone":
+            return {"ok": False, "error": "Unknown category."}
+        return {"ok": True, "id": "new-agent", "updating": True}
+
+    def test_the_phone_starts_an_agent_through_the_mac(self):
+        with (
+            Server(self, "{}") as server,
+            FakeDesktop(server.directory, self.answer) as desktop,
+        ):
+            status, listed = server.request("GET", "/api/harnesses")
+            self.assertEqual(status, 200)
+            self.assertEqual(listed["harnesses"][0]["id"], "codex")
+            status, started = server.request(
+                "POST",
+                "/api/agents",
+                {
+                    "harness": "codex",
+                    "directory": "~/dev/x",
+                    "category": "later",
+                    "title": "x",
+                },
+            )
+            self.assertEqual(
+                (status, started), (200, {"id": "new-agent", "updating": True})
+            )
+            self.assertEqual(
+                desktop.requests[-1],
+                {
+                    "version": 1,
+                    "request": "createAgent",
+                    "category": "later",
+                    "harness": "codex",
+                    "directory": "~/dev/x",
+                    "title": "x",
+                },
+            )
+
+    def test_refusals_and_malformed_requests(self):
+        with (
+            Server(self, "{}") as server,
+            FakeDesktop(server.directory, self.answer) as desktop,
+        ):
+            status, refused = server.request(
+                "POST",
+                "/api/agents",
+                {"harness": "codex", "directory": "/tmp", "category": "gone"},
+            )
+            self.assertEqual((status, refused), (422, {"error": "Unknown category."}))
+            asked = len(desktop.requests)
+            for body in (
+                {"harness": "codex", "directory": "/tmp"},
+                {"harness": "codex", "directory": "x" * 5000, "category": "later"},
+                {
+                    "harness": "codex",
+                    "directory": "/tmp",
+                    "category": "later",
+                    "title": 1,
+                },
+                ["not", "an", "object"],
+            ):
+                status, _ = server.request("POST", "/api/agents", body)
+                self.assertEqual(status, 400, body)
+            self.assertEqual(len(desktop.requests), asked, "bad requests reach nothing")
+
+    def test_without_lapis_on_the_mac(self):
+        with Server(self, "{}") as server:
+            status, reply = server.request(
+                "POST",
+                "/api/agents",
+                {"harness": "codex", "directory": "/tmp", "category": "later"},
+            )
+            self.assertEqual(status, 503)
+            self.assertIn("not running on the Mac", reply["error"])
+
+
+@unittest.skipUnless(DESKTOP and SERVICE.is_file(), "desktop build required")
+class WindowlessHostTests(unittest.TestCase):
+    """The real windowless host (lapis_desktop --serve) behind the gateway."""
+
+    def setUp(self):
+        self.runtime = Path(tempfile.mkdtemp(prefix="lh-", dir="/tmp")).resolve()
+        self.addCleanup(shutil.rmtree, self.runtime, True)
+        (self.runtime / "bin").mkdir()
+        (self.runtime / "project").mkdir()
+        grok = self.runtime / "bin" / "grok"
+        grok.write_text('#!/bin/sh\necho "grok ready in $(pwd)"\nexec sleep 600\n')
+        grok.chmod(0o755)
+        (self.runtime / "workspace.json").write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "activeCategory": "general",
+                    "categories": [
+                        {"id": "general", "name": "General"},
+                        {"id": "later", "name": "Later"},
+                    ],
+                    "agents": [],
+                }
+            )
+        )
+        environment = {
+            **os.environ,
+            "PATH": f"{self.runtime / 'bin'}:{os.environ.get('PATH', '')}",
+            "LAPIS_HISTORY_ROOT": str(self.runtime / "history"),
+        }
+        self.host = subprocess.Popen(
+            [
+                str(DESKTOP),
+                "--serve",
+                "--registry",
+                str(self.runtime / "workspace.json"),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env=environment,
+        )
+        self.addCleanup(self.stop)
+        control = str(self.runtime / remote.CONTROL_NAME)
+        deadline = time.monotonic() + 15
+        while not remote.service_answers(control):
+            self.assertLess(time.monotonic(), deadline, "the host did not start")
+            time.sleep(0.1)
+
+    def stop(self):
+        rows = subprocess.run(
+            ["ps", "-axo", "pid=,command="], capture_output=True, text=True
+        ).stdout.splitlines()
+        for row in rows:
+            if str(self.runtime) in row:
+                try:
+                    os.kill(int(row.split(None, 1)[0]), 9)
+                except (ProcessLookupError, ValueError):
+                    pass
+        self.host.wait(10)
+
+    def test_the_host_starts_an_agent_in_its_category(self):
+        with Server(
+            self, (self.runtime / "workspace.json").read_text(), self.runtime
+        ) as server:
+            status, listed = server.request("GET", "/api/harnesses")
+            self.assertEqual(status, 200)
+            self.assertTrue(
+                any(h["id"] == "grok" and h["installed"] for h in listed["harnesses"])
+            )
+            status, started = server.request(
+                "POST",
+                "/api/agents",
+                {
+                    "harness": "grok",
+                    "directory": str(self.runtime / "project"),
+                    "category": "later",
+                },
+            )
+            self.assertEqual(status, 200, started)
+            deadline = time.monotonic() + 15
+            while True:
+                status, listing = server.request("GET", "/api/agents")
+                later = next(c for c in listing["categories"] if c["id"] == "later")
+                agent = next(
+                    (a for a in later["agents"] if a["id"] == started["id"]), None
+                )
+                if agent and agent["running"]:
+                    break
+                self.assertLess(time.monotonic(), deadline, "the new agent never ran")
+                time.sleep(0.2)
+            self.assertEqual(agent["title"], "project")
+            status, refused = server.request(
+                "POST",
+                "/api/agents",
+                {"harness": "grok", "directory": "/tmp", "category": "gone"},
+            )
+            self.assertEqual((status, refused["error"]), (422, "Unknown category."))
 
 
 class Events:

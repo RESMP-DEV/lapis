@@ -1,6 +1,7 @@
 #include "agent_checkpoint.hpp"
 #include "launch_spec.hpp"
 #include "workspace.hpp"
+#include "workspace_control.hpp"
 
 #include <QCoreApplication>
 #include <QDataStream>
@@ -15,6 +16,7 @@
 #include <QLocalSocket>
 #include <QLockFile>
 #include <QPointer>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUuid>
@@ -934,9 +936,194 @@ void windowWaitsForTheRestoreHelper() {
             "a second window does not wait");
     auto restoring = options;
     restoring.restoreAgents = true;
-    restoring.restoreOnly = true;
+    restoring.headless = true;
     Workspace late(WorkspaceMode::live, restoring);
     require(!late.workspaceError().isEmpty(), "the helper leaves an open window's workspace alone");
+}
+
+// A request to the process that owns the workspace, answered while this
+// thread's event loop runs (a window's control server lives on it).
+QJsonObject askWorkspace(const QString& registry, const QJsonObject& request) {
+    QLocalSocket socket;
+    socket.connectToServer(lapis::desktop::WorkspaceControl::path(registry));
+    require(waitFor([&socket] { return socket.state() == QLocalSocket::ConnectedState; }, 3000),
+            "the workspace takes requests");
+    socket.write(QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n');
+    QByteArray answer;
+    require(waitFor(
+                [&] {
+                    answer += socket.readAll();
+                    return answer.contains('\n');
+                },
+                5000),
+            "the workspace answers");
+    return QJsonDocument::fromJson(answer.trimmed()).object();
+}
+
+QJsonObject createRequest(const QString& category, const QString& harness,
+                          const QString& directory) {
+    return {{QStringLiteral("version"), 1},
+            {QStringLiteral("request"), QStringLiteral("createAgent")},
+            {QStringLiteral("category"), category},
+            {QStringLiteral("harness"), harness},
+            {QStringLiteral("directory"), directory}};
+}
+
+// A stand-in Grok on PATH that says where it started.
+QByteArray installStandInGrok(const QDir& root) {
+    require(root.mkpath(QStringLiteral("bin")) && root.mkpath(QStringLiteral("project")),
+            "fixture folders");
+    QFile script(root.filePath(QStringLiteral("bin/grok")));
+    require(script.open(QIODevice::WriteOnly), "write the stand-in CLI");
+    script.write("#!/bin/sh\necho \"grok ready in $(pwd)\"\nexec sleep 600\n");
+    script.close();
+    require(script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "make it executable");
+    const auto path = qgetenv("PATH");
+    qputenv("PATH", QFile::encodeName(root.filePath(QStringLiteral("bin"))) + ':' + path);
+    return path;
+}
+
+// The phone gateway starts an agent through the window: it opens as a new tab
+// in the chosen category, while the window keeps its category and agent.
+void phoneStartsAnAgentInItsCategory() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-control-XXXXXX"));
+    require(directory.isValid(), "control directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    const auto project = root.filePath(QStringLiteral("project"));
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        const auto desk_category = workspace.activeCategoryId();
+        require(workspace.createAgent(project, QStringLiteral("desk"), QStringLiteral("grok")),
+                "an agent on the Mac");
+        auto* desk = workspace.focusedSession();
+        require(workspace.addCategory(QStringLiteral("Later")) &&
+                    workspace.selectCategory(desk_category),
+                "a second category");
+        const auto later =
+            workspace.categories().constLast().toMap().value(QStringLiteral("id")).toString();
+        lapis::desktop::WorkspaceControl control(workspace, false);
+        require(control.listening(), "the window takes workspace requests");
+        const auto registry = workspace.storagePath();
+
+        const auto harnesses =
+            askWorkspace(registry, {{QStringLiteral("version"), 1},
+                                    {QStringLiteral("request"), QStringLiteral("harnesses")}});
+        const auto listed = harnesses.value(QStringLiteral("harnesses")).toArray();
+        require(harnesses.value(QStringLiteral("ok")).toBool() &&
+                    std::any_of(listed.begin(), listed.end(),
+                                [](const QJsonValue& harness) {
+                                    return harness[QStringLiteral("id")] ==
+                                               QStringLiteral("grok") &&
+                                           harness[QStringLiteral("installed")].toBool();
+                                }),
+                "the phone learns which CLIs this Mac has");
+
+        const auto count = workspace.sessions().size();
+        auto wrong_version = createRequest(later, QStringLiteral("grok"), project);
+        wrong_version[QStringLiteral("version")] = 2;
+        auto missing_field = createRequest(later, QStringLiteral("grok"), project);
+        missing_field.remove(QStringLiteral("harness"));
+        for (const auto& bad :
+             {createRequest(QStringLiteral("nowhere"), QStringLiteral("grok"), project),
+              createRequest(later, QStringLiteral("nothing"), project),
+              createRequest(later, QStringLiteral("grok"), root.filePath(QStringLiteral("gone"))),
+              wrong_version, missing_field,
+              QJsonObject{{QStringLiteral("version"), 1},
+                          {QStringLiteral("request"), QStringLiteral("handover")}}}) {
+            const auto refused = askWorkspace(registry, bad);
+            require(!refused.value(QStringLiteral("ok")).toBool() &&
+                        !refused.value(QStringLiteral("error")).toString().isEmpty(),
+                    "a bad request is refused with a reason");
+        }
+        require(workspace.sessions().size() == count, "refused requests start nothing");
+
+        const auto started =
+            askWorkspace(registry, createRequest(later, QStringLiteral("grok"), project));
+        const auto id = started.value(QStringLiteral("id")).toString();
+        require(started.value(QStringLiteral("ok")).toBool() && !id.isEmpty() &&
+                    !started.value(QStringLiteral("updating")).toBool(),
+                "the phone starts an agent");
+        require(workspace.activeCategoryId() == desk_category && workspace.focusedSession() == desk,
+                "the window keeps its category and agent");
+        auto* agent = workspace.session(id);
+        require(agent != nullptr && agent->title() == QStringLiteral("project"),
+                "the new tab is named after its folder");
+        require(waitFor([agent] { return agent->inputReady(); }, 10000) &&
+                    waitFor(
+                        [agent, &project] {
+                            return screenText(agent->snapshot())
+                                .contains(QStringLiteral("grok ready in ") + project);
+                        },
+                        5000),
+                "the agent runs in the chosen folder");
+        QFile saved(registry);
+        require(saved.open(QIODevice::ReadOnly), "read the registry");
+        const auto agents = QJsonDocument::fromJson(saved.readAll())
+                                .object()
+                                .value(QStringLiteral("agents"))
+                                .toArray();
+        require(std::any_of(agents.begin(), agents.end(),
+                            [&](const QJsonValue& entry) {
+                                return entry[QStringLiteral("id")] == id &&
+                                       entry[QStringLiteral("category")] == later;
+                            }),
+                "the registry puts it in the chosen category");
+        for (const auto& closing : {desk->sessionId(), id})
+            require(workspace.closeSession(closing), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in agents close");
+    }
+    qputenv("PATH", path);
+}
+
+// With no window open, the windowless host serves the phone. A window that
+// opens asks the host for the workspace, and the host hands it over and exits.
+void windowTakesTheWorkspaceFromTheHost() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-host-XXXXXX"));
+    require(directory.isValid(), "host directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    QProcess host;
+    host.setProcessChannelMode(QProcess::MergedChannels);
+    host.start(QStringLiteral(LAPIS_DESKTOP_PATH),
+               {QStringLiteral("--serve"), QStringLiteral("--registry"), options.storagePath});
+    const auto control = lapis::desktop::WorkspaceControl::path(options.storagePath);
+    require(waitFor(
+                [&control] {
+                    QLocalSocket probe;
+                    probe.connectToServer(control);
+                    return probe.waitForConnected(100);
+                },
+                10000),
+            "the host serves the workspace");
+    // The host (another process) answers blocking requests too.
+    QLocalSocket phone;
+    phone.connectToServer(control);
+    require(phone.waitForConnected(1000), "the phone reaches the host");
+    phone.write(R"({"version":1,"request":"harnesses"})"
+                "\n");
+    QByteArray answer;
+    while (!answer.contains('\n') && phone.waitForReadyRead(3000))
+        answer += phone.readAll();
+    require(QJsonDocument::fromJson(answer.trimmed()).object().value(QStringLiteral("ok")).toBool(),
+            "the host answers the phone");
+    QElapsedTimer clock;
+    clock.start();
+    {
+        Workspace window(WorkspaceMode::live, options);
+        require(window.workspaceError().isEmpty() && clock.elapsed() < 10000,
+                "a window takes the workspace from the host");
+        require(host.waitForFinished(5000) && host.exitCode() == 0 &&
+                    host.readAll().contains("handed the workspace to a window"),
+                "the host hands over and exits");
+    }
+    qputenv("PATH", path);
 }
 
 // A new agent's CLI updates itself first, so the agent never opens on an
@@ -1572,6 +1759,8 @@ int main(int argc, char** argv) {
         joinedViewStaysInSync();
         harnessesUpdateBeforeNewAgents();
         windowWaitsForTheRestoreHelper();
+        phoneStartsAnAgentInItsCategory();
+        windowTakesTheWorkspaceFromTheHost();
         phoneSizeYieldsToTheDesktop();
         std::cout << "workspace categories, identity, persistence, status and closing passed\n";
         return 0;

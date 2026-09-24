@@ -1719,7 +1719,8 @@ agents to a reboot is the user's main pain point). `lapis_desktop
 --restore-agents` runs the restore path without a window (offscreen Qt
 platform): it restarts only cards whose services are gone, waits up to 90
 seconds for each to accept input, and exits, leaving services it did not start
-for a window to reattach. `scripts/restore_at_login.py` installs it as the
+for a window to reattach (with `--serve`, it then hosts the workspace for the
+phone until a window takes it; see phone access below). `scripts/restore_at_login.py` installs it as the
 `dev.lapis.restore` LaunchAgent with the installing shell's PATH, since agents
 inherit the helper's environment. The helper and a window share the registry
 lock. The helper writes its process ID to `<registry>.restoring` (owner-only)
@@ -1824,10 +1825,39 @@ A prototype, deliberately simpler than the SSH design first proposed:
   profile and installs it with `devicectl`. Both bypass Xcode's build service,
   which deadlocked on this Mac: the kernel's pipe memory was exhausted by
   long-running agent processes, leaving new pipes 512 bytes deep.
+- Starting agents from the phone (September 24, requested so a walk away from
+  the Mac is not a reason to wait). The registry has one writer, the lapis
+  process holding its lock, so the gateway asks that process instead of
+  editing the file: `<registry folder>/workspace-control.sock` (owner-only, in
+  the private runtime folder) takes one JSON line per connection and answers
+  with one. Version 1 requests are `harnesses` (the catalog with `installed`
+  as that process's PATH finds it), `createAgent` (category, harness, folder
+  with `~` expanded, optional title defaulting to the folder's name) and
+  `handover`. `createAgent` runs the desktop's own new-agent path, including
+  the CLI update first, in the named category without touching its
+  selection, so an agent shown on the Mac keeps the stage and keyboard; only
+  a category with nothing selected shows the new agent. The gateway exposes
+  `GET /api/harnesses` and `POST /api/agents` behind the same admission and
+  answers 503 when no lapis process owns the workspace. The phone's sheet
+  offers the Mac's installed CLIs, the folders of agents already there and the
+  categories, then waits (up to 150 seconds) until the agent's service answers
+  before opening it.
+- The windowless host. With no window open nothing would own the workspace,
+  so `lapis_desktop --serve` keeps it without a window (offscreen Qt
+  platform), serving the same socket and leaving running services for a
+  window to reattach; the login LaunchAgent runs `--restore-agents --serve`.
+  It writes the helper marker beside the lock. A window finding that marker
+  sends `handover` every half second while it waits (at most two minutes) for
+  the lock; the host answers, then exits, and the window takes the workspace.
+  A window refuses `handover`. Qualified by `phoneStartsAnAgentInItsCategory`
+  and `windowTakesTheWorkspaceFromTheHost` (workspace suite, the second
+  against the real binary), the gateway suite against a stand-in socket and
+  the real host, and `testStartAnAgentFromThePhone` in the simulator against
+  the real host.
 - Not yet: structured requests and approvals on the phone (agents' own prompts
-  are answered through the key bar), push notifications, and restoring agents
-  without the desktop open, which needs a per-user background process; these
-  remain proposed.
+  are answered through the key bar), push notifications, and serving the
+  phone after the window quits (only the login helper hosts without a
+  window); these remain proposed.
 
 Observed but not changed: Linux TSan reports frees and mutexes on Qt's uninstrumented
 threads in five GUI suites, identically on the pre-merge base, so TSan remains a

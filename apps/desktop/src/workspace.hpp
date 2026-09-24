@@ -85,6 +85,7 @@ class SessionPreview final : public QObject {
     void setClosing(bool closing);
     // Shown instead of the status while the agent's CLI updates before start.
     void setUpdating(const QString& label);
+    [[nodiscard]] bool updating() const { return !updating_.isEmpty(); }
     [[nodiscard]] bool unseen() const { return unseen_; }
     void setUnseen(bool unseen);
     // Where activity comes from: a service-side observer (the Codex app-server,
@@ -231,9 +232,10 @@ struct WorkspaceOptions {
     // Run a CLI's own update command before a new agent of it starts, at most
     // every 30 minutes per CLI, so agents never open on an update prompt.
     bool updateHarnesses{};
-    // With restoreAgents, only start agents whose services are gone and leave
-    // running services alone (the login helper; a window reattaches later).
-    bool restoreOnly{};
+    // No window: leave running services for a window to reattach, and hand the
+    // workspace to a window that opens (the login helper and the windowless
+    // host that serves the phone).
+    bool headless{};
 };
 
 class Workspace final : public QObject {
@@ -275,6 +277,12 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool selectSession(const QString& id);
     Q_INVOKABLE bool createAgent(const QString& directory, const QString& title,
                                  const QString& harness = QStringLiteral("codex"));
+    // Starts an agent in a category; returns its id, or "" with workspaceError().
+    // Without `select` the category's selection is left alone, so an agent
+    // started from another device never takes the stage from a shown agent.
+    QString startAgent(const QString& categoryId, const QString& directory, const QString& title,
+                       const QString& harness, bool select);
+    [[nodiscard]] const QString& storagePath() const { return storage_path_; }
     // Close an agent's tab. A reachable agent is ended through its
     // session service first and its tab closes once the process exits. An
     // unreachable one keeps its tab unless `abandon` accepts that it may still
@@ -313,7 +321,7 @@ class Workspace final : public QObject {
     QHash<QString, QStringList> harness_arguments_;
     bool restore_agents_{};
     bool update_harnesses_{};
-    bool restore_only_{};
+    bool headless_{};
     QHash<QString, qint64> harness_checked_ms_;
     QHash<QString, QPointer<QProcess>> harness_updates_;
     QHash<QString, QStringList> starts_after_update_;
@@ -348,6 +356,10 @@ class Workspace final : public QObject {
     QString error_;
     bool storage_failed_{};
     bool fail(const QString& message);
+    QString failed(const QString& message) {
+        fail(message);
+        return {};
+    }
     struct RegistryState {
         std::vector<Category> categories;
         QMap<QString, Agent> agents;

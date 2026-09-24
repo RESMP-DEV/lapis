@@ -1548,9 +1548,9 @@ int run_strip_ui_tests() {
 
     // The + under the last category opens the category form and shows its key.
     auto* new_category = item(QStringLiteral("newCategoryButton"));
-    auto* last_category = item(QStringLiteral("category_") +
-                               workspace.categories().constLast().toMap().value(
-                                   QStringLiteral("id")).toString());
+    auto* last_category =
+        item(QStringLiteral("category_") +
+             workspace.categories().constLast().toMap().value(QStringLiteral("id")).toString());
     CHECK(new_category->mapToScene({0, 0}).y() >
           last_category->mapToScene({0, last_category->height()}).y() - 1);
 #ifdef Q_OS_MACOS

@@ -4,9 +4,12 @@ struct AgentListView: View {
     @Environment(WorkspaceModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
     @State private var showingSettings = false
+    @State private var path: [Agent] = []
+    @State private var newAgent: NewAgentTarget?
+    @State private var started: Agent?
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             content
                 .background(Theme.background.ignoresSafeArea())
                 .navigationBarTitleDisplayMode(.inline)
@@ -22,7 +25,17 @@ struct AgentListView: View {
                             .frame(width: 24, height: 24)
                             .accessibilityLabel("lapis")
                     }
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button {
+                            if let listing = model.listing {
+                                newAgent = NewAgentTarget(category: listing.activeCategory)
+                            }
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .disabled(model.listing == nil)
+                        .accessibilityLabel("New agent")
+                        .accessibilityIdentifier("newAgent")
                         Button {
                             showingSettings = true
                         } label: {
@@ -33,6 +46,18 @@ struct AgentListView: View {
                 }
                 .sheet(isPresented: $showingSettings) {
                     SettingsView()
+                }
+                // The agent opens once the sheet has gone.
+                .sheet(item: $newAgent, onDismiss: {
+                    if let agent = started {
+                        started = nil
+                        path.append(agent)
+                    }
+                }) { target in
+                    NewAgentView(categories: model.listing?.categories ?? [],
+                                 category: target.category) { agent in
+                        started = agent
+                    }
                 }
         }
         .task(id: scenePhase) {
@@ -63,13 +88,27 @@ struct AgentListView: View {
                             .foregroundStyle(.orange)
                     }
                     ForEach(listing.categories) { category in
-                        Text(category.name)
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .textCase(.uppercase)
-                            .tracking(1.6)
-                            .foregroundStyle(Theme.quiet)
-                            .padding(.top, 14)
-                            .padding(.leading, 4)
+                        HStack {
+                            Text(category.name)
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .textCase(.uppercase)
+                                .tracking(1.6)
+                                .foregroundStyle(Theme.quiet)
+                            Spacer()
+                            Button {
+                                newAgent = NewAgentTarget(category: category.id)
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(Theme.quiet)
+                                    .frame(width: 36, height: 28)
+                                    .contentShape(Rectangle())
+                            }
+                            .accessibilityLabel("New agent in \(category.name)")
+                            .accessibilityIdentifier("newAgent-\(category.name)")
+                        }
+                        .padding(.top, 14)
+                        .padding(.leading, 4)
                         if category.agents.isEmpty {
                             Text("No agents")
                                 .font(.footnote)
@@ -103,6 +142,12 @@ struct AgentListView: View {
                 .foregroundStyle(Theme.quiet)
         }
     }
+}
+
+// Which category a new agent goes to.
+struct NewAgentTarget: Identifiable {
+    let category: String
+    var id: String { category }
 }
 
 // A card with cut corners and a harness-tinted edge, in the desktop's

@@ -2,11 +2,11 @@
 
     uv run --no-project python scripts/restore_at_login.py install|uninstall|status|run
 
-At login it runs `lapis_desktop --restore-agents`: agents whose services died
-with the Mac (a restart, a crash, a power cut) start again in their folders,
-resuming their conversations, and the helper exits. Opening lapis later
-reattaches to them; the iPhone app can reach them before that. A window opened
-while the helper runs waits for it.
+At login it runs `lapis_desktop --restore-agents --serve`: agents whose services
+died with the Mac (a restart, a crash, a power cut) start again in their
+folders, resuming their conversations. The helper then keeps the workspace
+without a window, so the iPhone app can start agents, until lapis opens; the
+window asks for the workspace and the helper hands it over and exits.
 
 Agents inherit the helper's environment, so install records this shell's PATH
 (agents started from an open lapis window get the environment lapis was
@@ -57,7 +57,7 @@ def install():
         plistlib.dumps(
             {
                 "Label": LABEL,
-                "ProgramArguments": [str(DESKTOP), "--restore-agents"],
+                "ProgramArguments": [str(DESKTOP), "--restore-agents", "--serve"],
                 "EnvironmentVariables": environment(),
                 "RunAtLoad": True,
                 "ProcessType": "Interactive",

@@ -3,12 +3,14 @@
 #include "terminal_surface.hpp"
 #include "ui_capture.hpp"
 #include "ui_preview.hpp"
+#include "workspace_control.hpp"
 
 #include "launch_spec.hpp"
 
 #include <QCommandLineParser>
 #include <QDebug>
 #include <QElapsedTimer>
+#include <QEventLoop>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QQmlEngine>
@@ -18,6 +20,7 @@
 #include <QThread>
 #include <algorithm>
 #include <exception>
+#include <optional>
 #include <set>
 
 namespace {
@@ -34,8 +37,11 @@ void add_options(QCommandLineParser& parser) {
     parser.addOption({QStringLiteral("restore-agents"),
                       QStringLiteral("Without a window, restart agents whose services are gone "
                                      "(after a reboot), wait until they answer, and exit.")});
+    parser.addOption({QStringLiteral("serve"),
+                      QStringLiteral("Without a window, host the workspace for the phone (after "
+                                     "--restore-agents, if given) until a lapis window opens.")});
     parser.addOption({QStringLiteral("registry"),
-                      QStringLiteral("Workspace registry for --restore-agents (tests)."),
+                      QStringLiteral("Workspace registry for --restore-agents or --serve (tests)."),
                       QStringLiteral("path")});
     parser.addOption({QStringLiteral("new-session"),
                       QStringLiteral("Explicitly start a new session on an unused endpoint")});
@@ -185,13 +191,14 @@ bool valid_options(const QCommandLineParser& parser) {
     return true;
 }
 
-// --restore-agents: the login helper restarts agents and leaves the rest alone.
-void restore_only_options(const QCommandLineParser& parser,
-                          lapis::desktop::WorkspaceOptions& options) {
-    if (!parser.isSet(QStringLiteral("restore-agents")))
+// --restore-agents and --serve run without a window: the login helper restarts
+// agents, and the host serves the phone until a window takes the workspace.
+void headless_options(const QCommandLineParser& parser, lapis::desktop::WorkspaceOptions& options) {
+    const bool restore = parser.isSet(QStringLiteral("restore-agents"));
+    if (!restore && !parser.isSet(QStringLiteral("serve")))
         return;
-    options.restoreAgents = true;
-    options.restoreOnly = true;
+    options.restoreAgents = restore;
+    options.headless = true;
     options.updateHarnesses = false;
     if (parser.isSet(QStringLiteral("registry")))
         options.storagePath = parser.value(QStringLiteral("registry"));
@@ -230,19 +237,28 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
         options.restoreAgents = !options.launch && options.endpoint.isEmpty();
         options.updateHarnesses = options.restoreAgents;
     }
-    restore_only_options(parser, options);
+    headless_options(parser, options);
     return options;
 }
 
 // At login (a LaunchAgent) or by hand: restart agents whose services are gone,
-// resuming their conversations, wait until they answer, and exit. The
-// services keep running; a window reattaches to them when it opens.
-int restore_headless(lapis::desktop::Workspace& workspace) {
+// resuming their conversations, and wait until they answer. With --serve, then
+// host the workspace for the phone until a lapis window asks for it. Services
+// keep running either way; a window reattaches to them when it opens.
+int run_headless(lapis::desktop::Workspace& workspace, bool serve) {
     using lapis::desktop::SessionPreview;
+    using lapis::desktop::WorkspaceControl;
     if (!workspace.workspaceError().isEmpty()) {
-        // An open window holds the workspace and restores agents itself.
+        // An open window holds the workspace, restores agents and serves the phone.
         qInfo().noquote() << "lapis restore:" << workspace.workspaceError();
         return 0;
+    }
+    std::optional<WorkspaceControl> control;
+    bool handed_over = false;
+    if (serve) {
+        control.emplace(workspace, true);
+        QObject::connect(&*control, &WorkspaceControl::handoverRequested,
+                         [&handed_over] { handed_over = true; });
     }
     std::vector<SessionPreview*> started;
     for (const auto& value : workspace.sessions())
@@ -267,7 +283,7 @@ int restore_headless(lapis::desktop::Workspace& workspace) {
             done = settled(item) && done; // visit every item to record attempts
         return done;
     };
-    while (clock.elapsed() < 90000 && !all_settled()) {
+    while (!handed_over && clock.elapsed() < 90000 && !all_settled()) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
         QThread::msleep(20);
     }
@@ -276,6 +292,14 @@ int restore_headless(lapis::desktop::Workspace& workspace) {
                           << (item->inputReady() ? QStringLiteral("running")
                                                  : item->connectionState());
     qInfo().noquote() << "lapis restore:" << started.size() << "agents restarted";
+    if (serve && !handed_over) {
+        qInfo().noquote() << "lapis restore: serving the workspace until a window opens";
+        QEventLoop loop;
+        QObject::connect(&*control, &WorkspaceControl::handoverRequested, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    if (handed_over)
+        qInfo().noquote() << "lapis restore: handed the workspace to a window";
     return 0;
 }
 
@@ -327,8 +351,9 @@ int main(int argc, char** argv) {
 #endif
     QCoreApplication::setAttribute(Qt::AA_MacDontSwapCtrlAndMeta);
     // The login helper shows nothing: no window and no Dock icon.
-    const bool restore_only = arguments.contains(QStringLiteral("--restore-agents"));
-    if (restore_only && !qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
+    const bool serve = arguments.contains(QStringLiteral("--serve"));
+    const bool headless = serve || arguments.contains(QStringLiteral("--restore-agents"));
+    if (headless && !qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(application_argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("lapis"));
@@ -348,8 +373,12 @@ int main(int argc, char** argv) {
         const bool isolated = parser.isSet(QStringLiteral("ui-preview"));
         const auto options = workspace_options(parser, isolated);
         Workspace workspace(isolated ? WorkspaceMode::preview : WorkspaceMode::live, options);
-        if (restore_only)
-            return restore_headless(workspace);
+        if (headless)
+            return run_headless(workspace, serve);
+        // The window owns the workspace: the phone's requests come here.
+        std::optional<WorkspaceControl> control;
+        if (options.restoreAgents && workspace.workspaceError().isEmpty())
+            control.emplace(workspace, false);
         KeyMap keymap;
         keymap.load();
         workspace.setHarnessArguments(keymap.harnessArguments());

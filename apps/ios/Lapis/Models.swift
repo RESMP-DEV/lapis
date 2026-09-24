@@ -36,6 +36,39 @@ final class WorkspaceModel {
     }
 }
 
+extension WorkspaceModel {
+    // Starts an agent through the Mac's lapis and waits until it runs; a CLI
+    // may update itself first, for up to two minutes.
+    func start(_ new: NewAgent, progress: @MainActor (String) -> Void) async throws -> Agent {
+        guard let gateway else { throw GatewayError.invalidHost }
+        let started = try await gateway.start(new)
+        progress(started.updating ? "Updating the CLI first…" : "Starting…")
+        let deadline = Date().addingTimeInterval(150)
+        while Date() < deadline {
+            try Task.checkCancellation()
+            let current = try await gateway.agents()
+            listing = current
+            if let agent = current.categories.flatMap(\.agents).first(where: { $0.id == started.id }),
+               agent.running {
+                return agent
+            }
+            try await Task.sleep(for: .milliseconds(600))
+        }
+        throw GatewayError.refused(0, "The agent has not started yet. It is in the list on the Mac.")
+    }
+
+    // Folders of this Mac's agents, for starting another beside them.
+    var recentFolders: [String] {
+        var seen = Set<String>()
+        return (listing?.categories.flatMap(\.agents) ?? [])
+            .filter { ($0.machine ?? "").isEmpty && !$0.location.isEmpty }
+            .map(\.location)
+            .filter { seen.insert($0).inserted }
+            .prefix(6)
+            .map { $0 }
+    }
+}
+
 func describe(_ error: Error) -> String {
     if let failure = error as? URLError {
         switch failure.code {

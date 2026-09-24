@@ -66,7 +66,7 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation | Automatic carousel and larger session-count qualification |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
 | Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect, `/clear` continuation and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
-| iPhone app (prototype) | Gateway on the Mac over Tailscale, admitting only the owner's iOS devices; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; the phone joins beside the desktop so both stay in sync (services started by this build); UI tests in the iOS 26.5 Simulator against real services with a Mac-side client attached, fake agents, and real Codex and Claude Code on a fake model; installed and used on an iPhone 17 Pro | Agents started before sync are taken over instead; no structured requests, push notifications or restore without the desktop |
+| iPhone app (prototype) | Gateway on the Mac over Tailscale, admitting only the owner's iOS devices; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; the phone joins beside the desktop so both stay in sync (services started by this build); starting an agent in a category from the phone through the Mac's lapis; UI tests in the iOS 26.5 Simulator against real services and the real windowless lapis host with a Mac-side client attached, fake agents, and real Codex and Claude Code on a fake model; installed and used on an iPhone 17 Pro | Agents started before sync are taken over instead; no structured requests or push notifications; starting agents needs a lapis window or the login helper running |
 | Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals; [installed binary qualification](evidence/codex-binary-update.json) | Broader binary and request-kind qualification |
 
 [Desktop evidence](evidence/desktop-preview.json),
@@ -182,10 +182,11 @@ the rollouts its app-server holds open, following `/new` and `/resume`.
 Command-W is what removes an agent for good. Restore runs when lapis opens.
 To have agents come back at login without opening a window, install the login
 helper once with `uv run --no-project python scripts/restore_at_login.py
-install`. It runs `lapis_desktop --restore-agents`, restarts the agents whose
-services died with the Mac (restart, crash, power cut) and exits; a window
-opened meanwhile waits for it, and it leaves agents that are still running
-alone. It needs a logged-in user session.
+install`. It runs `lapis_desktop --restore-agents --serve`, restarts the agents
+whose services died with the Mac (restart, crash, power cut), and then keeps the
+workspace without a window so the phone can start agents; opening lapis takes
+the workspace from it and it exits. It leaves agents that are still running
+alone, and it needs a logged-in user session.
 An agent that has ended or cannot be reached keeps its last screen, with a bar
 on the stage giving the reason and the key that closes it. **Restart agent**
 in Commands starts it again in the same card, resuming its conversation the
@@ -279,6 +280,13 @@ before this build run services that cannot be joined; opening one on the phone
 takes it from the desktop (its card offers **Reconnect agent**), and the phone
 says so. Restarting such an agent gives it a service that can. The Mac must be
 awake.
+
+**+** on a category (or in the toolbar) starts an agent from the phone: pick the
+CLI, a folder on the Mac (recent folders are offered) and the category, and it
+opens as a new tab in that category in lapis on the Mac, then on the phone once
+it runs. A shown agent on the Mac keeps the stage. This needs lapis running on
+the Mac: an open window, or the login helper (`scripts/restore_at_login.py`),
+which after a restart keeps the workspace without a window until lapis opens.
 `uv run --no-project python scripts/check_ios_remote.py [--codex] [--claude]`
 runs the app's UI tests in a headless simulator against disposable services.
 

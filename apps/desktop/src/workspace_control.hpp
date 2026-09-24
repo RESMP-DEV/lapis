@@ -1,0 +1,43 @@
+#ifndef LAPIS_DESKTOP_WORKSPACE_CONTROL_HPP
+#define LAPIS_DESKTOP_WORKSPACE_CONTROL_HPP
+#include <QByteArray>
+#include <QLocalServer>
+#include <QObject>
+#include <QString>
+
+namespace lapis::desktop {
+class Workspace;
+
+// Requests to the lapis process that owns the workspace (a window, or the
+// windowless host) from other lapis processes on this Mac, such as the phone
+// gateway: one JSON line per connection on <registry folder>/
+// workspace-control.sock, answered with one JSON line. Version 1 requests:
+// "harnesses", "createAgent" (category, harness, directory, optional title)
+// and "handover", which only the windowless host honours.
+class WorkspaceControl final : public QObject {
+    Q_OBJECT
+  public:
+    WorkspaceControl(Workspace& workspace, bool host, QObject* parent = nullptr);
+    ~WorkspaceControl() override;
+    WorkspaceControl(const WorkspaceControl&) = delete;
+    WorkspaceControl& operator=(const WorkspaceControl&) = delete;
+    WorkspaceControl(WorkspaceControl&&) = delete;
+    WorkspaceControl& operator=(WorkspaceControl&&) = delete;
+
+    [[nodiscard]] bool listening() const { return server_.isListening(); }
+    [[nodiscard]] static QString path(const QString& registry);
+    // Asks the windowless host holding this registry to let a window have it.
+    static bool requestHandover(const QString& registry);
+
+  signals:
+    void handoverRequested();
+
+  private:
+    void accept();
+    QByteArray answer(const QByteArray& line);
+    Workspace& workspace_;
+    bool host_;
+    QLocalServer server_;
+};
+} // namespace lapis::desktop
+#endif

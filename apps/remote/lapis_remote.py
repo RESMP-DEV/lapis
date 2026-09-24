@@ -5,7 +5,10 @@ The gateway reads the desktop's workspace registry and attaches to an
 agent's session service only while the phone shows that agent. It joins the
 session beside the desktop, so both show the same screen and either can type;
 the device in use sets the terminal size, and the desktop's returns when the
-phone leaves. A service started before joining
+phone leaves. The phone can also start an agent: the gateway asks the lapis
+process that owns the workspace (the window, or the windowless host after a
+restart) over its workspace-control socket, and the agent opens as a new tab
+in the chosen category. A service started before joining
 existed rejects it, and then the phone takes the agent from the desktop until
 Reconnect agent on the Mac. Agents keep running either way.
 
@@ -76,6 +79,8 @@ KEYS = {
 SHIFT, CONTROL, ALT = 1, 2, 4
 MAX_INPUT = 32 * 1024
 MAX_CAPTURE = 12 * 1024 * 1024
+MAX_REQUEST = 8 * 1024
+CONTROL_NAME = "workspace-control.sock"
 
 # Run style bits sent to the phone.
 BOLD, ITALIC, FAINT, UNDERLINE, STRIKE, CURSOR = 1, 2, 4, 8, 16, 32
@@ -83,6 +88,10 @@ BOLD, ITALIC, FAINT, UNDERLINE, STRIKE, CURSOR = 1, 2, 4, 8, 16, 32
 
 class GatewayError(RuntimeError):
     pass
+
+
+class DesktopUnavailable(GatewayError):
+    """No lapis window or windowless host owns the workspace."""
 
 
 def require(condition, message):
@@ -158,6 +167,39 @@ def load_workspace(path):
         "agents": agents,
         "activeCategory": str(data.get("activeCategory", "")),
     }
+
+
+def desktop_request(registry, request, timeout=15.0):
+    """One request to the lapis process that owns the workspace (a window, or
+    the windowless host): a JSON line out, a JSON line back."""
+    path = Path(registry).absolute().parent / CONTROL_NAME
+    connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    connection.settimeout(timeout)
+    try:
+        try:
+            connection.connect(str(path))
+        except (FileNotFoundError, ConnectionRefusedError) as error:
+            raise DesktopUnavailable(
+                "lapis is not running on the Mac. Open it there, or install the "
+                "login helper (scripts/restore_at_login.py) so it keeps serving."
+            ) from error
+        connection.sendall(json.dumps({"version": 1, **request}).encode() + b"\n")
+        data = b""
+        while not data.endswith(b"\n") and len(data) < MAX_REQUEST * 8:
+            chunk = connection.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+    finally:
+        connection.close()
+    try:
+        answer = json.loads(data)
+    except ValueError as error:
+        raise GatewayError("lapis on the Mac gave no answer") from error
+    require(isinstance(answer, dict), "lapis on the Mac gave no answer")
+    if not answer.get("ok"):
+        raise GatewayError(str(answer.get("error") or "lapis on the Mac refused"))
+    return answer
 
 
 SHELL_HOSTS = ("ssh", "mosh", "et")
@@ -657,6 +699,8 @@ class Handler(BaseHTTPRequestHandler):
             )
         elif parts == ["api", "agents"]:
             self.list_agents()
+        elif parts == ["api", "harnesses"]:
+            self.harnesses()
         elif agent_route(parts, "stream"):
             self.stream(parts[2])
         elif agent_route(parts, "history"):
@@ -670,6 +714,8 @@ class Handler(BaseHTTPRequestHandler):
         parts = self.route()
         if agent_route(parts, "input"):
             self.input(parts[2])
+        elif parts == ["api", "agents"]:
+            self.start_agent()
         elif parts == ["api", "captures"]:
             self.capture()
         else:
@@ -704,6 +750,62 @@ class Handler(BaseHTTPRequestHandler):
             HTTPStatus.OK,
             {"categories": categories, "activeCategory": workspace["activeCategory"]},
         )
+
+    def ask_desktop(self, request):
+        """The desktop's answer, or None after replying with why it failed."""
+        try:
+            return desktop_request(self.gateway.registry, request)
+        except DesktopUnavailable as error:
+            self.fail(HTTPStatus.SERVICE_UNAVAILABLE, str(error))
+        except (OSError, GatewayError) as error:
+            self.fail(HTTPStatus.UNPROCESSABLE_ENTITY, str(error))
+        return None
+
+    def harnesses(self):
+        answer = self.ask_desktop({"request": "harnesses"})
+        if answer is not None:
+            self.reply(HTTPStatus.OK, {"harnesses": answer.get("harnesses", [])})
+
+    def start_agent(self):
+        """A new agent in a category, started by the Mac's lapis as a new tab."""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = -1
+        if not 0 < length <= MAX_REQUEST:
+            self.fail(HTTPStatus.BAD_REQUEST, "Invalid request size")
+            return
+        try:
+            body = json.loads(self.rfile.read(length))
+            require(isinstance(body, dict), "The request must be an object")
+            request = {"request": "createAgent"}
+            for field, limit in (
+                ("category", 64),
+                ("harness", 32),
+                ("directory", 4096),
+            ):
+                value = body.get(field)
+                require(
+                    isinstance(value, str) and 0 < len(value) <= limit,
+                    f"Missing or invalid {field}",
+                )
+                request[field] = value
+            title = body.get("title", "")
+            require(isinstance(title, str) and len(title) <= 80, "Invalid title")
+            if title:
+                request["title"] = title
+        except (ValueError, GatewayError) as error:
+            self.fail(HTTPStatus.BAD_REQUEST, str(error))
+            return
+        answer = self.ask_desktop(request)
+        if answer is not None:
+            self.reply(
+                HTTPStatus.OK,
+                {
+                    "id": str(answer.get("id", "")),
+                    "updating": bool(answer.get("updating")),
+                },
+            )
 
     def event(self, name, body):
         data = json.dumps(body, separators=(",", ":"))

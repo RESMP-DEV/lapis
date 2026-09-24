@@ -2,9 +2,11 @@
 #include "agent_checkpoint.hpp"
 #include "live_connection.hpp"
 #include "platform/posix/local_endpoint.hpp"
+#include "workspace_control.hpp"
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -117,13 +119,13 @@ QString Workspace::defaultEndpoint() {
 }
 
 Workspace::~Workspace() {
-    if (restore_only_ && registry_lock_ && registry_lock_->isLocked())
+    if (headless_ && registry_lock_ && registry_lock_->isLocked())
         QFile::remove(storage_path_ + QStringLiteral(".restoring"));
 }
 
 Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
     : restore_agents_(options.restoreAgents), update_harnesses_(options.updateHarnesses),
-      restore_only_(options.restoreOnly), preview_mode_(mode == WorkspaceMode::preview) {
+      headless_(options.headless), preview_mode_(mode == WorkspaceMode::preview) {
     // Selecting an agent is looking at it.
     connect(this, &Workspace::focusChanged, this, [this] {
         if (auto* focused = focusedSession())
@@ -704,13 +706,21 @@ QString Workspace::displayPath(const QString& directory) const {
 // explicit. NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool Workspace::createAgent(const QString& directory, const QString& title,
                             const QString& harness) {
+    return !startAgent(active_category_, directory, title, harness, true).isEmpty();
+}
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters): validated boundary strings.
+QString Workspace::startAgent(const QString& categoryId, const QString& directory,
+                              const QString& title, const QString& harness, bool select) {
     if (!mutableRegistry())
-        return false;
+        return {};
     if (preview_mode_)
-        return fail(QStringLiteral("Agent launch is disabled in the preview fixture."));
+        return failed(QStringLiteral("Agent launch is disabled in the preview fixture."));
     if (sessions_.size() >= 128 || !validName(title))
-        return fail(QStringLiteral(
+        return failed(QStringLiteral(
             "Use an agent name of 1–80 characters; at most 128 agents are supported."));
+    if (std::none_of(categories_.begin(), categories_.end(),
+                     [&](const auto& category) { return category.id == categoryId; }))
+        return failed(QStringLiteral("Unknown category."));
     try {
         const QString project =
             directory == QStringLiteral("~") || directory.startsWith(QStringLiteral("~/"))
@@ -718,21 +728,21 @@ bool Workspace::createAgent(const QString& directory, const QString& title,
                 : directory;
         if (project.isEmpty() || project.size() > 4096 || project.contains(QChar::Null) ||
             !QFileInfo(project).isDir())
-            return fail(
+            return failed(
                 QStringLiteral("Choose an existing project directory (at most 4096 characters)."));
         const auto* selected = findHarness(harness);
         if (!selected)
-            return fail(QStringLiteral("Unknown agent harness."));
+            return failed(QStringLiteral("Unknown agent harness."));
         const auto program = harnessExecutable(*selected);
         if (program.isEmpty())
-            return fail(QStringLiteral("%1 is not installed or is not available on PATH.")
-                            .arg(QString::fromLatin1(selected->label)));
+            return failed(QStringLiteral("%1 is not installed or is not available on PATH.")
+                              .arg(QString::fromLatin1(selected->label)));
         // Codex and Claude Code have service-side observers; other CLIs run as
         // plain terminal agents.
         const auto mode = harness == QStringLiteral("codex")    ? session::AgentMode::codex
                           : harness == QStringLiteral("claude") ? session::AgentMode::claude
                                                                 : session::AgentMode::terminal;
-        const auto id = newId();
+        auto id = newId();
         const auto endpoint = session::posix::prepare_endpoint(
             QDir(QFileInfo(storage_path_).absolutePath()).filePath(id + QStringLiteral(".sock")));
         auto launch =
@@ -745,29 +755,30 @@ bool Workspace::createAgent(const QString& directory, const QString& title,
                                                      QColor(QStringLiteral("#87cbac")), "");
         item->setSessionId(id);
         item->setHarnessId(harness);
-        const Agent agent{active_category_, endpoint, launch, harness};
+        const Agent agent{categoryId, endpoint, launch, harness};
         item->setStatusSource(statusSource(agent));
         const auto previous = checkpoint();
         agents_.insert(id, agent);
         sessions_.push_back(std::move(item));
-        for (auto& category : categories_)
-            if (category.id == active_category_)
-                category.selected = id;
+        if (select)
+            for (auto& category : categories_)
+                if (category.id == categoryId)
+                    category.selected = id;
         restoreSelection();
         // Persist before starting a child, so a failed write cannot orphan a new agent.
         if (!save()) {
             sessions_.pop_back();
             rollback(previous);
             emit errorChanged();
-            return false;
+            return {};
         }
         watch(sessions_.back().get());
         if (!deferForUpdate(id))
             sessions_.back()->startLive(endpoint, launch, session::wire::AttachMode::create);
         changed();
-        return true;
+        return id;
     } catch (const std::exception& error) {
-        return fail(QString::fromUtf8(error.what()));
+        return failed(QString::fromUtf8(error.what()));
     }
 }
 bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
@@ -1164,10 +1175,19 @@ void Workspace::lockRegistry() {
                             marker.open(QIODevice::ReadOnly) &&
                             marker.read(32).trimmed().toLongLong() == holder;
         marker.close();
-        if (!helper || restore_only_ || !registry_lock_->tryLock(120000))
+        if (!helper || headless_)
             throw std::runtime_error("This workspace is already open in another lapis window");
+        // A windowless host keeps serving until asked; the login helper exits
+        // once its agents answer. Either way, wait at most two minutes.
+        QElapsedTimer waited;
+        waited.start();
+        while (!registry_lock_->tryLock(500)) {
+            if (waited.elapsed() >= 120000)
+                throw std::runtime_error("This workspace is already open in another lapis window");
+            WorkspaceControl::requestHandover(storage_path_);
+        }
     }
-    if (restore_only_ && marker.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    if (headless_ && marker.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         marker.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
         marker.write(QByteArray::number(QCoreApplication::applicationPid()));
     }
@@ -1224,14 +1244,14 @@ void Workspace::restore() {
                     restarted = true;
                     continue;
                 }
-            if (restore_only_)
+            if (headless_)
                 continue; // running services are the window's to reattach
             item->startLive(agent.endpoint, agent.launch, session::wire::AttachMode::reconnect);
         }
         // Restarted agents have new launch arguments, part of their fingerprint.
         if (restarted && !save())
             throw std::runtime_error(error_.toStdString());
-        if (restore_agents_ && !restore_only_) {
+        if (restore_agents_ && !headless_) {
             conversation_timer_.setInterval(60000);
             connect(&conversation_timer_, &QTimer::timeout, this, &Workspace::recordConversations);
             conversation_timer_.start();

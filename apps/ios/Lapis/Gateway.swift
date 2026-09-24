@@ -30,6 +30,26 @@ struct Agent: Decodable, Identifiable, Hashable {
     var location: String { place ?? directory }
 }
 
+// An agent CLI the Mac can start, as its lapis reports it.
+struct Harness: Decodable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let installed: Bool
+}
+
+// An agent to start on the Mac, as a new tab in `category`.
+struct NewAgent: Encodable {
+    let harness: String
+    let directory: String
+    let category: String
+}
+
+struct StartedAgent: Decodable {
+    let id: String
+    // The CLI updates itself before the agent starts.
+    let updating: Bool
+}
+
 struct ScreenFrame: Decodable {
     struct Cursor: Decodable {
         let x: Int
@@ -195,6 +215,23 @@ struct Gateway {
         let (data, response) = try await Gateway.requests.data(for: request("api/agents"))
         try Gateway.check(response, data)
         return try JSONDecoder().decode(WorkspaceListing.self, from: data)
+    }
+
+    func harnesses() async throws -> [Harness] {
+        struct Listing: Decodable { let harnesses: [Harness] }
+        let (data, response) = try await Gateway.requests.data(for: request("api/harnesses"))
+        try Gateway.check(response, data)
+        return try JSONDecoder().decode(Listing.self, from: data).harnesses
+    }
+
+    func start(_ agent: NewAgent) async throws -> StartedAgent {
+        var request = request("api/agents")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(agent)
+        let (data, response) = try await Gateway.requests.data(for: request)
+        try Gateway.check(response, data)
+        return try JSONDecoder().decode(StartedAgent.self, from: data)
     }
 
     func send(_ input: Input, to agent: String) async throws {
