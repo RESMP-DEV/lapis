@@ -229,6 +229,9 @@ struct WorkspaceOptions {
     // Run a CLI's own update command before a new agent of it starts, at most
     // every 30 minutes per CLI, so agents never open on an update prompt.
     bool updateHarnesses{};
+    // With restoreAgents, only start agents whose services are gone and leave
+    // running services alone (the login helper; a window reattaches later).
+    bool restoreOnly{};
 };
 
 class Workspace final : public QObject {
@@ -247,6 +250,7 @@ class Workspace final : public QObject {
         lapis::desktop::SessionPreview* focusedSession READ focusedSession NOTIFY focusChanged)
   public:
     explicit Workspace(WorkspaceMode mode = WorkspaceMode::live, WorkspaceOptions options = {});
+    ~Workspace() override;
     [[nodiscard]] bool previewMode() const { return preview_mode_; }
     [[nodiscard]] QString homeDirectory() const;
     Q_INVOKABLE [[nodiscard]] QVariantList availableHarnesses() const;
@@ -307,6 +311,7 @@ class Workspace final : public QObject {
     QHash<QString, QStringList> harness_arguments_;
     bool restore_agents_{};
     bool update_harnesses_{};
+    bool restore_only_{};
     QHash<QString, qint64> harness_checked_ms_;
     QHash<QString, QPointer<QProcess>> harness_updates_;
     QHash<QString, QStringList> starts_after_update_;
@@ -352,6 +357,7 @@ class Workspace final : public QObject {
     bool mutableRegistry();
     bool commit(const RegistryState& previous);
     bool save(const QString& renamedId = {}, const QString& renamedTitle = {});
+    void lockRegistry();
     void restore();
     void loadCategories(const QJsonArray& groups);
     static void loadManagedResume(const QJsonValue& value, Agent& agent);
