@@ -19,6 +19,13 @@ class ProtocolDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
             b"POST /responses HTTP/1.1\r\nContent-Length: private-prompt-sentinel\r\n\r\n",
             b'POST /responses HTTP/1.1\r\nContent-Length: 8\r\n\r\n{"bad": ',
         ]
+        for body in (b"[]", b'"private-prompt-sentinel"', b"42", b"null"):
+            malformed_requests.append(
+                b"POST /responses HTTP/1.1\r\nContent-Length: "
+                + str(len(body)).encode()
+                + b"\r\n\r\n"
+                + body
+            )
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "requests.jsonl"
             server = await asyncio.start_server(Server(log).handle, "127.0.0.1", 0)
@@ -53,14 +60,16 @@ class ProtocolDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
             entries = [json.loads(line) for line in log.read_text().splitlines()]
             errors = [entry for entry in entries if "error" in entry]
             records = [entry for entry in entries if "method" in entry]
-            self.assertEqual(len(errors), 3)
+            self.assertEqual(len(errors), len(malformed_requests))
             self.assertEqual(
                 [entry["error"].split(":", 1)[0] for entry in errors],
-                ["ValueError", "ValueError", "JSONDecodeError"],
+                ["ValueError", "ValueError", "JSONDecodeError"] + ["ValueError"] * 4,
             )
             self.assertTrue(all(set(entry) == {"time", "error"} for entry in errors))
             self.assertEqual([entry["method"] for entry in records], ["GET"])
-            self.assertEqual(len(log.read_text().splitlines()), 4)
+            self.assertEqual(
+                len(log.read_text().splitlines()), len(malformed_requests) + 1
+            )
             self.assertNotIn("private-prompt-sentinel", log.read_text())
 
 

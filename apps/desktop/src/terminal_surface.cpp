@@ -32,6 +32,29 @@ namespace {
 
 QColor color(std::uint32_t rgb) { return QColor::fromRgb(rgb | 0xff000000U); }
 
+struct SurfaceLayout {
+    qreal scale{};
+    qreal first_row{};
+};
+SurfaceLayout surface_layout(const session::TerminalSnapshot& snapshot, QSizeF viewport,
+                             qreal minimum_scale, QSizeF cell_size) {
+    const qreal cell_width = cell_size.width();
+    const qreal row_height = cell_size.height();
+    qreal scale = std::min(viewport.width() / (snapshot.size.columns * cell_width),
+                           viewport.height() / (snapshot.size.rows * row_height));
+    qreal first_row = 0;
+    if (minimum_scale > 0 && scale < minimum_scale) {
+        scale = minimum_scale;
+        const auto rows = static_cast<qreal>(snapshot.size.rows);
+        const qreal visible_rows = viewport.height() / (row_height * scale);
+        const qreal last_row = snapshot.cursor.visible && snapshot.cursor.in_viewport
+                                   ? std::min(rows, static_cast<qreal>(snapshot.cursor.row) + 3)
+                                   : rows;
+        first_row = std::max(0.0, std::floor(last_row - visible_rows));
+    }
+    return {scale, first_row};
+}
+
 bool modifier_key(int key) {
     return key == Qt::Key_Shift || key == Qt::Key_Control || key == Qt::Key_Meta ||
            key == Qt::Key_Alt || key == Qt::Key_CapsLock;
@@ -668,22 +691,11 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
             &layout);
         root->overlays->appendChildNode(composition.release());
     }
-    qreal scale = std::min(frame->viewport.width() / (snapshot.size.columns * cell_width),
-                           frame->viewport.height() / (snapshot.size.rows * row_height));
+    const auto layout = surface_layout(snapshot, frame->viewport, frame->minimum_scale,
+                                       QSizeF(cell_width, row_height));
     QMatrix4x4 matrix;
-    if (frame->minimum_scale > 0 && scale < frame->minimum_scale) {
-        // Keep the rows up to the cursor readable, where agent TUIs keep
-        // their prompt and latest output; the item clips the rest.
-        scale = frame->minimum_scale;
-        const auto rows = static_cast<qreal>(snapshot.size.rows);
-        const qreal visible_rows = frame->viewport.height() / (row_height * scale);
-        const qreal last_row = snapshot.cursor.visible && snapshot.cursor.in_viewport
-                                   ? std::min(rows, static_cast<qreal>(snapshot.cursor.row) + 3)
-                                   : rows;
-        const qreal first_row = std::max(0.0, std::floor(last_row - visible_rows));
-        matrix.translate(0, static_cast<float>(-first_row * row_height * scale));
-    }
-    matrix.scale(static_cast<float>(scale));
+    matrix.translate(0, static_cast<float>(-layout.first_row * row_height * layout.scale));
+    matrix.scale(static_cast<float>(layout.scale));
     root->setMatrix(matrix);
     return root;
 }
@@ -726,6 +738,7 @@ void TerminalSurface::setMinimumScale(qreal scale) {
         return;
     minimum_scale_ = bounded;
     publishFrame(false);
+    updateInputContext(Qt::ImCursorRectangle);
     emit minimumScaleChanged();
 }
 
@@ -905,29 +918,32 @@ void TerminalSurface::scrollHistory(int steps) {
 std::optional<TerminalSurface::CellGrid> TerminalSurface::cellGrid() const {
     if (!document_)
         return std::nullopt;
-    const auto size = document_->snapshot().size;
+    const auto& snapshot = document_->snapshot();
+    const auto size = snapshot.size;
     if (size.columns == 0 || size.rows == 0 || width() <= 0 || height() <= 0)
         return std::nullopt;
     const QFontMetricsF metrics(cellFont());
     const qreal cell_width = metrics.horizontalAdvance(QLatin1Char('M'));
     const qreal row_height = metrics.height() + 3;
-    // Matches updatePaintNode for a surface without a minimum scale.
-    const qreal scale =
-        std::min(width() / (size.columns * cell_width), height() / (size.rows * row_height));
-    return CellGrid{cell_width * scale, row_height * scale, size.columns, size.rows};
+    const auto layout = surface_layout(snapshot, QSizeF(width(), height()), minimum_scale_,
+                                       QSizeF(cell_width, row_height));
+    return CellGrid{cell_width * layout.scale, row_height * layout.scale, snapshot.size.columns,
+                    snapshot.size.rows,        layout.first_row,          layout.scale};
 }
 QPoint TerminalSurface::cellAt(QPointF position) const {
     const auto grid = cellGrid();
     if (!grid)
         return {};
     return {std::clamp(static_cast<int>(position.x() / grid->width), 0, grid->columns - 1),
-            std::clamp(static_cast<int>(position.y() / grid->height), 0, grid->rows - 1)};
+            std::clamp(static_cast<int>(position.y() / grid->height + grid->first_row), 0,
+                       grid->rows - 1)};
 }
 QRectF TerminalSurface::cellRect(int column, int row) const {
     const auto grid = cellGrid();
     if (!grid)
         return {};
-    return {column * grid->width, row * grid->height, grid->width, grid->height};
+    return {column * grid->width, (row - grid->first_row) * grid->height, grid->width,
+            grid->height};
 }
 QString TerminalSurface::textBetween(QPoint start, QPoint end) const {
     const auto grid = cellGrid();
@@ -1274,17 +1290,14 @@ QVariant TerminalSurface::inputMethodQuery(Qt::InputMethodQuery query) const {
     if (query == Qt::ImEnabled)
         return acceptsTerminalInput();
     if (query == Qt::ImCursorRectangle && document_) {
-        const QFontMetricsF metrics(cellFont());
         const auto& snapshot = document_->snapshot();
-        if (!snapshot.cursor.in_viewport)
+        const auto grid = cellGrid();
+        if (!snapshot.cursor.in_viewport || !grid)
             return QRectF();
-        const qreal cell_width = metrics.horizontalAdvance(QLatin1Char('M'));
-        const qreal row_height = metrics.height() + 3;
-        const qreal scale = std::min(width() / (snapshot.size.columns * cell_width),
-                                     height() / (snapshot.size.rows * row_height));
-        return QRectF(snapshot.cursor.column * cell_width * scale,
-                      snapshot.cursor.row * row_height * scale, 2 * scale,
-                      metrics.height() * scale);
+        const QFontMetricsF metrics(cellFont());
+        return QRectF(snapshot.cursor.column * grid->width,
+                      (snapshot.cursor.row - grid->first_row) * grid->height, 2 * grid->scale,
+                      metrics.height() * grid->scale);
     }
     return QQuickItem::inputMethodQuery(query);
 }

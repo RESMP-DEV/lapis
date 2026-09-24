@@ -106,8 +106,8 @@ bool valid_agent_launch(const QCommandLineParser& parser, bool preview) {
         !parser.isSet(QStringLiteral("smoke-input")) &&
         (!parser.positionalArguments().isEmpty() || parser.isSet(QStringLiteral("socket")) ||
          parser.isSet(QStringLiteral("cwd")))) {
-        qCritical("Agent workspaces do not launch shells; use --codex, --claude or "
-                  "--development-shell for qualification");
+        qCritical("Unqualified workspace launches are rejected; use --codex, --claude, "
+                  "--development-shell or --smoke-input to qualify the launch");
         return false;
     }
     return true;

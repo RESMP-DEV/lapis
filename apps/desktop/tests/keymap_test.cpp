@@ -533,6 +533,7 @@ void malformed_values_fall_back() {
 void harness_arguments_are_literal_lists() {
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
+    const QDir dir(directory.path());
     const QString path = write_config(
         QDir(directory.path()),
         R"({"theme": "oled", "harnessArguments": {"claude": ["--dangerously-skip-permissions"],)"
@@ -557,6 +558,28 @@ void harness_arguments_are_literal_lists() {
                     .toArray()
                     .size() == 1,
             "saving appearance keeps the harness arguments");
+
+    const QString long_name(40, QLatin1Char('n'));
+    const QString invalid_name = write_config(
+        dir,
+        QStringLiteral(R"({"harnessArguments":{"%1":["--qualified"]}})").arg(long_name).toUtf8());
+    KeyMap overlong_name;
+    overlong_name.setSourcePathForTesting(invalid_name);
+    require(overlong_name.load(), "an overlong harness name still loads other defaults");
+    require(overlong_name.harnessArguments().isEmpty(), "an overlong harness name is dropped");
+    require(overlong_name.diagnostic().contains(QStringLiteral("at most 32 characters")),
+            "the diagnostic names the harness-name bound");
+
+    const QString long_argument = QStringLiteral("--%1").arg(QString(1025, QLatin1Char('x')));
+    const QString invalid_argument = write_config(
+        dir,
+        QStringLiteral(R"({"harnessArguments":{"claude":["%1"]}})").arg(long_argument).toUtf8());
+    KeyMap overlong_argument;
+    overlong_argument.setSourcePathForTesting(invalid_argument);
+    require(overlong_argument.load(), "an overlong argument still loads other defaults");
+    require(overlong_argument.harnessArguments().isEmpty(), "an overlong argument is dropped");
+    require(overlong_argument.diagnostic().contains(QStringLiteral("at most 1024 characters")),
+            "the diagnostic names the argument bound");
 }
 
 // The dialog builds its controls from these lists, so they must agree with the

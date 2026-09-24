@@ -55,7 +55,8 @@ class SessionPreview final : public QObject {
     Q_PROPERTY(bool historyRequestPending READ historyRequestPending NOTIFY historyChanged)
     Q_PROPERTY(QString historyMessage READ historyMessage NOTIFY historyChanged)
     Q_PROPERTY(QColor accent READ accent CONSTANT)
-    // Set between an explicit close request and the process ending.
+    // True while a close request waits for the process to end; cleared if the
+    // service rejects the close and the agent remains attached.
     Q_PROPERTY(bool closing READ closing NOTIFY statusChanged)
     // Finished a turn or started needing a response while another agent was
     // selected; cleared when this agent is selected.

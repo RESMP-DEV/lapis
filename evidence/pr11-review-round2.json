@@ -1,0 +1,328 @@
+{
+  "schema": "lapis.pr-review-round/1",
+  "recorded_at": "2026-09-24T08:37:44.009407+00:00",
+  "pr": 11,
+  "reviewed_head": "d7a1025fa0c02d14cd585fd2d532f1126af3d30d",
+  "validation_source": "Local changes based on reviewed_head; file hashes identify the validated implementation.",
+  "source_files_sha256": {
+    "apps/desktop/CMakeLists.txt": "28372c7d72a3f7d0ba3a669db11ecefb45db7caef32e2de640e7ea72d76fa01d",
+    "apps/desktop/src/keymap.cpp": "13134fe98e125cf921df44e97f6bda8f68431ad541787c29ba98aac9b61f4cf7",
+    "apps/desktop/src/main.cpp": "df60bdb7fe5b0c950934a68db77641bb3cde912ae7a800dc1123c461d7ce033d",
+    "apps/desktop/src/terminal_surface.cpp": "3e7f493e6cc722aa10e935f7e7deede6650c1c86c351eabca669370e85108561",
+    "apps/desktop/src/terminal_surface.hpp": "5a88d4458b47232aa2fc9b9909ade21b6aab4fcc5671243079e923a74059f589",
+    "apps/desktop/src/ui_preview.cpp": "af9d6c6336b388d23d87965f8fa6b5c2285e8a649784695ef61b1ef07a7b9e29",
+    "apps/desktop/src/workspace.cpp": "c630faeffeb5dc2b5bab27f48249db5c8cdcab4bb23d378731d5835243f3bc87",
+    "apps/desktop/src/workspace.hpp": "1457a0e54058204a5e377d608453f43adf126b0774e1dc2c0e2062e50ece2156",
+    "apps/desktop/tests/keymap_test.cpp": "9657299f0c134df0f06180d9d01684edcbef9fc087476ad0d2bf9e650e695c35",
+    "apps/desktop/tests/terminal_input_test.cpp": "c191bda7e2a09b09fd2e124047e8d985debd7f9b0a2e4b9d29e73d4a5dfc6e26",
+    "apps/desktop/tests/ui_preview_test.cpp": "57b38263e8ef12aa7d7dad1270661c700c27d56a8eb9674001c7ed963321cccb",
+    "apps/desktop/tests/window_state_test.cpp": "0e33e67fc95955973d4cc2dc6f2197da3940c614eb0c68bafabf306f759fc584",
+    "apps/desktop/tests/workspace_live_probe.cpp": "68bdbe1245f3f7f9cd562cbee8cf0ad2b3b69091eecefa4cb8a7a106ef993db2",
+    "apps/desktop/tests/workspace_test.cpp": "97ea3a649c6c27a6ac853d257f0e00fb1a98de9304b4b95c5ae6798305b2b787",
+    "docs/architecture.md": "4510c3b8f0a93810400cf295436069409af93b4acdcde84d04945f0f51e54a54",
+    "scripts/fake_models.py": "b0388cb7608fce36737302e1d38fec368cc4cd4dba7c4338f9d0a79853ad5134",
+    "scripts/tests/test_fake_models.py": "80ec711e79a5d16e02e5b9e993e029f251eb092287aa442739f8a9b7437681dd"
+  },
+  "triage": {
+    "minimax": {
+      "total": 218,
+      "counts": {
+        "optional": 118,
+        "false_positive": 70,
+        "duplicate": 24,
+        "fixed": 6
+      }
+    },
+    "glm": {
+      "total": 15,
+      "counts": {
+        "optional": 8,
+        "fixed": 5,
+        "false_positive": 2
+      }
+    }
+  },
+  "fixed_findings": [
+    {
+      "id": "MM11-043",
+      "path": "apps/desktop/src/main.cpp",
+      "change": "Fixed apps/desktop/src/main.cpp: valid_agent_launch, 102-112. The rejected path does allow --development-shell and --smoke-input qualifier launches, so the message now names every qualifier and no longer asserts that workspaces never launch shells. Commit 9618e104d8c9b34eb3f65632768ce8905482f6e5.",
+      "evidence": "apps/desktop/src/main.cpp valid_agent_launch diagnostic; the worker patch was collected into the coordinator branch and is covered by the combined build/CLI checks."
+    },
+    {
+      "id": "MM11-065",
+      "path": "apps/desktop/src/terminal_surface.hpp",
+      "change": "cellGrid now applies the renderer minimum scale and cursor-relative first-row offset. cellAt and cellRect use that offset, so cropped surfaces select the visible row.",
+      "evidence": "terminal_surface.cpp cellGrid/cellAt/cellRect; terminal_input_test.cpp minimum-scale selection regression; build/pr-bot-round2/terminal-regression.json old code fails, fixed code passes"
+    },
+    {
+      "id": "MM11-084",
+      "path": "apps/desktop/src/workspace.hpp",
+      "change": "The closing lifecycle is broader than the original one-line comment because rejection also clears it. Updated the comment to cover both waiting and service rejection.",
+      "evidence": [
+        "apps/desktop/src/workspace.hpp:58-60 now documents both the waiting and rejected-close states.",
+        "workspace.cpp:949-967 closeSession and finishClosing show the clearing paths."
+      ]
+    },
+    {
+      "id": "MM11-111",
+      "path": "apps/desktop/src/workspace.cpp",
+      "change": "Valid bug: discardSession built its neighbor from the active strip, so closing a selected session in another category left that category selected id pointing at the removed session. It now builds the neighbor list from the closing item category and applies it to every selected reference.",
+      "evidence": [
+        "workspace.cpp Workspace::discardSession chooses a neighbor in the closing item category",
+        "workspace_test.cpp discardOutsideActiveCategorySelectsNeighbor uses three agents and requires the right neighbor, not generic first-agent fallback",
+        "build/pr-bot-round2/workspace-regression.json: old source fails; fixed source passes"
+      ]
+    },
+    {
+      "id": "MM11-153",
+      "path": "apps/desktop/tests/workspace_live_probe.cpp",
+      "change": "Restricted ownership discovery to commands beginning with the exact built service executable plus an argument boundary, in addition to the private runtime path. A process merely mentioning the service/runtime no longer becomes a cleanup target. Descendant discovery and per-signal PID/command rechecks remain.",
+      "evidence": [
+        "apps/desktop/CMakeLists.txt lapis_workspace_live_probe service path definition",
+        "workspace_live_probe.cpp OwnedProcesses::inspect exact executable prefix",
+        "build/pr-bot-round2/process-filter-probe.json",
+        "build/pr-bot-round2/workspace-live.json"
+      ]
+    },
+    {
+      "id": "MM11-191",
+      "path": "scripts/fake_models.py",
+      "change": "Server.handle returned after scheduling close, leaving transport completion unobserved. It now awaits wait_closed() and ignores only OSError during best-effort close.",
+      "evidence": "scripts/fake_models.py:539-544 after change. py_compile, Ruff 0.16.8 check and format check passed. The socket test was blocked before the change by sandbox EPERM binding 127.0.0.1:0; 18 unrelated attention tests passed."
+    },
+    {
+      "id": "GLM11-002",
+      "path": "apps/desktop/src/keymap.cpp",
+      "change": "Validated: the same rejected branch enforces key length, list size, item presence/type, item length, and NUL rejection, but the old message only described the list/count constraint. The diagnostic now names the actual bounds and NUL restriction. Two focused regressions separately exercise a 40-character harness name and a 1025-character argument.",
+      "evidence": "apps/desktop/src/keymap.cpp: KeyMap::load_harness_arguments, 536-552 enforces <=32-character key, <=32-item list, non-empty string, <=1024-character string, and no NUL; 547-550 now states every bound. apps/desktop/tests/keymap_test.cpp: harness_arguments_are_literal_lists, 562-581 asserts diagnostics contain \"at most 32 characters\" and \"at most 1024 characters\". Focused keymap build/run passed."
+    },
+    {
+      "id": "GLM11-005",
+      "path": "apps/desktop/src/ui_preview.cpp",
+      "change": "Validated: sibling scripts create runtime/ with the umask, so the old unconditional group/other-bit rejection disabled persistence. The save path now repairs only a pinned, real, current-user directory; open uses O_NOFOLLOW, fstat confirms directory type and owner, fchmod sets 0700, and a path lstat confirms the same device/inode afterward. Restore remains read-only. Symlinks, foreign-owned objects, and permissive existing geometry files continue to fail.",
+      "evidence": "apps/desktop/src/ui_preview.cpp: privateGeometryPath, 106-151 implements O_DIRECTORY|O_NOFOLLOW, fstat owner/type checks, save-only fchmod to 0700, and post-repair identity verification; 148-151 preserves regular-file/owner/private-mode checks. apps/desktop/tests/window_state_test.cpp:172-175 retains a geometry-path symlink rejection; 177-198 repairs a current-user 0755-style runtime directory and verifies directory/file modes; 200-204 retains rejection of a permissive existing file; 206-211 retains directory-symlink rejection. GUI test execution remains parent-owned."
+    },
+    {
+      "id": "GLM11-006",
+      "path": "apps/desktop/src/terminal_surface.cpp",
+      "change": "Rendering, mouse cell geometry and IME candidate geometry now share one scale/crop layout calculation. The cursor rectangle uses the same first-row offset, and minimum-scale changes notify the active input context.",
+      "evidence": "terminal_surface.cpp surface_layout/cellGrid/inputMethodQuery/setMinimumScale; terminal_input_test.cpp cropped selection and IME-coordinate assertions; MM11-065"
+    },
+    {
+      "id": "GLM11-009",
+      "path": "apps/desktop/tests/ui_preview_test.cpp",
+      "change": "Validated: addCategory changes the active category, selectCategory and moveSession change categorySessions, and Main.qml binds the strip model to that list; the old raw cue therefore crossed model resets before its final dereference. The test now reacquires the object by name at the attention-color read and final visibility read. A QPointer regression proves the pre-reset delegate is gone after event/DeferredDelete drainage, without adding a sleep.",
+      "evidence": "apps/desktop/src/workspace.cpp: Workspace::addCategory 419-431 and moveSession 535-553 call changed(); changed() emits sessionsChanged at 391-396; Main.qml:2186 binds model to categorySessions. apps/desktop/tests/ui_preview_test.cpp:1460-1462 performs a fresh lookup; 1464-1472 captures the old delegate as QPointer, resets the model, drains deferred deletion without sleeping, and asserts it is null; 1486-1487 performs a fresh final lookup. GUI/static checks remain parent-owned."
+    },
+    {
+      "id": "GLM11-015",
+      "path": "scripts/fake_models.py",
+      "change": "Server.handle now rejects valid JSON values that are not objects before recording or routing the request. Arrays, strings, numbers and null take the existing sanitized ValueError path. The regression verifies every error is logged without request text and subsequent requests still work.",
+      "evidence": "scripts/fake_models.py Server.handle; scripts/tests/test_fake_models.py malformed request table; build/pr-bot-round2/fake-models-regression.json baseline failure/fixed pass"
+    }
+  ],
+  "semantic_probes": {
+    "dead_process_lock_recovered_with_stale_time_zero": true,
+    "fractional_toInt_minus1": -1,
+    "integral_toInt_minus1": 16,
+    "optional_compares_to_value": true,
+    "pointee_stable_after_growth": true,
+    "pointee_stable_after_swap": true,
+    "qt_version": "6.11.2",
+    "vector_reallocated": true,
+    "symlink_and_canonical_path_reach_same_unix_socket": true,
+    "source_revision": "d7a1025fa0c02d14cd585fd2d532f1126af3d30d"
+  },
+  "regressions": {
+    "cropped_selection": {
+      "baseline": {
+        "exit_code": 8,
+        "log": "/Users/kearm/lapis/build/pr-bot-round2/terminal-baseline-test.log"
+      },
+      "fixed": {
+        "exit_code": 0,
+        "log": "/Users/kearm/lapis/build/pr-bot-round2/terminal-fixed-test.log"
+      }
+    },
+    "background_category_selection": {
+      "baseline": {
+        "exit_code": 8,
+        "log": "/Users/kearm/lapis/build/pr-bot-round2/workspace-baseline-test.log"
+      },
+      "fixed": {
+        "exit_code": 0,
+        "log": "/Users/kearm/lapis/build/pr-bot-round2/workspace-fixed-test.log"
+      }
+    },
+    "non_object_json": {
+      "baseline_exit_code": 1,
+      "fixed_exit_code": 0
+    },
+    "process_filter": {
+      "old_match_incorrectly_adopts_inspector": true,
+      "fixed_match_adopts_inspector": false
+    }
+  },
+  "validation": {
+    "quality": "120 Python tests, Ruff, formatting and repository contracts passed",
+    "desktop": "21 CTests and compiler warnings, clang-format, clang-tidy and Cppcheck passed",
+    "asan": "11 affected CTests passed",
+    "tsan": "3 affected CTests passed",
+    "ui_cli_native": {
+      "ui-final": {
+        "exit_code": 0,
+        "command": [
+          "just",
+          "ui-check"
+        ]
+      },
+      "cli-final": {
+        "exit_code": 0,
+        "command": [
+          "just",
+          "cli-check"
+        ]
+      },
+      "native-final": {
+        "exit_code": 0,
+        "command": [
+          "build/desktop/apps/desktop/lapis_native_input_probe",
+          "--output",
+          "/Users/kearm/lapis/build/pr-bot-round2/native-input-final.json"
+        ]
+      },
+      "sanitizer_builds": {
+        "asan": {
+          "exit_code": 0,
+          "command": [
+            "cmake",
+            "--build",
+            "build/desktop-asan",
+            "--parallel",
+            "4"
+          ]
+        },
+        "tsan": {
+          "exit_code": 0,
+          "command": [
+            "cmake",
+            "--build",
+            "build/desktop-tsan",
+            "--parallel",
+            "4"
+          ]
+        }
+      },
+      "asan-final": {
+        "exit_code": 0,
+        "command": [
+          "ctest",
+          "--test-dir",
+          "build/desktop-asan",
+          "-R",
+          "^(workspace|window-state|ui-preview|appearance-input|terminal-input|terminal-render|keymap|live-connection|local-protocol|launch-spec|session-descriptor)$",
+          "--output-on-failure",
+          "--no-tests=error",
+          "--parallel",
+          "4"
+        ]
+      },
+      "tsan-final": {
+        "exit_code": 0,
+        "command": [
+          "ctest",
+          "--test-dir",
+          "build/desktop-tsan",
+          "-R",
+          "^(workspace|live-connection|local-protocol)$",
+          "--output-on-failure",
+          "--no-tests=error",
+          "--parallel",
+          "4"
+        ]
+      }
+    },
+    "real_workspace_probe": {
+      "cleanupComplete": true,
+      "modelTurns": 0,
+      "passed": true,
+      "samePidsAfterReconnect": true,
+      "servicePids": [
+        2911,
+        3055
+      ],
+      "terminalPids": [
+        2986,
+        3134
+      ]
+    }
+  },
+  "minimax_calibration": {
+    "original": {
+      "status": "complete",
+      "finding_count": 2,
+      "findings": [
+        {
+          "severity": "critical",
+          "content": "Off-by-one bug: changed `>=` to `>` makes the upper bound incorrect. Valid indices for `items` are `0 .. size()-1`. Using `>` permits access at `index == items.size()`, which is out-of-bounds and causes undefined behavior when `*items[index]` is dereferenced. Revert to `>=`."
+        },
+        {
+          "severity": "high",
+          "content": "Raw pointer used to track a member owned by `std::unique_ptr`. This violates the smart pointer / RAII guidelines and introduces a dangling-pointer hazard: any subsequent `push_back` that triggers vector reallocation will invalidate `first_item`. Either drop the cached pointer, hold an index (`std::optional<std::size_t>`), or update `first_item` after every mutation under a single owner."
+        }
+      ],
+      "provider": "minimax-code",
+      "model": "MiniMax-M3",
+      "rule_config_sha256": "ddb40005eb732cb8b37d8d3dc1acb82f3aa51fded408c899a092c10349c369c4"
+    },
+    "guided": {
+      "status": "complete",
+      "finding_count": 3,
+      "findings": [
+        {
+          "severity": "critical",
+          "content": "Off-by-one in bounds check: changing `>=` to `>` allows `index == items.size()`, which then dereferences `items[items.size()]` \u2014 out-of-bounds access. Valid indices are `[0, items.size())`, so the original `>=` was correct."
+        },
+        {
+          "severity": "high",
+          "content": "Lifetime hazard: `first_item` is a raw pointer into memory owned by `items[0]`'s `unique_ptr`. It is set only on the first `append` (to `items.front().get()`), so any subsequent reallocation of the `std::vector` invalidates it, and any operation that removes or replaces the first element (e.g. `erase`, `pop_back` on the only element, `clear`, `~Items`) leaves it dangling. Either drop the member, store an index/size_t, or use an observer/weak reference and update it whenever `items[0]` may be reallocated or destroyed."
+        },
+        {
+          "severity": "low",
+          "content": "`first_item` is added but never read anywhere in the codebase; it only acts as a write-only cache of `items.front().get()`. This is dead state and a maintenance trap (see lifetime hazard above). Remove it or wire it to actual call sites."
+        }
+      ],
+      "provider": "minimax-code",
+      "model": "MiniMax-M3",
+      "rule_config_sha256": "ddb40005eb732cb8b37d8d3dc1acb82f3aa51fded408c899a092c10349c369c4"
+    },
+    "rules": {
+      "status": "complete",
+      "finding_count": 1,
+      "findings": [
+        {
+          "severity": "high",
+          "content": "Off-by-one in bounds allows `index == items.size()`, which is out-of-bounds for `items[index]` (valid range is `0..size()-1`). The original `>=` was correct; the new `>` permits undefined behavior on the boundary."
+        }
+      ],
+      "provider": "minimax-code",
+      "model": "MiniMax-M3",
+      "rule_config_sha256": "e97a74d85bcd3b32f0711e7e856cd7663724b68990d27d403ce670a21d66ab56"
+    },
+    "conclusion": "The background-only attempt failed. The custom-rule attempt retained the seeded off-by-one defect and removed the lifetime/style false positives on this fixture; this is a bounded calibration, not general review accuracy proof.",
+    "active_rule_sha256": "067c784449abc82133f6d5fedd589cac5e50b850042808196af320c4dfc1ac0f"
+  },
+  "review_reply_status": {
+    "prepared_inline_replies": 132,
+    "posted": false,
+    "reason": "The existing poster encountered GitHub secondary content-creation limits with no explicit reset. Defer new review comments under the configured no-reset policy until September 25, 2026 (America/Los_Angeles).",
+    "complete_private_dispositions": "build/pr-bot-round2/all-dispositions.json and glm-dispositions.json"
+  },
+  "limits": [
+    "The custom MiniMax system rule passed a small matched fixture; general reviewer accuracy is not claimed.",
+    "Linux desktop behavior remains deferred.",
+    "Historical receipts and the separate C5 stash remain preserved.",
+    "Wire v6 additive terminate compatibility is intentional: older services reject close and the desktop reconnects without discarding the agent."
+  ]
+}

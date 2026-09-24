@@ -410,6 +410,29 @@ void selection_and_scroll() {
                           Qt::NoModifier);
         QCoreApplication::sendEvent(&surface, &event);
     };
+    // A cropped preview must map visible coordinates to the same terminal row
+    // as the renderer, even when the minimum scale prevents fitting all rows.
+    const auto ordinary_size = surface.size();
+    surface.setMinimumScale(1);
+    surface.setSize(QSizeF(1, 1));
+    const qreal scaled_row_height = surface.cellRect(0, 0).height();
+    surface.setSize(QSizeF(640, scaled_row_height));
+    const auto visible_row = surface.cellRect(0, 1);
+    require(qAbs(visible_row.top()) < 0.01 && surface.cellRect(0, 0).top() < 0,
+            "Minimum-scale cell bounds did not follow the cropped terminal rows");
+    const auto cropped_cursor = f.document.snapshot().cursor;
+    require(surface.inputMethodQuery(Qt::ImCursorRectangle).toRectF().topLeft() ==
+                surface.cellRect(cropped_cursor.column, cropped_cursor.row).topLeft(),
+            "Minimum-scale IME rectangle did not follow the rendered cursor");
+    const QPointF visible_first_cell(surface.cellRect(0, 1).center().x(), scaled_row_height / 2);
+    const QPointF visible_second_cell(surface.cellRect(1, 1).center().x(), scaled_row_height / 2);
+    mouse(QEvent::MouseButtonPress, visible_first_cell, Qt::LeftButton);
+    mouse(QEvent::MouseMove, visible_second_cell, Qt::NoButton);
+    mouse(QEvent::MouseButtonRelease, visible_second_cell, Qt::LeftButton);
+    require(surface.selectedText() == QStringLiteral("en"),
+            "Minimum-scale selection targeted a hidden terminal row");
+    surface.setMinimumScale(0);
+    surface.setSize(ordinary_size);
     // The fixture screen is four columns: "scre" above "en".
     mouse(QEvent::MouseButtonPress, surface.cellRect(0, 0).center(), Qt::LeftButton);
     mouse(QEvent::MouseMove, surface.cellRect(3, 0).center(), Qt::NoButton);

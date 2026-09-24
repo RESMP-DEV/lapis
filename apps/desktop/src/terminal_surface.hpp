@@ -112,6 +112,8 @@ class TerminalSurface : public QQuickItem {
         qreal height{};
         int columns{};
         int rows{};
+        qreal first_row{};
+        qreal scale{};
     };
     [[nodiscard]] std::optional<CellGrid> cellGrid() const;
     [[nodiscard]] QPoint cellAt(QPointF position) const;

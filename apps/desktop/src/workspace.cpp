@@ -601,9 +601,14 @@ bool Workspace::discardSession(const QString& id) {
     const auto* item = session(id);
     if (!item)
         return false;
+    const auto item_category = agents_.value(id).category;
     const auto previous = checkpoint();
-    // A closed agent hands focus to its right neighbor, or its left one at the end.
-    const auto list = categorySessions();
+    // A closed agent hands focus to its right neighbor in its own category, or
+    // to its left one at that category's end, even while another strip is shown.
+    QVariantList list;
+    for (const auto& candidate : sessions_)
+        if (agents_.value(candidate->sessionId()).category == item_category)
+            list.append(QVariant::fromValue(candidate.get()));
     for (qsizetype i = 0; i < list.size(); ++i) {
         if (list[i].value<SessionPreview*>() != item)
             continue;

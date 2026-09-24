@@ -1457,11 +1457,20 @@ int run_strip_ui_tests() {
         workspace.session(QStringLiteral("agent"))->applyAttention(request);
     }
     pump(30);
-    CHECK(QQmlProperty::read(cue, QStringLiteral("border.color")).value<QColor>() ==
-          window->property("attentionColor").value<QColor>());
+    CHECK(
+        QQmlProperty::read(item(QStringLiteral("unseenCue_agent")), QStringLiteral("border.color"))
+            .value<QColor>() == window->property("attentionColor").value<QColor>());
     capture("unseen");
-    // Unseen agents elsewhere mark their category.
+    const QPointer<QQuickItem> replaced_cue = item(QStringLiteral("unseenCue_agent"));
+    CHECK(replaced_cue != nullptr);
+    // Category changes reset the strip model. Drain deferred deletes without
+    // adding a sleep so the subsequent lookups prove they see fresh delegates.
     CHECK(workspace.addCategory(QStringLiteral("Other")));
+    QCoreApplication::processEvents();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCoreApplication::processEvents();
+    CHECK(replaced_cue.isNull());
+    // Unseen agents elsewhere mark their category.
     const auto other = workspace.activeCategoryId();
     CHECK(workspace.selectCategory(QStringLiteral("general")));
     CHECK(workspace.moveSession(QStringLiteral("notes"), other));
@@ -1474,7 +1483,8 @@ int run_strip_ui_tests() {
     // Selecting the agent is looking at it.
     click_visual(*window, *item(QStringLiteral("agentTab_agent")));
     pump(30);
-    CHECK(!workspace.session(QStringLiteral("agent"))->unseen() && !cue->isVisible());
+    CHECK(!workspace.session(QStringLiteral("agent"))->unseen() &&
+          !item(QStringLiteral("unseenCue_agent"))->isVisible());
     CHECK(workspace.selectSession(QStringLiteral("notes")));
     pump(30);
     CHECK(!item(QStringLiteral("categoryUnseen_") + other)->isVisible());

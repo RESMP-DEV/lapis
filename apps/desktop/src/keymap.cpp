@@ -544,8 +544,10 @@ void KeyMap::load_harness_arguments(const QJsonValue& value) {
             });
         if (!valid) {
             append_diagnostic(&diagnostic_,
-                              QStringLiteral("Ignoring harnessArguments for '%1': use a list of "
-                                             "up to 32 non-empty strings")
+                              QStringLiteral("Ignoring harnessArguments for '%1': use a harness "
+                                             "name of at most 32 characters and a list of up to "
+                                             "32 non-empty strings of at most 1024 characters "
+                                             "without NUL")
                                   .arg(it.key().left(32)));
             continue;
         }

@@ -1559,8 +1559,12 @@ Window placement belongs to the user and OS. Normal launch should restore valid
 geometry or let the OS place a new window. Explicit screen overrides remain for
 qualification. Restore against currently available displays and recover an
 accessible frame after a display is removed. Window geometry is machine-local
-runtime state, not a reason to rewrite tracked project configuration. Native
-window-manager positioning should work without a dedicated Raycast integration
+runtime state, not a reason to rewrite tracked project configuration. Saving geometry
+may tighten a current-user-owned real runtime directory to mode 0700 when a project
+tool created it with the default umask. The repair uses an open directory descriptor
+and rechecks its identity; symlinked or foreign-owned directories and permissive
+existing geometry files remain rejected. Restoring geometry does not change permissions.
+Native window-manager positioning should work without a dedicated Raycast integration
 or changes to global shortcuts.
 
 The original review suggested retaining layout choices. The later category-first

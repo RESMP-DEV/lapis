@@ -411,6 +411,23 @@ void placeholderMatchesTerminalDefaults() {
     lapis::desktop::SessionPreview fixture(QStringLiteral("Sample"), {}, {}, QColor{}, "sample");
     require(fixture.snapshot().background_rgb == 0x0d131dU, "fixtures keep the sample palette");
 }
+void discardOutsideActiveCategorySelectsNeighbor() {
+    Workspace workspace(WorkspaceMode::preview);
+    require(workspace.addCategory(QStringLiteral("Research")), "destination category");
+    const auto research = workspace.activeCategoryId();
+    require(workspace.moveSession(QStringLiteral("renderer"), research), "move first neighbor");
+    require(workspace.moveSession(QStringLiteral("agent"), research), "move second neighbor");
+    require(workspace.moveSession(QStringLiteral("service"), research), "move right neighbor");
+    require(workspace.selectSession(QStringLiteral("agent")), "select the future closed tab");
+    require(workspace.selectCategory(QStringLiteral("general")), "show a different category");
+    auto* agent = workspace.session(QStringLiteral("agent"));
+    require(agent != nullptr, "retain the closed preview fixture");
+    agent->setConnection(QStringLiteral("ended"), false);
+    require(workspace.removeSession(QStringLiteral("agent")), "remove an inactive-category tab");
+    require(workspace.selectCategory(research) &&
+                workspace.focusedSession() == workspace.session(QStringLiteral("service")),
+            "closing an unseen category remembers its own neighbor");
+}
 void truthfulStatus() {
     lapis::desktop::SessionPreview item(QStringLiteral("Codex"), {}, {}, QColor{}, "");
     lapis::session::wire::AttentionSnapshot attention;
@@ -801,6 +818,7 @@ int main(int argc, char** argv) {
         restoreAgentIdentity();
         truthfulStatus();
         placeholderMatchesTerminalDefaults();
+        discardOutsideActiveCategorySelectsNeighbor();
         failedWritesPreserveState();
         malformedAgentRegistry();
         unseenFollowsTurnsAndSelection();
