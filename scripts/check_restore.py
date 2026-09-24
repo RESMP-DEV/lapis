@@ -8,13 +8,14 @@ disposable workspace in /tmp, with:
   report a conversation the way the agent-checkpoint hooks do and say which
   conversation they resumed.
 
-It starts every agent with the helper (a first boot), holds a conversation
-with each, then twice simulates a power loss (SIGKILL on every process at
-once, leaving stale sockets) and boots again with the helper, the second time
-as a launchd job like the login LaunchAgent. After each boot
-every agent must be running its original conversation: Codex and Claude show
-the earlier exchange and the model receives it with the next prompt; the
-stand-ins report resuming the recorded conversation. Finally the helper runs
+It starts every agent with the helper (a first boot) and holds a conversation
+with each; Codex and Claude then start a second one with /new and /clear.
+Twice it simulates a power loss (SIGKILL on every process at once, leaving
+stale sockets) and boots again with the helper, the second time as a launchd
+job like the login LaunchAgent. After each boot every agent must be back in
+the conversation it was in: Codex and Claude show the exchange after /new and
+/clear, and the model receives it with the next prompt; the stand-ins report
+resuming the recorded conversation. Finally the helper runs
 with everything alive and must leave it untouched. macOS; nothing is left
 running.
 
@@ -126,11 +127,11 @@ def record(endpoint):
         return None
 
 
-def wait_record(endpoint, agent, timeout=40):
+def wait_record(endpoint, agent, timeout=40, replacing=None):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         value = record(endpoint)
-        if value and value.get("agent") == agent:
+        if value and value.get("agent") == agent and value["session_id"] != replacing:
             return value["session_id"]
         time.sleep(0.2)
     raise Failure(f"{agent} never recorded its conversation at {endpoint}")
@@ -408,17 +409,37 @@ def main():
             "codex": "hello codex from before",
             "claude": "hello claude from before",
         }
+        # Each starts a fresh conversation in the same agent first; the one to
+        # come back is the one in use at the power loss.
+        fresh = {"codex": "/new", "claude": "/clear"}
+
+        def say(session, text):
+            session.paste(text.encode())
+            time.sleep(0.3)
+            session.key("enter")
+            wait_screen(session, f"Fake model reply to: {text}")
+
         for name in ("codex", "claude"):
             session = attach(name)
             wait_screen(session, "codex" if name == "codex" else "Claude Code")
             time.sleep(2)
-            session.paste(prompt[name].encode())
-            time.sleep(0.3)
+            say(session, f"{name} before {fresh[name]}")
+            earlier = wait_record(endpoint[name], name)
+            session.paste(fresh[name].encode())
+            time.sleep(0.5)
             session.key("enter")
-            wait_screen(session, f"Fake model reply to: {prompt[name]}")
-            conversations[name] = wait_record(endpoint[name], name)
+            time.sleep(3)
+            say(session, prompt[name])
+            # Codex builds the observer has not qualified are followed by the
+            # service's rollout scan, once a minute after the first find.
+            conversations[name] = wait_record(
+                endpoint[name], name, timeout=90, replacing=earlier
+            )
             session.close()
-            print(f"  {name}: conversation {conversations[name]}")
+            print(
+                f"  {name}: conversation {earlier}, then {fresh[name]} "
+                f"{conversations[name]}"
+            )
         for name in STAND_INS:
             conversations[name] = wait_record(endpoint[name], name)
             session = attach(name)

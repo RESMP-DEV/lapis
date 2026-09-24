@@ -1707,9 +1707,9 @@ Claude hook relay's command line. Changing any of them needs a migration that
 still reattaches services started by the previous build. For Codex services
 started before resume records existed, the desktop recovers the thread every
 60 seconds: it finds the app-server by its exact `app-server --listen
-unix://<endpoint>.codex` command line and takes the earliest rollout it holds
-open (later ones are subagents); this was checked against real Codex 0.155.1
-with the fake model after deleting the record. Restart agent (Commands) applies
+unix://<endpoint>.codex` command line and reads the rollouts it holds open
+(the rule is under Restore at login below); this was checked against real
+Codex 0.155.1 with the fake model after deleting the record. Restart agent (Commands) applies
 the restore path to one ended or unreachable card and refuses while its service
 answers. Antigravity resumes with `agy --conversation`.
 
@@ -1724,24 +1724,35 @@ inherit the helper's environment. The helper and a window share the registry
 lock. The helper writes its process ID to `<registry>.restoring` (owner-only)
 while it holds the lock, because QLockFile records the process name rather
 than the application name; a window finding that marker waits up to two
-minutes for the lock (longer than the helper's own limit), while a second window, or a helper finding a window,
-fails at once. Two gaps found by simulated power loss are closed in the
-service. A Codex build the observer has not qualified reports no thread, so
-the service also reads the rollout its app-server holds open (`lsof` on macOS,
-`/proc/<pid>/fd` on Linux) every 5 seconds until it finds one, then every
-minute, and records it. Codex 0.156 listens through a symlink it removes only
-on a clean exit; a dead link at the service's own `.codex` path is removed,
-while one that still answers is refused. `scripts/check_restore.py` qualifies
-this end to end on macOS: real Codex and Claude Code against the fake model
-and fake stand-ins for Grok, Kimi, OpenCode and OMP, started by the helper,
-then two rounds of SIGKILL on every process with stale sockets left behind,
-each followed by the helper, the second time as a launchd job with the
-LaunchAgent's minimal environment (launchd kills a job's process group when it
-exits; services leave it through `startDetached`'s new session). Every agent
-must show its earlier exchange,
-accept a follow-up, and keep its conversation identity with exactly one resume
-argument; the model must receive the growing conversation. A final helper run
-with everything alive must restart nothing.
+minutes for the lock (longer than the helper's own limit), while a second
+window, or a helper finding a window, fails at once.
+
+Gaps found by simulated power loss are closed in the service. A Codex build
+the observer has not qualified reports no thread, so the service also reads
+the rollouts its app-server holds open (`lsof` on macOS, `/proc/<pid>/fd` on
+Linux) every 5 seconds until it finds one, then every minute, and records
+the conversation in use. Codex keeps every loaded thread's rollout open,
+including the previous conversation after `/new` or `/resume` (observed with
+Codex 0.156.1), so the rule is the main thread written last: subagent threads,
+whose rollout's first line has a `{"subagent": ...}` source and a parent
+thread, are left out, and unreadable files are skipped. The desktop's minute
+check applies the same rule to services that predate the scan, replacing a
+saved thread only when it is still open and another main thread was written
+after it. Codex 0.156 listens through a symlink it removes only on a clean
+exit; a dead link at the service's own `.codex` path is removed, while one
+that still answers is refused.
+
+`scripts/check_restore.py` qualifies this end to end on macOS: real Codex and
+Claude Code against the fake model and fake stand-ins for Grok, Kimi, OpenCode
+and OMP, started by the helper. Codex and Claude each hold a conversation and
+then start another with `/new` and `/clear`. Two rounds of SIGKILL on every
+process, with stale sockets left behind, are each followed by the helper; the
+second runs as a launchd job with the LaunchAgent's minimal environment
+(launchd kills a job's process group when it exits; services leave it through
+`startDetached`'s new session). Every agent must come back in the conversation
+it was in, show that exchange, accept a follow-up, and keep its conversation
+identity with exactly one resume argument; the model must receive the growing
+conversation. A final helper run with everything alive must restart nothing.
 
 CLI updates (September 24, requested so agents never open on an update
 prompt). Before a new agent starts, the desktop runs that CLI's own

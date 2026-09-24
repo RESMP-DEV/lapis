@@ -174,8 +174,9 @@ present. Codex transcript lookup stays within the `sessions/YYYY/MM/DD` layout
 and does not follow directory symlinks. Each service records
 the conversation beside its endpoint (`<endpoint>.resume`) from the Codex
 observer, the Claude hook adapter, or the `agent_checkpoint` sequence that
-iTerm2 restore hooks print. For Codex agents whose service predates these
-records, lapis reads the thread from the rollout its app-server holds open.
+iTerm2 restore hooks print. For Codex builds lapis has not qualified, and
+Codex agents whose service predates these records, lapis reads the thread from
+the rollouts its app-server holds open, following `/new` and `/resume`.
 Command-W is what removes an agent for good. Restore runs when lapis opens.
 To have agents come back at login without opening a window, install the login
 helper once with `uv run --no-project python scripts/restore_at_login.py
