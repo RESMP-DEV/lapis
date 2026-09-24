@@ -877,7 +877,8 @@ void check_composition_navigation(lapis::desktop::Workspace& workspace,
         workspace.categories()[1].toMap().value(QStringLiteral("id")).toString();
     for (const auto& name :
          {QStringLiteral("agentTab_shell"), QStringLiteral("category_") + other_category,
-          QStringLiteral("newAgentButton"), QStringLiteral("commandsButton")}) {
+          QStringLiteral("newAgentButton"), QStringLiteral("newCategoryButton"),
+          QStringLiteral("commandsButton")}) {
         if (auto* strip = find_visual(preview.window()->contentItem(), QStringLiteral("agentTabs")))
             CHECK(QMetaObject::invokeMethod(strip, name == QStringLiteral("newAgentButton")
                                                        ? "positionViewAtEnd"
@@ -1544,6 +1545,26 @@ int run_strip_ui_tests() {
     wait_popup(*picker, true);
     CHECK(QMetaObject::invokeMethod(picker, "close"));
     wait_popup(*picker, false);
+
+    // The + under the last category opens the category form and shows its key.
+    auto* new_category = item(QStringLiteral("newCategoryButton"));
+    auto* last_category = item(QStringLiteral("category_") +
+                               workspace.categories().constLast().toMap().value(
+                                   QStringLiteral("id")).toString());
+    CHECK(new_category->mapToScene({0, 0}).y() >
+          last_category->mapToScene({0, last_category->height()}).y() - 1);
+#ifdef Q_OS_MACOS
+    const QString category_key = QString(QChar(0x2318)) + QLatin1Char('N');
+#else
+    const QString category_key = QStringLiteral("Ctrl+Shift+N");
+#endif
+    CHECK(item(QStringLiteral("newCategoryHint"))->property("text").toString() == category_key);
+    click_visual(*window, *new_category);
+    auto* category_form = window->findChild<QObject*>(QStringLiteral("categoryDialog"));
+    CHECK(category_form != nullptr);
+    wait_popup(*category_form, true);
+    CHECK(QMetaObject::invokeMethod(category_form, "close"));
+    wait_popup(*category_form, false);
     CHECK(preview.diagnostics().isEmpty());
     return EXIT_SUCCESS;
 }

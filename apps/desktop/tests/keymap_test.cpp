@@ -414,6 +414,16 @@ void navigation_defaults_preserve_terminal_editing() {
     require(keymap.sequences(QStringLiteral("nextCategory")) ==
                 QStringList({QStringLiteral("Meta+Alt+Right"), QStringLiteral("Meta+Shift+Down")}),
             "categories keep Command-Option-arrows and gain Command-Shift-arrows");
+    require(keymap.sequences(QStringLiteral("newAgent")) == QStringList{QStringLiteral("Meta+T")} &&
+                keymap.sequences(QStringLiteral("newCategory")) ==
+                    QStringList{QStringLiteral("Meta+N")},
+            "as in a browser, Command-T opens an agent and Command-N a category");
+#else
+    require(keymap.sequences(QStringLiteral("newAgent")) ==
+                    QStringList{QStringLiteral("Ctrl+Shift+T")} &&
+                keymap.sequences(QStringLiteral("newCategory")) ==
+                    QStringList{QStringLiteral("Ctrl+Shift+N")},
+            "Control-Shift-T opens an agent and Control-Shift-N a category");
 #endif
     QStringList seen;
     for (const auto& action : actions) {

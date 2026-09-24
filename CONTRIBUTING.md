@@ -375,7 +375,8 @@ The committed `lapis.json` holds defaults only (see
   selects a category.
 - Command-J (`nextAttention`) selects the next agent in any category with a pending
   request, then one that finished unseen; Linux uses Control-Shift-J.
-- Command-N starts the new-agent form; Command-Shift-N starts the category form.
+- Command-T starts the new-agent form; Command-N (or the + under the categories) starts
+  the category form.
   Command-Shift-P opens the searchable, scrollable Commands palette. Command-B
   toggles the sidebar; `sidebarVisible` persists in `lapis.json`. Command-V remains paste.
   Command-comma opens Appearance. Command-W (`closeAgent`) closes the focused

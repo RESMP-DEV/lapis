@@ -388,8 +388,10 @@ void KeyMap::apply_defaults() {
     const QString modifier = QStringLiteral("Ctrl+Shift+");
 #endif
     // Command-W closes the focused agent, as in an IDE. Closing the window is
-    // the window's own control or Quit. Categories answer to both the original
-    // Command-Option-left/right and the vertical Command-Shift-up/down.
+    // the window's own control or Quit. As in a browser, Command-T opens an
+    // agent (a tab) and Command-N a category (a window). Categories answer to
+    // both the original Command-Option-left/right and the vertical
+    // Command-Shift-up/down.
     bindings_ = {
         {QStringLiteral("quit"), {modifier + QStringLiteral("Q")}},
         {QStringLiteral("closeAgent"), {modifier + QStringLiteral("W")}},
@@ -399,7 +401,8 @@ void KeyMap::apply_defaults() {
         {QStringLiteral("category4"), {modifier + QStringLiteral("4")}},
         {QStringLiteral("openSettings"), default_settings_shortcuts()},
         {QStringLiteral("reloadConfig"), {modifier + QStringLiteral("R")}},
-        {QStringLiteral("newAgent"), {modifier + QStringLiteral("N")}},
+        {QStringLiteral("newAgent"), {modifier + QStringLiteral("T")}},
+        {QStringLiteral("newCategory"), {modifier + QStringLiteral("N")}},
         {QStringLiteral("nextAttention"), {modifier + QStringLiteral("J")}},
         {QStringLiteral("toggleSidebar"), {modifier + QStringLiteral("B")}},
     };
@@ -410,7 +413,6 @@ void KeyMap::apply_defaults() {
                      {QStringLiteral("Meta+Alt+Left"), QStringLiteral("Meta+Shift+Up")});
     bindings_.insert(QStringLiteral("nextWindow"), {QStringLiteral("Meta+Shift+]")});
     bindings_.insert(QStringLiteral("previousWindow"), {QStringLiteral("Meta+Shift+[")});
-    bindings_.insert(QStringLiteral("newCategory"), {QStringLiteral("Meta+Shift+N")});
     bindings_.insert(QStringLiteral("openCommands"), {QStringLiteral("Meta+Shift+P")});
 #else
     bindings_.insert(QStringLiteral("nextCategory"),
@@ -419,7 +421,6 @@ void KeyMap::apply_defaults() {
                      {modifier + QStringLiteral("Alt+Left"), modifier + QStringLiteral("Up")});
     bindings_.insert(QStringLiteral("nextWindow"), {QStringLiteral("Ctrl+Shift+]")});
     bindings_.insert(QStringLiteral("previousWindow"), {QStringLiteral("Ctrl+Shift+[")});
-    bindings_.insert(QStringLiteral("newCategory"), {QStringLiteral("Ctrl+Shift+Alt+N")});
     bindings_.insert(QStringLiteral("openCommands"), {QStringLiteral("Ctrl+Shift+P")});
 #endif
     sidebar_visible_ = true;

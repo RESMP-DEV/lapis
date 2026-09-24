@@ -160,7 +160,7 @@ ApplicationWindow {
         if (action === "openCommands")
             return [mac ? "Meta+Shift+P" : "Ctrl+Shift+P"]
         if (action === "newAgent")
-            return [mod + "N"]
+            return [mod + "T"]
         if (action === "reloadConfig")
             return [mod + "R"]
         if (action === "nextWindow")
@@ -168,7 +168,7 @@ ApplicationWindow {
         if (action === "previousWindow")
             return [mac ? "Meta+Shift+[" : "Ctrl+Shift+["]
         if (action === "newCategory")
-            return [mac ? "Meta+Shift+N" : "Ctrl+Shift+Alt+N"]
+            return [mod + "N"]
         return []
     }
 
@@ -1813,6 +1813,63 @@ ApplicationWindow {
                             onTapped: {
                                 workspace.selectCategory(categoryButton.modelData.id)
                                 window.popupAt(categoryMenu, categoryButton)
+                            }
+                        }
+                    }
+
+                    // A quiet plus right under the last category, in the recall
+                    // column, with its shortcut as a readout.
+                    footer: Item {
+                        width: categoryList.width
+                        height: window.tabHeight + categoryList.spacing
+                        Button {
+                            id: newCategoryButton
+                            objectName: "newCategoryButton"
+                            y: categoryList.spacing
+                            width: parent.width
+                            height: window.tabHeight
+                            padding: 0
+                            focusPolicy: Qt.NoFocus
+                            hoverEnabled: true
+                            enabled: window.interactionArmed
+                            onClicked: window.openCategoryDialog("add")
+                            Accessible.name: qsTr("New category")
+                            ToolTip.visible: hovered
+                            ToolTip.delay: 600
+                            ToolTip.text: qsTr("New category")
+
+                            background: Rectangle {
+                                radius: window.chromeRadius
+                                color: newCategoryButton.hovered ? window.hoveredCardColor : window.surfaceColor
+                                Behavior on color {
+                                    enabled: window.motionEnabled
+                                    ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                                }
+                            }
+                            contentItem: Item {
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 10
+                                    anchors.rightMargin: 6
+                                    spacing: 8
+                                    PlainText {
+                                        text: "+"
+                                        color: newCategoryButton.hovered ? window.textColor : window.mutedTextColor
+                                        font.pixelSize: window.chromeFont
+                                        Layout.alignment: Qt.AlignVCenter
+                                    }
+                                    PlainText {
+                                        objectName: "newCategoryHint"
+                                        text: window.shortcutText("newCategory")
+                                        color: window.mutedTextColor
+                                        font.family: window.monoFamily
+                                        font.pixelSize: window.readoutFont
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                        Layout.minimumWidth: 0
+                                        Layout.alignment: Qt.AlignVCenter
+                                    }
+                                }
                             }
                         }
                     }

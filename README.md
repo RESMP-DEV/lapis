@@ -123,7 +123,7 @@ uv run --no-project python scripts/lapis.py build
 uv run --no-project python scripts/lapis.py run
 ```
 
-Use **New agent** (Command-N), choose a harness with arrows and Return, then
+Use **New agent** (Command-T), choose a harness with arrows and Return, then
 enter a project folder and press Return. Codex, Claude, OMP, Grok, Kimi, OpenCode,
 Gemini and Antigravity appear in the picker; missing executables are marked
 unavailable. Escape returns from the folder step to harness selection. The field
@@ -156,8 +156,9 @@ pending request, or else one that finished while you were elsewhere.
 Command-W closes the focused agent: a running agent is
 confirmed, then ended by its session service.
 Command-Shift-P opens Commands; Command-B hides or shows the category sidebar
-and remembers that choice. Command-V remains paste. Command-N creates an agent
-(its tab defaults to the project path), Command-Shift-N creates a category, Command-comma
+and remembers that choice. Command-V remains paste. As in a browser, Command-T
+creates an agent (its tab defaults to the project path) and Command-N creates a
+category; the **+** under the last category does the same. Command-comma
 opens Appearance, and Command-R reloads configuration. Linux uses Control-Shift
 bindings. Terminal Control chords and Command-left/right editing stay with the
 agent. Bindings remain configurable in `lapis.json`.
