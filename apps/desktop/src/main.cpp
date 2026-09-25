@@ -180,41 +180,40 @@ bool valid_options(const QCommandLineParser& parser) {
 lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& parser,
                                                    bool isolated) {
     lapis::desktop::WorkspaceOptions options;
-    if (!isolated) {
-        if (parser.isSet(QStringLiteral("new-session")))
-            options.mode = lapis::session::wire::AttachMode::create;
-        else if (parser.isSet(QStringLiteral("discover")))
-            options.mode = lapis::session::wire::AttachMode::discover;
-        if (parser.isSet(QStringLiteral("socket")))
-            options.endpoint = QFileInfo(parser.value(QStringLiteral("socket"))).absoluteFilePath();
-        const auto positional = parser.positionalArguments();
-        if (!positional.isEmpty()) {
-            options.launch = lapis::session::LaunchSpec{
-                .program = positional.front(),
-                .arguments = positional.mid(1),
-                .directory = parser.isSet(QStringLiteral("cwd"))
-                                 ? parser.value(QStringLiteral("cwd"))
-                                 : QString::fromUtf8(LAPIS_PROJECT_ROOT),
-                .agent = parser.isSet(QStringLiteral("codex")) ? lapis::session::AgentMode::codex
-                         : parser.isSet(QStringLiteral("claude"))
-                             ? lapis::session::AgentMode::claude
-                             : lapis::session::AgentMode::terminal,
-            };
-        } else if (parser.isSet(QStringLiteral("development-shell")) ||
-                   parser.isSet(QStringLiteral("smoke-input"))) {
-            options.launch = lapis::session::shell_launch(
-                parser.isSet(QStringLiteral("cwd")) ? parser.value(QStringLiteral("cwd"))
-                                                    : QString::fromUtf8(LAPIS_PROJECT_ROOT));
-        }
-        // The normal workspace restarts agents whose services are gone.
-        options.restoreAgents = !options.launch && options.endpoint.isEmpty();
-        // Updates are for creating an agent. Existing-session discovery and
-        // reconnection never change the CLI that owns the attached session.
-        // The explicit opt-out is absolute for reproducible qualification.
-        options.updateHarnesses =
-            !parser.isSet(QStringLiteral("no-harness-updates")) &&
-            (options.restoreAgents || parser.isSet(QStringLiteral("new-session")));
+    if (isolated)
+        return options;
+    if (parser.isSet(QStringLiteral("new-session")))
+        options.mode = lapis::session::wire::AttachMode::create;
+    else if (parser.isSet(QStringLiteral("discover")))
+        options.mode = lapis::session::wire::AttachMode::discover;
+    if (parser.isSet(QStringLiteral("socket")))
+        options.endpoint = QFileInfo(parser.value(QStringLiteral("socket"))).absoluteFilePath();
+    const auto positional = parser.positionalArguments();
+    if (!positional.isEmpty()) {
+        options.launch = lapis::session::LaunchSpec{
+            .program = positional.front(),
+            .arguments = positional.mid(1),
+            .directory = parser.isSet(QStringLiteral("cwd"))
+                             ? parser.value(QStringLiteral("cwd"))
+                             : QString::fromUtf8(LAPIS_PROJECT_ROOT),
+            .agent = parser.isSet(QStringLiteral("codex"))    ? lapis::session::AgentMode::codex
+                     : parser.isSet(QStringLiteral("claude")) ? lapis::session::AgentMode::claude
+                                                              : lapis::session::AgentMode::terminal,
+        };
+    } else if (parser.isSet(QStringLiteral("development-shell")) ||
+               parser.isSet(QStringLiteral("smoke-input"))) {
+        options.launch = lapis::session::shell_launch(parser.isSet(QStringLiteral("cwd"))
+                                                          ? parser.value(QStringLiteral("cwd"))
+                                                          : QString::fromUtf8(LAPIS_PROJECT_ROOT));
     }
+    // The normal workspace restarts agents whose services are gone.
+    options.restoreAgents = !options.launch && options.endpoint.isEmpty();
+    // Updates are for creating an agent. Existing-session discovery and
+    // reconnection never change the CLI that owns the attached session.
+    // The explicit opt-out is absolute for reproducible qualification.
+    options.updateHarnesses =
+        !parser.isSet(QStringLiteral("no-harness-updates")) &&
+        (options.restoreAgents || parser.isSet(QStringLiteral("new-session")));
     return options;
 }
 
