@@ -2,6 +2,7 @@
 
 #include "platform/posix/unique_fd.hpp"
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
@@ -54,7 +55,9 @@ std::optional<ResumeRecord> decode(QByteArrayView value) {
     ResumeRecord record;
     record.agent = object.value(QStringLiteral("agent")).toString().toLower();
     record.session_id = object.value(QStringLiteral("session_id")).toString();
-    if (!known_agent(record.agent) || !valid_resume_identity(record.session_id) ||
+    if ((object.contains(QStringLiteral("version")) &&
+         object.value(QStringLiteral("version")).toInt() != 1) ||
+        !known_agent(record.agent) || !valid_resume_identity(record.session_id) ||
         !local_host(object.value(QStringLiteral("host")).toString()))
         return std::nullopt;
     return record;
@@ -92,6 +95,18 @@ bool valid_resume_identity(const QString& value) {
            std::none_of(value.begin(), value.end(), [](QChar character) {
                return character.isSpace() || !character.isPrint();
            });
+}
+
+QString checkpoint_agent_for_launch(const LaunchSpec& launch) {
+    switch (launch.agent) {
+    case AgentMode::codex:
+        return QStringLiteral("codex");
+    case AgentMode::claude:
+        return QStringLiteral("claude");
+    case AgentMode::terminal:
+        break;
+    }
+    return QFileInfo(launch.program).fileName().toLower();
 }
 
 std::optional<ResumeRecord> CheckpointScanner::scan(QByteArrayView output) {
@@ -173,9 +188,18 @@ std::optional<ResumeRecord> read_resume_record(const QString& endpoint) {
     ResumeRecord record;
     record.agent = object.value(QStringLiteral("agent")).toString().toLower();
     record.session_id = object.value(QStringLiteral("session_id")).toString();
-    if (object.value(QStringLiteral("version")).toInt() != 1 || !known_agent(record.agent) ||
+    const auto version = object.value(QStringLiteral("version")).toInt();
+    if ((version != 1 && version != 2) || !known_agent(record.agent) ||
         !valid_resume_identity(record.session_id))
         return std::nullopt;
+    if (version == 2) {
+        const auto source = object.value(QStringLiteral("source")).toString();
+        if (source != QStringLiteral("observer") && source != QStringLiteral("terminal"))
+            return std::nullopt;
+        record.source =
+            source == QStringLiteral("observer") ? ResumeSource::observer : ResumeSource::terminal;
+    }
+    // Legacy records cannot attest how their identity was learned.
     return record;
 }
 
@@ -186,7 +210,10 @@ void write_resume_record(const QString& endpoint, const ResumeRecord& record) {
     if (!safe_existing(path))
         throw std::runtime_error("Unsafe resume record");
     const QJsonObject object{
-        {"version", 1}, {"agent", record.agent}, {"session_id", record.session_id}};
+        {"version", 2},
+        {"agent", record.agent},
+        {"session_id", record.session_id},
+        {"source", record.source == ResumeSource::observer ? "observer" : "terminal"}};
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly) ||
         !file.setPermissions(QFile::ReadOwner | QFile::WriteOwner) ||
