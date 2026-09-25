@@ -1284,11 +1284,12 @@ at `dev/sites/penthouse.sh`, revision `db47ca1`. No running Penthouse app was
 observed; a current production deployment was not established. Both later app
 repositories call themselves paused as of August 21.
 
-Tetra's `dev/penthouse-spike` is an unversioned remote-driver copy with no desktop
-app. Its older single-file driver exactly matches the Mac's SSH spike. Of 19
-shared driver/schema/replay files, 8 match and 11 differ; none exists only on
-tetra. The Mac has later native-resume, agent-option, model-discovery, OMP and
-tool-update work. Anvil has hook/resume helpers but no app checkout found in the
+A second Linux host's `dev/penthouse-spike` is an unversioned remote-driver copy
+with no desktop app. Its older single-file driver exactly matches the Mac's SSH
+spike. Of 19 shared driver/schema/replay files, 8 match and 11 differ; none
+exists only on that host. The Mac has later native-resume, agent-option,
+model-discovery, OMP and tool-update work. The Linux test host has hook/resume
+helpers but no app checkout found in the
 home-directory search through depth four. No Penthouse files were changed or
 merged. Local receipts: `build/penthouse-review/reconciliation.json` and
 `build/penthouse-review/opus-review.txt`.
@@ -1603,7 +1604,7 @@ Implementation order and acceptance:
    pixels, including larger fonts, long names, multiple requests, reduced motion,
    screen removal and each supported layout. Verify bounds, input ownership and
    readability, not just that a screenshot can be written. These cases have not
-   yet been exercised. Routine coverage stays on anvil; native Mac window-manager
+   yet been exercised. Routine coverage stays on the Linux test host; native Mac window-manager
    and input acceptance is separately scheduled.
 
 Automatic carousel, 32-session scale, additional adapters and packaging remain
@@ -1616,7 +1617,7 @@ visible in behavior even when diagnostics are visually quieter.
 
 #### Break-it QA, selection and follow-up fixes (September 23)
 
-`tools/qa/breakit.py` drives the real GUI on anvil's isolated display with
+`tools/qa/breakit.py` drives the real GUI on the Linux test host's isolated display with
 synthetic X11 input. Its agents are `tools/qa/fake_agent.py` installed under
 harness names on a private PATH; scenarios cover creation, typing while
 switching, finish pulses, floods, categories, closing running and signal-ignoring
@@ -1672,7 +1673,7 @@ Decisions from these runs:
 
 Each agent and each Codex backend runs under a group guard process that kills its
 group when the service's pipe closes; SIGKILL of the service alone removed the
-backend on anvil. Guards share the service's command line, so cleanup that kills
+backend on the Linux test host. Guards share the service's command line, so cleanup that kills
 every matching process also kills the guards and leaves backends running.
 Session restore (September 23, requested to match an iTerm2 restore plugin). A
 card still in the workspace whose service is gone when lapis opens is restarted

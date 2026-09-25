@@ -354,7 +354,7 @@ pixel/layout assertion after window and snapshot preconditions pass.
 
 Normal launch restores machine-local window geometry and does not force a screen.
 `--screen <text>` is an explicit capture/qualification override. Routine GUI tests
-run on anvil through `uv run --no-project python scripts/lapis.py linux-gui`.
+run on the Linux test host through `uv run --no-project python scripts/lapis.py linux-gui`.
 Do not use the user's Mac as an automatic GUI-testing fallback.
 
 ### Keybindings and layout
