@@ -4,6 +4,18 @@ set(CMAKE_AUTOMOC ON)
 if(APPLE)
     enable_language(OBJCXX)
 endif()
+# The downloadable app updates itself with Sparkle when it is given one; the
+# feed is the appcast attached to the latest GitHub release.
+set(LAPIS_SPARKLE_FRAMEWORK "" CACHE PATH "Sparkle.framework for the downloadable app's updates")
+set(LAPIS_UPDATE_KEYS "")
+if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
+    file(READ macos/update-public-key.txt LAPIS_UPDATE_PUBLIC_KEY)
+    string(STRIP "${LAPIS_UPDATE_PUBLIC_KEY}" LAPIS_UPDATE_PUBLIC_KEY)
+    string(CONCAT LAPIS_UPDATE_KEYS
+        "<key>SUFeedURL</key><string>https://github.com/RESMP-DEV/lapis/releases/latest/download/appcast.xml</string>"
+        "<key>SUPublicEDKey</key><string>${LAPIS_UPDATE_PUBLIC_KEY}</string>"
+        "<key>SUEnableAutomaticChecks</key><true/>")
+endif()
 add_library(lapis_desktop_view STATIC
     src/workspace.cpp src/workspace.hpp
     src/workspace_control.cpp src/workspace_control.hpp
@@ -28,6 +40,12 @@ if(APPLE)
     target_sources(lapis_desktop_view PRIVATE src/desktop_actions_mac.mm)
     target_link_libraries(lapis_desktop_view PUBLIC "-framework Foundation"
         "-framework ServiceManagement" "-framework UserNotifications")
+    if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
+        get_filename_component(sparkle_directory "${LAPIS_SPARKLE_FRAMEWORK}" DIRECTORY)
+        target_compile_definitions(lapis_desktop_view PRIVATE LAPIS_SPARKLE)
+        target_compile_options(lapis_desktop_view PRIVATE "-F${sparkle_directory}")
+        target_link_libraries(lapis_desktop_view PUBLIC "-F${sparkle_directory}" "-framework Sparkle")
+    endif()
 endif()
 # The token counter another machine runs over ssh, compiled in as text.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/count_tokens.py)

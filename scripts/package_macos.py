@@ -22,6 +22,7 @@ import getpass
 import hashlib
 import json
 import os
+import plistlib
 import re
 import shutil
 import signal
@@ -63,6 +64,16 @@ JOBS = max(2, (os.cpu_count() or 4) - 4)
 VULKAN_INCLUDE = RELEASE / "vulkan-headers" / "include"
 MOLTENVK_LIBRARY = MOLTENVK / "lib" / "libMoltenVK.dylib"
 APP_BUILD = RELEASE / "lapis-build"
+# Sparkle updates the downloaded app from the appcast on the latest release.
+SPARKLE_VERSION = "2.10.0"
+SPARKLE_SHA256 = "c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c"
+SPARKLE_URL = (
+    "https://github.com/sparkle-project/Sparkle/releases/download/"
+    f"{SPARKLE_VERSION}/Sparkle-{SPARKLE_VERSION}.tar.xz"
+)
+SPARKLE = RELEASE / "sparkle"
+APPCAST = RELEASE / "appcast.xml"
+RELEASES = "https://github.com/RESMP-DEV/lapis/releases"
 APP = RELEASE / "stage" / "lapis.app"
 APP_ZIP = RELEASE / "lapis-app.zip"
 DMG = RELEASE / "lapis-macos-arm64.dmg"
@@ -72,6 +83,7 @@ NOTICES = {
     "Qt-NOTICES.txt": ROOT / "third_party/qt/NOTICES.txt",
     "MoltenVK-NOTICES.txt": ROOT / "third_party/moltenvk/NOTICES.txt",
     "Ghostty-NOTICES.txt": ROOT / "third_party/ghostty/NOTICES.txt",
+    "Sparkle-NOTICES.txt": ROOT / "third_party/sparkle/NOTICES.txt",
 }
 # lapis never asks for camera, contacts and the like through Qt.
 UNUSED_PLUGINS = ("permissions",)
@@ -529,9 +541,28 @@ def signing_identity():
     return found[0]
 
 
+def fetch_sparkle():
+    """Sparkle's pinned release, unpacked once; returns its framework."""
+    framework = SPARKLE / "Sparkle.framework"
+    archive = DOWNLOADS / f"Sparkle-{SPARKLE_VERSION}.tar.xz"
+    if not archive.exists() or sha256(archive) != SPARKLE_SHA256:
+        DOWNLOADS.mkdir(parents=True, exist_ok=True)
+        with urllib.request.urlopen(SPARKLE_URL) as response:
+            archive.write_bytes(response.read())
+        if sha256(archive) != SPARKLE_SHA256:
+            archive.unlink()
+            raise PackageError("Sparkle's archive does not match its pinned SHA-256")
+        shutil.rmtree(SPARKLE, ignore_errors=True)
+    if not framework.exists():
+        SPARKLE.mkdir(parents=True, exist_ok=True)
+        run(["tar", "-xJf", archive, "-C", SPARKLE])
+    return framework
+
+
 def build_lapis():
     if not (QT_PREFIX / f".qtdeclarative-{QT_VERSION}").exists():
         raise PackageError("Build Qt first: package_macos.py qt")
+    sparkle = fetch_sparkle()
     try:
         ghostty = ghostty_prefix()
     except SetupError as error:
@@ -547,6 +578,7 @@ def build_lapis():
             f"-DLAPIS_GHOSTTY_PREFIX={ghostty}",
             f"-DVulkan_INCLUDE_DIR={VULKAN_INCLUDE}",
             f"-DVulkan_LIBRARY={MOLTENVK_LIBRARY}",
+            f"-DLAPIS_SPARKLE_FRAMEWORK={sparkle}",
         ]
     )
     run(
@@ -598,6 +630,15 @@ def deploy(built):
     )
     for unused in UNUSED_PLUGINS:
         shutil.rmtree(contents / "PlugIns" / unused, ignore_errors=True)
+    # Sparkle, without the XPC services only a sandboxed app needs, and arm64
+    # like everything else.
+    sparkle = contents / "Frameworks" / "Sparkle.framework"
+    shutil.rmtree(sparkle, ignore_errors=True)
+    run(["ditto", SPARKLE / "Sparkle.framework", sparkle])
+    shutil.rmtree(sparkle / "Versions" / "B" / "XPCServices", ignore_errors=True)
+    for path in macho_files(sparkle):
+        if len(capture(["lipo", "-archs", path]).split()) > 1:
+            run(["lipo", path, "-thin", ARCHITECTURE, "-output", path])
     moltenvk = contents / "Frameworks" / "libMoltenVK.dylib"
     shutil.copy2(MOLTENVK_LIBRARY, moltenvk)
     moltenvk.chmod(0o755)
@@ -630,6 +671,15 @@ def sign(identity):
     for path in loose:
         run(base + ["--sign", identity, path])
     for framework in frameworks:
+        # Code nested in a framework (Sparkle's updater) is signed before it.
+        nested = sorted(framework.rglob("*.app"))
+        for bundle in nested:
+            run(base + ["--sign", identity, bundle])
+        for path in macho_files(framework):
+            if path.name != framework.stem and not any(
+                b in path.parents for b in nested
+            ):
+                run(base + ["--sign", identity, path])
         run(base + ["--sign", identity, framework])
     run(
         base
@@ -873,8 +923,23 @@ def check_launchd_start(problems):
         shutil.rmtree(home, ignore_errors=True)
 
 
+def check_updates(problems):
+    """The app knows where its updates come from and whose key signs them."""
+    info = plistlib.loads((APP / "Contents" / "Info.plist").read_bytes())
+    key = (ROOT / "apps/desktop/macos/update-public-key.txt").read_text().strip()
+    if info.get("SUPublicEDKey") != key or not str(
+        info.get("SUFeedURL", "")
+    ).startswith(RELEASES):
+        problems.append("the app has no update feed or key")
+    if not (
+        APP / "Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
+    ).exists():
+        problems.append("Sparkle's updater is missing")
+
+
 def command_verify(arguments):
     problems = []
+    check_updates(problems)
     run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", APP])
     check_binaries(problems)
     check_identifying_strings(problems)
@@ -923,11 +988,51 @@ def command_release(arguments):
     sources = [
         DOWNLOADS / f"{name}-everywhere-src-{QT_VERSION}.tar.xz" for name in QT_MODULES
     ]
+    write_appcast(arguments.tag, version)
     run(
         ["gh", "release", "create", arguments.tag, "--target", commit]
         + ["--title", f"lapis {version}", "--notes", notes]
         + (["--draft"] if arguments.draft else [])
-        + [DMG, *sources]
+        + [DMG, APPCAST, *sources]
+    )
+
+
+def update_signature(path):
+    """Sparkle's EdDSA signature for a file. The key stays in the login
+    keychain; generate_keys (which made it) exports it for this one call to a
+    private temporary file, since sign_update itself would need a prompt."""
+    with tempfile.TemporaryDirectory() as folder:
+        key = Path(folder) / "key"
+        run([SPARKLE / "bin" / "generate_keys", "-x", key], stdout=subprocess.DEVNULL)
+        output = capture([SPARKLE / "bin" / "sign_update", "--ed-key-file", key, path])
+    found = re.search(r'sparkle:edSignature="([^"]+)" length="(\d+)"', output)
+    if not found:
+        raise PackageError("sign_update did not sign the DMG")
+    return found.group(1), found.group(2)
+
+
+def write_appcast(tag, version):
+    """The update feed the app reads from the latest release's assets."""
+    signature, length = update_signature(DMG)
+    published = time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime())
+    APPCAST.write_text(
+        f"""<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>lapis</title>
+    <item>
+      <title>lapis {version}</title>
+      <pubDate>{published}</pubDate>
+      <link>{RELEASES}/tag/{tag}</link>
+      <sparkle:version>{version}</sparkle:version>
+      <sparkle:shortVersionString>{version}</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>{MACOS_TARGET}</sparkle:minimumSystemVersion>
+      <enclosure url="{RELEASES}/download/{tag}/{DMG.name}" type="application/octet-stream"
+                 sparkle:edSignature="{signature}" length="{length}"/>
+    </item>
+  </channel>
+</rss>
+"""
     )
 
 

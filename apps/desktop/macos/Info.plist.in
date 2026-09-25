@@ -51,5 +51,6 @@
 	<string>Agents you run in lapis, and its usage view, can reach machines on your local network.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Agents you run in lapis can control other apps when you ask them to.</string>
+	${LAPIS_UPDATE_KEYS}
 </dict>
 </plist>
