@@ -260,7 +260,8 @@ Mac** in the agent's menu saves a screenshot and the exact screen data under
 `runtime/phone-captures/` for debugging what the phone drew. The phone
 reports capture failures in the same alert used for delivery results. Rotation
 updates the terminal grid while composing; keyboard appearance alone keeps its
-row count. The phone
+row count. Input requests are sent in order and pending input is canceled when
+the view closes. Brief inactive transitions preserve the stream and history. The phone
 joins the agent beside the desktop: both show the same screen, either can type,
 and the terminal takes the size of the device in use. Opening the agent on the
 phone gives it the phone's size; closing it or locking the phone, activating the

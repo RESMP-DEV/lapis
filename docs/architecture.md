@@ -1758,6 +1758,11 @@ A prototype, deliberately simpler than the SSH design first proposed:
   service for the terminal's modes) and resize. The phone's grid is applied to
   the PTY; the software keyboard covering the screen does not resize it.
   Width changes, including rotation while composing, also update the row count.
+  Input POSTs are serialized, including compound paste/Enter requests. Closing
+  a view cancels its pending input; overload is reported after 128 queued requests.
+  Brief inactive transitions preserve the stream and loaded history; returning
+  from the background reattaches it. Immutable history pages retain their wrapped
+  rows and accessibility text until the page set or fitting width changes.
 - Admission replaces keys or pairing: the gateway binds only the Mac's
   Tailscale address and serves a request only when `tailscale whois` gives the
   Mac owner's login on an iOS device, or the Mac itself. The Mac's tailnet is
@@ -1775,7 +1780,9 @@ A prototype, deliberately simpler than the SSH design first proposed:
   terminals draw them, so logos and borders join across rows; rows wider than
   the phone (history archived at a desktop size) wrap instead of scrolling
   sideways. `scripts/check_ios_remote.py` compiles it and its UI tests
-  directly and runs them in a headless simulator against disposable services,
+  directly and runs them in a headless simulator against disposable services.
+  Its loopback fixture supplies synthetic Tailscale status metadata and checks
+  gateway readiness; it does not qualify real tailnet admission. It runs
   with a Mac-side client attached the way the desktop is, which must see the
   phone's typing, answer it and never be replaced;
   The agent menu's Send screen to Mac posts a screenshot and the frame it drew

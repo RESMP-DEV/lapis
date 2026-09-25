@@ -464,6 +464,10 @@ class LiveServiceTests(unittest.TestCase):
                 ],
             }
         )
+        # A listening socket can precede PTY startup under instrumentation.
+        # Establish protocol readiness before exercising joined phone views.
+        agent = {**json.loads(self.registry)["agents"][0], "mode": ""}
+        remote.WireSession(agent, mode=remote.DISCOVER).close()
 
     def stop(self):
         if self.service.poll() is None:
