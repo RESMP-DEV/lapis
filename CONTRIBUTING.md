@@ -414,8 +414,11 @@ workspace navigation from redirecting the input.
 Command-Left and Command-Right inside the terminal move to the start and end of
 the line, matching macOS editing. The terminal translates them to the Ctrl-A and
 Ctrl-E sequences that interactive shells already implement, so line editing stays
-with the shell rather than being reimplemented in lapis. Every other Command
-combination stays available to the window.
+with the shell rather than being reimplemented in lapis. Command-Backspace and
+Command-Delete likewise send Ctrl-U and Ctrl-K (delete to line start or end).
+Every other Command combination stays available to the window. Command-R reloads
+`lapis.json` in place; key handling compiled into the terminal needs a rebuild
+and relaunch, which leaves running agents untouched.
 
 The macOS app sets `QT_MTL_NO_TRANSACTION=1` before Qt initialization. On this
 Qt/MoltenVK combination, the default transaction layer emitted five-second display
@@ -766,6 +769,7 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `codex-observer` | Desktop-enabled | Discovery, temporary-thread isolation, exact decisions, simultaneous requests, resume/read recovery and source loss |
 | `claude-observer` | Desktop-enabled | Hook launch settings, relay identity/turn boundaries, exact retirement, privacy bounds and malformed/oversized-event loss |
 | `session-descriptor` | Desktop-enabled | Private identity hint, atomic replacement, corruption and unsafe-file rejection |
+| `agent-checkpoint` | Desktop-enabled | Restore-hook sequences, identity/host checks, private records and observer provenance |
 | `live-connection` | Desktop-enabled | Screen-before-input, exact attention decisions/rejections, duplicate gating, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
 | `keymap` | Desktop-enabled | Configuration defaults, appearance choices, persistence and invalid input |
@@ -777,7 +781,7 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `terminal-input` | Desktop-enabled, native GUI | Qt composition commit/cancel, replacement rejection, paste and focus/document/history/disconnect ownership |
 | `terminal-render` | Desktop-enabled | Real Qt Vulkan pixel regressions for cell background grids, wide/combining characters, fallback/RTL text, styles/decorations, actual Ghostty resize, cursor placement and clearing |
 
-`just desktop` runs these twenty-one suites plus static checks. The separate Python
+`just desktop` runs these twenty-two suites plus static checks. The separate Python
 GUI harness checks five preview captures and seven expected failures. The CLI
 harness checks detached service behavior, attachment generations, fragmented
 handshakes, synchronization timeout, stale controls, bounded queue failure and

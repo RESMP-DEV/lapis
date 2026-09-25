@@ -60,6 +60,18 @@ SYMBOLS = {
 }
 
 
+def resumed_pairs(processes, bin_path):
+    """Pair observed argv with the fake harness and working directory."""
+    fake_bins = {f"{bin_path}/{name}" for name in FAKE_NAMES}
+    seen = set()
+    for row in processes:
+        words = row["args"].split()
+        harness = next((Path(word).name for word in words if word in fake_bins), None)
+        if harness:
+            seen.update((harness, row.get("cwd"), word) for word in words)
+    return seen
+
+
 def positive_minutes(value):
     """Reject unusable soak durations before constructing the GUI runtime."""
     try:
@@ -302,6 +314,14 @@ class Run:
                         "args": parts[3],
                     }
                 )
+                try:
+                    rows[-1]["cwd"] = os.path.realpath(
+                        os.readlink(f"/proc/{rows[-1]['pid']}/cwd")
+                    )
+                except OSError:
+                    # ps is also used on non-Linux hosts; identity-sensitive
+                    # assertions must fail if the working directory is unknown.
+                    rows[-1]["cwd"] = None
         return rows
 
     def services(self):
@@ -612,6 +632,73 @@ class Run:
         self.keys.combo("ctrl+shift+j", 0.8)
         return {"screenshots": [before, self.shot("after-next-attention")]}
 
+    def s_reboot_restore(self):
+        """Every service and agent dies, as in a reboot; reopening restores them."""
+        conversations = {}
+        initial_agents = {agent["id"]: agent for agent in self.agents()}
+        for agent in initial_agents.values():
+            path = Path(agent["endpoint"] + ".resume")
+            if path.exists() and agent.get("harness") in (
+                "kimi",
+                "grok",
+                "opencode",
+                "omp",
+                "agy",
+            ):
+                conversations[agent["id"]] = json.loads(path.read_text())
+        if not conversations:
+            raise Failure("no agent recorded a conversation")
+        os.killpg(self.gui.pid, signal.SIGKILL)
+        self.gui.wait()
+        for row in self.services() + self.fake_agents():
+            try:
+                os.kill(row["pid"], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        self.wait(lambda: not self.fake_agents(), 10, "every agent is gone")
+        self.launch()
+        agents_by_id = {agent["id"]: agent for agent in self.agents()}
+        if set(agents_by_id) != set(initial_agents):
+            raise Failure("restore changed the retained agent identities")
+        expected, advisory = set(), set()
+        for agent_id, record in conversations.items():
+            agent = agents_by_id[agent_id]
+            identity = (
+                agent.get("harness"),
+                str(Path(agent["directory"]).resolve()),
+                record["session_id"],
+            )
+            if record.get("source") == "observer":
+                expected.add(identity)
+            elif record["session_id"] not in initial_agents[agent_id].get(
+                "arguments", []
+            ):
+                advisory.add(identity)
+        if len({identity[:2] for identity in expected}) != len(expected):
+            raise Failure(
+                "observer resume assertions need distinct harness/directory pairs"
+            )
+
+        def restored():
+            processes = self.fake_agents()
+            pairs = resumed_pairs(processes, self.bin)
+            return (
+                len(processes) >= self.expected_fakes()
+                and all(row.get("cwd") is not None for row in processes)
+                and expected <= pairs
+                and not advisory.intersection(pairs)
+            )
+
+        self.wait(
+            restored, 20, "restore uses only observed or explicit resume identities"
+        )
+        time.sleep(2.0)
+        return {
+            "resumed": len(expected),
+            "advisory_restarts": len(advisory),
+            "screenshot": self.shot("restored-after-reboot"),
+        }
+
     def s_quit_restore(self):
         fakes = {row["pid"] for row in self.fake_agents()}
         self.keys.combo("ctrl+shift+q", 1.0)
@@ -755,6 +842,7 @@ def main():
         ("next_attention", run.s_next_attention),
         ("service_kill", run.s_service_kill),
         ("quit_restore", run.s_quit_restore),
+        ("reboot_restore", run.s_reboot_restore),
     ]
     if args.soak:
         os.environ["LAPIS_FAKE_BURST"] = "20"

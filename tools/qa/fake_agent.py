@@ -17,13 +17,21 @@ Commands typed at its prompt exercise terminal and lifecycle behavior:
 
 LAPIS_FAKE_BURST=N prints a 3-second burst every N seconds in the background,
 so a soak can keep many agents moderately busy without typing.
+
+At start it reports a conversation the way agent session hooks do for terminal
+restore tools (OSC 1337 SetUserVar=agent_checkpoint), reusing the one passed
+with --session, --resume, -r or --conversation so a restored agent can say what
+it resumed.
 """
 
+import base64
+import json
 import os
 import signal
 import sys
 import threading
 import time
+import uuid
 
 NAME = os.path.basename(sys.argv[0])
 OUTPUT_LOCK = threading.Lock()
@@ -91,8 +99,27 @@ def run(command, line):
         say(f"echo: {line}")
 
 
+def checkpoint():
+    """Emit a session-start checkpoint; return its identity and resumed state."""
+    arguments = sys.argv[1:]
+    resumed = None
+    for flag in ("--session", "--resume", "-r", "--conversation"):
+        if flag in arguments and arguments.index(flag) + 1 < len(arguments):
+            resumed = arguments[arguments.index(flag) + 1]
+    conversation = resumed or str(uuid.uuid4())
+    value = json.dumps({"agent": NAME, "session_id": conversation}).encode()
+    sys.stdout.write(
+        "\x1b]1337;SetUserVar=agent_checkpoint="
+        + base64.b64encode(value).decode()
+        + "\x07"
+    )
+    return conversation, resumed is not None
+
+
 def main():
+    conversation, resumed = checkpoint()
     say(f"\x1b[1m{NAME}\x1b[0m (lapis fake agent) pid {os.getpid()} cwd {os.getcwd()}")
+    say(("resumed conversation " if resumed else "new conversation ") + conversation)
     period = float(os.environ.get("LAPIS_FAKE_BURST", "0") or 0)
     stop = threading.Event()
     worker = None

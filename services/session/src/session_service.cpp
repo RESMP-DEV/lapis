@@ -1,3 +1,4 @@
+#include "agent_checkpoint.hpp"
 #include "claude_observer.hpp"
 #include "history_worker.hpp"
 #include "hook_relay.hpp"
@@ -78,6 +79,10 @@ class SessionService final : public QObject {
                                         QStringLiteral(LAPIS_DEFAULT_HISTORY_ROOT)),
                    QString::fromLatin1(requested_session_id.toHex()), history_limits()) {
         configure_history();
+        resume_endpoint_ = endpoint;
+        checkpoint_agent_ = checkpoint_agent_for_launch(launch);
+        if (auto saved = read_resume_record(endpoint))
+            resume_ = *saved;
         current_size_ = launch.size;
         terminal_.feed("\x1b]10;rgb:d9/de/e8\x1b\\\x1b]11;rgb:0d/13/1d\x1b\\");
         lock_.setStaleLockTime(0);
@@ -126,16 +131,8 @@ class SessionService final : public QObject {
             process_started_ = true;
             hello();
         });
-        connect(&pty_, &posix::PtyProcess::output, this, [this](const QByteArray& bytes) {
-            timing_.pty_read_ns = monotonic_ns();
-            if (pending_output_.size() + bytes.size() > qsizetype{64} * 1024) {
-                stop(QStringLiteral("PTY output queue overflow"));
-                return;
-            }
-            pending_output_ += bytes;
-            pty_.pauseOutput(true);
-            process_output();
-        });
+        connect(&pty_, &posix::PtyProcess::output, this,
+                [this](const QByteArray& bytes) { receive_output(bytes); });
         connect(&pty_, &posix::PtyProcess::failure, this,
                 [this](const QString& message) { stop(message); });
         connect(&pty_, &posix::PtyProcess::finished, this,
@@ -180,6 +177,7 @@ class SessionService final : public QObject {
             identity_.session_id.toHex().toStdString(), "claude-code");
         claude_observer_ = std::make_unique<lapis::claude::Observer>(*claude_state_);
         connect(claude_observer_.get(), &lapis::claude::Observer::changed, this, [this] {
+            note_conversation(QStringLiteral("claude"), claude_observer_->sessionId());
             decision_error_.clear();
             attention_dirty_ = true;
             schedule_attention();
@@ -189,6 +187,40 @@ class SessionService final : public QObject {
         terminal.arguments = claude_observer_->launchArguments(
             launch.arguments, QCoreApplication::applicationFilePath());
         pty_.start(terminal);
+    }
+    void receive_output(const QByteArray& bytes) {
+        timing_.pty_read_ns = monotonic_ns();
+        if (pending_output_.size() + bytes.size() > qsizetype{64} * 1024) {
+            stop(QStringLiteral("PTY output queue overflow"));
+            return;
+        }
+        pending_output_ += bytes;
+        if (const auto found = checkpoint_scanner_.scan(bytes);
+            found && found->agent == checkpoint_agent_)
+            note_conversation(found->agent, found->session_id, ResumeSource::terminal);
+        pty_.pauseOutput(true);
+        process_output();
+    }
+    // The conversation to resume if this service stops without the agent being
+    // closed (see agent_checkpoint.hpp). Failure to save is not fatal.
+    void note_conversation(const QString& agent, const QString& session_id,
+                           ResumeSource source = ResumeSource::observer) {
+        // Printed bytes cannot impersonate the managed observer or downgrade
+        // an identity already learned through its independent protocol.
+        if (source == ResumeSource::terminal &&
+            (codex_observer_ || claude_observer_ || resume_.source == ResumeSource::observer))
+            return;
+        if (!valid_resume_identity(session_id) ||
+            (resume_.agent == agent && resume_.session_id == session_id &&
+             resume_.source == source))
+            return;
+        const ResumeRecord candidate{agent, session_id, source};
+        try {
+            write_resume_record(resume_endpoint_, candidate);
+            resume_ = candidate;
+        } catch (const std::exception& error) {
+            qWarning().noquote() << "Resume record not saved:" << error.what();
+        }
     }
     void schedule_attention() {
         if (attention_state() && attention_dirty_ && client_ && ready_ && !stopping_ &&
@@ -302,6 +334,7 @@ class SessionService final : public QObject {
             std::make_unique<attention::State>(identity_.session_id.toHex().toStdString(), "codex");
         codex_observer_ = std::make_unique<lapis::codex::Observer>(*codex_state_);
         connect(codex_observer_.get(), &lapis::codex::Observer::changed, this, [this] {
+            note_conversation(QStringLiteral("codex"), codex_observer_->threadId());
             decision_error_.clear();
             attention_dirty_ = true;
             schedule_attention();
@@ -1010,6 +1043,10 @@ class SessionService final : public QObject {
     wire::SnapshotTiming timing_;
     std::unique_ptr<attention::State> claude_state_;
     std::unique_ptr<lapis::claude::Observer> claude_observer_;
+    QString resume_endpoint_;
+    CheckpointScanner checkpoint_scanner_;
+    QString checkpoint_agent_;
+    ResumeRecord resume_;
     std::unique_ptr<attention::State> codex_state_;
     std::unique_ptr<lapis::codex::Observer> codex_observer_;
     QProcess codex_backend_;

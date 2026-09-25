@@ -19,6 +19,7 @@
 #include <QTimer>
 #include <QVariantList>
 
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -216,6 +217,9 @@ struct WorkspaceOptions {
     std::optional<session::LaunchSpec> launch;
     session::wire::AttachMode mode{session::wire::AttachMode::reconnect};
     QString storagePath{};
+    // Restart agents whose session service is gone (after a reboot or crash),
+    // resuming each recorded conversation. Off unless the app asks for it.
+    bool restoreAgents{};
 };
 
 class Workspace final : public QObject {
@@ -261,6 +265,7 @@ class Workspace final : public QObject {
     // unreachable one keeps its tab unless `abandon` accepts that it may still
     // be running without one.
     Q_INVOKABLE bool closeSession(const QString& id, bool abandon = false);
+    Q_INVOKABLE bool restartAgent(const QString& id);
     Q_INVOKABLE bool moveSession(const QString& id, const QString& categoryId);
     Q_INVOKABLE bool renameSession(const QString& id, const QString& title);
     Q_INVOKABLE bool moveSessionBy(const QString& id, int delta);
@@ -291,6 +296,11 @@ class Workspace final : public QObject {
     [[nodiscard]] static QString defaultEndpoint();
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
     QHash<QString, QStringList> harness_arguments_;
+    bool restore_agents_{};
+    // Records conversations for agents whose services do not.
+    QTimer conversation_timer_;
+    std::shared_ptr<std::atomic_bool> probing_{std::make_shared<std::atomic_bool>(false)};
+    void recordConversations();
     struct Category {
         QString id;
         QString name;
@@ -301,6 +311,10 @@ class Workspace final : public QObject {
         QString endpoint;
         session::LaunchSpec launch;
         QString harness{QStringLiteral("codex")};
+        // The exact resume pair lapis appended, or no provenance for a
+        // user-authored launch. Existing unmarked records stay user-owned.
+        int managed_resume_index{-1};
+        QString managed_resume_identity{};
     };
     std::vector<Category> categories_;
     QMap<QString, Agent> agents_;
@@ -323,10 +337,19 @@ class Workspace final : public QObject {
     bool save(const QString& renamedId = {}, const QString& renamedTitle = {});
     void restore();
     void loadCategories(const QJsonArray& groups);
+    static void loadManagedResume(const QJsonValue& value, Agent& agent);
     void loadAgents(const QJsonArray& agents);
     void finishClosing(SessionPreview* item);
     [[nodiscard]] static SessionPreview::StatusSource statusSource(const Agent& agent);
     [[nodiscard]] static QStringList savedArguments(const QJsonValue& value);
+    struct ResumeLaunch {
+        session::LaunchSpec launch;
+        int managed_resume_index{-1};
+        QString managed_resume_identity{};
+    };
+    [[nodiscard]] static std::optional<ResumeLaunch> restoredLaunch(const Agent& agent,
+                                                                    QString* diagnostic = nullptr);
+    [[nodiscard]] static bool serviceRunning(const QString& endpoint);
     void noteStatus(SessionPreview* item);
     QHash<const SessionPreview*, QString> last_kind_;
     bool batching_categories_{};

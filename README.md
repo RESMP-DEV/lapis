@@ -164,11 +164,28 @@ agent. Bindings remain configurable in `lapis.json`.
 Close the window (its close button or Command-Q) to detach. Reopen it to
 reconnect the same agents and restore category selections and window
 placement. Closing the window does not stop agents; Command-W on an agent does.
-An agent lapis cannot reach can only have its card closed, with a warning that it
-may still be running. Failed reconnects are visible and
-never silently replaced; use the explicit recovery actions in **Commands**.
+If an agent's session service is gone when lapis opens (after a reboot or a
+crash), lapis restarts it in its card. Codex and Claude resume saved conversations
+learned through their independent observer or hook adapter. Other CLIs restart
+fresh in the same folder unless explicit user arguments select a conversation.
+Those arguments remain authoritative; lapis only manages a resume selection it
+added itself. Printed `agent_checkpoint` sequences, including iTerm2 restore
+hooks, are advisory and cannot authorize automatic resume. Services store the
+identity and its source beside the endpoint (`<endpoint>.resume`); legacy records
+without provenance remain advisory. Codex transcript lookup stays within the
+`sessions/YYYY/MM/DD` layout and does not follow directory symlinks. For Codex agents whose service predates these
+records, lapis reads the thread from the rollout its app-server holds open.
+Command-W is what removes an agent for good. Restore runs when lapis opens;
+add lapis to Login Items to have it happen at login.
 An agent that has ended or cannot be reached keeps its last screen, with a bar
-on the stage giving the reason and the key that closes it.
+on the stage giving the reason and the key that closes it. **Restart agent**
+in Commands starts it again in the same card, resuming its conversation the
+same way.
+
+Upgrading lapis does not disturb running agents: quit the old build and open
+the new one, and it reattaches to the same processes. Launch fingerprints,
+the service protocol, the workspace registry and resume records are kept
+compatible across builds, and a test pins the fingerprints.
 
 **Requests** appears when the selected agent needs a response. Open it, select a
 request, then explicitly approve, decline, cancel or send answers. Opening or
@@ -178,7 +195,10 @@ Code's idle reminder after a finished turn is not a request. A new Codex agent
 reads **No prompt yet** until its first turn. Agents
 started in the same folder are numbered in cards and menus.
 
-Command-click (Control-click on Linux) a web link in agent output to open it,
+Command-Left/Right move to the start or end of the line, Command-Backspace
+deletes to the line start and Command-Delete to the line end (Control-A, -E, -U
+and -K to the agent). Command-click (Control-click on Linux) a web link in agent
+output to open it,
 including links that wrap across rows. Drag across the terminal to select text,
 or double-click a word; Command-C
 (Control-Shift-C on Linux) copies it, and typing clears it. The mouse wheel pages

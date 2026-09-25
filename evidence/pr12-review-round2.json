@@ -1,0 +1,255 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-24T08:58:08.952340+00:00",
+  "scope": "PR #12 second review batch, including the updated PR #11 base",
+  "reviewed_head": "8c2c5c0e7a4cd9cef08eced438ec608cef10041d",
+  "baseline_for_validation": "5dd6c55f978c39f8f6284a3e28cfe4c3ec7932b9",
+  "source_state": "Working tree changes listed below, validated before the fix commit; evidence text was added afterward.",
+  "changed_source_files": [
+    "apps/desktop/src/terminal_surface.cpp",
+    "apps/desktop/src/workspace.cpp",
+    "apps/desktop/src/workspace.hpp",
+    "apps/desktop/tests/terminal_input_test.cpp",
+    "apps/desktop/tests/workspace_test.cpp",
+    "docs/architecture.md",
+    "scripts/tests/test_breakit.py",
+    "services/session/src/agent_checkpoint.cpp",
+    "services/session/tests/agent_checkpoint_test.cpp",
+    "tools/qa/breakit.py",
+    "tools/qa/fake_agent.py"
+  ],
+  "triage": {
+    "fixed": 7,
+    "optional": 2,
+    "false_positive": 1,
+    "duplicate": 1
+  },
+  "findings": [
+    {
+      "id": "GLM12-001",
+      "path": "tools/qa/fake_agent.py",
+      "disposition": "fixed",
+      "rationale": "Valid. The fake harness catalog includes agy and the desktop maps agy to --conversation, so the fixture must recognize and echo that value instead of minting a new identity after an intentional restore.",
+      "evidence": [
+        "tools/qa/fake_agent.py: checkpoint now accepts --conversation",
+        "tools/qa/fake_agent.py: module usage documents the added option",
+        "apps/desktop/src/workspace.cpp: resumeOption maps agy to --conversation"
+      ]
+    },
+    {
+      "id": "GLM12-002",
+      "path": "tools/qa/breakit.py",
+      "disposition": "fixed",
+      "rationale": "Valid after GLM12-001. agy is a fake harness with a supported resume option, so reboot_restore should exercise its --conversation path.",
+      "evidence": [
+        "tools/qa/breakit.py: Run.s_reboot_restore resume-capable harness set includes agy",
+        "tools/qa/fake_agent.py: checkpoint recognizes the value"
+      ]
+    },
+    {
+      "id": "GLM12-003",
+      "path": "tools/qa/breakit.py",
+      "disposition": "fixed",
+      "rationale": "Valid test-strength gap. The old global word subset could not detect a conversation moved between harnesses. The assertion now pairs each saved identity with its registered harness and requires that pair in that harness process arguments. Same-harness agent swaps remain outside ps-argument distinguishability.",
+      "evidence": [
+        "tools/qa/breakit.py: Run.s_reboot_restore builds expected (harness, conversation) pairs",
+        "tools/qa/breakit.py: resumed_pairs associates fake process arguments with the installed harness binary token"
+      ]
+    },
+    {
+      "id": "GLM12-004",
+      "path": "services/session/src/agent_checkpoint.cpp",
+      "disposition": "fixed",
+      "rationale": "The version field is part of the durable resume-record schema written by write_resume_record, so read_resume_record now accepts only version 1 while retaining safe open/fstat ownership checks. Record validation now precedes the filesystem probe, restoring invalid_argument semantics and avoiding an unnecessary probe.",
+      "evidence": [
+        "services/session/src/agent_checkpoint.cpp: decode/read_resume_record validates version 1",
+        "services/session/src/agent_checkpoint.cpp: write_resume_record validates ResumeRecord before safe_existing",
+        "services/session/tests/agent_checkpoint_test.cpp: records_are_private adds a version-2 rejection"
+      ]
+    },
+    {
+      "id": "GLM12-005",
+      "path": "services/session/src/session_service.cpp",
+      "disposition": "optional",
+      "rationale": "Retrying after an unsuccessful durable write is necessary to recover without losing the latest checkpoint. A rate-limited writer needs a queued-latest-value/flush-on-exit design to preserve that guarantee. No measured output or disk saturation is supplied; retain write-then-commit correctness and defer a broader scheduling change.",
+      "evidence": [
+        "services/session/src/session_service.cpp: SessionService::note_conversation is the call path",
+        "services/session/src/agent_checkpoint.cpp: write_resume_record uses QSaveFile plus commit"
+      ]
+    },
+    {
+      "id": "GLM12-006",
+      "path": "services/session/src/agent_checkpoint.cpp",
+      "disposition": "false_positive",
+      "rationale": "False positive as suggested. Comparing only the first DNS label would accept unrelated remote DNS names that share the local label and weaken the existing host boundary. No durable FQDN/canonical-host contract or evidence was provided; fail-closed is correct until a reviewed host-identity normalization contract exists.",
+      "evidence": [
+        "services/session/src/agent_checkpoint.cpp: local_host intentionally compares normalized exact host strings and strips only .local"
+      ]
+    },
+    {
+      "id": "GLM12-007",
+      "path": "apps/desktop/src/workspace.cpp",
+      "disposition": "optional",
+      "rationale": "The probes are bounded and preserve conservative running-service rejection; transcript traversal follows the constrained recorded layout. Asynchronous startup/caching requires a separate measured change with lifetime/cancellation contracts. The review identifies an unmeasured latency concern, not a failed current recovery behavior.",
+      "evidence": [
+        "apps/desktop/src/workspace.cpp: Workspace::restore loops serviceRunning and restoredLaunch synchronously",
+        "apps/desktop/src/workspace.cpp: serviceRunning uses waitForConnected(250)",
+        "apps/desktop/src/workspace.cpp: conversationSaved walks Claude/Codex transcript layouts"
+      ]
+    },
+    {
+      "id": "GLM12-008",
+      "path": "apps/desktop/src/terminal_surface.cpp",
+      "disposition": "fixed",
+      "rationale": "The added Command-Backspace/Delete translation is now compiled only on macOS. Non-macOS Meta deletion chords stay available to the window. Tests encode both platform branches; macOS was exercised and Linux remains deferred.",
+      "evidence": [
+        "terminal_surface.cpp commandKey Q_OS_MACOS gate for deletion chords",
+        "terminal_input_test.cpp Command/Super expectations"
+      ]
+    },
+    {
+      "id": "GLM12-009",
+      "path": "apps/desktop/src/workspace.cpp",
+      "disposition": "fixed",
+      "rationale": "Valid high-priority defect. Lapis now persists explicit managedResume provenance containing the argument index and appended identity. It replaces only that validated pair with a newer same-agent durable record; unmarked argv remains user-owned even if it resembles the record. Validation requires an integer in-range index, valid identity, recognized resume option, and exact option/identity pair. Unrelated arguments and launch-fingerprint inputs remain unchanged except the managed identity.",
+      "evidence": [
+        "apps/desktop/src/workspace.hpp: Agent gains managed_resume_index/managed_resume_identity and restoredLaunch returns ResumeLaunch",
+        "apps/desktop/src/workspace.cpp: save serializes managedResume",
+        "apps/desktop/src/workspace.cpp: loadAgents validates managedResume against the exact argv pair",
+        "apps/desktop/src/workspace.cpp: restoredLaunch replaces provenance-owned identity and conservatively leaves unmarked options unchanged",
+        "apps/desktop/src/workspace.cpp: restore/restartAgent persist the resulting provenance",
+        "apps/desktop/tests/workspace_test.cpp: managedResumeFollowsRecovery performs two actual restart/recovery cycles to changed identities m-2 and m-3, checks an explicit --session=user-original argument stays unchanged, and rejects malformed provenance"
+      ]
+    },
+    {
+      "id": "GLM12-010",
+      "path": "apps/desktop/src/workspace.cpp",
+      "disposition": "duplicate",
+      "rationale": "Same unmeasured bounded-probe scheduling concern as GLM12-007, on explicit restart. No broad asynchronous redesign is included in this defect batch.",
+      "evidence": [
+        "apps/desktop/src/workspace.cpp: Workspace::restartAgent calls serviceRunning and restoredLaunch before startLive",
+        "apps/desktop/src/workspace.cpp: restoredLaunch reads records and may scan transcripts"
+      ]
+    },
+    {
+      "id": "GLM12-011",
+      "path": "services/session/src/agent_checkpoint.cpp",
+      "disposition": "fixed",
+      "rationale": "Valid maintainability cleanup. The write-only exists out-parameter was dead; safe_existing now returns its safety result directly and write_resume_record has no unused local.",
+      "evidence": [
+        "services/session/src/agent_checkpoint.cpp: safe_existing signature simplified",
+        "services/session/src/agent_checkpoint.cpp: write_resume_record caller cleanup"
+      ]
+    }
+  ],
+  "behavior_verified": [
+    "Two actual process restart cycles advance the lapis-owned resume identity from m-1 to m-2 to m-3; registry arguments and argv received by the children agree.",
+    "The explicit --session=user-original argument remains unchanged through the same cycles and acquires no managed provenance; existing tests cover bare explicit resume pairs.",
+    "Malformed managed-resume provenance is rejected. Durable resume record version 2 is rejected while version 1 remains readable; permissions and symlink tests use an otherwise valid record.",
+    "The fake Antigravity launcher retains --conversation identity and reports resumed state.",
+    "The QA restore assertion rejects conversation IDs delivered to the wrong harness.",
+    "Command-Backspace/Delete translation is scoped to macOS; the qualified Mac exercises its exact resulting bytes."
+  ],
+  "checks": [
+    {
+      "command": ["just", "desktop"],
+      "result": "passed: all 22 CTest suites, formatting, compiler warnings, clang-tidy and Cppcheck",
+      "receipt": "build/pr-bot-round2/pr12-desktop-full-receipt.json"
+    },
+    {
+      "command": ["just", "quality"],
+      "result": "passed: 122 Python tests, Ruff and common quality checks",
+      "receipt": "build/pr-bot-round2/pr12-quality-full-receipt.json"
+    },
+    {
+      "exit_code": 0,
+      "command": [
+        "just",
+        "ui-check"
+      ],
+      "name": "ui-final"
+    },
+    {
+      "exit_code": 0,
+      "command": [
+        "just",
+        "cli-check"
+      ],
+      "name": "cli-final"
+    },
+    {
+      "exit_code": 0,
+      "command": [
+        "build/desktop/apps/desktop/lapis_native_input_probe",
+        "--output",
+        "/Users/kearm/lapis/build/pr-bot-round2/pr12-native-input-final.json"
+      ],
+      "name": "native-final"
+    },
+    {
+      "exit_code": 0,
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/desktop-asan",
+        "-R",
+        "^(workspace|agent-checkpoint|terminal-input|live-connection|local-protocol|launch-spec)$",
+        "--output-on-failure",
+        "--no-tests=error",
+        "--parallel",
+        "4"
+      ],
+      "name": "asan-final"
+    },
+    {
+      "exit_code": 0,
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/desktop-tsan",
+        "-R",
+        "^(workspace|agent-checkpoint|live-connection|local-protocol)$",
+        "--output-on-failure",
+        "--no-tests=error",
+        "--parallel",
+        "4"
+      ],
+      "name": "tsan-final"
+    }
+  ],
+  "sanitizer_builds": {
+    "asan": {
+      "exit_code": 0,
+      "command": [
+        "cmake",
+        "--build",
+        "build/desktop-asan",
+        "--parallel",
+        "4"
+      ]
+    },
+    "tsan": {
+      "exit_code": 0,
+      "command": [
+        "cmake",
+        "--build",
+        "build/desktop-tsan",
+        "--parallel",
+        "4"
+      ]
+    }
+  },
+  "compatibility": "Registry versions 1/2, resume record version 1, IPC version 6 and launch-fingerprint format remain unchanged. managedResume is optional provenance. Older unmarked resume arguments are conservatively user owned.",
+  "review_delivery": {
+    "status": "prepared; not posted or resolved",
+    "mapped_open_threads_in_both_prs": 155,
+    "local_reply_artifact": "build/pr-bot-round2/prepared-replies.json",
+    "reason": "GitHub secondary content-creation rate limit observed September 24; canonical review policy defers calls until the next local day when no reset is supplied. No server reset time was supplied.",
+    "earliest_policy_retry": "2026-09-25 America/Los_Angeles"
+  },
+  "limitations": [
+    "Linux native input and the X11 QA UI scenario were not qualified; only platform-independent QA logic and its actual fake CLI were exercised on macOS.",
+    "The fake-process regression proves desktop argument routing, not real provider conversation contents.",
+    "Bounded synchronous startup/restart probes and checkpoint write retry scheduling remain optional follow-up work requiring a recovery and latency contract."
+  ]
+}

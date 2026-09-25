@@ -122,6 +122,7 @@ class TerminalSurface : public QQuickItem {
     void clearSelection();
     bool copySelection(const QKeyEvent& event);
     void resumeLiveForTyping(const QKeyEvent& event);
+    void commandKey(QKeyEvent& event);
     void scrollHistory(int steps);
     struct RenderState;
     std::mutex render_mutex_;

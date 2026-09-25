@@ -1167,21 +1167,7 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
         return;
     }
     if (event->modifiers().testFlag(Qt::MetaModifier)) {
-        // macOS editing convention: Command-Left/Right go to line start/end.
-        // The shells people actually run (zsh with emacs bindings, bash, fish)
-        // implement that as Ctrl-A and Ctrl-E, so translate rather than
-        // reimplement line editing inside the terminal.
-        // AppKit also marks physical arrow keys as keypad keys.
-        if ((event->modifiers() & ~Qt::KeypadModifier) == Qt::MetaModifier &&
-            (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right)) {
-            const bool line_start = event->key() == Qt::Key_Left;
-            document_->sendText(QByteArray(1, line_start ? '\x01' : '\x05'));
-            event->accept();
-            return;
-        }
-        // Every other Command combination stays available to the window for
-        // navigation and menu shortcuts.
-        event->ignore();
+        commandKey(*event);
         return;
     }
     std::optional<session::TerminalKey> key;
@@ -1244,6 +1230,34 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
             document_->sendText(text);
     }
     event->accept();
+}
+// Command chords: macOS line editing, or left to the window's shortcuts.
+void TerminalSurface::commandKey(QKeyEvent& event) {
+    // macOS editing convention: Command-Left/Right go to line start/end.
+    // The shells people actually run (zsh with emacs bindings, bash, fish)
+    // implement that as Ctrl-A and Ctrl-E, so translate rather than
+    // reimplement line editing inside the terminal.
+    // AppKit also marks physical arrow keys as keypad keys.
+    const bool bare_command = (event.modifiers() & ~Qt::KeypadModifier) == Qt::MetaModifier;
+    if (bare_command && (event.key() == Qt::Key_Left || event.key() == Qt::Key_Right)) {
+        const bool line_start = event.key() == Qt::Key_Left;
+        document_->sendText(QByteArray(1, line_start ? '\x01' : '\x05'));
+        event.accept();
+        return;
+    }
+#ifdef Q_OS_MACOS
+    // Command-Backspace deletes to the line start (Ctrl-U) and
+    // Command-Delete to the line end (Ctrl-K), as in iTerm2's natural text
+    // editing and the shells' emacs bindings.
+    if (bare_command && (event.key() == Qt::Key_Backspace || event.key() == Qt::Key_Delete)) {
+        document_->sendText(QByteArray(1, event.key() == Qt::Key_Backspace ? '\x15' : '\x0b'));
+        event.accept();
+        return;
+    }
+#endif
+    // Every other Command combination stays available to the window for
+    // navigation and menu shortcuts.
+    event.ignore();
 }
 void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
     const quint64 composition_epoch = ime_epoch_;

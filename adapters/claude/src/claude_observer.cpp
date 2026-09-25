@@ -422,6 +422,7 @@ Observer::Observer(attention::State& state, QObject* parent)
     : QObject(parent), impl_(std::make_unique<Impl>(state, *this)) {}
 Observer::~Observer() = default;
 const QString& Observer::diagnostic() const { return impl_->diagnostic_; }
+const QString& Observer::sessionId() const { return impl_->pinned_; }
 QJsonObject Observer::details(const attention::RequestId& id) const {
     const auto found = impl_->details_.find(id);
     return found == impl_->details_.end() ? QJsonObject{} : found->second;

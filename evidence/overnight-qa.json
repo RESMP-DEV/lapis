@@ -140,5 +140,26 @@
     "Hebrew order and emoji skin-tone modifiers render per cell (known cross-cell shaping gap)",
     "Linux timing and CPU figures are software-rendered",
     "The tracked-config unit test reads HEAD:lapis.json and fails in the Linux checkout, whose HEAD is the old base commit"
-  ]
+  ],
+  "session_restore": {
+    "recorded_at": "2026-09-23T22:25:00Z",
+    "checks": [
+      "agent-checkpoint suite: sequences split across reads, both terminators, invalid base64, remote host, option-like identity, oversized sequence, private record files",
+      "workspace suite: restore off by default; recorded conversation replaces an old resume pair and keeps user flags; unknown resume option restarts fresh; another CLI's conversation is ignored; restored agents run under new services",
+      "break-it reboot_restore on the Linux test host: GUI, services and agents killed, reopened; 4 of 4 agents with a resume option resumed their recorded conversations (17/17 scenarios, no GUI warnings)",
+      "headless real binaries on macOS against the fake model: Claude Code 2.1.280 recorded its session from the iterm-agent-checkpoint hook sequence and `--resume` showed the earlier exchange; Codex 0.155.1 recorded its thread from the observer and `codex resume` showed the earlier prompt",
+      "launch-spec suite pins terminal, Codex and Claude launch fingerprints to known SHA-256 values so a new build reattaches to services started by an older one",
+      "GUI from an older build quit and a newer build opened on macOS: running agents reattached to the same processes",
+      "Codex recovery without a record on macOS: real Codex 0.155.1 turn against the fake model, record deleted, desktop reopened, the thread recovered from the app-server's open rollout matched the original",
+      "workspace suite: Restart agent refuses a running agent and restarts an ended one in its card with a new service",
+      "ASan on the Linux test host: agent-checkpoint, workspace, launch-spec, terminal-input and claude-observer suites passed",
+      "full Linux gate 56/56"
+    ],
+    "limitations": [
+      "Restore runs when lapis opens; nothing relaunches lapis itself after a reboot",
+      "Non-Codex agents started by services built before resume records have none until their hook prints a checkpoint; they restart fresh",
+      "Codex thread recovery needs a rollout, which Codex writes after the first prompt",
+      "Grok, OpenCode, OMP, Kimi and Antigravity resume options come from the user's plugin or CLI help and were exercised with fake agents only (Antigravity not exercised)"
+    ]
+  }
 }

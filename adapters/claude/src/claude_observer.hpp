@@ -14,6 +14,9 @@ class Observer final : public QObject {
     explicit Observer(session::attention::State& state, QObject* parent = nullptr);
     ~Observer() override;
     [[nodiscard]] const QString& diagnostic() const;
+    // The Claude Code session the hooks are bound to; empty before SessionStart
+    // and after /clear until the next session starts.
+    [[nodiscard]] const QString& sessionId() const;
     [[nodiscard]] QJsonObject details(const session::attention::RequestId& id) const;
     [[nodiscard]] QStringList launchArguments(const QStringList& original,
                                               const QString& serviceExecutable);
