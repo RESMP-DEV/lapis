@@ -5,6 +5,11 @@ default:
 quality:
     python3 scripts/lapis.py quality
 
+# The iPhone app's UI tests in a headless iOS Simulator, with a Mac-side client
+# attached to the same agent (macOS with an iOS Simulator runtime).
+ios-check:
+    python3 scripts/check_ios_remote.py --codex --claude
+
 # Report which local dependencies are ready.
 doctor:
     python3 scripts/lapis.py doctor

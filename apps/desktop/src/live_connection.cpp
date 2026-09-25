@@ -121,6 +121,10 @@ void SessionPreview::sendKey(session::TerminalKey key, session::KeyModifiers mod
     if (live_)
         live_->send(wire::Kind::key, bytes);
 }
+void SessionPreview::claimTerminalSize() {
+    if (live_ && !history_active_ && !history_request_pending_)
+        live_->claimSize();
+}
 void SessionPreview::resizeTerminal(session::TerminalSize size) {
     if (!live_)
         return;
@@ -206,6 +210,8 @@ void LiveConnection::begin(wire::AttachMode mode) {
     ready_ = false;
     attempts_ = 0;
     last_sequence_ = 0;
+    shown_size_ = {};
+    claimed_over_.reset();
     attachment_.reset();
     buffer_.clear();
     invalidateHistory();
@@ -354,10 +360,22 @@ void LiveConnection::resize(session::TerminalSize size) {
     wanted_size_ = size;
     if (!ready_)
         return;
+    sendResize(size);
+}
+
+void LiveConnection::sendResize(session::TerminalSize size) {
     QByteArray bytes;
     QDataStream out(&bytes, QIODevice::WriteOnly);
     out << quint16(size.columns) << quint16(size.rows);
     send(wire::Kind::resize, bytes);
+}
+
+void LiveConnection::claimSize() {
+    if (!ready_ || !wanted_size_requested_ || shown_size_ == wanted_size_ ||
+        claimed_over_ == shown_size_)
+        return;
+    claimed_over_ = shown_size_;
+    sendResize(wanted_size_);
 }
 
 void LiveConnection::setWantedSize(session::TerminalSize size) {
@@ -423,6 +441,10 @@ void LiveConnection::acceptSnapshot(wire::SnapshotMessage message) {
     // resizing a reattached agent to the launch default.
     if (initial && !wanted_size_requested_)
         wanted_size_ = message.snapshot.size;
+    if (message.snapshot.size != shown_size_) {
+        shown_size_ = message.snapshot.size;
+        claimed_over_.reset();
+    }
     document_.setSnapshotTiming(
         {{QStringLiteral("sequence"), QVariant::fromValue(message.sequence)},
          {QStringLiteral("pty_read_ns"), QVariant::fromValue(message.timing.pty_read_ns)},

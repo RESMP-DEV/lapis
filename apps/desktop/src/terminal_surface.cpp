@@ -549,6 +549,7 @@ TerminalSurface::TerminalSurface(QQuickItem* parent)
       resolved_font_family_(QFontDatabase::systemFont(QFontDatabase::FixedFont).family()) {
     setFlag(ItemHasContents);
     setClip(true);
+    setAcceptHoverEvents(true);
     window_changed_connection_ =
         connect(this, &QQuickItem::windowChanged, this, &TerminalSurface::bindWindow);
     throttle_.setSingleShot(true);
@@ -567,6 +568,7 @@ void TerminalSurface::bindWindow(QQuickWindow* current) {
                 resetInputContext();
             } else {
                 updateInputContext(Qt::ImEnabled | Qt::ImCursorRectangle);
+                claimSize();
             }
         });
 }
@@ -624,6 +626,7 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     ++ime_epoch_;
     resetInputContext();
     requestResize();
+    claimSize();
     publishFrame(true);
     emit documentChanged();
 }
@@ -806,6 +809,22 @@ void TerminalSurface::requestResize() {
         return;
     document_->resizeTerminal(
         {static_cast<std::uint16_t>(grid.width()), static_cast<std::uint16_t>(grid.height())});
+}
+// Coming back to this window after using the agent on another device (a joined
+// phone) takes the terminal size back: activating the window, showing the
+// agent on the stage, or moving the pointer over it.
+void TerminalSurface::claimSize() {
+    if (interactive_ && document_ && document_->live())
+        document_->claimTerminalSize();
+}
+void TerminalSurface::hoverMoveEvent(QHoverEvent* event) {
+    // Qt Quick repeats hover events while the scene changes under a resting
+    // pointer; only a pointer that moved means someone is at this Mac.
+    if (event->globalPosition() != last_hover_) {
+        last_hover_ = event->globalPosition();
+        claimSize();
+    }
+    event->ignore();
 }
 void TerminalSurface::mousePressEvent(QMouseEvent* event) {
     if (!interactive_) {

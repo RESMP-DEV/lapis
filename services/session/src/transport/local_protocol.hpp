@@ -41,7 +41,9 @@ struct Attachment {
     quint64 generation{};
     bool operator==(const Attachment&) const = default;
 };
-enum class AttachMode : quint8 { discover = 0, reconnect = 1, create = 2 };
+// Join (added within v6) attaches another view beside the current client
+// instead of replacing it; services built before it reject the request.
+enum class AttachMode : quint8 { discover = 0, reconnect = 1, create = 2, join = 3 };
 struct AttachRequest {
     AttachMode mode{AttachMode::discover};
     QByteArray fingerprint;
@@ -98,7 +100,8 @@ struct Status {
 [[nodiscard]] bool valid_identity(const SessionIdentity& identity);
 [[nodiscard]] QByteArray new_id();
 // Attach: BE u32 version, fingerprint[32], mode u8, expected session[16], epoch[16].
-// Discover requires both zero; reconnect both nonzero; create session nonzero/epoch zero.
+// Discover and join require both zero; reconnect both nonzero; create session
+// nonzero/epoch zero.
 [[nodiscard]] QByteArray encode_attach(const AttachRequest& request);
 [[nodiscard]] AttachRequest decode_attach(const QByteArray& payload);
 // Hello: BE u32 version, attachment[40], BE u64 child PID.
