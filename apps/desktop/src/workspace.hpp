@@ -232,6 +232,9 @@ struct WorkspaceOptions {
     // With restoreAgents, only start agents whose services are gone and leave
     // running services alone (the login helper; a window reattaches later).
     bool restoreOnly{};
+    // Production bounds. Tests inject short values so stuck-updater cleanup is
+    // observable without waiting two minutes or leaving installer children.
+    qint64 updateTimeoutMs{qint64{2} * 60 * 1000};
 };
 
 class Workspace final : public QObject {
@@ -315,8 +318,12 @@ class Workspace final : public QObject {
     QHash<QString, qint64> harness_checked_ms_;
     QHash<QString, QPointer<QProcess>> harness_updates_;
     QHash<QString, QStringList> starts_after_update_;
+    QHash<QProcess*, QByteArray> updater_output_;
+    QHash<QProcess*, bool> updater_stopping_;
+    qint64 update_timeout_ms_{qint64{2} * 60 * 1000};
     // True when the agent waits for its CLI's update and starts after it.
     bool deferForUpdate(const QString& id);
+    void drainUpdater(QProcess* process);
     void finishUpdate(const QString& harness, QProcess* process, const QString& outcome);
     void logUpdate(const QString& line) const;
     // Records conversations for agents whose services do not.
@@ -370,6 +377,7 @@ class Workspace final : public QObject {
         int managed_resume_index{-1};
         QString managed_resume_identity{};
     };
+    static void applyStartupDefaults(const Agent& agent, ResumeLaunch& plan);
     [[nodiscard]] static std::optional<ResumeLaunch> restoredLaunch(const Agent& agent,
                                                                     QString* diagnostic = nullptr);
     [[nodiscard]] static bool serviceRunning(const QString& endpoint);

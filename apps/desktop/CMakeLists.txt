@@ -6,6 +6,7 @@ add_library(lapis_desktop_view STATIC
     src/attention_view.cpp
     src/keymap.cpp src/keymap.hpp
     src/live_connection.cpp src/live_connection.hpp
+    src/platform/updater_process.cpp src/platform/updater_process.hpp
     src/terminal_surface.cpp src/terminal_surface.hpp
     src/ui_preview.cpp src/ui_preview.hpp)
 target_include_directories(lapis_desktop_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")

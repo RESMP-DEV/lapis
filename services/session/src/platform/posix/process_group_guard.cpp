@@ -11,13 +11,13 @@
 namespace lapis::session::posix {
 
 namespace {
-[[noreturn]] void guard_process(std::array<int, 2> control, int descriptor_limit) {
+[[noreturn]] void guard_process(std::array<int, 2> retained, int descriptor_limit) {
     for (int descriptor = 0; descriptor < descriptor_limit; ++descriptor)
-        if (descriptor != control[0])
+        if (descriptor != retained[0] && descriptor != retained[1])
             ::close(descriptor);
     char command{};
     for (;;) {
-        const auto count = ::read(control[0], &command, 1);
+        const auto count = ::read(retained[0], &command, 1);
         if (count > 0 || (count < 0 && errno == EINTR))
             continue;
         break;
@@ -32,7 +32,7 @@ namespace {
 // the CLI leader. Double-fork and reap the intermediate before exec: the CLI must
 // not inherit a hidden child that could interfere with wait()/SIGCHLD handling.
 // Called only in QProcess's fork child; use async-signal-safe operations here.
-bool start_group_guard(std::array<int, 2> control, int descriptor_limit) {
+bool start_group_guard(std::array<int, 2> control, int descriptor_limit, int completion) {
     sigset_t blocked{};
     sigset_t previous{};
     static_cast<void>(sigfillset(&blocked));
@@ -46,7 +46,7 @@ bool start_group_guard(std::array<int, 2> control, int descriptor_limit) {
         const pid_t guard = ::fork();
         if (guard != 0)
             ::_exit(guard < 0 ? 1 : 0);
-        guard_process(control, descriptor_limit);
+        guard_process({control[0], completion}, descriptor_limit);
     }
     int status{};
     pid_t waited = -1;
@@ -64,6 +64,8 @@ bool start_group_guard(std::array<int, 2> control, int descriptor_limit) {
         failure_errno = restore_result;
     ::close(control[0]);
     ::close(control[1]);
+    if (completion >= 0)
+        ::close(completion);
     const bool started = restored && waited == intermediate && intermediate > 0 &&
                          WIFEXITED(status) && WEXITSTATUS(status) == 0;
     if (!started)

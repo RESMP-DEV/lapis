@@ -19,7 +19,10 @@ namespace lapis::session::posix {
 // In the fork child, start_group_guard consumes both supplied descriptors and
 // closes them after spawning; the caller must _exit on failure. The parent
 // retains its original descriptors.
-bool start_group_guard(std::array<int, 2> control, int descriptor_limit);
+// Optional completion is a pipe writer retained only by the guard. Its reader
+// observes EOF after the guard signals the group and exits; the caller closes
+// its parent-side writer after successful startup (or startup failure).
+bool start_group_guard(std::array<int, 2> control, int descriptor_limit, int completion = -1);
 
 // Replaces the descriptors owned by read and write with the two ends of a new
 // CLOEXEC pipe. On failure, errno is preserved from the failed operation and

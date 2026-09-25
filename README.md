@@ -195,8 +195,10 @@ update`, `kimi upgrade`, `opencode upgrade`, `agy update`), at most every 30
 minutes per CLI; the card reads **Updating Claude…** until the agent starts on
 the new version, and results go to `runtime/harness-updates.log`. Codex is the
 exception: lapis observes only Codex builds it has qualified, so it keeps the
-qualified build and starts Codex with its update prompt turned off
-(`check_for_update_on_startup=false`).
+qualified build and defaults Codex's update prompt to off
+(`check_for_update_on_startup=false`), including newly spawned restored agents.
+Explicit user settings are preserved. Reattaching to a running agent keeps its
+recorded launch arguments.
 
 Upgrading lapis does not disturb running agents: quit the old build and open
 the new one, and it reattaches to the same processes. Launch fingerprints,
