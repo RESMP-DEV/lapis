@@ -95,11 +95,13 @@ class TerminalSurface : public QQuickItem {
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    void hoverMoveEvent(QHoverEvent* event) override;
     void inputMethodEvent(QInputMethodEvent* event) override;
 
   private:
     [[nodiscard]] bool acceptsTerminalInput() const;
     void requestResize();
+    void claimSize();
     void applyFont();
     [[nodiscard]] QFont cellFont() const;
     void bindWindow(QQuickWindow* current);
@@ -130,6 +132,7 @@ class TerminalSurface : public QQuickItem {
     QPointer<SessionPreview> document_;
     QMetaObject::Connection window_active_connection_;
     QMetaObject::Connection window_changed_connection_;
+    QPointF last_hover_;
 
     QString font_family_;
     QString resolved_font_family_;

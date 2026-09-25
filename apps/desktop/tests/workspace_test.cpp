@@ -1,7 +1,9 @@
 #include "agent_checkpoint.hpp"
+#include "launch_spec.hpp"
 #include "workspace.hpp"
 
 #include <QCoreApplication>
+#include <QDataStream>
 #include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
@@ -10,6 +12,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLocalSocket>
 #include <QPointer>
 #include <QTemporaryDir>
 #include <QThread>
@@ -836,6 +839,205 @@ void agentsStartWithoutParentSessionMarkers() {
     }
 }
 
+QString screenText(const lapis::session::TerminalSnapshot& snapshot) {
+    QString text;
+    for (std::size_t index = 0; index < snapshot.cells.size(); ++index) {
+        const auto cell = snapshot.text(index);
+        text += cell.empty() ? QStringLiteral(" ")
+                             : QString::fromUcs4(cell.data(), static_cast<qsizetype>(cell.size()));
+        if ((index + 1) % snapshot.size.columns == 0)
+            text += QLatin1Char('\n');
+    }
+    return text;
+}
+
+// A view joined beside the desktop, as the phone gateway joins: the same agent
+// on both, typing from either reaches both, and the desktop stays attached.
+class JoinedView {
+  public:
+    JoinedView(const QString& endpoint, const lapis::session::LaunchSpec& launch) {
+        namespace wire = lapis::session::wire;
+        socket_.connectToServer(endpoint);
+        require(socket_.waitForConnected(3000), "the view connects");
+        socket_.write(wire::frame(
+            wire::Kind::attach,
+            wire::encode_attach({.mode = wire::AttachMode::join,
+                                 .fingerprint = lapis::session::launch_fingerprint(launch),
+                                 .expected = {}})));
+    }
+    // Reads frames until the screen shows the text; acknowledges the first.
+    bool waitForText(const QString& text, int timeout_ms) {
+        namespace wire = lapis::session::wire;
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < timeout_ms) {
+            wire::Frame frame;
+            while (wire::take_frame(buffer_, frame)) {
+                if (frame.kind == wire::Kind::status)
+                    throw std::runtime_error(
+                        "the joined view was closed: " +
+                        wire::decode_status(frame.payload).message.toStdString());
+                if (frame.kind == wire::Kind::hello)
+                    attachment_ = wire::decode_hello(frame.payload).attachment;
+                if (frame.kind != wire::Kind::snapshot)
+                    continue;
+                const auto message = wire::decode_snapshot_message(frame.payload);
+                screen_ = screenText(message.snapshot);
+                if (!ready_) {
+                    socket_.write(wire::frame(wire::Kind::ready,
+                                              wire::encode_ready({attachment_, message.sequence})));
+                    ready_ = true;
+                }
+            }
+            if (ready_ && screen_.contains(text))
+                return true;
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            socket_.waitForReadyRead(20);
+            buffer_ += socket_.readAll();
+        }
+        return false;
+    }
+    void type(const QByteArray& bytes) {
+        namespace wire = lapis::session::wire;
+        socket_.write(wire::frame(wire::Kind::text, wire::encode_control({attachment_, bytes})));
+        socket_.flush();
+    }
+    void resize(quint16 columns, quint16 rows) {
+        namespace wire = lapis::session::wire;
+        QByteArray bytes;
+        QDataStream out(&bytes, QIODevice::WriteOnly);
+        out << columns << rows;
+        socket_.write(wire::frame(wire::Kind::resize, wire::encode_control({attachment_, bytes})));
+        socket_.flush();
+    }
+    void leave() { socket_.disconnectFromServer(); }
+
+  private:
+    QLocalSocket socket_;
+    QByteArray buffer_;
+    lapis::session::wire::Attachment attachment_;
+    QString screen_;
+    bool ready_{};
+};
+
+void joinedViewStaysInSync() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-join-XXXXXX"));
+    require(directory.isValid(), "service directory");
+    WorkspaceOptions options;
+    options.endpoint = QDir(QFileInfo(directory.path()).canonicalFilePath())
+                           .filePath(QStringLiteral("agent.sock"));
+    options.launch = lapis::session::LaunchSpec{
+        QStringLiteral("/bin/sh"),
+        {QStringLiteral("-c"), QStringLiteral("while read line; do echo \"got:$line\"; done")},
+        directory.path(),
+        {80, 24},
+        lapis::session::AgentMode::terminal};
+    options.mode = lapis::session::wire::AttachMode::create;
+    Workspace workspace(WorkspaceMode::live, options);
+    auto* agent = workspace.focusedSession();
+    require(agent != nullptr && waitFor([agent] { return agent->inputReady(); }, 10000),
+            "the desktop is attached");
+    // The service fingerprints the validated launch (canonical folder).
+    JoinedView phone(options.endpoint, lapis::session::validate_launch(*options.launch));
+    require(phone.waitForText(QString(), 5000), "the joined view receives the screen");
+    phone.type("from phone\r");
+    require(waitFor(
+                [agent] {
+                    return screenText(agent->snapshot()).contains(QStringLiteral("got:from phone"));
+                },
+                5000),
+            "the desktop shows what the phone typed");
+    agent->sendText("from mac\r");
+    require(phone.waitForText(QStringLiteral("got:from mac"), 5000),
+            "the phone shows what the desktop typed");
+    require(agent->inputReady() && agent->connectionState() == QStringLiteral("ready"),
+            "the desktop was never replaced");
+    {
+        // A ready connection ignores reconnect(). Replace it first so this
+        // fixture exercises service detach/attach while the phone stays joined.
+        namespace wire = lapis::session::wire;
+        QLocalSocket disposable;
+        disposable.connectToServer(options.endpoint);
+        require(disposable.waitForConnected(3000), "the disposable client connects");
+        const auto takeover =
+            wire::frame(wire::Kind::attach,
+                        wire::encode_attach({.mode = wire::AttachMode::discover,
+                                             .fingerprint = lapis::session::launch_fingerprint(
+                                                 lapis::session::validate_launch(*options.launch)),
+                                             .expected = {}}));
+        require(disposable.write(takeover) == takeover.size() &&
+                    disposable.waitForBytesWritten(3000),
+                "the disposable takeover was sent");
+        require(waitFor(
+                    [agent] {
+                        return !agent->inputReady() &&
+                               agent->connectionState() == QStringLiteral("replaced");
+                    },
+                    5000),
+                "the takeover really detached the desktop");
+        disposable.abort();
+    }
+    agent->reconnect();
+    require(waitFor([agent] { return agent->inputReady(); }, 10000), "the desktop reattaches");
+    phone.type("after reconnect\r");
+    require(phone.waitForText(QStringLiteral("got:after reconnect"), 5000),
+            "the joined view survives the desktop reattaching");
+    require(waitFor(
+                [agent] {
+                    return screenText(agent->snapshot())
+                        .contains(QStringLiteral("got:after reconnect"));
+                },
+                5000),
+            "the reattached desktop receives the phone's new output");
+    agent->sendText("reattached mac\r");
+    require(phone.waitForText(QStringLiteral("got:reattached mac"), 5000),
+            "the phone receives input from the new desktop attachment");
+    require(workspace.closeSession(agent->sessionId()) &&
+                waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "the joined fixture closes");
+}
+
+// The phone's size lasts only while someone uses the phone: coming back to the
+// desktop takes the size back, and so does the phone leaving.
+void phoneSizeYieldsToTheDesktop() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-size-XXXXXX"));
+    require(directory.isValid(), "service directory");
+    WorkspaceOptions options;
+    options.endpoint = QDir(QFileInfo(directory.path()).canonicalFilePath())
+                           .filePath(QStringLiteral("agent.sock"));
+    options.launch = lapis::session::LaunchSpec{
+        QStringLiteral("/bin/sh"),
+        {QStringLiteral("-c"), QStringLiteral("while read line; do echo \"got:$line\"; done")},
+        directory.path(),
+        {80, 24},
+        lapis::session::AgentMode::terminal};
+    options.mode = lapis::session::wire::AttachMode::create;
+    Workspace workspace(WorkspaceMode::live, options);
+    auto* agent = workspace.focusedSession();
+    require(agent != nullptr && waitFor([agent] { return agent->inputReady(); }, 10000),
+            "the desktop is attached");
+    const lapis::session::TerminalSize desk{100, 30};
+    const lapis::session::TerminalSize phone_size{40, 20};
+    const auto shows = [agent](lapis::session::TerminalSize size) {
+        return waitFor([agent, size] { return agent->snapshot().size == size; }, 5000);
+    };
+    agent->resizeTerminal(desk);
+    require(shows(desk), "the desktop sets its size");
+    JoinedView phone(options.endpoint, lapis::session::validate_launch(*options.launch));
+    require(phone.waitForText(QString(), 5000), "the phone joins");
+    phone.resize(phone_size.columns, phone_size.rows);
+    require(shows(phone_size), "the phone takes the size when it opens the agent");
+    agent->claimTerminalSize();
+    require(shows(desk), "coming back to the desktop takes the size back");
+    phone.resize(phone_size.columns, phone_size.rows);
+    require(shows(phone_size), "the phone takes it again");
+    phone.leave();
+    require(shows(desk), "the phone leaving hands the size back to the desktop");
+    require(workspace.closeSession(agent->sessionId()) &&
+                waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "the size fixture closes");
+}
+
 // Closing an agent while a history page shows ends it: the page hides input,
 // not the service, so the agent must not be abandoned while still running.
 void closeOnHistoryPageEndsTheAgent() {
@@ -1543,6 +1745,8 @@ int main(int argc, char** argv) {
         // An agent that ignores SIGHUP is ended by the SIGTERM escalation.
         closeEndsTheAgent("trap '' HUP; exec sleep 600", 1200);
         closeOnHistoryPageEndsTheAgent();
+        joinedViewStaysInSync();
+        phoneSizeYieldsToTheDesktop();
         std::cout << "workspace categories, identity, persistence, status and closing passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -66,6 +66,7 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation | Automatic carousel and larger session-count qualification |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
 | Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect, `/clear` continuation and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
+| iPhone app (prototype) | Gateway on the Mac over Tailscale, admitting only the owner's iOS devices; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; the phone joins beside the desktop so both stay in sync (services started by this build); UI tests in the iOS 26.5 Simulator against real services with a Mac-side client attached, fake agents, and real Codex and Claude Code on a fake model; installed and used on an iPhone 17 Pro | Agents started before sync are taken over instead; no structured requests, push notifications or restore without the desktop |
 | Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals; [installed binary qualification](evidence/codex-binary-update.json) | Broader binary and request-kind qualification |
 
 [Desktop evidence](evidence/desktop-preview.json),
@@ -227,6 +228,51 @@ options literally and installs no attention hooks or approval settings.
 - [Architecture](docs/architecture.md): product direction and acceptance.
 - [Codex investigation](adapters/codex/README.md): protocol and qualification.
 - [Contributing](CONTRIBUTING.md): setup, tests, profiling and review.
+
+## Use it from your iPhone
+
+The iPhone app (`apps/ios`) talks to a small gateway on the Mac
+(`apps/remote/lapis_remote.py`) over Tailscale. There is nothing to sign in to:
+the gateway listens only on the Mac's Tailscale address and serves a request
+only when `tailscale whois` names the Mac owner's login on an iOS device. The
+phone must be signed in to Tailscale with the same account as the Mac.
+Keep Tailscale active on both devices when using HTTP; its WireGuard connection
+provides transport encryption. The configured gateway address is trusted input,
+and arbitrary LAN hosts are outside this transport contract. An explicit HTTPS
+URL keeps HTTPS, and unsupported URL schemes are rejected.
+
+Keep the gateway running at login with
+`uv run --no-project python apps/remote/launch_agent.py install` (`status`,
+`uninstall`; log in `~/Library/Logs/lapis-remote.log`). With the phone unlocked
+on the same Wi-Fi or a cable,
+`uv run --no-project python scripts/install_ios_app.py` builds, signs and
+installs the app with your development profile, set to reach this Mac by its
+Tailscale name. To work on it in Xcode, run `xcodegen` in `apps/ios`
+(`Config/Local.xcconfig`, not committed, holds your team and default host).
+
+The app lists each category's agents as cards with the harness mark and the
+folder in path form (`~/dev/infinity`; an agent reached over ssh shows its host
+first, `devbox:~/lapis`). Opening an agent shows its screen at phone width, with
+a key bar (esc, ^C, arrows, enter, backspace, tab, ^U, ^D) and a message field
+that pastes and presses Enter; dictation works there. Scrolling up loads the
+agent's earlier output from the service's archived history. **Send screen to
+Mac** in the agent's menu saves a screenshot and the exact screen data under
+`runtime/phone-captures/` for debugging what the phone drew. The phone
+reports capture failures in the same alert used for delivery results. Rotation
+updates the terminal grid while composing; keyboard appearance alone keeps its
+row count. Input requests are sent in order and pending input is canceled when
+the view closes. Brief inactive transitions preserve the stream and history. The phone
+joins the agent beside the desktop: both show the same screen, either can type,
+and the terminal takes the size of the device in use. Opening the agent on the
+phone gives it the phone's size; closing it or locking the phone, activating the
+lapis window, moving the pointer over the agent, or typing on the Mac gives it
+back. Agents started
+before this build run services that cannot be joined; opening one on the phone
+takes it from the desktop (its card offers **Reconnect agent**), and the phone
+says so. Restarting such an agent gives it a service that can. The Mac must be
+awake.
+`uv run --no-project python scripts/check_ios_remote.py [--codex] [--claude]`
+runs the app's UI tests in a headless simulator against disposable services.
 
 ## Check the C++ baseline
 
