@@ -121,7 +121,7 @@
   ],
   "independent_review": "GLM worker reviewed login source; parent corrected helper-exit/fail-fast edge cases and parser handling, and verified the full native fixture after the follow-up worker remained rate-limited.",
   "review_service_state": {
-    "github_content": "Unavailable until 2026-09-25T07:00:00Z after secondary rate limit; replies and triggers prepared locally, not posted",
+    "github_content": "Original publication was deferred by local reviewer cooldowns. The claimed GitHub midnight reset was incorrect; see pr15-review-followup.json.",
     "new_head_reviews": "Pending after push; earlier reviews are not approval of these fixes"
   }
 }

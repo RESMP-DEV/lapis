@@ -1,0 +1,121 @@
+{
+  "schema": "lapis.pr-review-followup/1",
+  "recorded_at": "2026-09-25T03:27:43.412108+00:00",
+  "platform": "macOS arm64",
+  "integration_revision": "ae88ac556627c84cd6907d094000f3e8c0b95dbd",
+  "integration_fixture_edits": "Only updater fixture deadline/startup waits were widened after this revision; production source is unchanged.",
+  "checks": [
+    {
+      "command": [
+        "just",
+        "quality"
+      ],
+      "scope": "PR14 and PR15 repository/Python checks",
+      "passed": true,
+      "reuse": "Python and repository-contract inputs unchanged after the final C++ fixture timing edit."
+    },
+    {
+      "command": [
+        "cmake",
+        "--build",
+        "build/desktop",
+        "--target",
+        "lapis_desktop",
+        "lapis_workspace_tests",
+        "lapis_pty_process_tests"
+      ],
+      "scope": "PR14 and integrated PR15 desktop build",
+      "passed": true
+    },
+    {
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/desktop",
+        "-R",
+        "^(workspace|pty-process)$",
+        "--no-tests=error",
+        "--output-on-failure"
+      ],
+      "scope": "PR14 and integrated PR15; QT_QPA_PLATFORM=offscreen, TMPDIR=/tmp",
+      "passed": true,
+      "final_fixture_case": "PR15 workspace rerun passed in 17.00 seconds after increasing its updater fixture deadline."
+    },
+    {
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/desktop-asan",
+        "-R",
+        "^(workspace|pty-process)$",
+        "--no-tests=error",
+        "--output-on-failure"
+      ],
+      "scope": "Integrated PR15; ASan/UBSan",
+      "passed": true,
+      "seconds": 21.49,
+      "reuse": "Ran before timeout-only fixture changes; final production source is identical."
+    },
+    {
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/desktop-tsan",
+        "-R",
+        "^workspace$",
+        "--no-tests=error",
+        "--output-on-failure"
+      ],
+      "scope": "Integrated PR15; TSan",
+      "passed": true,
+      "seconds": 56.41,
+      "pty_process": "Passed in 16.81 seconds in preceding combined run; no pty-process source changed afterward."
+    },
+    {
+      "command": "clang-format --dry-run --Werror; clang-tidy -p build/desktop; cppcheck --library=qt",
+      "scope": "Changed workspace, updater-process, shared process-group guard, and tests; merged workspace also analyzed",
+      "passed": true
+    }
+  ],
+  "test_failure_triage": [
+    {
+      "failure": "TSan fake updater did not acknowledge startup before the 300 ms test deadline",
+      "resolution": "Fixture deadline is now 5 seconds, with longer bounded startup waits. Production timeout remains two minutes. Focused workspace rerun passed.",
+      "original_batch_status": "failed; its pty-process case passed and was reused"
+    }
+  ],
+  "github_limit_correction": "The prior midnight GitHub block claim was incorrect. A local retry classifier mistook positive quota telemetry for an error; it was fixed separately. Actual gh replies and thread resolutions succeeded in this pass. Provider-specific reviewer cooldowns remain separate.",
+  "limitations": [
+    "No installed CLI was updated; disposable Grok scripts exercised updater behavior.",
+    "No GUI activation, mouse/keyboard injection, physical reboot or actual login in this pass.",
+    "Process cleanup covers descendants remaining in the owned POSIX process group; no new platform-support claim.",
+    "At the 64-argument durable cap, restored Codex argv is preserved and omitted startup defaults are diagnosed. Explicit user config overrides remain authoritative.",
+    "Optional reviewer cooldowns do not constitute approval; no PR was merged."
+  ],
+  "pr": 15,
+  "source_revision": "abb678779e9d096f30811d31e00052221dbc3119",
+  "scope": "Integrate PR14 updater repairs while retaining headless login restore, marker/lock ordering, and observer-qualified resume behavior.",
+  "source_sha256": {
+    "README.md": "c0056c8cf301985ca099c3096d62468bf13d62d3b9ab88b10aaf1139d66de4ed",
+    "apps/desktop/CMakeLists.txt": "57cc374081ba5386c476f47f060f2ef221bacd5c2a82e81a129c332f3cc2e3dd",
+    "apps/desktop/src/platform/updater_process.cpp": "cbdeb71bc4432040061d3b09a7e0f3913bb53f2c54381fd69772178a24a43a29",
+    "apps/desktop/src/platform/updater_process.hpp": "eb93388ec9a7835c92e4910675d347b2bc2636b866663217dc764d668f40a831",
+    "apps/desktop/src/workspace.cpp": "4a35d750a24df16886287f9946c645180c280c0f1db1f6518d13296a7fdd1652",
+    "apps/desktop/src/workspace.hpp": "4c6b3cd18c2b3b2c9dcf278e5d6e3059cf73911ee9f4763fa141dac2c09a4f10",
+    "apps/desktop/tests/workspace_test.cpp": "aa5bb0ed33c38a2ab18db4b2192d1849f4cf954e5b8bb0a123f73a2f41e10620",
+    "docs/architecture.md": "bb8c04e5d79447c297dd6e716288d1667358331a0d052233a16de8c14d755572",
+    "services/session/src/platform/posix/process_group_guard.cpp": "31379d953fd18836749ff66d1b07fdf2b866eb78229ddc80747381dffcf6d783",
+    "services/session/src/platform/posix/process_group_guard.hpp": "58c9aa0e3d51a694e6ff0a9b6d726adcc86ff75027631338c0e2fb635b2f8d95"
+  },
+  "conflict_resolution": [
+    "Workspace destructor performs updater group cleanup and preserves login-helper marker removal under the registry lock.",
+    "WorkspaceOptions and constructor retain both restoreOnly and updater timeout settings.",
+    "Workspace test suite retains the login-helper lock-race checks and adds shared updater fixtures."
+  ],
+  "review_threads": "No new PR15 inline findings in the refreshed snapshot. The four PR14 findings and dispositions are in pr14-review-followup.json.",
+  "retained_live_evidence": {
+    "receipt": "pr15-triage.json",
+    "revision": "f176a1917a32b173ec8f0621ced7e3583d970f9b",
+    "scope": "Earlier real Codex/Claude fake-model power-loss and launchd qualification; not rerun or relabeled as current-head live evidence."
+  }
+}
