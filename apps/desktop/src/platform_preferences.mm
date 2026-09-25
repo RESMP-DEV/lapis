@@ -1,11 +1,15 @@
 #include "platform_preferences.hpp"
 #import <AppKit/AppKit.h>
+#include <QGuiApplication>
 #include <QQuickWindow>
 namespace lapis::desktop {
 bool system_reduced_motion() {
     return [[NSWorkspace sharedWorkspace] accessibilityDisplayShouldReduceMotion];
 }
 void style_window_chrome(QQuickWindow& window) {
+    // Other Qt platform plugins use opaque IDs that are not Cocoa objects.
+    if (QGuiApplication::platformName() != QStringLiteral("cocoa"))
+        return;
     if (!window.isVisible())
         return; // Do not create a native window while it is hidden or closing.
     // Qt exposes its native NSView through WId. This is a borrowed view/window;
@@ -30,12 +34,14 @@ void style_window_chrome(QQuickWindow& window) {
 void play_sound(const QByteArray& wav) {
     // One sound per distinct chime, kept for reuse; a chime still playing
     // starts over rather than overlapping itself.
-    static NSMutableDictionary<NSData*, NSSound*>* sounds = [NSMutableDictionary dictionary];
+    // This file uses manual reference counting. Retain the cache for the
+    // process lifetime; a convenience dictionary would die with its pool.
+    static NSMutableDictionary<NSData*, NSSound*>* sounds = [[NSMutableDictionary alloc] init];
     NSData* data = [NSData dataWithBytes:wav.constData()
                                   length:static_cast<NSUInteger>(wav.size())];
     NSSound* sound = sounds[data];
     if (sound == nil) {
-        sound = [[NSSound alloc] initWithData:data];
+        sound = [[[NSSound alloc] initWithData:data] autorelease];
         if (sound == nil)
             return;
         sounds[data] = sound;

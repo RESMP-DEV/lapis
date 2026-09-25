@@ -55,7 +55,7 @@
   ],
   "limitations": [
     "Agents whose services started before joining existed (including the two running on September 24) are taken over by the phone instead of shared until they restart",
-    "Joined views do not page history, answer structured requests or end the agent",
+    "Joined views do not answer structured requests or end the agent",
     "No push notifications, or restore without the desktop",
     "Xcode's build service deadlocked on this Mac because kernel pipe memory was exhausted (new pipes held 512 bytes), so the app and tests are compiled directly with swiftc, actool and codesign"
   ]

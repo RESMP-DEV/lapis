@@ -299,14 +299,21 @@ final class AgentSession {
         task = Task { [weak self] in
             do {
                 for try await event in events {
-                    guard let self else { return }
+                    guard !Task.isCancelled, let self else { return }
                     switch event {
                     case let .attached(attached):
                         self.shared = attached.shared
                     case let .frame(frame, json):
+                        let firstFrame = self.state == .connecting
                         self.frame = frame
                         self.lastFrameJSON = json
                         self.state = .live
+                        // The stream carries the opening size; send any resize
+                        // made during connection once the first frame arrives.
+                        if firstFrame, let size = self.size,
+                           size.columns != columns || size.rows != rows {
+                            self.send(Input(resize: [size.columns, size.rows]))
+                        }
                         ScreenCache.shared.store(self.agent.id, frame)
                         self.followNewHistory()
                         // The newest archived page, before the first scroll up asks.
@@ -319,10 +326,14 @@ final class AgentSession {
                         return
                     }
                 }
+                // Cancellation can end AsyncThrowingStream normally. An old
+                // stream must not close the connection started by a new open().
+                guard !Task.isCancelled else { return }
                 self?.closedByGateway()
             } catch is CancellationError {
             } catch let failure as URLError where failure.code == .cancelled {
             } catch {
+                guard !Task.isCancelled else { return }
                 self?.state = .closed(describe(error), reopen: true)
             }
         }

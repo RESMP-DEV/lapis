@@ -58,6 +58,8 @@ void add_options(QCommandLineParser& parser) {
                       QStringLiteral("Explicitly start a new session on an unused endpoint")});
     parser.addOption({QStringLiteral("discover"),
                       QStringLiteral("Explicitly discover and remember an existing session")});
+    parser.addOption({QStringLiteral("no-harness-updates"),
+                      QStringLiteral("Do not run a supported CLI update before a new session")});
     parser.addOption({QStringLiteral("socket"),
                       QStringLiteral("Session service socket path (required for explicit launch)"),
                       QStringLiteral("path")});
@@ -218,38 +220,49 @@ void headless_options(const QCommandLineParser& parser, lapis::desktop::Workspac
 lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& parser,
                                                    bool isolated) {
     lapis::desktop::WorkspaceOptions options;
-    if (!isolated) {
-        if (parser.isSet(QStringLiteral("new-session")))
-            options.mode = lapis::session::wire::AttachMode::create;
-        else if (parser.isSet(QStringLiteral("discover")))
-            options.mode = lapis::session::wire::AttachMode::discover;
-        if (parser.isSet(QStringLiteral("socket")))
-            options.endpoint = QFileInfo(parser.value(QStringLiteral("socket"))).absoluteFilePath();
-        const auto positional = parser.positionalArguments();
-        if (!positional.isEmpty()) {
-            options.launch = lapis::session::LaunchSpec{
-                .program = positional.front(),
-                .arguments = positional.mid(1),
-                .directory = parser.isSet(QStringLiteral("cwd"))
-                                 ? parser.value(QStringLiteral("cwd"))
-                                 : lapis::desktop::default_working_directory(),
-                .agent = parser.isSet(QStringLiteral("codex")) ? lapis::session::AgentMode::codex
-                         : parser.isSet(QStringLiteral("claude"))
-                             ? lapis::session::AgentMode::claude
-                             : lapis::session::AgentMode::terminal,
-            };
-        } else if (parser.isSet(QStringLiteral("development-shell")) ||
-                   parser.isSet(QStringLiteral("smoke-input"))) {
-            options.launch = lapis::session::shell_launch(
-                parser.isSet(QStringLiteral("cwd")) ? parser.value(QStringLiteral("cwd"))
-                                                    : lapis::desktop::default_working_directory());
-        }
-        // The normal workspace restarts agents whose services are gone.
-        options.restoreAgents = !options.launch && options.endpoint.isEmpty();
-        options.updateHarnesses = options.restoreAgents;
+    if (isolated) {
+        headless_options(parser, options);
+        return options;
     }
+    if (parser.isSet(QStringLiteral("new-session")))
+        options.mode = lapis::session::wire::AttachMode::create;
+    else if (parser.isSet(QStringLiteral("discover")))
+        options.mode = lapis::session::wire::AttachMode::discover;
+    if (parser.isSet(QStringLiteral("socket")))
+        options.endpoint = QFileInfo(parser.value(QStringLiteral("socket"))).absoluteFilePath();
+    const auto positional = parser.positionalArguments();
+    if (!positional.isEmpty()) {
+        options.launch = lapis::session::LaunchSpec{
+            .program = positional.front(),
+            .arguments = positional.mid(1),
+            .directory = parser.isSet(QStringLiteral("cwd"))
+                             ? parser.value(QStringLiteral("cwd"))
+                             : lapis::desktop::default_working_directory(),
+            .agent = parser.isSet(QStringLiteral("codex"))    ? lapis::session::AgentMode::codex
+                     : parser.isSet(QStringLiteral("claude")) ? lapis::session::AgentMode::claude
+                                                              : lapis::session::AgentMode::terminal,
+        };
+    } else if (parser.isSet(QStringLiteral("development-shell")) ||
+               parser.isSet(QStringLiteral("smoke-input"))) {
+        options.launch = lapis::session::shell_launch(
+            parser.isSet(QStringLiteral("cwd")) ? parser.value(QStringLiteral("cwd"))
+                                                : lapis::desktop::default_working_directory());
+    }
+    // The normal workspace restarts agents whose services are gone.
+    options.restoreAgents = !options.launch && options.endpoint.isEmpty();
+    // Updates are for creating an agent. Existing-session discovery and
+    // reconnection never change the CLI that owns the attached session.
+    // The explicit opt-out is absolute for reproducible qualification.
+    options.updateHarnesses =
+        !parser.isSet(QStringLiteral("no-harness-updates")) &&
+        (options.restoreAgents || parser.isSet(QStringLiteral("new-session")));
     headless_options(parser, options);
     return options;
+}
+
+bool parsed_headless(const QCommandLineParser& parser, bool parsed) {
+    return parsed && (parser.isSet(QStringLiteral("serve")) ||
+                      parser.isSet(QStringLiteral("restore-agents")));
 }
 
 // Chimes for agents that need you, in the real workspace (the preview
@@ -422,16 +435,20 @@ int main(int argc, char** argv) {
 #endif
     QCoreApplication::setAttribute(Qt::AA_MacDontSwapCtrlAndMeta);
     // The login helper shows nothing: no window and no Dock icon.
-    const bool serve = arguments.contains(QStringLiteral("--serve"));
-    const bool headless = serve || arguments.contains(QStringLiteral("--restore-agents"));
+    // Parse the same option definitions before creating the application so a
+    // child argument cannot select headless mode. process() below handles help
+    // and parse errors once the application name and translation context exist.
+    QCommandLineParser parser;
+    parser.setOptionsAfterPositionalArgumentsMode(QCommandLineParser::ParseAsPositionalArguments);
+    add_options(parser);
+    const bool parsed = parser.parse(arguments);
+    const bool serve = parsed && parser.isSet(QStringLiteral("serve"));
+    const bool headless = parsed_headless(parser, parsed);
     if (headless && !qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(application_argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("lapis"));
     QCoreApplication::setOrganizationName(QStringLiteral("lapis"));
-    QCommandLineParser parser;
-    parser.setOptionsAfterPositionalArgumentsMode(QCommandLineParser::ParseAsPositionalArguments);
-    add_options(parser);
     parser.process(arguments);
     if (!valid_options(parser) || !valid_connection_options(parser))
         return 2;

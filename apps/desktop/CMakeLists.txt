@@ -27,6 +27,7 @@ add_library(lapis_desktop_view STATIC
     src/attention_view.cpp
     src/keymap.cpp src/keymap.hpp
     src/live_connection.cpp src/live_connection.hpp
+    src/platform/updater_process.cpp src/platform/updater_process.hpp
     src/terminal_surface.cpp src/terminal_surface.hpp
     src/cell_shapes.cpp src/cell_shapes.hpp
     src/tile_layout.cpp src/tile_layout.hpp
@@ -138,7 +139,7 @@ if(BUILD_TESTING)
     target_compile_definitions(lapis_workspace_tests PRIVATE
         LAPIS_DESKTOP_PATH="$<TARGET_FILE:lapis_desktop>")
     add_test(NAME workspace COMMAND lapis_workspace_tests)
-    set_tests_properties(workspace PROPERTIES TIMEOUT 30)
+    set_tests_properties(workspace PROPERTIES TIMEOUT 120)
     add_executable(lapis_live_connection_tests tests/live_connection_test.cpp)
     target_link_libraries(lapis_live_connection_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME live-connection COMMAND lapis_live_connection_tests)

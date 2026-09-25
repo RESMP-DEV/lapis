@@ -60,5 +60,24 @@ class DiscoveryTests(unittest.TestCase):
                     install.reachable_phone()
 
 
+class BuildOnlyTests(unittest.TestCase):
+    def test_build_only_never_discovers_network_or_devices(self):
+        for host in (None, "gateway.example"):
+            argv = ["install_ios_app.py", "--build-only"]
+            if host:
+                argv += ["--host", host]
+            with (
+                self.subTest(host=host),
+                patch.object(install.sys, "argv", argv),
+                patch.object(install, "build") as build,
+                patch.object(install, "mac_host") as mac_host,
+                patch.object(install, "reachable_phone") as phone,
+            ):
+                self.assertEqual(install.main(), 0)
+                build.assert_called_once_with(host or "")
+                mac_host.assert_not_called()
+                phone.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

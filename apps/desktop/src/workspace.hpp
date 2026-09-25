@@ -250,9 +250,13 @@ struct WorkspaceOptions {
     // Restart agents whose session service is gone (after a reboot or crash),
     // resuming each recorded conversation. Off unless the app asks for it.
     bool restoreAgents{};
-    // Run a CLI's own update command before a new agent of it starts, at most
-    // every 30 minutes per CLI, so agents never open on an update prompt.
+    // Run a supported CLI's own update command before a new agent of it
+    // starts, at most every 30 minutes per CLI, so agents never open on an
+    // update prompt. Existing-session reconnect and discovery do not update.
     bool updateHarnesses{};
+    // Production bounds. Tests inject short values so stuck-updater cleanup is
+    // observable without waiting two minutes or leaving installer children.
+    qint64 updateTimeoutMs{qint64{2} * 60 * 1000};
     // No window: leave running services for a window to reattach, and hand the
     // workspace to a window that opens (the login helper and the windowless
     // host that serves the phone).
@@ -399,10 +403,15 @@ class Workspace final : public QObject {
     QHash<QString, qint64> harness_checked_ms_;
     QHash<QString, QPointer<QProcess>> harness_updates_;
     QHash<QString, QStringList> starts_after_update_;
+    QHash<QProcess*, QByteArray> updater_output_;
+    QHash<QProcess*, bool> updater_stopping_;
+    qint64 update_timeout_ms_{qint64{2} * 60 * 1000};
     // True when the agent waits for its CLI's update and starts after it.
     bool deferForUpdate(const QString& id);
+    void drainUpdater(QProcess* process);
     void finishUpdate(const QString& harness, QProcess* process, const QString& outcome);
     void logUpdate(const QString& line) const;
+    QString update_log_directory_;
     // Records conversations for agents whose services do not.
     QTimer conversation_timer_;
     std::shared_ptr<std::atomic_bool> probing_{std::make_shared<std::atomic_bool>(false)};
@@ -477,6 +486,7 @@ class Workspace final : public QObject {
         int managed_resume_index{-1};
         QString managed_resume_identity{};
     };
+    static void applyStartupDefaults(const Agent& agent, ResumeLaunch& plan);
     [[nodiscard]] static std::optional<ResumeLaunch> restoredLaunch(const Agent& agent,
                                                                     QString* diagnostic = nullptr);
     struct ClosedAgent {
