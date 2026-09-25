@@ -655,7 +655,7 @@ Dialog {
                 SwitchRow {
                     objectName: "showUsageRow"
                     label: qsTr("Show plan usage")
-                    detail: qsTr("Codex and Claude limits under the categories, checked every five minutes, with token totals from this Mac's transcripts. Off, lapis asks neither CLI.")
+                    detail: qsTr("Each signed-in plan under the categories (Codex, Claude, Grok, Kimi, and OMP's accounts), checked every five minutes, with a dashboard per machine. usage.meter and usage.machines in the config pick which. Off, lapis asks no CLI.")
                     on: settings.showUsage
                     onToggled: function(on) { settings.showUsageChosen(on) }
                 }

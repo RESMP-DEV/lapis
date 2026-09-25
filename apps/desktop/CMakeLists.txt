@@ -7,12 +7,18 @@ add_library(lapis_desktop_view STATIC
     src/alerts.cpp src/alerts.hpp
     src/agent_search.cpp src/agent_search.hpp
     src/usage.cpp src/usage.hpp
+    src/usage_limits.cpp src/usage_limits.hpp
     src/attention_view.cpp
     src/keymap.cpp src/keymap.hpp
     src/live_connection.cpp src/live_connection.hpp
     src/terminal_surface.cpp src/terminal_surface.hpp
     src/ui_preview.cpp src/ui_preview.hpp)
 target_include_directories(lapis_desktop_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+# The token counter another machine runs over ssh, compiled in as text.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/count_tokens.py)
+file(READ src/count_tokens.py LAPIS_COUNT_TOKENS_SCRIPT)
+configure_file(src/count_tokens.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/count_tokens.hpp" @ONLY)
+target_include_directories(lapis_desktop_view PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options
     PUBLIC lapis_terminal lapis_local_protocol Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network)
 target_compile_definitions(lapis_desktop_view PRIVATE

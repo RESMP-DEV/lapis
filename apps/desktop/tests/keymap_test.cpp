@@ -758,6 +758,7 @@ void config_reloads_when_edited_elsewhere() {
     const QDir dir(directory.path());
     const QString path = write_config(
         dir, R"({"version": 1, "theme": "graphite", "keepAwake": false, "showUsage": false,
+                 "usage": {"meter": ["grok", "codex", "grok"], "machines": ["devbox", "-oProxy=x", "two words"]},
                  "alerts": {"sound": false, "repeat": 5},
                  "newAgent": {"harness": "claude", "folder": "~/dev",
                               "machines": {"devbox": {"folder": "~/work"}},
@@ -780,6 +781,9 @@ void config_reloads_when_edited_elsewhere() {
     require(!keymap.alertSound() && keymap.finishSound() && keymap.alertRepeat() == 5 &&
                 !keymap.keepAwake() && !keymap.showUsage(),
             "alerts, keeping awake and usage are read, with defaults for what is missing");
+    require(keymap.usageMeter() == QStringList({QStringLiteral("grok"), QStringLiteral("codex")}) &&
+                keymap.usageMachines() == QStringList{QStringLiteral("devbox")},
+            "the meter's plans and the dashboard's machines, without anything read as an option");
 
     int changes = 0;
     QObject::connect(&keymap, &KeyMap::changed, [&changes] { ++changes; });
@@ -814,7 +818,11 @@ void config_reloads_when_edited_elsewhere() {
                     .value(QStringLiteral("sound"))
                     .toBool(true) &&
                 !written.value(QStringLiteral("keepAwake")).toBool(true) &&
-                !written.value(QStringLiteral("showUsage")).toBool(true) &&
+                !written.contains(QStringLiteral("showUsage")) &&
+                !written.value(QStringLiteral("usage"))
+                     .toObject()
+                     .value(QStringLiteral("show"))
+                     .toBool(true) &&
                 written.value(QStringLiteral("theme")).toString() == QStringLiteral("amber"),
             "alert choices are written beside the rest of the config");
 }

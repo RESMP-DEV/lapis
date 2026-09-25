@@ -22,6 +22,7 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QStandardPaths>
 #include <QThread>
 #include <algorithm>
 #include <exception>
@@ -260,9 +261,19 @@ lapis::desktop::TokenLedger::Roots transcript_roots() {
     return {home("CODEX_HOME", ".codex") + QStringLiteral("/sessions"),
             home("CLAUDE_CONFIG_DIR", ".claude") + QStringLiteral("/projects")};
 }
-// Usage asks the CLIs only while its setting is on.
+// A CLI usage asks, or ssh, as found on this Mac.
+QString usage_program(const QString& id) {
+    return id == QLatin1String("ssh") ? QStandardPaths::findExecutable(id)
+                                      : lapis::desktop::harness_program(id);
+}
+// Usage asks the CLIs only while its setting is on, on the machines and in
+// the order the config names.
 void follow_usage_setting(lapis::desktop::Usage& usage, const lapis::desktop::KeyMap& keymap) {
-    const auto show = [&usage, &keymap] { usage.setActive(keymap.showUsage()); };
+    const auto show = [&usage, &keymap] {
+        usage.setMachines(keymap.usageMachines());
+        usage.setMeterOrder(keymap.usageMeter());
+        usage.setActive(keymap.showUsage());
+    };
     show();
     QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &usage, show);
 }
@@ -441,7 +452,7 @@ int main(int argc, char** argv) {
         // home variable says.
         std::optional<Usage> usage;
         if (!isolated)
-            follow_usage_setting(usage.emplace(&harness_program, transcript_roots()), keymap);
+            follow_usage_setting(usage.emplace(&usage_program, transcript_roots()), keymap);
         UiPreview view(workspace, {.source = source,
                                    .compact = parser.isSet(QStringLiteral("compact")),
                                    .screen = parser.isSet(QStringLiteral("screen"))

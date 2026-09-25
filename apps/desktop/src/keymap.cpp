@@ -464,6 +464,8 @@ void KeyMap::apply_defaults() {
     alert_repeat_ = 3;
     keep_awake_ = true;
     show_usage_ = true;
+    usage_meter_.clear();
+    usage_machines_.clear();
     // Models offered until the config names its own; each CLI's default
     // (no flag) is always offered as well.
     agent_defaults_ = {};
@@ -564,6 +566,7 @@ bool KeyMap::load() {
     load_terminal_font(root.value(QStringLiteral("terminalFont")));
     load_harness_arguments(root.value(QStringLiteral("harnessArguments")));
     load_alerts(root);
+    load_usage(root);
     load_agent_defaults(root.value(QStringLiteral("newAgent")));
 
     known_contents_ = contents;
@@ -620,7 +623,27 @@ void KeyMap::load_alerts(const QJsonObject& root) {
     finish_sound_ = alerts.value(QStringLiteral("finished")).toBool(true);
     alert_repeat_ = std::clamp(alerts.value(QStringLiteral("repeat")).toInt(3), 1, 10);
     keep_awake_ = root.value(QStringLiteral("keepAwake")).toBool(true);
-    show_usage_ = root.value(QStringLiteral("showUsage")).toBool(true);
+}
+
+// {"usage": {"show": true, "meter": ["codex", "claude", "grok"], "machines":
+// ["devbox"]}}; an older top-level "showUsage" still counts.
+void KeyMap::load_usage(const QJsonObject& root) {
+    const auto usage = root.value(QStringLiteral("usage")).toObject();
+    show_usage_ = usage.value(QStringLiteral("show"))
+                      .toBool(root.value(QStringLiteral("showUsage")).toBool(true));
+    const auto names = [](const QJsonValue& value, qsizetype longest) {
+        QStringList list;
+        for (const auto& item : value.toArray()) {
+            const auto name = item.toString().trimmed();
+            // Names only: nothing that could be read as an option.
+            if (!name.isEmpty() && name.size() <= longest && !name.startsWith(QLatin1Char('-')) &&
+                !name.contains(QLatin1Char(' ')) && !list.contains(name) && list.size() < 32)
+                list << name;
+        }
+        return list;
+    };
+    usage_meter_ = names(usage.value(QStringLiteral("meter")), 32);
+    usage_machines_ = names(usage.value(QStringLiteral("machines")), 128);
 }
 
 // Paths are kept as written (~ is the machine's home); the new-agent forms
@@ -935,7 +958,10 @@ bool KeyMap::persist() {
     alerts.insert(QStringLiteral("repeat"), alert_repeat_);
     root.insert(QStringLiteral("alerts"), alerts);
     root.insert(QStringLiteral("keepAwake"), keep_awake_);
-    root.insert(QStringLiteral("showUsage"), show_usage_);
+    root.remove(QStringLiteral("showUsage"));
+    QJsonObject usage = root.value(QStringLiteral("usage")).toObject();
+    usage.insert(QStringLiteral("show"), show_usage_);
+    root.insert(QStringLiteral("usage"), usage);
     if (!root.contains(QStringLiteral("version")))
         root.insert(QStringLiteral("version"), 1);
     QByteArray contents = format_config(root) + '\n';

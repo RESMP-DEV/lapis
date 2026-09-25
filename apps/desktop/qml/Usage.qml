@@ -2,13 +2,16 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// Plan limits as each CLI reports them, with where the current pace ends,
-// and tokens counted from this Mac's Codex and Claude transcripts.
+// A dashboard per machine: each signed-in plan with every window, its reset
+// time and where the current pace ends, the other accounts OMP holds, and the
+// tokens that machine's Codex and Claude transcripts count.
 Dialog {
     id: usagePopup
     objectName: "usageDialog"
     property var engine: null
-    readonly property var providers: engine ? engine.providers : []
+    readonly property var machines: engine ? engine.machines : []
+    property int machineIndex: 0
+    readonly property var machine: machines.length > 0 ? machines[Math.min(machineIndex, machines.length - 1)] : null
     property color surfaceColor: "#0e1822"
     property color cardColor: "#15202b"
     property color textColor: "#e4eef1"
@@ -16,6 +19,7 @@ Dialog {
     property color accentColor: "#70d8c5"
     property color faultColor: "#ee7a8a"
     property color borderColor: "#263c48"
+    property color selectionColor: "#193638"
     property string monoFamily: "monospace"
     property int uiFont: 13
     property int readoutFont: 12
@@ -26,8 +30,8 @@ Dialog {
     focus: true
     title: qsTr("Usage")
     anchors.centerIn: parent
-    width: Math.min(620, parent.width - 32)
-    height: Math.min(680, parent.height - 32)
+    width: Math.min(660, parent.width - 32)
+    height: Math.min(720, parent.height - 32)
     padding: 16
     font.pixelSize: uiFont
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -57,6 +61,12 @@ Dialog {
     function barColor(percent) {
         return percent >= 90 ? faultColor : accentColor
     }
+    function markFor(id) {
+        return id === "antigravity" ? "agy" : id
+    }
+    function planName(plan) {
+        return plan.length ? plan.charAt(0).toUpperCase() + plan.slice(1) : ""
+    }
 
     component Readout: Label {
         textFormat: Text.PlainText
@@ -67,6 +77,49 @@ Dialog {
 
     contentItem: ColumnLayout {
         spacing: 12
+        // One tab per machine when the config names others.
+        Flow {
+            Layout.fillWidth: true
+            visible: usagePopup.machines.length > 1
+            spacing: 6
+            Repeater {
+                model: usagePopup.machines
+                delegate: Button {
+                    id: machineTab
+                    required property var modelData
+                    required property int index
+                    readonly property bool marked: index === usagePopup.machineIndex
+                    objectName: "usageMachine_" + (modelData.host.length ? modelData.host : "here")
+                    text: modelData.name
+                    focusPolicy: Qt.NoFocus
+                    hoverEnabled: true
+                    onClicked: usagePopup.machineIndex = index
+                    contentItem: Label {
+                        text: machineTab.text
+                        textFormat: Text.PlainText
+                        color: machineTab.marked ? usagePopup.textColor : usagePopup.mutedColor
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+                    background: Rectangle {
+                        radius: usagePopup.chromeRadius
+                        color: machineTab.marked ? usagePopup.selectionColor : usagePopup.cardColor
+                        border.color: machineTab.marked ? usagePopup.accentColor : usagePopup.borderColor
+                        Behavior on color {
+                            enabled: usagePopup.motionEnabled
+                            ColorAnimation { duration: usagePopup.motionDuration; easing.type: Easing.OutCubic }
+                        }
+                    }
+                }
+            }
+        }
+        Label {
+            Layout.fillWidth: true
+            visible: text.length > 0
+            text: usagePopup.machine ? usagePopup.machine.note : ""
+            textFormat: Text.PlainText
+            color: usagePopup.faultColor
+            wrapMode: Text.WordWrap
+        }
         ScrollView {
             id: scroll
             Layout.fillWidth: true
@@ -78,14 +131,14 @@ Dialog {
                 spacing: 12
                 Label {
                     Layout.fillWidth: true
-                    visible: usagePopup.providers.length === 0
-                    text: usagePopup.engine && usagePopup.engine.counting ? qsTr("Checking…")
-                                                                          : qsTr("Neither Codex nor Claude is installed here, and no transcripts were found.")
+                    visible: !usagePopup.machine || usagePopup.machine.providers.length === 0
+                    text: usagePopup.machine && usagePopup.machine.counting ? qsTr("Checking…")
+                          : qsTr("No CLI here is signed in to a plan, and no Codex or Claude transcripts were found.")
                     color: usagePopup.mutedColor
                     wrapMode: Text.WordWrap
                 }
                 Repeater {
-                    model: usagePopup.providers
+                    model: usagePopup.machine ? usagePopup.machine.providers : []
                     delegate: Rectangle {
                         id: card
                         required property var modelData
@@ -95,19 +148,18 @@ Dialog {
                         color: usagePopup.cardColor
                         border.color: usagePopup.borderColor
                         radius: usagePopup.chromeRadius
-                        readonly property var chart: modelData.days
                         readonly property real chartPeak: Math.max(1, ...modelData.days)
 
                         ColumnLayout {
                             id: body
                             anchors.fill: parent
                             anchors.margins: 12
-                            spacing: 8
+                            spacing: 10
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 8
                                 AgentMark {
-                                    harnessId: card.modelData.id
+                                    harnessId: usagePopup.markFor(card.modelData.id)
                                     ink: usagePopup.textColor
                                     Layout.preferredWidth: 18
                                     Layout.preferredHeight: 18
@@ -118,84 +170,111 @@ Dialog {
                                     color: usagePopup.textColor
                                     font.bold: true
                                 }
-                                Readout {
-                                    visible: card.modelData.plan.length > 0
-                                    text: card.modelData.plan.charAt(0).toUpperCase() + card.modelData.plan.slice(1)
-                                }
                                 Item { Layout.fillWidth: true }
                                 Readout {
-                                    visible: card.modelData.checked && !isNaN(card.modelData.checked.getTime())
-                                    text: visible ? qsTr("checked %1").arg(Qt.formatTime(card.modelData.checked, "h:mm ap")) : ""
+                                    visible: card.modelData.accounts.length > 1
+                                    text: qsTr("%1 accounts").arg(card.modelData.accounts.length)
                                 }
                             }
-                            Label {
-                                Layout.fillWidth: true
-                                visible: text.length > 0
-                                text: [card.modelData.note,
-                                       card.modelData.resetCredits > 0 ?
-                                           (card.modelData.resetCredits === 1 ? qsTr("1 free reset on the account")
-                                                                              : qsTr("%1 free resets on the account").arg(card.modelData.resetCredits)) : ""]
-                                      .filter(part => part.length > 0).join("  ·  ")
-                                textFormat: Text.PlainText
-                                color: usagePopup.textColor
-                                wrapMode: Text.WordWrap
-                            }
                             Repeater {
-                                model: card.modelData.windows
+                                model: card.modelData.accounts
                                 delegate: ColumnLayout {
-                                    id: windowRow
+                                    id: account
                                     required property var modelData
+                                    required property int index
+                                    objectName: "usageAccount_" + card.modelData.id + "_" + index
                                     Layout.fillWidth: true
-                                    spacing: 3
+                                    spacing: 4
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        spacing: 10
+                                        spacing: 8
                                         Label {
-                                            text: windowRow.modelData.label
+                                            text: account.modelData.label
                                             textFormat: Text.PlainText
                                             color: usagePopup.textColor
-                                            Layout.preferredWidth: 120
-                                            elide: Text.ElideRight
-                                        }
-                                        Rectangle {
+                                            elide: Text.ElideMiddle
                                             Layout.fillWidth: true
-                                            Layout.preferredHeight: 6
-                                            radius: 3
-                                            color: usagePopup.borderColor
-                                            Rectangle {
-                                                width: parent.width * Math.min(100, windowRow.modelData.percent) / 100
-                                                height: parent.height
-                                                radius: parent.radius
-                                                color: usagePopup.barColor(windowRow.modelData.percent)
-                                                Behavior on width {
-                                                    enabled: usagePopup.motionEnabled
-                                                    NumberAnimation { duration: usagePopup.motionDuration; easing.type: Easing.OutCubic }
-                                                }
-                                            }
+                                            Layout.minimumWidth: 0
                                         }
                                         Readout {
-                                            text: Math.round(windowRow.modelData.percent) + "%"
-                                            color: usagePopup.textColor
-                                            horizontalAlignment: Text.AlignRight
-                                            Layout.preferredWidth: 44
+                                            text: [usagePopup.planName(account.modelData.plan),
+                                                   account.modelData.source === "omp" ? qsTr("via OMP") : "",
+                                                   account.modelData.checked && !isNaN(account.modelData.checked.getTime()) ?
+                                                       qsTr("checked %1").arg(Qt.formatTime(account.modelData.checked, "h:mm ap")) : ""]
+                                                  .filter(part => part.length > 0).join("  ·  ")
                                         }
                                     }
-                                    Readout {
+                                    Label {
                                         Layout.fillWidth: true
-                                        Layout.leftMargin: 130
-                                        text: [usagePopup.resetText(windowRow.modelData.resets),
-                                               windowRow.modelData.pace >= 0 && windowRow.modelData.percent < 100 ?
-                                                   qsTr("at this pace %1% by then").arg(Math.round(windowRow.modelData.pace)) : ""]
+                                        visible: text.length > 0
+                                        text: [account.modelData.note,
+                                               account.modelData.resetCredits > 0 ?
+                                                   (account.modelData.resetCredits === 1 ? qsTr("1 free reset on the account")
+                                                                                         : qsTr("%1 free resets on the account").arg(account.modelData.resetCredits)) : ""]
                                               .filter(part => part.length > 0).join("  ·  ")
-                                        color: windowRow.modelData.pace > 100 && windowRow.modelData.percent < 100 ?
-                                                   usagePopup.faultColor : usagePopup.mutedColor
-                                        elide: Text.ElideRight
+                                        textFormat: Text.PlainText
+                                        color: usagePopup.mutedColor
+                                        wrapMode: Text.WordWrap
+                                    }
+                                    Repeater {
+                                        model: account.modelData.windows
+                                        delegate: ColumnLayout {
+                                            id: windowRow
+                                            required property var modelData
+                                            Layout.fillWidth: true
+                                            spacing: 2
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 10
+                                                Label {
+                                                    text: windowRow.modelData.label
+                                                    textFormat: Text.PlainText
+                                                    color: usagePopup.mutedColor
+                                                    Layout.preferredWidth: 120
+                                                    elide: Text.ElideRight
+                                                }
+                                                Rectangle {
+                                                    Layout.fillWidth: true
+                                                    Layout.preferredHeight: 6
+                                                    radius: 3
+                                                    color: usagePopup.borderColor
+                                                    Rectangle {
+                                                        width: parent.width * Math.min(100, windowRow.modelData.percent) / 100
+                                                        height: parent.height
+                                                        radius: parent.radius
+                                                        color: usagePopup.barColor(windowRow.modelData.percent)
+                                                        Behavior on width {
+                                                            enabled: usagePopup.motionEnabled
+                                                            NumberAnimation { duration: usagePopup.motionDuration; easing.type: Easing.OutCubic }
+                                                        }
+                                                    }
+                                                }
+                                                Readout {
+                                                    text: Math.round(windowRow.modelData.percent) + "%"
+                                                    color: usagePopup.textColor
+                                                    horizontalAlignment: Text.AlignRight
+                                                    Layout.preferredWidth: 44
+                                                }
+                                            }
+                                            Readout {
+                                                Layout.fillWidth: true
+                                                Layout.leftMargin: 130
+                                                visible: text.length > 0
+                                                text: [usagePopup.resetText(windowRow.modelData.resets),
+                                                       windowRow.modelData.pace >= 0 && windowRow.modelData.percent < 100 ?
+                                                           qsTr("at this pace %1% by then").arg(Math.round(windowRow.modelData.pace)) : ""]
+                                                      .filter(part => part.length > 0).join("  ·  ")
+                                                color: windowRow.modelData.pace > 100 && windowRow.modelData.percent < 100 ?
+                                                           usagePopup.faultColor : usagePopup.mutedColor
+                                                elide: Text.ElideRight
+                                            }
+                                        }
                                     }
                                 }
                             }
                             RowLayout {
                                 Layout.fillWidth: true
-                                Layout.topMargin: 4
+                                visible: card.modelData.counted
                                 spacing: 16
                                 ColumnLayout {
                                     spacing: 2
@@ -227,7 +306,7 @@ Dialog {
                                         anchors.fill: parent
                                         spacing: 2
                                         Repeater {
-                                            model: card.chart
+                                            model: card.modelData.days
                                             delegate: Item {
                                                 required property var modelData
                                                 required property int index
@@ -247,6 +326,7 @@ Dialog {
                             }
                             Readout {
                                 Layout.fillWidth: true
+                                visible: card.modelData.counted
                                 text: qsTr("input %1  ·  cache read %2  ·  cache write %3  ·  output %4 this month")
                                         .arg(usagePopup.tokens(card.modelData.month.input))
                                         .arg(usagePopup.tokens(card.modelData.month.cacheRead))
@@ -256,7 +336,7 @@ Dialog {
                             }
                             Readout {
                                 Layout.fillWidth: true
-                                visible: card.modelData.models.length > 0
+                                visible: card.modelData.counted && card.modelData.models.length > 0
                                 text: card.modelData.models.slice(0, 4)
                                         .map(model => model.name + " " + usagePopup.tokens(model.total)).join("  ·  ")
                                 wrapMode: Text.WordWrap
@@ -271,9 +351,9 @@ Dialog {
             spacing: 8
             Label {
                 Layout.fillWidth: true
-                text: usagePopup.engine && usagePopup.engine.counting ?
-                          qsTr("Counting tokens in this Mac's transcripts…") :
-                          qsTr("Limits as each CLI reports them, checked every five minutes. Tokens from this Mac's transcripts, without prices.")
+                text: usagePopup.machine && usagePopup.machine.counting ?
+                          qsTr("Counting tokens in the transcripts…") :
+                          qsTr("Limits as each signed-in CLI reports them, checked every five minutes. Tokens from Codex and Claude transcripts, without prices.")
                 textFormat: Text.PlainText
                 color: usagePopup.mutedColor
                 font.pixelSize: usagePopup.readoutFont

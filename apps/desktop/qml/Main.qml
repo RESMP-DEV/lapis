@@ -233,24 +233,10 @@ ApplicationWindow {
     readonly property bool usageAvailable: typeof usage !== "undefined" && usage !== null
     readonly property bool usageShown: usageAvailable && typeof keymap !== "undefined" && keymap !== null
                                        && keymap.showUsage
-    // Each CLI's tightest plan window, for the meter under the categories.
+    // Each signed-in plan at its tightest window, for the meter under the
+    // categories; the config picks which and in what order.
     function usageRows() {
-        if (!usageShown)
-            return []
-        const rows = []
-        for (const provider of usage.providers) {
-            let top = null
-            for (const limit of provider.windows)
-                if (!top || limit.percent > top.percent)
-                    top = limit
-            if (!top)
-                continue
-            const label = top.label === "5 hours" ? "5h" :
-                          top.label === "Week" ? "wk" :
-                          top.label.startsWith("Week, ") ? "wk " + top.label.slice(6) : top.label
-            rows.push({id: provider.id, name: provider.name, percent: top.percent, label: label})
-        }
-        return rows
+        return usageShown ? usage.meter : []
     }
     readonly property var commandEntries: {
         const agent = workspace.focusedSession
@@ -683,6 +669,7 @@ ApplicationWindow {
         accentColor: window.focusedBorderColor
         faultColor: window.faultColor
         borderColor: window.borderColor
+        selectionColor: window.focusedColor
         monoFamily: window.monoFamily
         uiFont: window.chromeFont
         readoutFont: window.readoutFont

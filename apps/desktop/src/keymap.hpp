@@ -114,8 +114,10 @@ class KeyMap final : public QObject {
     Q_PROPERTY(int alertRepeat READ alertRepeat NOTIFY changed)
     // Keep this Mac from sleeping on power, so the phone can reach it.
     Q_PROPERTY(bool keepAwake READ keepAwake NOTIFY changed)
-    // Plan limits and token totals under the categories.
+    // Plan usage under the categories, and the dashboard's machines.
     Q_PROPERTY(bool showUsage READ showUsage NOTIFY changed)
+    Q_PROPERTY(QStringList usageMeter READ usageMeter NOTIFY changed)
+    Q_PROPERTY(QStringList usageMachines READ usageMachines NOTIFY changed)
   public:
     explicit KeyMap(QObject* parent = nullptr);
 
@@ -183,6 +185,10 @@ class KeyMap final : public QObject {
     [[nodiscard]] int alertRepeat() const { return alert_repeat_; }
     [[nodiscard]] bool keepAwake() const { return keep_awake_; }
     [[nodiscard]] bool showUsage() const { return show_usage_; }
+    // The meter's plans in order (empty: every signed-in plan), and the ssh
+    // hosts with a usage dashboard beside this Mac.
+    [[nodiscard]] const QStringList& usageMeter() const { return usage_meter_; }
+    [[nodiscard]] const QStringList& usageMachines() const { return usage_machines_; }
     [[nodiscard]] const AgentDefaults& agentDefaults() const { return agent_defaults_; }
     [[nodiscard]] static int terminalFontSizeMinimum() { return kTerminalFontSizeMinimum; }
     [[nodiscard]] static int terminalFontSizeMaximum() { return kTerminalFontSizeMaximum; }
@@ -200,6 +206,7 @@ class KeyMap final : public QObject {
     void load_terminal_font(const QJsonValue& value);
     void load_harness_arguments(const QJsonValue& value);
     void load_alerts(const QJsonObject& root);
+    void load_usage(const QJsonObject& root);
     void load_agent_defaults(const QJsonValue& value);
     // The file is watched, so an edit from anywhere (an agent included)
     // applies at once; the window's own saves are recognised and skipped.
@@ -227,6 +234,8 @@ class KeyMap final : public QObject {
     int alert_repeat_{3};
     bool keep_awake_{true};
     bool show_usage_{true};
+    QStringList usage_meter_;
+    QStringList usage_machines_;
     AgentDefaults agent_defaults_;
     QFileSystemWatcher watcher_;
     QTimer settle_;

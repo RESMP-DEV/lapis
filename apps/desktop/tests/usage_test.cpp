@@ -1,4 +1,5 @@
 #include "usage.hpp"
+#include "workspace.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -6,6 +7,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QTimeZone>
@@ -249,14 +251,67 @@ void reads_plan_limits() {
             R"({"subscription_type": null, "rate_limits_available": false, "rate_limits": null})")
             .object());
     require(api.windows.empty() && !api.note.isEmpty(), "Claude: an API key has no plan limits");
-}
 
-QString script(const QTemporaryDir& dir, const QString& name, const QByteArray& body) {
-    const auto path = dir.filePath(name);
-    write(path, "#!/bin/sh\n" + body);
-    QFile::setPermissions(path,
-                          QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
-    return path;
+    const auto grok = lapis::desktop::grok_limits(QJsonDocument::fromJson(R"({"config": {
+        "creditUsagePercent": 100.0,
+        "currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY",
+            "start": "2026-09-21T18:48:35.175614+00:00", "end": "2026-09-28T18:48:35.175614+00:00"},
+        "onDemandCap": {"val": 0}, "isUnifiedBillingUser": true}})")
+                                                      .object());
+    require(grok.windows.size() == 1 && grok.windows[0].label == QStringLiteral("Week") &&
+                grok.windows[0].percent == 100 && grok.windows[0].minutes == 10080 &&
+                grok.note == QStringLiteral("Limit reached"),
+            "Grok: the weekly credits");
+
+    const auto kimi = lapis::desktop::kimi_limits(QJsonDocument::fromJson(R"({"kind": "ok",
+        "summary": {"window": {"duration": 1, "unit": "week"}, "used": 25, "limit": 100,
+            "reset_at": "2026-10-01T06:00:06.646803Z"},
+        "limits": [{"window": {"duration": 5, "unit": "hour"}, "used": 1, "limit": 4,
+            "reset_at": "2026-09-25T03:00:06.646803Z"}], "extra_usage": null})")
+                                                      .object());
+    require(kimi.windows.size() == 2 && kimi.windows[0].label == QStringLiteral("Week") &&
+                kimi.windows[0].percent == 25 &&
+                kimi.windows[1].label == QStringLiteral("5 hours") &&
+                kimi.windows[1].percent == 25 && kimi.windows[1].minutes == 300,
+            "Kimi: the week and five hours, as used over the limit");
+
+    const auto omp = lapis::desktop::omp_limits(QJsonDocument::fromJson(R"json({"reports": [
+        {"provider": "openai-codex", "metadata": {"planType": "pro", "email": "a@example.com", "accountId": "acct-a"},
+         "limits": [{"label": "7 days", "window": {"durationMs": 604800000, "resetsAt": 1790558545000},
+                     "amount": {"usedFraction": 1, "unit": "percent"}, "status": "exhausted"}]},
+        {"provider": "kimi-code", "metadata": {"accountId": "k1"},
+         "limits": [{"label": "Weekly limit", "window": {"durationMs": 604800000, "resetsAt": 1790834406646},
+                     "amount": {"used": 0, "limit": 100, "unit": "unknown"}},
+                    {"label": "limit_7d", "window": {"durationMs": 604800000, "resetsAt": 1790834405000},
+                     "amount": {"usedFraction": 0, "unit": "percent"}}]},
+        {"provider": "xai-oauth", "metadata": {},
+         "limits": [{"label": "SuperGrok Weekly Credits", "window": {"durationMs": 604800000, "resetsAt": 1790621315175},
+                     "amount": {"usedFraction": 1}},
+                    {"label": "Grok Build (Weekly)", "window": {"durationMs": 604800000, "resetsAt": 1790621315175},
+                     "amount": {"usedFraction": 0.5}}]},
+        {"provider": "cursor", "metadata": {}, "limits": []}]})json")
+                                                    .object());
+    require(omp.size() == 3, "OMP: accounts with windows");
+    require(omp[0].provider == QStringLiteral("codex") &&
+                omp[0].account == QStringLiteral("a@example.com") &&
+                omp[0].accountId == QStringLiteral("acct-a") &&
+                omp[0].plan == QStringLiteral("pro") && omp[0].windows.size() == 1 &&
+                omp[0].windows[0].percent == 100 && omp[0].note == QStringLiteral("Limit reached"),
+            "OMP: a Codex account as the CLI names it");
+    require(omp[1].provider == QStringLiteral("kimi") && omp[1].windows.size() == 1,
+            "OMP: one window reported under two names counts once");
+    require(omp[2].provider == QStringLiteral("grok") && omp[2].windows.size() == 2 &&
+                omp[2].windows[1].label == QStringLiteral("Week, Grok Build (Weekly)"),
+            "OMP: two windows of one length keep the plan's own names");
+    require(lapis::desktop::same_account(omp[0], codex),
+            "the same Codex account, told by its weekly window");
+    require(!lapis::desktop::same_account(omp[0], omp[2]),
+            "different plans are different accounts");
+    require(
+        lapis::desktop::shell_words({QStringLiteral("codex"), QStringLiteral("--setting-sources"),
+                                     QString(), QStringLiteral("it's")}) ==
+            QStringLiteral(R"(codex --setting-sources '' 'it'\''s')"),
+        "shell words are quoted for a remote shell");
 }
 
 template <typename Done> void wait_for(Done done, const char* what) {
@@ -269,91 +324,271 @@ template <typename Done> void wait_for(Done done, const char* what) {
     require(done(), what);
 }
 
-QVariantMap provider(const Usage& usage, const char* id) {
-    for (const auto& item : usage.providers())
+QVariantMap machine_of(const Usage& usage, const QString& host) {
+    for (const auto& item : usage.machines())
+        if (item.toMap().value(QStringLiteral("host")).toString() == host)
+            return item.toMap();
+    return {};
+}
+QVariantMap provider(const Usage& usage, const char* id, const QString& host = QString()) {
+    for (const auto& item : machine_of(usage, host).value(QStringLiteral("providers")).toList())
         if (item.toMap().value(QStringLiteral("id")).toString() == QLatin1String(id))
             return item.toMap();
     return {};
 }
+QStringList provider_ids(const Usage& usage, const QString& host = QString()) {
+    QStringList ids;
+    for (const auto& item : machine_of(usage, host).value(QStringLiteral("providers")).toList())
+        ids << item.toMap().value(QStringLiteral("id")).toString();
+    return ids;
+}
+QVariantList accounts(const Usage& usage, const char* id, const QString& host = QString()) {
+    return provider(usage, id, host).value(QStringLiteral("accounts")).toList();
+}
+double first_percent(const QVariantList& list) {
+    return list.isEmpty() ? -1
+                          : list.front()
+                                .toMap()
+                                .value(QStringLiteral("windows"))
+                                .toList()
+                                .front()
+                                .toMap()
+                                .value(QStringLiteral("percent"))
+                                .toDouble();
+}
 
-// Each CLI is asked in its own protocol and then stopped; the person's
-// settings, hooks and transcripts are left alone; a CLI that ends without an
-// answer keeps the last one and says so.
-void asks_each_cli() {
+// Stand-ins for each CLI's usage interface, for ssh, and for a remote login
+// shell that finds only the stand-ins.
+struct Fakes {
     QTemporaryDir dir;
-    require(dir.isValid(), "temporary directory");
-    const auto args = dir.filePath(QStringLiteral("claude-args"));
-    const auto codex = script(dir, QStringLiteral("codex"), R"(
-read -r line
-echo '{"method":"remoteControl/status/changed","params":{}}'
+    QHash<QString, QString> programs;
+    QString home; // the remote machine's
+};
+void make_fakes(Fakes& fakes) {
+    require(fakes.dir.isValid(), "temporary directory");
+    const auto bin = fakes.dir.filePath(QStringLiteral("bin"));
+    QDir().mkpath(bin);
+    fakes.home = fakes.dir.filePath(QStringLiteral("home"));
+    QDir().mkpath(fakes.home);
+    const auto add = [&](const QString& name, const QByteArray& body) {
+        const auto path = bin + QLatin1Char('/') + name;
+        write(path, "#!/bin/sh\n" + body);
+        QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                        QFileDevice::ExeOwner);
+        fakes.programs.insert(name, path);
+    };
+    const auto args = [&](const char* name) {
+        return QByteArray(R"(for a in "$@"; do printf '[%s]\n' "$a"; done > ")") +
+               fakes.dir.filePath(QStringLiteral("%1-args").arg(QLatin1String(name))).toUtf8() +
+               "\"\n";
+    };
+    add(QStringLiteral("codex"), args("codex") + R"(read -r line
 echo '{"id":1,"result":{}}'
 read -r line
 read -r line
 case "$line" in *account/rateLimits/read*) ;; *) exit 3 ;; esac
-echo '{"id":2,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":40,"windowDurationMins":10080,"resetsAt":1790558544},"planType":"pro"}}}'
+echo '{"id":2,"result":{"accountId":"acct-1","rateLimits":{"limitId":"codex","primary":{"usedPercent":40,"windowDurationMins":10080,"resetsAt":4071513600},"planType":"pro"}}}'
 cat >/dev/null
 )");
-    const auto claude = script(dir, QStringLiteral("claude"),
-                               R"(
-for a in "$@"; do printf '[%s]\n' "$a"; done > ")" +
-                                   args.toUtf8() + R"("
-read -r line
+    add(QStringLiteral("claude"), args("claude") + R"(read -r line
 case "$line" in *get_usage*) ;; *) exit 3 ;; esac
 echo '{"type":"system","subtype":"init"}'
-echo '{"type":"control_response","response":{"subtype":"success","request_id":"usage","response":{"subscription_type":"max","rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":87,"resets_at":"2026-09-25T03:09:59+00:00"}}}}}'
+echo '{"type":"control_response","response":{"subtype":"success","request_id":"usage","response":{"subscription_type":"max","rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":87,"resets_at":"2099-01-01T05:00:00+00:00"},"seven_day":{"utilization":23,"resets_at":"2099-01-08T00:00:00+00:00"}}}}}'
 cat >/dev/null
 )");
-    QString codex_program = codex;
+    add(QStringLiteral("grok"), args("grok") + R"(read -r line
+echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}'
+read -r line
+case "$line" in *_x.ai/billing*) ;; *) exit 3 ;; esac
+echo '{"jsonrpc":"2.0","id":2,"result":{"config":{"creditUsagePercent":100.0,"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2099-01-01T00:00:00Z","end":"2099-01-08T00:00:00Z"}}}}'
+cat >/dev/null
+)");
+    add(QStringLiteral("omp"), args("omp") + R"(read -r line
+echo '{"jsonrpc":"2.0","id":1,"result":{}}'
+read -r line
+case "$line" in *session/new*) ;; *) exit 3 ;; esac
+echo '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s"}}'
+read -r line
+case "$line" in *_omp/usage*) ;; *) exit 3 ;; esac
+echo '{"jsonrpc":"2.0","id":3,"result":{"reports":[{"provider":"openai-codex","metadata":{"accountId":"acct-1","email":"one@example.com"},"limits":[{"label":"7 days","window":{"durationMs":604800000,"resetsAt":4071513600000},"amount":{"usedFraction":0.4}}]},{"provider":"openai-codex","metadata":{"accountId":"acct-2","email":"two@example.com","planType":"pro"},"limits":[{"label":"7 days","window":{"durationMs":604800000,"resetsAt":4071000000000},"amount":{"usedFraction":0.1}}]},{"provider":"kimi-code","metadata":{"accountId":"k1"},"limits":[{"label":"Weekly limit","window":{"durationMs":604800000,"resetsAt":4071513600000},"amount":{"used":30,"limit":100}}]},{"provider":"zai","metadata":{},"limits":[{"label":"5h","window":{"durationMs":18000000,"resetsAt":4070926800000},"amount":{"usedFraction":0.2}}]}]}}'
+cat >/dev/null
+)");
+    // kimi web: a loopback server that prints its token and answers usage.
+    add(QStringLiteral("kimi"), args("kimi") + R"(exec python3 - "$@" <<'PY'
+import http.server, json, sys
+port = int(sys.argv[sys.argv.index("--port") + 1])
+class Usage(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        ok = self.path == "/api/v1/oauth/usage" and self.headers.get("Authorization") == "Bearer secret-1"
+        body = json.dumps({"code": 0, "data": {"kind": "ok",
+            "summary": {"window": {"duration": 1, "unit": "week"}, "used": 30, "limit": 100, "reset_at": "2099-01-08T00:00:00Z"},
+            "limits": [{"window": {"duration": 5, "unit": "hour"}, "used": 10, "limit": 100, "reset_at": "2099-01-01T05:00:00Z"}]}}
+            if ok else {"code": 401}).encode()
+        self.send_response(200 if ok else 401)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *args):
+        pass
+server = http.server.HTTPServer(("127.0.0.1", port), Usage)
+print("  Local:    http://127.0.0.1:%d/#token=secret-1" % port, flush=True)
+server.serve_forever()
+PY
+)");
+    const auto home = fakes.home.toUtf8();
+    const auto shell = (bin + QStringLiteral("/login-shell")).toUtf8();
+    add(QStringLiteral("login-shell"), "for last; do :; done\nPATH='" + bin.toUtf8() +
+                                           R"(:/usr/bin:/bin' exec /bin/sh -c "$last")"
+                                           "\n");
+    // Grok is not installed on the remote machine: only these CLIs are there.
+    QFile::remove(bin + QStringLiteral("/grok-remote"));
+    add(QStringLiteral("ssh"), R"(while [ $# -gt 0 ]; do
+  case "$1" in -T) shift ;; -o|-L) shift 2 ;; *) break ;; esac
+done
+host=$1
+shift
+[ "$host" = offline ] && exit 255
+HOME=')" + home + "' SHELL='" + shell +
+                                   R"(' exec /bin/sh -c "$1"
+)");
+}
+
+// Every signed-in CLI is asked in its own protocol, here and over ssh; OMP's
+// accounts join them, an account two sources report shows once, and a CLI
+// that is not installed, not signed in, or unreachable is left out or said so.
+void asks_every_signed_in_cli() {
+    Fakes fakes;
+    make_fakes(fakes);
+    // devbox: Codex and Claude transcripts of its own; no Grok there.
+    const auto today = QDate::currentDate();
+    write(fakes.home + QStringLiteral("/.codex/sessions/2026/09/24/rollout-r.jsonl"),
+          codex_model(stamp(today), "gpt-6-sol") + codex_total(stamp(today), 5000, 4000, 100));
+    write(fakes.home + QStringLiteral("/.claude/projects/p/s.jsonl"),
+          claude_line(stamp(today), "msg_r", "req_r", "claude-opus-5-5", 1, 2, 3, 4));
+    const auto remote_grok = fakes.programs.value(QStringLiteral("grok"));
+    QFile::rename(remote_grok, remote_grok + QStringLiteral(".here"));
+    fakes.programs.insert(QStringLiteral("grok"), remote_grok + QStringLiteral(".here"));
+
+    auto programs = fakes.programs;
     Usage usage(
-        [&](const QString& id) {
-            return id == QLatin1String("codex")
-                       ? codex_program
-                       : (id == QLatin1String("claude") ? claude : QString());
-        },
-        {dir.filePath(QStringLiteral("none")), dir.filePath(QStringLiteral("none"))});
+        [&programs](const QString& id) { return programs.value(id); },
+        {fakes.dir.filePath(QStringLiteral("none")), fakes.dir.filePath(QStringLiteral("none"))});
+    usage.setMachines(
+        {QStringLiteral("devbox"), QStringLiteral("offline"), QStringLiteral("-bad")});
+    require(usage.machines().size() == 3,
+            "the configured machines, without one that looks like an option");
     usage.refresh();
     wait_for(
         [&] {
-            return !provider(usage, "codex").value(QStringLiteral("windows")).toList().isEmpty() &&
-                   !provider(usage, "claude").value(QStringLiteral("windows")).toList().isEmpty() &&
+            return provider_ids(usage).size() == 5 &&
+                   provider(usage, "codex", QStringLiteral("devbox"))
+                           .value(QStringLiteral("month"))
+                           .toMap()
+                           .value(QStringLiteral("total"))
+                           .toLongLong() > 0 &&
+                   !provider(usage, "kimi", QStringLiteral("devbox")).isEmpty() &&
+                   !provider(usage, "claude", QStringLiteral("devbox")).isEmpty() &&
+                   !machine_of(usage, QStringLiteral("offline"))
+                        .value(QStringLiteral("note"))
+                        .toString()
+                        .isEmpty() &&
                    !usage.counting();
         },
-        "both CLIs answer");
-    const auto week =
-        provider(usage, "codex").value(QStringLiteral("windows")).toList().front().toMap();
-    require(week.value(QStringLiteral("label")).toString() == QStringLiteral("Week") &&
-                week.value(QStringLiteral("percent")).toDouble() == 40,
-            "the Codex answer is shown");
-    const auto session =
-        provider(usage, "claude").value(QStringLiteral("windows")).toList().front().toMap();
-    require(session.value(QStringLiteral("percent")).toDouble() == 87 &&
-                provider(usage, "claude").value(QStringLiteral("plan")).toString() ==
-                    QStringLiteral("max"),
-            "the Claude answer is shown");
-    QFile recorded(args);
-    require(recorded.open(QIODevice::ReadOnly), "Claude's arguments were recorded");
-    const auto words = recorded.readAll();
-    require(words.contains("[--setting-sources]\n[]\n") &&
-                words.contains("[--no-session-persistence]") && words.contains("[-p]"),
-            "Claude runs without the person's settings and writes no transcript");
+        "every CLI answers here and on devbox; offline says why not");
 
-    // A CLI that ends without answering: the last answer stays, with a note.
-    codex_program = script(dir, QStringLiteral("codex-broken"), "exit 1\n");
+    require(provider_ids(usage) == QStringList({QStringLiteral("codex"), QStringLiteral("claude"),
+                                                QStringLiteral("grok"), QStringLiteral("kimi"),
+                                                QStringLiteral("zai")}),
+            "this Mac: the signed-in CLIs in the usual order, then OMP's other plans");
+    const auto codex = accounts(usage, "codex");
+    require(codex.size() == 2 && first_percent(codex) == 40 &&
+                codex[1].toMap().value(QStringLiteral("label")).toString() ==
+                    QStringLiteral("two@example.com") &&
+                codex[1].toMap().value(QStringLiteral("source")).toString() ==
+                    QStringLiteral("omp"),
+            "Codex: the CLI's sign-in, and OMP's other account; the one both report shows once");
+    require(accounts(usage, "kimi").size() == 1 && first_percent(accounts(usage, "kimi")) == 30,
+            "Kimi: kimi web's answer, the same account OMP holds shown once");
+    require(first_percent(accounts(usage, "grok")) == 100 &&
+                first_percent(accounts(usage, "claude")) == 87,
+            "Grok and Claude answer");
+
+    QStringList meter;
+    for (const auto& row : usage.meter())
+        meter << row.toMap().value(QStringLiteral("id")).toString() + QLatin1Char(' ') +
+                     QString::number(row.toMap().value(QStringLiteral("percent")).toDouble()) +
+                     QLatin1Char(' ') + row.toMap().value(QStringLiteral("label")).toString();
+    require(meter == QStringList({QStringLiteral("codex 40 wk"), QStringLiteral("claude 87 5h"),
+                                  QStringLiteral("grok 100 wk"), QStringLiteral("kimi 30 wk"),
+                                  QStringLiteral("zai 20 5h")}),
+            "the meter: each plan at its tightest window");
+    usage.setMeterOrder(
+        {QStringLiteral("Grok"), QStringLiteral("codex"), QStringLiteral("missing")});
+    require(usage.meter().size() == 2 &&
+                usage.meter()[0].toMap().value(QStringLiteral("id")).toString() ==
+                    QStringLiteral("grok"),
+            "the config's meter order, leaving out what is not signed in");
+
+    require(!provider_ids(usage, QStringLiteral("devbox")).contains(QStringLiteral("grok")) &&
+                !provider_ids(usage, QStringLiteral("devbox")).contains(QStringLiteral("zai")),
+            "devbox: a CLI not installed there is left out, and OMP is asked here only");
+    require(first_percent(accounts(usage, "codex", QStringLiteral("devbox"))) == 40,
+            "devbox: its CLIs answer over ssh");
+    const auto remote = provider(usage, "codex", QStringLiteral("devbox"));
+    require(
+        remote.value(QStringLiteral("today")).toMap().value(QStringLiteral("total")).toLongLong() ==
+                5100 &&
+            provider(usage, "claude", QStringLiteral("devbox"))
+                    .value(QStringLiteral("today"))
+                    .toMap()
+                    .value(QStringLiteral("total"))
+                    .toLongLong() == 10,
+        "devbox: its transcripts counted there by python3");
+
+    const auto recorded = [&](const char* name) {
+        QFile file(fakes.dir.filePath(QStringLiteral("%1-args").arg(QLatin1String(name))));
+        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    require(recorded("claude").contains("[--setting-sources]\n[]\n") &&
+                recorded("claude").contains("[--no-session-persistence]"),
+            "Claude runs without the person's settings and writes no transcript");
+    require(recorded("grok").contains("[agent]\n[--no-leader]\n[stdio]"),
+            "Grok runs its own agent");
+    const auto omp_args = recorded("omp");
+    const auto session = omp_args.mid(omp_args.indexOf("[--session-dir=") + 15);
+    require(omp_args.contains("[--no-extensions]") && omp_args.endsWith("[acp]\n") &&
+                !QFileInfo::exists(QString::fromUtf8(session.left(session.indexOf(']')))),
+            "OMP keeps its session in a folder removed afterwards");
+
+    // Signed out of Grok: it leaves the dashboard and the meter.
+    write(fakes.programs.value(QStringLiteral("grok")), R"(#!/bin/sh
+read -r line
+echo '{"jsonrpc":"2.0","id":1,"result":{}}'
+read -r line
+echo '{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"Not signed in"}}'
+cat >/dev/null
+)");
+    // Codex ends without answering: its last answer stays, with a note.
+    const auto broken = fakes.dir.filePath(QStringLiteral("bin/codex-broken"));
+    write(broken, "#!/bin/sh\nexit 1\n");
+    QFile::setPermissions(broken,
+                          QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    programs.insert(QStringLiteral("codex"), broken);
     usage.refresh();
     wait_for(
+        [&] { return !provider_ids(usage).contains(QStringLiteral("grok")) && !usage.counting(); },
+        "a signed-out CLI leaves");
+    wait_for(
         [&] {
-            return provider(usage, "codex")
+            return accounts(usage, "codex")
+                .front()
+                .toMap()
                 .value(QStringLiteral("note"))
                 .toString()
                 .contains(QStringLiteral("without an answer"));
         },
-        "a failed check is reported");
-    require(!provider(usage, "codex").value(QStringLiteral("windows")).toList().isEmpty(),
-            "the last answer is kept");
-    codex_program.clear();
-    usage.refresh();
-    wait_for([&] { return provider(usage, "codex").isEmpty(); },
-             "an uninstalled CLI with no transcripts is not shown");
+        "a failed check keeps the last answer and says so");
+    require(first_percent(accounts(usage, "codex")) == 40, "the last answer is kept");
 }
 
 // A month of synthetic transcripts: how fast the first count and a rescan run.
@@ -446,18 +681,93 @@ void measure_home(const QString& home) {
                   << '\n';
     }
 }
+
+// Opt-in live check against the installed CLIs, here and on the listed ssh
+// hosts: what each dashboard shows (accounts by number, not by name).
+void show_live(const QString& hosts) {
+    Usage usage(
+        [](const QString& id) {
+            return id == QLatin1String("ssh") ? QStandardPaths::findExecutable(id)
+                                              : lapis::desktop::harness_program(id);
+        },
+        {QDir::home().filePath(QStringLiteral(".codex/sessions")),
+         QDir::home().filePath(QStringLiteral(".claude/projects"))});
+    usage.setMachines(hosts.split(QLatin1Char(','), Qt::SkipEmptyParts));
+    QElapsedTimer timer;
+    timer.start();
+    usage.refresh();
+    // Every check has answered once nothing has changed for three seconds.
+    qint64 quiet = 0;
+    QObject::connect(&usage, &Usage::changed, [&] { quiet = timer.elapsed(); });
+    while (timer.elapsed() < 120000 && (usage.counting() || timer.elapsed() - quiet < 3000)) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QThread::msleep(10);
+    }
+    std::cout << "live: settled after " << quiet << " ms\n";
+    for (const auto& item : usage.machines()) {
+        const auto machine = item.toMap();
+        std::cout << "== " << machine.value(QStringLiteral("name")).toString().toStdString() << ' '
+                  << machine.value(QStringLiteral("note")).toString().toStdString() << '\n';
+        for (const auto& entry : machine.value(QStringLiteral("providers")).toList()) {
+            const auto provider = entry.toMap();
+            std::cout << "  " << provider.value(QStringLiteral("name")).toString().toStdString()
+                      << ": tokens today "
+                      << provider.value(QStringLiteral("today"))
+                             .toMap()
+                             .value(QStringLiteral("total"))
+                             .toLongLong()
+                      << ", month "
+                      << provider.value(QStringLiteral("month"))
+                             .toMap()
+                             .value(QStringLiteral("total"))
+                             .toLongLong()
+                      << '\n';
+            int number = 0;
+            for (const auto& value : provider.value(QStringLiteral("accounts")).toList()) {
+                const auto account = value.toMap();
+                std::cout << "    account " << ++number << " ("
+                          << account.value(QStringLiteral("source")).toString().toStdString() << ' '
+                          << account.value(QStringLiteral("plan")).toString().toStdString() << ") "
+                          << account.value(QStringLiteral("note")).toString().toStdString() << ':';
+                for (const auto& window : account.value(QStringLiteral("windows")).toList())
+                    std::cout
+                        << ' '
+                        << window.toMap().value(QStringLiteral("label")).toString().toStdString()
+                        << ' ' << window.toMap().value(QStringLiteral("percent")).toDouble()
+                        << "% resets "
+                        << window.toMap()
+                               .value(QStringLiteral("resets"))
+                               .toDateTime()
+                               .toString(QStringLiteral("ddd h:mm ap"))
+                               .toStdString()
+                        << ';';
+                std::cout << '\n';
+            }
+        }
+    }
+    std::cout << "meter:";
+    for (const auto& row : usage.meter())
+        std::cout << ' ' << row.toMap().value(QStringLiteral("name")).toString().toStdString()
+                  << ' ' << row.toMap().value(QStringLiteral("percent")).toDouble() << "% "
+                  << row.toMap().value(QStringLiteral("label")).toString().toStdString() << ';';
+    std::cout << '\n';
+}
 } // namespace
 
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
+        if (qEnvironmentVariableIsSet("LAPIS_USAGE_LIVE")) {
+            show_live(qEnvironmentVariable("LAPIS_USAGE_LIVE"));
+            return 0;
+        }
         if (const auto home = qEnvironmentVariable("LAPIS_USAGE_MEASURE_HOME"); !home.isEmpty()) {
             measure_home(home);
             return 0;
         }
         counts_tokens_from_transcripts();
         reads_plan_limits();
-        asks_each_cli();
+        asks_every_signed_in_cli();
         counts_a_month_quickly();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

@@ -1404,7 +1404,13 @@ void check_usage(QQuickWindow& window, lapis::desktop::Usage& usage, lapis::desk
     usage.refresh();
     QElapsedTimer asked;
     asked.start();
-    while ((usage.providers().size() < 2 || usage.counting()) && asked.elapsed() < 10000)
+    const auto remote_ready = [&usage] {
+        const auto machines = usage.machines();
+        return machines.size() == 2 &&
+               machines.back().toMap().value(QStringLiteral("providers")).toList().size() >= 2;
+    };
+    while ((usage.meter().size() < 2 || usage.counting() || !remote_ready()) &&
+           asked.elapsed() < 15000)
         pump(20);
     pump(60);
     auto* meter = required_visual(window, QStringLiteral("usageMeter"));
@@ -1424,6 +1430,12 @@ void check_usage(QQuickWindow& window, lapis::desktop::Usage& usage, lapis::desk
         required_visual(window, QStringLiteral("usageToday_claude"))->property("text").toString() ==
         QStringLiteral("0"));
     capture_step(window, "usage-details");
+    // Each configured machine has its own tab.
+    click_visual(window, *required_visual(window, QStringLiteral("usageMachine_devbox")));
+    pump(60);
+    CHECK(details->property("machineIndex").toInt() == 1);
+    CHECK(required_visual(window, QStringLiteral("usageAccount_codex_0")) != nullptr);
+    capture_step(window, "usage-devbox");
     send_binding(window, QStringLiteral("Escape"));
     wait_popup(*details, false);
     CHECK(terminal.hasActiveFocus());
@@ -1454,14 +1466,30 @@ cat >/dev/null
 echo '{"type":"control_response","response":{"subtype":"success","request_id":"usage","response":{"subscription_type":"max","rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":41,"resets_at":"2099-01-01T00:00:00+00:00"},"seven_day":{"utilization":23,"resets_at":"2099-01-01T00:00:00+00:00"}}}}}'
 cat >/dev/null
 )");
-    return std::make_unique<lapis::desktop::Usage>(
-        [codex_cli, claude_cli](const QString& id) {
-            return id == QLatin1String("codex")
-                       ? codex_cli
-                       : (id == QLatin1String("claude") ? claude_cli : QString());
+    // devbox: ssh runs the command here, where a login shell finds the same
+    // stand-ins.
+    const auto dir = config.path().toUtf8();
+    const auto shell =
+        fake(QStringLiteral("login-shell"), "for last; do :; done\nPATH='" + dir +
+                                                R"(:/usr/bin:/bin' exec /bin/sh -c "$last")"
+                                                "\n");
+    const auto ssh = fake(QStringLiteral("ssh"), R"(while [ $# -gt 0 ]; do
+  case "$1" in -T) shift ;; -o|-L) shift 2 ;; *) break ;; esac
+done
+shift
+HOME=')" + dir + R"(' SHELL=')" + shell.toUtf8() + R"(' exec /bin/sh -c "$1"
+)");
+    auto usage = std::make_unique<lapis::desktop::Usage>(
+        [codex_cli, claude_cli, ssh](const QString& id) {
+            return id == QLatin1String("codex")    ? codex_cli
+                   : id == QLatin1String("claude") ? claude_cli
+                   : id == QLatin1String("ssh")    ? ssh
+                                                   : QString();
         },
         lapis::desktop::TokenLedger::Roots{config.filePath(QStringLiteral("none")),
                                            config.filePath(QStringLiteral("none"))});
+    usage->setMachines({QStringLiteral("devbox")});
+    return usage;
 }
 
 // The agent strip is the category's navigation: live previews in tab order

@@ -1,11 +1,14 @@
 #include "usage.hpp"
 
+#include "count_tokens.hpp"
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QRegularExpression>
+#include <QSysInfo>
 #include <QThread>
 #include <QTimeZone>
 #include <algorithm>
@@ -15,7 +18,7 @@
 namespace lapis::desktop {
 namespace {
 constexpr qint64 kChunk = qint64{8} << 20;
-constexpr qsizetype kLongestAnswer = qsizetype{4} << 20;
+constexpr qsizetype kLongestCount = qsizetype{64} << 20;
 constexpr int kChartDays = 30;
 
 // The text of the JSON string after `key` (which ends with its opening
@@ -77,17 +80,6 @@ bool covers(const TokenCount& later, const TokenCount& earlier) {
            later.cacheWrite >= earlier.cacheWrite && later.output >= earlier.output;
 }
 
-QString window_label(int minutes) {
-    if (minutes == 7 * 24 * 60)
-        return QStringLiteral("Week");
-    if (minutes == 24 * 60)
-        return QStringLiteral("Day");
-    if (minutes > 0 && minutes % 60 == 0)
-        return minutes == 60 ? QStringLiteral("Hour")
-                             : QStringLiteral("%1 hours").arg(minutes / 60);
-    return minutes > 0 ? QStringLiteral("%1 minutes").arg(minutes) : QStringLiteral("Limit");
-}
-
 QVariantMap token_map(const TokenCount& count) {
     return {{QStringLiteral("total"), count.total()},
             {QStringLiteral("input"), count.input},
@@ -96,18 +88,53 @@ QVariantMap token_map(const TokenCount& count) {
             {QStringLiteral("output"), count.output}};
 }
 
-// Deleted once it has exited, so it is reaped rather than left running.
-void stop(QProcess* process) {
-    if (process->state() == QProcess::NotRunning) {
-        process->deleteLater();
-        return;
-    }
-    QObject::connect(process, &QProcess::finished, process, &QObject::deleteLater);
-    process->kill();
+constexpr int kWeek = 7 * 24 * 60;
+// The CLIs asked on every machine; OMP is asked on this Mac only, since its
+// logins are usually shared across machines.
+constexpr std::array<const char*, 4> kCliProviders{"codex", "claude", "grok", "kimi"};
+
+QString provider_name(const QString& id) {
+    static const QHash<QString, QString> names{
+        {QStringLiteral("codex"), QStringLiteral("Codex")},
+        {QStringLiteral("claude"), QStringLiteral("Claude")},
+        {QStringLiteral("grok"), QStringLiteral("Grok")},
+        {QStringLiteral("kimi"), QStringLiteral("Kimi")},
+        {QStringLiteral("antigravity"), QStringLiteral("Antigravity")},
+        {QStringLiteral("gemini"), QStringLiteral("Gemini")},
+        {QStringLiteral("zai"), QStringLiteral("Z.ai")},
+        {QStringLiteral("copilot"), QStringLiteral("Copilot")},
+        {QStringLiteral("cursor"), QStringLiteral("Cursor")},
+    };
+    const auto name = names.value(id);
+    return name.isEmpty() ? id.left(1).toUpper() + id.mid(1) : name;
 }
 
-const std::array<std::pair<const char*, const char*>, 2> providers_shown{
-    {{"codex", "Codex"}, {"claude", "Claude"}}};
+// A window's name in the meter: 5h, wk, 30d, day; "Week, Fable" is "wk Fable".
+QString short_label(const UsageWindow& window) {
+    const int minutes = window.minutes;
+    QString base = minutes == kWeek     ? QStringLiteral("wk")
+                   : minutes == 24 * 60 ? QStringLiteral("day")
+                   : minutes > 0 && minutes % (24 * 60) == 0
+                       ? QStringLiteral("%1d").arg(minutes / (24 * 60))
+                   : minutes > 0 && minutes % 60 == 0 ? QStringLiteral("%1h").arg(minutes / 60)
+                                                      : window.label;
+    const auto comma = window.label.indexOf(QStringLiteral(", "));
+    return comma > 0 && base != window.label ? base + QLatin1Char(' ') + window.label.mid(comma + 2)
+                                             : base;
+}
+
+const UsageWindow* tightest(const PlanLimits& limits) {
+    const auto found = std::max_element(
+        limits.windows.begin(), limits.windows.end(),
+        [](const UsageWindow& a, const UsageWindow& b) { return a.percent < b.percent; });
+    return found == limits.windows.end() ? nullptr : &*found;
+}
+
+// An ssh host name as ssh config names it; never an option.
+bool valid_host(const QString& host) {
+    static const QRegularExpression name(QStringLiteral(R"(^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$)"));
+    return name.match(host).hasMatch();
+}
 } // namespace
 
 TokenCount& TokenCount::operator+=(const TokenCount& other) {
@@ -310,285 +337,6 @@ QHash<QString, TokenLedger::Days> TokenLedger::days() const {
     return result;
 }
 
-PlanLimits codex_limits(const QJsonObject& result) {
-    PlanLimits limits;
-    const auto main = result.value(QStringLiteral("rateLimits")).toObject();
-    limits.plan = main.value(QStringLiteral("planType")).toString();
-    const auto add = [&](const QJsonObject& bucket, const QString& name) {
-        for (const auto* which : {"primary", "secondary"}) {
-            const auto window = bucket.value(QLatin1String(which)).toObject();
-            if (window.isEmpty())
-                continue;
-            const int minutes = window.value(QStringLiteral("windowDurationMins")).toInt();
-            const auto resets =
-                static_cast<qint64>(window.value(QStringLiteral("resetsAt")).toDouble());
-            auto label = window_label(minutes);
-            if (!name.isEmpty())
-                label += QStringLiteral(", ") + name;
-            limits.windows.push_back(
-                {.label = label,
-                 .percent = window.value(QStringLiteral("usedPercent")).toDouble(),
-                 .resets = resets > 0 ? QDateTime::fromSecsSinceEpoch(resets) : QDateTime(),
-                 .minutes = minutes});
-        }
-    };
-    add(main, QString());
-    // Other buckets (a model with its own limit), each named by the server.
-    const auto others = result.value(QStringLiteral("rateLimitsByLimitId")).toObject();
-    const auto main_id = main.value(QStringLiteral("limitId")).toString();
-    for (auto it = others.begin(); it != others.end(); ++it) {
-        if (it.key() == main_id)
-            continue;
-        const auto bucket = it.value().toObject();
-        const auto name = bucket.value(QStringLiteral("limitName")).toString();
-        add(bucket, name.isEmpty() ? it.key() : name);
-    }
-    if (!main.value(QStringLiteral("rateLimitReachedType")).toString().isEmpty())
-        limits.note = QStringLiteral("Limit reached");
-    limits.resetCredits = result.value(QStringLiteral("rateLimitResetCredits"))
-                              .toObject()
-                              .value(QStringLiteral("availableCount"))
-                              .toInt();
-    return limits;
-}
-
-PlanLimits claude_limits(const QJsonObject& response) {
-    PlanLimits limits;
-    limits.plan = response.value(QStringLiteral("subscription_type")).toString();
-    if (!response.value(QStringLiteral("rate_limits_available")).toBool()) {
-        limits.note = QStringLiteral("No plan limits for this login");
-        return limits;
-    }
-    const auto rates = response.value(QStringLiteral("rate_limits")).toObject();
-    const auto add = [&](const QJsonObject& window, const QString& label, int minutes) {
-        if (window.isEmpty() || window.value(QStringLiteral("utilization")).isNull())
-            return;
-        limits.windows.push_back(
-            {.label = label,
-             .percent = window.value(QStringLiteral("utilization")).toDouble(),
-             .resets = QDateTime::fromString(window.value(QStringLiteral("resets_at")).toString(),
-                                             Qt::ISODateWithMs),
-             .minutes = minutes});
-    };
-    add(rates.value(QStringLiteral("five_hour")).toObject(), QStringLiteral("5 hours"), 5 * 60);
-    add(rates.value(QStringLiteral("seven_day")).toObject(), QStringLiteral("Week"), 7 * 24 * 60);
-    // Per-model weekly windows, as the server names them.
-    const auto scoped = rates.value(QStringLiteral("model_scoped")).toArray();
-    for (const auto& item : scoped) {
-        const auto window = item.toObject();
-        add(window,
-            QStringLiteral("Week, ") + window.value(QStringLiteral("display_name")).toString(),
-            7 * 24 * 60);
-    }
-    if (scoped.isEmpty()) {
-        add(rates.value(QStringLiteral("seven_day_opus")).toObject(), QStringLiteral("Week, Opus"),
-            7 * 24 * 60);
-        add(rates.value(QStringLiteral("seven_day_sonnet")).toObject(),
-            QStringLiteral("Week, Sonnet"), 7 * 24 * 60);
-    }
-    return limits;
-}
-
-Usage::Usage(Programs programs, TokenLedger::Roots roots, QObject* parent)
-    : QObject(parent), programs_(std::move(programs)), ledger_(std::move(roots)) {
-    pool_.setMaxThreadCount(1);
-    connect(&limits_timer_, &QTimer::timeout, this, [this] {
-        limits_timer_.setInterval(kLimitsMs);
-        askLimits();
-    });
-    tokens_timer_.setSingleShot(true);
-    connect(&tokens_timer_, &QTimer::timeout, this, &Usage::count);
-}
-
-Usage::~Usage() {
-    setActive(false);
-    for (auto* process : findChildren<QProcess*>(Qt::FindDirectChildrenOnly)) {
-        process->disconnect(this);
-        process->kill();
-        process->waitForFinished(1000);
-    }
-    pool_.waitForDone();
-}
-
-void Usage::setActive(bool active) {
-    if (active == active_)
-        return;
-    active_ = active;
-    if (active_) {
-        // After the window and its agents have started.
-        limits_timer_.start(kFirstLimitsMs);
-        tokens_timer_.start(kFirstCountMs);
-        return;
-    }
-    limits_timer_.stop();
-    tokens_timer_.stop();
-    while (!queries_.empty())
-        finish(queries_.front().provider, std::nullopt, QString());
-}
-
-void Usage::refresh() {
-    askLimits();
-    count();
-}
-
-QDate Usage::today() const { return today_.isValid() ? today_ : QDate::currentDate(); }
-
-void Usage::askLimits() {
-    for (const auto& [id, name] : providers_shown)
-        ask(QString::fromLatin1(id));
-}
-
-void Usage::ask(const QString& provider) {
-    if (std::any_of(queries_.begin(), queries_.end(),
-                    [&](const Query& query) { return query.provider == provider; }))
-        return;
-    const auto program = programs_ ? programs_(provider) : QString();
-    if (program.isEmpty()) {
-        limits_.remove(provider);
-        emit changed();
-        return;
-    }
-    auto* process = new QProcess(this);
-    process->setProgram(program);
-    process->setWorkingDirectory(QDir::tempPath());
-    process->setStandardErrorFile(QProcess::nullDevice());
-    if (provider == QLatin1String("codex")) {
-        process->setArguments({QStringLiteral("app-server")});
-    } else {
-        // No settings (so none of the person's hooks run) and no transcript.
-        process->setArguments({QStringLiteral("-p"), QStringLiteral("--input-format"),
-                               QStringLiteral("stream-json"), QStringLiteral("--output-format"),
-                               QStringLiteral("stream-json"), QStringLiteral("--verbose"),
-                               QStringLiteral("--setting-sources"), QString(),
-                               QStringLiteral("--no-session-persistence")});
-    }
-    queries_.push_back({provider, process, {}});
-    connect(process, &QProcess::readyReadStandardOutput, this,
-            [this, provider] { answer(provider); });
-    connect(process, &QProcess::finished, this, [this, provider] {
-        finish(provider, std::nullopt, QStringLiteral("ended without an answer"));
-    });
-    connect(process, &QProcess::errorOccurred, this,
-            [this, provider](QProcess::ProcessError error) {
-                if (error == QProcess::FailedToStart)
-                    finish(provider, std::nullopt, QStringLiteral("could not start"));
-            });
-    QTimer::singleShot(kAnswerMs, process, [this, provider] {
-        finish(provider, std::nullopt, QStringLiteral("did not answer"));
-    });
-    process->start();
-    const QJsonObject request =
-        provider == QLatin1String("codex")
-            ? QJsonObject{{QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
-                          {QStringLiteral("id"), 1},
-                          {QStringLiteral("method"), QStringLiteral("initialize")},
-                          {QStringLiteral("params"),
-                           QJsonObject{
-                               {QStringLiteral("clientInfo"),
-                                QJsonObject{{QStringLiteral("name"), QStringLiteral("lapis")},
-                                            {QStringLiteral("version"), QStringLiteral("1")}}}}}}
-            : QJsonObject{{QStringLiteral("type"), QStringLiteral("control_request")},
-                          {QStringLiteral("request_id"), QStringLiteral("usage")},
-                          {QStringLiteral("request"),
-                           QJsonObject{{QStringLiteral("subtype"), QStringLiteral("get_usage")},
-                                       {QStringLiteral("skip_behaviors"), true}}}};
-    process->write(QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n');
-}
-
-void Usage::answer(const QString& provider) {
-    const auto found = std::find_if(queries_.begin(), queries_.end(),
-                                    [&](const Query& query) { return query.provider == provider; });
-    if (found == queries_.end() || !found->process)
-        return;
-    auto* process = found->process.data();
-    found->pending += process->readAllStandardOutput();
-    if (found->pending.size() > kLongestAnswer)
-        return finish(provider, std::nullopt, QStringLiteral("answered too much"));
-    const bool codex = provider == QLatin1String("codex");
-    for (auto end = found->pending.indexOf('\n'); end >= 0; end = found->pending.indexOf('\n')) {
-        const auto message = QJsonDocument::fromJson(found->pending.left(end)).object();
-        found->pending.remove(0, end + 1);
-        if (codex) {
-            const auto id = message.value(QStringLiteral("id")).toInt();
-            if (id == 1) {
-                process->write(R"({"jsonrpc":"2.0","method":"initialized"})"
-                               "\n"
-                               R"({"jsonrpc":"2.0","id":2,"method":"account/rateLimits/read"})"
-                               "\n");
-            } else if (id == 2) {
-                if (message.contains(QStringLiteral("result")))
-                    return finish(provider,
-                                  codex_limits(message.value(QStringLiteral("result")).toObject()),
-                                  QString());
-                return finish(provider, std::nullopt,
-                              message.value(QStringLiteral("error"))
-                                  .toObject()
-                                  .value(QStringLiteral("message"))
-                                  .toString(QStringLiteral("refused")));
-            }
-            continue;
-        }
-        if (message.value(QStringLiteral("type")).toString() != QLatin1String("control_response"))
-            continue;
-        const auto response = message.value(QStringLiteral("response")).toObject();
-        if (response.value(QStringLiteral("request_id")).toString() != QLatin1String("usage"))
-            continue;
-        if (response.value(QStringLiteral("subtype")).toString() == QLatin1String("success"))
-            return finish(provider,
-                          claude_limits(response.value(QStringLiteral("response")).toObject()),
-                          QString());
-        return finish(provider, std::nullopt,
-                      response.value(QStringLiteral("error")).toString(QStringLiteral("refused")));
-    }
-}
-
-void Usage::finish(const QString& provider, std::optional<PlanLimits> limits,
-                   const QString& failure) {
-    const auto found = std::find_if(queries_.begin(), queries_.end(),
-                                    [&](const Query& query) { return query.provider == provider; });
-    if (found == queries_.end())
-        return;
-    if (auto* process = found->process.data()) {
-        disconnect(process, nullptr, this, nullptr);
-        stop(process);
-    }
-    queries_.erase(found);
-    if (limits) {
-        limits_[provider] = std::move(*limits);
-        checked_[provider] = QDateTime::currentDateTime();
-    } else if (!failure.isEmpty()) {
-        // Keep the last answer; say why it was not refreshed.
-        limits_[provider].note = QStringLiteral("Not checked: the CLI %1").arg(failure);
-    } else {
-        return;
-    }
-    emit changed();
-}
-
-void Usage::count() {
-    if (counting_)
-        return;
-    counting_ = true;
-    emit changed();
-    const auto day = today();
-    const auto since = std::min(QDate(day.year(), day.month(), 1), day.addDays(1 - kChartDays));
-    pool_.start([this, since] {
-        QThread::currentThread()->setPriority(QThread::LowPriority);
-        ledger_.scan(since);
-        auto days = ledger_.days();
-        QMetaObject::invokeMethod(
-            this,
-            [this, days = std::move(days)]() mutable {
-                days_ = std::move(days);
-                counting_ = false;
-                if (active_)
-                    tokens_timer_.start(kTokensMs);
-                emit changed();
-            },
-            Qt::QueuedConnection);
-    });
-}
-
 namespace {
 // Each window with where it ends if use keeps its pace so far, shown only once
 // a tenth of the window has passed.
@@ -651,25 +399,446 @@ QVariantMap token_summary(const TokenLedger::Days& days, QDate day) {
 }
 } // namespace
 
-QVariantList Usage::providers() const {
-    QVariantList result;
-    const auto now = QDateTime::currentDateTime();
-    for (const auto& [id_text, name] : providers_shown) {
-        const auto id = QString::fromLatin1(id_text);
-        const auto days = days_.value(id);
-        if (!limits_.contains(id) && days.empty())
-            continue;
-        const auto limits = limits_.value(id);
-        auto entry = token_summary(days, today());
-        entry.insert({{QStringLiteral("id"), id},
-                      {QStringLiteral("name"), QString::fromLatin1(name)},
-                      {QStringLiteral("plan"), limits.plan},
-                      {QStringLiteral("note"), limits.note},
-                      {QStringLiteral("checked"), checked_.value(id)},
-                      {QStringLiteral("resetCredits"), limits.resetCredits},
-                      {QStringLiteral("windows"), window_list(limits, now)}});
-        result.append(entry);
+QHash<QString, TokenLedger::Days> remote_days(const QJsonObject& counts, QDate since) {
+    QHash<QString, TokenLedger::Days> result;
+    for (auto provider = counts.begin(); provider != counts.end(); ++provider) {
+        auto& days = result[provider.key()];
+        const auto models = provider.value().toObject();
+        for (auto model = models.begin(); model != models.end(); ++model) {
+            const auto hours = model.value().toObject();
+            for (auto hour = hours.begin(); hour != hours.end(); ++hour) {
+                const auto at =
+                    QDateTime::fromString(hour.key() + QStringLiteral(":00:00Z"), Qt::ISODate);
+                const auto day = at.toLocalTime().date();
+                const auto values = hour.value().toArray();
+                if (!at.isValid() || day < since || values.size() != 4)
+                    continue;
+                days[day][model.key()] += TokenCount{.input = values.at(0).toInteger(),
+                                                     .cacheRead = values.at(1).toInteger(),
+                                                     .cacheWrite = values.at(2).toInteger(),
+                                                     .output = values.at(3).toInteger()};
+            }
+        }
     }
     return result;
+}
+
+Usage::Usage(Programs programs, TokenLedger::Roots roots, QObject* parent)
+    : QObject(parent), programs_(std::move(programs)), ledger_(std::move(roots)) {
+    pool_.setMaxThreadCount(1);
+    machines_.emplace_back();
+    connect(&limits_timer_, &QTimer::timeout, this, [this] {
+        limits_timer_.setInterval(kLimitsMs);
+        askLimits();
+    });
+    tokens_timer_.setSingleShot(true);
+    connect(&tokens_timer_, &QTimer::timeout, this, &Usage::count);
+    connect(&remote_timer_, &QTimer::timeout, this, [this] {
+        remote_timer_.setInterval(kRemoteTokensMs);
+        QStringList hosts;
+        for (const auto& machine : machines_)
+            if (!machine.host.isEmpty())
+                hosts << machine.host;
+        for (const auto& host : hosts)
+            countRemote(host);
+    });
+}
+
+Usage::~Usage() {
+    setActive(false);
+    for (auto& machine : machines_)
+        if (auto* counter = machine.counter.data()) {
+            counter->disconnect(this);
+            counter->kill();
+            counter->waitForFinished(1000);
+            delete counter;
+        }
+    pool_.waitForDone();
+}
+
+void Usage::setActive(bool active) {
+    if (active == active_)
+        return;
+    active_ = active;
+    if (active_) {
+        // After the window and its agents have started.
+        limits_timer_.start(kFirstLimitsMs);
+        tokens_timer_.start(kFirstCountMs);
+        remote_timer_.start(kFirstRemoteCountMs);
+        return;
+    }
+    limits_timer_.stop();
+    tokens_timer_.stop();
+    remote_timer_.stop();
+    queue_.clear();
+    auto running = std::move(running_);
+    running_.clear();
+    for (auto& check : running)
+        delete check.probe.data();
+}
+
+void Usage::setMachines(const QStringList& hosts) {
+    QStringList wanted;
+    for (const auto& host : hosts)
+        if (valid_host(host) && !wanted.contains(host))
+            wanted << host;
+    QStringList current;
+    for (auto it = machines_.begin() + 1; it != machines_.end(); ++it)
+        current << it->host;
+    if (current == wanted)
+        return;
+    std::vector<Machine> next;
+    next.push_back(std::move(machines_.front()));
+    QStringList added;
+    for (const auto& host : wanted) {
+        const auto found =
+            std::find_if(machines_.begin() + 1, machines_.end(),
+                         [&](const Machine& machine) { return machine.host == host; });
+        if (found != machines_.end()) {
+            next.push_back(std::move(*found));
+            continue;
+        }
+        Machine machine;
+        machine.host = host;
+        next.push_back(std::move(machine));
+        added << host;
+    }
+    for (auto it = machines_.begin() + 1; it != machines_.end(); ++it)
+        if (!wanted.contains(it->host) && it->counter) {
+            it->counter->disconnect(this);
+            it->counter->kill();
+            it->counter->deleteLater();
+        }
+    machines_ = std::move(next);
+    std::erase_if(queue_, [&](const Check& check) {
+        return !check.host.isEmpty() && !wanted.contains(check.host);
+    });
+    emit changed();
+    if (!active_ || added.isEmpty())
+        return;
+    for (const auto& host : added) {
+        for (const auto* provider : kCliProviders)
+            queue_.push_back({host, QString::fromLatin1(provider)});
+        countRemote(host);
+    }
+    schedule();
+}
+
+void Usage::setMeterOrder(const QStringList& providers) {
+    QStringList order;
+    for (const auto& provider : providers) {
+        const auto id = provider.trimmed().toLower();
+        if (!id.isEmpty() && id.size() <= 32 && !order.contains(id))
+            order << id;
+    }
+    if (order == meter_order_)
+        return;
+    meter_order_ = order;
+    emit changed();
+}
+
+void Usage::refresh() {
+    askLimits();
+    count();
+    QStringList hosts;
+    for (const auto& machine : machines_)
+        if (!machine.host.isEmpty())
+            hosts << machine.host;
+    for (const auto& host : hosts)
+        countRemote(host);
+}
+
+QDate Usage::today() const { return today_.isValid() ? today_ : QDate::currentDate(); }
+
+QDate Usage::since() const {
+    const auto day = today();
+    return std::min(QDate(day.year(), day.month(), 1), day.addDays(1 - kChartDays));
+}
+
+Usage::Machine* Usage::find(const QString& host) {
+    const auto found = std::find_if(machines_.begin(), machines_.end(),
+                                    [&](const Machine& machine) { return machine.host == host; });
+    return found == machines_.end() ? nullptr : &*found;
+}
+
+void Usage::askLimits() {
+    const auto queued = [this](const Check& check) {
+        const auto same = [&](const Check& other) {
+            return other.host == check.host && other.provider == check.provider;
+        };
+        return std::any_of(queue_.begin(), queue_.end(), same) ||
+               std::any_of(running_.begin(), running_.end(),
+                           [&](const Running& running) { return same(running.check); });
+    };
+    for (const auto& machine : machines_) {
+        std::vector<Check> checks;
+        checks.reserve(kCliProviders.size() + 1);
+        for (const auto* provider : kCliProviders)
+            checks.push_back({machine.host, QString::fromLatin1(provider)});
+        if (machine.host.isEmpty())
+            checks.push_back({QString(), QStringLiteral("omp")});
+        for (auto& check : checks)
+            if (!queued(check))
+                queue_.push_back(std::move(check));
+    }
+    schedule();
+}
+
+void Usage::schedule() {
+    while (running_.size() < kProbesAtOnce && !queue_.empty()) {
+        const auto check = queue_.front();
+        queue_.erase(queue_.begin());
+        auto* machine = find(check.host);
+        if (machine == nullptr)
+            continue;
+        UsageProbe::Setup setup{.provider = check.provider,
+                                .program = check.provider,
+                                .host = check.host,
+                                .ssh = QString()};
+        if (check.host.isEmpty()) {
+            setup.program = programs_ ? programs_(check.provider) : QString();
+            if (setup.program.isEmpty()) {
+                // Not installed here.
+                if (check.provider == QLatin1String("omp"))
+                    machine->accounts.clear();
+                else
+                    machine->logins.remove(check.provider);
+                emit changed();
+                continue;
+            }
+        } else {
+            setup.ssh = programs_ ? programs_(QStringLiteral("ssh")) : QString();
+            if (setup.ssh.isEmpty())
+                continue;
+        }
+        auto* probe = new UsageProbe(
+            setup, [this, check](const UsageProbe::Result& result) { probed(check, result); },
+            this);
+        running_.push_back({check, probe});
+        probe->start();
+    }
+}
+
+void Usage::probed(const Check& check, const UsageProbe::Result& result) {
+    const auto running = std::find_if(running_.begin(), running_.end(), [&](const Running& item) {
+        return item.check.host == check.host && item.check.provider == check.provider;
+    });
+    if (running != running_.end()) {
+        if (running->probe)
+            running->probe->deleteLater();
+        running_.erase(running);
+    }
+    QTimer::singleShot(0, this, &Usage::schedule);
+    auto* machine = find(check.host);
+    if (machine == nullptr)
+        return;
+    if (result.failure == QLatin1String("could not connect")) {
+        machine->note = QStringLiteral("Could not connect over ssh");
+    } else if (!check.host.isEmpty()) {
+        machine->note.clear();
+    }
+    if (check.provider == QLatin1String("omp")) {
+        if (result.limits)
+            machine->accounts = *result.limits;
+        else if (result.absent)
+            machine->accounts.clear();
+    } else if (result.limits && !result.absent) {
+        machine->logins[check.provider] = result.limits->front();
+        machine->checked[check.provider] = QDateTime::currentDateTime();
+    } else if (result.absent) {
+        machine->logins.remove(check.provider);
+    } else if (machine->logins.contains(check.provider)) {
+        // Keep the last answer; say why it was not refreshed.
+        machine->logins[check.provider].note =
+            QStringLiteral("Not checked: the CLI %1").arg(result.failure);
+    }
+    emit changed();
+}
+
+void Usage::count() {
+    if (counting_)
+        return;
+    counting_ = true;
+    emit changed();
+    pool_.start([this, since = since()] {
+        QThread::currentThread()->setPriority(QThread::LowPriority);
+        ledger_.scan(since);
+        auto days = ledger_.days();
+        QMetaObject::invokeMethod(
+            this,
+            [this, days = std::move(days)]() mutable {
+                machines_.front().days = std::move(days);
+                counting_ = false;
+                if (active_)
+                    tokens_timer_.start(kTokensMs);
+                emit changed();
+            },
+            Qt::QueuedConnection);
+    });
+}
+
+// Another machine counts its own transcripts with python3, niced, at most
+// every five minutes; this Mac only reads the totals.
+void Usage::countRemote(const QString& host) {
+    auto* machine = find(host);
+    const auto ssh = programs_ ? programs_(QStringLiteral("ssh")) : QString();
+    if (machine == nullptr || host.isEmpty() || machine->counter || ssh.isEmpty() ||
+        (machine->counted.isValid() && machine->counted.secsTo(QDateTime::currentDateTime()) < 300))
+        return;
+    const auto start = QDateTime(since(), QTime(0, 0)).toSecsSinceEpoch();
+    auto* process = new QProcess(this);
+    process->setProgram(ssh);
+    process->setArguments(
+        {QStringLiteral("-T"), QStringLiteral("-o"), QStringLiteral("BatchMode=yes"),
+         QStringLiteral("-o"), QStringLiteral("ConnectTimeout=8"), host,
+         QStringLiteral(R"(cd /tmp 2>/dev/null; exec "${SHELL:-/bin/sh}" -lc %1)")
+             .arg(shell_words({QStringLiteral("exec nice -n 19 python3 - %1").arg(start)}))});
+    process->setStandardErrorFile(QProcess::nullDevice());
+    machine->counter = process;
+    machine->output.clear();
+    connect(process, &QProcess::readyReadStandardOutput, this, [this, host, process] {
+        auto* counted = find(host);
+        if (counted == nullptr)
+            return;
+        counted->output += process->readAllStandardOutput();
+        if (counted->output.size() > kLongestCount)
+            process->kill();
+    });
+    connect(process, &QProcess::finished, this, [this, host, process](int code) {
+        process->deleteLater();
+        auto* counted = find(host);
+        if (counted == nullptr)
+            return;
+        counted->counter.clear();
+        const auto totals = QJsonDocument::fromJson(counted->output).object();
+        counted->output.clear();
+        if (code == 0 && !totals.isEmpty()) {
+            counted->days = remote_days(totals, since());
+            counted->counted = QDateTime::currentDateTime();
+        }
+        emit changed();
+    });
+    QTimer::singleShot(kRemoteCountMs, process, [process] { process->kill(); });
+    process->start();
+    process->write(kCountTokensScript);
+    process->closeWriteChannel();
+    emit changed();
+}
+
+bool Usage::counting() const {
+    return counting_ || std::any_of(machines_.begin(), machines_.end(), [](const Machine& machine) {
+               return !machine.counter.isNull();
+           });
+}
+
+// Plans first in the usual order, then any other OMP knows, by name.
+QStringList Usage::providerOrder(const Machine& machine) const {
+    QStringList ids;
+    for (auto it = machine.logins.cbegin(); it != machine.logins.cend(); ++it)
+        ids << it.key();
+    for (const auto& account : machine.accounts)
+        ids << account.provider;
+    for (auto it = machine.days.cbegin(); it != machine.days.cend(); ++it)
+        if (!it->empty())
+            ids << it.key();
+    ids.removeDuplicates();
+    std::sort(ids.begin(), ids.end(), [](const QString& a, const QString& b) {
+        const auto rank = [](const QString& id) {
+            const auto found =
+                std::find_if(kCliProviders.begin(), kCliProviders.end(),
+                             [&](const char* known) { return id == QLatin1String(known); });
+            return static_cast<int>(found - kCliProviders.begin());
+        };
+        return rank(a) != rank(b) ? rank(a) < rank(b) : a < b;
+    });
+    return ids;
+}
+
+QVariantMap Usage::providerEntry(const Machine& machine, const QString& id,
+                                 const QDateTime& now) const {
+    QVariantList accounts;
+    const auto login = machine.logins.constFind(id);
+    const bool signed_in = login != machine.logins.cend();
+    if (signed_in)
+        accounts.append(
+            QVariantMap{{QStringLiteral("label"), QStringLiteral("Signed in to the CLI")},
+                        {QStringLiteral("source"), login->source},
+                        {QStringLiteral("plan"), login->plan},
+                        {QStringLiteral("note"), login->note},
+                        {QStringLiteral("resetCredits"), login->resetCredits},
+                        {QStringLiteral("checked"), machine.checked.value(id)},
+                        {QStringLiteral("windows"), window_list(*login, now)}});
+    for (const auto& account : machine.accounts) {
+        if (account.provider != id || (signed_in && same_account(account, *login)))
+            continue;
+        accounts.append(QVariantMap{{QStringLiteral("label"), account.account.isEmpty()
+                                                                  ? QStringLiteral("An OMP account")
+                                                                  : account.account},
+                                    {QStringLiteral("source"), account.source},
+                                    {QStringLiteral("plan"), account.plan},
+                                    {QStringLiteral("note"), account.note},
+                                    {QStringLiteral("resetCredits"), account.resetCredits},
+                                    {QStringLiteral("checked"), QDateTime()},
+                                    {QStringLiteral("windows"), window_list(account, now)}});
+    }
+    auto entry = token_summary(machine.days.value(id), today());
+    entry.insert({{QStringLiteral("id"), id},
+                  {QStringLiteral("name"), provider_name(id)},
+                  {QStringLiteral("counted"), machine.days.contains(id)},
+                  {QStringLiteral("accounts"), accounts}});
+    return entry;
+}
+
+QVariantList Usage::machines() const {
+#ifdef Q_OS_MACOS
+    const auto here = QStringLiteral("This Mac");
+#else
+    const auto here = QStringLiteral("This computer");
+#endif
+    const auto now = QDateTime::currentDateTime();
+    QVariantList result;
+    for (const auto& machine : machines_) {
+        QVariantList providers;
+        for (const auto& id : providerOrder(machine))
+            providers.append(providerEntry(machine, id, now));
+        result.append(
+            QVariantMap{{QStringLiteral("host"), machine.host},
+                        {QStringLiteral("name"), machine.host.isEmpty() ? here : machine.host},
+                        {QStringLiteral("note"), machine.note},
+                        {QStringLiteral("counting"),
+                         machine.host.isEmpty() ? counting_ : !machine.counter.isNull()},
+                        {QStringLiteral("providers"), providers}});
+    }
+    return result;
+}
+
+// The CLI's own sign-in when there is one, since new agents use it;
+// otherwise the OMP account with the most room left.
+QVariantList Usage::meter() const {
+    const auto& here = machines_.front();
+    QVariantList rows;
+    for (const auto& id : meter_order_.isEmpty() ? providerOrder(here) : meter_order_) {
+        const PlanLimits* chosen = nullptr;
+        if (const auto login = here.logins.constFind(id);
+            login != here.logins.cend() && !login->windows.empty())
+            chosen = &*login;
+        const auto room = [](const PlanLimits& limits) {
+            const auto* window = tightest(limits);
+            return window == nullptr ? 101.0 : window->percent;
+        };
+        for (const auto& account : here.accounts)
+            if (account.provider == id &&
+                (chosen == nullptr ||
+                 (chosen->source == QLatin1String("omp") && room(account) < room(*chosen))))
+                chosen = &account;
+        const auto* window = chosen ? tightest(*chosen) : nullptr;
+        if (window == nullptr)
+            continue;
+        rows.append(QVariantMap{{QStringLiteral("id"), id},
+                                {QStringLiteral("name"), provider_name(id)},
+                                {QStringLiteral("percent"), window->percent},
+                                {QStringLiteral("label"), short_label(*window)}});
+    }
+    return rows;
 }
 } // namespace lapis::desktop

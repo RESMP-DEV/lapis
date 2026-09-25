@@ -1887,7 +1887,7 @@ A prototype, deliberately simpler than the SSH design first proposed:
   its own config). `lapis.json` is watched (the file and its folder, settled
   for 150 ms, the app's own writes recognized by content) and applies without
   a restart, so an agent can edit it. It holds `alerts` (`sound`, `finished`,
-  `repeat`), `keepAwake`, `showUsage` and `newAgent` (`harness`, `folder`,
+  `repeat`), `keepAwake`, `usage` (`show`, `meter`, `machines`) and `newAgent` (`harness`, `folder`,
   `machines.<host>.folder`, `models.<cli>`); a model that looks like an option
   is dropped. Chimes are synthesized WAVs, no audio files: two glassy taps
   (sine with an octave shimmer and a short inharmonic strike), rising E6 to A6
@@ -1905,11 +1905,30 @@ A prototype, deliberately simpler than the SSH design first proposed:
   rebuilt when it opens: letters in order over name, folder, category, CLI and
   machine, substrings on screen lines; 128 agents with 60 lines each index in
   0.71 ms, and queries take p50 0.07, p95 0.65, p99 0.68 ms on the M4 Max.
-  Usage asks each CLI in its own protocol every five minutes while shown:
-  Codex app-server `account/rateLimits/read` and Claude Code's `get_usage`
-  control request over stream-json with `--setting-sources ""` and
-  `--no-session-persistence`, so no prompt is sent, none of the person's hooks
-  run and no transcript is written (0.5 to 0.8 s each). Token totals come
+  Usage shows whatever plans are signed in, since plans change often: each
+  CLI is asked in its own interface every five minutes while shown, at most
+  three at a time. Codex app-server `account/rateLimits/read`; Claude Code's
+  `get_usage` control request over stream-json with `--setting-sources ""` and
+  `--no-session-persistence`; Grok's ACP `_x.ai/billing` from `grok agent
+  --no-leader stdio`; Kimi's `/api/v1/oauth/usage` from a `kimi web --no-open`
+  on a free loopback port, authorized by the token it prints (Kimi's access
+  token lasts 15 minutes, and refreshing it outside the CLI would rotate its
+  refresh token); OMP's ACP `_omp/usage` after `session/new`, with
+  `--session-dir` in a folder deleted afterwards, since ACP sessions are saved
+  even with `--no-session`. No prompt is sent, none of the person's hooks run
+  and nothing is saved; each answers in 0.5 to 2.2 s. An error answer means
+  not signed in, and that plan is left out. OMP's accounts are matched to a
+  CLI's sign-in by account ID or by a window of the same length ending at the
+  same time at the same use, and shown once. Another machine in
+  `usage.machines` is asked the same way over `ssh -T -o BatchMode=yes` in an
+  interactive login shell (Kimi's port forwarded, and its server stopped when
+  the connection closes); OMP is asked here only, since its broker is usually
+  shared. That machine's tokens are counted by `count_tokens.py`, compiled in
+  and sent to its python3 over ssh every 30 minutes at `nice 19`, returning
+  UTC hours that this Mac turns into local days; it follows the same rules as
+  the desktop's counter and has its own tests. Live on September 24, three
+  machines settled in 7.1 s, and counting the last 30 days of a Linux host's transcripts
+  over ssh took 1.4 s. Token totals come
   from the transcripts, read on a background thread and then only as they
   grow: Codex's running totals as differences, with a file's first report
   and any decrease counted as that call alone (forks can start from the

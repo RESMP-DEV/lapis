@@ -63,7 +63,7 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect; stale sockets left by a simulated power loss are replaced | Qualification across an actual reboot |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging and link opening (Qt tests on the Linux test host) | Cross-cell contextual shaping, rectangular/multi-click selection, link hover feedback and accessibility; native Mac selection not yet exercised; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
-| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation; live config reload, alert chimes and their repeat rules, Command-K agent search and the usage meter and details (Qt tests on the Linux test host); usage answers from the installed Codex 0.156.1 and Claude Code 2.1.282 | Automatic carousel and larger session-count qualification; the chimes and usage view have not been seen and heard on a Mac by a test |
+| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation; live config reload, alert chimes and their repeat rules, Command-K agent search, the usage meter and per-machine dashboard (Qt tests on the Linux test host); usage answers from the installed Codex 0.156.1, Claude Code 2.1.282, Grok 1.0.41, Kimi Code 0.39.1 and OMP 18.2.9, here and on a Linux host over ssh | Automatic carousel and larger session-count qualification; the chimes and usage view have not been seen and heard on a Mac by a test |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
 | Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect, `/clear` continuation and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
 | iPhone app (prototype) | Gateway on the Mac over Tailscale, admitting only the owner's iOS devices; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; the phone joins beside the desktop so both stay in sync (services started by this build); starting an agent in a category from the phone through the Mac's lapis; UI tests in the iOS 26.5 Simulator against real services and the real windowless lapis host with a Mac-side client attached, fake agents, and real Codex and Claude Code on a fake model; installed and used on an iPhone 17 Pro | Agents started before sync are taken over instead; no structured requests or push notifications; starting agents needs a lapis window or the login helper running |
@@ -181,7 +181,7 @@ per machine where they differ:
   },
   "alerts": {"sound": true, "finished": true, "repeat": 3},
   "keepAwake": true,
-  "showUsage": true
+  "usage": {"show": true, "meter": ["codex", "claude", "grok"], "machines": ["devbox"]}
 }
 ```
 
@@ -189,12 +189,19 @@ An agent that needs you chimes (two taps, rising), and again every few seconds
 while the request waits and you are looking elsewhere, up to `repeat` times; a
 Codex or Claude turn that ends out of view chimes once, quietly. Appearance has
 the switches and a Play button for each. `keepAwake` keeps the Mac from
-sleeping while it is plugged in, so the phone can reach it. `showUsage` shows
-plan usage under the categories: each CLI's tightest limit window, opening the
-details (every Codex and Claude window with its reset time and where the
-current pace ends, tokens today, this month and per day for 30 days, by model).
-Limits come from each CLI, asked every five minutes without a prompt; tokens are
-counted from this Mac's transcripts, without prices.
+sleeping while it is plugged in, so the phone can reach it.
+
+`usage.show` puts plan usage under the categories: every plan a CLI here is
+signed in to (Codex, Claude, Grok and Kimi, plus every account OMP's logins
+hold), each at its tightest window. `usage.meter` picks which appear and in
+what order; one that is not signed in is left out. Clicking it opens a
+dashboard per machine, this Mac and each ssh host in `usage.machines`: every
+account's windows with reset times and where the current pace ends, and the
+Codex and Claude tokens used on that machine today, this month and per day
+for 30 days, by model. Each CLI is asked through its own interface every five
+minutes, without a prompt, a hook or a saved session; another machine's CLIs
+are asked over ssh, and its transcripts are counted there by its own python3.
+There are no prices.
 
 Close the window (its close button or Command-Q) to detach. Reopen it to
 reconnect the same agents and restore category selections and window

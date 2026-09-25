@@ -1,5 +1,6 @@
 #ifndef LAPIS_DESKTOP_USAGE_HPP
 #define LAPIS_DESKTOP_USAGE_HPP
+#include "usage_limits.hpp"
 #include <QByteArray>
 #include <QDate>
 #include <QDateTime>
@@ -13,6 +14,7 @@
 #include <QThreadPool>
 #include <QTimer>
 #include <QVariantList>
+#include <QVariantMap>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -80,55 +82,57 @@ class TokenLedger {
     qint64 bytes_read_{};
 };
 
-// One plan window, as the CLI reported it.
-struct UsageWindow {
-    QString label; // "5 hours", "Week", "Week, Fable"
-    double percent{};
-    QDateTime resets; // invalid when the CLI did not say
-    int minutes{};    // the window's length, when known
-};
+// Tokens counted on another machine by its own python3 (usage/count_tokens.py),
+// as {provider: {model: {"YYYY-MM-DDTHH" (UTC): [input, cacheRead,
+// cacheWrite, output]}}}, gathered into local days from `since`.
+[[nodiscard]] QHash<QString, TokenLedger::Days> remote_days(const QJsonObject& counts, QDate since);
 
-// What each CLI said about its plan: its windows, or why there are none.
-struct PlanLimits {
-    std::vector<UsageWindow> windows;
-    QString plan;       // "pro", "max"
-    QString note;       // e.g. "Limit reached", or why nothing is known
-    int resetCredits{}; // Codex: free resets on the account
-};
-[[nodiscard]] PlanLimits codex_limits(const QJsonObject& result);
-[[nodiscard]] PlanLimits claude_limits(const QJsonObject& response);
-
-// Plan limits asked of each CLI through its own protocol (Codex app-server's
-// account/rateLimits/read, Claude's get_usage control request, which sends
-// no prompt and spends nothing), and token totals from the transcripts. Both
-// refresh on a timer while active and on request.
+// Usage by machine: this Mac and each ssh host configured. On each machine,
+// every CLI lapis knows that is signed in to a plan says how much of it is
+// used (see UsageProbe), and on this Mac OMP adds every account its logins
+// hold; an account two sources report is shown once. Tokens come from the
+// Codex and Claude transcripts on each machine. Everything refreshes on a
+// timer while active and on request; a CLI that is not installed or not
+// signed in is left out.
 class Usage final : public QObject {
     Q_OBJECT
-    // [{id, name, plan, note, checked, resetCredits,
-    //   windows: [{label, percent, resets, minutes, pace}],
+    // This Mac first: [{host, name, note, counting, providers: [{id, name,
+    //   counted, accounts: [{label, source, plan, note, resetCredits, checked,
+    //   windows: [{label, percent, resets, minutes, pace}]}],
     //   today, month: {total, input, cacheRead, cacheWrite, output},
-    //   days: [30 day totals, oldest first], models: [{name, total}] (this month)}]
-    Q_PROPERTY(QVariantList providers READ providers NOTIFY changed)
+    //   days: [30 day totals, oldest first], models: [{name, total}]}]}]
+    Q_PROPERTY(QVariantList machines READ machines NOTIFY changed)
+    // Under the categories: this Mac's plans, each at its tightest window:
+    // [{id, name, percent, label}]
+    Q_PROPERTY(QVariantList meter READ meter NOTIFY changed)
     Q_PROPERTY(bool counting READ counting NOTIFY changed)
   public:
-    // The CLI program for a provider id, or empty when it is not installed.
+    // The program for a CLI id, or "ssh", on this Mac; empty when missing.
     using Programs = std::function<QString(const QString&)>;
     static constexpr int kLimitsMs = 5 * 60 * 1000;
     static constexpr int kTokensMs = 2 * 60 * 1000;
+    static constexpr int kRemoteTokensMs = 30 * 60 * 1000;
     static constexpr int kFirstLimitsMs = 2 * 1000;
     static constexpr int kFirstCountMs = 15 * 1000;
-    static constexpr int kAnswerMs = 20 * 1000;
+    static constexpr int kFirstRemoteCountMs = 30 * 1000;
+    static constexpr int kRemoteCountMs = 180 * 1000;
+    static constexpr int kProbesAtOnce = 3;
 
     Usage(Programs programs, TokenLedger::Roots roots, QObject* parent = nullptr);
     ~Usage() override;
     Usage(const Usage&) = delete;
     Usage& operator=(const Usage&) = delete;
 
-    // Polls while active; stops, and kills any query, when not.
+    // Polls while active; stops, and ends every check, when not.
     void setActive(bool active);
+    // The other machines with a dashboard, as ssh names them.
+    void setMachines(const QStringList& hosts);
+    // The meter's plans in this order; empty shows every signed-in plan.
+    void setMeterOrder(const QStringList& providers);
     Q_INVOKABLE void refresh();
-    [[nodiscard]] QVariantList providers() const;
-    [[nodiscard]] bool counting() const { return counting_; }
+    [[nodiscard]] QVariantList machines() const;
+    [[nodiscard]] QVariantList meter() const;
+    [[nodiscard]] bool counting() const;
     // Tests: the clock that decides today and this month.
     void setTodayForTesting(QDate today) { today_ = today; }
 
@@ -136,17 +140,36 @@ class Usage final : public QObject {
     void changed();
 
   private:
-    struct Query {
+    struct Machine {
+        QString host;                      // empty: this Mac
+        QHash<QString, PlanLimits> logins; // each CLI's own sign-in, by CLI
+        QHash<QString, QDateTime> checked;
+        std::vector<PlanLimits> accounts; // OMP's
+        QHash<QString, TokenLedger::Days> days;
+        QString note; // why it could not be reached
+        QPointer<QProcess> counter;
+        QDateTime counted;
+        QByteArray output;
+    };
+    struct Check {
+        QString host;
         QString provider;
-        QPointer<QProcess> process; // deleted later, never inside its own signal
-        QByteArray pending;
+    };
+    struct Running {
+        Check check;
+        QPointer<UsageProbe> probe;
     };
     void askLimits();
-    void ask(const QString& provider);
-    void answer(const QString& provider);
-    void finish(const QString& provider, std::optional<PlanLimits> limits, const QString& failure);
+    void schedule();
+    void probed(const Check& check, const UsageProbe::Result& result);
     void count();
+    void countRemote(const QString& host);
+    [[nodiscard]] Machine* find(const QString& host);
     [[nodiscard]] QDate today() const;
+    [[nodiscard]] QDate since() const;
+    [[nodiscard]] QStringList providerOrder(const Machine& machine) const;
+    [[nodiscard]] QVariantMap providerEntry(const Machine& machine, const QString& id,
+                                            const QDateTime& now) const;
 
     Programs programs_;
     TokenLedger ledger_;
@@ -155,10 +178,11 @@ class Usage final : public QObject {
     bool counting_{};
     QTimer limits_timer_;
     QTimer tokens_timer_;
-    std::vector<Query> queries_;
-    QHash<QString, PlanLimits> limits_;
-    QHash<QString, QDateTime> checked_;
-    QHash<QString, TokenLedger::Days> days_;
+    QTimer remote_timer_;
+    std::vector<Machine> machines_; // this Mac first
+    QStringList meter_order_;
+    std::vector<Check> queue_;
+    std::vector<Running> running_;
     QDate today_;
 };
 } // namespace lapis::desktop
