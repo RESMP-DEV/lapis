@@ -5,6 +5,7 @@
 #include <QString>
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "launch_spec.hpp"
 
@@ -44,9 +45,13 @@ class CheckpointScanner {
 // on failure.
 [[nodiscard]] std::optional<ResumeRecord> read_resume_record(const QString& endpoint);
 
-// The Codex thread whose rollout a Codex app-server holds open, from its
-// `lsof -Fn` listing. Codex keeps the rollout of each loaded thread open; the
-// earliest one is the conversation (later ones are its subagents).
+// The Codex threads whose rollouts a Codex app-server holds open, from its
+// `lsof -Fn` listing, most recently written first. Codex keeps every loaded
+// thread's rollout open, including the previous conversation after /new or
+// /resume; subagent threads, which say so in their rollout's first line, are
+// left out. Rollouts that are not readable regular files are skipped.
+[[nodiscard]] std::vector<QString> codex_threads_from_open_files(const QString& listing);
+// The conversation in use: the first of codex_threads_from_open_files.
 [[nodiscard]] std::optional<QString> codex_thread_from_open_files(const QString& listing);
 void write_resume_record(const QString& endpoint, const ResumeRecord& record);
 } // namespace lapis::session

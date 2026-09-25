@@ -232,6 +232,9 @@ struct WorkspaceOptions {
     // starts, at most every 30 minutes per CLI, so agents never open on an
     // update prompt. Existing-session reconnect and discovery do not update.
     bool updateHarnesses{};
+    // With restoreAgents, only start agents whose services are gone and leave
+    // running services alone (the login helper; a window reattaches later).
+    bool restoreOnly{};
     // Production bounds. Tests inject short values so stuck-updater cleanup is
     // observable without waiting two minutes or leaving installer children.
     qint64 updateTimeoutMs{qint64{2} * 60 * 1000};
@@ -314,6 +317,7 @@ class Workspace final : public QObject {
     QHash<QString, QStringList> harness_arguments_;
     bool restore_agents_{};
     bool update_harnesses_{};
+    bool restore_only_{};
     QHash<QString, qint64> harness_checked_ms_;
     QHash<QString, QPointer<QProcess>> harness_updates_;
     QHash<QString, QStringList> starts_after_update_;
@@ -364,6 +368,7 @@ class Workspace final : public QObject {
     bool mutableRegistry();
     bool commit(const RegistryState& previous);
     bool save(const QString& renamedId = {}, const QString& renamedTitle = {});
+    void lockRegistry();
     void restore();
     void loadCategories(const QJsonArray& groups);
     static void loadManagedResume(const QJsonValue& value, Agent& agent);

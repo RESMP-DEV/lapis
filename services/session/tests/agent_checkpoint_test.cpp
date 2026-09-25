@@ -1,4 +1,5 @@
 #include "agent_checkpoint.hpp"
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
@@ -10,6 +11,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 using lapis::session::CheckpointScanner;
@@ -188,20 +190,83 @@ void records_are_private() {
     require(!lapis::session::read_resume_record(fifo_endpoint),
             "opening an untrusted FIFO does not block waiting for a writer");
 }
-// An app-server's open files name its thread's rollout; subagent rollouts
-// opened later do not replace the conversation.
+// A rollout as Codex writes it: a session_meta first line, then items.
+QString rollout(const QDir& day, const QString& name, const QJsonObject& meta,
+                const QDateTime& written) {
+    const auto path = day.filePath(name);
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly), "write a rollout");
+    file.write(QJsonDocument(QJsonObject{{QStringLiteral("type"), QStringLiteral("session_meta")},
+                                         {QStringLiteral("payload"), meta}})
+                   .toJson(QJsonDocument::Compact) +
+               "\n{}\n");
+    file.close();
+    require(file.open(QIODevice::ReadWrite) &&
+                file.setFileTime(written, QFileDevice::FileModificationTime),
+            "date a rollout");
+    return QStringLiteral("f9\nn") + path + QLatin1Char('\n');
+}
+
+// An app-server holds every loaded thread's rollout open. The conversation is
+// the main thread written last: subagents never replace it, /new moves to the
+// new thread, and /resume moves back.
 void codex_threads_from_open_files() {
-    const QString listing =
-        QStringLiteral("p58543\nfcwd\nn/Users/me/project\nf12\n"
-                       "n/Users/me/.codex/sessions/2026/09/23/"
-                       "rollout-2026-09-23T16-20-11-01a0d055-9999-7581-be09-2abee03315ea.jsonl\n"
-                       "f13\nn/Users/me/.codex/sessions/2026/09/23/"
-                       "rollout-2026-09-23T16-13-58-01a0d055-2f25-7581-be09-2abee03315ea.jsonl\n"
-                       "f14\nn/Users/me/.codex/log/codex-tui.log\n");
-    require(lapis::session::codex_thread_from_open_files(listing) ==
-                QStringLiteral("01a0d055-2f25-7581-be09-2abee03315ea"),
-            "the earliest open rollout names the conversation");
-    require(!lapis::session::codex_thread_from_open_files(
+    using lapis::session::codex_thread_from_open_files;
+    using lapis::session::codex_threads_from_open_files;
+    QTemporaryDir directory;
+    require(directory.isValid(), "rollout directory");
+    const QDir day(directory.filePath(QStringLiteral("sessions/2026/09/24")));
+    require(QDir().mkpath(day.path()), "sessions folder");
+    const auto start = QDateTime::currentDateTimeUtc().addSecs(-600);
+    const auto first = QStringLiteral("01a0d4b2-82f4-7a50-bd3a-60260ad6bc71");
+    const auto subagent = QStringLiteral("01a0d4b2-9999-7441-b8b8-aad7d5c571d8");
+    const auto after_new = QStringLiteral("01a0d4b2-9af0-7441-b8b8-aad7d5c571d8");
+    const QJsonObject main_meta{{QStringLiteral("source"), QStringLiteral("cli")}};
+    const QJsonObject subagent_meta{
+        {QStringLiteral("source"),
+         QJsonObject{{QStringLiteral("subagent"),
+                      QJsonObject{{QStringLiteral("thread_spawn"),
+                                   QJsonObject{{QStringLiteral("parent_thread_id"), first}}}}}}},
+        {QStringLiteral("parent_thread_id"), first}};
+    const auto first_name =
+        QStringLiteral("rollout-2026-09-24T12-00-00-") + first + QStringLiteral(".jsonl");
+    auto listing = QStringLiteral("p58543\nfcwd\nn/Users/me/project\n") +
+                   rollout(day,
+                           QStringLiteral("rollout-2026-09-24T12-05-00-") + subagent +
+                               QStringLiteral(".jsonl"),
+                           subagent_meta, start.addSecs(30)) +
+                   rollout(day, first_name, main_meta, start.addSecs(10)) +
+                   QStringLiteral("f14\nn/Users/me/.codex/log/codex-tui.log\n");
+    require(codex_thread_from_open_files(listing) == first,
+            "a subagent written later does not replace the conversation");
+    listing += rollout(
+        day, QStringLiteral("rollout-2026-09-24T12-10-00-") + after_new + QStringLiteral(".jsonl"),
+        main_meta, start.addSecs(20));
+    require(codex_threads_from_open_files(listing) == std::vector{after_new, first},
+            "after /new the new thread comes first and the previous one stays listed");
+    rollout(day, first_name, main_meta, start.addSecs(40));
+    require(codex_thread_from_open_files(listing) == first,
+            "/resume of the earlier thread moves back to it");
+    require(codex_thread_from_open_files(
+                listing + QStringLiteral("n") +
+                day.filePath(QStringLiteral("rollout-2026-09-24T13-00-00-01a0d4b2-0000-"
+                                            "7441-b8b8-aad7d5c571d8.jsonl")) +
+                QLatin1Char('\n')) == first,
+            "a rollout that no longer exists is skipped");
+    const auto malformed_path = day.filePath(
+        QStringLiteral("rollout-2026-09-24T13-10-00-01a0d4b2-0001-7441-b8b8-aad7d5c571d8.jsonl"));
+    for (const auto& header : {QByteArray("not JSON\n"), QByteArray("{\"payload\":{}}\n"),
+                               QByteArray(1024 * 1024 + 1, 'x')}) {
+        QFile malformed(malformed_path);
+        require(malformed.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                    malformed.write(header) == header.size(),
+                "write an unqualified rollout header");
+        malformed.close();
+        require(codex_thread_from_open_files(listing + QStringLiteral("n") + malformed_path +
+                                             QLatin1Char('\n')) == first,
+                "malformed or oversized headers never become a main conversation");
+    }
+    require(!codex_thread_from_open_files(
                  QStringLiteral("p1\nn/tmp/rollout-notes.jsonl\nn/Users/me/.codex/log/x\n"))
                  .has_value(),
             "files outside Codex sessions are not rollouts");

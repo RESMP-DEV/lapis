@@ -71,6 +71,20 @@ QByteArray parse_session_id(const QString& value) {
         throw std::invalid_argument("Session ID cannot be zero");
     return id;
 }
+// Codex 0.156 listens through a symlink it removes on a clean exit. A power
+// loss leaves the link behind (pointing into a /tmp a reboot clears); a dead
+// link at this service's own path is removed.
+void remove_dead_codex_link(const QString& path) {
+    if (!QFileInfo(path).isSymLink())
+        return;
+    QLocalSocket existing;
+    existing.connectToServer(path);
+    if (existing.waitForConnected(100))
+        throw std::runtime_error("Codex endpoint already in use");
+    if (!QFile::remove(path))
+        throw std::runtime_error("Cannot remove stale Codex endpoint");
+}
+
 class SessionService final : public QObject {
   public:
     SessionService(const QString& endpoint, const QByteArray& requested_session_id,
@@ -121,6 +135,8 @@ class SessionService final : public QObject {
         attention_timer_.setSingleShot(true);
         attention_timer_.setInterval(16);
         connect(&attention_timer_, &QTimer::timeout, this, [this] { publish_attention(); });
+        rollout_timer_.setInterval(5000);
+        connect(&rollout_timer_, &QTimer::timeout, this, [this] { probe_rollout(); });
         connect(&ack_timer_, &QTimer::timeout, this, [this] {
             if (client_ && !ready_) {
                 send_status(client_, wire::StatusCode::rejected,
@@ -270,6 +286,7 @@ class SessionService final : public QObject {
         }
     }
     void stop_codex() {
+        rollout_timer_.stop();
         backend_wait_.stop();
         backend_probe_.abort();
         attention_timer_.stop();
@@ -319,7 +336,9 @@ class SessionService final : public QObject {
         return arguments;
     }
     void start_codex(const QString& endpoint, const LaunchSpec& launch) {
-        const auto backend_socket = posix::prepare_endpoint(endpoint + QStringLiteral(".codex"));
+        const auto backend_path = endpoint + QStringLiteral(".codex");
+        remove_dead_codex_link(backend_path);
+        const auto backend_socket = posix::prepare_endpoint(backend_path);
         if (QFileInfo::exists(backend_socket)) {
             QLocalSocket existing;
             existing.connectToServer(backend_socket);
@@ -383,7 +402,45 @@ class SessionService final : public QObject {
                         stop(codex_error_);
                 });
         codex_backend_.start();
+        // The backend holds each loaded thread's rollout open. Reading its open
+        // files names the conversation whatever Codex build runs, so resuming
+        // after a reboot does not depend on the observer accepting this build.
+        rollout_timer_.start();
         wait_for_codex(launch, backend_socket, binary_hash);
+    }
+    void probe_rollout() {
+        const auto pid = codex_backend_.processId();
+        if (pid <= 0 || stopping_ || rollout_probing_ ||
+            (codex_observer_ && !codex_observer_->threadId().isEmpty()))
+            return;
+#ifdef Q_OS_MACOS
+        auto* probe = new QProcess(this);
+        rollout_probing_ = true;
+        connect(probe, &QProcess::finished, this, [this, probe] {
+            rollout_probing_ = false;
+            note_rollout(QString::fromUtf8(probe->readAllStandardOutput()));
+            probe->deleteLater();
+        });
+        connect(probe, &QProcess::errorOccurred, this, [this, probe](QProcess::ProcessError) {
+            rollout_probing_ = false;
+            probe->deleteLater();
+        });
+        probe->setStandardInputFile(QProcess::nullDevice());
+        probe->start(QStringLiteral("/usr/sbin/lsof"),
+                     {QStringLiteral("-p"), QString::number(pid), QStringLiteral("-Fn")});
+#else
+        QString listing;
+        const QDir descriptors(QStringLiteral("/proc/%1/fd").arg(pid));
+        for (const auto& entry : descriptors.entryInfoList(QDir::Files | QDir::System))
+            listing += QStringLiteral("n") + entry.symLinkTarget() + QLatin1Char('\n');
+        note_rollout(listing);
+#endif
+    }
+    void note_rollout(const QString& open_files) {
+        if (const auto thread = codex_thread_from_open_files(open_files)) {
+            note_conversation(QStringLiteral("codex"), *thread);
+            rollout_timer_.setInterval(60000); // found; keep following /new slowly
+        }
     }
     void wait_for_codex(const LaunchSpec& launch, const QString& backend_socket,
                         const QString& binary_hash) {
@@ -1306,6 +1363,8 @@ class SessionService final : public QObject {
     QTimer backend_wait_;
     QLocalSocket backend_probe_;
     QTimer attention_timer_;
+    QTimer rollout_timer_;
+    bool rollout_probing_{};
     posix::UniqueFd backend_guard_read_;
     posix::UniqueFd backend_guard_control_;
     bool pty_requested_{};

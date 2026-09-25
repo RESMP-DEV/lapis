@@ -15,6 +15,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
+#include <QLockFile>
 #include <QPointer>
 #include <QScopeGuard>
 #include <QTemporaryDir>
@@ -22,12 +23,14 @@
 #include <QUuid>
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 #if defined(Q_OS_UNIX)
@@ -891,6 +894,83 @@ QString screenText(const lapis::session::TerminalSnapshot& snapshot) {
             text += QLatin1Char('\n');
     }
     return text;
+}
+
+// The login helper (lapis_desktop --restore-agents) holds the workspace only while it restarts
+// agents: a window opened meanwhile waits for it; a second window, and a
+// helper finding a window open fails at once. A second window waits only for
+// the brief marker-publication grace period.
+void windowWaitsForTheRestoreHelper() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-lock-XXXXXX"));
+    require(directory.isValid(), "lock directory");
+    WorkspaceOptions options;
+    options.storagePath = QDir(QFileInfo(directory.path()).canonicalFilePath())
+                              .filePath(QStringLiteral("workspace.json"));
+    // The helper's lock and marker, as lapis_desktop --restore-agents keeps
+    // them. It owns the lock briefly before it can replace a previous marker,
+    // so start with that stale value and publish the helper's PID in the gap.
+    QLockFile helper(options.storagePath + QStringLiteral(".lock"));
+    require(helper.tryLock(0), "the helper holds the workspace");
+    QFile marker(options.storagePath + QStringLiteral(".restoring"));
+    require(marker.open(QIODevice::WriteOnly) && marker.write(QByteArrayLiteral("0")) > 0,
+            "the helper holds a stale marker before naming itself");
+    marker.close();
+    // A second helper must not wait even if the first helper already published.
+    require(marker.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                marker.write(QByteArray::number(QCoreApplication::applicationPid())) > 0,
+            "publish the first helper identity");
+    marker.close();
+    auto restoring = options;
+    restoring.restoreAgents = true;
+    restoring.restoreOnly = true;
+    QElapsedTimer helper_clock;
+    helper_clock.start();
+    Workspace duplicate_helper(WorkspaceMode::live, restoring);
+    require(!duplicate_helper.workspaceError().isEmpty() && helper_clock.elapsed() < 1000,
+            "a helper never waits for another helper");
+    require(marker.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                marker.write(QByteArrayLiteral("0")) > 0,
+            "restore the unpublished marker");
+    marker.close();
+    // The helper exits: its marker goes with its lock.
+    std::thread release([&helper, &options] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        QFile marker(options.storagePath + QStringLiteral(".restoring"));
+        require(marker.open(QIODevice::WriteOnly | QIODevice::Truncate),
+                "open the marker in the helper race");
+        require(marker.write(QByteArray::number(QCoreApplication::applicationPid())) > 0,
+                "the helper names itself after taking the lock");
+        marker.close();
+        std::this_thread::sleep_for(std::chrono::milliseconds(700));
+        QFile::remove(options.storagePath + QStringLiteral(".restoring"));
+        helper.unlock();
+    });
+    QElapsedTimer clock;
+    clock.start();
+    Workspace window(WorkspaceMode::live, options);
+    release.join();
+    require(window.workspaceError().isEmpty() && clock.elapsed() >= 700,
+            "a window waits for the login helper");
+    clock.restart();
+    Workspace second(WorkspaceMode::live, options);
+    require(!second.workspaceError().isEmpty() && clock.elapsed() < 3000,
+            "a second window waits only for marker publication");
+    Workspace late(WorkspaceMode::live, restoring);
+    require(!late.workspaceError().isEmpty(), "the helper leaves an open window's workspace alone");
+
+    WorkspaceOptions short_options;
+    short_options.storagePath = QDir(QFileInfo(directory.path()).canonicalFilePath())
+                                    .filePath(QStringLiteral("short.json"));
+    QLockFile short_helper(short_options.storagePath + QStringLiteral(".lock"));
+    require(short_helper.tryLock(0), "a short helper holds another workspace");
+    std::thread short_release([&short_helper] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        short_helper.unlock();
+    });
+    Workspace after_short_helper(WorkspaceMode::live, short_options);
+    short_release.join();
+    require(after_short_helper.workspaceError().isEmpty(),
+            "a window acquires a helper lock released without a marker");
 }
 
 struct UpdaterFixture {
@@ -2107,6 +2187,7 @@ int main(int argc, char** argv) {
         failedUpdaterStartClearsTheQueue();
         explicitLaunchesUseUpdaterPolicy();
         harnessesUpdateBeforeNewAgents();
+        windowWaitsForTheRestoreHelper();
         joinedViewStaysInSync();
         phoneSizeYieldsToTheDesktop();
         std::cout << "workspace categories, identity, persistence, status and closing passed\n";

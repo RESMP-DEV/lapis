@@ -8,13 +8,17 @@
 
 #include <QCommandLineParser>
 #include <QDebug>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QQmlEngine>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QThread>
+#include <algorithm>
 #include <exception>
+#include <set>
 
 namespace {
 void add_options(QCommandLineParser& parser) {
@@ -27,6 +31,12 @@ void add_options(QCommandLineParser& parser) {
     parser.addOption({QStringLiteral("claude"),
                       QStringLiteral("Use Claude Code hook attention (requires an explicit "
                                      "Claude executable)")});
+    parser.addOption({QStringLiteral("restore-agents"),
+                      QStringLiteral("Without a window, restart agents whose services are gone "
+                                     "(after a reboot), wait until they answer, and exit.")});
+    parser.addOption({QStringLiteral("registry"),
+                      QStringLiteral("Workspace registry for --restore-agents (tests)."),
+                      QStringLiteral("path")});
     parser.addOption({QStringLiteral("new-session"),
                       QStringLiteral("Explicitly start a new session on an unused endpoint")});
     parser.addOption({QStringLiteral("discover"),
@@ -177,6 +187,18 @@ bool valid_options(const QCommandLineParser& parser) {
     return true;
 }
 
+// --restore-agents: the login helper restarts agents and leaves the rest alone.
+void restore_only_options(const QCommandLineParser& parser,
+                          lapis::desktop::WorkspaceOptions& options) {
+    if (!parser.isSet(QStringLiteral("restore-agents")))
+        return;
+    options.restoreAgents = true;
+    options.restoreOnly = true;
+    options.updateHarnesses = false;
+    if (parser.isSet(QStringLiteral("registry")))
+        options.storagePath = parser.value(QStringLiteral("registry"));
+}
+
 lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& parser,
                                                    bool isolated) {
     lapis::desktop::WorkspaceOptions options;
@@ -214,7 +236,53 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
     options.updateHarnesses =
         !parser.isSet(QStringLiteral("no-harness-updates")) &&
         (options.restoreAgents || parser.isSet(QStringLiteral("new-session")));
+    restore_only_options(parser, options);
     return options;
+}
+
+// At login (a LaunchAgent) or by hand: restart agents whose services are gone,
+// resuming their conversations, wait until they answer, and exit. The
+// services keep running; a window reattaches to them when it opens.
+int restore_headless(lapis::desktop::Workspace& workspace) {
+    using lapis::desktop::SessionPreview;
+    if (!workspace.workspaceError().isEmpty()) {
+        // An open window holds the workspace and restores agents itself.
+        qInfo().noquote() << "lapis restore:" << workspace.workspaceError();
+        return 0;
+    }
+    std::vector<SessionPreview*> started;
+    for (const auto& value : workspace.sessions())
+        if (auto* item = qobject_cast<SessionPreview*>(value.value<QObject*>());
+            item && item->live())
+            started.push_back(item);
+    // A card reads disconnected until its connection begins on the event
+    // loop, so an agent has settled once it is ready, or failed after trying.
+    std::set<const SessionPreview*> tried;
+    const auto settled = [&tried](const SessionPreview* item) {
+        const auto& state = item->connectionState();
+        if (state == QStringLiteral("connecting"))
+            tried.insert(item);
+        return item->inputReady() || state == QStringLiteral("ended") ||
+               (tried.contains(item) && state == QStringLiteral("disconnected"));
+    };
+    QElapsedTimer clock;
+    clock.start();
+    const auto all_settled = [&] {
+        bool done = true;
+        for (const auto* item : started)
+            done = settled(item) && done; // visit every item to record attempts
+        return done;
+    };
+    while (clock.elapsed() < 90000 && !all_settled()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QThread::msleep(20);
+    }
+    for (const auto* item : started)
+        qInfo().noquote() << "lapis restore:" << item->title() << item->harnessId()
+                          << (item->inputReady() ? QStringLiteral("running")
+                                                 : item->connectionState());
+    qInfo().noquote() << "lapis restore:" << started.size() << "agents restarted";
+    return 0;
 }
 
 // Connect keyboard ownership and any requested capture to the window that
@@ -264,12 +332,20 @@ int main(int argc, char** argv) {
         qputenv("QT_MTL_NO_TRANSACTION", "1");
 #endif
     QCoreApplication::setAttribute(Qt::AA_MacDontSwapCtrlAndMeta);
-    QGuiApplication app(application_argc, argv);
-    QCoreApplication::setApplicationName(QStringLiteral("lapis"));
-    QCoreApplication::setOrganizationName(QStringLiteral("lapis"));
+    // The login helper shows nothing: no window and no Dock icon.
+    // Parse the same option definitions before creating the application so a
+    // child argument cannot select headless mode. process() below handles help
+    // and parse errors once the application name and translation context exist.
     QCommandLineParser parser;
     parser.setOptionsAfterPositionalArgumentsMode(QCommandLineParser::ParseAsPositionalArguments);
     add_options(parser);
+    const bool restore_only =
+        parser.parse(arguments) && parser.isSet(QStringLiteral("restore-agents"));
+    if (restore_only && !qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+    QGuiApplication app(application_argc, argv);
+    QCoreApplication::setApplicationName(QStringLiteral("lapis"));
+    QCoreApplication::setOrganizationName(QStringLiteral("lapis"));
     parser.process(arguments);
     if (!valid_options(parser) || !valid_connection_options(parser))
         return 2;
@@ -282,6 +358,8 @@ int main(int argc, char** argv) {
         const bool isolated = parser.isSet(QStringLiteral("ui-preview"));
         const auto options = workspace_options(parser, isolated);
         Workspace workspace(isolated ? WorkspaceMode::preview : WorkspaceMode::live, options);
+        if (restore_only)
+            return restore_headless(workspace);
         KeyMap keymap;
         keymap.load();
         workspace.setHarnessArguments(keymap.harnessArguments());

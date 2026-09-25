@@ -1,0 +1,63 @@
+{
+  "schema": "lapis.qa-receipt/1",
+  "recorded_at": "2026-09-24T18:45:00Z",
+  "scope": "Agents come back after the Mac restarts or loses power: a windowless login helper restarts agents whose services died, each resuming its conversation, without disturbing agents still running",
+  "source": {
+    "base": "e0e2f14 (feature/cli-updates)",
+    "branch": "feature/login-restore"
+  },
+  "hosts": {
+    "mac": "Apple Silicon, macOS 26.5.1",
+    "linux": "Linux ARM64, software-rendered GUI gate"
+  },
+  "tools": {
+    "codex": "codex-cli 0.156.1 (installed; not in the observer's qualified hashes, so its thread came from the rollout scan)",
+    "claude_code": "2.1.281",
+    "stand_ins": "tools/qa/fake_agent.py installed as grok, kimi, opencode and omp",
+    "models": "scripts/fake_models.py on 127.0.0.1:43110; no model usage"
+  },
+  "checks": [
+    {
+      "name": "power loss (scripts/check_restore.py, macOS)",
+      "result": "PASS on the final revision and on 8 earlier runs during development. The helper started 6 agents; Codex and Claude each held a conversation and then started another with /new and /clear, and the record followed (Codex through the service's rollout scan). After each of two SIGKILLs of all 21 workspace processes (sockets left behind) the helper restarted all 6, directly in 1.4 s and as a launchd job with the LaunchAgent's environment in 4.5 s. Codex and Claude came back in the conversation after /new and /clear, showed that exchange and answered a follow-up; conversation IDs were unchanged with one resume argument each; the stand-ins reported resuming the recorded conversation. Model context grew with each boot: Codex 3 -> 5 -> 7 input items, Claude 2 -> 5 -> 8 messages. A final helper run with everything alive restarted nothing and left service PIDs unchanged. No jobs, processes or folders remained."
+    },
+    {
+      "name": "Codex /new with an unqualified build (real Codex 0.156.1, fake model)",
+      "result": "Before the fix, the app-server held both rollouts open after /new and the record stayed on the earlier thread for 76 s of observation, so a reboot would have resumed the wrong conversation. After it, the record moved to the new thread within 54 s."
+    },
+    {
+      "name": "rollout chooser (lapis_agent_checkpoint_tests codex_threads_from_open_files)",
+      "result": "PASS on macOS and in the Linux gate with real files: a subagent written later is ignored, /new puts the new thread first while the previous stays listed, /resume moves back, missing files are skipped, other paths are not rollouts"
+    },
+    {
+      "name": "lock handoff (lapis_workspace_tests windowWaitsForTheRestoreHelper)",
+      "result": "PASS headless on macOS and in the Linux gate: a window waited for a helper holding the lock and marker, a second window failed in under 1 s, and a helper failed while a window held the workspace"
+    },
+    {
+      "name": "Linux full gate (scripts/lapis.py linux-gui)",
+      "result": "56 PASS, 0 FAIL on the final revision, including every clang-tidy analysis and the workspace tests"
+    },
+    {
+      "name": "shared quality (scripts/lapis.py quality)",
+      "result": "PASS on the final revision"
+    },
+    {
+      "name": "installed login helper (scripts/restore_at_login.py install, the user's Mac)",
+      "result": "Installed as dev.lapis.restore; its load-time run found the user's lapis window holding the workspace and exited without touching agents, as designed"
+    }
+  ],
+  "observations": [
+    "Codex 0.156.1's app-server keeps every loaded thread's rollout open, including the previous conversation after /new; subagent rollouts carry a {\"subagent\": ...} source and parent_thread_id in their session_meta first line (up to 49 KB in 500 local rollouts)",
+    "Codex 0.156.1 app-server --listen unix://<path> makes <path> a symlink into /private/tmp/codex-daemon-501; it is removed on a clean exit and left dangling by SIGKILL, which made the restarted service fail with 'Socket path cannot be a symlink' until the service removed dead links",
+    "QLockFile records the process name, not the Qt application name, so the helper identifies itself with a PID marker",
+    "QProcess::startDetached places services in a new session, outside the launchd job's process group"
+  ],
+  "limitations": [
+    "Not exercised across an actual reboot or at a real login; power loss was simulated with SIGKILL",
+    "The login helper runs only after the user logs in",
+    "The Linux /proc rollout scan is compiled and analyzed on the Linux test host but not run against a real Codex (none installed there)",
+    "The desktop's correction of records on services that predate the rollout scan is covered by the chooser test, not end to end",
+    "check_restore.py uses the phone gateway's wire client (apps/remote/lapis_remote.py, PR #13)",
+    "Codex agents on an unqualified Codex build resume correctly but lack observer turn status and requests"
+  ]
+}

@@ -1718,12 +1718,62 @@ version 1 without assuming observer provenance. Changing these contracts needs a
 still reattaches services started by the previous build. For Codex services
 started before resume records existed, the desktop recovers the thread every
 60 seconds: it finds the app-server by its exact `app-server --listen
-unix://<endpoint>.codex` command line and takes the earliest rollout it holds
-open (later ones are subagents); this was checked against real Codex 0.155.1
-with the fake model after deleting the record. Restart agent (Commands) applies
+unix://<endpoint>.codex` command line and reads the rollouts it holds open
+(the rule is under Restore at login below); this was checked against real
+Codex 0.155.1 with the fake model after deleting the record. Restart agent (Commands) applies
 the restore path to one ended or unreachable card and refuses while its service
 answers. Explicit Antigravity resumes use `agy --conversation`; its printed
 checkpoint does not authorize automatic resume.
+
+Restore at login and after power loss (September 24, requested because losing
+agents to a reboot is the user's main pain point). `lapis_desktop
+--restore-agents` runs the restore path without a window (offscreen Qt
+platform): it restarts only cards whose services are gone, waits up to 90
+seconds for each to accept input, and exits, leaving services it did not start
+for a window to reattach. `scripts/restore_at_login.py` installs it as the
+`dev.lapis.restore` LaunchAgent with the installing shell's PATH, locale, shell
+and explicitly set `CODEX_HOME`, `CLAUDE_CONFIG_DIR` and `LAPIS_HISTORY_ROOT`,
+since agents inherit the helper's environment. Other environment variables,
+including provider tokens, are not copied into the plist. Reinstall the helper
+after changing these directory overrides. The helper and a window share the registry
+lock. The helper writes its process ID to `<registry>.restoring` (owner-only)
+while it holds the lock, because QLockFile records the process name rather
+than the application name; a window finding that marker waits up to two
+minutes for the lock (longer than the helper's own limit). A window allows a
+bounded two-second grace period for a helper that has taken the lock but not
+yet published its marker, and acquires the lock if that helper exits meanwhile.
+A competing window fails after that grace period; a helper finding any holder
+fails immediately.
+
+Gaps found by simulated power loss are closed in the service. A Codex build
+the observer has not qualified reports no thread, so the service also reads
+the rollouts its app-server holds open (`lsof` on macOS, `/proc/<pid>/fd` on
+Linux) every 5 seconds until it finds one, then every minute, and records
+the conversation in use. Codex keeps every loaded thread's rollout open,
+including the previous conversation after `/new` or `/resume` (observed with
+Codex 0.156.1), so the rule is the main thread written last: subagent threads,
+whose rollout's first line has a `{"subagent": ...}` source and a parent
+thread, are left out. Unreadable, malformed and oversized headers are skipped. The desktop's minute
+check applies the same rule to services that predate the scan, replacing a
+saved thread only when it is still open and another main thread was written
+after it. Codex 0.156 listens through a symlink it removes only on a clean
+exit; a dead link at the service's own `.codex` path is removed, while one
+that still answers is refused.
+
+`scripts/check_restore.py` qualifies this end to end on macOS: real Codex and
+Claude Code against the fake model and fake stand-ins for Grok, Kimi, OpenCode
+and OMP, started by the helper. Codex and Claude each hold a conversation and
+then start another with `/new` and `/clear`. Two rounds of SIGKILL on every
+process, with stale sockets left behind, are each followed by the helper; the
+second runs as a launchd job with the LaunchAgent's minimal environment
+(launchd kills a job's process group when it exits; services leave it through
+`startDetached`'s new session). Codex and Claude must show their earlier exchange,
+accept a follow-up, and keep the verified identity with exactly one resume
+argument; the fake model must receive the growing conversation. The four
+OSC-only stand-ins must restart fresh without injecting their advisory IDs into
+argv. The probe uses the existing CLI test wire client and an ephemeral local
+model port, so it runs independently of the phone PR and other local listeners.
+A final helper run with everything alive must restart nothing.
 
 CLI updates (September 24, requested so agents never open on an update
 prompt). Before a new agent starts, the desktop runs that CLI's own

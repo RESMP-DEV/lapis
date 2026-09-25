@@ -4,6 +4,7 @@
 #include "platform/posix/local_endpoint.hpp"
 #include "platform/updater_process.hpp"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QFile>
 #include <QJsonArray>
@@ -19,8 +20,10 @@
 #include <QUuid>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <iterator>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 #include <QDir>
@@ -130,6 +133,8 @@ Workspace::~Workspace() {
         static_cast<UpdaterProcess*>(process.data())->stopGroup();
         process->deleteLater();
     }
+    if (restore_only_ && registry_lock_ && registry_lock_->isLocked())
+        QFile::remove(storage_path_ + QStringLiteral(".restoring"));
 }
 
 SessionPreview::SessionPreview(QString title, QString directory, QString activity, QColor accent,
@@ -166,6 +171,7 @@ QString Workspace::defaultEndpoint() {
 
 Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
     : restore_agents_(options.restoreAgents), update_harnesses_(options.updateHarnesses),
+      restore_only_(options.restoreOnly),
       update_timeout_ms_(std::max(qint64{1}, options.updateTimeoutMs)),
       preview_mode_(mode == WorkspaceMode::preview) {
     // Selecting an agent is looking at it.
@@ -927,23 +933,24 @@ QString resumeOption(const QString& harness) {
         return QStringLiteral("--conversation");
     return {};
 }
-// Services built before resume records keep none. A Codex agent's app-server,
-// found by the backend socket it listens on, still holds its rollout open.
-std::optional<QString> openCodexThread(const QString& endpoint) {
+// Services built before resume records keep none, and services built before
+// the rollout scan do not follow /new. A Codex agent's app-server, found by the
+// backend socket it listens on, still holds its threads' rollouts open.
+std::vector<QString> openCodexThreads(const QString& endpoint) {
     // Only platform-owned process tools may attest an observer identity.
     const auto lsof = QStandardPaths::findExecutable(
         QStringLiteral("lsof"), {QStringLiteral("/usr/sbin"), QStringLiteral("/usr/bin")});
     const auto ps = QStandardPaths::findExecutable(
         QStringLiteral("ps"), {QStringLiteral("/bin"), QStringLiteral("/usr/bin")});
     if (lsof.isEmpty() || ps.isEmpty())
-        return std::nullopt;
+        return {};
     // No backend socket means no app-server can still hold a rollout open.
     if (!QFileInfo::exists(endpoint + QStringLiteral(".codex")))
-        return std::nullopt;
+        return {};
     QProcess list;
     list.start(ps, {QStringLiteral("-axo"), QStringLiteral("pid=,command=")});
     if (!list.waitForFinished(3000))
-        return std::nullopt;
+        return {};
     const auto listen =
         QStringLiteral("app-server --listen unix://") + endpoint + QStringLiteral(".codex");
     QString pid;
@@ -951,17 +958,17 @@ std::optional<QString> openCodexThread(const QString& endpoint) {
         const auto row = line.trimmed();
         if (row.endsWith(listen) || row.contains(listen + QLatin1Char(' '))) {
             if (!pid.isEmpty())
-                return std::nullopt;
+                return {};
             pid = row.section(QLatin1Char(' '), 0, 0);
         }
     }
     if (pid.isEmpty())
-        return std::nullopt;
+        return {};
     QProcess files;
     files.start(lsof, {QStringLiteral("-p"), pid, QStringLiteral("-Fn")});
     if (!files.waitForFinished(5000))
-        return std::nullopt;
-    return session::codex_thread_from_open_files(QString::fromUtf8(files.readAllStandardOutput()));
+        return {};
+    return session::codex_threads_from_open_files(QString::fromUtf8(files.readAllStandardOutput()));
 }
 // Hooks report a conversation at session start, before anything is saved; a
 // conversation without a transcript cannot be resumed, so it starts fresh.
@@ -1008,10 +1015,7 @@ bool conversationSaved(const session::ResumeRecord& record) {
 void Workspace::recordConversations() {
     QStringList endpoints;
     for (const auto& agent : std::as_const(agents_)) {
-        if (agent.harness != QLatin1String("codex"))
-            continue;
-        const auto record = session::read_resume_record(agent.endpoint);
-        if (!record || record->source != session::ResumeSource::observer)
+        if (agent.harness == QLatin1String("codex"))
             endpoints.append(agent.endpoint);
     }
     if (endpoints.isEmpty() || probing_->exchange(true))
@@ -1020,14 +1024,25 @@ void Workspace::recordConversations() {
     // touches only files beside each endpoint.
     QThreadPool::globalInstance()->start([endpoints, busy = probing_] {
         const auto done = qScopeGuard([busy] { busy->store(false); });
-        for (const auto& endpoint : endpoints)
-            if (const auto thread = openCodexThread(endpoint))
-                try {
-                    session::write_resume_record(endpoint, {QStringLiteral("codex"), *thread,
-                                                            session::ResumeSource::observer});
-                } catch (const std::exception& error) {
-                    qWarning().noquote() << "Resume record not saved:" << error.what();
-                }
+        for (const auto& endpoint : endpoints) {
+            const auto open = openCodexThreads(endpoint);
+            if (open.empty())
+                continue;
+            // A saved thread still loaded but no longer written last was left
+            // by /new or /resume. One not loaded may be a thread the service
+            // recorded before Codex wrote its rollout, so it stays.
+            const auto saved = session::read_resume_record(endpoint);
+            if (saved && saved->source == session::ResumeSource::observer &&
+                (saved->session_id == open.front() ||
+                 std::find(open.begin(), open.end(), saved->session_id) == open.end()))
+                continue;
+            try {
+                session::write_resume_record(endpoint, {QStringLiteral("codex"), open.front(),
+                                                        session::ResumeSource::observer});
+            } catch (const std::exception& error) {
+                qWarning().noquote() << "Resume record not saved:" << error.what();
+            }
+        }
     });
 }
 // Restart an ended or unreachable agent in its card, resuming its conversation.
@@ -1245,6 +1260,55 @@ void Workspace::loadAgents(const QJsonArray& agents) {
     agents_ = std::move(metadata);
     sessions_ = std::move(restored);
 }
+void Workspace::lockRegistry() {
+    registry_lock_ = std::make_unique<QLockFile>(storage_path_ + QStringLiteral(".lock"));
+    // This lock lasts for the window lifetime; elapsed time cannot steal it.
+    registry_lock_->setStaleLockTime(0);
+    QFile marker(storage_path_ + QStringLiteral(".restoring"));
+    if (!registry_lock_->tryLock(0)) {
+        // The login helper holds the workspace only while it restarts agents
+        // and names itself in a marker holding its process ID; a window opened
+        // meanwhile waits for it. The helper takes the lock before writing the
+        // marker, so briefly re-read around that gap; a stale marker from the
+        // previous helper is replaced by the new process ID there.
+        const auto marker_pid = [&marker] {
+            qint64 pid{};
+            if (marker.open(QIODevice::ReadOnly)) {
+                pid = marker.read(32).trimmed().toLongLong();
+                marker.close();
+            }
+            return pid;
+        };
+        if (restore_only_)
+            throw std::runtime_error("This workspace is already open in another lapis window");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        bool acquired = false;
+        for (;;) {
+            // A short-lived helper can exit without ever publishing its marker.
+            // Taking the now-free lock is sufficient evidence to continue.
+            if (registry_lock_->tryLock(0)) {
+                acquired = true;
+                break;
+            }
+            qint64 holder{};
+            QString host;
+            QString name;
+            const bool helper =
+                registry_lock_->getLockInfo(&holder, &host, &name) && marker_pid() == holder;
+            if (helper)
+                break;
+            if (std::chrono::steady_clock::now() >= deadline)
+                throw std::runtime_error("This workspace is already open in another lapis window");
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        if (!acquired && !registry_lock_->tryLock(120000))
+            throw std::runtime_error("This workspace is already open in another lapis window");
+    }
+    if (restore_only_ && marker.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        marker.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
+        marker.write(QByteArray::number(QCoreApplication::applicationPid()));
+    }
+}
 void Workspace::restore() {
     try {
         // The endpoint helper validates private ownership and every ancestor.
@@ -1253,11 +1317,7 @@ void Workspace::restore() {
                                                  .filePath(QStringLiteral("registry-check.sock")));
         storage_path_ =
             QDir(QFileInfo(validated).absolutePath()).filePath(QFileInfo(storage_path_).fileName());
-        registry_lock_ = std::make_unique<QLockFile>(storage_path_ + QStringLiteral(".lock"));
-        // This lock lasts for the window lifetime; elapsed time cannot steal it.
-        registry_lock_->setStaleLockTime(0);
-        if (!registry_lock_->tryLock(0))
-            throw std::runtime_error("This workspace is already open in another lapis window");
+        lockRegistry();
         if (QFileInfo(storage_path_).isSymLink())
             throw std::runtime_error("Workspace registry cannot be a symlink");
         QFile file(storage_path_);
@@ -1301,12 +1361,14 @@ void Workspace::restore() {
                     restarted = true;
                     continue;
                 }
+            if (restore_only_)
+                continue; // running services are the window's to reattach
             item->startLive(agent.endpoint, agent.launch, session::wire::AttachMode::reconnect);
         }
         // Restarted agents have new launch arguments, part of their fingerprint.
         if (restarted && !save())
             throw std::runtime_error(error_.toStdString());
-        if (restore_agents_) {
+        if (restore_agents_ && !restore_only_) {
             conversation_timer_.setInterval(60000);
             connect(&conversation_timer_, &QTimer::timeout, this, &Workspace::recordConversations);
             conversation_timer_.start();
