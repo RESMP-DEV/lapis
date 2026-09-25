@@ -11,6 +11,7 @@ final class FolderCatalog: Sendable {
     // The CLIs found on another machine, by harness id; nil for this Mac.
     let harnesses: [String: String]?
     let paths: [String]
+    private let known: Set<String>
     private let lowered: [[UInt8]]
     private let nameStart: [Int]
     private let boost: [Int]
@@ -23,6 +24,7 @@ final class FolderCatalog: Sendable {
         harnesses = payload.harnesses
         let paths = payload.folders ?? []
         self.paths = paths
+        known = Set(paths)
         lowered = paths.map { Array($0.lowercased().utf8) }
         nameStart = paths.map { path in
             path.lastIndex(of: "/").map { path.utf8.distance(from: path.startIndex, to: $0) + 1 } ?? 0
@@ -52,6 +54,9 @@ final class FolderCatalog: Sendable {
     func children(of folder: String) -> [String] { children[folder] ?? [] }
 
     func hasChildren(_ folder: String) -> Bool { children[folder] != nil }
+
+    // Whether the machine has this folder ("" is home).
+    func contains(_ folder: String) -> Bool { folder.isEmpty || known.contains(folder) }
 
     // Folders matching the letters of `query` in order: every match (to
     // narrow the next, longer query) and the best `limit`, best first. Matches

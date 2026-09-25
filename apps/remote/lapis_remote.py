@@ -1374,6 +1374,10 @@ class Handler(BaseHTTPRequestHandler):
             self.input(parts[2])
         elif parts == ["api", "agents"]:
             self.start_agent()
+        elif agent_route(parts, "close"):
+            self.close_agent(parts[2])
+        elif parts == ["api", "categories"]:
+            self.create_category()
         elif parts == ["api", "captures"]:
             self.capture()
         else:
@@ -1547,6 +1551,53 @@ class Handler(BaseHTTPRequestHandler):
                     "updating": bool(answer.get("updating")),
                 },
             )
+
+    def read_object(self):
+        """The request's JSON object, or None after replying why not."""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = -1
+        if not 0 < length <= MAX_REQUEST:
+            self.fail(HTTPStatus.BAD_REQUEST, "Invalid request size")
+            return None
+        try:
+            body = json.loads(self.rfile.read(length))
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            self.fail(HTTPStatus.BAD_REQUEST, "The request must be an object")
+            return None
+        return body
+
+    def create_category(self):
+        """A new category on the Mac; the Mac's window stays where it is."""
+        body = self.read_object()
+        if body is None:
+            return
+        name = body.get("name")
+        if not isinstance(name, str) or not 0 < len(name.strip()) <= 80:
+            self.fail(HTTPStatus.BAD_REQUEST, "Use a category name of 1-80 characters")
+            return
+        answer = self.ask_desktop({"request": "createCategory", "name": name.strip()})
+        if answer is not None:
+            self.reply(HTTPStatus.OK, {"id": str(answer.get("id", ""))})
+
+    def close_agent(self, identifier):
+        """Ends the agent, as Command-W does on the Mac."""
+        # Any body is read, so the kept-alive connection stays in step.
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+        except ValueError:
+            length = -1
+        if not 0 <= length <= MAX_REQUEST:
+            self.fail(HTTPStatus.BAD_REQUEST, "Invalid request size")
+            return
+        self.rfile.read(length)
+        answer = self.ask_desktop({"request": "closeAgent", "id": identifier})
+        if answer is not None:
+            self.gateway.supersede(identifier)
+            self.reply(HTTPStatus.OK, {"ok": True})
 
     def event(self, name, body):
         data = json.dumps(body, separators=(",", ":"))

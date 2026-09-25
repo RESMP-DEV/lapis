@@ -132,7 +132,8 @@ Tab or Return completes the selected folder. The browse button opens the native
 folder picker. Chips under the folder choose a model, from the models the CLI
 itself lists for your account (its default first; Kimi, OpenCode and OMP from
 their config, recent models and roles), and one of three approval modes:
-Accept edits, Auto or Full access, each passed as that CLI's own flag. The mode
+Accept edits, Auto or Full access (the first time, Full access, or
+`newAgent.mode`), each passed as that CLI's own flag. The mode
 stays when the CLI changes; a CLI without it (OMP, OpenCode and Antigravity
 have no Auto, Kimi and OpenCode no Accept edits) uses its nearest, less access
 first. The next agent starts with the same CLI, mode and model. Everything else
@@ -328,13 +329,17 @@ takes it from the desktop (its card offers **Reconnect agent**), and the phone
 says so. Restarting such an agent gives it a service that can. The Mac must be
 awake.
 
-**+** on a category (or in the toolbar) starts an agent from the phone: pick the
+The **+** at the top offers a new agent or a new category (added on the Mac
+without moving its window). Swiping an agent left offers **Close**, and a full
+swipe closes it, as Command-W does on the Mac. A new agent from the phone: pick the
 machine (this Mac, or an ssh host from your ssh config and shell history,
 reachable and most used first), the CLI, the category, a folder (starting at
 that machine's `newAgent` folder), a model and an approval mode, and it opens
 as a new tab in that category in lapis on the Mac, then on the phone once it
 runs. Another machine keeps the chosen CLI when it has it, and the mode and
-each CLI's model are remembered. The folder opens its own screen: the ten
+each CLI's model are remembered. The folder starts at `newAgent.folder` (the
+machine's own in `machines`, else the one for every machine) when that machine
+has it, and opens its own screen: that preset, pinned and marked, then the ten
 folders where you have started the most Codex, Claude Code and lapis agents,
 most first, then the machine's folders to browse (visible ones
 alphabetically, hidden ones last), or a search by a few of their letters;

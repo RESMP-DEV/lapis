@@ -18,6 +18,8 @@ struct NewAgentView: View {
     @State private var folder = ""
     @State private var progress: String?
     @State private var failure: String?
+    @State private var naming = false
+    @State private var categoryName = ""
     // The mode across CLIs, and each CLI's model: {"claude": "claude-fable-5-1"}.
     @AppStorage("newAgent.mode") private var storedMode = ""
     @AppStorage("newAgent.models") private var storedModels = "{}"
@@ -75,6 +77,9 @@ struct NewAgentView: View {
                     .background(Theme.background)
             }
             .background(Theme.background.ignoresSafeArea())
+            .alert("New category", isPresented: $naming) {
+                NewCategoryFields(name: $categoryName) { id in category = id }
+            }
             .navigationTitle("New agent")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.background, for: .navigationBar)
@@ -253,12 +258,17 @@ struct NewAgentView: View {
         }
     }
 
+    // The Mac's categories, and one made here.
     private var categoryChips: some View {
         FlowLayout(spacing: 8) {
-            ForEach(categories) { item in
+            ForEach(model.listing?.categories ?? categories) { item in
                 chip(item.name, chosen: item.id == category, id: "category-\(item.name)") {
                     category = item.id
                 }
+            }
+            chip("New category", chosen: false, id: "newCategory") {
+                categoryName = ""
+                naming = true
             }
         }
     }
@@ -266,7 +276,7 @@ struct NewAgentView: View {
     // The folder on its own screen: search, the most used, or browse.
     private var folderRow: some View {
         NavigationLink {
-            FolderPicker(folder: $folder, machine: machine)
+            FolderPicker(folder: $folder, machine: machine, preset: presetFolder)
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "folder")
@@ -344,11 +354,11 @@ struct NewAgentView: View {
         return models.first { $0.id == remembered } ?? models.first(where: \.isDefault) ?? models.first
     }
 
-    // The mode last chosen, else lapis.json's, else Accept edits; a CLI
+    // The mode last chosen, else lapis.json's, else Full access; a CLI
     // without it uses its nearest, less access first.
     private func effectiveMode(_ chosen: Harness) -> String {
         let order = Self.modes.map(\.id)
-        let preferred = !storedMode.isEmpty ? storedMode : model.defaults?.mode ?? "edits"
+        let preferred = !storedMode.isEmpty ? storedMode : model.defaults?.mode ?? "full"
         let at = order.firstIndex(of: preferred) ?? 0
         let offered = Set((chosen.modes ?? []).map(\.id))
         for index in [at, at - 1, at - 2, at + 1, at + 2] where order.indices.contains(index) {
@@ -367,18 +377,21 @@ struct NewAgentView: View {
         }
     }
 
-    // The machine's folder from lapis.json's newAgent defaults, else where the
-    // most agents were started there, else home.
+    // lapis.json's preset folder: the machine's own, else the one for every
+    // machine ("~/dev"), when that machine has it.
+    private var presetFolder: String? {
+        let configured = model.defaults?.machines?[machine] ?? model.defaults?.folder
+        guard let configured, !configured.isEmpty else { return nil }
+        let path = configured == "~" ? "" : configured.hasPrefix("~/")
+            ? String(configured.dropFirst(2)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            : configured
+        if let catalog, !catalog.contains(path) { return nil }
+        return path
+    }
+
+    // The preset folder, else where the most agents were started there, else home.
     private var startingFolder: String {
-        let configured = machine.isEmpty ? model.defaults?.folder : model.defaults?.machines?[machine]
-        if let configured, !configured.isEmpty {
-            if configured == "~" { return "" }
-            if configured.hasPrefix("~/") {
-                return String(configured.dropFirst(2)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            }
-            return configured
-        }
-        return catalog?.frequent.first?.path ?? ""
+        presetFolder ?? catalog?.frequent.first?.path ?? ""
     }
 
     // Keeps the chosen CLI while it is offered (or while the machine's CLIs
@@ -456,15 +469,17 @@ struct FolderPicker: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var folder: String
     let machine: String
+    let preset: String?
     @State private var browsing: String
     @State private var query = ""
     @State private var results: [String] = []
     // The last query's matches in one catalog version, to narrow the next.
     @State private var narrowing: (version: String, query: String, all: [Int])?
 
-    init(folder: Binding<String>, machine: String) {
+    init(folder: Binding<String>, machine: String, preset: String?) {
         _folder = folder
         self.machine = machine
+        self.preset = preset
         _browsing = State(initialValue: folder.wrappedValue)
     }
 
@@ -475,6 +490,7 @@ struct FolderPicker: View {
             VStack(alignment: .leading, spacing: 8) {
                 searchField
                 if query.isEmpty {
+                    presetRow
                     frequentFolders
                     browser
                 } else {
@@ -546,10 +562,45 @@ struct FolderPicker: View {
         }
     }
 
+    // lapis.json's folder for this machine, first and marked.
+    @ViewBuilder private var presetRow: some View {
+        if let preset {
+            let chosen = preset == folder
+            Button {
+                choose(preset)
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.accent)
+                    Text(place(preset, on: machine))
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    Spacer(minLength: 4)
+                    Text("Preset")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Theme.accent)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background {
+                    Chamfered(cut: 7).fill(Theme.accent.opacity(chosen ? 0.22 : 0.1))
+                    Chamfered(cut: 7).stroke(Theme.accent.opacity(chosen ? 0.9 : 0.35), lineWidth: 1)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("presetFolder")
+            .accessibilityAddTraits(chosen ? .isSelected : [])
+        }
+    }
+
     // Where agents were started most, most first, marked out above browsing.
     @ViewBuilder private var frequentFolders: some View {
         if let frequent = catalog?.frequent, !frequent.isEmpty {
-            ForEach(frequent.prefix(10), id: \.path) { item in
+            ForEach(frequent.filter { $0.path != preset }.prefix(10), id: \.path) { item in
                 let chosen = item.path == folder
                 Button {
                     choose(item.path)

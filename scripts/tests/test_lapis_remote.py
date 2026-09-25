@@ -459,6 +459,40 @@ class StartAgentTests(unittest.TestCase):
                 {"machine": "devbox", "model": "gpt-6-sol", "mode": "full"},
             )
 
+    def test_categories_and_closing_go_through_the_mac(self):
+        def answer(request):
+            if request["request"] == "createCategory":
+                return {"ok": True, "id": "cat-1"}
+            if request["request"] == "closeAgent" and request["id"] == "gone":
+                return {"ok": False, "error": "No such agent"}
+            return {"ok": True}
+
+        with (
+            Server(self, "{}") as server,
+            FakeDesktop(server.directory, answer) as desktop,
+        ):
+            status, made = server.request(
+                "POST", "/api/categories", {"name": " Later "}
+            )
+            self.assertEqual((status, made), (200, {"id": "cat-1"}))
+            self.assertEqual(
+                desktop.requests[-1],
+                {"version": 1, "request": "createCategory", "name": "Later"},
+            )
+            asked = len(desktop.requests)
+            for body in ({"name": ""}, {"name": "x" * 81}, {"name": 3}, ["x"]):
+                status, _ = server.request("POST", "/api/categories", body)
+                self.assertEqual(status, 400, body)
+            self.assertEqual(len(desktop.requests), asked, "bad names reach nothing")
+            status, closed = server.request("POST", "/api/agents/a1/close", {})
+            self.assertEqual((status, closed), (200, {"ok": True}))
+            self.assertEqual(
+                desktop.requests[-1],
+                {"version": 1, "request": "closeAgent", "id": "a1"},
+            )
+            status, refused = server.request("POST", "/api/agents/gone/close", {})
+            self.assertEqual((status, refused), (422, {"error": "No such agent"}))
+
     def test_without_lapis_on_the_mac(self):
         with Server(self, "{}") as server:
             status, reply = server.request(

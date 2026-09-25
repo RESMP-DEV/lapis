@@ -199,6 +199,34 @@ extension WorkspaceModel {
     }
 }
 
+extension WorkspaceModel {
+    // A new category on the Mac, listed at once.
+    func createCategory(named name: String) async throws -> String {
+        guard let gateway else { throw GatewayError.invalidHost }
+        let id = try await gateway.createCategory(named: name)
+        await refresh()
+        return id
+    }
+
+    // Ends the agent on the Mac; it leaves the list at once.
+    func close(_ agent: Agent) async {
+        guard let gateway else { return }
+        if let current = listing {
+            listing = WorkspaceListing(
+                categories: current.categories.map {
+                    AgentCategory(id: $0.id, name: $0.name, agents: $0.agents.filter { $0.id != agent.id })
+                },
+                activeCategory: current.activeCategory)
+        }
+        do {
+            try await gateway.close(agent: agent.id)
+        } catch {
+            self.error = describe(error)
+        }
+        await refresh()
+    }
+}
+
 func describe(_ error: Error) -> String {
     if let failure = error as? URLError {
         switch failure.code {

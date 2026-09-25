@@ -572,19 +572,26 @@ bool Workspace::commit(const RegistryState& previous) {
     emit errorChanged();
     return false;
 }
-bool Workspace::addCategory(const QString& name) {
+bool Workspace::addCategory(const QString& name) { return !insertCategory(name, true).isEmpty(); }
+
+// From the phone: the category is added without moving the window to it.
+QString Workspace::createCategory(const QString& name) { return insertCategory(name, false); }
+
+QString Workspace::insertCategory(const QString& name, bool select) {
     if (!mutableRegistry())
-        return false;
+        return {};
     if (!validName(name) || categories_.size() >= 32)
-        return fail(QStringLiteral(
+        return failed(QStringLiteral(
             "Use a category name of 1–80 characters; at most 32 categories are supported."));
     const auto previous = checkpoint();
     categories_.push_back({newId(), name.trimmed(), {}});
-    active_category_ = categories_.back().id;
+    auto id = categories_.back().id;
+    if (select)
+        active_category_ = id;
     if (!commit(previous))
-        return false;
+        return {};
     changed();
-    return true;
+    return id;
 }
 // QML positional API v1 requires QString arguments; role names and boundary validation are
 // explicit. NOLINTNEXTLINE(bugprone-easily-swappable-parameters)

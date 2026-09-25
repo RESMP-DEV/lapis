@@ -27,6 +27,12 @@ final class LapisUITests: XCTestCase {
         XCTAssertEqual(result, .completed, "screen never showed \(text); it showed: \(element.value ?? "")")
     }
 
+    private func waitForGone(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+                                                    object: element)
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
     private func openAgent(_ title: String) -> XCUIElement {
         let row = app.buttons["agent-\(title)"]
         XCTAssertTrue(row.waitForExistence(timeout: 30), "agent \(title) is listed")
@@ -187,13 +193,17 @@ final class LapisUITests: XCTestCase {
     func testStartAnAgentFromThePhone() throws {
         let folder = ProcessInfo.processInfo.environment["LAPIS_NEW_AGENT_FOLDER"] ?? ""
         try XCTSkipIf(folder.isEmpty, "the check provides a folder and the Mac's lapis")
-        let plus = app.buttons["newAgent-Later"]
-        XCTAssertTrue(plus.waitForExistence(timeout: 30), "each category offers a new agent")
-        plus.tap()
+        let add = app.buttons["add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 30), "one plus")
+        XCTAssertFalse(app.buttons["newAgent-Later"].exists, "and none beside each category")
+        add.tap()
+        app.buttons["New agent"].tap()
         let grok = app.buttons["harness-grok"]
         XCTAssertTrue(grok.waitForExistence(timeout: 15), "the Mac's CLIs are offered")
         grok.tap()
+        app.buttons["category-Later"].tap()
         XCTAssertTrue(app.buttons["category-Later"].isSelected, "the tapped category is chosen")
+        XCTAssertTrue(app.buttons["mode-full"].isSelected || app.buttons["mode-edits"].isSelected)
         let edits = app.buttons["mode-edits"]
         XCTAssertTrue(edits.waitForExistence(timeout: 5), "the CLI's approval modes are offered")
         XCTAssertTrue(app.buttons["mode-auto"].exists && app.buttons["mode-full"].exists,
@@ -217,6 +227,25 @@ final class LapisUITests: XCTestCase {
         submit("started from the phone")
         waitFor(terminal, valueContaining: "echo: started from the phone")
         snap("10-new-agent-open")
+        // Back in the list, it swipes away like a notification, and the Mac
+        // closes it.
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let card = app.buttons["agent-phone-project"]
+        XCTAssertTrue(card.waitForExistence(timeout: 15))
+        card.swipeLeft()
+        let close = app.buttons["Close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "swiping offers Close")
+        close.tap()
+        XCTAssertTrue(waitForGone(card, timeout: 20), "the closed agent leaves the list")
+        // A category from the phone.
+        app.buttons["add"].tap()
+        app.buttons["New category"].tap()
+        let name = app.alerts.textFields.firstMatch
+        XCTAssertTrue(name.waitForExistence(timeout: 5), "the new category asks for a name")
+        name.typeText("Ideas")
+        app.alerts.buttons["Create"].tap()
+        XCTAssertTrue(app.staticTexts["category-Ideas"].waitForExistence(timeout: 20),
+                      "the new category is listed")
     }
 
     // Folders come from the Mac's index: the most used ones first and marked,
@@ -226,10 +255,11 @@ final class LapisUITests: XCTestCase {
     func testFoldersAndMachines() throws {
         try XCTSkipIf(ProcessInfo.processInfo.environment["LAPIS_FOLDER_FIXTURE"] == nil,
                       "the check provides a folder fixture")
-        let plus = app.buttons["newAgent"]
-        XCTAssertTrue(plus.waitForExistence(timeout: 30))
+        let add = app.buttons["add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 30))
         XCTAssertTrue(app.buttons["agent-echo agent"].waitForExistence(timeout: 30))
-        plus.tap()
+        add.tap()
+        app.buttons["New agent"].tap()
         let beta = app.buttons["machine-beta"]
         let alpha = app.buttons["machine-alpha"]
         XCTAssertTrue(beta.waitForExistence(timeout: 10) && alpha.exists, "ssh machines are offered")
@@ -247,9 +277,11 @@ final class LapisUITests: XCTestCase {
         let folderRow = app.buttons["folderRow"]
         XCTAssertTrue(folderRow.waitForExistence(timeout: 20))
         folderRow.tap()
+        let preset = app.buttons["presetFolder"]
+        XCTAssertTrue(preset.waitForExistence(timeout: 20), "the config's preset folder is offered")
+        XCTAssertTrue(preset.isSelected && preset.label.contains("~/dev"), "and chosen to start with")
         let frequent = app.buttons["frequent-b"]
-        XCTAssertTrue(frequent.waitForExistence(timeout: 20), "the most used folder is offered")
-        XCTAssertTrue(frequent.isSelected, "and chosen to start with")
+        XCTAssertTrue(frequent.waitForExistence(timeout: 20), "the most used folders follow")
         XCTAssertTrue(app.buttons["frequent-dev/lapis"].exists)
         XCTAssertLessThan(frequent.frame.minY, app.buttons["frequent-dev/lapis"].frame.minY,
                           "more agents started there, higher in the list")

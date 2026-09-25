@@ -547,12 +547,18 @@ def main():
         (bin_dir / "grok").chmod(0o755)
         new_folder = runtime / "phone-project"
         new_folder.mkdir()
+        # A preset folder for every machine, as the person's config may set.
+        (runtime / "lapis.json").write_text(
+            json.dumps({"version": 1, "newAgent": {"folder": "~/dev"}}) + "\n"
+        )
         run.start(
             "host",
             [str(DESKTOP), "--serve", "--registry", str(registry)],
             {
                 "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
                 "LAPIS_HISTORY_ROOT": str(runtime / "history"),
+                # Its own config: never the person's lapis.json.
+                "LAPIS_CONFIG": str(runtime / "lapis.json"),
             },
         )
         deadline = time.monotonic() + 20
@@ -670,6 +676,31 @@ def main():
         ]
         if args.only:
             command += ["-only-testing", f"LapisUITests/LapisUITests/{args.only}"]
+
+        # The agent the phone starts is closed from the phone later in the same
+        # test, so its launch is caught while it exists.
+        def phone_agents():
+            return [
+                item
+                for item in lapis_remote.load_workspace(registry)["agents"]
+                if item["category"] == "later"
+                and item["harness"] == "grok"
+                and Path(item["directory"]).resolve() == new_folder
+            ]
+
+        launched = []
+        watching = threading.Event()
+
+        def watch():
+            while not watching.is_set():
+                try:
+                    launched.extend(item["arguments"] for item in phone_agents())
+                except (OSError, ValueError, KeyError, lapis_remote.GatewayError):
+                    pass
+                watching.wait(0.3)
+
+        watcher = threading.Thread(target=watch, daemon=True)
+        watcher.start()
         with (BUILD / "test.log").open("wb") as log:
             outcome = subprocess.run(
                 command,
@@ -677,6 +708,8 @@ def main():
                 stdout=log,
                 stderr=log,
             )
+        watching.set()
+        watcher.join()
         screens = BUILD / "screens" / stamp
         screens.mkdir(parents=True, exist_ok=True)
         subprocess.run(
@@ -711,16 +744,20 @@ def main():
         if (not args.only or args.only == "testSendScreenToMac") and not captures:
             return 1
         if not args.only or args.only == "testStartAnAgentFromThePhone":
-            started = [
-                item
-                for item in lapis_remote.load_workspace(registry)["agents"]
-                if item["category"] == "later"
-                and item["harness"] == "grok"
-                and Path(item["directory"]).resolve() == new_folder
-                and item["arguments"][-2:] == ["--permission-mode", "acceptEdits"]
-            ]
-            print(f"Mac: the phone started an agent in Later: {bool(started)}")
-            if not started:
+            started = any(
+                arguments[-2:] == ["--permission-mode", "acceptEdits"]
+                for arguments in launched
+            )
+            closed = not phone_agents()
+            made = any(
+                category["name"] == "Ideas"
+                for category in lapis_remote.load_workspace(registry)["categories"]
+            )
+            print(
+                f"Mac: the phone started an agent in Later: {started}, closed it: "
+                f"{closed}, made a category: {made}"
+            )
+            if not (started and closed and made):
                 return 1
         return outcome.returncode
     finally:

@@ -497,7 +497,7 @@ ApplicationWindow {
                        defaults.folder
         agentDirectoryField.text = (folder.length > 0 ? folder.replace(/\/+$/, "") : workspace.homeDirectory) + "/"
         agentDialog.preferredMode = window.lastMode.length > 0 ? window.lastMode :
-                                    defaults.mode && defaults.mode.length > 0 ? defaults.mode : "edits"
+                                    defaults.mode && defaults.mode.length > 0 ? defaults.mode : "full"
         openFresh(agentDialog)
     }
     // Command-W: close the focused agent. A running agent is confirmed first,
@@ -1151,7 +1151,7 @@ ApplicationWindow {
         // stays across CLIs; a CLI without it uses its nearest, less access
         // first, and the preference returns on a CLI that has it.
         property string selectedModel: ""
-        property string preferredMode: "edits"
+        property string preferredMode: "full"
         readonly property var selectedItem: harnesses.find(h => h.id === selectedHarness)
         readonly property string harnessName: selectedItem ? selectedItem.name : selectedHarness
         readonly property var modelChoices: selectedItem && selectedItem.models ? selectedItem.models : []

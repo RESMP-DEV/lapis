@@ -89,6 +89,22 @@ QByteArray WorkspaceControl::answer(const QByteArray& line) {
                        QJsonObject::fromVariantMap(workspace_.agentDefaults())}});
     if (kind == QStringLiteral("createAgent"))
         return create(request);
+    if (kind == QStringLiteral("createCategory")) {
+        const auto name = request.value(QStringLiteral("name"));
+        if (!name.isString())
+            return refusal(QStringLiteral("Missing name"));
+        const auto id = workspace_.createCategory(name.toString());
+        return id.isEmpty() ? refusal(workspace_.workspaceError())
+                            : reply({{QStringLiteral("ok"), true}, {QStringLiteral("id"), id}});
+    }
+    // Ends the agent, as Command-W on the Mac does after it asks.
+    if (kind == QStringLiteral("closeAgent")) {
+        const auto id = request.value(QStringLiteral("id")).toString();
+        if (workspace_.session(id) == nullptr)
+            return refusal(QStringLiteral("No such agent"));
+        return workspace_.closeSession(id, false) ? reply({{QStringLiteral("ok"), true}})
+                                                  : refusal(workspace_.workspaceError());
+    }
     if (kind == QStringLiteral("handover")) {
         if (!host_)
             return refusal(QStringLiteral("A lapis window keeps this workspace"));

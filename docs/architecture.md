@@ -1962,7 +1962,13 @@ A prototype, deliberately simpler than the SSH design first proposed:
   configured roles, then the models its 40 newest sessions switched to (OMP
   lists 940 and OpenCode 593, so what was used ranks them); at most eight,
   the default first and started without the flag. `newAgent.models` still
-  replaces a CLI's list, and `newAgent.mode` sets the first mode. The phone
+  replaces a CLI's list, and `newAgent.mode` sets the first mode, Full access
+  when unset (asked the same day). `newAgent.folder` is the preset folder on
+  every machine unless `machines` names one, preselected when the machine's
+  index has it. The phone's list has one **+** (a new agent or a new
+  category; `createCategory` on the control socket adds it without moving
+  the window) and closes an agent with a swipe (`closeAgent`, as Command-W).
+  `LAPIS_CONFIG` points a check's lapis at its own config. The phone
   shows the CLIs as large cards two and a half across, the models wrapped,
   the modes as three buttons, and the folder on its own screen (search, the
   ten most used without counts, browsing).

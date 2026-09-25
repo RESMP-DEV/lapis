@@ -295,6 +295,26 @@ struct Gateway {
         return try JSONDecoder().decode(StartedAgent.self, from: data)
     }
 
+    // A new category on the Mac; its id.
+    func createCategory(named name: String) async throws -> String {
+        struct Made: Decodable { let id: String }
+        var request = request("api/categories")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["name": name])
+        let (data, response) = try await Gateway.requests.data(for: request)
+        try Gateway.check(response, data)
+        return try JSONDecoder().decode(Made.self, from: data).id
+    }
+
+    // Ends the agent on the Mac, as Command-W does there.
+    func close(agent: String) async throws {
+        var request = request("api/agents/\(agent)/close")
+        request.httpMethod = "POST"
+        let (data, response) = try await Gateway.requests.data(for: request)
+        try Gateway.check(response, data)
+    }
+
     func machines() async throws -> [Machine] {
         struct Listing: Decodable { let machines: [Machine] }
         let (data, response) = try await Gateway.requests.data(for: request("api/machines"))

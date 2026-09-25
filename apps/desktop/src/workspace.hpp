@@ -291,6 +291,8 @@ class Workspace final : public QObject {
     [[nodiscard]] const QString& workspaceError() const { return error_; }
     Q_INVOKABLE void clearError();
     Q_INVOKABLE bool addCategory(const QString& name);
+    // A new category's id, or empty with the reason in workspaceError.
+    QString createCategory(const QString& name);
     Q_INVOKABLE bool renameCategory(const QString& id, const QString& name);
     Q_INVOKABLE bool removeCategory(const QString& id);
     Q_INVOKABLE bool selectCategory(const QString& id);
@@ -394,6 +396,7 @@ class Workspace final : public QObject {
     bool fail(const QString& message);
     // The launch for a new agent, or nullopt with workspaceError().
     std::optional<session::LaunchSpec> agentLaunch(const AgentRequest& request);
+    QString insertCategory(const QString& name, bool select);
     QString failed(const QString& message) {
         fail(message);
         return {};

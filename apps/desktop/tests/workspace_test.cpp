@@ -1075,6 +1075,29 @@ void phoneStartsAnAgentInItsCategory() {
                                        entry[QStringLiteral("category")] == later;
                             }),
                 "the registry puts it in the chosen category");
+        // The phone adds a category without moving the window, and closes an
+        // agent as Command-W does.
+        const auto made =
+            askWorkspace(registry, {{QStringLiteral("version"), 1},
+                                    {QStringLiteral("request"), QStringLiteral("createCategory")},
+                                    {QStringLiteral("name"), QStringLiteral("Ideas")}});
+        require(made.value(QStringLiteral("ok")).toBool() &&
+                    workspace.categories().constLast().toMap().value(QStringLiteral("id")) ==
+                        made.value(QStringLiteral("id")).toString() &&
+                    workspace.activeCategoryId() == desk_category,
+                "a category from the phone, with the window left where it was");
+        require(
+            !askWorkspace(registry, {{QStringLiteral("version"), 1},
+                                     {QStringLiteral("request"), QStringLiteral("createCategory")},
+                                     {QStringLiteral("name"), QString()}})
+                    .value(QStringLiteral("ok"))
+                    .toBool() &&
+                !askWorkspace(registry, {{QStringLiteral("version"), 1},
+                                         {QStringLiteral("request"), QStringLiteral("closeAgent")},
+                                         {QStringLiteral("id"), QStringLiteral("nothing")}})
+                     .value(QStringLiteral("ok"))
+                     .toBool(),
+            "an empty name or an unknown agent is refused");
         // Over ssh: the CLI runs in the folder on that machine, in its login
         // shell. A stand-in ssh prints what it was given.
         QFile ssh(root.filePath(QStringLiteral("bin/ssh")));

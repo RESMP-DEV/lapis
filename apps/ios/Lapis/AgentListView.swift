@@ -7,6 +7,8 @@ struct AgentListView: View {
     @State private var path: [Agent] = []
     @State private var newAgent: NewAgentTarget?
     @State private var started: Agent?
+    @State private var naming = false
+    @State private var categoryName = ""
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -26,16 +28,27 @@ struct AgentListView: View {
                             .accessibilityLabel("lapis")
                     }
                     ToolbarItemGroup(placement: .topBarTrailing) {
-                        Button {
-                            if let listing = model.listing {
-                                newAgent = NewAgentTarget(category: listing.activeCategory)
+                        // The one plus: a new agent or a new category.
+                        Menu {
+                            Button {
+                                if let listing = model.listing {
+                                    newAgent = NewAgentTarget(category: listing.activeCategory)
+                                }
+                            } label: {
+                                Label("New agent", systemImage: "terminal")
+                            }
+                            Button {
+                                categoryName = ""
+                                naming = true
+                            } label: {
+                                Label("New category", systemImage: "folder.badge.plus")
                             }
                         } label: {
                             Image(systemName: "plus")
                         }
                         .disabled(model.listing == nil)
-                        .accessibilityLabel("New agent")
-                        .accessibilityIdentifier("newAgent")
+                        .accessibilityLabel("Add")
+                        .accessibilityIdentifier("add")
                         Button {
                             showingSettings = true
                         } label: {
@@ -46,6 +59,9 @@ struct AgentListView: View {
                 }
                 .sheet(isPresented: $showingSettings) {
                     SettingsView()
+                }
+                .alert("New category", isPresented: $naming) {
+                    NewCategoryFields(name: $categoryName) { _ in }
                 }
                 // The agent opens once the sheet has gone.
                 .sheet(item: $newAgent, onDismiss: {
@@ -80,53 +96,58 @@ struct AgentListView: View {
                 Button("Settings") { showingSettings = true }
             }
         } else if let listing = model.listing {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    if let error = model.error {
-                        Text(error)
-                            .font(.footnote)
-                            .foregroundStyle(.orange)
-                    }
-                    ForEach(listing.categories) { category in
-                        HStack {
-                            Text(category.name)
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                .textCase(.uppercase)
-                                .tracking(1.6)
-                                .foregroundStyle(Theme.quiet)
-                            Spacer()
-                            Button {
-                                newAgent = NewAgentTarget(category: category.id)
-                            } label: {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(Theme.quiet)
-                                    .frame(width: 36, height: 28)
-                                    .contentShape(Rectangle())
-                            }
-                            .accessibilityLabel("New agent in \(category.name)")
-                            .accessibilityIdentifier("newAgent-\(category.name)")
-                        }
+            // A list, so an agent can be swiped away like a notification:
+            // swiping left offers Close, and a full swipe closes it.
+            List {
+                if let error = model.error {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+                ForEach(listing.categories) { category in
+                    Text(category.name)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .textCase(.uppercase)
+                        .tracking(1.6)
+                        .foregroundStyle(Theme.quiet)
                         .padding(.top, 14)
-                        .padding(.leading, 4)
-                        if category.agents.isEmpty {
-                            Text("No agents")
-                                .font(.footnote)
-                                .foregroundStyle(Theme.quiet)
-                                .padding(.leading, 4)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 2, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .accessibilityIdentifier("category-\(category.name)")
+                    if category.agents.isEmpty {
+                        Text("No agents")
+                            .font(.footnote)
+                            .foregroundStyle(Theme.quiet)
+                            .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 4, trailing: 16))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    }
+                    ForEach(category.agents) { agent in
+                        Button {
+                            path.append(agent)
+                        } label: {
+                            AgentCard(agent: agent)
                         }
-                        ForEach(category.agents) { agent in
-                            NavigationLink(value: agent) {
-                                AgentCard(agent: agent)
+                        .buttonStyle(CardPress())
+                        .accessibilityIdentifier("agent-\(agent.title)")
+                        .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                Task { await model.close(agent) }
+                            } label: {
+                                Label("Close", systemImage: "xmark")
                             }
-                            .buttonStyle(CardPress())
-                            .accessibilityIdentifier("agent-\(agent.title)")
                         }
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 24)
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
             .refreshable { await model.refresh() }
         } else if let error = model.error {
             ContentUnavailableView {
@@ -141,6 +162,30 @@ struct AgentListView: View {
             ProgressView("Connecting to \(model.host)")
                 .foregroundStyle(Theme.quiet)
         }
+    }
+}
+
+// A category's name, created on the Mac when confirmed.
+struct NewCategoryFields: View {
+    @Environment(WorkspaceModel.self) private var model
+    @Binding var name: String
+    let created: (String) -> Void
+
+    var body: some View {
+        TextField("Name", text: $name)
+            .accessibilityIdentifier("categoryName")
+        Button("Create") {
+            let chosen = name.trimmingCharacters(in: .whitespaces)
+            Task {
+                do {
+                    created(try await model.createCategory(named: chosen))
+                } catch {
+                    model.error = describe(error)
+                }
+            }
+        }
+        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+        Button("Cancel", role: .cancel) {}
     }
 }
 

@@ -1307,7 +1307,7 @@ int run_attention_ui_tests() {
         CHECK(QMetaObject::invokeMethod(new_agent, method, Q_ARG(QVariant, value)));
         pump(20);
     };
-    CHECK(new_agent->property("selectedMode").toString() == QStringLiteral("edits"));
+    CHECK(new_agent->property("selectedMode").toString() == QStringLiteral("full"));
     call("chooseMode", QStringLiteral("auto"));
     call("chooseModel", QStringLiteral("claude-fable-5-1"));
     CHECK(new_agent->property("selectedMode").toString() == QStringLiteral("auto"));

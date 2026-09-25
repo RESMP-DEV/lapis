@@ -386,7 +386,11 @@ void KeyMap::fileTouched() {
     static_cast<void>(reload());
 }
 
+// lapis.json at the project root, or LAPIS_CONFIG's file (checks keep theirs
+// apart from the person's).
 QString KeyMap::default_source_path() {
+    if (const auto set = qEnvironmentVariable("LAPIS_CONFIG"); !set.isEmpty())
+        return QFileInfo(set).absoluteFilePath();
     return QDir(QStringLiteral(LAPIS_PROJECT_ROOT)).filePath(QStringLiteral("lapis.json"));
 }
 
