@@ -977,6 +977,11 @@ and facts. New review receipts identify the base commit, changed source digests,
 commands/results and reused evidence explicitly. Consumers must dispatch on the
 schema identifier rather than assume every evidence JSON has the same shape.
 
+`lapis.pr-review-resolution/1` keeps the original source revision, digests,
+validation and thread dispositions at the root. Each optional `followups` entry
+records its own base revision, changed source digests, validation and limits;
+it does not replace or refresh the original evidence.
+
 The original `scripts/probe_codex.py` retains its no-turn behavior. The separate
 shared-server probe also sends no model prompt:
 

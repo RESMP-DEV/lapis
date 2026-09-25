@@ -36,21 +36,28 @@ import time
 import uuid
 
 NAME = os.path.basename(sys.argv[0])
+OUTPUT_LOCK = threading.Lock()
+
+
+def write(text, *, flush=False):
+    with OUTPUT_LOCK:
+        sys.stdout.write(text)
+        if flush:
+            sys.stdout.flush()
 
 
 def say(text=""):
-    sys.stdout.write(text + "\n")
-    sys.stdout.flush()
+    write(text + "\n", flush=True)
 
 
-def bursts(period):
+def bursts(period, stop):
     count = 0
-    while True:
-        time.sleep(period)
+    while not stop.wait(period):
         count += 1
         for step in range(30):
             say(f"\x1b[36mburst {count}.{step}\x1b[0m " + "·" * (step % 40))
-            time.sleep(0.1)
+            if stop.wait(0.1):
+                return
 
 
 def run(command, line):
@@ -66,24 +73,24 @@ def run(command, line):
             time.sleep(1)
     elif command == "flood":
         for number in range(20000):
-            sys.stdout.write(f"flood {number:05d} " + "x" * 90 + "\n")
-        sys.stdout.flush()
+            write(f"flood {number:05d} " + "x" * 90 + "\n")
+        write("", flush=True)
     elif command == "wide":
         say("wide: 漢字かなカナ 한국어 😀👍🏽 é ä مرحبا بالعالم שלום")
         say("box: ┌──┬──┐ │▓▓│░░│ └──┴──┘")
     elif command == "alt":
-        sys.stdout.write("\x1b[?1049h\x1b[2J\x1b[H")
+        write("\x1b[?1049h\x1b[2J\x1b[H")
         for row in range(10):
-            sys.stdout.write(f"\x1b[{row + 2};4Halternate screen row {row}")
-        sys.stdout.flush()
+            write(f"\x1b[{row + 2};4Halternate screen row {row}")
+        write("", flush=True)
         time.sleep(5)
-        sys.stdout.write("\x1b[?1049l")
+        write("\x1b[?1049l")
         say("left the alternate screen")
     elif command == "title":
-        sys.stdout.write("\x1b]0;‮eltit desrever \x07")
+        write("\x1b]0;‮eltit desrever \x07")
         say("title set")
     elif command == "bell":
-        sys.stdout.write("\a")
+        write("\a")
         say("bell rung")
     elif command == "hang":
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
@@ -122,14 +129,23 @@ def main():
     say(f"\x1b[1m{NAME}\x1b[0m (lapis fake agent) pid {os.getpid()} cwd {os.getcwd()}")
     say(("resumed conversation " if resumed else "new conversation ") + conversation)
     period = float(os.environ.get("LAPIS_FAKE_BURST", "0") or 0)
+    stop = threading.Event()
+    worker = None
     if period > 0:
-        threading.Thread(target=bursts, args=(period,), daemon=True).start()
-    while True:
-        try:
-            line = input("\x1b[32m›\x1b[0m ")
-        except EOFError:
-            return 0
-        run(line.strip().lower(), line)
+        worker = threading.Thread(target=bursts, args=(period, stop))
+        worker.start()
+    try:
+        while True:
+            try:
+                write("\x1b[32m›\x1b[0m ", flush=True)
+                line = input()
+            except EOFError:
+                return 0
+            run(line.strip().lower(), line)
+    finally:
+        stop.set()
+        if worker is not None:
+            worker.join()
 
 
 if __name__ == "__main__":

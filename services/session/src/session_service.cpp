@@ -1181,6 +1181,8 @@ class SessionService final : public QObject {
                                         [id](const auto& view) { return view->id == id; });
         if (found == views_.end())
             return;
+        if (pending_history_ && (*found)->attachment == pending_history_->first)
+            pending_history_.reset();
         const QPointer<QLocalSocket> socket = (*found)->socket;
         views_.erase(found);
         // A phone that leaves hands the size back to the desktop.
@@ -1307,7 +1309,8 @@ class SessionService final : public QObject {
         disconnect(client_, nullptr, this, nullptr);
         retire(client_);
         client_ = nullptr;
-        pending_history_.reset();
+        if (pending_history_ && pending_history_->first == attachment_)
+            pending_history_.reset();
         buffer_.clear();
         ready_ = false;
         snapshot_in_flight_ = false;

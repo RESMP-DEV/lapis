@@ -28,16 +28,19 @@ constexpr std::array known_agents{"claude", "codex", "grok",   "opencode",
                                   "omp",    "kimi",  "gemini", "agy"};
 
 // A rollout's first line (session_meta) marks a subagent thread with a
-// {"subagent": ...} source and its parent. nullopt when it cannot be read; a
-// first line that is not the expected JSON counts as a main thread.
+// {"subagent": ...} source and its parent. Unreadable, malformed or oversized
+// metadata cannot attest a main thread.
 std::optional<bool> subagent_rollout(const QString& path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
         return std::nullopt;
-    const auto meta = QJsonDocument::fromJson(file.readLine(max_rollout_header))
-                          .object()
-                          .value(QStringLiteral("payload"))
-                          .toObject();
+    QJsonParseError parse;
+    const auto header = QJsonDocument::fromJson(file.readLine(max_rollout_header), &parse).object();
+    if (parse.error != QJsonParseError::NoError ||
+        header.value(QStringLiteral("type")).toString() != QStringLiteral("session_meta") ||
+        !header.value(QStringLiteral("payload")).isObject())
+        return std::nullopt;
+    const auto meta = header.value(QStringLiteral("payload")).toObject();
     return meta.value(QStringLiteral("source")).toObject().contains(QStringLiteral("subagent")) ||
            !meta.value(QStringLiteral("parent_thread_id")).toString().isEmpty();
 }

@@ -9,8 +9,8 @@ without a window, so the iPhone app can start agents, until lapis opens; the
 window asks for the workspace and the helper hands it over and exits.
 
 Agents inherit the helper's environment, so install records this shell's PATH
-(agents started from an open lapis window get the environment lapis was
-opened with). `run` starts the helper now. Output goes to
+and data locations (agents started from an open lapis window get the
+environment lapis was opened with). `run` starts the helper now. Output goes to
 ~/Library/Logs/lapis-restore.log.
 """
 
@@ -28,7 +28,14 @@ LABEL = "dev.lapis.restore"
 PLIST = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
 LOG = Path.home() / "Library" / "Logs" / "lapis-restore.log"
 DOMAIN = f"gui/{os.getuid()}"
-KEPT = ("PATH", "LANG", "SHELL")
+KEPT = (
+    "PATH",
+    "LANG",
+    "SHELL",
+    "CODEX_HOME",
+    "CLAUDE_CONFIG_DIR",
+    "LAPIS_HISTORY_ROOT",
+)
 
 
 def launchctl(*arguments, check=False):
@@ -38,7 +45,7 @@ def launchctl(*arguments, check=False):
 
 
 def environment():
-    """This shell's PATH and locale, without the Python `uv run` puts first."""
+    """Retain launch settings and data locations, omitting transient Python paths."""
     kept = {name: os.environ[name] for name in KEPT if name in os.environ}
     if "PATH" in kept:
         kept["PATH"] = os.pathsep.join(

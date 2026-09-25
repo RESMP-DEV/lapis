@@ -1745,12 +1745,19 @@ seconds for each to accept input, and exits, leaving services it did not start
 for a window to reattach (with `--serve`, it then hosts the workspace for the
 phone until a window takes it; see phone access below). `scripts/restore_at_login.py` installs it as the
 `dev.lapis.restore` LaunchAgent with the installing shell's PATH, since agents
-inherit the helper's environment. The helper and a window share the registry
+inherit the helper's environment. It also preserves `CODEX_HOME`,
+`CLAUDE_CONFIG_DIR` and `LAPIS_HISTORY_ROOT`; reinstall the development helper
+when these locations change. Top-level restore/serve flags are parsed before
+Qt starts, so an agent argument after `--` cannot select headless mode.
+The helper and a window share the registry
 lock. The helper writes its process ID to `<registry>.restoring` (owner-only)
 while it holds the lock, because QLockFile records the process name rather
-than the application name; a window finding that marker waits up to two
-minutes for the lock (longer than the helper's own limit), while a second
-window, or a helper finding a window, fails at once.
+than the application name. A window allows up to two seconds for a missing
+or stale marker to be published, taking the lock immediately if it becomes
+free meanwhile. Once the marker identifies the holder as a helper, the
+window waits up to two minutes and requests handover from a windowless host.
+A second ordinary window fails after the marker grace; a duplicate headless
+helper, or a helper finding a window, fails immediately.
 
 Gaps found by simulated power loss are closed in the service. A Codex build
 the observer has not qualified reports no thread, so the service also reads
@@ -1760,7 +1767,8 @@ the conversation in use. Codex keeps every loaded thread's rollout open,
 including the previous conversation after `/new` or `/resume` (observed with
 Codex 0.156.1), so the rule is the main thread written last: subagent threads,
 whose rollout's first line has a `{"subagent": ...}` source and a parent
-thread, are left out, and unreadable files are skipped. The desktop's minute
+thread, are left out. Unreadable, malformed, oversized or non-`session_meta`
+headers cannot qualify a main thread and are skipped. The desktop's minute
 check applies the same rule to services that predate the scan, replacing a
 saved thread only when it is still open and another main thread was written
 after it. Codex 0.156 listens through a symlink it removes only on a clean
@@ -1774,10 +1782,14 @@ then start another with `/new` and `/clear`. Two rounds of SIGKILL on every
 process, with stale sockets left behind, are each followed by the helper; the
 second runs as a launchd job with the LaunchAgent's minimal environment
 (launchd kills a job's process group when it exits; services leave it through
-`startDetached`'s new session). Every agent must come back in the conversation
-it was in, show that exchange, accept a follow-up, and keep its conversation
-identity with exactly one resume argument; the model must receive the growing
-conversation. A final helper run with everything alive must restart nothing.
+`startDetached`'s new session). Codex and Claude must return to their observed
+conversation, show that exchange, accept a follow-up, and keep the identity
+with exactly one resume argument; the model must receive the growing context.
+The four stand-ins provide terminal-only advisory checkpoints, so they must
+restart fresh without injecting that unverified identity into their arguments.
+The fixture waits for observer provenance where required and binds its fake
+model to an ephemeral loopback port. A final helper run with everything alive
+must restart nothing.
 
 CLI updates (September 24, requested so agents never open on an update
 prompt). Before a new agent starts, the desktop runs that CLI's own
@@ -1792,6 +1804,15 @@ qualified build and launches Codex with `check_for_update_on_startup=false`.
 Automating Codex requalification (the probes against the fake model rather
 than a live one) is the step that would let Codex update too. Restored and
 reattached agents are not updated.
+
+Explicit supported-CLI creation shares this queue, and `--no-harness-updates`
+disables it. Headless restore/serve keeps its existing no-update policy. Each
+updater has an isolated process group and a retained guard; timeout, leader exit
+and desktop teardown stop installer descendants too. A queued agent starts only
+after the leader exits and the guard acknowledges cleanup. Restart cannot bypass
+the queue. Output is drained while the updater runs into an 8 KiB tail. Restored
+Codex launches receive the qualified-binary update setting only after the old
+service is gone, preserving explicit configuration and resume-argument provenance.
 
 Phone access (September 23, requested for use on the go without signing in).
 A prototype, deliberately simpler than the SSH design first proposed:
@@ -1826,6 +1847,9 @@ A prototype, deliberately simpler than the SSH design first proposed:
   service for the terminal's modes) and resize. The phone's grid is applied to
   the PTY; the software keyboard covering the screen does not resize it.
   Width changes, including rotation while composing, also update the row count.
+  A size changed during connection is sent once after the first frame. Cancelled
+  streams cannot mutate or close a replacement connection. Deferred history
+  belongs to the requesting attachment and survives another attachment leaving.
 - Admission replaces keys or pairing: the gateway binds only the Mac's
   Tailscale address and serves a request only when `tailscale whois` gives the
   Mac owner's login on an iOS device, or the Mac itself. The Mac's tailnet is
@@ -2048,10 +2072,14 @@ A release is `lapis.app` in a signed DMG, built by `scripts/package_macos.py`
   login shell's PATH. Highway's assertion text inside Ghostty's library names its
   Zig cache path; packaging shortens that string to the header name in place.
 
-Not yet exercised: a window of the packaged app on a Mac (so Vulkan presentation
-through the direct MoltenVK path is unproven), macOS 14 and 15, Intel Macs (not
-built), notarization, and a launch from a DMG on a second Mac. The phone gateway
-and login helper are not in the app. There is no automatic update.
+The published 0.2.0 arm64 package was independently checked on September 25:
+strict deep code-signature verification, stapled app and DMG notarization tickets,
+and the appcast's Ed25519 signature and asset length pass. This read-only check
+did not launch the app and applies to the published `ed177847` artifact, before
+the subsequent integration fixes. It does not establish presentation, an actual
+update, or launch on a second Mac. macOS 14 and 15 remain unqualified; Intel Macs
+are not built. The package now includes the login item and Sparkle update support
+described below; the Python phone gateway remains a separate developer tool.
 
 ### Tiles, dragging and desktop integration (September 25)
 

@@ -16,6 +16,7 @@ import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps" / "remote"))
@@ -368,6 +369,33 @@ class CaptureTests(unittest.TestCase):
             self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
             status, _ = server.request("POST", "/api/captures", {"png": "bm90IGEgcG5n"})
             self.assertEqual(status, 400)
+
+    def test_malformed_capture_bodies_are_rejected_without_object_methods(self):
+        with Server(self, "{}") as server:
+            for body in ([], "png", 12):
+                with self.subTest(body=body):
+                    status, _ = server.request("POST", "/api/captures", body)
+                    self.assertEqual(status, 400)
+
+    def test_rapid_captures_do_not_replace_each_other(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"1" * 32
+        with (
+            Server(self, "{}") as server,
+            patch("time.strftime", return_value="20260925-000000"),
+        ):
+            replies = [
+                server.request(
+                    "POST",
+                    "/api/captures",
+                    {"png": base64.b64encode(png + bytes([number])).decode()},
+                )
+                for number in range(2)
+            ]
+            saved = [reply["saved"] for _, reply in replies]
+            self.assertEqual(len(set(saved)), 2)
+            for number, name in enumerate(saved):
+                path = server.directory / "phone-captures" / (name + ".png")
+                self.assertEqual(path.read_bytes(), png + bytes([number]))
 
 
 class FakeDesktop:

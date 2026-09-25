@@ -1,0 +1,41 @@
+{
+  "recorded_at": "2026-09-25T08:37:08.249816+00:00",
+  "pr": 14,
+  "source_revision": "cabae7a167f706a1235493a06db30aa890d6ad43",
+  "source_sha256": {
+    "CONTRIBUTING.md": "aa76b9cad9e6fb516f07b33005c3d5467a6cde96cf2416cd652d0be3f285ceb2",
+    "README.md": "4f892d6133f60c27d1c0759da8eccab4db528b55f5e207d24ecb3098532f90de",
+    "apps/desktop/src/keymap.cpp": "7c6abbfce6ec0ccfc473f75b3508fae2e5cb86bbbc547bb40a33a495fdbd9fac",
+    "apps/desktop/src/main.cpp": "e2e050f04d180a2a72dff824a8eb45654cb41c0798ebe0ac3cd8225bb8e59c76",
+    "apps/desktop/src/platform_preferences.mm": "be9797fe68fc908cd7f4829e9c83c48db468a81f2f0440b20f8e253b0ea94596",
+    "apps/desktop/src/workspace.cpp": "25deb50b05568e4edfffc5d88d5bb74317dcb48594efd21d25b45064a93cbd05",
+    "apps/desktop/src/workspace.hpp": "84f0aa1de9dd66eacfaffd6685ddd260062a7f4414a06d5e50d9db1c3ba697d2",
+    "apps/desktop/tests/keymap_test.cpp": "b9ed54cb37bcd1107f2e167092e7b4b3ff172d737a0a87ede7ffde39f52f6f26",
+    "apps/desktop/tests/workspace_test.cpp": "55051b7c56f679966db6ec11bb1ecc16993b56a4690739c957252ff6f0e7f509",
+    "docs/architecture.md": "cefb3253da351ebaed5875f68b590be3ccc86142ca693b347c032fa3399c9a4c",
+    "evidence/pr11-review-resolution.json": "bce971d0db54ddb1e29aa83050afd615bf678b43901153124d0d8e033793cab8",
+    "evidence/pr12-review-resolution.json": "ee76ee55c2e2b694d12aa49392328ebaac3485134191e5e0926b3f77be60f799",
+    "scripts/tests/test_breakit.py": "ea7e7e11947e37855aa7cdba86786e5df66fcc0336076cec469104b247ffa1bf",
+    "tools/qa/breakit.py": "b58acfcbfb04212741a5b3dc6b74bde4293cfcf386a65ac84fbc8c2eaaa70831"
+  },
+  "validation": [
+    "Focused workspace updater/reconnect/discover fixture: pass, 12.44s",
+    "Native LLDB CLI parser probe: explicit create enabled, opt-out disabled, reconnect/discover disabled, managed default enabled and managed opt-out disabled all pass",
+    "Scoped C++ static analysis: pass; parser complexity reduced below configured threshold",
+    "Inherited restart guard and keymap/QA repair validated by their owning branch checks",
+    "See PR15 reused integration sanitizer evidence at d2834e5"
+  ],
+  "thread_dispositions": [],
+  "limitations": [
+    "No merge into main performed. Optional reviewer availability is separate from required repository gates.",
+    "macOS remains the qualified desktop target; no Linux qualification in this pass.",
+    "CLI option values were observed under LLDB at Workspace construction, before window creation; actual updater/attachment behavior is covered separately by the workspace fixture.",
+    "Offscreen full-application rendering is unavailable for the required Vulkan backend. A Cocoa-window cast crash exposed by that attempt was guarded by checking the cocoa platform.",
+    "No installed agent CLI was updated."
+  ],
+  "outside_diff_finding": {
+    "review": "https://github.com/RESMP-DEV/lapis/pull/14#pullrequestreview-5313051744",
+    "disposition": "fixed",
+    "change": "Explicit supported-CLI creation obeys the updater queue; --no-harness-updates disables all launch updates; normalized endpoint/log paths retained; reconnect/discover do not update."
+  }
+}

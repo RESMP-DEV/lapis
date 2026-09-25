@@ -7,8 +7,8 @@ agents; one terminal stage shows the selected agent above a strip of live
 previews that is the category's navigation. Normal launch has no shell sessions
 or sample cards. Managed Codex is the first adapter; Claude Code reports through
 a service-side hook adapter.
-macOS is the live-agent qualification target; Linux tests run on the Linux test host using
-an isolated software-rendered display.
+macOS is the active live-agent qualification target. Linux desktop work remains
+deferred; an explicitly selected Linux host can run isolated software-rendered checks.
 
 The priority is **responsiveness, then ergonomics, then visuals**. Design for
 high-end M-series hardware and high-refresh displays; use generous, bounded RAM
@@ -59,7 +59,7 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | Component | Exercised | Remaining |
 | --- | --- | --- |
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
-| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS; after a simulated power loss (SIGKILL of every process), the login helper restarts agents resuming their conversations ([check](scripts/check_restore.py)) | An actual reboot through the login helper, and later Linux qualification |
+| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS; after simulated power loss, the login helper resumes observer-verified Codex/Claude conversations and restarts advisory-only agents fresh ([check](scripts/check_restore.py)) | An actual reboot through the login helper, and later Linux qualification |
 | Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect; stale sockets left by a simulated power loss are replaced | Qualification across an actual reboot |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging and link opening (Qt tests on the Linux test host) | Cross-cell contextual shaping, rectangular/multi-click selection, link hover feedback and accessibility; native Mac selection not yet exercised; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
@@ -277,6 +277,9 @@ whose services died with the Mac (restart, crash, power cut), and then keeps the
 workspace without a window so the phone can start agents; opening lapis takes
 the workspace from it and it exits. It leaves agents that are still running
 alone, and it needs a logged-in user session.
+The development login helper preserves custom `CODEX_HOME`, `CLAUDE_CONFIG_DIR`
+and `LAPIS_HISTORY_ROOT` values from the installing shell. Reinstall that helper
+after changing those locations.
 An agent that has ended or cannot be reached keeps its last screen, with a bar
 on the stage giving the reason and the key that closes it. **Restart agent**
 in Commands starts it again in the same card, resuming its conversation the
@@ -289,6 +292,10 @@ the new version, and results go to `runtime/harness-updates.log`. Codex is the
 exception: lapis observes only Codex builds it has qualified, so it keeps the
 qualified build and starts Codex with its update prompt turned off
 (`check_for_update_on_startup=false`).
+Explicit supported-CLI creation uses the same update queue; reconnect and
+discovery do not. Pass `--no-harness-updates` to keep a chosen CLI installation
+unchanged. Queued agents wait until the updater and its installer children have
+stopped; restarting a queued agent cannot bypass that wait.
 
 Upgrading lapis does not disturb running agents: quit the old build and open
 the new one, and it reattaches to the same processes. Launch fingerprints,
