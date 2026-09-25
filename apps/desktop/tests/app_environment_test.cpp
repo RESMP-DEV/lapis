@@ -1,4 +1,5 @@
 #include "app_paths.hpp"
+#include "desktop_actions.hpp"
 #include "shell_environment.hpp"
 
 #include <QDir>
@@ -39,12 +40,23 @@ void lapis_home_moves_config_and_runtime_state() {
             "LAPIS_HOME moves lapis.json and runtime/");
     qunsetenv("LAPIS_HOME");
 }
+void editors_follow_the_config_then_preference() {
+    using lapis::desktop::DesktopActions;
+    require(DesktopActions::chooseEditor(QStringLiteral(" Nova "), {QStringLiteral("Cursor")}) ==
+                QStringLiteral("Nova"),
+            "the configured editor wins");
+    require(DesktopActions::chooseEditor({}, {QStringLiteral("Zed"), QStringLiteral("Cursor")}) ==
+                QStringLiteral("Zed"),
+            "otherwise the first installed, in preference order");
+    require(DesktopActions::chooseEditor({}, {}).isEmpty(), "none without an editor");
+}
 } // namespace
 
 int main() {
     try {
         login_environment_is_read_after_the_marker();
         lapis_home_moves_config_and_runtime_state();
+        editors_follow_the_config_then_preference();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return 1;

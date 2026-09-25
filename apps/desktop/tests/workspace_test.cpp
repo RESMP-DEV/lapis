@@ -1270,6 +1270,31 @@ void alertsChimeWhileAnAgentWaits() {
     waitFor([] { return false; }, 300);
     require(played.empty(), "no chimes with the sound off");
 
+    // Notifications: the same moments, only while lapis is in the background,
+    // and not with them turned off.
+    std::vector<QStringList> posted;
+    bool background = false;
+    lapis::desktop::Notifier notifier(
+        workspace, keymap,
+        [&posted](const QString& id, const QString& title, const QString& body) {
+            posted.push_back({id, title, body});
+        },
+        [&background] { return background; });
+    request(true);
+    emit workspace.agentNeedsYou(&agent);
+    require(posted.empty(), "no notification while lapis is in front");
+    background = true;
+    emit workspace.agentNeedsYou(&agent);
+    require(posted.size() == 1 && posted[0][1] == QStringLiteral("agent") &&
+                posted[0][2] == QStringLiteral("Needs you: Approval"),
+            "a request in the background posts one notification naming the agent");
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 2 && posted[1][2] == QStringLiteral("Finished a turn"),
+            "a finished turn posts one too");
+    require(keymap.setNotify(false), "turn notifications off");
+    emit workspace.agentNeedsYou(&agent);
+    require(posted.size() == 2, "none with notifications off");
+
     const auto wav = lapis::desktop::chime_wav(lapis::desktop::Chime::needsYou);
     require(wav.startsWith("RIFF") && wav.mid(8, 8) == "WAVEfmt " && wav.size() == 44 + 27342 * 2,
             "a chime is a 0.62 second, 16-bit mono WAV");
@@ -1567,6 +1592,19 @@ void agentsRestoreAfterServiceLoss() {
         require(workspace.closeSession(id), "close a restored agent");
     require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
             "restored agents close");
+    // Command-Shift-T brings the last closed agent back as a new tab, in its
+    // folder and category, running again.
+    require(workspace.canReopenAgent(), "closed agents can come back");
+    require(workspace.reopenAgent() && workspace.sessions().size() == 1, "reopen the last one");
+    auto* back = workspace.focusedSession();
+    // The three closed in whichever order their processes ended.
+    require(back != nullptr && QStringList({resumed, fresh, foreign}).contains(back->title()) &&
+                back->directory() == canonical,
+            "the reopened agent keeps its name and folder");
+    require(waitFor([back] { return back->inputReady(); }, 10000), "the reopened agent runs");
+    require(workspace.closeSession(back->sessionId()), "close it again");
+    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "the reopened agent closes");
 }
 
 void requireProcessArguments(const QJsonArray& arguments, const QString& directory) {

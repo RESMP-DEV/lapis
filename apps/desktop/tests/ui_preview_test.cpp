@@ -1000,6 +1000,62 @@ void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     pump(60);
     CHECK(strip_ids(workspace) == order);
 }
+// Command-F finds text on the page shown; Command-plus and zero change the
+// text size; categories reorder.
+void check_find_and_text_size(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                              lapis::desktop::KeyMap& keymap) {
+    const auto item = [&window](const QString& name) {
+        auto* found = find_visual(window.contentItem(), name);
+        if (found == nullptr)
+            throw std::runtime_error("missing item " + name.toStdString());
+        return found;
+    };
+    const auto key = [&](const char* action) {
+        send_binding(window, keymap.sequences(QString::fromLatin1(action)).front());
+        pump(80);
+    };
+    const auto type = [&window](const QString& text) {
+        for (const auto character : text) {
+            QKeyEvent press(QEvent::KeyPress, 0, Qt::NoModifier, QString(character));
+            QKeyEvent release(QEvent::KeyRelease, 0, Qt::NoModifier, QString(character));
+            QCoreApplication::sendEvent(&window, &press);
+            QCoreApplication::sendEvent(&window, &release);
+        }
+        pump(60);
+    };
+    auto* terminal = qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
+    for (const auto& value : workspace.categorySessions()) {
+        auto* session = value.value<lapis::desktop::SessionPreview*>();
+        if (session->title() == QStringLiteral("Codex"))
+            CHECK(workspace.selectSession(session->sessionId()));
+    }
+    pump(60);
+    key("find");
+    auto* bar = item(QStringLiteral("findBar"));
+    CHECK(bar->isVisible());
+    type(QStringLiteral("ready"));
+    CHECK(terminal->selectedText() == QStringLiteral("Ready"));
+    CHECK(terminal->countMatches(QStringLiteral("ready")) == 1);
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QCoreApplication::sendEvent(&window, &escape);
+    pump(60);
+    CHECK(!bar->isVisible() && terminal->selectedText().isEmpty());
+
+    const int size = keymap.terminalFontSize();
+    key("textBigger");
+    CHECK(keymap.terminalFontSize() == size + 1 && terminal->fontPixelSize() == size + 1);
+    key("textSmaller");
+    CHECK(keymap.terminalFontSize() == size);
+    key("textReset");
+    CHECK(keymap.terminalFontSize() == keymap.terminalFontSizeDefault());
+
+    const auto second = workspace.createCategory(QStringLiteral("Moved up"));
+    CHECK(workspace.placeCategory(second, 0));
+    CHECK(workspace.categories().constFirst().toMap().value(QStringLiteral("id")).toString() ==
+          second);
+    CHECK(workspace.removeCategory(second));
+    pump(40);
+}
 void check_composition_navigation(lapis::desktop::Workspace& workspace,
                                   lapis::desktop::UiPreview& preview,
                                   lapis::desktop::TerminalSurface& terminal) {
@@ -1919,6 +1975,7 @@ int run_strip_ui_tests() {
     wait_popup(*category_form, false);
 
     check_tiles_and_drags(*window, workspace, keymap);
+    check_find_and_text_size(*window, workspace, keymap);
     check_agent_search(*window, workspace, keymap, *terminal);
     check_usage(*window, *usage, keymap, *terminal);
     CHECK(preview.diagnostics().isEmpty());

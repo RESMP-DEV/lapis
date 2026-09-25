@@ -30,6 +30,12 @@ Dialog {
     required property int alertRepeat
     required property bool keepAwake
     required property bool showUsage
+    // Notifications while lapis is in the background; the downloaded app's
+    // login item and updates (absent in a developer build).
+    property bool notify: true
+    property bool loginAvailable: false
+    property bool launchAtLogin: false
+    property bool updatesAvailable: false
 
     signal themeChosen(string name)
     signal densityChosen(string name)
@@ -40,6 +46,9 @@ Dialog {
     signal alertRepeatChosen(int times)
     signal keepAwakeChosen(bool on)
     signal showUsageChosen(bool on)
+    signal notifyChosen(bool on)
+    signal launchAtLoginChosen(bool on)
+    signal checkUpdates()
     signal chimePlayed(bool needsYou)
 
     readonly property int uiFont: {
@@ -643,6 +652,42 @@ Dialog {
                     playable: true
                     onToggled: function(on) { settings.finishSoundChosen(on) }
                     onPlayed: settings.chimePlayed(false)
+                }
+
+                SwitchRow {
+                    objectName: "notifyRow"
+                    label: qsTr("Notify from the background")
+                    detail: qsTr("A notification for the same moments while lapis is not the app in front; clicking it shows the agent.")
+                    on: settings.notify
+                    onToggled: function(on) { settings.notifyChosen(on) }
+                }
+
+                SwitchRow {
+                    objectName: "launchAtLoginRow"
+                    visible: settings.loginAvailable
+                    label: qsTr("Keep agents running at login")
+                    detail: qsTr("At login lapis restarts agents that were running, resuming their conversations, and keeps them until you open it.")
+                    on: settings.launchAtLogin
+                    onToggled: function(on) { settings.launchAtLoginChosen(on) }
+                }
+
+                RowLayout {
+                    objectName: "updatesRow"
+                    visible: settings.updatesAvailable
+                    Layout.fillWidth: true
+                    spacing: 8
+                    PlainLabel {
+                        Layout.fillWidth: true
+                        text: qsTr("lapis checks for updates once a day.")
+                        color: settings.paletteMuted
+                        font.pixelSize: Math.max(12, settings.uiFont - 1)
+                        wrapMode: Text.WordWrap
+                    }
+                    StepButton {
+                        objectName: "checkUpdates"
+                        text: qsTr("Check now")
+                        onClicked: settings.checkUpdates()
+                    }
                 }
 
                 SwitchRow {

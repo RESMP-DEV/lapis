@@ -7,6 +7,7 @@
 #include <QFont>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
+#include <QPoint>
 #include <QPointer>
 #include <QQuickItem>
 #include <QSize>
@@ -24,6 +25,17 @@ namespace lapis::desktop {
 // when the cell is not part of one.
 [[nodiscard]] QString terminal_url_at(const session::TerminalSnapshot& snapshot, int column,
                                       int row);
+// A case-insensitive match of `needle` within one screen row.
+struct TerminalMatch {
+    int row{};
+    int first_column{};
+    int last_column{};
+};
+// The next match after the cell `from` (column, row), or the one before it
+// when `backwards`; searching wraps around neither end of the screen.
+[[nodiscard]] std::optional<TerminalMatch> terminal_find(const session::TerminalSnapshot& snapshot,
+                                                         const QString& needle, QPoint from,
+                                                         bool backwards);
 
 class TerminalSurface : public QQuickItem {
     Q_OBJECT
@@ -56,6 +68,16 @@ class TerminalSurface : public QQuickItem {
     Q_PROPERTY(QString selectedText READ selectedText NOTIFY selectionChanged)
   public:
     explicit TerminalSurface(QQuickItem* parent = nullptr);
+    // Text as if pasted (bracketed when the agent asked for it): what files
+    // dropped on the terminal become.
+    Q_INVOKABLE bool pasteText(const QString& text);
+    // Selects the next match on the page shown (older first when
+    // `backwards`), starting from the current selection; false when there is
+    // none left on this page.
+    Q_INVOKABLE bool findText(const QString& text, bool backwards);
+    // How many times the page shown contains the text.
+    Q_INVOKABLE int countMatches(const QString& text) const;
+    Q_INVOKABLE void clearSelectedText() { clearSelection(); }
     ~TerminalSurface() override;
     [[nodiscard]] SessionPreview* document() const { return document_.data(); }
     void setDocument(SessionPreview* document);

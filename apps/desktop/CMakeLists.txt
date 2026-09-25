@@ -1,6 +1,9 @@
 find_package(Qt6 6.11.2 EXACT REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network)
 find_package(Vulkan REQUIRED)
 set(CMAKE_AUTOMOC ON)
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
 add_library(lapis_desktop_view STATIC
     src/workspace.cpp src/workspace.hpp
     src/workspace_control.cpp src/workspace_control.hpp
@@ -16,9 +19,16 @@ add_library(lapis_desktop_view STATIC
     src/cell_shapes.cpp src/cell_shapes.hpp
     src/tile_layout.cpp src/tile_layout.hpp
     src/app_paths.cpp src/app_paths.hpp
+    src/desktop_actions.cpp src/desktop_actions.hpp src/platform_desktop.hpp
     src/shell_environment.cpp src/shell_environment.hpp
     src/ui_preview.cpp src/ui_preview.hpp)
 target_include_directories(lapis_desktop_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+if(APPLE)
+    # Notifications, the login item and (in the downloaded app) Sparkle.
+    target_sources(lapis_desktop_view PRIVATE src/desktop_actions_mac.mm)
+    target_link_libraries(lapis_desktop_view PUBLIC "-framework Foundation"
+        "-framework ServiceManagement" "-framework UserNotifications")
+endif()
 # The token counter another machine runs over ssh, compiled in as text.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/count_tokens.py)
 file(READ src/count_tokens.py LAPIS_COUNT_TOKENS_SCRIPT)
@@ -38,7 +48,6 @@ else()
 endif()
 qt_add_executable(lapis_desktop MACOSX_BUNDLE src/main.cpp src/ui_capture.cpp src/ui_capture.hpp)
 if(APPLE)
-    enable_language(OBJCXX)
     target_sources(lapis_desktop PRIVATE src/platform_preferences.mm)
     target_link_libraries(lapis_desktop PRIVATE "-framework AppKit")
 endif()
@@ -60,6 +69,10 @@ add_dependencies(lapis_desktop lapis_session_service)
 if(LAPIS_PACKAGE)
     # lapis.app/Contents/MacOS/lapis, with the session service beside it.
     set_target_properties(lapis_desktop PROPERTIES OUTPUT_NAME "lapis")
+    # The login item Settings turns on (SMAppService finds it by name).
+    target_sources(lapis_desktop PRIVATE macos/dev.lapis.desktop.restore.plist)
+    set_source_files_properties(macos/dev.lapis.desktop.restore.plist PROPERTIES
+        MACOSX_PACKAGE_LOCATION Library/LaunchAgents)
     add_custom_command(TARGET lapis_desktop POST_BUILD
         COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:lapis_session_service>"
             "$<TARGET_BUNDLE_CONTENT_DIR:lapis_desktop>/MacOS/lapis_session_service"
@@ -79,6 +92,10 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_app_environment_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME app-environment COMMAND lapis_app_environment_tests)
     set_tests_properties(app-environment PROPERTIES TIMEOUT 20)
+    add_executable(lapis_terminal_find_tests tests/terminal_find_test.cpp)
+    target_link_libraries(lapis_terminal_find_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME terminal-find COMMAND lapis_terminal_find_tests)
+    set_tests_properties(terminal-find PROPERTIES TIMEOUT 20)
     add_executable(lapis_tile_layout_tests tests/tile_layout_test.cpp)
     target_link_libraries(lapis_tile_layout_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME tile-layout COMMAND lapis_tile_layout_tests)

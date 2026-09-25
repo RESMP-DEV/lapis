@@ -478,6 +478,8 @@ bool UiPreview::loadCandidate() {
                                                      options_.agentSearch);
     if (options_.usage)
         candidate->rootContext()->setContextProperty(QStringLiteral("usage"), options_.usage);
+    if (options_.desktop)
+        candidate->rootContext()->setContextProperty(QStringLiteral("desktop"), options_.desktop);
     candidate->setInitialProperties({{QStringLiteral("visible"), false}});
 
     QString candidateDiagnostics;

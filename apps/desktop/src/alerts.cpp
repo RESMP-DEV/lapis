@@ -136,4 +136,23 @@ void Alerts::finished(SessionPreview* item) {
     if (config_.finishSound() && !looking_(item))
         ring(Chime::finished);
 }
+
+Notifier::Notifier(Workspace& workspace, const KeyMap& config, Post post, Background background,
+                   QObject* parent)
+    : QObject(parent), config_(config), post_(std::move(post)),
+      background_(std::move(background)) {
+    connect(&workspace, &Workspace::agentNeedsYou, this,
+            [this](SessionPreview* item) { notify(item, true); });
+    connect(&workspace, &Workspace::turnFinished, this,
+            [this](SessionPreview* item) { notify(item, false); });
+}
+
+void Notifier::notify(const SessionPreview* item, bool needsYou) {
+    if (item == nullptr || !config_.notify() || !background_())
+        return;
+    QString body = needsYou ? tr("Needs you") : tr("Finished a turn");
+    if (needsYou && !item->attentionReason().isEmpty())
+        body += QStringLiteral(": ") + item->attentionReason();
+    post_(item->sessionId(), item->title(), body);
+}
 } // namespace lapis::desktop

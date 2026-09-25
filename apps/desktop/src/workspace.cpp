@@ -858,6 +858,8 @@ bool Workspace::discardSession(const QString& id) {
     if (!item)
         return false;
     const auto item_category = agents_.value(id).category;
+    const auto closed_agent = agents_.value(id);
+    const auto closed_title = item->title();
     const auto previous = checkpoint();
     // A closed agent hands focus to its right neighbor in its own category, or
     // to its left one at that category's end, even while another strip is shown.
@@ -893,6 +895,17 @@ bool Workspace::discardSession(const QString& id) {
         return false;
     }
     last_kind_.remove(item);
+    // Command-Shift-T brings it back, resuming its conversation where it can.
+    if (!preview_mode_)
+        if (auto plan = restoredLaunch(closed_agent)) {
+            closed_.push_back({closed_agent.category, closed_title, closed_agent.harness,
+                               std::move(*plan),
+                               QFileInfo(closed_agent.launch.program).fileName() ==
+                                   QStringLiteral("ssh")});
+            if (closed_.size() > 10)
+                closed_.erase(closed_.begin());
+            emit closedChanged();
+        }
     changed();
     // QML delegates can still hold the removed object during this call stack.
     retained.release()->deleteLater();
@@ -1802,6 +1815,33 @@ SessionPreview::StatusSource Workspace::statusSource(const Agent& agent) {
                ? SessionPreview::StatusSource::output
                : SessionPreview::StatusSource::observer;
 }
+bool Workspace::reopenAgent() {
+    if (closed_.empty() || !mutableRegistry())
+        return false;
+    auto closed = std::move(closed_.back());
+    closed_.pop_back();
+    emit closedChanged();
+    const auto target = category(closed.category) != nullptr ? closed.category : active_category_;
+    const AgentRequest request{.category = target,
+                               .directory = closed.plan.launch.directory,
+                               .title = closed.title,
+                               .harness = closed.harness,
+                               .machine = closed.remote ? QStringLiteral("ssh") : QString(),
+                               .program = closed.plan.launch.program,
+                               .model = {},
+                               .mode = {},
+                               .select = true};
+    const auto id = launchAgent(request, closed.plan.launch);
+    if (id.isEmpty())
+        return false;
+    // The resume pair lapis added stays lapis's to update on later restarts.
+    auto& agent = agents_[id];
+    agent.managed_resume_index = closed.plan.managed_resume_index;
+    agent.managed_resume_identity = closed.plan.managed_resume_identity;
+    static_cast<void>(save());
+    return selectSession(id);
+}
+
 // Tiles -----------------------------------------------------------------------
 
 Workspace::Category* Workspace::category(const QString& id) {

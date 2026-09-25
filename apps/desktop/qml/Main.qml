@@ -190,6 +190,16 @@ ApplicationWindow {
             return [mac ? "Meta+Ctrl+Down" : "Ctrl+Alt+Down"]
         if (action === "zoomTile")
             return [mac ? "Meta+Shift+Return" : "Ctrl+Shift+Return"]
+        if (action === "textBigger")
+            return [mod + "=", mod + "+"]
+        if (action === "textSmaller")
+            return [mod + "-"]
+        if (action === "textReset")
+            return [mod + "0"]
+        if (action === "find")
+            return [mod + "F"]
+        if (action === "reopenAgent")
+            return [mac ? "Meta+Shift+T" : "Ctrl+Alt+Shift+T"]
         return []
     }
 
@@ -282,6 +292,17 @@ ApplicationWindow {
         const liveAgent = hasAgent && !workspace.previewMode
         add("splitRight", qsTr("New agent here, tiled to the right"), "splitRight", liveAgent, needAgent, () => window.splitAgent("right"))
         add("splitDown", qsTr("New agent here, tiled below"), "splitDown", liveAgent, needAgent, () => window.splitAgent("bottom"))
+        add("reopenAgent", qsTr("Reopen closed agent"), "reopenAgent", workspace.canReopenAgent, qsTr("No agent was closed since lapis opened"), () => window.reopenAgent())
+        add("find", qsTr("Find in terminal"), "find", hasAgent, needAgent, () => findBar.open())
+        add("textBigger", qsTr("Bigger text"), "textBigger", true, "", () => window.changeTextSize(1))
+        add("textSmaller", qsTr("Smaller text"), "textSmaller", true, "", () => window.changeTextSize(-1))
+        add("textReset", qsTr("Default text size"), "textReset", true, "", () => window.changeTextSize(0))
+        const folder = window.focusedFolder()
+        const noFolder = qsTr("Select an agent on this Mac first")
+        add("revealFolder", Qt.platform.os === "osx" ? qsTr("Show folder in Finder") : qsTr("Show folder"), "", folder.length > 0 && desktopAvailable, noFolder, () => desktop.revealFolder(folder))
+        const editor = desktopAvailable ? desktop.editorName : ""
+        add("openEditor", editor.length > 0 ? qsTr("Open folder in %1").arg(editor) : qsTr("Open folder in editor"), "", folder.length > 0 && editor.length > 0, editor.length > 0 ? noFolder : qsTr("Set \"editor\" in lapis.json, or install Cursor, VS Code or Zed"), () => desktop.openInEditor(folder))
+        add("copyPath", qsTr("Copy folder path"), "", folder.length > 0 && desktopAvailable, noFolder, () => desktop.copyText(folder))
         const tiled = workspace.stageTiles.length > 1
         add("untile", qsTr("Take agent off the stage"), "", tiled, qsTr("No tiles on the stage"), () => window.untileFocused())
         add("zoomTile", window.tileZoomed ? qsTr("Show all tiles") : qsTr("Fill the stage with this tile"), "zoomTile", tiled, qsTr("No tiles on the stage"), () => { window.tileZoomed = !window.tileZoomed })
@@ -791,6 +812,40 @@ ApplicationWindow {
         if (interactionArmed && workspace.focusTile(direction))
             preview.deferTerminalFocus()
     }
+    readonly property bool desktopAvailable: typeof desktop !== "undefined" && desktop !== null
+    // Command-plus, minus and zero: the terminal text size, saved to the config.
+    function changeTextSize(delta) {
+        if (typeof keymap === "undefined" || keymap === null)
+            return
+        const next = delta === 0 ? keymap.terminalFontSizeDefault : keymap.terminalFontSize + delta
+        keymap.setTerminalFontSize(Math.max(keymap.terminalFontSizeMinimum,
+                                            Math.min(keymap.terminalFontSizeMaximum, next)))
+    }
+    function reopenAgent() {
+        if (interactionArmed && workspace.reopenAgent())
+            preview.deferTerminalFocus()
+    }
+    // The selected agent's folder on this Mac, or "" for one over ssh.
+    function focusedFolder() {
+        const session = workspace.focusedSession
+        if (!session || workspace.previewMode)
+            return ""
+        const place = workspace.agentPlace(session.sessionId)
+        return place.machine && place.machine.length > 0 ? "" : session.directory
+    }
+    // Dropped files become their paths, quoted for a shell, as in Terminal.
+    function pastePaths(urls) {
+        const quoted = []
+        for (const url of urls) {
+            const text = url.toString()
+            if (!text.startsWith("file://"))
+                continue
+            const path = decodeURIComponent(text.slice(7))
+            quoted.push("'" + path.replace(/'/g, "'\\''") + "'")
+        }
+        if (quoted.length > 0)
+            liveTerminal.pasteText(quoted.join(" ") + " ")
+    }
     function untileFocused() {
         const session = workspace.focusedSession
         if (session)
@@ -988,6 +1043,11 @@ ApplicationWindow {
         enabled: window.shortcutsArmed
         autoRepeat: false
     }
+    ActionShortcut { action: "textBigger"; onActivated: window.changeTextSize(1) }
+    ActionShortcut { action: "textSmaller"; onActivated: window.changeTextSize(-1) }
+    ActionShortcut { action: "textReset"; onActivated: window.changeTextSize(0) }
+    ActionShortcut { action: "find"; onActivated: if (workspace.focusedSession !== null) findBar.open() }
+    ActionShortcut { action: "reopenAgent"; onActivated: window.reopenAgent() }
     ActionShortcut { action: "splitRight"; onActivated: window.splitAgent("right") }
     ActionShortcut { action: "splitDown"; onActivated: window.splitAgent("bottom") }
     ActionShortcut { action: "tileLeft"; onActivated: window.focusTile("left") }
@@ -1393,6 +1453,13 @@ ApplicationWindow {
         alertRepeat: (typeof keymap !== "undefined" && keymap !== null) ? keymap.alertRepeat : 3
         keepAwake: (typeof keymap !== "undefined" && keymap !== null) ? keymap.keepAwake : true
         showUsage: (typeof keymap !== "undefined" && keymap !== null) ? keymap.showUsage : true
+        notify: (typeof keymap !== "undefined" && keymap !== null) ? keymap.notify : true
+        loginAvailable: window.desktopAvailable && desktop.launchAtLoginAvailable
+        launchAtLogin: window.desktopAvailable && desktop.launchAtLogin
+        updatesAvailable: window.desktopAvailable && desktop.updatesAvailable
+        onNotifyChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setNotify(on) }
+        onLaunchAtLoginChosen: function(on) { if (window.desktopAvailable) desktop.setLaunchAtLogin(on) }
+        onCheckUpdates: if (window.desktopAvailable) desktop.checkForUpdates()
         onAlertSoundChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setAlertSound(on) }
         onFinishSoundChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setFinishSound(on) }
         onAlertRepeatChosen: function(times) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setAlertRepeat(times) }
@@ -2049,6 +2116,24 @@ ApplicationWindow {
                     }
                 }
             }
+        }
+        ActionItem {
+            objectName: "revealFolderAction"
+            text: Qt.platform.os === "osx" ? qsTr("Show in Finder") : qsTr("Show folder")
+            visible: window.desktopAvailable && window.focusedFolder().length > 0
+            onTriggered: desktop.revealFolder(window.focusedFolder())
+        }
+        ActionItem {
+            objectName: "openEditorAction"
+            text: window.desktopAvailable ? qsTr("Open in %1").arg(desktop.editorName) : ""
+            visible: window.desktopAvailable && desktop.editorName.length > 0 && window.focusedFolder().length > 0
+            onTriggered: desktop.openInEditor(window.focusedFolder())
+        }
+        ActionItem {
+            objectName: "copyPathAction"
+            text: qsTr("Copy path")
+            visible: window.desktopAvailable && window.focusedFolder().length > 0
+            onTriggered: desktop.copyText(window.focusedFolder())
         }
         ActionItem {
             objectName: "untileAgentAction"
@@ -3132,6 +3217,167 @@ ApplicationWindow {
                         drop.accept()
                     }
                 }
+                // Files dragged in from Finder: their paths, quoted, are pasted into
+                // the terminal they land on.
+                DropArea {
+                    id: fileDrop
+                    objectName: "fileDrop"
+                    anchors.fill: parent
+                    keys: ["text/uri-list"]
+                    enabled: workspace.focusedSession !== null
+                    onDropped: function(drop) {
+                        if (!drop.hasUrls)
+                            return
+                        if (stage.tiled && !stage.zoomed)
+                            for (const tile of stage.tiles) {
+                                const frame = stage.frameOf(tile)
+                                if (drop.x >= frame.x && drop.x <= frame.x + frame.width
+                                        && drop.y >= frame.y && drop.y <= frame.y + frame.height)
+                                    workspace.selectSession(tile.sessionId)
+                            }
+                        const urls = drop.urls
+                        Qt.callLater(() => window.pastePaths(urls))
+                        drop.acceptProposedAction()
+                    }
+                }
+                Rectangle {
+                    objectName: "fileDropHint"
+                    visible: fileDrop.containsDrag
+                    anchors.fill: parent
+                    anchors.margins: 3
+                    radius: window.chromeRadius
+                    color: Qt.alpha(window.focusedBorderColor, 0.08)
+                    border.width: 2
+                    border.color: window.focusedBorderColor
+                }
+
+                // Command-F: find text in the selected terminal, the page shown
+                // and then older history pages. Return goes older, Shift-Return newer.
+                Rectangle {
+                    id: findBar
+                    objectName: "findBar"
+                    visible: false
+                    z: 20
+                    anchors.top: parent.top
+                    anchors.right: parent.right
+                    anchors.topMargin: stage.tiled ? stage.focusedFrame.y + stage.headerHeight + 4 : 10
+                    anchors.rightMargin: stage.tiled ? stage.width - stage.focusedFrame.x - stage.focusedFrame.width + 8 : 12
+                    width: Math.min(380, stage.width - 24)
+                    height: findRow.implicitHeight + 12
+                    radius: window.chromeRadius
+                    color: window.surfaceColor
+                    border.width: 1
+                    border.color: window.focusedBorderColor
+                    property string status: ""
+                    property string paging: ""
+                    property int pages: 0
+                    function open() {
+                        visible = true
+                        status = ""
+                        findField.forceActiveFocus()
+                        findField.selectAll()
+                    }
+                    function close() {
+                        visible = false
+                        paging = ""
+                        liveTerminal.clearSelectedText()
+                        preview.deferTerminalFocus()
+                    }
+                    function search(older) {
+                        if (findField.text.length === 0)
+                            return
+                        if (liveTerminal.findText(findField.text, older)) {
+                            status = ""
+                            return
+                        }
+                        // Nothing more on this page: fetch the next page of history.
+                        const session = workspace.focusedSession
+                        if (older && session && session.live && pages < 500) {
+                            paging = "older"
+                            ++pages
+                            status = qsTr("Searching history…")
+                            session.olderHistory()
+                        } else if (!older && session && session.historyActive && pages < 500) {
+                            paging = "newer"
+                            ++pages
+                            session.newerHistory()
+                        } else {
+                            status = qsTr("No more matches")
+                        }
+                    }
+                    Connections {
+                        target: workspace.focusedSession
+                        enabled: findBar.visible && findBar.paging.length > 0
+                        function onHistoryChanged() {
+                            const session = workspace.focusedSession
+                            if (!session || session.historyRequestPending)
+                                return
+                            const older = findBar.paging === "older"
+                            findBar.paging = ""
+                            liveTerminal.clearSelectedText()
+                            if (liveTerminal.findText(findField.text, older)) {
+                                findBar.status = ""
+                                return
+                            }
+                            if (session.historyMessage.length > 0 || !session.historyActive)
+                                findBar.status = qsTr("No more matches")
+                            else
+                                findBar.search(older)
+                        }
+                    }
+                    RowLayout {
+                        id: findRow
+                        anchors.fill: parent
+                        anchors.margins: 6
+                        spacing: 6
+                        TextField {
+                            id: findField
+                            objectName: "findField"
+                            Layout.fillWidth: true
+                            placeholderText: qsTr("Find")
+                            font.family: window.monoFamily
+                            font.pixelSize: window.readoutFont + 1
+                            onTextEdited: {
+                                findBar.pages = 0
+                                liveTerminal.clearSelectedText()
+                                findBar.search(true)
+                            }
+                            Keys.onReturnPressed: function(event) {
+                                findBar.pages = 0
+                                findBar.search(!(event.modifiers & Qt.ShiftModifier))
+                            }
+                            Keys.onEnterPressed: function(event) {
+                                findBar.pages = 0
+                                findBar.search(!(event.modifiers & Qt.ShiftModifier))
+                            }
+                            Keys.onEscapePressed: findBar.close()
+                        }
+                        PlainText {
+                            objectName: "findStatus"
+                            text: findBar.status.length > 0 ? findBar.status :
+                                  findField.text.length > 0 ? qsTr("%1 here").arg(liveTerminal.countMatches(findField.text)) : ""
+                            color: window.mutedTextColor
+                            font.family: window.monoFamily
+                            font.pixelSize: window.readoutFont
+                        }
+                        CommandButton {
+                            text: "↑"
+                            Accessible.name: qsTr("Older match")
+                            onClicked: { findBar.pages = 0; findBar.search(true) }
+                        }
+                        CommandButton {
+                            text: "↓"
+                            Accessible.name: qsTr("Newer match")
+                            onClicked: { findBar.pages = 0; findBar.search(false) }
+                        }
+                        CommandButton {
+                            text: "×"
+                            Accessible.name: qsTr("Close find")
+                            onClicked: findBar.close()
+                        }
+                    }
+                }
+
                 Rectangle {
                     objectName: "stageDropHint"
                     visible: stageDrop.containsDrag && stageDrop.target.length > 0

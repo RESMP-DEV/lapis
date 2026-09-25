@@ -31,6 +31,7 @@ struct UiPreviewOptions {
     QObject* alerts{};      // exposed to QML as `alerts`
     QObject* agentSearch{}; // exposed to QML as `agentSearch`
     QObject* usage{};       // exposed to QML as `usage`
+    QObject* desktop{};     // exposed to QML as `desktop`
     // Only the normal workspace restores user geometry; tests opt in with an isolated path.
     bool persistGeometry{};
     QString geometryPath{};

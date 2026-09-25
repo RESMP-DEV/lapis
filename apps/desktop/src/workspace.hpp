@@ -280,6 +280,8 @@ class Workspace final : public QObject {
     // Each split's divider line and the area it divides, in the same units:
     // {path, stacked, x, y, width, height, areaX, areaY, areaWidth, areaHeight}.
     Q_PROPERTY(QVariantList stageDividers READ stageDividers NOTIFY tilesChanged)
+    // An agent closed since lapis opened can come back with its conversation.
+    Q_PROPERTY(bool canReopenAgent READ canReopenAgent NOTIFY closedChanged)
   public:
     explicit Workspace(WorkspaceMode mode = WorkspaceMode::live, WorkspaceOptions options = {});
     ~Workspace() override;
@@ -361,6 +363,10 @@ class Workspace final : public QObject {
     // Starts an agent like the selected one (folder, CLI, model and mode) and
     // tiles it beside it; returns its id.
     Q_INVOKABLE QString splitAgent(const QString& edge);
+    // Starts the most recently closed agent again, resuming its conversation
+    // where its CLI can, in its category, and shows it.
+    Q_INVOKABLE bool reopenAgent();
+    [[nodiscard]] bool canReopenAgent() const { return !closed_.empty(); }
     // Arguments from lapis.json added to each new agent of a harness.
     void setHarnessArguments(QHash<QString, QStringList> arguments) {
         harness_arguments_ = std::move(arguments);
@@ -378,6 +384,7 @@ class Workspace final : public QObject {
     void categoryChanged();
     void errorChanged();
     void tilesChanged();
+    void closedChanged();
 
   private:
     [[nodiscard]] static QString rootDirectory();
@@ -465,6 +472,15 @@ class Workspace final : public QObject {
     };
     [[nodiscard]] static std::optional<ResumeLaunch> restoredLaunch(const Agent& agent,
                                                                     QString* diagnostic = nullptr);
+    struct ClosedAgent {
+        QString category;
+        QString title;
+        QString harness;
+        ResumeLaunch plan;
+        bool remote{};
+    };
+    // Newest last; at most ten.
+    std::vector<ClosedAgent> closed_;
     [[nodiscard]] static bool serviceRunning(const QString& endpoint);
     void noteStatus(SessionPreview* item);
     QHash<const SessionPreview*, QString> last_kind_;

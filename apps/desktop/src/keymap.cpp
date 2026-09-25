@@ -461,6 +461,11 @@ void KeyMap::apply_defaults() {
         // Tiles: split with a new agent like the selected one, as iTerm2's
         // Command-D does, and move between tiles.
         {QStringLiteral("splitRight"), {modifier + QStringLiteral("D")}},
+        // Text size, find, and bringing back the last closed agent.
+        {QStringLiteral("textBigger"), {modifier + QStringLiteral("="), modifier + QStringLiteral("+")}},
+        {QStringLiteral("textSmaller"), {modifier + QStringLiteral("-")}},
+        {QStringLiteral("textReset"), {modifier + QStringLiteral("0")}},
+        {QStringLiteral("find"), {modifier + QStringLiteral("F")}},
     };
 #ifdef Q_OS_MACOS
     bindings_.insert(QStringLiteral("splitDown"), {QStringLiteral("Meta+Shift+D")});
@@ -469,6 +474,7 @@ void KeyMap::apply_defaults() {
     bindings_.insert(QStringLiteral("tileUp"), {QStringLiteral("Meta+Ctrl+Up")});
     bindings_.insert(QStringLiteral("tileDown"), {QStringLiteral("Meta+Ctrl+Down")});
     bindings_.insert(QStringLiteral("zoomTile"), {QStringLiteral("Meta+Shift+Return")});
+    bindings_.insert(QStringLiteral("reopenAgent"), {QStringLiteral("Meta+Shift+T")});
 #else
     bindings_.insert(QStringLiteral("splitDown"), {QStringLiteral("Ctrl+Alt+Shift+D")});
     bindings_.insert(QStringLiteral("tileLeft"), {QStringLiteral("Ctrl+Alt+Left")});
@@ -476,6 +482,7 @@ void KeyMap::apply_defaults() {
     bindings_.insert(QStringLiteral("tileUp"), {QStringLiteral("Ctrl+Alt+Up")});
     bindings_.insert(QStringLiteral("tileDown"), {QStringLiteral("Ctrl+Alt+Down")});
     bindings_.insert(QStringLiteral("zoomTile"), {QStringLiteral("Ctrl+Shift+Return")});
+    bindings_.insert(QStringLiteral("reopenAgent"), {QStringLiteral("Ctrl+Alt+Shift+T")});
 #endif
 #ifdef Q_OS_MACOS
     bindings_.insert(QStringLiteral("nextCategory"),
@@ -499,7 +506,9 @@ void KeyMap::apply_defaults() {
     alert_sound_ = true;
     finish_sound_ = true;
     alert_repeat_ = 3;
+    notify_ = true;
     keep_awake_ = true;
+    editor_.clear();
     show_usage_ = true;
     usage_meter_.clear();
     usage_machines_.clear();
@@ -652,7 +661,9 @@ void KeyMap::load_alerts(const QJsonObject& root) {
     alert_sound_ = alerts.value(QStringLiteral("sound")).toBool(true);
     finish_sound_ = alerts.value(QStringLiteral("finished")).toBool(true);
     alert_repeat_ = std::clamp(alerts.value(QStringLiteral("repeat")).toInt(3), 1, 10);
+    notify_ = alerts.value(QStringLiteral("notify")).toBool(true);
     keep_awake_ = root.value(QStringLiteral("keepAwake")).toBool(true);
+    editor_ = root.value(QStringLiteral("editor")).toString().left(1024);
 }
 
 // {"usage": {"show": true, "meter": ["codex", "claude", "grok"], "machines":
@@ -992,6 +1003,7 @@ bool KeyMap::persist() {
     alerts.insert(QStringLiteral("sound"), alert_sound_);
     alerts.insert(QStringLiteral("finished"), finish_sound_);
     alerts.insert(QStringLiteral("repeat"), alert_repeat_);
+    alerts.insert(QStringLiteral("notify"), notify_);
     root.insert(QStringLiteral("alerts"), alerts);
     root.insert(QStringLiteral("keepAwake"), keep_awake_);
     root.remove(QStringLiteral("showUsage"));
@@ -1027,6 +1039,10 @@ bool KeyMap::setFinishSound(bool on) {
 }
 bool KeyMap::setAlertRepeat(int times) {
     alert_repeat_ = std::clamp(times, 1, 10);
+    return save();
+}
+bool KeyMap::setNotify(bool on) {
+    notify_ = on;
     return save();
 }
 bool KeyMap::setKeepAwake(bool on) {

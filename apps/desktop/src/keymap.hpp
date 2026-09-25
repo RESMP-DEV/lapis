@@ -117,6 +117,12 @@ class KeyMap final : public QObject {
     Q_PROPERTY(bool alertSound READ alertSound NOTIFY changed)
     Q_PROPERTY(bool finishSound READ finishSound NOTIFY changed)
     Q_PROPERTY(int alertRepeat READ alertRepeat NOTIFY changed)
+    // A system notification for the same moments while lapis is in the
+    // background; clicking it shows the agent.
+    Q_PROPERTY(bool notify READ notify NOTIFY changed)
+    // The app that opens an agent's folder ("Cursor", a .app path or a
+    // command); empty picks the first installed of a few common editors.
+    Q_PROPERTY(QString editor READ editor NOTIFY changed)
     // Keep this Mac from sleeping on power, so the phone can reach it.
     Q_PROPERTY(bool keepAwake READ keepAwake NOTIFY changed)
     // Plan usage under the categories, and the dashboard's machines.
@@ -184,10 +190,13 @@ class KeyMap final : public QObject {
     Q_INVOKABLE bool setFinishSound(bool on);
     Q_INVOKABLE bool setAlertRepeat(int times);
     Q_INVOKABLE bool setKeepAwake(bool on);
+    Q_INVOKABLE bool setNotify(bool on);
     Q_INVOKABLE bool setShowUsage(bool on);
     [[nodiscard]] bool alertSound() const { return alert_sound_; }
     [[nodiscard]] bool finishSound() const { return finish_sound_; }
     [[nodiscard]] int alertRepeat() const { return alert_repeat_; }
+    [[nodiscard]] bool notify() const { return notify_; }
+    [[nodiscard]] const QString& editor() const { return editor_; }
     [[nodiscard]] bool keepAwake() const { return keep_awake_; }
     [[nodiscard]] bool showUsage() const { return show_usage_; }
     // The meter's plans in order (empty: every signed-in plan), and the ssh
@@ -238,6 +247,8 @@ class KeyMap final : public QObject {
     bool finish_sound_{true};
     int alert_repeat_{3};
     bool keep_awake_{true};
+    bool notify_{true};
+    QString editor_;
     bool show_usage_{true};
     QStringList usage_meter_;
     QStringList usage_machines_;

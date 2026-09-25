@@ -1,7 +1,9 @@
 #include "agent_search.hpp"
 #include "alerts.hpp"
 #include "app_paths.hpp"
+#include "desktop_actions.hpp"
 #include "keymap.hpp"
+#include "platform_desktop.hpp"
 #include "platform_preferences.hpp"
 #include "shell_environment.hpp"
 #include "terminal_surface.hpp"
@@ -457,6 +459,26 @@ int main(int argc, char** argv) {
                 [&workspace, &shown](const SessionPreview* item) {
                     return shown && shown->isActive() && workspace.focusedSession() == item;
                 });
+        // A notification for the same moments while lapis is in the
+        // background; clicking one brings the window to that agent.
+        std::optional<Notifier> notifier;
+        if (!isolated) {
+            notifier.emplace(
+                workspace, keymap,
+                [](const QString& id, const QString& title, const QString& body) {
+                    platform::post_notification(id, title, body);
+                },
+                [] { return QGuiApplication::applicationState() != Qt::ApplicationActive; });
+            platform::on_notification_opened([&workspace, &shown](const QString& id) {
+                if (!workspace.selectSession(id) || !shown)
+                    return;
+                shown->show();
+                shown->raise();
+                shown->requestActivate();
+            });
+            platform::start_updater();
+        }
+        DesktopActions desktop(keymap);
         AgentSearch agentSearch(&workspace);
         // Plan limits and token totals, only while the setting is on and only
         // in the real workspace. Each CLI keeps its transcripts where its own
@@ -473,6 +495,7 @@ int main(int argc, char** argv) {
                                    .alerts = alerts ? &*alerts : nullptr,
                                    .agentSearch = &agentSearch,
                                    .usage = usage ? &*usage : nullptr,
+                                   .desktop = &desktop,
                                    .persistGeometry = !isolated && !options.launch &&
                                                       options.endpoint.isEmpty() &&
                                                       !parser.isSet(QStringLiteral("capture"))});
@@ -497,7 +520,9 @@ int main(int argc, char** argv) {
         view.window()->requestActivate();
         qInfo() << "UI preview:" << isolated
                 << "system reduced motion:" << view.systemReducedMotion();
-        return app.exec();
+        const int result = QGuiApplication::exec();
+        platform::on_notification_opened({});
+        return result;
     } catch (const std::exception& error) {
         qCritical().noquote() << error.what();
         return 1;

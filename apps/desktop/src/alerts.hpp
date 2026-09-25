@@ -4,6 +4,7 @@
 #include <QElapsedTimer>
 #include <QObject>
 #include <QPointer>
+#include <QString>
 #include <QTimer>
 #include <cstdint>
 #include <functional>
@@ -65,6 +66,23 @@ class Alerts final : public QObject {
     QTimer repeat_;
     QElapsedTimer last_;
     int quiet_ms_{kQuietMs};
+};
+// A system notification when an agent needs you or finishes a turn while
+// lapis is in the background (the chime's moments, when you are elsewhere).
+// Clicking one shows that agent; `post` gets the agent's id for that.
+class Notifier final : public QObject {
+    Q_OBJECT
+  public:
+    using Post = std::function<void(const QString& id, const QString& title, const QString& body)>;
+    using Background = std::function<bool()>;
+    Notifier(Workspace& workspace, const KeyMap& config, Post post, Background background,
+             QObject* parent = nullptr);
+
+  private:
+    void notify(const SessionPreview* item, bool needsYou);
+    const KeyMap& config_;
+    Post post_;
+    Background background_;
 };
 } // namespace lapis::desktop
 #endif
