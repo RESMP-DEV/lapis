@@ -21,14 +21,14 @@
       "passed": true,
       "ctest_suites": 20,
       "gate_checks": 51,
-      "artifact": "/home/infatoshi/lapis-agent-workspace/build/reports/desktop/receipt.json"
+      "artifact": "~/lapis-agent-workspace/build/reports/desktop/receipt.json"
     },
     "linux_asan_ubsan": {
       "passed": true,
       "ctest_suites": 20,
       "leak_detection": true,
       "suppressions": false,
-      "artifact": "/home/infatoshi/lapis-agent-workspace/build/agent-workspace/asan-final.log"
+      "artifact": "~/lapis-agent-workspace/build/agent-workspace/asan-final.log"
     },
     "python_quality": {
       "passed": true,
@@ -38,12 +38,12 @@
     "tool_detectors": {
       "passed": true,
       "checks": 12,
-      "artifact": "/home/infatoshi/lapis-agent-workspace/build/reports/tool-verification/receipt.json"
+      "artifact": "~/lapis-agent-workspace/build/reports/tool-verification/receipt.json"
     },
     "linux_service_gui": {
       "passed": true,
       "checks": 15,
-      "artifact": "/home/infatoshi/lapis-agent-workspace/build/agent-workspace/cli-final.json"
+      "artifact": "~/lapis-agent-workspace/build/agent-workspace/cli-final.json"
     },
     "linux_captures": {
       "passed": true,
@@ -56,7 +56,7 @@
         "2560x1080"
       ],
       "larger_text_and_menu_bounds": true,
-      "artifact": "/home/infatoshi/lapis-agent-workspace/build/agent-workspace/captures/receipt.json"
+      "artifact": "~/lapis-agent-workspace/build/agent-workspace/captures/receipt.json"
     },
     "mac_live_protocol": {
       "timestamp": "2026-09-22T06:42:16.745919+00:00",
@@ -178,7 +178,7 @@
   },
   "limits": [
     "Linux uses CPU Mesa Vulkan in a private Xvfb/Openbox display; physical GPU/Wayland/input are not qualified.",
-    "Anvil Codex login is expired; its binary was not added to the qualified hash. Mac0.155.1 live protocol was exercised.",
+    "The Linux test host's Codex login is expired; its binary was not added to the qualified hash. Mac0.155.1 live protocol was exercised.",
     "Vendor libraries are not sanitizer-instrumented; no memory or frame-rate comparison with Cursor is claimed.",
     "No automatic carousel, second adapter, 32-session qualification or distributable packaging is claimed."
   ],
