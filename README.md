@@ -7,7 +7,7 @@ agents; one terminal stage shows the selected agent above a strip of live
 previews that is the category's navigation. Normal launch has no shell sessions
 or sample cards. Managed Codex is the first adapter; Claude Code reports through
 a service-side hook adapter.
-macOS is the live-agent qualification target; Linux tests run on anvil using
+macOS is the live-agent qualification target; Linux tests run on the Linux test host using
 an isolated software-rendered display.
 
 The priority is **responsiveness, then ergonomics, then visuals**. Design for
@@ -61,7 +61,7 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
 | PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS; after a simulated power loss (SIGKILL of every process), the login helper restarts agents resuming their conversations ([check](scripts/check_restore.py)) | An actual reboot through the login helper, and later Linux qualification |
 | Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect; stale sockets left by a simulated power loss are replaced | Qualification across an actual reboot |
-| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging and link opening (Qt tests on anvil) | Cross-cell contextual shaping, rectangular/multi-click selection, link hover feedback and accessibility; native Mac selection not yet exercised; Linux GUI port is deferred |
+| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging and link opening (Qt tests on the Linux test host) | Cross-cell contextual shaping, rectangular/multi-click selection, link hover feedback and accessibility; native Mac selection not yet exercised; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
 | UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation | Automatic carousel and larger session-count qualification |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
@@ -230,7 +230,7 @@ and must not be copied between hosts.
 
 For development, `lapis.py quality`, `check`, `ui-check` and `cli-check` remain
 available. `build` is the full desktop validation gate. During edits use a focused
-CMake target and `ctest -R ... --no-tests=error` on anvil. `linux-gui` wraps supplied
+CMake target and `ctest -R ... --no-tests=error` on the Linux test host. `linux-gui` wraps supplied
 commands in a private Xvfb/Openbox software-rendered display. Native Mac input
 checks are a separately scheduled acceptance step.
 
@@ -265,7 +265,7 @@ Tailscale name. To work on it in Xcode, run `xcodegen` in `apps/ios`
 
 The app lists each category's agents as cards with the harness mark and the
 folder in path form (`~/dev/infinity`; an agent reached over ssh shows its host
-first, `anvil:~/lapis`). Opening an agent shows its screen at phone width, with
+first, `devbox:~/lapis`). Opening an agent shows its screen at phone width, with
 a key bar (esc, ^C, arrows, enter, backspace, tab, ^U, ^D) and a message field
 that pastes and presses Enter; dictation works there. Scrolling up loads the
 agent's earlier output from the service's archived history. **Send screen to

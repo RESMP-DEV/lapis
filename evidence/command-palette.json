@@ -29,7 +29,7 @@
       "checks": 51,
       "ctest_suites": 20,
       "ctest_seconds": 7.07,
-      "artifact": "/home/infatoshi/lapis-agent-workspace/build/reports/desktop/receipt.json",
+      "artifact": "~/lapis-agent-workspace/build/reports/desktop/receipt.json",
       "scope": "Before final stable-tab-width correction; focused UI suites rerun after correction"
     },
     "linux_asan_ubsan": {
@@ -42,7 +42,7 @@
       "leak_detection": true,
       "suppressions": false,
       "seconds": 4.46,
-      "artifact": "/home/infatoshi/lapis-agent-workspace/build/command-palette/asan-test.log",
+      "artifact": "~/lapis-agent-workspace/build/command-palette/asan-test.log",
       "scope": "Before final QML stable-tab-width correction"
     },
     "quality": {
@@ -64,7 +64,7 @@
         "appearance-input"
       ],
       "seconds": 3.79,
-      "artifact": "/home/infatoshi/lapis-agent-workspace/build/command-palette/final-test.log",
+      "artifact": "~/lapis-agent-workspace/build/command-palette/final-test.log",
       "covers": "Stable tab widths, palette navigation, sidebar persistence integration, IME guards and viewports"
     }
   },

@@ -211,7 +211,7 @@ struct NewAgentView: View {
 
     // MARK: Folder
 
-    // "~/dev/lapis" here, "anvil:~/dev/lapis" on another machine.
+    // "~/dev/lapis" here, "devbox:~/dev/lapis" on another machine.
     private func place(_ path: String) -> String {
         let shown = path.isEmpty ? "~" : path.hasPrefix("/") ? path : "~/" + path
         return machine.isEmpty ? shown : machine + ":" + shown

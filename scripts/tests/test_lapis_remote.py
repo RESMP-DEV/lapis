@@ -199,11 +199,11 @@ class PlaceTests(unittest.TestCase):
         self.assertEqual(place("/bin/codex", [], "/opt/x"), ("", "/opt/x"))
         self.assertEqual(
             place(
-                "/usr/bin/ssh", ["-t", "-p", "22", "me@anvil", "cd ~/lapis && codex"]
+                "/usr/bin/ssh", ["-t", "-p", "22", "me@devbox", "cd ~/lapis && codex"]
             ),
-            ("anvil", "anvil:~/lapis"),
+            ("devbox", "devbox:~/lapis"),
         )
-        self.assertEqual(place("/usr/bin/ssh", ["tetra"]), ("tetra", "tetra:"))
+        self.assertEqual(place("/usr/bin/ssh", ["gpubox"]), ("gpubox", "gpubox:"))
 
 
 def fake_tailscale(peers):
@@ -448,11 +448,11 @@ class StartAgentTests(unittest.TestCase):
                     "harness": "codex",
                     "directory": "~/x",
                     "category": "later",
-                    "machine": "anvil",
+                    "machine": "devbox",
                 },
             )
             self.assertEqual(status, 200)
-            self.assertEqual(desktop.requests[-1]["machine"], "anvil")
+            self.assertEqual(desktop.requests[-1]["machine"], "devbox")
 
     def test_without_lapis_on_the_mac(self):
         with Server(self, "{}") as server:
@@ -707,47 +707,49 @@ class MachineTests(unittest.TestCase):
 
     def test_hosts_from_config_and_history(self):
         included = self.root / "extra config"
-        included.write_text("Host tetra\n  HostName 10.0.0.2\n")
+        included.write_text("Host gpubox\n  HostName 10.0.0.2\n")
         config = self.root / "config"
         config.write_text(
-            f'Include "{included}"\nHost anvil anvil-lan\nHost *\nHost i-* mi-*\n# Host commented\n'
+            f'Include "{included}"\nHost devbox devbox-lan\nHost *\nHost i-* mi-*\n# Host commented\n'
         )
         self.assertEqual(
-            remote.ssh_config_hosts(config), ["tetra", "anvil", "anvil-lan"]
+            remote.ssh_config_hosts(config), ["gpubox", "devbox", "devbox-lan"]
         )
         history = self.root / "zsh_history"
         history.write_text(
-            ": 1700000000:0;ssh anvil\n"
-            ": 1700000001:0;ssh -p 22 me@tetra 'ls'\n"
-            "mosh anvil\n"
-            "ssh -J jump anvil uptime\n"
+            ": 1700000000:0;ssh devbox\n"
+            ": 1700000001:0;ssh -p 22 me@gpubox 'ls'\n"
+            "mosh devbox\n"
+            "ssh -J jump devbox uptime\n"
             "echo ssh nobody\n" + "ssh -o ProxyCommand=x cloud\n" * 3
         )
         counts = remote.history_hosts([history])
-        self.assertEqual(counts["anvil"], 3)
-        self.assertEqual(counts["tetra"], 1)
+        self.assertEqual(counts["devbox"], 3)
+        self.assertEqual(counts["gpubox"], 1)
         self.assertEqual(counts["cloud"], 3)
         self.assertNotIn("nobody", counts)
 
     def test_machines_are_ordered_by_availability_then_use(self):
         config = self.root / "config"
-        config.write_text("Host anvil tetra theodolos\n")
+        config.write_text("Host devbox gpubox oldbox\n")
         history = self.root / "history"
         history.write_text(
-            "ssh theodolos\n" * 9
-            + "ssh anvil\n" * 5
-            + "ssh tetra\n"
+            "ssh oldbox\n" * 9
+            + "ssh devbox\n" * 5
+            + "ssh gpubox\n"
             + "ssh gone\n" * 4
             + "ssh live\n" * 3
         )
         original = remote.reachable
-        remote.reachable = lambda name, timeout=1.5: name in ("anvil", "tetra", "live")
+        remote.reachable = lambda name, timeout=1.5: (
+            name in ("devbox", "gpubox", "live")
+        )
         self.addCleanup(setattr, remote, "reachable", original)
         machines = remote.MachineList(self.root / "none.json", config, [history])
         machines.build()
         self.assertEqual(
             [(m["name"], m["available"]) for m in machines.machines],
-            [("anvil", True), ("live", True), ("tetra", True), ("theodolos", False)],
+            [("devbox", True), ("live", True), ("gpubox", True), ("oldbox", False)],
         )
 
 

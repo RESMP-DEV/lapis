@@ -803,7 +803,7 @@ def remote_machine(agent):
 
 
 def display_place(agent):
-    """Where an agent runs, as the phone shows it: ~/dev/x here, anvil:~/x elsewhere."""
+    """Where an agent runs, as the phone shows it: ~/dev/x here, devbox:~/x elsewhere."""
     machine = remote_machine(agent)
     if machine:
         remote = next(

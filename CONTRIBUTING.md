@@ -354,7 +354,7 @@ pixel/layout assertion after window and snapshot preconditions pass.
 
 Normal launch restores machine-local window geometry and does not force a screen.
 `--screen <text>` is an explicit capture/qualification override. Routine GUI tests
-run on anvil through `uv run --no-project python scripts/lapis.py linux-gui`.
+run on the Linux test host through `uv run --no-project python scripts/lapis.py linux-gui`.
 Do not use the user's Mac as an automatic GUI-testing fallback.
 
 ### Keybindings and layout
@@ -641,7 +641,7 @@ union of the relevant checks; a check satisfying two rows runs once:
 | Disk history | `python3 scripts/check_history.py --disk-full` on macOS, plus desktop-enabled ASan/TSan; the disk-full fixture creates and removes its own 32 MiB disk image |
 | Python tooling | `just quality` (includes Ruff and Python unit tests), plus relevant runtime probes |
 | iPhone app or gateway (`apps/ios`, `apps/remote`) | `just quality` (includes the gateway suite, with a live service when the desktop is built) and `uv run --no-project python scripts/check_ios_remote.py --codex --claude` on macOS with an iOS Simulator runtime |
-| Before a release (Mac and iPhone together) | The full anvil gate (`lapis.py linux-gui`, whose workspace suite joins a view beside the real desktop connection and types both ways) and, on the Mac, `just quality` plus `just ios-check`, whose Mac-side client stays attached through every UI test and must see and answer the phone |
+| Before a release (Mac and iPhone together) | The full Linux gate (`lapis.py linux-gui`, whose workspace suite joins a view beside the real desktop connection and types both ways) and, on the Mac, `just quality` plus `just ios-check`, whose Mac-side client stays attached through every UI test and must see and answer the phone |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; run `just quality` for shared check/config/instruction changes; no unrelated C++ rebuild |
 
 ### Claude Code hook qualification
