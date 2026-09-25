@@ -1,4 +1,5 @@
 #include "keymap.hpp"
+#include "app_paths.hpp"
 
 #include <QDebug>
 #include <QDir>
@@ -391,7 +392,7 @@ void KeyMap::fileTouched() {
 QString KeyMap::default_source_path() {
     if (const auto set = qEnvironmentVariable("LAPIS_CONFIG"); !set.isEmpty())
         return QFileInfo(set).absoluteFilePath();
-    return QDir(QStringLiteral(LAPIS_PROJECT_ROOT)).filePath(QStringLiteral("lapis.json"));
+    return QDir(data_directory()).filePath(QStringLiteral("lapis.json"));
 }
 
 // Parse a requested layout. Returns false for an unrecognised name so the

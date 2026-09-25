@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleName</key>
+	<string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+	<key>CFBundleDisplayName</key>
+	<string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+	<key>CFBundleIdentifier</key>
+	<string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
+	<key>CFBundleExecutable</key>
+	<string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
+	<key>CFBundleVersion</key>
+	<string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
+	<key>CFBundleShortVersionString</key>
+	<string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
+	<key>CFBundleIconFile</key>
+	<string>${MACOSX_BUNDLE_ICON_FILE}</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleAllowMixedLocalizations</key>
+	<true/>
+	<key>LSMinimumSystemVersion</key>
+	<string>${CMAKE_OSX_DEPLOYMENT_TARGET}</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.developer-tools</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>${MACOSX_BUNDLE_COPYRIGHT}</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSSupportsAutomaticGraphicsSwitching</key>
+	<true/>
+	<!-- macOS asks on lapis's behalf when an agent it runs reaches these. -->
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Agents you run in lapis can work with files on your Desktop.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Agents you run in lapis can work with files in your Documents folder.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Agents you run in lapis can work with files in your Downloads folder.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Agents you run in lapis can work with files on removable drives.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>Agents you run in lapis can work with files on network drives.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Agents you run in lapis, and its usage view, can reach machines on your local network.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Agents you run in lapis can control other apps when you ask them to.</string>
+</dict>
+</plist>

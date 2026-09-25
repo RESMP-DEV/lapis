@@ -603,6 +603,43 @@ service and types into its shell. Use it only with a dedicated test session;
 `--ui-preview` deliberately rejects that combination. Debugging starts from a
 reproducible symptom; a screenshot alone does not establish an application defect.
 
+### Build the Mac app
+
+`scripts/package_macos.py` makes the downloadable `lapis.app` and its DMG on an
+Apple silicon Mac with Xcode, Homebrew's `vulkan-headers` and `molten-vk`, and a
+bootstrapped Ghostty build. Everything goes under ignored `build/release/`.
+
+```sh
+uv run --no-project python scripts/package_macos.py qt       # once: Qt from pinned source
+uv run --no-project python scripts/package_macos.py app      # build, bundle, sign
+uv run --no-project python scripts/package_macos.py verify   # release checks
+uv run --no-project python scripts/package_macos.py notarize --profile NAME
+uv run --no-project python scripts/package_macos.py verify --notarized
+```
+
+The official Qt binaries have no Vulkan and Homebrew's need macOS 26 and a
+dozen more libraries, so `qt` builds qtbase, qtshadertools and qtdeclarative
+6.11.2 from their pinned archives with Vulkan on, bundled third-party code, and
+arm64 for macOS 14. The app build (`LAPIS_PACKAGE=ON`) compiles in no path from
+the build machine: it keeps its data in `~/.lapis`, runs the session service
+beside its executable, and loads the bundled MoltenVK directly. `app` signs with
+the keychain's one Developer ID Application identity (or `LAPIS_SIGN_IDENTITY`)
+and the hardened runtime. `notarize` needs a notarytool keychain profile, made
+once with `xcrun notarytool store-credentials NAME`, and staples the app and
+then the DMG.
+
+`verify` fails the release when a binary is not arm64-only, needs a macOS newer
+than 14, links anything outside the bundle or the system, or holds the build
+machine's user name, host name or Homebrew path (add more with
+`LAPIS_SWEEP_TERMS`). It also creates a Vulkan instance on the bundled MoltenVK,
+asks the windowless host for its harnesses, and starts the app through launchd,
+as the Dock does, to confirm it takes the login shell's PATH. None of these opens
+a window; a window launch of the packaged app is a separate, scheduled check.
+`notices` regenerates `third_party/qt/NOTICES.txt` from the Qt build's SBOM and
+`third_party/moltenvk/NOTICES.txt` from MoltenVK's pinned revisions; rerun it
+when either version changes. A release attaches the DMG and the three Qt source
+archives from `build/release/downloads/`.
+
 ## Checks
 
 Run from the repository root:
@@ -642,6 +679,7 @@ union of the relevant checks; a check satisfying two rows runs once:
 | Python tooling | `just quality` (includes Ruff and Python unit tests), plus relevant runtime probes |
 | iPhone app or gateway (`apps/ios`, `apps/remote`) | `just quality` (includes the gateway suite, with a live service when the desktop is built) and `uv run --no-project python scripts/check_ios_remote.py --codex --claude` on macOS with an iOS Simulator runtime |
 | Before a release (Mac and iPhone together) | The full Linux gate (`lapis.py linux-gui`, whose workspace suite joins a view beside the real desktop connection and types both ways) and, on the Mac, `just quality` plus `just ios-check`, whose Mac-side client stays attached through every UI test and must see and answer the phone |
+| Mac app packaging (`scripts/package_macos.py`, `apps/desktop/macos`, `LAPIS_PACKAGE`) | `just quality`, then `package_macos.py app` and `verify` on the Mac; `verify --notarized` for a release |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; run `just quality` for shared check/config/instruction changes; no unrelated C++ rebuild |
 
 ### Claude Code hook qualification

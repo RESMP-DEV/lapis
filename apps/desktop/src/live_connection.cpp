@@ -1,4 +1,5 @@
 #include "live_connection.hpp"
+#include "app_paths.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "session_descriptor.hpp"
 #include <QDataStream>
@@ -231,7 +232,7 @@ void LiveConnection::begin(wire::AttachMode mode) {
         } else if (mode == wire::AttachMode::create) {
             request_.expected.session_id = wire::new_id();
             QProcess service;
-            service.setProgram(QStringLiteral(LAPIS_SESSION_SERVICE_PATH));
+            service.setProgram(session_service_program());
             service.setArguments(
                 QStringList{QStringLiteral("--session-id"),
                             QString::fromLatin1(request_.expected.session_id.toHex())} +

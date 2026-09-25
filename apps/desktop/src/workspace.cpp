@@ -1,5 +1,6 @@
 #include "workspace.hpp"
 #include "agent_checkpoint.hpp"
+#include "app_paths.hpp"
 #include "live_connection.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "workspace_control.hpp"
@@ -237,9 +238,7 @@ SessionPreview::SessionPreview(QString title, QString directory, QString activit
     snapshot_ = terminal.snapshot();
 }
 
-QString Workspace::rootDirectory() {
-    return QFileInfo{QStringLiteral(LAPIS_PROJECT_ROOT)}.absoluteFilePath();
-}
+QString Workspace::rootDirectory() { return data_directory(); }
 
 QString Workspace::defaultEndpoint() {
     return QDir{rootDirectory()}.filePath(QStringLiteral("runtime/desktop-v6.sock"));

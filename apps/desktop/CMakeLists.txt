@@ -14,6 +14,8 @@ add_library(lapis_desktop_view STATIC
     src/live_connection.cpp src/live_connection.hpp
     src/terminal_surface.cpp src/terminal_surface.hpp
     src/cell_shapes.cpp src/cell_shapes.hpp
+    src/app_paths.cpp src/app_paths.hpp
+    src/shell_environment.cpp src/shell_environment.hpp
     src/ui_preview.cpp src/ui_preview.hpp)
 target_include_directories(lapis_desktop_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 # The token counter another machine runs over ssh, compiled in as text.
@@ -23,9 +25,16 @@ configure_file(src/count_tokens.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/co
 target_include_directories(lapis_desktop_view PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options
     PUBLIC lapis_terminal lapis_local_protocol Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network)
-target_compile_definitions(lapis_desktop_view PRIVATE
-    LAPIS_PROJECT_ROOT="${PROJECT_SOURCE_DIR}"
-    LAPIS_SESSION_SERVICE_PATH="$<TARGET_FILE:lapis_session_service>")
+if(LAPIS_PACKAGE)
+    # The downloadable app finds everything inside its bundle and keeps its
+    # data in ~/.lapis; no path on the build machine is compiled in.
+    target_compile_definitions(lapis_desktop_view PRIVATE LAPIS_PACKAGED)
+else()
+    target_compile_definitions(lapis_desktop_view PRIVATE
+        LAPIS_PROJECT_ROOT="${PROJECT_SOURCE_DIR}"
+        LAPIS_SESSION_SERVICE_PATH="$<TARGET_FILE:lapis_session_service>"
+        LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
+endif()
 qt_add_executable(lapis_desktop MACOSX_BUNDLE src/main.cpp src/ui_capture.cpp src/ui_capture.hpp)
 if(APPLE)
     enable_language(OBJCXX)
@@ -33,13 +42,28 @@ if(APPLE)
     target_link_libraries(lapis_desktop PRIVATE "-framework AppKit")
 endif()
 target_link_libraries(lapis_desktop PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
-target_compile_definitions(lapis_desktop PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}"
-    LAPIS_PROJECT_ROOT="${PROJECT_SOURCE_DIR}")
 qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Usage.qml)
 set_target_properties(lapis_desktop PROPERTIES
+    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/macos/Info.plist.in"
     MACOSX_BUNDLE_BUNDLE_NAME "lapis"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "dev.lapis.desktop")
+    MACOSX_BUNDLE_GUI_IDENTIFIER "dev.lapis.desktop"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_ICON_FILE "lapis"
+    MACOSX_BUNDLE_COPYRIGHT "Copyright (c) 2026 lapis contributors. MIT License.")
+if(APPLE)
+    target_sources(lapis_desktop PRIVATE macos/lapis.icns)
+    set_source_files_properties(macos/lapis.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+endif()
 add_dependencies(lapis_desktop lapis_session_service)
+if(LAPIS_PACKAGE)
+    # lapis.app/Contents/MacOS/lapis, with the session service beside it.
+    set_target_properties(lapis_desktop PROPERTIES OUTPUT_NAME "lapis")
+    add_custom_command(TARGET lapis_desktop POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:lapis_session_service>"
+            "$<TARGET_BUNDLE_CONTENT_DIR:lapis_desktop>/MacOS/lapis_session_service"
+        VERBATIM)
+endif()
 if(BUILD_TESTING)
     add_executable(lapis_window_state_tests tests/window_state_test.cpp)
     target_link_libraries(lapis_window_state_tests PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
@@ -50,6 +74,10 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_agent_search_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME agent-search COMMAND lapis_agent_search_tests)
     set_tests_properties(agent-search PROPERTIES TIMEOUT 60)
+    add_executable(lapis_app_environment_tests tests/app_environment_test.cpp)
+    target_link_libraries(lapis_app_environment_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME app-environment COMMAND lapis_app_environment_tests)
+    set_tests_properties(app-environment PROPERTIES TIMEOUT 20)
     add_executable(lapis_cell_shapes_tests tests/cell_shapes_test.cpp)
     target_link_libraries(lapis_cell_shapes_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME cell-shapes COMMAND lapis_cell_shapes_tests)

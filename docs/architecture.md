@@ -105,8 +105,8 @@ Qualify engines independently of upstream GUIs. Keep C++20 until an evidenced
 decision changes it.
 
 The [engine experiment](../evidence/terminal-engine-probe.json) records pinned
-builds and runtime results. The production adapter now reuses that pinned library;
-distribution packaging remains unfinished.
+builds and runtime results. The production adapter now reuses that pinned library,
+and the [downloadable Mac app](#the-downloadable-mac-app-september-25) links it.
 
 ## Portable rendering
 
@@ -144,8 +144,8 @@ Qt's default macOS transaction layer produced five-second display-lock stalls in
 this Vulkan window. Setting `QT_MTL_NO_TRANSACTION=1` selected the plain
 CAMetalLayer path and removed the warnings in the same threaded-render-loop
 capture. This workaround is isolated to macOS startup and tied to Qt 6.11.2;
-revalidate it on upgrades. Continuous resize, presentation timing and packaging
-still need qualification. Linux rendering, if scheduled later, needs its own evidence. Compare native Metal if later matched measurements warrant it; no
+revalidate it on upgrades. Continuous resize and presentation timing still need
+qualification. Linux rendering, if scheduled later, needs its own evidence. Compare native Metal if later matched measurements warrant it; no
 second custom renderer is needed for that comparison.
 
 Avoid OpenGL-only `QQuickFramebufferObject` and upstream private renderer APIs.
@@ -337,7 +337,7 @@ missing dependencies cannot silently omit its tests. The existing archive runner
 owns downloads and source verification, while `cmake/Ghostty.cmake` checks build
 provenance and imports the library. Reuse the build across C++ check modes.
 [Dependency notices](../third_party/ghostty/NOTICES.txt) collect the upstream texts;
-remaining source-provenance/SBOM limits are explicit. No binary is packaged yet.
+remaining source-provenance/SBOM limits are explicit. The Mac app ships them.
 
 The coordinator owns shared headers, build files and these documents. For future
 parallel work, commit the shared contract first, assign disjoint files and one
@@ -687,7 +687,8 @@ simdutf header identifies 9.0.0 while wrapper metadata says 5.2.8. The receipt h
 the observed dependency/license inventory and retrieved notice references. The
 shared dependency scanner cannot recognize this C++/Zig graph; direct OSV commit
 queries returned no advisories for the queried pins, which is not full coverage
-or vulnerability clearance. Runtime dependency packaging remains unfinished.
+or vulnerability clearance. The notices now include uucode's referenced Unicode and
+Hoehrmann texts and simdutf's 9.0.0 texts, and the Mac app carries them.
 
 ### Deliver milestone 1: one persistent terminal
 
@@ -1988,6 +1989,52 @@ threads in five GUI suites, identically on the pre-merge base, so TSan remains a
 macOS qualification. Native Mac selection, wheel and window-manager behavior are
 not yet exercised.
 
+### The downloadable Mac app (September 25)
+
+A release is `lapis.app` in a signed DMG, built by `scripts/package_macos.py`
+(procedure in [Contributing](../CONTRIBUTING.md#build-the-mac-app)).
+
+- **Qt built for lapis.** The official Qt 6.11.2 macOS binaries are built without
+  Vulkan (`QT_FEATURE_vulkan` is off), and Homebrew's Qt requires macOS 26 and
+  brings glib, ICU, OpenSSL and a dozen other libraries. The release builds
+  qtbase, qtshadertools and qtdeclarative 6.11.2 from their pinned source archives
+  with Vulkan, bundled FreeType, HarfBuzz, PCRE2, libpng and libjpeg, no D-Bus,
+  glib, ICU, OpenSSL, widgets or SQL, only the Basic Controls style, arm64 and
+  macOS 14. Its install prefix is a neutral path and build paths are remapped, so
+  nothing in the app names the build machine.
+- **MoltenVK without a loader.** The app bundles Homebrew's MoltenVK 1.4.2 (system
+  frameworks only, macOS 12 and later) and points `QT_VULKAN_LIB` at it; Qt
+  resolves `vkGetInstanceProcAddr` from it directly. The Vulkan loader is not
+  shipped. A developer build still uses the loader it was configured with.
+- **Data in `~/.lapis`.** `LAPIS_PACKAGE` removes the checkout path, session
+  service path and Vulkan path from the build. The app keeps `lapis.json` and
+  `runtime/` in `~/.lapis` (overridable with `LAPIS_HOME`). Agent sockets live in
+  `runtime/`, and `~/Library/Application Support/lapis/runtime/<uuid>.sock` would
+  pass the roughly 104-byte socket path limit for longer user names.
+- **The login shell's environment.** Opened from Finder, the Dock or a LaunchAgent,
+  the process is launchd's child with a PATH of system folders, so agents could not
+  find node, git or the person's API keys. On macOS, when its parent is launchd,
+  lapis runs the login shell once (`-i -l -c`, 8-second limit, stdin closed) and
+  takes its environment, as VS Code does; any other start keeps its environment.
+- **Signing and notarization.** Every framework, plugin and executable is signed
+  inside out with the hardened runtime and a timestamp; the app has only the JIT
+  entitlement for the QML engine. Notarization staples the app, then the DMG.
+- **Licenses.** Qt is used under LGPL-3.0 as separate frameworks the user can
+  replace; its notices come from the build's SBOM, and each release attaches the
+  exact Qt source archives. MoltenVK's notices cover SPIRV-Cross, SPIRV-Tools,
+  SPIRV-Headers, Vulkan-Headers and cereal at MoltenVK's pinned revisions.
+- **Release checks.** `verify` checks every Mach-O for arm64, macOS 14 and links,
+  sweeps the bundle for the build machine's user name, host name and Homebrew
+  path, creates a Vulkan instance with a Metal surface on the bundled MoltenVK,
+  queries the windowless host, and starts the app under launchd to confirm the
+  login shell's PATH. Highway's assertion text inside Ghostty's library names its
+  Zig cache path; packaging shortens that string to the header name in place.
+
+Not yet exercised: a window of the packaged app on a Mac (so Vulkan presentation
+through the direct MoltenVK path is unproven), macOS 14 and 15, Intel Macs (not
+built), notarization, and a launch from a DMG on a second Mac. The phone gateway
+and login helper are not in the app. There is no automatic update.
+
 ### Following milestones
 
 With the two-session workspace assembled, the next qualification stages are
@@ -2001,7 +2048,7 @@ planned; they are not implied by Milestone 3 passing.
 | 5: independent adapter and platform completion | Stable adapter capability contract; separate adapter/platform owners | Second CLI independently exercises observation/response/reconciliation; macOS and named Linux backends have actual lifecycle, native input and rendering evidence |
 
 Dependency notices, a complete bundled inventory/SBOM and redistribution obligations
-must be closed before publishing binaries. This release requirement is independent
+must be closed before publishing binaries; the Mac app's are collected above. This release requirement is independent
 of a local milestone passing. Keep current implementation status in the README;
 the tables here define work order and acceptance only.
 

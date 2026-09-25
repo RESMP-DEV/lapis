@@ -67,13 +67,15 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
 | Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect, `/clear` continuation and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
 | iPhone app (prototype) | Gateway on the Mac over Tailscale, admitting only the owner's iOS devices; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; the phone joins beside the desktop so both stay in sync (services started by this build); starting an agent in a category from the phone through the Mac's lapis; UI tests in the iOS 26.5 Simulator against real services and the real windowless lapis host with a Mac-side client attached, fake agents, and real Codex and Claude Code on a fake model; installed and used on an iPhone 17 Pro | Agents started before sync are taken over instead; no structured requests or push notifications; starting agents needs a lapis window or the login helper running |
+| Mac app package | Qt 6.11.2 built with Vulkan (arm64, macOS 14 or later) with MoltenVK loaded directly; signed with the hardened runtime; release checks for architecture, minimum macOS, links outside the bundle, identifying strings, the bundled MoltenVK on an M4 Max, the windowless host and a launchd start taking the login shell's PATH | Notarization; the packaged app's window has not been opened on a Mac by a check; macOS 14 and 15 untested |
 | Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals; [installed binary qualification](evidence/codex-binary-update.json) | Broader binary and request-kind qualification |
 
 [Desktop evidence](evidence/desktop-preview.json),
 [UI refinement evidence](evidence/ui-preview.json),
 [reconciled UI and test evidence](evidence/reconciliation.json) and
 [adapter evidence](evidence/terminal-adapter.json) delimit these observations.
-Dependency packaging remains unfinished; this is a local developer build.
+The [downloadable Mac app](#download-for-macos) carries its own Qt, MoltenVK
+and dependency notices; a build from the repository is a developer build.
 The old multi-layout preview is no longer the product surface. The explicit
 `--ui-preview` developer fixture exercises the same category UI with synthetic
 data; it is never added to a normal workspace. See the
@@ -112,9 +114,23 @@ install global hooks. The [Claude hook receipt](evidence/claude-code-hooks.json)
 records runtime qualification. See the
 [hook contract and limitations](docs/architecture.md#claude-code-hooks-an-observation-only-extension).
 
+## Download for macOS
+
+The Mac app is on the [releases page](https://github.com/RESMP-DEV/lapis/releases/latest):
+open `lapis-macos-arm64.dmg` and drag lapis to Applications. It needs an Apple
+silicon Mac with macOS 14 or later; it is signed with a Developer ID and built
+and checked on macOS 26.5. The app keeps `lapis.json` and its runtime state in
+`~/.lapis` (or `$LAPIS_HOME`), and uses the agent CLIs you already have
+installed. Opened from Finder or the Dock, it starts agents with your login
+shell's environment, so they find the same tools and keys as in your terminal.
+The phone gateway and the login helper that restarts agents at login are set up
+from this repository; the app does not include them yet.
+[Contributing](CONTRIBUTING.md#build-the-mac-app) describes how the app is built,
+signed and notarized.
+
 ## Run the workspace
 
-After the [dependency setup](CONTRIBUTING.md#desktop-preview):
+To build it yourself, after the [dependency setup](CONTRIBUTING.md#desktop-preview):
 
 ```sh
 uv run --no-project python scripts/lapis.py doctor
@@ -272,7 +288,8 @@ through history (read-only; scrolling past the newest page or typing returns to
 the live screen, and the typed key reaches the agent), or sends arrow keys to a
 full-screen program on the alternate screen.
 History actions are also under **Agent**. Private
-workspace metadata and window geometry live under ignored `runtime/`. Builds and
+workspace metadata and window geometry live under ignored `runtime/` (in
+`~/.lapis/runtime/` for the downloaded app). Builds and
 local captures live under ignored `build/`. Runtime state is not project config
 and must not be copied between hosts.
 
@@ -395,5 +412,7 @@ and their acceptance criteria live in the architecture document.
 ## License
 
 lapis is licensed under [MIT](LICENSE). Third-party components retain their own
-licenses; the experiment receipt records upstream licenses and outstanding
-attribution work required before redistribution.
+licenses. The Mac app carries Qt under the LGPL-3.0, MoltenVK under Apache-2.0
+and Ghostty's VT library under MIT; their notices are in
+[third_party/](third_party) and in the app under `Contents/Resources/Notices`,
+and each release attaches the Qt source archives the app was built from.

@@ -1,7 +1,9 @@
 #include "agent_search.hpp"
 #include "alerts.hpp"
+#include "app_paths.hpp"
 #include "keymap.hpp"
 #include "platform_preferences.hpp"
+#include "shell_environment.hpp"
 #include "terminal_surface.hpp"
 #include "ui_capture.hpp"
 #include "ui_preview.hpp"
@@ -15,6 +17,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QPointer>
@@ -227,7 +230,7 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
                 .arguments = positional.mid(1),
                 .directory = parser.isSet(QStringLiteral("cwd"))
                                  ? parser.value(QStringLiteral("cwd"))
-                                 : QString::fromUtf8(LAPIS_PROJECT_ROOT),
+                                 : lapis::desktop::default_working_directory(),
                 .agent = parser.isSet(QStringLiteral("codex")) ? lapis::session::AgentMode::codex
                          : parser.isSet(QStringLiteral("claude"))
                              ? lapis::session::AgentMode::claude
@@ -237,7 +240,7 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
                    parser.isSet(QStringLiteral("smoke-input"))) {
             options.launch = lapis::session::shell_launch(
                 parser.isSet(QStringLiteral("cwd")) ? parser.value(QStringLiteral("cwd"))
-                                                    : QString::fromUtf8(LAPIS_PROJECT_ROOT));
+                                                    : lapis::desktop::default_working_directory());
         }
         // The normal workspace restarts agents whose services are gone.
         options.restoreAgents = !options.launch && options.endpoint.isEmpty();
@@ -397,8 +400,10 @@ int main(int argc, char** argv) {
     parser.process(arguments);
     if (!valid_options(parser) || !valid_connection_options(parser))
         return 2;
+    // Before any agent, session service or CLI probe inherits the environment.
+    lapis::desktop::adopt_login_environment();
     if (qEnvironmentVariableIsEmpty("QT_VULKAN_LIB"))
-        qputenv("QT_VULKAN_LIB", LAPIS_VULKAN_LIBRARY);
+        qputenv("QT_VULKAN_LIB", QFile::encodeName(lapis::desktop::vulkan_library()));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
     QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
     try {
