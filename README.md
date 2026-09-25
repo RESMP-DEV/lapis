@@ -63,7 +63,7 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect; stale sockets left by a simulated power loss are replaced | Qualification across an actual reboot |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging and link opening (Qt tests on the Linux test host) | Cross-cell contextual shaping, rectangular/multi-click selection, link hover feedback and accessibility; native Mac selection not yet exercised; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
-| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation | Automatic carousel and larger session-count qualification |
+| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation; live config reload, alert chimes and their repeat rules, Command-K agent search and the usage meter and details (Qt tests on the Linux test host); usage answers from the installed Codex 0.156.1 and Claude Code 2.1.282 | Automatic carousel and larger session-count qualification; the chimes and usage view have not been seen and heard on a Mac by a test |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
 | Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect, `/clear` continuation and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
 | iPhone app (prototype) | Gateway on the Mac over Tailscale, admitting only the owner's iOS devices; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; the phone joins beside the desktop so both stay in sync (services started by this build); starting an agent in a category from the phone through the Mac's lapis; UI tests in the iOS 26.5 Simulator against real services and the real windowless lapis host with a Mac-side client attached, fake agents, and real Codex and Claude Code on a fake model; installed and used on an iPhone 17 Pro | Agents started before sync are taken over instead; no structured requests or push notifications; starting agents needs a lapis window or the login helper running |
@@ -129,8 +129,10 @@ Gemini and Antigravity appear in the picker; missing executables are marked
 unavailable. Escape returns from the folder step to harness selection. The field
 starts at your platform home directory; arrows select folder suggestions and
 Tab or Return completes the selected folder. The browse button opens the native
-folder picker. There is no name or model field. Each harness uses its existing
-login, default model and execution policy; model changes stay inside its own TUI.
+folder picker. Chips under the folder choose a model (for CLIs with a model
+flag) and an approval mode (Ask, Accept edits, Plan, Auto or Full access, as far
+as the CLI has them), each passed as that CLI's own flag; Default passes nothing
+and leaves the CLI's own setting. Everything else stays in each CLI's own config.
 To add your own flags to every new agent of a harness (lapis adds none itself),
 set `harnessArguments` in `lapis.json`, for example
 `{"harnessArguments": {"claude": ["--dangerously-skip-permissions"]}}`; shell
@@ -159,9 +161,40 @@ Command-Shift-P opens Commands; Command-B hides or shows the category sidebar
 and remembers that choice. Command-V remains paste. As in a browser, Command-T
 creates an agent (its tab defaults to the project path) and Command-N creates a
 category; the **+** under the last category does the same. Command-comma
-opens Appearance, and Command-R reloads configuration. Linux uses Control-Shift
+opens Appearance, and Command-R reloads configuration. Command-K finds an agent
+as you type: by the letters of its name, folder, category, CLI or machine, or by
+text on its screen, and Return shows it. Linux uses Control-Shift
 bindings. Terminal Control chords and Command-left/right editing stay with the
 agent. Bindings remain configurable in `lapis.json`.
+
+`lapis.json` applies as soon as it changes, whether Appearance, you or an agent
+edits it. Besides bindings and appearance it holds the defaults for new agents,
+per machine where they differ:
+
+```json
+{
+  "newAgent": {
+    "harness": "codex",
+    "folder": "~/dev",
+    "machines": {"devbox": {"folder": "~/work"}},
+    "models": {"codex": ["gpt-6-astra", "gpt-6-sol"], "claude": ["opus", "sonnet"]}
+  },
+  "alerts": {"sound": true, "finished": true, "repeat": 3},
+  "keepAwake": true,
+  "showUsage": true
+}
+```
+
+An agent that needs you chimes (two taps, rising), and again every few seconds
+while the request waits and you are looking elsewhere, up to `repeat` times; a
+Codex or Claude turn that ends out of view chimes once, quietly. Appearance has
+the switches and a Play button for each. `keepAwake` keeps the Mac from
+sleeping while it is plugged in, so the phone can reach it. `showUsage` shows
+plan usage under the categories: each CLI's tightest limit window, opening the
+details (every Codex and Claude window with its reset time and where the
+current pace ends, tokens today, this month and per day for 30 days, by model).
+Limits come from each CLI, asked every five minutes without a prompt; tokens are
+counted from this Mac's transcripts, without prices.
 
 Close the window (its close button or Command-Q) to detach. Reopen it to
 reconnect the same agents and restore category selections and window
@@ -283,9 +316,10 @@ awake.
 
 **+** on a category (or in the toolbar) starts an agent from the phone: pick the
 machine (this Mac, or an ssh host from your ssh config and shell history,
-reachable and most used first), the CLI, the category and a folder, and it
-opens as a new tab in that category in lapis on the Mac, then on the phone once
-it runs. Folders are browsed from an index of the machine's folders (visible
+reachable and most used first), the CLI, the category, a folder (starting at
+that machine's `newAgent` folder), and optionally a model and approval mode, and
+it opens as a new tab in that category in lapis on the Mac, then on the phone
+once it runs. Folders are browsed from an index of the machine's folders (visible
 ones alphabetically, hidden ones last), with the folders where you have started
 the most Codex, Claude Code and lapis agents marked at the top, and searched by
 typing a few of their letters; both run on the phone. The list, the CLIs, the

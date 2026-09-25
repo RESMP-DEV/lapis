@@ -470,6 +470,13 @@ bool UiPreview::loadCandidate() {
     // QML reads `keymap.actionSequences(...)`. Absent keymap keeps the literals.
     if (options_.keymap != nullptr)
         candidate->rootContext()->setContextProperty(QStringLiteral("keymap"), options_.keymap);
+    if (options_.alerts)
+        candidate->rootContext()->setContextProperty(QStringLiteral("alerts"), options_.alerts);
+    if (options_.agentSearch)
+        candidate->rootContext()->setContextProperty(QStringLiteral("agentSearch"),
+                                                     options_.agentSearch);
+    if (options_.usage)
+        candidate->rootContext()->setContextProperty(QStringLiteral("usage"), options_.usage);
     candidate->setInitialProperties({{QStringLiteral("visible"), false}});
 
     QString candidateDiagnostics;

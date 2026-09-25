@@ -449,10 +449,15 @@ class StartAgentTests(unittest.TestCase):
                     "directory": "~/x",
                     "category": "later",
                     "machine": "devbox",
+                    "model": "gpt-6-sol",
+                    "mode": "full",
                 },
             )
             self.assertEqual(status, 200)
-            self.assertEqual(desktop.requests[-1]["machine"], "devbox")
+            self.assertEqual(
+                {k: desktop.requests[-1][k] for k in ("machine", "model", "mode")},
+                {"machine": "devbox", "model": "gpt-6-sol", "mode": "full"},
+            )
 
     def test_without_lapis_on_the_mac(self):
         with Server(self, "{}") as server:
@@ -751,6 +756,24 @@ class MachineTests(unittest.TestCase):
             [(m["name"], m["available"]) for m in machines.machines],
             [("devbox", True), ("live", True), ("gpubox", True), ("oldbox", False)],
         )
+
+
+@unittest.skipUnless(shutil.which("caffeinate"), "macOS only")
+class KeepAwakeTests(unittest.TestCase):
+    def test_the_mac_stays_awake_only_while_the_setting_is_on(self):
+        directory = Path(tempfile.mkdtemp(prefix="lk-", dir="/tmp"))
+        self.addCleanup(shutil.rmtree, directory, True)
+        config = directory / "lapis.json"
+        config.write_text("{}")
+        keeper = remote.KeepAwake(config)
+        self.addCleanup(lambda: keeper.process and keeper.process.terminate())
+        keeper.apply()
+        self.assertIsNotNone(keeper.process, "on by default")
+        self.assertIsNone(keeper.process.poll())
+        self.assertIn("-s", keeper.process.args)
+        config.write_text('{"keepAwake": false}')
+        keeper.apply()
+        self.assertIsNone(keeper.process, "off when the config says so")
 
 
 class Events:

@@ -1,4 +1,6 @@
 #include "agent_checkpoint.hpp"
+#include "alerts.hpp"
+#include "keymap.hpp"
 #include "launch_spec.hpp"
 #include "workspace.hpp"
 #include "workspace_control.hpp"
@@ -20,6 +22,7 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUuid>
+#include <QtEndian>
 #include <algorithm>
 #include <chrono>
 #include <functional>
@@ -1085,7 +1088,7 @@ void phoneStartsAnAgentInItsCategory() {
         remote[QStringLiteral("machine")] = QStringLiteral("-oProxyCommand=touch");
         require(!askWorkspace(registry, remote).value(QStringLiteral("ok")).toBool(),
                 "a machine name cannot be an ssh option");
-        remote[QStringLiteral("machine")] = QStringLiteral("anvil-test");
+        remote[QStringLiteral("machine")] = QStringLiteral("devbox");
         remote[QStringLiteral("program")] = QStringLiteral("/opt/grok/bin/grok");
         const auto over_ssh = askWorkspace(registry, remote);
         auto* far = workspace.session(over_ssh.value(QStringLiteral("id")).toString());
@@ -1097,7 +1100,7 @@ void phoneStartsAnAgentInItsCategory() {
                 [far] {
                     const auto text = screenText(far->snapshot());
                     return text.contains(QStringLiteral("[-t]")) &&
-                           text.contains(QStringLiteral("[anvil-test]")) &&
+                           text.contains(QStringLiteral("[devbox]")) &&
                            text.contains(QStringLiteral(
                                R"([cd ~/'dev/some project' && exec "${SHELL:-/bin/sh}" -lic /opt/grok/bin/grok])"));
                 },
@@ -1156,6 +1159,103 @@ void windowTakesTheWorkspaceFromTheHost() {
                 "the host hands over and exits");
     }
     qputenv("PATH", path);
+}
+
+// An agent that needs you chimes at once and again while its request waits
+// and you look elsewhere, up to the configured count; looking, answering or
+// turning the sound off stops it. A finished turn chimes once, quietly.
+void alertsChimeWhileAnAgentWaits() {
+    namespace wire = lapis::session::wire;
+    QTemporaryDir directory;
+    require(directory.isValid(), "alerts directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    QFile config(root.filePath(QStringLiteral("lapis.json")));
+    require(config.open(QIODevice::WriteOnly), "write the config");
+    config.write(R"({"version": 1, "alerts": {"sound": true, "finished": true, "repeat": 3}})");
+    config.close();
+    lapis::desktop::KeyMap keymap;
+    keymap.setSourcePathForTesting(config.fileName());
+    require(keymap.load(), "alerts config loads");
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    Workspace workspace(WorkspaceMode::live, options);
+    lapis::desktop::SessionPreview agent(QStringLiteral("agent"), root.path(), {}, QColor(), "");
+    std::vector<lapis::desktop::Chime> played;
+    bool looking = false;
+    lapis::desktop::Alerts alerts(
+        workspace, keymap, [&played](lapis::desktop::Chime chime) { played.push_back(chime); },
+        [&looking](const lapis::desktop::SessionPreview*) { return looking; });
+    alerts.setTimingForTesting({.repeatMs = 120, .quietMs = 40});
+    const auto request = [&agent](bool pending) {
+        wire::AttentionSnapshot state;
+        state.available = state.connected = state.ready = true;
+        state.source_epoch = 1;
+        if (pending) {
+            lapis::session::attention::Pending item;
+            item.request = {.id = std::int64_t{1},
+                            .thread_id = "t",
+                            .turn_id = "u",
+                            .item_id = "i",
+                            .reason = "Approval",
+                            .summary = "Run tests",
+                            .choices = {"accept"}};
+            item.source_epoch = item.revision = 1;
+            state.requests.push_back({item, QJsonObject{}});
+        }
+        agent.applyAttention(state);
+    };
+    const auto needs = [&played] {
+        return std::count(played.begin(), played.end(), lapis::desktop::Chime::needsYou);
+    };
+    request(true);
+    emit workspace.agentNeedsYou(&agent);
+    require(needs() == 1, "a request chimes at once");
+    waitFor([] { return false; }, 700);
+    require(needs() == 3, "and again while it waits, three times in all");
+
+    played.clear();
+    looking = true;
+    emit workspace.agentNeedsYou(&agent);
+    waitFor([] { return false; }, 300);
+    require(played.empty(), "nothing plays for the agent being looked at");
+
+    looking = false;
+    emit workspace.agentNeedsYou(&agent);
+    require(needs() == 1, "a request out of view chimes");
+    looking = true;
+    waitFor([] { return false; }, 400);
+    require(needs() == 1, "looking at the agent stops the repeats");
+
+    looking = false;
+    played.clear();
+    waitFor([] { return false; }, 60);
+    emit workspace.agentNeedsYou(&agent);
+    request(false);
+    waitFor([] { return false; }, 400);
+    require(needs() == 1, "an answered request stops the repeats");
+
+    played.clear();
+    waitFor([] { return false; }, 60);
+    emit workspace.turnFinished(&agent);
+    require(played == std::vector{lapis::desktop::Chime::finished}, "a finished turn chimes once");
+
+    require(keymap.setAlertSound(false), "turn the sound off");
+    played.clear();
+    request(true);
+    waitFor([] { return false; }, 60);
+    emit workspace.agentNeedsYou(&agent);
+    waitFor([] { return false; }, 300);
+    require(played.empty(), "no chimes with the sound off");
+
+    const auto wav = lapis::desktop::chime_wav(lapis::desktop::Chime::needsYou);
+    require(wav.startsWith("RIFF") && wav.mid(8, 8) == "WAVEfmt " && wav.size() == 44 + 27342 * 2,
+            "a chime is a 0.62 second, 16-bit mono WAV");
+    qint16 peak = 0;
+    for (qsizetype i = 44; i + 1 < wav.size(); i += 2)
+        peak = std::max<qint16>(
+            peak, static_cast<qint16>(std::abs(qFromLittleEndian<qint16>(wav.constData() + i))));
+    require(qFromLittleEndian<qint16>(wav.constData() + 44) == 0 && peak > 8000 && peak < 8500,
+            "it starts from silence and peaks near -12 dBFS");
 }
 
 // A new agent's CLI updates itself first, so the agent never opens on an
@@ -1793,6 +1893,7 @@ int main(int argc, char** argv) {
         windowWaitsForTheRestoreHelper();
         phoneStartsAnAgentInItsCategory();
         windowTakesTheWorkspaceFromTheHost();
+        alertsChimeWhileAnAgentWaits();
         phoneSizeYieldsToTheDesktop();
         std::cout << "workspace categories, identity, persistence, status and closing passed\n";
         return 0;

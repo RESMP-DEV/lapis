@@ -27,4 +27,20 @@ void style_window_chrome(QQuickWindow& window) {
     if (@available(macOS 11.0, *))
         native.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
 }
+void play_sound(const QByteArray& wav) {
+    // One sound per distinct chime, kept for reuse; a chime still playing
+    // starts over rather than overlapping itself.
+    static NSMutableDictionary<NSData*, NSSound*>* sounds = [NSMutableDictionary dictionary];
+    NSData* data = [NSData dataWithBytes:wav.constData()
+                                  length:static_cast<NSUInteger>(wav.size())];
+    NSSound* sound = sounds[data];
+    if (sound == nil) {
+        sound = [[NSSound alloc] initWithData:data];
+        if (sound == nil)
+            return;
+        sounds[data] = sound;
+    }
+    [sound stop];
+    [sound play];
+}
 } // namespace lapis::desktop

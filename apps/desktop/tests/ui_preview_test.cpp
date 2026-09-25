@@ -1,7 +1,9 @@
+#include "agent_search.hpp"
 #include "keymap.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include "ui_preview.hpp"
+#include "usage.hpp"
 #include <QAccessible>
 #include <QElapsedTimer>
 #include <QHash>
@@ -1351,6 +1353,117 @@ void finish_turn(lapis::desktop::SessionPreview& session) {
     session.applyAttention(state);
 }
 
+QQuickItem* required_visual(QQuickWindow& window, const QString& name) {
+    auto* found = find_visual(window.contentItem(), name);
+    if (found == nullptr)
+        throw std::runtime_error("missing item " + name.toStdString());
+    return found;
+}
+void press_action(QQuickWindow& window, const lapis::desktop::KeyMap& keymap, const char* action) {
+    send_binding(window, keymap.sequences(QString::fromLatin1(action)).front());
+    pump(260); // Longer than the strip's scroll animation.
+}
+void capture_step(QQuickWindow& window, const char* name) {
+    if (const auto path = qEnvironmentVariable("LAPIS_WORKSPACE_CAPTURE_PREFIX"); !path.isEmpty())
+        CHECK(window.grabWindow().save(path + QString::fromLatin1(name) + QStringLiteral(".png")));
+}
+
+void check_agent_search(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                        const lapis::desktop::KeyMap& keymap,
+                        lapis::desktop::TerminalSurface& terminal) {
+    // Command-K finds an agent by name; Return shows it and gives it the keys.
+    CHECK(workspace.selectSession(QStringLiteral("shell")));
+    pump(30);
+    press_action(window, keymap, "searchAgents");
+    auto* finder = window.findChild<QObject*>(QStringLiteral("searchDialog"));
+    CHECK(finder != nullptr);
+    wait_popup(*finder, true);
+    auto* field = required_visual(window, QStringLiteral("agentSearchField"));
+    CHECK(field->hasActiveFocus());
+    field->setProperty("text", QStringLiteral("wsnotes"));
+    pump(30);
+    CHECK(required_visual(window, QStringLiteral("agentResult_notes")) != nullptr);
+    send_binding(window, QStringLiteral("Return"));
+    wait_popup(*finder, false);
+    CHECK(focused_id(workspace) == QStringLiteral("notes") && terminal.hasActiveFocus());
+    // Escape leaves the focused agent alone.
+    press_action(window, keymap, "searchAgents");
+    wait_popup(*finder, true);
+    required_visual(window, QStringLiteral("agentSearchField"))
+        ->setProperty("text", QStringLiteral("shell"));
+    pump(30);
+    send_binding(window, QStringLiteral("Escape"));
+    wait_popup(*finder, false);
+    CHECK(focused_id(workspace) == QStringLiteral("notes"));
+}
+
+void check_usage(QQuickWindow& window, lapis::desktop::Usage& usage, lapis::desktop::KeyMap& keymap,
+                 lapis::desktop::TerminalSurface& terminal) {
+    // Plan usage sits under the categories, each CLI at its tightest window,
+    // and opens the details; the setting hides it.
+    usage.refresh();
+    QElapsedTimer asked;
+    asked.start();
+    while ((usage.providers().size() < 2 || usage.counting()) && asked.elapsed() < 10000)
+        pump(20);
+    pump(60);
+    auto* meter = required_visual(window, QStringLiteral("usageMeter"));
+    CHECK(meter->isVisible());
+    CHECK(required_visual(window, QStringLiteral("usageMeter_codex")) != nullptr &&
+          required_visual(window, QStringLiteral("usageMeter_claude")) != nullptr);
+    CHECK(meter->mapToScene({0, 0}).y() >
+          required_visual(window, QStringLiteral("newCategoryButton"))->mapToScene({0, 0}).y());
+    capture_step(window, "usage-meter");
+    click_visual(window, *meter);
+    auto* details = window.findChild<QObject*>(QStringLiteral("usageDialog"));
+    CHECK(details != nullptr);
+    wait_popup(*details, true);
+    CHECK(required_visual(window, QStringLiteral("usage_codex")) != nullptr &&
+          required_visual(window, QStringLiteral("usage_claude")) != nullptr);
+    CHECK(
+        required_visual(window, QStringLiteral("usageToday_claude"))->property("text").toString() ==
+        QStringLiteral("0"));
+    capture_step(window, "usage-details");
+    send_binding(window, QStringLiteral("Escape"));
+    wait_popup(*details, false);
+    CHECK(terminal.hasActiveFocus());
+    CHECK(keymap.setShowUsage(false));
+    pump(30);
+    CHECK(!meter->isVisible());
+}
+
+// Stand-ins for the two CLIs' usage answers; no transcripts.
+std::unique_ptr<lapis::desktop::Usage> fake_usage(const QTemporaryDir& config) {
+    const auto fake = [&config](const QString& name, const QByteArray& body) {
+        const auto path = config.filePath(name);
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly) && file.write("#!/bin/sh\n" + body) > 0);
+        file.close();
+        CHECK(QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                              QFileDevice::ExeOwner));
+        return path;
+    };
+    const auto codex_cli = fake(QStringLiteral("codex"), R"(read -r line
+echo '{"id":1,"result":{}}'
+read -r line
+read -r line
+echo '{"id":2,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":96,"windowDurationMins":10080,"resetsAt":4102444800},"planType":"pro"}}}'
+cat >/dev/null
+)");
+    const auto claude_cli = fake(QStringLiteral("claude"), R"(read -r line
+echo '{"type":"control_response","response":{"subtype":"success","request_id":"usage","response":{"subscription_type":"max","rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":41,"resets_at":"2099-01-01T00:00:00+00:00"},"seven_day":{"utilization":23,"resets_at":"2099-01-01T00:00:00+00:00"}}}}}'
+cat >/dev/null
+)");
+    return std::make_unique<lapis::desktop::Usage>(
+        [codex_cli, claude_cli](const QString& id) {
+            return id == QLatin1String("codex")
+                       ? codex_cli
+                       : (id == QLatin1String("claude") ? claude_cli : QString());
+        },
+        lapis::desktop::TokenLedger::Roots{config.filePath(QStringLiteral("none")),
+                                           config.filePath(QStringLiteral("none"))});
+}
+
 // The agent strip is the category's navigation: live previews in tab order
 // that never take input or resize a terminal, keep part of the neighboring
 // card in view as selection moves, and pulse an agent that finished or needs a
@@ -1362,10 +1475,14 @@ int run_strip_ui_tests() {
     CHECK(config.isValid());
     KeyMap keymap;
     keymap.setSourcePathForTesting(config.filePath(QStringLiteral("strip.json")));
+    AgentSearch search(&workspace);
+    const auto usage = fake_usage(config);
     UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),
-                                  .keymap = &keymap});
+                                  .keymap = &keymap,
+                                  .agentSearch = &search,
+                                  .usage = usage.get()});
     CHECK(preview.load());
     auto* window = preview.window();
     window->resize(1400, 960);
@@ -1565,6 +1682,9 @@ int run_strip_ui_tests() {
     wait_popup(*category_form, true);
     CHECK(QMetaObject::invokeMethod(category_form, "close"));
     wait_popup(*category_form, false);
+
+    check_agent_search(*window, workspace, keymap, *terminal);
+    check_usage(*window, *usage, keymap, *terminal);
     CHECK(preview.diagnostics().isEmpty());
     return EXIT_SUCCESS;
 }

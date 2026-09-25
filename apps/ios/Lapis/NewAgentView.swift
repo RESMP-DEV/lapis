@@ -12,6 +12,8 @@ struct NewAgentView: View {
     @State private var category: String
     @State private var machine = "" // "" is this Mac
     @State private var harness = ""
+    @State private var chosenModel = "" // "" is the CLI's default
+    @State private var mode = ""
     // Relative to the machine's home ("" is home), or absolute.
     @State private var folder = ""
     @State private var query = ""
@@ -50,6 +52,18 @@ struct NewAgentView: View {
                             section("Machine") { machineChips }
                         }
                         section("Agent") { harnessGrid }
+                        if let chosen = offered.first(where: { $0.id == harness }) {
+                            if let models = chosen.models, !models.isEmpty {
+                                section("Model") {
+                                    optionChips(models.map { ($0, $0) }, selected: $chosenModel, prefix: "model")
+                                }
+                            }
+                            if let modes = chosen.modes, !modes.isEmpty {
+                                section("Mode") {
+                                    optionChips(modes.map { ($0.id, $0.name) }, selected: $mode, prefix: "mode")
+                                }
+                            }
+                        }
                         section("Category") { categoryChips }
                     }
                     section("Folder") { folderPicker }
@@ -168,7 +182,11 @@ struct NewAgentView: View {
                         let chosen = item.id == harness
                         let accent = Theme.harness(item.id)
                         Button {
+                            if harness != item.id {
                             harness = item.id
+                            chosenModel = ""
+                            mode = ""
+                        }
                         } label: {
                             VStack(spacing: 7) {
                                 HarnessBadge(harness: item.id, accent: accent)
@@ -193,6 +211,23 @@ struct NewAgentView: View {
                     }
                 }
                 .padding(.vertical, 6)
+            }
+        }
+    }
+
+    // "Default" (the CLI's own setting) and the offered choices.
+    private func optionChips(_ choices: [(id: String, name: String)], selected: Binding<String>,
+                             prefix: String) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                chip("Default", chosen: selected.wrappedValue.isEmpty, id: "\(prefix)-default") {
+                    selected.wrappedValue = ""
+                }
+                ForEach(choices, id: \.id) { choice in
+                    chip(choice.name, chosen: selected.wrappedValue == choice.id, id: "\(prefix)-\(choice.id)") {
+                        selected.wrappedValue = choice.id
+                    }
+                }
             }
         }
     }
@@ -434,21 +469,39 @@ struct NewAgentView: View {
 
     private func prepare() async {
         pickHarness()
-        folder = catalog?.frequent.first?.path ?? ""
+        folder = startingFolder
         if model.harnesses == nil || catalog == nil {
             await model.prefetch()
             pickHarness()
-            if folder.isEmpty { folder = catalog?.frequent.first?.path ?? "" }
+            if folder.isEmpty { folder = startingFolder }
         }
     }
 
-    // The CLI last used on this machine, else the first one there.
+    // The machine's folder from lapis.json's newAgent defaults, else where the
+    // most agents were started there, else home.
+    private var startingFolder: String {
+        let configured = machine.isEmpty ? model.defaults?.folder : model.defaults?.machines?[machine]
+        if let configured, !configured.isEmpty {
+            if configured == "~" { return "" }
+            if configured.hasPrefix("~/") {
+                return String(configured.dropFirst(2)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            }
+            return configured
+        }
+        return catalog?.frequent.first?.path ?? ""
+    }
+
+    // The configured CLI, else the one last used on this machine, else the
+    // first one there.
     private func pickHarness() {
         let ids = offered.map(\.id)
         guard !ids.contains(harness) else { return }
         let recent = (model.listing?.categories.flatMap(\.agents) ?? [])
             .last { ($0.machine ?? "") == machine }?.harness
-        harness = recent.flatMap { ids.contains($0) ? $0 : nil } ?? ids.first ?? ""
+        let preferred = [model.defaults?.harness, recent].compactMap { $0 }.first { ids.contains($0) }
+        harness = preferred ?? ids.first ?? ""
+        chosenModel = ""
+        mode = ""
     }
 
     private func choose(machine name: String) {
@@ -459,13 +512,13 @@ struct NewAgentView: View {
         results = []
         harness = ""
         pickHarness()
-        folder = catalog?.frequent.first?.path ?? ""
+        folder = startingFolder
         if catalog == nil {
             Task {
                 await model.loadCatalog(name)
                 guard machine == name else { return }
                 pickHarness()
-                folder = catalog?.frequent.first?.path ?? ""
+                folder = startingFolder
             }
         }
     }
@@ -501,7 +554,9 @@ struct NewAgentView: View {
         do {
             let agent = try await model.start(
                 NewAgent(harness: harness, directory: directory, category: category,
-                         machine: machine.isEmpty ? nil : machine)
+                         machine: machine.isEmpty ? nil : machine,
+                         model: chosenModel.isEmpty ? nil : chosenModel,
+                         mode: mode.isEmpty ? nil : mode)
             ) { message in progress = message }
             progress = nil
             onStarted(agent)

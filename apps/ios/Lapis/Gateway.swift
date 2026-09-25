@@ -35,6 +35,22 @@ struct Harness: Codable, Identifiable, Hashable {
     let id: String
     let name: String
     let installed: Bool
+    // Models and approval modes the Mac can start it with; older Macs send none.
+    let models: [String]?
+    let modes: [AgentMode]?
+}
+
+struct AgentMode: Codable, Hashable, Identifiable {
+    let id: String
+    let name: String
+}
+
+// lapis.json's newAgent defaults: the CLI, and the folder on this Mac and on
+// each ssh machine ("~/dev" style).
+struct AgentDefaults: Codable {
+    let harness: String?
+    let folder: String?
+    let machines: [String: String]?
 }
 
 // An agent to start, as a new tab in `category` on the Mac: on the Mac, or
@@ -44,6 +60,8 @@ struct NewAgent: Encodable {
     let directory: String
     let category: String
     let machine: String?
+    let model: String?
+    let mode: String?
 }
 
 // An ssh host the Mac can start agents on, most used first.
@@ -242,11 +260,15 @@ struct Gateway {
         return try JSONDecoder().decode(WorkspaceListing.self, from: data)
     }
 
-    func harnesses() async throws -> [Harness] {
-        struct Listing: Decodable { let harnesses: [Harness] }
+    func harnesses() async throws -> (harnesses: [Harness], defaults: AgentDefaults?) {
+        struct Listing: Decodable {
+            let harnesses: [Harness]
+            let defaults: AgentDefaults?
+        }
         let (data, response) = try await Gateway.requests.data(for: request("api/harnesses"))
         try Gateway.check(response, data)
-        return try JSONDecoder().decode(Listing.self, from: data).harnesses
+        let listing = try JSONDecoder().decode(Listing.self, from: data)
+        return (listing.harnesses, listing.defaults)
     }
 
     func start(_ agent: NewAgent) async throws -> StartedAgent {

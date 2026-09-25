@@ -1,18 +1,23 @@
+#include "agent_search.hpp"
+#include "alerts.hpp"
 #include "keymap.hpp"
 #include "platform_preferences.hpp"
 #include "terminal_surface.hpp"
 #include "ui_capture.hpp"
 #include "ui_preview.hpp"
+#include "usage.hpp"
 #include "workspace_control.hpp"
 
 #include "launch_spec.hpp"
 
 #include <QCommandLineParser>
 #include <QDebug>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QPointer>
 #include <QQmlEngine>
 #include <QQuickStyle>
 #include <QQuickWindow>
@@ -245,6 +250,23 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
 // resuming their conversations, and wait until they answer. With --serve, then
 // host the workspace for the phone until a lapis window asks for it. Services
 // keep running either way; a window reattaches to them when it opens.
+// Where Codex and Claude Code keep transcripts: their own home variables, or
+// their default folders.
+lapis::desktop::TokenLedger::Roots transcript_roots() {
+    const auto home = [](const char* variable, const char* fallback) {
+        const auto set = qEnvironmentVariable(variable);
+        return set.isEmpty() ? QDir::home().filePath(QLatin1String(fallback)) : set;
+    };
+    return {home("CODEX_HOME", ".codex") + QStringLiteral("/sessions"),
+            home("CLAUDE_CONFIG_DIR", ".claude") + QStringLiteral("/projects")};
+}
+// Usage asks the CLIs only while its setting is on.
+void follow_usage_setting(lapis::desktop::Usage& usage, const lapis::desktop::KeyMap& keymap) {
+    const auto show = [&usage, &keymap] { usage.setActive(keymap.showUsage()); };
+    show();
+    QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &usage, show);
+}
+
 int run_headless(lapis::desktop::Workspace& workspace, bool serve) {
     using lapis::desktop::SessionPreview;
     using lapis::desktop::WorkspaceControl;
@@ -373,17 +395,23 @@ int main(int argc, char** argv) {
         const bool isolated = parser.isSet(QStringLiteral("ui-preview"));
         const auto options = workspace_options(parser, isolated);
         Workspace workspace(isolated ? WorkspaceMode::preview : WorkspaceMode::live, options);
+        // The config file applies live: a change from the window or an agent
+        // reaches new agents at once, with or without a window.
+        KeyMap keymap;
+        keymap.load();
+        const auto configure = [&] {
+            workspace.setHarnessArguments(keymap.harnessArguments());
+            workspace.setAgentDefaults(keymap.agentDefaults());
+        };
+        configure();
+        QObject::connect(&keymap, &KeyMap::changed, &workspace, configure);
         if (headless)
             return run_headless(workspace, serve);
         // The window owns the workspace: the phone's requests come here.
         std::optional<WorkspaceControl> control;
         if (options.restoreAgents && workspace.workspaceError().isEmpty())
             control.emplace(workspace, false);
-        KeyMap keymap;
-        keymap.load();
-        workspace.setHarnessArguments(keymap.harnessArguments());
-        QObject::connect(&keymap, &KeyMap::changed, &workspace,
-                         [&] { workspace.setHarnessArguments(keymap.harnessArguments()); });
+
         qInfo().noquote() << "lapis keymap:" << keymap.sourcePath()
                           << (keymap.loaded() ? "loaded" : "defaults");
         qmlRegisterUncreatableType<SessionPreview>("Lapis", 1, 0, "SessionPreview",
@@ -396,12 +424,33 @@ int main(int argc, char** argv) {
                 ? QUrl::fromLocalFile(
                       QFileInfo(parser.value(QStringLiteral("qml"))).absoluteFilePath())
                 : QUrl(QStringLiteral("qrc:/qml/Main.qml"));
+        // Chimes for agents that need you, only in the real workspace (the
+        // preview fixtures stay silent). Looking means the window is active
+        // and showing that agent.
+        QPointer<QQuickWindow> shown;
+        std::optional<Alerts> alerts;
+        if (!isolated)
+            alerts.emplace(
+                workspace, keymap, [](Chime chime) { play_sound(chime_wav(chime)); },
+                [&workspace, &shown](const SessionPreview* item) {
+                    return shown && shown->isActive() && workspace.focusedSession() == item;
+                });
+        AgentSearch agentSearch(&workspace);
+        // Plan limits and token totals, only while the setting is on and only
+        // in the real workspace. Each CLI keeps its transcripts where its own
+        // home variable says.
+        std::optional<Usage> usage;
+        if (!isolated)
+            follow_usage_setting(usage.emplace(&harness_program, transcript_roots()), keymap);
         UiPreview view(workspace, {.source = source,
                                    .compact = parser.isSet(QStringLiteral("compact")),
                                    .screen = parser.isSet(QStringLiteral("screen"))
                                                  ? parser.value(QStringLiteral("screen"))
                                                  : qEnvironmentVariable("LAPIS_SCREEN"),
                                    .keymap = &keymap,
+                                   .alerts = alerts ? &*alerts : nullptr,
+                                   .agentSearch = &agentSearch,
+                                   .usage = usage ? &*usage : nullptr,
                                    .persistGeometry = !isolated && !options.launch &&
                                                       options.endpoint.isEmpty() &&
                                                       !parser.isSet(QStringLiteral("capture"))});
@@ -413,6 +462,7 @@ int main(int argc, char** argv) {
                                  view.setSystemReducedMotion(system_reduced_motion());
                          });
         QObject::connect(&view, &UiPreview::windowChanged, &view, [&](QQuickWindow* window) {
+            shown = window;
             wire_window(*window, view, workspace, parser);
             const auto update_chrome = [window] { style_window_chrome(*window); };
             QObject::connect(window, &QQuickWindow::colorChanged, window, update_chrome);
@@ -421,6 +471,7 @@ int main(int argc, char** argv) {
         });
         if (!view.load())
             return 1;
+        shown = view.window();
         view.window()->requestActivate();
         qInfo() << "UI preview:" << isolated
                 << "system reduced motion:" << view.systemReducedMotion();

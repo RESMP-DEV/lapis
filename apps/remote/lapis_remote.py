@@ -782,6 +782,56 @@ class RemoteFolders:
         return report[0].get("harnesses", {}).get(harness, "") if report else ""
 
 
+class KeepAwake:
+    """Keeps this Mac from sleeping on power while lapis.json's keepAwake is on
+    (the default), so the phone can reach it. caffeinate -s only holds on AC
+    power and exits with the gateway; the display still sleeps."""
+
+    def __init__(self, config):
+        self.config = Path(config)
+        self.process = None
+        self.stamp = None
+
+    def wanted(self):
+        try:
+            return bool(
+                json.loads(self.config.read_text(encoding="utf-8")).get(
+                    "keepAwake", True
+                )
+            )
+        except (OSError, ValueError, AttributeError):
+            return True
+
+    def apply(self):
+        try:
+            stamp = self.config.stat().st_mtime_ns
+        except OSError:
+            stamp = None
+        running = self.process is not None and self.process.poll() is None
+        if stamp == self.stamp and running == self.wanted():
+            return
+        self.stamp = stamp
+        if self.wanted() and not running:
+            caffeinate = shutil.which("caffeinate")
+            if caffeinate:
+                self.process = subprocess.Popen(
+                    [caffeinate, "-s", "-w", str(os.getpid())],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                sys.stderr.write("keeping this Mac awake on power\n")
+        elif not self.wanted() and running:
+            self.process.terminate()
+            self.process = None
+            sys.stderr.write("letting this Mac sleep\n")
+
+    def run(self, interval=5.0):
+        while True:
+            self.apply()
+            time.sleep(interval)
+
+
 SHELL_HOSTS = ("ssh", "mosh", "et")
 SSH_VALUE_OPTIONS = set("bcDEeFIiJLlmOoPpQRSWw")
 
@@ -1373,7 +1423,13 @@ class Handler(BaseHTTPRequestHandler):
     def harnesses(self):
         answer = self.ask_desktop({"request": "harnesses"})
         if answer is not None:
-            self.reply(HTTPStatus.OK, {"harnesses": answer.get("harnesses", [])})
+            self.reply(
+                HTTPStatus.OK,
+                {
+                    "harnesses": answer.get("harnesses", []),
+                    "defaults": answer.get("defaults", {}),
+                },
+            )
 
     def list_machines(self):
         machines = self.gateway.machines.current()
@@ -1460,6 +1516,13 @@ class Handler(BaseHTTPRequestHandler):
             require(isinstance(title, str) and len(title) <= 80, "Invalid title")
             if title:
                 request["title"] = title
+            for field in ("model", "mode"):
+                value = body.get(field, "")
+                require(
+                    isinstance(value, str) and len(value) <= 128, f"Invalid {field}"
+                )
+                if value:
+                    request[field] = value
             machine = body.get("machine", "")
             require(
                 isinstance(machine, str)
@@ -1713,6 +1776,8 @@ def serve(args):
         ),
         machines=MachineList(args.registry, args.ssh_config, args.shell_history),
     )
+    if sys.platform == "darwin":
+        threading.Thread(target=KeepAwake(args.config).run, daemon=True).start()
     sys.stderr.write(f"lapis remote on {bind}:{args.port} for {auth.dns_name}\n")
     server.serve_forever()
 
@@ -1720,6 +1785,9 @@ def serve(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--registry", default=str(ROOT / "runtime" / "workspace.json"))
+    parser.add_argument(
+        "--config", default=str(ROOT / "lapis.json"), help="lapis settings"
+    )
     parser.add_argument("--bind", help="address; defaults to this Mac's Tailscale IPv4")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--tailscale", default="tailscale")

@@ -1,6 +1,7 @@
 #ifndef LAPIS_DESKTOP_WORKSPACE_HPP
 #define LAPIS_DESKTOP_WORKSPACE_HPP
 
+#include "keymap.hpp"
 #include <lapis/session/terminal.hpp>
 
 #include "launch_spec.hpp"
@@ -221,6 +222,10 @@ struct PreviewRequest {
     QString reason;
 };
 
+// The installed program of a CLI lapis knows ("codex", "claude", ...), or
+// empty when it is not found on this Mac.
+[[nodiscard]] QString harness_program(const QString& id);
+
 // An agent to start: a CLI in a folder, in a category, on this Mac or over ssh.
 struct AgentRequest {
     QString category;
@@ -229,6 +234,8 @@ struct AgentRequest {
     QString harness;
     QString machine; // an ssh host; empty for this Mac
     QString program; // the CLI's path on `machine`, when known
+    QString model;   // passed with the CLI's model flag; empty for its default
+    QString mode;    // ask, edits, plan, auto or full; empty for the CLI's own setting
     // Show it on the stage; otherwise the category's selection stays.
     bool select{};
 };
@@ -288,7 +295,15 @@ class Workspace final : public QObject {
     Q_INVOKABLE void nextCategory(int delta = 1);
     Q_INVOKABLE bool selectSession(const QString& id);
     Q_INVOKABLE bool createAgent(const QString& directory, const QString& title,
-                                 const QString& harness = QStringLiteral("codex"));
+                                 const QString& harness = QStringLiteral("codex"),
+                                 const QString& model = {}, const QString& mode = {});
+    // The config's new-agent defaults, for the forms: harness, folder, and
+    // the folder on each ssh machine.
+    Q_INVOKABLE [[nodiscard]] QVariantMap agentDefaults() const;
+    // Where an agent is: its category's name, its ssh machine (or ""), and
+    // its folder as the card shows it ("~/x", or "host:~/x" over ssh).
+    [[nodiscard]] QVariantMap agentPlace(const QString& id) const;
+    void setAgentDefaults(const AgentDefaults& defaults) { agent_defaults_ = defaults; }
     // Starts an agent; returns its id, or "" with workspaceError(). Without
     // `select` the category's selection is left alone, so an agent started
     // from another device never takes the stage from a shown agent.
@@ -320,6 +335,10 @@ class Workspace final : public QObject {
     void focusChanged();
     // An agent received a new request.
     void requestArrived();
+    // An agent has a new request for you (alerts chime for these).
+    void agentNeedsYou(lapis::desktop::SessionPreview* item);
+    // A Codex or Claude turn ended; terminal agents' output pauses do not count.
+    void turnFinished(lapis::desktop::SessionPreview* item);
     void sessionsChanged();
     void categoriesChanged();
     void categoryChanged();
@@ -330,6 +349,7 @@ class Workspace final : public QObject {
     [[nodiscard]] static QString defaultEndpoint();
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
     QHash<QString, QStringList> harness_arguments_;
+    AgentDefaults agent_defaults_;
     bool restore_agents_{};
     bool update_harnesses_{};
     bool headless_{};

@@ -84,7 +84,9 @@ QByteArray WorkspaceControl::answer(const QByteArray& line) {
     if (kind == QStringLiteral("harnesses"))
         return reply({{QStringLiteral("ok"), true},
                       {QStringLiteral("harnesses"),
-                       QJsonArray::fromVariantList(workspace_.availableHarnesses())}});
+                       QJsonArray::fromVariantList(workspace_.availableHarnesses())},
+                      {QStringLiteral("defaults"),
+                       QJsonObject::fromVariantMap(workspace_.agentDefaults())}});
     if (kind == QStringLiteral("createAgent"))
         return create(request);
     if (kind == QStringLiteral("handover")) {
@@ -108,7 +110,7 @@ QByteArray WorkspaceControl::create(const QJsonObject& request) {
         const auto parts = QDir::cleanPath(directory).split(QLatin1Char('/'));
         title = parts.constLast().isEmpty() ? QStringLiteral("/") : parts.constLast();
     }
-    for (const auto* field : {"machine", "program", "title"})
+    for (const auto* field : {"machine", "program", "title", "model", "mode"})
         if (request.contains(QLatin1String(field)) &&
             !request.value(QLatin1String(field)).isString())
             return refusal(QStringLiteral("Invalid %1").arg(QLatin1String(field)));
@@ -119,6 +121,8 @@ QByteArray WorkspaceControl::create(const QJsonObject& request) {
                                .harness = request.value(QStringLiteral("harness")).toString(),
                                .machine = request.value(QStringLiteral("machine")).toString(),
                                .program = request.value(QStringLiteral("program")).toString(),
+                               .model = request.value(QStringLiteral("model")).toString(),
+                               .mode = request.value(QStringLiteral("mode")).toString(),
                                .select = false});
     if (id.isEmpty())
         return refusal(workspace_.workspaceError());

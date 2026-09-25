@@ -4,6 +4,9 @@ set(CMAKE_AUTOMOC ON)
 add_library(lapis_desktop_view STATIC
     src/workspace.cpp src/workspace.hpp
     src/workspace_control.cpp src/workspace_control.hpp
+    src/alerts.cpp src/alerts.hpp
+    src/agent_search.cpp src/agent_search.hpp
+    src/usage.cpp src/usage.hpp
     src/attention_view.cpp
     src/keymap.cpp src/keymap.hpp
     src/live_connection.cpp src/live_connection.hpp
@@ -24,7 +27,7 @@ endif()
 target_link_libraries(lapis_desktop PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
 target_compile_definitions(lapis_desktop PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}"
     LAPIS_PROJECT_ROOT="${PROJECT_SOURCE_DIR}")
-qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml)
+qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Usage.qml)
 set_target_properties(lapis_desktop PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME "lapis"
     MACOSX_BUNDLE_GUI_IDENTIFIER "dev.lapis.desktop")
@@ -35,6 +38,14 @@ if(BUILD_TESTING)
     target_compile_definitions(lapis_window_state_tests PRIVATE LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
     add_test(NAME window-state COMMAND lapis_window_state_tests)
     set_tests_properties(window-state PROPERTIES TIMEOUT 30 RESOURCE_LOCK "qt_gui" ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
+    add_executable(lapis_agent_search_tests tests/agent_search_test.cpp)
+    target_link_libraries(lapis_agent_search_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME agent-search COMMAND lapis_agent_search_tests)
+    set_tests_properties(agent-search PROPERTIES TIMEOUT 60)
+    add_executable(lapis_usage_tests tests/usage_test.cpp)
+    target_link_libraries(lapis_usage_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME usage COMMAND lapis_usage_tests)
+    set_tests_properties(usage PROPERTIES TIMEOUT 60)
     add_executable(lapis_workspace_tests tests/workspace_test.cpp)
     target_link_libraries(lapis_workspace_tests PRIVATE lapis_project_options lapis_desktop_view)
     # Closing an agent is exercised against the real session service, and the
@@ -115,4 +126,4 @@ target_link_libraries(lapis_attention_ui_probe PRIVATE lapis_project_options lap
     Qt6::QuickControls2)
 target_compile_definitions(lapis_attention_ui_probe PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
 qt_add_resources(lapis_attention_ui_probe attention_qml PREFIX "/" FILES
-    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml)
+    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Usage.qml)

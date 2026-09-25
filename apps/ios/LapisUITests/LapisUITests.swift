@@ -194,6 +194,10 @@ final class LapisUITests: XCTestCase {
         XCTAssertTrue(grok.waitForExistence(timeout: 15), "the Mac's CLIs are offered")
         grok.tap()
         XCTAssertTrue(app.buttons["category-Later"].isSelected, "the tapped category is chosen")
+        let edits = app.buttons["mode-edits"]
+        XCTAssertTrue(edits.waitForExistence(timeout: 5), "the CLI's approval modes are offered")
+        edits.tap()
+        XCTAssertTrue(edits.isSelected)
         let search = app.textFields["folderSearch"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         search.tap()

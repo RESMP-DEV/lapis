@@ -76,6 +76,8 @@ ApplicationWindow {
     readonly property bool motionEnabled: !preview.reducedMotion && active && visible && motionDuration > 0
     readonly property bool inputBlocked: transitionLock
             || commandsDialog.visible
+            || searchDialog.visible
+            || usageDialog.visible
             || settingsDialog.visible
             || attentionDialog.visible
             || agentDialog.visible
@@ -169,6 +171,8 @@ ApplicationWindow {
             return [mac ? "Meta+Shift+[" : "Ctrl+Shift+["]
         if (action === "newCategory")
             return [mod + "N"]
+        if (action === "searchAgents")
+            return [mod + "K"]
         return []
     }
 
@@ -218,6 +222,36 @@ ApplicationWindow {
         if (!interactionArmed) return
         commandsDialog.open()
     }
+    function openSearchDialog() {
+        if (!interactionArmed || dialogsVisible()) return
+        searchDialog.open()
+    }
+    function openUsageDialog() {
+        if (!interactionArmed || dialogsVisible() || !usageAvailable) return
+        usageDialog.open()
+    }
+    readonly property bool usageAvailable: typeof usage !== "undefined" && usage !== null
+    readonly property bool usageShown: usageAvailable && typeof keymap !== "undefined" && keymap !== null
+                                       && keymap.showUsage
+    // Each CLI's tightest plan window, for the meter under the categories.
+    function usageRows() {
+        if (!usageShown)
+            return []
+        const rows = []
+        for (const provider of usage.providers) {
+            let top = null
+            for (const limit of provider.windows)
+                if (!top || limit.percent > top.percent)
+                    top = limit
+            if (!top)
+                continue
+            const label = top.label === "5 hours" ? "5h" :
+                          top.label === "Week" ? "wk" :
+                          top.label.startsWith("Week, ") ? "wk " + top.label.slice(6) : top.label
+            rows.push({id: provider.id, name: provider.name, percent: top.percent, label: label})
+        }
+        return rows
+    }
     readonly property var commandEntries: {
         const agent = workspace.focusedSession
         const hasAgent = agent !== null
@@ -229,6 +263,8 @@ ApplicationWindow {
         }
         add("newAgent", qsTr("New agent"), "newAgent", true, "", () => window.openNewAgentDialog())
         add("newCategory", qsTr("New category"), "newCategory", true, "", () => window.openCategoryDialog("add"))
+        add("searchAgents", qsTr("Find an agent"), "searchAgents", true, "", () => window.openSearchDialog())
+        add("openUsage", qsTr("Usage"), "", usageAvailable, qsTr("Usage is not available here"), () => window.openUsageDialog())
         add("toggleSidebar", sidebarExpanded ? qsTr("Hide sidebar") : qsTr("Show sidebar"), "toggleSidebar", true, "", () => window.toggleSidebar())
         add("togglePreviews", previewsEnabled ? qsTr("Hide agent previews") : qsTr("Show agent previews"), "togglePreviews", true, "", () => window.togglePreviews())
         add("nextAttention", qsTr("Go to agent that needs you"), "nextAttention", workspace.attentionAgents > 0, qsTr("No agent is waiting"), () => workspace.nextAttention())
@@ -359,7 +395,7 @@ ApplicationWindow {
     }
 
     function dialogsVisible() {
-        return commandsDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
+        return commandsDialog.visible || searchDialog.visible || usageDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
                 || closeAgentDialog.visible || categoryDialog.visible || renameAgentDialog.visible
     }
 
@@ -454,9 +490,15 @@ ApplicationWindow {
         agentDialog.localError = ""
         agentDialog.harnesses = workspace.availableHarnesses()
         agentDialog.phase = 0
-        const preferred = agentDialog.harnesses.findIndex(h => h.id === window.lastHarness && h.installed)
+        // The config's newAgent defaults: the CLI, then the folder to start in.
+        const defaults = workspace.agentDefaults()
+        const wanted = window.lastHarness.length > 0 ? window.lastHarness : defaults.harness
+        const preferred = agentDialog.harnesses.findIndex(h => h.id === wanted && h.installed)
         harnessChoices.currentIndex = preferred >= 0 ? preferred : Math.max(0, agentDialog.harnesses.findIndex(h => h.installed))
-        agentDirectoryField.text = workspace.homeDirectory + "/"
+        const folder = defaults.folder === "~" ? workspace.homeDirectory :
+                       defaults.folder.startsWith("~/") ? workspace.homeDirectory + defaults.folder.slice(1) :
+                       defaults.folder
+        agentDirectoryField.text = (folder.length > 0 ? folder.replace(/\/+$/, "") : workspace.homeDirectory) + "/"
         openFresh(agentDialog)
     }
     // Command-W: close the focused agent. A running agent is confirmed first,
@@ -510,7 +552,8 @@ ApplicationWindow {
             agentDialog.localError = folderIssue
             return
         }
-        if (!workspace.createAgent(agentDirectoryField.text.trim(), title, agentDialog.selectedHarness)) {
+        if (!workspace.createAgent(agentDirectoryField.text.trim(), title, agentDialog.selectedHarness,
+                                   agentDialog.selectedModel, agentDialog.selectedMode)) {
             agentDialog.localError = workspace.workspaceError.length > 0 ? workspace.workspaceError :
                                                                           qsTr("Could not start %1.").arg(agentDialog.harnessName)
             return
@@ -611,6 +654,44 @@ ApplicationWindow {
         autoRepeat: false
         onActivated: window.toggleSidebar()
     }
+    Search {
+        id: searchDialog
+        engine: (typeof agentSearch !== "undefined") ? agentSearch : null
+        surfaceColor: window.surfaceColor
+        textColor: window.textColor
+        mutedColor: window.mutedTextColor
+        accentColor: window.focusedBorderColor
+        selectionColor: window.focusedColor
+        hoverColor: window.hoveredCardColor
+        borderColor: window.borderColor
+        monoFamily: window.monoFamily
+        uiFont: window.chromeFont
+        readoutFont: window.readoutFont
+        chromeRadius: window.chromeRadius
+        motionDuration: window.motionDuration
+        motionEnabled: window.motionEnabled
+        onChosen: function(sessionId) { Qt.callLater(function() { workspace.selectSession(sessionId) }) }
+        onClosed: preview.deferTerminalFocus()
+    }
+    Usage {
+        id: usageDialog
+        engine: window.usageAvailable ? usage : null
+        surfaceColor: window.surfaceColor
+        cardColor: window.cardColor
+        textColor: window.textColor
+        mutedColor: window.mutedTextColor
+        accentColor: window.focusedBorderColor
+        faultColor: window.faultColor
+        borderColor: window.borderColor
+        monoFamily: window.monoFamily
+        uiFont: window.chromeFont
+        readoutFont: window.readoutFont
+        chromeRadius: window.chromeRadius
+        motionDuration: window.motionDuration
+        motionEnabled: window.motionEnabled
+        onClosed: preview.deferTerminalFocus()
+    }
+
     Commands {
         id: commandsDialog
         commands: window.commandEntries
@@ -733,6 +814,14 @@ ApplicationWindow {
         enabled: window.shortcutsArmed
         autoRepeat: false
         onActivated: window.openNewAgentDialog()
+    }
+    Shortcut {
+        objectName: "searchAgentsShortcut"
+        sequences: window.bindings("searchAgents")
+        context: Qt.WindowShortcut
+        enabled: window.shortcutsArmed
+        autoRepeat: false
+        onActivated: window.openSearchDialog()
     }
     Shortcut {
         objectName: "newCategoryShortcut"
@@ -1011,6 +1100,17 @@ ApplicationWindow {
         fontSizeDefault: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeDefault : 16
         motionDuration: window.motionDuration
         motionEnabled: window.motionEnabled
+        alertSound: (typeof keymap !== "undefined" && keymap !== null) ? keymap.alertSound : true
+        finishSound: (typeof keymap !== "undefined" && keymap !== null) ? keymap.finishSound : true
+        alertRepeat: (typeof keymap !== "undefined" && keymap !== null) ? keymap.alertRepeat : 3
+        keepAwake: (typeof keymap !== "undefined" && keymap !== null) ? keymap.keepAwake : true
+        showUsage: (typeof keymap !== "undefined" && keymap !== null) ? keymap.showUsage : true
+        onAlertSoundChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setAlertSound(on) }
+        onFinishSoundChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setFinishSound(on) }
+        onAlertRepeatChosen: function(times) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setAlertRepeat(times) }
+        onKeepAwakeChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setKeepAwake(on) }
+        onShowUsageChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setShowUsage(on) }
+        onChimePlayed: function(needsYou) { if (typeof alerts !== "undefined" && alerts !== null) alerts.preview(needsYou) }
         onClosed: preview.deferTerminalFocus()
         onFontFamilyChosen: function(name) {
             if (typeof keymap !== "undefined" && keymap !== null)
@@ -1043,14 +1143,19 @@ ApplicationWindow {
         property var harnesses: []
         readonly property var choices: harnesses
         property string selectedHarness: "codex"
-        readonly property string harnessName: {
-            const item = harnesses.find(h => h.id === selectedHarness)
-            return item ? item.name : selectedHarness
-        }
+        // This agent's model and approval mode; "" leaves the CLI's own setting.
+        property string selectedModel: ""
+        property string selectedMode: ""
+        readonly property var selectedItem: harnesses.find(h => h.id === selectedHarness)
+        readonly property string harnessName: selectedItem ? selectedItem.name : selectedHarness
+        readonly property var modelChoices: [""].concat(selectedItem && selectedItem.models ? selectedItem.models : [])
+        readonly property var modeChoices: [{id: "", name: qsTr("Default")}].concat(selectedItem && selectedItem.modes ? selectedItem.modes : [])
         function chooseHarness(index) {
             const item = choices[index]
             if (!item || !item.installed) return
             selectedHarness = item.id
+            selectedModel = ""
+            selectedMode = ""
             window.lastHarness = item.id
             phase = 1
             Qt.callLater(function() {
@@ -1192,6 +1297,39 @@ ApplicationWindow {
                     }
                     AgentMark { harnessId: agentDialog.selectedHarness; ink: window.textColor; Layout.preferredWidth: 24; Layout.preferredHeight: 24 }
                     PlainLabel { text: agentDialog.harnessName; color: window.textColor; font.pixelSize: window.chromeFont + 2 }
+                }
+                // Model and approval mode for this agent, as the CLI's own flags.
+                Flow {
+                    visible: agentDialog.phase === 1 && agentDialog.modelChoices.length > 1
+                    Layout.fillWidth: true
+                    spacing: 6
+                    PlainLabel { text: qsTr("Model"); color: window.mutedTextColor; height: window.tabHeight; verticalAlignment: Text.AlignVCenter; width: 52 }
+                    Repeater {
+                        model: agentDialog.modelChoices
+                        delegate: CommandButton {
+                            required property string modelData
+                            objectName: "model_" + (modelData.length > 0 ? modelData : "default")
+                            text: modelData.length > 0 ? modelData : qsTr("Default")
+                            selected: modelData === agentDialog.selectedModel
+                            onClicked: agentDialog.selectedModel = modelData
+                        }
+                    }
+                }
+                Flow {
+                    visible: agentDialog.phase === 1 && agentDialog.modeChoices.length > 1
+                    Layout.fillWidth: true
+                    spacing: 6
+                    PlainLabel { text: qsTr("Mode"); color: window.mutedTextColor; height: window.tabHeight; verticalAlignment: Text.AlignVCenter; width: 52 }
+                    Repeater {
+                        model: agentDialog.modeChoices
+                        delegate: CommandButton {
+                            required property var modelData
+                            objectName: "mode_" + (modelData.id.length > 0 ? modelData.id : "default")
+                            text: modelData.name
+                            selected: modelData.id === agentDialog.selectedMode
+                            onClicked: agentDialog.selectedMode = modelData.id
+                        }
+                    }
                 }
                 RowLayout {
                     visible: agentDialog.phase === 1
@@ -1868,6 +2006,86 @@ ApplicationWindow {
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
                                         Layout.alignment: Qt.AlignVCenter
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Plan usage: each CLI's tightest window, opening the details.
+                Button {
+                    id: usageMeter
+                    objectName: "usageMeter"
+                    readonly property var rows: window.usageRows()
+                    visible: rows.length > 0
+                    Layout.fillWidth: true
+                    implicitHeight: meterRows.implicitHeight + 14
+                    padding: 0
+                    focusPolicy: Qt.NoFocus
+                    hoverEnabled: true
+                    enabled: window.interactionArmed
+                    onClicked: window.openUsageDialog()
+                    Accessible.name: qsTr("Usage: %1").arg(rows.map(row => row.name + " " + Math.round(row.percent) + "%").join(", "))
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 600
+                    ToolTip.text: qsTr("Plan usage")
+
+                    background: Rectangle {
+                        radius: window.chromeRadius
+                        color: usageMeter.hovered ? window.hoveredCardColor : window.surfaceColor
+                        Behavior on color {
+                            enabled: window.motionEnabled
+                            ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                        }
+                    }
+                    contentItem: Item {
+                        ColumnLayout {
+                            id: meterRows
+                            anchors.fill: parent
+                            anchors.topMargin: 7
+                            anchors.bottomMargin: 7
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 6
+                            spacing: 6
+                            Repeater {
+                                model: usageMeter.rows
+                                delegate: ColumnLayout {
+                                    id: meterRow
+                                    required property var modelData
+                                    objectName: "usageMeter_" + modelData.id
+                                    Layout.fillWidth: true
+                                    spacing: 3
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+                                        PlainText {
+                                            text: meterRow.modelData.name
+                                            color: usageMeter.hovered ? window.textColor : window.mutedTextColor
+                                            font.pixelSize: window.readoutFont
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                        }
+                                        PlainText {
+                                            text: Math.round(meterRow.modelData.percent) + "% " + meterRow.modelData.label
+                                            color: meterRow.modelData.percent >= 90 ? window.faultColor : window.textColor
+                                            font.family: window.monoFamily
+                                            font.pixelSize: window.readoutFont
+                                        }
+                                    }
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 2
+                                        color: window.borderColor
+                                        Rectangle {
+                                            width: parent.width * Math.min(100, meterRow.modelData.percent) / 100
+                                            height: parent.height
+                                            color: meterRow.modelData.percent >= 90 ? window.faultColor : window.focusedBorderColor
+                                            Behavior on width {
+                                                enabled: window.motionEnabled
+                                                NumberAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                                            }
+                                        }
                                     }
                                 }
                             }

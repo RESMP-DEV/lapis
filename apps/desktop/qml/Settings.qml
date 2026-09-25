@@ -25,11 +25,22 @@ Dialog {
     required property int fontSizeDefault
     required property int motionDuration
     required property bool motionEnabled
+    required property bool alertSound
+    required property bool finishSound
+    required property int alertRepeat
+    required property bool keepAwake
+    required property bool showUsage
 
     signal themeChosen(string name)
     signal densityChosen(string name)
     signal fontFamilyChosen(string name)
     signal fontSizeChosen(int pixels)
+    signal alertSoundChosen(bool on)
+    signal finishSoundChosen(bool on)
+    signal alertRepeatChosen(int times)
+    signal keepAwakeChosen(bool on)
+    signal showUsageChosen(bool on)
+    signal chimePlayed(bool needsYou)
 
     readonly property int uiFont: {
         if (font.pixelSize > 0)
@@ -144,6 +155,65 @@ Dialog {
         background: ChoiceSurface {
             hovered: stepButton.hovered && stepButton.enabled
             pressed: stepButton.down
+        }
+    }
+
+    // A setting that is on or off, with a line on what it does and an
+    // optional Play button to hear it.
+    component SwitchRow: RowLayout {
+        id: switchRow
+        required property string label
+        required property string detail
+        required property bool on
+        property bool playable: false
+        signal toggled(bool on)
+        signal played()
+        spacing: 10
+        Layout.fillWidth: true
+        ColumnLayout {
+            spacing: 2
+            Layout.fillWidth: true
+            PlainLabel {
+                text: switchRow.label
+                color: settings.paletteText
+                font.pixelSize: settings.uiFont
+            }
+            PlainLabel {
+                Layout.fillWidth: true
+                text: switchRow.detail
+                color: settings.paletteMuted
+                font.pixelSize: Math.max(12, settings.uiFont - 1)
+                wrapMode: Text.WordWrap
+            }
+        }
+        StepButton {
+            visible: switchRow.playable
+            objectName: "play-" + switchRow.label
+            text: qsTr("Play")
+            onClicked: switchRow.played()
+        }
+        Button {
+            id: toggle
+            objectName: "switch-" + switchRow.label
+            focusPolicy: Qt.NoFocus
+            hoverEnabled: true
+            text: switchRow.on ? qsTr("On") : qsTr("Off")
+            font.pixelSize: Math.max(12, settings.uiFont - 1)
+            implicitWidth: Math.max(56, implicitContentWidth + 24)
+            implicitHeight: Math.max(32, settings.uiFont + 18)
+            onClicked: switchRow.toggled(!switchRow.on)
+            contentItem: PlainLabel {
+                text: toggle.text
+                font: toggle.font
+                color: switchRow.on ? settings.paletteText : settings.paletteMuted
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
+            background: ChoiceSurface {
+                marked: switchRow.on
+                hovered: toggle.hovered
+                pressed: toggle.down
+            }
         }
     }
 
@@ -530,6 +600,73 @@ Dialog {
                 }
 
                 SectionLabel {
+                    text: qsTr("Alerts")
+                }
+
+                SwitchRow {
+                    label: qsTr("Chime when an agent needs you")
+                    detail: qsTr("Two taps, then again every few seconds while the request waits and you are looking elsewhere.")
+                    on: settings.alertSound
+                    playable: true
+                    onToggled: function(on) { settings.alertSoundChosen(on) }
+                    onPlayed: settings.chimePlayed(true)
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    enabled: settings.alertSound
+                    PlainLabel {
+                        Layout.fillWidth: true
+                        text: settings.alertRepeat === 1 ? qsTr("Chime once") : qsTr("Chime up to %1 times").arg(settings.alertRepeat)
+                        color: settings.alertSound ? settings.paletteText : settings.paletteMuted
+                        font.pixelSize: Math.max(12, settings.uiFont - 1)
+                    }
+                    StepButton {
+                        objectName: "repeatDown"
+                        text: "−"
+                        enabled: settings.alertRepeat > 1
+                        onClicked: settings.alertRepeatChosen(settings.alertRepeat - 1)
+                    }
+                    StepButton {
+                        objectName: "repeatUp"
+                        text: "+"
+                        enabled: settings.alertRepeat < 10
+                        onClicked: settings.alertRepeatChosen(settings.alertRepeat + 1)
+                    }
+                }
+
+                SwitchRow {
+                    label: qsTr("Chime when a turn finishes")
+                    detail: qsTr("Once, quietly, when a Codex or Claude turn ends out of view.")
+                    on: settings.finishSound
+                    playable: true
+                    onToggled: function(on) { settings.finishSoundChosen(on) }
+                    onPlayed: settings.chimePlayed(false)
+                }
+
+                SwitchRow {
+                    label: qsTr("Keep this Mac awake")
+                    detail: qsTr("While it is plugged in, so the phone can reach your agents. The display still sleeps; closing the lid still sleeps.")
+                    on: settings.keepAwake
+                    onToggled: function(on) { settings.keepAwakeChosen(on) }
+                }
+
+                SwitchRow {
+                    objectName: "showUsageRow"
+                    label: qsTr("Show plan usage")
+                    detail: qsTr("Codex and Claude limits under the categories, checked every five minutes, with token totals from this Mac's transcripts. Off, lapis asks neither CLI.")
+                    on: settings.showUsage
+                    onToggled: function(on) { settings.showUsageChosen(on) }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: 1
+                    color: settings.paletteBorder
+                }
+
+                SectionLabel {
                     text: qsTr("Configuration")
                 }
 
@@ -551,7 +688,7 @@ Dialog {
                 }
                 PlainLabel {
                     Layout.fillWidth: true
-                    text: qsTr("Changes are saved to this file immediately.")
+                    text: qsTr("Changes are saved to this file immediately, and edits to it (by you or an agent) apply at once. Defaults for new agents (newAgent: CLI, folder, per-machine folders, models) live there too.")
                     color: settings.paletteMuted
                     font.pixelSize: Math.max(11, settings.uiFont - 2)
                     wrapMode: Text.WordWrap

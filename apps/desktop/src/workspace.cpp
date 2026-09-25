@@ -80,6 +80,83 @@ QString harnessExecutable(const Harness& harness) {
     paths << QStringLiteral("/opt/homebrew/bin") << QStringLiteral("/usr/local/bin");
     return QStandardPaths::findExecutable(QLatin1String(harness.command), paths);
 }
+// Named approval modes, and the flags each CLI takes for them (checked
+// against each CLI's --help, September 24). Only a CLI's own modes are
+// offered; no mode passes no flag, leaving the CLI's own setting.
+struct ModeFlags {
+    const char* harness;
+    const char* mode;
+    std::array<const char*, 4> flags;
+};
+constexpr std::array mode_flags{
+    ModeFlags{"codex", "ask", {"-a", "on-request", "-s", "workspace-write"}},
+    ModeFlags{"codex", "auto", {"-a", "never", "-s", "workspace-write"}},
+    ModeFlags{"codex", "full", {"--dangerously-bypass-approvals-and-sandbox"}},
+    ModeFlags{"claude", "ask", {"--permission-mode", "manual"}},
+    ModeFlags{"claude", "edits", {"--permission-mode", "acceptEdits"}},
+    ModeFlags{"claude", "plan", {"--permission-mode", "plan"}},
+    ModeFlags{"claude", "auto", {"--permission-mode", "auto"}},
+    ModeFlags{"claude", "full", {"--permission-mode", "bypassPermissions"}},
+    ModeFlags{"grok", "ask", {"--permission-mode", "default"}},
+    ModeFlags{"grok", "edits", {"--permission-mode", "acceptEdits"}},
+    ModeFlags{"grok", "plan", {"--permission-mode", "plan"}},
+    ModeFlags{"grok", "auto", {"--permission-mode", "auto"}},
+    ModeFlags{"grok", "full", {"--permission-mode", "bypassPermissions"}},
+    ModeFlags{"kimi", "auto", {"--yolo"}},
+    ModeFlags{"kimi", "full", {"--auto"}},
+    ModeFlags{"omp", "ask", {"--approval-mode=always-ask"}},
+    ModeFlags{"omp", "edits", {"--approval-mode=write"}},
+    ModeFlags{"omp", "full", {"--approval-mode=yolo"}},
+    ModeFlags{"opencode", "full", {"--auto"}},
+    ModeFlags{"agy", "edits", {"--mode", "accept-edits"}},
+    ModeFlags{"agy", "plan", {"--mode", "plan"}},
+    ModeFlags{"agy", "full", {"--dangerously-skip-permissions"}},
+};
+constexpr std::array<std::pair<const char*, const char*>, 5> mode_names{{{"ask", "Ask"},
+                                                                         {"edits", "Accept edits"},
+                                                                         {"plan", "Plan"},
+                                                                         {"auto", "Auto"},
+                                                                         {"full", "Full access"}}};
+QStringList modeArguments(const QString& harness, const QString& mode) {
+    for (const auto& entry : mode_flags)
+        if (harness == QLatin1String(entry.harness) && mode == QLatin1String(entry.mode)) {
+            QStringList flags;
+            for (const auto* flag : entry.flags)
+                if (flag)
+                    flags << QString::fromLatin1(flag);
+            return flags;
+        }
+    return {};
+}
+QVariantList harnessModes(const QString& harness) {
+    QVariantList modes;
+    for (const auto& [mode, name] : mode_names)
+        if (!modeArguments(harness, QString::fromLatin1(mode)).isEmpty())
+            modes.append(QVariantMap{{QStringLiteral("id"), QString::fromLatin1(mode)},
+                                     {QStringLiteral("name"), QString::fromLatin1(name)}});
+    return modes;
+}
+// The CLI's model flag with a model name; empty when it has none here. The
+// CLI id and the model are both strings; call sites name each.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+QStringList modelArguments(const QString& harness, const QString& model) {
+    if (model.isEmpty())
+        return {};
+    if (harness == QLatin1String("omp"))
+        return {QStringLiteral("--model=") + model};
+    if (harness == QLatin1String("claude") || harness == QLatin1String("agy"))
+        return {QStringLiteral("--model"), model};
+    if (harness == QLatin1String("codex") || harness == QLatin1String("grok") ||
+        harness == QLatin1String("kimi") || harness == QLatin1String("opencode"))
+        return {QStringLiteral("-m"), model};
+    return {};
+}
+bool validModel(const QString& model) {
+    static const QRegularExpression name(
+        QStringLiteral(R"(^[A-Za-z0-9][A-Za-z0-9._:/\[\]@+-]{0,127}$)"));
+    return model.isEmpty() || name.match(model).hasMatch();
+}
+
 // One POSIX shell word, whatever it holds.
 QString shellWord(const QString& text) {
     static const QRegularExpression plain(QStringLiteral(R"(^[A-Za-z0-9_./=:@%+,-]+$)"));
@@ -107,7 +184,37 @@ constexpr std::string_view kPreviewPalette =
     "\x1b]4;2;rgb:87/cb/ac\x1b\\\x1b]4;4;rgb:9c/b4/ee\x1b\\"
     "\x1b]4;3;rgb:df/bb/7b\x1b\\\x1b]4;5;rgb:ba/a4/e8\x1b\\"
     "\x1b]4;8;rgb:75/83/98\x1b\\";
+
+// An agent on another machine: ssh runs the CLI in an interactive login shell
+// there, so its PATH matches that machine's terminal. Returns why not, or
+// empty with `launch` set.
+QString remoteLaunch(const AgentRequest& request, const QString& command,
+                     const QStringList& arguments, std::optional<session::LaunchSpec>& launch) {
+    const auto ssh = QStandardPaths::findExecutable(QStringLiteral("ssh"));
+    if (ssh.isEmpty())
+        return QStringLiteral("ssh is not available on this Mac.");
+    if (!validMachine(request.machine))
+        return QStringLiteral("Unknown machine name.");
+    if (request.program.contains(QChar::Null) || request.program.contains(QLatin1Char('\n')))
+        return QStringLiteral("Invalid program path.");
+    QStringList words{shellWord(request.program.isEmpty() ? command : request.program)};
+    for (const auto& argument : arguments)
+        words << shellWord(argument);
+    const auto line = QStringLiteral(R"(cd %1 && exec "${SHELL:-/bin/sh}" -lic %2)")
+                          .arg(remoteFolder(request.directory), shellWord(words.join(' ')));
+    launch = session::validate_launch({ssh,
+                                       {QStringLiteral("-t"), request.machine, line},
+                                       QDir::homePath(),
+                                       {100, 30},
+                                       session::AgentMode::terminal});
+    return {};
+}
 } // namespace
+
+QString harness_program(const QString& id) {
+    const auto* harness = findHarness(id);
+    return harness ? harnessExecutable(*harness) : QString();
+}
 
 SessionPreview::SessionPreview(QString title, QString directory, QString activity, QColor accent,
                                std::string_view content)
@@ -371,6 +478,8 @@ void Workspace::clearError() {
 void Workspace::watch(SessionPreview* item) {
     connect(item, &SessionPreview::connectionChanged, this, [this, item] { finishClosing(item); });
     connect(item, &SessionPreview::attentionArrived, this, &Workspace::requestArrived);
+    connect(item, &SessionPreview::attentionArrived, this,
+            [this, item] { emit agentNeedsYou(item); });
     last_kind_.insert(item, item->statusKind());
     connect(item, &SessionPreview::statusChanged, this, [this, item] { noteStatus(item); });
     connect(item, &SessionPreview::unseenChanged, this, [this] {
@@ -706,9 +815,15 @@ QVariantList Workspace::availableHarnesses() const {
     QVariantList result;
     for (const auto& harness : harness_catalog) {
         const auto program = harnessExecutable(harness);
-        result.append(QVariantMap{{QStringLiteral("id"), QString::fromLatin1(harness.id)},
+        const auto id = QString::fromLatin1(harness.id);
+        QStringList models;
+        if (!modelArguments(id, QStringLiteral("x")).isEmpty())
+            models = agent_defaults_.models.value(id);
+        result.append(QVariantMap{{QStringLiteral("id"), id},
                                   {QStringLiteral("name"), QString::fromLatin1(harness.label)},
-                                  {QStringLiteral("installed"), !program.isEmpty()}});
+                                  {QStringLiteral("installed"), !program.isEmpty()},
+                                  {QStringLiteral("models"), models},
+                                  {QStringLiteral("modes"), harnessModes(id)}});
     }
     return result;
 }
@@ -727,16 +842,52 @@ QString Workspace::displayPath(const QString& directory) const {
 
 // QML positional API v1 requires QString arguments; role names and boundary validation are
 // explicit. NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-bool Workspace::createAgent(const QString& directory, const QString& title,
-                            const QString& harness) {
+bool Workspace::createAgent(const QString& directory, const QString& title, const QString& harness,
+                            const QString& model, const QString& mode) {
     return !startAgent({.category = active_category_,
                         .directory = directory,
                         .title = title,
                         .harness = harness,
                         .machine = {},
                         .program = {},
+                        .model = model,
+                        .mode = mode,
                         .select = true})
                 .isEmpty();
+}
+QVariantMap Workspace::agentPlace(const QString& id) const {
+    const auto entry = agents_.constFind(id);
+    if (entry == agents_.cend())
+        return {};
+    QString category;
+    for (const auto& item : categories_)
+        if (item.id == entry->category)
+            category = item.name;
+    const auto& launch = entry->launch;
+    QString machine;
+    QString place = displayPath(launch.directory);
+    // Remote agents are `ssh -t <host> 'cd <folder> && exec ...'`.
+    if (QFileInfo(launch.program).fileName() == QStringLiteral("ssh") &&
+        launch.arguments.size() >= 3 && launch.arguments[0] == QStringLiteral("-t")) {
+        machine = launch.arguments[1];
+        const auto& command = launch.arguments[2];
+        const auto end = command.indexOf(QStringLiteral(" && "));
+        place = machine + QLatin1Char(':') +
+                (command.startsWith(QStringLiteral("cd ")) && end > 3 ? command.mid(3, end - 3)
+                                                                      : QString());
+    }
+    return {{QStringLiteral("category"), category},
+            {QStringLiteral("machine"), machine},
+            {QStringLiteral("place"), place}};
+}
+QVariantMap Workspace::agentDefaults() const {
+    QVariantMap machines;
+    for (auto it = agent_defaults_.machineFolders.begin();
+         it != agent_defaults_.machineFolders.end(); ++it)
+        machines.insert(it.key(), it.value());
+    return {{QStringLiteral("harness"), agent_defaults_.harness},
+            {QStringLiteral("folder"), agent_defaults_.folder},
+            {QStringLiteral("machines"), machines}};
 }
 std::optional<session::LaunchSpec> Workspace::agentLaunch(const AgentRequest& request) {
     const auto refuse = [this](const QString& message) -> std::optional<session::LaunchSpec> {
@@ -750,29 +901,21 @@ std::optional<session::LaunchSpec> Workspace::agentLaunch(const AgentRequest& re
     if (directory.isEmpty() || directory.size() > 4096 || directory.contains(QChar::Null) ||
         directory.contains(QLatin1Char('\n')))
         return refuse(QStringLiteral("Choose a project directory (at most 4096 characters)."));
-    const auto arguments =
-        defaultArguments(request.harness) + harness_arguments_.value(request.harness);
+    if (!validModel(request.model) ||
+        modelArguments(request.harness, request.model).isEmpty() != request.model.isEmpty())
+        return refuse(QStringLiteral("This agent cannot take that model."));
+    if (!request.mode.isEmpty() && modeArguments(request.harness, request.mode).isEmpty())
+        return refuse(QStringLiteral("This agent has no such mode."));
+    // The user's configured arguments, then this agent's model and mode.
+    const auto arguments = defaultArguments(request.harness) +
+                           harness_arguments_.value(request.harness) +
+                           modelArguments(request.harness, request.model) +
+                           modeArguments(request.harness, request.mode);
     if (!request.machine.isEmpty()) {
-        // ssh runs the CLI in an interactive login shell there, so its PATH
-        // matches that machine's terminal.
-        const auto ssh = QStandardPaths::findExecutable(QStringLiteral("ssh"));
-        if (ssh.isEmpty())
-            return refuse(QStringLiteral("ssh is not available on this Mac."));
-        if (!validMachine(request.machine))
-            return refuse(QStringLiteral("Unknown machine name."));
-        if (request.program.contains(QChar::Null) || request.program.contains(QLatin1Char('\n')))
-            return refuse(QStringLiteral("Invalid program path."));
-        QStringList words{shellWord(
-            request.program.isEmpty() ? QString::fromLatin1(harness->command) : request.program)};
-        for (const auto& argument : arguments)
-            words << shellWord(argument);
-        const auto command = QStringLiteral(R"(cd %1 && exec "${SHELL:-/bin/sh}" -lic %2)")
-                                 .arg(remoteFolder(directory), shellWord(words.join(' ')));
-        return session::validate_launch({ssh,
-                                         {QStringLiteral("-t"), request.machine, command},
-                                         QDir::homePath(),
-                                         {100, 30},
-                                         session::AgentMode::terminal});
+        std::optional<session::LaunchSpec> launch;
+        const auto refusal =
+            remoteLaunch(request, QString::fromLatin1(harness->command), arguments, launch);
+        return refusal.isEmpty() ? launch : refuse(refusal);
     }
     const QString project =
         directory == QStringLiteral("~") || directory.startsWith(QStringLiteral("~/"))
@@ -1503,11 +1646,13 @@ void Workspace::noteStatus(SessionPreview* item) {
     const auto now = item->statusKind();
     const auto previous = last_kind_.value(item);
     last_kind_.insert(item, now);
-    if (previous == now || item == focusedSession())
+    if (previous == now)
         return;
     const bool finished = previous == QStringLiteral("working") &&
                           (now == QStringLiteral("finished") || now == QStringLiteral("idle"));
-    if (finished)
+    if (finished && item->statusSource() != SessionPreview::StatusSource::output)
+        emit turnFinished(item);
+    if (finished && item != focusedSession())
         item->setUnseen(true);
 }
 SessionPreview::StatusSource Workspace::statusSource(const Agent& agent) {

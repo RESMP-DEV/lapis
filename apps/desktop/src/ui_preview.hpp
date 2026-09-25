@@ -28,6 +28,9 @@ struct UiPreviewOptions {
     // User keybindings and layout, exposed to QML as `keymap`. Optional; a
     // null value uses the shared C++ settings defaults and QML navigation defaults.
     KeyMap* keymap{};
+    QObject* alerts{};      // exposed to QML as `alerts`
+    QObject* agentSearch{}; // exposed to QML as `agentSearch`
+    QObject* usage{};       // exposed to QML as `usage`
     // Only the normal workspace restores user geometry; tests opt in with an isolated path.
     bool persistGeometry{};
     QString geometryPath{};

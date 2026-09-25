@@ -337,6 +337,39 @@ namespace {
 KeyMap::KeyMap(QObject* parent) : QObject(parent) {
     apply_defaults();
     source_path_ = default_source_path();
+    // Editors and agents often replace the file rather than write in place,
+    // so the folder is watched too, and bursts of events settle first.
+    settle_.setSingleShot(true);
+    settle_.setInterval(150);
+    connect(&settle_, &QTimer::timeout, this, &KeyMap::fileTouched);
+    connect(&watcher_, &QFileSystemWatcher::fileChanged, &settle_, qOverload<>(&QTimer::start));
+    connect(&watcher_, &QFileSystemWatcher::directoryChanged, &settle_,
+            qOverload<>(&QTimer::start));
+    watch();
+}
+
+void KeyMap::watch() {
+    if (!watcher_.files().isEmpty())
+        watcher_.removePaths(watcher_.files());
+    if (!watcher_.directories().isEmpty())
+        watcher_.removePaths(watcher_.directories());
+    const QFileInfo info(source_path_);
+    if (info.dir().exists())
+        watcher_.addPath(info.absolutePath());
+    if (info.exists())
+        watcher_.addPath(info.absoluteFilePath());
+}
+
+void KeyMap::fileTouched() {
+    watch(); // a replaced file is a new file to watch
+    QFile file(source_path_);
+    QByteArray contents;
+    if (file.open(QIODevice::ReadOnly))
+        contents = file.read(kMaximumConfigBytes + 1);
+    if (contents == known_contents_)
+        return;
+    qInfo().noquote() << "lapis config changed on disk; reloading";
+    static_cast<void>(reload());
 }
 
 QString KeyMap::default_source_path() {
@@ -403,6 +436,7 @@ void KeyMap::apply_defaults() {
         {QStringLiteral("reloadConfig"), {modifier + QStringLiteral("R")}},
         {QStringLiteral("newAgent"), {modifier + QStringLiteral("T")}},
         {QStringLiteral("newCategory"), {modifier + QStringLiteral("N")}},
+        {QStringLiteral("searchAgents"), {modifier + QStringLiteral("K")}},
         {QStringLiteral("nextAttention"), {modifier + QStringLiteral("J")}},
         {QStringLiteral("toggleSidebar"), {modifier + QStringLiteral("B")}},
     };
@@ -425,6 +459,20 @@ void KeyMap::apply_defaults() {
 #endif
     sidebar_visible_ = true;
     previews_visible_ = true;
+    alert_sound_ = true;
+    finish_sound_ = true;
+    alert_repeat_ = 3;
+    keep_awake_ = true;
+    show_usage_ = true;
+    // Models offered until the config names its own; each CLI's default
+    // (no flag) is always offered as well.
+    agent_defaults_ = {};
+    agent_defaults_.models.insert(
+        QStringLiteral("codex"),
+        {QStringLiteral("gpt-6-astra"), QStringLiteral("gpt-6-sol"), QStringLiteral("gpt-6-luna")});
+    agent_defaults_.models.insert(
+        QStringLiteral("claude"),
+        {QStringLiteral("opus"), QStringLiteral("sonnet"), QStringLiteral("haiku")});
     terminal_font_family_.clear();
     harness_arguments_.clear();
     terminal_font_size_ = kTerminalFontSizeDefault;
@@ -515,7 +563,10 @@ bool KeyMap::load() {
 
     load_terminal_font(root.value(QStringLiteral("terminalFont")));
     load_harness_arguments(root.value(QStringLiteral("harnessArguments")));
+    load_alerts(root);
+    load_agent_defaults(root.value(QStringLiteral("newAgent")));
 
+    known_contents_ = contents;
     loaded_ = true;
     emit changed();
     return true;
@@ -560,6 +611,43 @@ void KeyMap::load_harness_arguments(const QJsonValue& value) {
             continue;
         }
         harness_arguments_.insert(it.key(), arguments);
+    }
+}
+
+void KeyMap::load_alerts(const QJsonObject& root) {
+    const auto alerts = root.value(QStringLiteral("alerts")).toObject();
+    alert_sound_ = alerts.value(QStringLiteral("sound")).toBool(true);
+    finish_sound_ = alerts.value(QStringLiteral("finished")).toBool(true);
+    alert_repeat_ = std::clamp(alerts.value(QStringLiteral("repeat")).toInt(3), 1, 10);
+    keep_awake_ = root.value(QStringLiteral("keepAwake")).toBool(true);
+    show_usage_ = root.value(QStringLiteral("showUsage")).toBool(true);
+}
+
+// Paths are kept as written (~ is the machine's home); the new-agent forms
+// check them where they are used.
+void KeyMap::load_agent_defaults(const QJsonValue& value) {
+    const auto section = value.toObject();
+    const auto text = [](const QJsonValue& item) {
+        const auto string = item.toString().trimmed();
+        return string.size() <= 4096 && !string.contains(QChar::Null) ? string : QString();
+    };
+    agent_defaults_.harness = text(section.value(QStringLiteral("harness")));
+    agent_defaults_.folder = text(section.value(QStringLiteral("folder")));
+    const auto machines = section.value(QStringLiteral("machines")).toObject();
+    for (auto it = machines.begin(); it != machines.end() && it.key().size() <= 128; ++it) {
+        const auto folder = text(it.value().toObject().value(QStringLiteral("folder")));
+        if (!folder.isEmpty())
+            agent_defaults_.machineFolders.insert(it.key(), folder);
+    }
+    const auto models = section.value(QStringLiteral("models")).toObject();
+    for (auto it = models.begin(); it != models.end(); ++it) {
+        QStringList names;
+        for (const auto& item : it.value().toArray()) {
+            const auto name = text(item);
+            if (!name.isEmpty() && !name.startsWith(QLatin1Char('-')) && names.size() < 24)
+                names << name;
+        }
+        agent_defaults_.models.insert(it.key(), names);
     }
 }
 
@@ -841,6 +929,13 @@ bool KeyMap::persist() {
     else
         font.insert(QStringLiteral("family"), terminal_font_family_);
     root.insert(QStringLiteral("terminalFont"), font);
+    QJsonObject alerts = root.value(QStringLiteral("alerts")).toObject();
+    alerts.insert(QStringLiteral("sound"), alert_sound_);
+    alerts.insert(QStringLiteral("finished"), finish_sound_);
+    alerts.insert(QStringLiteral("repeat"), alert_repeat_);
+    root.insert(QStringLiteral("alerts"), alerts);
+    root.insert(QStringLiteral("keepAwake"), keep_awake_);
+    root.insert(QStringLiteral("showUsage"), show_usage_);
     if (!root.contains(QStringLiteral("version")))
         root.insert(QStringLiteral("version"), 1);
     QByteArray contents = format_config(root) + '\n';
@@ -853,9 +948,32 @@ bool KeyMap::persist() {
         return fail(file.errorString());
     if (file.write(contents) != contents.size() || !file.commit())
         return fail(file.errorString());
+    known_contents_ = contents;
+    watch();
     diagnostic_.clear();
     emit changed();
     return true;
+}
+
+bool KeyMap::setAlertSound(bool on) {
+    alert_sound_ = on;
+    return save();
+}
+bool KeyMap::setFinishSound(bool on) {
+    finish_sound_ = on;
+    return save();
+}
+bool KeyMap::setAlertRepeat(int times) {
+    alert_repeat_ = std::clamp(times, 1, 10);
+    return save();
+}
+bool KeyMap::setKeepAwake(bool on) {
+    keep_awake_ = on;
+    return save();
+}
+bool KeyMap::setShowUsage(bool on) {
+    show_usage_ = on;
+    return save();
 }
 
 } // namespace lapis::desktop

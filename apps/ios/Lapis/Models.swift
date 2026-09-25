@@ -13,6 +13,7 @@ final class WorkspaceModel {
     var error: String?
     // Fetched ahead in the background so the new-agent sheet never waits.
     var harnesses: [Harness]?
+    var defaults: AgentDefaults?
     var machines: [Machine] = []
     var catalogs: [String: FolderCatalog] = [:] // by machine; "" is this Mac
     var catalogErrors: [String: String] = [:]
@@ -28,6 +29,7 @@ final class WorkspaceModel {
         // The last known state shows at once; it is refreshed right after.
         listing = DiskCache.load(WorkspaceListing.self, cacheName("listing"))
         harnesses = DiskCache.load([Harness].self, cacheName("harnesses"))
+        defaults = DiskCache.load(AgentDefaults.self, cacheName("defaults"))
         machines = DiskCache.load([Machine].self, cacheName("machines")) ?? []
         let names = [""] + machines.map(\.name)
         let folders = names.compactMap { name in
@@ -79,10 +81,13 @@ final class WorkspaceModel {
         guard let gateway, !prefetching else { return }
         prefetching = true
         defer { prefetching = false }
-        if due("harnesses", 600), let list = try? await gateway.harnesses() {
-            harnesses = list
+        // The Mac's config applies live, so its defaults are asked for often.
+        if due("harnesses", 60), let answer = try? await gateway.harnesses() {
+            harnesses = answer.harnesses
+            defaults = answer.defaults
             fetched["harnesses"] = Date()
-            DiskCache.save(list, cacheName("harnesses"))
+            DiskCache.save(answer.harnesses, cacheName("harnesses"))
+            if let found = answer.defaults { DiskCache.save(found, cacheName("defaults")) }
         }
         if due("machines", 120), let list = try? await gateway.machines() {
             machines = list

@@ -717,6 +717,7 @@ def main():
                 if item["category"] == "later"
                 and item["harness"] == "grok"
                 and Path(item["directory"]).resolve() == new_folder
+                and item["arguments"][-2:] == ["--permission-mode", "acceptEdits"]
             ]
             print(f"Mac: the phone started an agent in Later: {bool(started)}")
             if not started:

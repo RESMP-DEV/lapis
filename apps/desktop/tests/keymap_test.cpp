@@ -8,6 +8,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -17,8 +18,11 @@
 #include <QKeySequence>
 #include <QList>
 #include <QPair>
+#include <QSaveFile>
 #include <QTemporaryDir>
+#include <QThread>
 #include <array>
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 
@@ -745,6 +749,76 @@ void terminal_font_persists_and_rolls_back() {
 
 } // namespace
 
+// Defaults for new agents, alerts and keeping awake come from the file, and
+// an edit from anywhere (an agent rewriting it included) applies at once; the
+// window's own saves are not read back as edits.
+void config_reloads_when_edited_elsewhere() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    const QDir dir(directory.path());
+    const QString path = write_config(
+        dir, R"({"version": 1, "theme": "graphite", "keepAwake": false, "showUsage": false,
+                 "alerts": {"sound": false, "repeat": 5},
+                 "newAgent": {"harness": "claude", "folder": "~/dev",
+                              "machines": {"devbox": {"folder": "~/work"}},
+                              "models": {"codex": ["gpt-6-sol"], "grok": ["-oBad", "grok-4.7"]}}})");
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "config with defaults should load");
+    const auto& defaults = keymap.agentDefaults();
+    require(defaults.harness == QStringLiteral("claude") &&
+                defaults.folder == QStringLiteral("~/dev") &&
+                defaults.machineFolders.value(QStringLiteral("devbox")) == QStringLiteral("~/work"),
+            "new-agent defaults are read");
+    require(
+        defaults.models.value(QStringLiteral("codex")) ==
+                QStringList{QStringLiteral("gpt-6-sol")} &&
+            defaults.models.value(QStringLiteral("grok")) ==
+                QStringList{QStringLiteral("grok-4.7")} &&
+            defaults.models.value(QStringLiteral("claude")).contains(QStringLiteral("opus")),
+        "configured models replace the built-in list; names that look like options are dropped");
+    require(!keymap.alertSound() && keymap.finishSound() && keymap.alertRepeat() == 5 &&
+                !keymap.keepAwake() && !keymap.showUsage(),
+            "alerts, keeping awake and usage are read, with defaults for what is missing");
+
+    int changes = 0;
+    QObject::connect(&keymap, &KeyMap::changed, [&changes] { ++changes; });
+    const auto settle = [](const std::function<bool()>& done, int milliseconds) {
+        QElapsedTimer clock;
+        clock.start();
+        while (!done() && clock.elapsed() < milliseconds) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(10);
+        }
+        return done();
+    };
+    // Rewritten by replacement, as editors and agents usually write files.
+    QSaveFile replacement(path);
+    require(replacement.open(QIODevice::WriteOnly), "replace the config");
+    replacement.write(R"({"version": 1, "theme": "amber"})");
+    require(replacement.commit(), "commit the replacement");
+    require(settle([&keymap] { return keymap.themeName() == QStringLiteral("amber"); }, 3000),
+            "an edit elsewhere applies without a restart");
+    require(keymap.agentDefaults().harness.isEmpty() && keymap.alertSound() && keymap.showUsage(),
+            "settings removed from the file return to their defaults");
+    settle([] { return false; }, 400); // let the replacement's events pass
+    changes = 0;
+    require(keymap.setAlertSound(false) && keymap.setKeepAwake(false) && keymap.setShowUsage(false),
+            "save alert and usage choices");
+    const int saved = changes;
+    settle([] { return false; }, 600);
+    require(changes == saved && !keymap.alertSound(), "the window's own save is not read back");
+    const QJsonObject written = read_config(path);
+    require(!written.value(QStringLiteral("alerts"))
+                    .toObject()
+                    .value(QStringLiteral("sound"))
+                    .toBool(true) &&
+                !written.value(QStringLiteral("keepAwake")).toBool(true) &&
+                !written.value(QStringLiteral("showUsage")).toBool(true) &&
+                written.value(QStringLiteral("theme")).toString() == QStringLiteral("amber"),
+            "alert choices are written beside the rest of the config");
+}
+
 int main(int argc, char** argv) {
     QCoreApplication application(argc, argv);
     try {
@@ -769,6 +843,7 @@ int main(int argc, char** argv) {
         harness_arguments_are_literal_lists();
         advertised_names_are_accepted();
         terminal_font_persists_and_rolls_back();
+        config_reloads_when_edited_elsewhere();
     } catch (const std::exception& error) {
         std::cerr << "keymap_test: " << error.what() << '\n';
         return 1;

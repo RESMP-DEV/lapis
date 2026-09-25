@@ -1882,6 +1882,44 @@ A prototype, deliberately simpler than the SSH design first proposed:
   against the real binary), the gateway suite against a stand-in socket and
   the real host, and `testStartAnAgentFromThePhone` in the simulator against
   the real host.
+- Alerts, live configuration, model and mode, search and usage (September 24,
+  requested after a Cursor settings review; each CLI's other settings stay in
+  its own config). `lapis.json` is watched (the file and its folder, settled
+  for 150 ms, the app's own writes recognized by content) and applies without
+  a restart, so an agent can edit it. It holds `alerts` (`sound`, `finished`,
+  `repeat`), `keepAwake`, `showUsage` and `newAgent` (`harness`, `folder`,
+  `machines.<host>.folder`, `models.<cli>`); a model that looks like an option
+  is dropped. Chimes are synthesized WAVs, no audio files: two glassy taps
+  (sine with an octave shimmer and a short inharmonic strike), rising E6 to A6
+  at -12 dBFS when an agent needs you, falling and at -18 dBFS when a Codex or
+  Claude turn ends out of view. A request chimes at once and every four
+  seconds while it waits unseen, up to `repeat` times (default three), with
+  at most one chime per 1.5 s; looking at the agent, answering or closing it
+  stops it. macOS plays them through NSSound; Linux is silent. Keep awake
+  runs `caffeinate -s -w <gateway pid>` from the gateway while the setting is
+  on, so it sleeps normally on battery and ends with the gateway. The new-agent
+  form, desktop and phone, offers a model (CLIs with a model flag) and an
+  approval mode (Ask, Accept edits, Plan, Auto, Full access, only those the
+  CLI has), mapped per CLI to flags checked against each `--help`; Default
+  passes nothing. Command-K searches agents with a purpose-built index,
+  rebuilt when it opens: letters in order over name, folder, category, CLI and
+  machine, substrings on screen lines; 128 agents with 60 lines each index in
+  0.71 ms, and queries take p50 0.07, p95 0.65, p99 0.68 ms on the M4 Max.
+  Usage asks each CLI in its own protocol every five minutes while shown:
+  Codex app-server `account/rateLimits/read` and Claude Code's `get_usage`
+  control request over stream-json with `--setting-sources ""` and
+  `--no-session-persistence`, so no prompt is sent, none of the person's hooks
+  run and no transcript is written (0.5 to 0.8 s each). Token totals come
+  from the transcripts, read on a background thread and then only as they
+  grow: Codex's running totals as differences, with a file's first report
+  and any decrease counted as that call alone (forks can start from the
+  parent's total, and Codex repeats reports unchanged); Claude messages once
+  across lines and resumed sessions at the largest usage any line reported
+  (earlier lines can carry partial output counts). September's totals match
+  ccusage exactly for Codex and to the live session's growth for Claude.
+  Reading this Mac's 6.9 GB of the last 30 days took 5.6 s once and 0.31 s per
+  later check. No prices are shown: lapis has no published price list for
+  current models to read.
 - Not yet: structured requests and approvals on the phone (agents' own prompts
   are answered through the key bar), push notifications, serving the phone
   after the window quits (only the login helper hosts without a window), and
