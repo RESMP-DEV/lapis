@@ -1,0 +1,155 @@
+{
+  "recorded_at": "2026-09-25T08:37:08.852496+00:00",
+  "pr": 13,
+  "source_revision": "82954d1532041fb8cd9467ea90d5994d9c5dda60",
+  "source_sha256": {
+    "CONTRIBUTING.md": "4af6d404e1c09edda0d5d0f578252433924397f3033bdeb8ea3f86014a814b21",
+    "README.md": "61b0dcb15949be54cc9660c8cfcfa7c604fbc279752b8689d31c6ebbffa5d171",
+    "apps/desktop/src/keymap.cpp": "7c6abbfce6ec0ccfc473f75b3508fae2e5cb86bbbc547bb40a33a495fdbd9fac",
+    "apps/desktop/src/live_connection.cpp": "3c94ebbd3c1ff3e3e78bb47ffe615b7abf7334112e7e4ba2fca17d25de181cba",
+    "apps/desktop/src/live_connection.hpp": "dd181d6622c49993645bdca3520155873b8d249c344dcda5c97ec07e60eeb1ce",
+    "apps/desktop/src/workspace.cpp": "c6f594c8ecda20a6be1fc91540a1cc8222897c6f2646317395aa56081d1f709f",
+    "apps/desktop/tests/keymap_test.cpp": "b9ed54cb37bcd1107f2e167092e7b4b3ff172d737a0a87ede7ffde39f52f6f26",
+    "apps/desktop/tests/terminal_input_test.cpp": "5322e04bf69e56a3f29bd8d309ea362a58f068d4a927be9f46294fb944253ec5",
+    "apps/desktop/tests/workspace_test.cpp": "5f26226a0f7768b7176428ed286c21db7e858dee7ee892d20518c0e8475b0101",
+    "apps/ios/Lapis/AgentView.swift": "045d360cf20801760e2c03e12b604d1cee65c8a89c450a5b198c37423bce3eed",
+    "apps/ios/Lapis/Gateway.swift": "3c7fff46cd64e37cb6859d01451a6441321cf7a12de81c9085d271d6e5d58626",
+    "apps/ios/Lapis/Models.swift": "f7564fe10fa46b41a8bc26887c105a31425d49b3a4f8add53fd93b432a5d9cf1",
+    "apps/ios/Lapis/TerminalScreen.swift": "b168b39bc2a3f4333012428edaed7a824d943c966a75153f7f88264ff9a34faf",
+    "apps/ios/LapisUITests/LapisUITests.swift": "bbf08dc56fecfd4bb38ac6fc0d09f1f503c633b74cd17d20d9eb88d4d68bb770",
+    "apps/remote/lapis_remote.py": "1829a3d57a076ed2daf96045e944c1a51d8480952679298290fb677b69c4366f",
+    "docs/architecture.md": "c26951540d556356b25e920af1ee196b473b22497ccbbac6a7b2bf83e94f9748",
+    "evidence/pr11-review-resolution.json": "bce971d0db54ddb1e29aa83050afd615bf678b43901153124d0d8e033793cab8",
+    "evidence/pr12-review-resolution.json": "ee76ee55c2e2b694d12aa49392328ebaac3485134191e5e0926b3f77be60f799",
+    "scripts/check_ios_remote.py": "9bd8674a53190729d53642e36c866b604bff971ab0454f94f2189292f4467dc9",
+    "scripts/install_ios_app.py": "d53cbf15c698cfda119bc9918ad9a90287b3d1e19b4addadf3442989698d40ba",
+    "scripts/tests/test_breakit.py": "ea7e7e11947e37855aa7cdba86786e5df66fcc0336076cec469104b247ffa1bf",
+    "scripts/tests/test_install_ios_app.py": "54df0e85b78075a597538679e26b6f9ce4f68352171bab7fc24af6d85845b7a3",
+    "scripts/tests/test_lapis_remote.py": "4c1b94f6573605af87adcf017f3322087191565ef4c58641fba88c980206a8f4",
+    "services/session/src/session_service.cpp": "359df161a4670be40ed00b77af2d2d9416914a1dd5510ca17acc13c02fe09b2c",
+    "tools/qa/breakit.py": "b58acfcbfb04212741a5b3dc6b74bde4293cfcf386a65ac84fbc8c2eaaa70831",
+    "tools/qa/fake_agent.py": "965605bd550b00b046da0f0ecc733b7748c82260ad9b79fa5770434e63fc42f4"
+  },
+  "validation": [
+    "just quality: pass on assembled source and final fixture readiness change",
+    "workspace/keymap: pass, 5.92s on assembled source",
+    "lapis_terminal_input_tests --background: pass in normal, ASan/UBSan and TSan builds; Qt/software only",
+    "Scoped clang-format, clang-tidy and Cppcheck: pass for live_connection.cpp, terminal_input_test.cpp and session_service.cpp",
+    "Gateway suite: 18 cases pass; device discovery: 2 cases pass",
+    "LiveServiceTests: 3 cases pass with ASan/UBSan service and 3 with TSan service after fixture protocol-readiness repair",
+    "Incomplete authentication during shutdown: discover and join receive ended in normal, ASan/UBSan and TSan services",
+    "Native Foundation URL probe: bare host, HTTP, HTTPS, explicit ports and unsupported schemes pass",
+    "Native AgentSession HTTP probe: ordered rapid sends, compound paste/Enter and close cancellation pass",
+    "Headless iOS26.5 Simulator: testListOpenTypeAndKeys 23.961s, testRotationWhileComposing 15.940s, testScrollingBackLoadsHistory 20.541s, testSendScreenToMac 13.024s; all pass; one capture saved"
+  ],
+  "thread_dispositions": [
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l64lz",
+      "disposition": "fixed",
+      "reply_body": "Missing gateway/window and PNG encoding failures now set session.notice, using the existing result alert. The selected headless Simulator capture test passes and the gateway saved one PNG/frame capture."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l64mC",
+      "disposition": "fixed",
+      "reply_body": "A width/column change now updates rows even while the composer or keyboard is active; a keyboard-only height change retains the PTY rows. The headless Simulator test queries the actual fixture PTY grid before keyboard display and after rotation; it passes."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l64mI",
+      "disposition": "fixed",
+      "reply_body": "Gateway preserves an explicit HTTPS scheme, preserves explicit ports, and rejects schemes other than HTTP/HTTPS. The native Foundation URL probe passes bare-host, HTTP, HTTPS and unsupported-scheme cases. This is URL-construction evidence, not a new live TLS deployment qualification."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l64mN",
+      "disposition": "inapplicable",
+      "reply_body": "Retaining NSAllowsLocalNetworking for the documented Tailscale transport. That ATS flag is not server authentication; changing it does not authenticate an arbitrary LAN endpoint. The documented contract now explicitly requires active Tailscale and a trusted configured gateway. The gateway binds its own tailnet address and checks same-owner iOS whois identity, Host and Origin; arbitrary LAN endpoints are outside that contract. Explicit HTTPS is preserved separately. No claim of arbitrary LAN endpoint authentication is made."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P1I",
+      "disposition": "fixed",
+      "reply_body": "resize and claimSize now share sendResize for the wire payload. The background terminal-input cases exercise size claims; normal, ASan/UBSan and TSan runs pass, with scoped static analysis clean."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P1l",
+      "disposition": "fixed",
+      "reply_body": "begin now resets shown_size_ and claimed_over_ with the rest of the attachment state. This removes stale bookkeeping without relying on the initial forced resize. Background input/reconnect/size-claim checks pass under normal, ASan/UBSan and TSan builds."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P19",
+      "disposition": "fixed",
+      "reply_body": "Moved the wrapped-link comment back immediately above links_follow_wrapped_rows. The size-claim test retains its own description."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P2H",
+      "disposition": "fixed",
+      "reply_body": "AgentView now records an actual background transition and reopens only on the corresponding return to active. A brief inactive-to-active transition preserves the healthy stream and history. Swift typecheck and the four selected Simulator cases pass; an actual Control Center transition was not separately automated."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P2V",
+      "disposition": "fixed",
+      "reply_body": "AgentSession now drains a single bounded input queue. One request completes before the next begins, including compound paste/Enter, and close invalidates the queue epoch and cancels the active task. A native HTTP probe confirms ordered rapid sends and cancellation of pending input; the Simulator typing/key case passes."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P2p",
+      "disposition": "fixed",
+      "reply_body": "Immutable history pages now retain wrapped rows in a per-view cache keyed by load identity and fitting width; live rows render separately. Reloaded page numbers receive new identities so reconnects cannot reuse stale content. The Simulator scrollback and rotation cases pass. No performance percentile claim is made."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P26",
+      "disposition": "fixed",
+      "reply_body": "History accessibility text is cached with the page set, and the combined value is rebuilt only when the history or live text changes. This preserves screen-reader and XCTest access without repeatedly traversing every history line on unrelated body evaluations. The Simulator history case passes; latency is not newly benchmarked."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P3D",
+      "disposition": "fixed",
+      "reply_body": "A cursor on a wide-tail cell now emits an explicit cursor overlay while retaining the wide glyph run at its full two-cell width. The regression places the cursor on the tail and checks the following glyph column; the gateway suite passes."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P3e",
+      "disposition": "fixed",
+      "reply_body": "Snapshot decoding rejects out-of-range Unicode scalars and surrogates before rendering. History rendering is inside its GatewayError boundary, so malformed archived data returns a 502 diagnostic. Regression payloads cover both invalid scalar classes."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P3o",
+      "disposition": "fixed",
+      "reply_body": "Gateway resize validation now enforces columns*rows <= 32768 before sending the wire request. The focused boundary regression refuses an oversized grid and accepts a valid large grid; the gateway suite passes."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P33",
+      "disposition": "fixed",
+      "reply_body": "The runner shuts down only the simulator UUID it booted. Review verification used a separately created disposable simulator and deleted only that fixture afterward; no shutdown-all call remains."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P4D",
+      "disposition": "fixed",
+      "reply_body": "Device discovery now distinguishes command failure, timeout, malformed output and multiple reachable phones with actionable diagnostics. The temporary JSON is always removed. Focused tests cover none/one/multiple devices and each failure class without installing anything."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P4V",
+      "disposition": "duplicate-fixed",
+      "reply_body": "Covered by the discovery repair: multiple reachable iPhones now produce an explicit --device selection diagnostic instead of the no-phone connectivity message. The none/one/multiple regression passes."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P4l",
+      "disposition": "fixed",
+      "reply_body": "Removed the unused time.time_ns patch. Server fixtures that allocate their own temporary directory now register its cleanup. The gateway suite passes."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P4z",
+      "disposition": "fixed",
+      "reply_body": "Authentication now rejects a draining session with an ended status before either join or takeover activates. A live probe holds an incomplete attachment, ends the owner process, then completes authentication; both modes receive ended under normal, ASan/UBSan and TSan services."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P5E",
+      "disposition": "fixed",
+      "reply_body": "Snapshot publication now logs the affected view ID and exception diagnostic before dropping the view. Scoped clang-tidy/Cppcheck and the instrumented live gateway checks pass; overflow itself was not artificially induced."
+    }
+  ],
+  "limitations": [
+    "No merge into main performed. Optional reviewer availability is separate from required repository gates.",
+    "macOS remains the qualified desktop target; no Linux qualification in this pass.",
+    "Simulator and synthetic loopback Tailscale status do not prove physical iPhone or real tailnet admission.",
+    "No new latency percentile or VoiceOver-device qualification.",
+    "A default Cocoa input attempt observed host interference; the passing input evidence uses explicit --background mode. Native OS input/GPU acceptance was not repeated.",
+    "Initial Simulator packaging and gateway-fixture failures were diagnosed before the passing final run. Sanitizer configuration reuses -Xclang -fobjc-dispatch-method=legacy for installed LLVM/Apple linker compatibility."
+  ]
+}
