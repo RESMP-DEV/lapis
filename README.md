@@ -59,7 +59,7 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | Component | Exercised | Remaining |
 | --- | --- | --- |
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
-| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS; after a simulated power loss (SIGKILL of every process), the login helper restarts agents resuming their conversations ([check](scripts/check_restore.py)) | An actual reboot through the login helper, and later Linux qualification |
+| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS; after a simulated power loss (SIGKILL of every process), the login helper resumes verified Codex/Claude conversations and restarts advisory-only agents fresh ([check](scripts/check_restore.py)) | An actual reboot through the login helper, and later Linux qualification |
 | Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect; stale sockets left by a simulated power loss are replaced | Qualification across an actual reboot |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging and link opening (Qt tests on the Linux test host) | Cross-cell contextual shaping, rectangular/multi-click selection, link hover feedback and accessibility; native Mac selection not yet exercised; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
@@ -167,16 +167,15 @@ Close the window (its close button or Command-Q) to detach. Reopen it to
 reconnect the same agents and restore category selections and window
 placement. Closing the window does not stop agents; Command-W on an agent does.
 If an agent's session service is gone when lapis opens (after a reboot or a
-crash), lapis restarts it in its card, like a restored terminal tab: Codex,
-Claude, Grok, OpenCode, OMP, Kimi and Antigravity resume their saved
-conversation with their own resume option; other CLIs, or a conversation with
-no saved transcript yet, start fresh in the same folder. Explicit resume arguments
-remain authoritative; lapis adds a resume selection only when none is already
-present. Codex transcript lookup stays within the `sessions/YYYY/MM/DD` layout
-and does not follow directory symlinks. Each service records
-the conversation beside its endpoint (`<endpoint>.resume`) from the Codex
-observer, the Claude hook adapter, or the `agent_checkpoint` sequence that
-iTerm2 restore hooks print. For Codex builds lapis has not qualified, and
+crash), lapis restarts it in its card. Codex and Claude resume saved conversations
+learned through their independent observer or hook adapter. Other CLIs restart
+fresh in the same folder unless explicit user arguments select a conversation.
+Those arguments remain authoritative; lapis only manages a resume selection it
+added itself. Printed `agent_checkpoint` sequences, including iTerm2 restore
+hooks, are advisory and cannot authorize automatic resume. Services store the
+identity and its source beside the endpoint (`<endpoint>.resume`); legacy records
+without provenance remain advisory. Codex transcript lookup stays within the
+`sessions/YYYY/MM/DD` layout and does not follow directory symlinks. For Codex builds lapis has not qualified, and
 Codex agents whose service predates these records, lapis reads the thread from
 the rollouts its app-server holds open, following `/new` and `/resume`.
 Command-W is what removes an agent for good. Restore runs when lapis opens.
