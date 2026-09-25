@@ -28,8 +28,8 @@ constexpr std::array known_agents{"claude", "codex", "grok",   "opencode",
                                   "omp",    "kimi",  "gemini", "agy"};
 
 // A rollout's first line (session_meta) marks a subagent thread with a
-// {"subagent": ...} source and its parent. nullopt when it cannot be read; a
-// malformed or oversized metadata cannot attest a main thread.
+// {"subagent": ...} source and its parent. Unreadable, malformed or oversized
+// metadata cannot attest a main thread.
 std::optional<bool> subagent_rollout(const QString& path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))

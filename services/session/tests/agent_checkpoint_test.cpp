@@ -253,6 +253,19 @@ void codex_threads_from_open_files() {
                                             "7441-b8b8-aad7d5c571d8.jsonl")) +
                 QLatin1Char('\n')) == first,
             "a rollout that no longer exists is skipped");
+    const auto malformed_path = day.filePath(
+        QStringLiteral("rollout-2026-09-24T13-10-00-01a0d4b2-0001-7441-b8b8-aad7d5c571d8.jsonl"));
+    for (const auto& header : {QByteArray("not JSON\n"), QByteArray("{\"payload\":{}}\n"),
+                               QByteArray(1024 * 1024 + 1, 'x')}) {
+        QFile malformed(malformed_path);
+        require(malformed.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                    malformed.write(header) == header.size(),
+                "write an unqualified rollout header");
+        malformed.close();
+        require(codex_thread_from_open_files(listing + QStringLiteral("n") + malformed_path +
+                                             QLatin1Char('\n')) == first,
+                "malformed or oversized headers never become a main conversation");
+    }
     require(!codex_thread_from_open_files(
                  QStringLiteral("p1\nn/tmp/rollout-notes.jsonl\nn/Users/me/.codex/log/x\n"))
                  .has_value(),
