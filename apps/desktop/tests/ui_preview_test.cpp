@@ -646,7 +646,7 @@ int run_shortcut_focus_tests() {
         wait_popup(*dialog, false);
     }
 #ifndef Q_OS_MACOS
-    // X11 delivers Ctrl+Shift+, as Ctrl+Shift+< (observed on anvil).
+    // X11 delivers Ctrl+Shift+, as Ctrl+Shift+< (observed on Linux).
     QKeyEvent shifted_settings(QEvent::KeyPress, Qt::Key_Less,
                                Qt::ControlModifier | Qt::ShiftModifier);
     QCoreApplication::sendEvent(window, &shifted_settings);

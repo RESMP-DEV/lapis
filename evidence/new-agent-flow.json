@@ -44,7 +44,7 @@
       "seconds": 5.63,
       "suppressions": false,
       "scope": "Before final nodiscard and automatic-move style corrections only",
-      "artifact": "/home/infatoshi/lapis-agent-workspace/build/new-agent/asan-test.log"
+      "artifact": "~/lapis-agent-workspace/build/new-agent/asan-test.log"
     },
     "quality": {
       "passed": true,

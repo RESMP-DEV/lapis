@@ -5,7 +5,7 @@
   "source_state": "uncommitted working tree on feature/agent-workspace",
   "implementation_model": "claude-opus-5-5",
   "isolated_snapshot": "395d7c539b12bd2ecbb8f7a78ddb9f0e88a84f8b",
-  "worker_report": "/Users/infatoshi/dev/lapis-opus-ui/build/opus-ui/result.json",
+  "worker_report": "~/dev/lapis-opus-ui/build/opus-ui/result.json",
   "guidance": "https://claude.dev/blog/getting-the-most-out-of-opus-5-5/",
   "source_sha256": {
     "CONTRIBUTING.md": "028de227542260414f936fd52537dde01495a0ce4b9e25ba229a3343169f277c",
@@ -51,24 +51,24 @@
         "ui-preview",
         "appearance-input"
       ],
-      "artifact": "/home/infatoshi/lapis-agent-workspace/build/opus-ui/final-ui.log",
+      "artifact": "~/lapis-agent-workspace/build/opus-ui/final-ui.log",
       "scope": "Final QML including Appearance shortcut label"
     },
     "worker_quality": {
       "passed": true,
-      "artifact": "/Users/infatoshi/dev/lapis-opus-ui/build/opus-ui/remote/quality-receipt.json"
+      "artifact": "~/dev/lapis-opus-ui/build/opus-ui/remote/quality-receipt.json"
     },
     "worker_threaded_asan_ubsan_lsan": {
       "passed": true,
       "suites": 7,
       "suppressions": false,
-      "artifact": "/Users/infatoshi/dev/lapis-opus-ui/build/opus-ui/remote/asan-test-threaded.log",
+      "artifact": "~/dev/lapis-opus-ui/build/opus-ui/remote/asan-test-threaded.log",
       "scope": "Worker source hashes in result.json; coordinator changes afterwards are four color literals and one shortcut-label binding"
     },
     "worker_ui_check": {
       "passed": true,
       "checks": 10,
-      "artifact": "/Users/infatoshi/dev/lapis-opus-ui/build/opus-ui/remote/ui-check-receipt.json"
+      "artifact": "~/dev/lapis-opus-ui/build/opus-ui/remote/ui-check-receipt.json"
     },
     "mac": {
       "built_and_opened": true,
@@ -117,11 +117,11 @@
     "Synthetic snapshot captures scale existing terminal grids; live Mac font resize was separately inspected"
   ],
   "screenshots_reviewed_by_coordinator": [
-    "/Users/infatoshi/dev/lapis-opus-ui/build/opus-ui/shots/ws-640x480.png",
-    "/Users/infatoshi/dev/lapis-opus-ui/build/opus-ui/shots/ws-1400x960.png",
-    "/Users/infatoshi/dev/lapis-opus-ui/build/opus-ui/shots/ws-appearance.png",
-    "/Users/infatoshi/dev/lapis-opus-ui/build/opus-ui/shots/ws-commands.png",
-    "/Users/infatoshi/dev/lapis-opus-ui/build/opus-ui/shots/ws-theme-contrast.png"
+    "~/dev/lapis-opus-ui/build/opus-ui/shots/ws-640x480.png",
+    "~/dev/lapis-opus-ui/build/opus-ui/shots/ws-1400x960.png",
+    "~/dev/lapis-opus-ui/build/opus-ui/shots/ws-appearance.png",
+    "~/dev/lapis-opus-ui/build/opus-ui/shots/ws-commands.png",
+    "~/dev/lapis-opus-ui/build/opus-ui/shots/ws-theme-contrast.png"
   ],
   "git": "No publish, commit on the working branch, or PR; original dirty work preserved. Snapshot commit exists only for isolated worker baseline."
 }

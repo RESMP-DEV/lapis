@@ -8,7 +8,7 @@
   },
   "hosts": {
     "mac": "Apple Silicon, macOS 26.5.1",
-    "anvil": "Linux ARM64, software-rendered GUI gate"
+    "linux": "Linux ARM64, software-rendered GUI gate"
   },
   "tools": {
     "codex": "codex-cli 0.156.1 (installed; not in the observer's qualified hashes, so its thread came from the rollout scan)",
@@ -27,14 +27,14 @@
     },
     {
       "name": "rollout chooser (lapis_agent_checkpoint_tests codex_threads_from_open_files)",
-      "result": "PASS on macOS and in the anvil gate with real files: a subagent written later is ignored, /new puts the new thread first while the previous stays listed, /resume moves back, missing files are skipped, other paths are not rollouts"
+      "result": "PASS on macOS and in the Linux gate with real files: a subagent written later is ignored, /new puts the new thread first while the previous stays listed, /resume moves back, missing files are skipped, other paths are not rollouts"
     },
     {
       "name": "lock handoff (lapis_workspace_tests windowWaitsForTheRestoreHelper)",
-      "result": "PASS headless on macOS and in the anvil gate: a window waited for a helper holding the lock and marker, a second window failed in under 1 s, and a helper failed while a window held the workspace"
+      "result": "PASS headless on macOS and in the Linux gate: a window waited for a helper holding the lock and marker, a second window failed in under 1 s, and a helper failed while a window held the workspace"
     },
     {
-      "name": "anvil full gate (scripts/lapis.py linux-gui)",
+      "name": "Linux full gate (scripts/lapis.py linux-gui)",
       "result": "56 PASS, 0 FAIL on the final revision, including every clang-tidy analysis and the workspace tests"
     },
     {
@@ -55,7 +55,7 @@
   "limitations": [
     "Not exercised across an actual reboot or at a real login; power loss was simulated with SIGKILL",
     "The login helper runs only after the user logs in",
-    "The Linux /proc rollout scan is compiled and analyzed on anvil but not run against a real Codex (none installed there)",
+    "The Linux /proc rollout scan is compiled and analyzed on the Linux test host but not run against a real Codex (none installed there)",
     "The desktop's correction of records on services that predate the rollout scan is covered by the chooser test, not end to end",
     "check_restore.py uses the phone gateway's wire client (apps/remote/lapis_remote.py, PR #13)",
     "Codex agents on an unqualified Codex build resume correctly but lack observer turn status and requests"

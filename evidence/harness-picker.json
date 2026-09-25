@@ -23,7 +23,7 @@
     "linux_full_gate": {
       "passed": true,
       "checks": 51,
-      "artifact": "/home/infatoshi/lapis-agent-workspace/build/reports/desktop/receipt.json"
+      "artifact": "~/lapis-agent-workspace/build/reports/desktop/receipt.json"
     },
     "linux_focused": {
       "passed": true,
