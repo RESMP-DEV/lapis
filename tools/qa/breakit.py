@@ -211,6 +211,8 @@ class Run:
         self.bin = output / "bin"
         self.project = output / "project"
         self.config = None
+        self.registry = None
+        self.prepared = False
 
     # Environment -------------------------------------------------------------
 
@@ -230,6 +232,8 @@ class Run:
             )
         # The app persists sidebar and appearance changes into lapis.json.
         self.config = CONFIG.read_bytes() if CONFIG.exists() else None
+        self.registry = REGISTRY.read_bytes() if REGISTRY.exists() else None
+        self.prepared = True
 
     def environment(self):
         env = dict(os.environ)
@@ -691,8 +695,8 @@ class Run:
         }
 
     def cleanup(self):
-        if self.config is not None:
-            CONFIG.write_bytes(self.config)
+        if not self.prepared:
+            return
         if self.gui_alive():
             os.killpg(self.gui.pid, signal.SIGKILL)
         for row in self.services():
@@ -705,6 +709,13 @@ class Run:
                 os.kill(row["pid"], signal.SIGKILL)
             except ProcessLookupError:
                 pass
+        # Restore after stopping writers, including an originally absent file.
+        for path, original in ((CONFIG, self.config), (REGISTRY, self.registry)):
+            if original is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(original)
+        self.prepared = False
 
 
 def main():
