@@ -1,0 +1,153 @@
+{
+  "schema": "lapis.pr-review-followup/1",
+  "recorded_at": "2026-09-25T03:27:43.412108+00:00",
+  "platform": "macOS arm64",
+  "integration_revision": "ae88ac556627c84cd6907d094000f3e8c0b95dbd",
+  "integration_fixture_edits": "Only updater fixture deadline/startup waits were widened after this revision; production source is unchanged.",
+  "checks": [
+    {
+      "command": [
+        "just",
+        "quality"
+      ],
+      "scope": "PR14 and PR15 repository/Python checks",
+      "passed": true,
+      "reuse": "Python and repository-contract inputs unchanged after the final C++ fixture timing edit."
+    },
+    {
+      "command": [
+        "cmake",
+        "--build",
+        "build/desktop",
+        "--target",
+        "lapis_desktop",
+        "lapis_workspace_tests",
+        "lapis_pty_process_tests"
+      ],
+      "scope": "PR14 and integrated PR15 desktop build",
+      "passed": true
+    },
+    {
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/desktop",
+        "-R",
+        "^(workspace|pty-process)$",
+        "--no-tests=error",
+        "--output-on-failure"
+      ],
+      "scope": "PR14 and integrated PR15; QT_QPA_PLATFORM=offscreen, TMPDIR=/tmp",
+      "passed": true,
+      "final_fixture_case": "PR15 workspace rerun passed in 17.00 seconds after increasing its updater fixture deadline."
+    },
+    {
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/desktop-asan",
+        "-R",
+        "^(workspace|pty-process)$",
+        "--no-tests=error",
+        "--output-on-failure"
+      ],
+      "scope": "Integrated PR15; ASan/UBSan",
+      "passed": true,
+      "seconds": 21.49,
+      "reuse": "Ran before timeout-only fixture changes; final production source is identical."
+    },
+    {
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build/desktop-tsan",
+        "-R",
+        "^workspace$",
+        "--no-tests=error",
+        "--output-on-failure"
+      ],
+      "scope": "Integrated PR15; TSan",
+      "passed": true,
+      "seconds": 56.41,
+      "pty_process": "Passed in 16.81 seconds in preceding combined run; no pty-process source changed afterward."
+    },
+    {
+      "command": "clang-format --dry-run --Werror; clang-tidy -p build/desktop; cppcheck --library=qt",
+      "scope": "Changed workspace, updater-process, shared process-group guard, and tests; merged workspace also analyzed",
+      "passed": true
+    }
+  ],
+  "test_failure_triage": [
+    {
+      "failure": "TSan fake updater did not acknowledge startup before the 300 ms test deadline",
+      "resolution": "Fixture deadline is now 5 seconds, with longer bounded startup waits. Production timeout remains two minutes. Focused workspace rerun passed.",
+      "original_batch_status": "failed; its pty-process case passed and was reused"
+    }
+  ],
+  "github_limit_correction": "The prior midnight GitHub block claim was incorrect. A local retry classifier mistook positive quota telemetry for an error; it was fixed separately. Actual gh replies and thread resolutions succeeded in this pass. Provider-specific reviewer cooldowns remain separate.",
+  "limitations": [
+    "No installed CLI was updated; disposable Grok scripts exercised updater behavior.",
+    "No GUI activation, mouse/keyboard injection, physical reboot or actual login in this pass.",
+    "Process cleanup covers descendants remaining in the owned POSIX process group; no new platform-support claim.",
+    "At the 64-argument durable cap, restored Codex argv is preserved and omitted startup defaults are diagnosed. Explicit user config overrides remain authoritative.",
+    "Optional reviewer cooldowns do not constitute approval; no PR was merged."
+  ],
+  "pr": 14,
+  "source_revision": "d34dcd83194a35158cd9231b28ec71e639d54dcb",
+  "source_sha256": {
+    "README.md": "5b65fb86b3cef214e5ba45f1a8b3b5910157c251257a406e0839d0497b176a28",
+    "apps/desktop/CMakeLists.txt": "dde2d4972bc94b6f416192dec82b89c5b1ecd1a828630532409cb1305b3e9606",
+    "apps/desktop/src/platform/updater_process.cpp": "cbdeb71bc4432040061d3b09a7e0f3913bb53f2c54381fd69772178a24a43a29",
+    "apps/desktop/src/platform/updater_process.hpp": "eb93388ec9a7835c92e4910675d347b2bc2636b866663217dc764d668f40a831",
+    "apps/desktop/src/workspace.cpp": "7501ba211d39c5191be535c3dd0681437a4d1cf1f2be9e15020cb72aee864b88",
+    "apps/desktop/src/workspace.hpp": "2975ea7888ca94e511568a8c442d347255c0d2f01f087901b5c268218ac808a1",
+    "apps/desktop/tests/workspace_test.cpp": "ba293853cf19f92b6f2ce4fdceb8611be3d320cc7bceaccf8a7a8c4396011f7a",
+    "docs/architecture.md": "dc00054c3c5f4bd9055e7c7d0d0584b8a377760e3babd2d0ddc2332c7aff3b13",
+    "services/session/src/platform/posix/process_group_guard.cpp": "31379d953fd18836749ff66d1b07fdf2b866eb78229ddc80747381dffcf6d783",
+    "services/session/src/platform/posix/process_group_guard.hpp": "58c9aa0e3d51a694e6ff0a9b6d726adcc86ff75027631338c0e2fb635b2f8d95"
+  },
+  "review_threads": [
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l2Gqj",
+      "disposition": "fixed",
+      "change": "Newly spawned restored Codex launches receive default update suppression. Explicit config and literal prompt boundaries are respected; managed resume index and identity are checked after prepending the pair."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l2Gqo",
+      "disposition": "fixed",
+      "change": "UpdaterProcess retains a POSIX group guard and waits for cleanup acknowledgment after leader exit, including normal exit, timeout and teardown. Cleanup never relies on a reaped leader PID."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l2Gqu",
+      "disposition": "fixed",
+      "change": "Drain output throughout execution in 8 KiB chunks and retain an 8 KiB tail, preserving the 600-character log limit. No nonexistent QProcess buffer-size API is used."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l2Gqy",
+      "disposition": "fixed",
+      "change": "Reject queued restarts, deduplicate queued IDs, and skip closed or already-live agents when releasing the update queue."
+    }
+  ],
+  "additional_review_triage": [
+    {
+      "finding": "Normal updater exit can leave an installer child alive",
+      "disposition": "fixed",
+      "evidence": "Normal-exit variant requires both explicit fixture PIDs gone before the new agent executes."
+    },
+    {
+      "finding": "Managed resume provenance shift lacked an assertion",
+      "disposition": "fixed",
+      "evidence": "Persisted managedResume.index is 3 for [-c, setting, --user, resume, id], and identity is verified."
+    },
+    {
+      "finding": "Call QProcess::setReadBufferSize",
+      "disposition": "not-applicable",
+      "evidence": "Qt 6.11.2 QProcess and QIODevice expose no such member. Application output is drained in bounded chunks."
+    },
+    {
+      "finding": "A before-marker/after-marker log assertion proves runtime buffer boundedness",
+      "disposition": "not-applicable",
+      "evidence": "The prior final 600-character truncation also drops the before-marker. Retained buffer bounds are checked in source; the large-output fixture verifies launch completion and final tail delivery, not a measured RSS bound."
+    }
+  ]
+}
