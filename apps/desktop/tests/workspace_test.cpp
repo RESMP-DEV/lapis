@@ -57,6 +57,9 @@ void explicitAgentIdentity() {
                                              ? SessionPreview::StatusSource::output
                                              : SessionPreview::StatusSource::observer),
                 "explicit attach selects the correct status source");
+        require(!workspace.createAgent(directory.path(), QStringLiteral("Blocked")),
+                "an explicit attach cannot create an unpersisted managed agent");
+        require(workspace.sessions().size() == 1, "rejected creation leaves the attach intact");
     }
 }
 void projectPaths() {
@@ -677,12 +680,58 @@ void agentArgumentsPersist() {
                            .toArray();
     require(saved == QJsonArray{QStringLiteral("--dangerously-skip-permissions")},
             "saving keeps the agent's arguments");
+    {
+        auto unsafe_resume = agentRecord(canonical, uuid(), "general");
+        unsafe_resume.insert(QStringLiteral("harness"), QStringLiteral("codex"));
+        unsafe_resume.insert(QStringLiteral("arguments"),
+                             QJsonArray{QStringLiteral("resume"), QStringLiteral("not-a-uuid")});
+        auto configured = root;
+        configured.insert(QStringLiteral("agents"), QJsonArray{unsafe_resume});
+        writeRegistry(options.storagePath, configured);
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.workspaceError().isEmpty(),
+                "a configured codex resume value is an ordinary argument");
+        require(workspace.addCategory(QStringLiteral("Research")), "save configured arguments");
+    }
+    const auto resumed = QJsonDocument::fromJson(readRegistry(options.storagePath))
+                             .object()
+                             .value(QStringLiteral("agents"))
+                             .toArray()
+                             .first()
+                             .toObject();
+    require(resumed.value(QStringLiteral("arguments")) ==
+                    QJsonArray{QStringLiteral("resume"), QStringLiteral("not-a-uuid")} &&
+                resumed.value(QStringLiteral("resumeThread")).toString().isEmpty(),
+            "a non-native resume argument cannot poison the native identity field");
     record.insert(QStringLiteral("arguments"), QJsonArray{3});
     auto broken = root;
     broken.insert(QStringLiteral("agents"), QJsonArray{record});
     writeRegistry(options.storagePath, broken);
     Workspace rejected(WorkspaceMode::live, options);
     require(!rejected.workspaceError().isEmpty(), "non-string arguments are rejected");
+    require(rejected.sessions().isEmpty() && !rejected.focusedSession(),
+            "one malformed agent cannot be partially restored");
+}
+
+void unknownRegistryVersionsAreRejected() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "version directory");
+    WorkspaceOptions options;
+    options.storagePath = QDir(directory.path()).filePath(QStringLiteral("workspace.json"));
+    const auto bytes =
+        QJsonDocument(QJsonObject{{"version", 3},
+                                  {"activeCategory", "general"},
+                                  {"categories",
+                                   QJsonArray{QJsonObject{
+                                       {"id", "general"}, {"name", "General"}, {"selected", ""}}}},
+                                  {"agents", QJsonArray{}}})
+            .toJson();
+    writeRegistry(options.storagePath, QJsonDocument::fromJson(bytes).object());
+    Workspace workspace(WorkspaceMode::live, options);
+    require(!workspace.workspaceError().isEmpty(), "unknown registry versions are rejected");
+    require(workspace.sessions().isEmpty() && !workspace.focusedSession(),
+            "unknown registry versions create no sessions");
+    require(readRegistry(options.storagePath) == bytes, "unknown versions remain for migration");
 }
 
 // Harnesses without an observer get an output-timing estimate that
@@ -728,16 +777,19 @@ void outputEstimate() {
 void agentsStartWithoutParentSessionMarkers() {
     QTemporaryDir directory;
     require(directory.isValid(), "marker directory");
+    struct RestoreEnvironment {
+        ~RestoreEnvironment() {
+            for (const char* name : {"CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "GROK_AGENT",
+                                     "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_EFFORT_LEVEL"})
+                qunsetenv(name);
+        }
+    };
+    const RestoreEnvironment restore;
     qputenv("CLAUDECODE", "1");
     qputenv("CLAUDE_CODE_CHILD_SESSION", "1");
     qputenv("CLAUDE_CODE_SESSION_ID", "parent-session");
     qputenv("GROK_AGENT", "1");
     qputenv("CLAUDE_CODE_EFFORT_LEVEL", "max");
-    const auto restore = [] {
-        for (const char* name : {"CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "GROK_AGENT",
-                                 "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_EFFORT_LEVEL"})
-            qunsetenv(name);
-    };
     const auto record = QDir(directory.path()).filePath(QStringLiteral("environment"));
     WorkspaceOptions options;
     options.endpoint = QDir(QFileInfo(directory.path()).canonicalFilePath())
@@ -754,7 +806,6 @@ void agentsStartWithoutParentSessionMarkers() {
         Workspace workspace(WorkspaceMode::live, options);
         // The service starts from the event loop, so keep the markers until then.
         const bool recorded = waitFor([&] { return QFileInfo::exists(record); }, 10000);
-        restore();
         require(recorded, "agent recorded its environment");
         QFile file(record);
         require(file.open(QIODevice::ReadOnly), "read agent environment");
@@ -1463,6 +1514,7 @@ int main(int argc, char** argv) {
         unseenFollowsTurnsAndSelection();
         claudeAgentsUseServiceAdapter();
         agentArgumentsPersist();
+        unknownRegistryVersionsAreRejected();
         outputEstimate();
         agentsStartWithoutParentSessionMarkers();
         restartRefusesClosingAgent();

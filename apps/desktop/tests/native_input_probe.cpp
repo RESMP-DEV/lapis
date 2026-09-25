@@ -395,8 +395,11 @@ int main(int argc, char** argv) {
     parser.addOption(
         {QStringLiteral("output"), QStringLiteral("JSON receipt"), QStringLiteral("path")});
     parser.process(app);
-    QJsonObject receipt{{QStringLiteral("schema"), QStringLiteral("lapis.native-input/1")},
-                        {QStringLiteral("passed"), false}};
+    QJsonObject receipt{{QStringLiteral("schema"), QStringLiteral("lapis.native-input/2")},
+                        {QStringLiteral("passed"), false},
+                        {QStringLiteral("scope"),
+                         QStringLiteral("Terminal input and attachment ownership; excludes "
+                                        "workspace navigation and automatic switching")}};
     int result = 1;
     try {
         const auto original_source = NativeInputDriver::selectedSource();

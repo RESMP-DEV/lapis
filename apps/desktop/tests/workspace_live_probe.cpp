@@ -8,11 +8,13 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMap>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSet>
 #include <QTemporaryDir>
 #include <QThread>
+#include <algorithm>
 #include <csignal>
 #include <functional>
 #include <iostream>
@@ -29,6 +31,7 @@ struct Process {
 QList<qint64> observed;
 QtMessageHandler previous{};
 void messages(QtMsgType type, const QMessageLogContext& context, const QString& message) {
+    // LiveConnection::acceptHello emits this exact producer contract.
     const auto match =
         QRegularExpression(QStringLiteral("Connected terminal PID ([0-9]+)")).match(message);
     if (match.hasMatch())
@@ -140,16 +143,20 @@ class OwnedProcesses {
     QMap<qint64, QString> owned_;
     bool finished_{};
 };
-qint64 ready(Workspace& workspace, const QString& id) {
+qint64 ready(Workspace& workspace, const QString& id, QSet<qint64> excluded = {}) {
     const auto before = observed.size();
     await(
         [&] {
             auto* item = workspace.session(id);
-            return item && item->inputReady() && !item->serviceSessionId().isEmpty() &&
-                   observed.size() > before;
+            if (!item || !item->inputReady() || item->serviceSessionId().isEmpty())
+                return false;
+            return std::any_of(observed.begin() + before, observed.end(),
+                               [&](qint64 pid) { return !excluded.contains(pid); });
         },
         "Agent did not reach restored-screen input readiness");
-    return observed.back();
+    const auto found = std::find_if(observed.begin() + before, observed.end(),
+                                    [&](qint64 pid) { return !excluded.contains(pid); });
+    return *found;
 }
 void run_harness_probe(const QString& harness, QTemporaryDir& runtime, OwnedProcesses& owned,
                        QFile& output) {
@@ -250,7 +257,7 @@ int main(int argc, char** argv) {
             require(workspace.createAgent(runtime.path(), QStringLiteral("Second")),
                     "Second managed Codex launch rejected");
             second = workspace.focusedSession()->sessionId();
-            pid2 = ready(workspace, second);
+            pid2 = ready(workspace, second, {pid1});
             service2 = owned.serviceFor(pid2);
             identity2 = workspace.session(second)->serviceSessionId();
             require(pid1 != pid2 && service1 != service2,

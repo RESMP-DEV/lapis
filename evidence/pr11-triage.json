@@ -1,0 +1,88 @@
+{
+  "schema": "lapis.pr-triage/1",
+  "recorded_at": "2026-09-25",
+  "pr": 11,
+  "reviewed_base": "e48f3cb7e88d54c8335de218c7e2e27e8836c891",
+  "tested_code_revision": "160cebd8c99b2811996efe405f8643708e9937c2",
+  "platform": "macOS arm64",
+  "source_sha256": {
+    ".coderabbit.yaml": "265b90971e6b351748325f5b0e5fe998ba39982809a755a57e01f258907c55bc",
+    "CONTRIBUTING.md": "695f6640b3de36631f6a289589525c8a94a8c62d34ff241374fbdd261fbf890b",
+    "apps/desktop/src/keymap.cpp": "7478e234ec1dead37308d230366e1b9e12759f684a15dac56a5ae8ea0076f009",
+    "apps/desktop/src/main.cpp": "6ccbe2517a7e0996d4c884fd82f560035b3be2bb2fb10efa5b81b81659667cc1",
+    "apps/desktop/src/workspace.cpp": "c1e4cde8866e75f98f35f53073c565eaa4324a3cf34bb93956abbdb0cac8ce5d",
+    "apps/desktop/tests/keymap_test.cpp": "bc495a8a9581826eb34f136bcf6fda27c69853f7b3a2e7cddff23e2baf9ea1dd",
+    "apps/desktop/tests/live_connection_test.cpp": "8bd9fcad11d14d297445d6b94ae8aea59db9889636ac21e9ddefab93bcc0b553",
+    "apps/desktop/tests/native_input_probe.cpp": "817cbd448453eeac42e9c427cc231a81aaac575ad3b72ece3daf45eab04823ef",
+    "apps/desktop/tests/window_state_test.cpp": "f0a4f58ffd2e93bf742678b616bdb9b03922477d7acbeb97d0885bdc875676b3",
+    "apps/desktop/tests/workspace_live_probe.cpp": "1f36b7840c965d6b3c1fd37335f89e2e3b13f5c58f5c91b00568912ebbcf649e",
+    "apps/desktop/tests/workspace_test.cpp": "b5ad7f0624a8cfa8c9dd827d6a2d96400071d3992be7f9597406b745bfa6c584",
+    "scripts/check_cli_launch.py": "04d72acc18c5ec3283c020eda67abf8d23949c2b4b58e5037a709a8eff4c535b",
+    "scripts/check_service_attention.py": "bda1aac0860c82f4a5733556493bccaa2fdb0c47442f19271ddba74a21147b54",
+    "scripts/tests/test_check_service_attention.py": "9264189459ae4cff2121d02b99ad127dbe99b3789f05fa8eaa3dd6f71038d8ea",
+    "scripts/tests/test_fake_models.py": "c18d0ed5f5b38f5ebf20effa9431a8a56974d48f36a8d9bb79628b84754ed739",
+    "scripts/tests/test_lapis.py": "758cfd9558fb1b67e5f8708edbe08bcefa199c44375b39d11844f0010f19b1b0",
+    "tools/qa/breakit.py": "f41039c559d540ce6e52da779994dd84daa03083a4b2c8c8adbaae7dff5545d0",
+    "tools/qa/fake_agent.py": "f175cc172b8cb0e80a44ae085cf8617600083398ff904d7a7edf36283afecb4d"
+  },
+  "scope": "Agent workspace review fixes and main/reviewer configuration reconciliation",
+  "review_items": {
+    "unresolved_threads_triaged": 164,
+    "additional_unposted_m3_findings_triaged": 86
+  },
+  "changes": [
+    "Reject empty harness-argument keys and attach-only workspace agent creation",
+    "Preserve literal non-UUID Codex resume arguments without invalid legacy metadata",
+    "Reject incompatible preview/development-shell modes",
+    "Correct native workspace probe PID attribution and document native-input receipt scope",
+    "Validate private CLI runtime paths and isolate copied test authentication",
+    "Stop fake-agent output workers at EOF/exit; complete HTTP response cleanup",
+    "Retain AA_MacDontSwapCtrlAndMeta and existing terminal keyboard ownership",
+    "Add current stacked bases to CodeRabbit configuration and sanitize remaining dated evidence keys"
+  ],
+  "checks": [
+    {
+      "command": "just quality",
+      "passed": true,
+      "python_tests": 121
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R '^(workspace|keymap|live-connection)$' --no-tests=error --output-on-failure",
+      "passed": true,
+      "note": "Cases selected in separate focused runs with TMPDIR=/tmp and QT_QPA_PLATFORM=offscreen"
+    },
+    {
+      "command": "lapis_terminal_input_tests --background",
+      "passed": true,
+      "note": "Programmatic software Qt scope"
+    },
+    {
+      "command": "clang-format --dry-run --Werror; clang-tidy -p build/desktop; cppcheck --library=qt",
+      "passed": true,
+      "scope": "Nine changed first-party translation units; filtered compile database"
+    },
+    {
+      "command": "lapis_desktop --ui-preview --development-shell",
+      "passed": true,
+      "expected_exit": 2
+    },
+    {
+      "command": "fake_agent.py burst followed by EOF/exit",
+      "passed": true
+    },
+    {
+      "command": "real child QLockFile acquire, _Exit, parent recovery",
+      "passed": true,
+      "note": "Both staleTime 0 and 30000 recover dead owners; no change to lifetime lock semantics"
+    }
+  ],
+  "independent_review": "Scoped GLM workers plus parent review; rejected incorrect modifier swap and fake-lock conclusions. Final code review found only disposition-report corrections, now applied.",
+  "review_service_state": {
+    "github_content": "Unavailable until 2026-09-25T07:00:00Z after secondary rate limit; replies and triggers prepared locally, not posted",
+    "new_head_reviews": "Pending after push; earlier reviews are not approval of these fixes"
+  },
+  "limitations": [
+    "No foreground or native-input qualification in this pass. Offscreen render suites require Vulkan and were not qualified.",
+    "No merge performed."
+  ]
+}

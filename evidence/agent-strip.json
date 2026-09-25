@@ -34,14 +34,14 @@
     "Categories: Command-Option-left/right and Command-Shift-up/down"
   ],
   "validation": {
-    "anvil_full_gate": {
+    "linux_full_gate": {
       "passed": true,
       "checks": 51,
       "ctest_suites": 20,
       "seconds": 40,
       "includes": "build, clang-format, cppcheck, clang-tidy shards, all CTest suites under Xvfb"
     },
-    "anvil_asan_leaks": {
+    "linux_asan_leaks": {
       "passed": true,
       "suites": [
         "workspace",
