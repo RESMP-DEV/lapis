@@ -416,8 +416,13 @@ void navigation_defaults_preserve_terminal_editing() {
     // Command-W closes an agent; closing the window has no default key.
     require(keymap.sequences(QStringLiteral("detachWindow")).isEmpty(),
             "the window closes only from its own control or Quit");
-    for (const auto* removed : {"splitRight", "nextPane", "zoomPane", "paneLeft", "dividerLeft"})
-        require(keymap.sequences(QString::fromLatin1(removed)).isEmpty(), "no tiling actions");
+    for (const auto* removed : {"nextPane", "zoomPane", "paneLeft", "dividerLeft"})
+        require(keymap.sequences(QString::fromLatin1(removed)).isEmpty(),
+                "the old pane actions stay retired");
+    // Tiles split with a new agent and move between tiles, as in iTerm2.
+    for (const auto* tiling : {"splitRight", "splitDown", "tileLeft", "tileRight", "tileUp",
+                               "tileDown", "zoomTile"})
+        require(!keymap.sequences(QString::fromLatin1(tiling)).isEmpty(), "tile actions have keys");
 #ifdef Q_OS_MACOS
     require(keymap.sequences(QStringLiteral("nextCategory")) ==
                 QStringList({QStringLiteral("Meta+Alt+Right"), QStringLiteral("Meta+Shift+Down")}),

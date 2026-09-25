@@ -14,6 +14,7 @@ add_library(lapis_desktop_view STATIC
     src/live_connection.cpp src/live_connection.hpp
     src/terminal_surface.cpp src/terminal_surface.hpp
     src/cell_shapes.cpp src/cell_shapes.hpp
+    src/tile_layout.cpp src/tile_layout.hpp
     src/app_paths.cpp src/app_paths.hpp
     src/shell_environment.cpp src/shell_environment.hpp
     src/ui_preview.cpp src/ui_preview.hpp)
@@ -78,6 +79,10 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_app_environment_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME app-environment COMMAND lapis_app_environment_tests)
     set_tests_properties(app-environment PROPERTIES TIMEOUT 20)
+    add_executable(lapis_tile_layout_tests tests/tile_layout_test.cpp)
+    target_link_libraries(lapis_tile_layout_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME tile-layout COMMAND lapis_tile_layout_tests)
+    set_tests_properties(tile-layout PROPERTIES TIMEOUT 20)
     add_executable(lapis_cell_shapes_tests tests/cell_shapes_test.cpp)
     target_link_libraries(lapis_cell_shapes_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME cell-shapes COMMAND lapis_cell_shapes_tests)

@@ -265,7 +265,7 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
     };
     if (preview_mode_ && (options.launch || !options.endpoint.isEmpty()))
         throw std::invalid_argument("UI preview cannot launch or attach to a process");
-    categories_.push_back({QStringLiteral("general"), QStringLiteral("General"), {}});
+    categories_.push_back({QStringLiteral("general"), QStringLiteral("General"), {}, {}});
     if (!preview_mode_) {
         if (options.launch || !options.endpoint.isEmpty()) {
             const auto launch = options.launch ? session::validate_launch(*options.launch)
@@ -532,6 +532,9 @@ void Workspace::restoreSelection() {
                                  [&](const auto& value) { return value.id == active_category_; });
     if (category == categories_.end())
         return;
+    // With tiles on the stage, the selected agent is one of them.
+    if (!category->tiles.empty() && !category->tiles.contains(category->selected))
+        category->selected = category->tiles.sessions().front();
     for (std::size_t i = 0; i < sessions_.size(); ++i) {
         const auto& id = sessions_[i]->sessionId();
         if (agents_.value(id).category != active_category_)
@@ -548,6 +551,7 @@ void Workspace::changed() {
     emit categoriesChanged();
     emit categoryChanged();
     emit sessionsChanged();
+    emit tilesChanged();
     emit focusChanged();
 }
 Workspace::RegistryState Workspace::checkpoint() const {
@@ -583,7 +587,7 @@ QString Workspace::insertCategory(const QString& name, bool select) {
         return failed(QStringLiteral(
             "Use a category name of 1–80 characters; at most 32 categories are supported."));
     const auto previous = checkpoint();
-    categories_.push_back({newId(), name.trimmed(), {}});
+    categories_.push_back({newId(), name.trimmed(), {}, {}});
     auto id = categories_.back().id;
     if (select)
         active_category_ = id;
@@ -644,6 +648,7 @@ bool Workspace::selectCategory(const QString& id) {
         return false;
     emit categoryChanged();
     emit sessionsChanged();
+    emit tilesChanged();
     emit focusChanged();
     return true;
 }
@@ -667,15 +672,22 @@ bool Workspace::selectSession(const QString& id) {
     const auto previous = checkpoint();
     const bool category_changed = active_category_ != agents_.value(id).category;
     active_category_ = agents_.value(id).category;
+    bool retiled = false;
     for (auto& category : categories_)
-        if (category.id == active_category_)
+        if (category.id == active_category_) {
+            // The selected tile shows the agent picked from the strip.
+            if (!category.tiles.empty() && !category.tiles.contains(id))
+                retiled = category.tiles.replace(category.selected, id);
             category.selected = id;
+        }
     if (!commit(previous))
         return false;
     if (category_changed) {
         emit categoryChanged();
         emit sessionsChanged();
     }
+    if (category_changed || retiled)
+        emit tilesChanged();
     emit focusChanged();
     return true;
 }
@@ -705,10 +717,13 @@ bool Workspace::moveSession(const QString& id, const QString& categoryId) {
     const auto entry = agents_.find(id);
     if (entry == agents_.end())
         return fail(QStringLiteral("Missing agent metadata."));
-    entry->category = categoryId;
-    for (auto& category : categories_)
+    for (auto& category : categories_) {
+        if (category.id == entry->category)
+            untile(category, id);
         if (category.selected == id)
             category.selected.clear();
+    }
+    entry->category = categoryId;
     if (!commit(previous))
         return false;
     changed();
@@ -748,6 +763,85 @@ bool Workspace::moveSessionBy(const QString& id, int delta) {
         }
     return false;
 }
+bool Workspace::placeSessions(const QStringList& ids, const QString& categoryId, int index) {
+    if (!mutableRegistry())
+        return false;
+    auto* destination = category(categoryId);
+    const QSet<QString> moving(ids.begin(), ids.end());
+    if (destination == nullptr || moving.isEmpty() || moving.size() != ids.size() ||
+        std::any_of(ids.begin(), ids.end(), [&](const auto& id) { return !session(id); }))
+        return fail(QStringLiteral("Agent or category no longer exists."));
+    const auto previous = checkpoint();
+    std::vector<SessionPreview*> old_order;
+    for (const auto& item : sessions_)
+        old_order.push_back(item.get());
+    std::vector<std::unique_ptr<SessionPreview>> moved;
+    std::vector<std::unique_ptr<SessionPreview>> rest;
+    for (auto& item : sessions_)
+        (moving.contains(item->sessionId()) ? moved : rest).push_back(std::move(item));
+    // Before the index-th agent the destination keeps, or after its last one.
+    auto position = rest.size();
+    std::optional<std::size_t> last;
+    int seen = 0;
+    for (std::size_t i = 0; i < rest.size(); ++i) {
+        if (agents_.value(rest[i]->sessionId()).category != categoryId)
+            continue;
+        if (seen++ == index) {
+            position = i;
+            break;
+        }
+        last = i;
+    }
+    if (position == rest.size() && last)
+        position = *last + 1;
+    rest.insert(rest.begin() + static_cast<std::ptrdiff_t>(position),
+                std::make_move_iterator(moved.begin()), std::make_move_iterator(moved.end()));
+    sessions_ = std::move(rest);
+    for (const auto& id : ids) {
+        auto& agent = agents_[id];
+        if (agent.category == categoryId)
+            continue;
+        for (auto& place : categories_) {
+            if (place.id == agent.category)
+                untile(place, id);
+            if (place.selected == id)
+                place.selected.clear();
+        }
+        agent.category = categoryId;
+    }
+    restoreSelection();
+    if (!save()) {
+        std::vector<std::unique_ptr<SessionPreview>> restored;
+        for (auto* item : old_order) {
+            const auto found = std::find_if(sessions_.begin(), sessions_.end(),
+                                            [&](const auto& value) { return value.get() == item; });
+            restored.push_back(std::move(*found));
+        }
+        sessions_ = std::move(restored);
+        rollback(previous);
+        emit errorChanged();
+        return false;
+    }
+    changed();
+    return true;
+}
+bool Workspace::placeCategory(const QString& id, int index) {
+    if (!mutableRegistry())
+        return false;
+    const auto found = std::find_if(categories_.begin(), categories_.end(),
+                                    [&](const auto& value) { return value.id == id; });
+    if (found == categories_.end())
+        return fail(QStringLiteral("Category no longer exists."));
+    const auto previous = checkpoint();
+    auto moved = std::move(*found);
+    categories_.erase(found);
+    const auto target = std::clamp<qsizetype>(index, 0, static_cast<qsizetype>(categories_.size()));
+    categories_.insert(categories_.begin() + target, std::move(moved));
+    if (!commit(previous))
+        return false;
+    changed();
+    return true;
+}
 bool Workspace::removeSession(const QString& id) {
     if (!mutableRegistry())
         return false;
@@ -778,9 +872,12 @@ bool Workspace::discardSession(const QString& id) {
             list.size() < 2
                 ? QString()
                 : list[i + 1 < list.size() ? i + 1 : i - 1].value<SessionPreview*>()->sessionId();
-        for (auto& category : categories_)
+        for (auto& category : categories_) {
+            if (category.id == item_category)
+                untile(category, id);
             if (category.selected == id)
                 category.selected = next;
+        }
     }
     const auto position = std::find_if(sessions_.begin(), sessions_.end(),
                                        [&](const auto& value) { return value.get() == item; });
@@ -982,15 +1079,22 @@ QString Workspace::startAgent(const AgentRequest& request) {
         const auto launch = agentLaunch(request);
         if (!launch)
             return {};
+        return launchAgent(request, *launch);
+    } catch (const std::exception& error) {
+        return failed(QString::fromUtf8(error.what()));
+    }
+}
+QString Workspace::launchAgent(const AgentRequest& request, const session::LaunchSpec& launch) {
+    try {
         auto id = newId();
         const auto endpoint = session::posix::prepare_endpoint(
             QDir(QFileInfo(storage_path_).absolutePath()).filePath(id + QStringLiteral(".sock")));
         auto item =
-            std::make_unique<SessionPreview>(request.title.trimmed(), launch->directory, QString{},
+            std::make_unique<SessionPreview>(request.title.trimmed(), launch.directory, QString{},
                                              QColor(QStringLiteral("#87cbac")), "");
         item->setSessionId(id);
         item->setHarnessId(request.harness);
-        const Agent agent{request.category, endpoint, *launch, request.harness};
+        const Agent agent{request.category, endpoint, launch, request.harness};
         item->setStatusSource(statusSource(agent));
         const auto previous = checkpoint();
         agents_.insert(id, agent);
@@ -1010,7 +1114,7 @@ QString Workspace::startAgent(const AgentRequest& request) {
         watch(sessions_.back().get());
         // Only this Mac's CLIs are updated first.
         if (!request.machine.isEmpty() || !deferForUpdate(id))
-            sessions_.back()->startLive(endpoint, *launch, session::wire::AttachMode::create);
+            sessions_.back()->startLive(endpoint, launch, session::wire::AttachMode::create);
         changed();
         return id;
     } catch (const std::exception& error) {
@@ -1029,9 +1133,13 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
         return saveError(
             QStringLiteral("Workspace registry could not be loaded; it has not been overwritten."));
     QJsonArray groups;
-    for (const auto& category : categories_)
-        groups.append(QJsonObject{
-            {"id", category.id}, {"name", category.name}, {"selected", category.selected}});
+    for (const auto& category : categories_) {
+        QJsonObject group{
+            {"id", category.id}, {"name", category.name}, {"selected", category.selected}};
+        if (!category.tiles.empty())
+            group.insert(QStringLiteral("tiles"), category.tiles.toJson());
+        groups.append(group);
+    }
     QJsonArray agents;
     for (const auto& item : sessions_) {
         const auto entry = agents_.constFind(item->sessionId());
@@ -1087,7 +1195,8 @@ void Workspace::loadCategories(const QJsonArray& groups) {
         const auto group = value.toObject();
         Category category{group.value(QStringLiteral("id")).toString(),
                           group.value(QStringLiteral("name")).toString(),
-                          group.value(QStringLiteral("selected")).toString()};
+                          group.value(QStringLiteral("selected")).toString(),
+                          {}};
         if (!validName(category.id) || !validName(category.name) || category.selected.size() > 80 ||
             ids.contains(category.id))
             throw std::runtime_error("Invalid or duplicate category");
@@ -1457,6 +1566,7 @@ void Workspace::restore() {
             throw std::runtime_error("Invalid workspace registry format");
         loadCategories(groups);
         loadAgents(agents);
+        loadTiles(groups);
         active_category_ = root.value(QStringLiteral("activeCategory")).toString();
         if (std::none_of(categories_.begin(), categories_.end(),
                          [&](const auto& category) { return category.id == active_category_; }))
@@ -1496,7 +1606,7 @@ void Workspace::restore() {
     } catch (const std::exception& error) {
         sessions_.clear();
         agents_.clear();
-        categories_ = {{QStringLiteral("general"), QStringLiteral("General"), {}}};
+        categories_ = {{QStringLiteral("general"), QStringLiteral("General"), {}, {}}};
         active_category_ = QStringLiteral("general");
         focused_index_ = -1;
         storage_failed_ = true;
@@ -1691,5 +1801,171 @@ SessionPreview::StatusSource Workspace::statusSource(const Agent& agent) {
     return agent.launch.agent == session::AgentMode::terminal
                ? SessionPreview::StatusSource::output
                : SessionPreview::StatusSource::observer;
+}
+// Tiles -----------------------------------------------------------------------
+
+Workspace::Category* Workspace::category(const QString& id) {
+    const auto found = std::find_if(categories_.begin(), categories_.end(),
+                                    [&](const auto& value) { return value.id == id; });
+    return found == categories_.end() ? nullptr : &*found;
+}
+const Workspace::Category* Workspace::activeCategory() const {
+    const auto found = std::find_if(categories_.begin(), categories_.end(),
+                                    [&](const auto& value) { return value.id == active_category_; });
+    return found == categories_.end() ? nullptr : &*found;
+}
+void Workspace::untile(Category& category, const QString& id) {
+    category.tiles.remove(id);
+    if (category.tiles.count() < 2)
+        category.tiles = {};
+}
+void Workspace::loadTiles(const QJsonArray& groups) {
+    for (const auto& value : groups) {
+        const auto group = value.toObject();
+        auto* place = category(group.value(QStringLiteral("id")).toString());
+        if (place == nullptr)
+            continue;
+        QSet<QString> members;
+        for (auto agent = agents_.cbegin(); agent != agents_.cend(); ++agent)
+            if (agent->category == place->id)
+                members.insert(agent.key());
+        place->tiles = TileLayout::fromJson(group.value(QStringLiteral("tiles")).toObject(), members);
+        if (place->tiles.count() < 2)
+            place->tiles = {};
+    }
+}
+QVariantList Workspace::stageTiles() const {
+    QVariantList result;
+    const auto* active = activeCategory();
+    if (active == nullptr || active->tiles.empty())
+        return result;
+    for (const auto& tile : active->tiles.tiles(QRectF(0, 0, 1, 1))) {
+        auto* item = session(tile.session);
+        if (item == nullptr)
+            continue;
+        result.append(QVariantMap{{QStringLiteral("sessionId"), tile.session},
+                                  {QStringLiteral("session"), QVariant::fromValue(item)},
+                                  {QStringLiteral("x"), tile.rect.x()},
+                                  {QStringLiteral("y"), tile.rect.y()},
+                                  {QStringLiteral("width"), tile.rect.width()},
+                                  {QStringLiteral("height"), tile.rect.height()}});
+    }
+    return result;
+}
+QVariantList Workspace::stageDividers() const {
+    QVariantList result;
+    const auto* active = activeCategory();
+    if (active == nullptr || active->tiles.empty())
+        return result;
+    for (const auto& divider : active->tiles.dividers(QRectF(0, 0, 1, 1)))
+        result.append(QVariantMap{{QStringLiteral("path"), divider.path},
+                                  {QStringLiteral("stacked"), divider.stacked},
+                                  {QStringLiteral("x"), divider.line.x()},
+                                  {QStringLiteral("y"), divider.line.y()},
+                                  {QStringLiteral("width"), divider.line.width()},
+                                  {QStringLiteral("height"), divider.line.height()},
+                                  {QStringLiteral("areaX"), divider.area.x()},
+                                  {QStringLiteral("areaY"), divider.area.y()},
+                                  {QStringLiteral("areaWidth"), divider.area.width()},
+                                  {QStringLiteral("areaHeight"), divider.area.height()}});
+    return result;
+}
+// QML positional API v1 requires QString arguments; role names and boundary validation are
+// explicit. NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+bool Workspace::tileSession(const QString& id, const QString& target, const QString& edge) {
+    if (!mutableRegistry())
+        return false;
+    const auto side = TileLayout::edge(edge);
+    auto* place = category(agents_.value(id).category);
+    if (!session(id) || !side || place == nullptr)
+        return fail(QStringLiteral("Agent no longer exists."));
+    const QString beside = target.isEmpty() ? place->selected : target;
+    if (beside.isEmpty() || beside == id || agents_.value(beside).category != place->id)
+        return false;
+    const auto previous = checkpoint();
+    auto tiles = place->tiles;
+    // The first split starts from the agent the stage shows.
+    if (tiles.empty())
+        tiles.place(beside, {}, TileLayout::Edge::center);
+    if (!tiles.place(id, beside, *side))
+        return fail(QStringLiteral("The stage holds at most %1 agents.")
+                        .arg(TileLayout::kMaximumTiles));
+    place->tiles = tiles.count() < 2 ? TileLayout{} : tiles;
+    place->selected = id;
+    active_category_ = place->id;
+    if (!commit(previous))
+        return false;
+    changed();
+    return true;
+}
+bool Workspace::untileSession(const QString& id) {
+    if (!mutableRegistry())
+        return false;
+    auto* place = category(agents_.value(id).category);
+    if (place == nullptr || !place->tiles.contains(id))
+        return false;
+    const auto previous = checkpoint();
+    untile(*place, id);
+    if (!commit(previous))
+        return false;
+    changed();
+    return true;
+}
+bool Workspace::setTileRatio(const QString& path, qreal ratio, bool persist) {
+    if (!mutableRegistry())
+        return false;
+    auto* place = category(active_category_);
+    if (place == nullptr)
+        return false;
+    const auto previous = checkpoint();
+    if (!place->tiles.setRatio(path, ratio))
+        return false;
+    // A drag moves the divider every frame; the registry is written when it ends.
+    if (persist && !commit(previous))
+        return false;
+    emit tilesChanged();
+    return true;
+}
+bool Workspace::focusTile(const QString& direction) {
+    const auto* active = activeCategory();
+    const auto side = TileLayout::edge(direction);
+    if (active == nullptr || !side || active->tiles.empty())
+        return false;
+    const auto next = active->tiles.neighbor(active->selected, *side);
+    return !next.isEmpty() && selectSession(next);
+}
+QString Workspace::splitAgent(const QString& edge) {
+    if (!mutableRegistry())
+        return {};
+    const auto* item = focusedSession();
+    if (item == nullptr || !TileLayout::edge(edge))
+        return {};
+    const auto entry = agents_.constFind(item->sessionId());
+    if (entry == agents_.cend())
+        return failed(QStringLiteral("Missing agent metadata."));
+    // The same CLI, folder, model and mode, as a new conversation.
+    auto launch = entry->launch;
+    if (entry->managed_resume_index >= 0 &&
+        entry->managed_resume_index + 1 < launch.arguments.size())
+        launch.arguments.remove(entry->managed_resume_index, 2);
+    else if (launch.arguments.size() == 2 && launch.arguments.front() == QStringLiteral("resume"))
+        launch.arguments.clear();
+    const bool remote = QFileInfo(launch.program).fileName() == QStringLiteral("ssh");
+    AgentRequest request{.category = entry->category,
+                         .directory = launch.directory,
+                         .title = item->title(),
+                         .harness = entry->harness,
+                         .machine = remote ? QStringLiteral("ssh") : QString(),
+                         .program = launch.program,
+                         .model = {},
+                         .mode = {},
+                         .select = false};
+    if (preview_mode_)
+        return failed(QStringLiteral("Agent launch is disabled in the preview fixture."));
+    const auto beside = item->sessionId();
+    const auto id = launchAgent(request, launch);
+    if (!id.isEmpty())
+        tileSession(id, beside, edge);
+    return id;
 }
 } // namespace lapis::desktop

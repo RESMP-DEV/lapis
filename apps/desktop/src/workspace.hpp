@@ -3,6 +3,7 @@
 
 #include "harness_models.hpp"
 #include "keymap.hpp"
+#include "tile_layout.hpp"
 #include <lapis/session/terminal.hpp>
 
 #include "launch_spec.hpp"
@@ -272,6 +273,13 @@ class Workspace final : public QObject {
     Q_PROPERTY(int focusedIndex READ focusedIndex NOTIFY focusChanged)
     Q_PROPERTY(
         lapis::desktop::SessionPreview* focusedSession READ focusedSession NOTIFY focusChanged)
+    // The active category's tiles, in unit coordinates of the stage: each
+    // {sessionId, session, x, y, width, height}. Empty while the stage shows
+    // one agent.
+    Q_PROPERTY(QVariantList stageTiles READ stageTiles NOTIFY tilesChanged)
+    // Each split's divider line and the area it divides, in the same units:
+    // {path, stacked, x, y, width, height, areaX, areaY, areaWidth, areaHeight}.
+    Q_PROPERTY(QVariantList stageDividers READ stageDividers NOTIFY tilesChanged)
   public:
     explicit Workspace(WorkspaceMode mode = WorkspaceMode::live, WorkspaceOptions options = {});
     ~Workspace() override;
@@ -324,6 +332,11 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool moveSession(const QString& id, const QString& categoryId);
     Q_INVOKABLE bool renameSession(const QString& id, const QString& title);
     Q_INVOKABLE bool moveSessionBy(const QString& id, int delta);
+    // Puts agents, in their strip order, at `index` of a category's strip (at
+    // its end when `index` is past it), moving them there from any category.
+    Q_INVOKABLE bool placeSessions(const QStringList& ids, const QString& categoryId, int index);
+    // Moves a category to `index` in the rail.
+    Q_INVOKABLE bool placeCategory(const QString& id, int index);
     Q_INVOKABLE bool removeSession(const QString& id);
     Q_INVOKABLE void nextSession(int delta = 1);
     // Selects the next agent, in any category, with a pending request, or else
@@ -333,6 +346,21 @@ class Workspace final : public QObject {
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;
     [[nodiscard]] int attentionAgents() const;
+    [[nodiscard]] QVariantList stageTiles() const;
+    [[nodiscard]] QVariantList stageDividers() const;
+    // Tiles `id` beside `target` on its category's stage (left, right, top,
+    // bottom), or in its place (center), and selects it. With no target, beside
+    // the selected agent.
+    Q_INVOKABLE bool tileSession(const QString& id, const QString& target, const QString& edge);
+    // Takes an agent off the stage; it keeps running in the strip.
+    Q_INVOKABLE bool untileSession(const QString& id);
+    // Moves a divider; `persist` saves it (once, when a drag ends).
+    Q_INVOKABLE bool setTileRatio(const QString& path, qreal ratio, bool persist);
+    // Selects the tile beside the selected one (left, right, top or bottom).
+    Q_INVOKABLE bool focusTile(const QString& direction);
+    // Starts an agent like the selected one (folder, CLI, model and mode) and
+    // tiles it beside it; returns its id.
+    Q_INVOKABLE QString splitAgent(const QString& edge);
     // Arguments from lapis.json added to each new agent of a harness.
     void setHarnessArguments(QHash<QString, QStringList> arguments) {
         harness_arguments_ = std::move(arguments);
@@ -349,6 +377,7 @@ class Workspace final : public QObject {
     void categoriesChanged();
     void categoryChanged();
     void errorChanged();
+    void tilesChanged();
 
   private:
     [[nodiscard]] static QString rootDirectory();
@@ -375,6 +404,8 @@ class Workspace final : public QObject {
         QString id;
         QString name;
         QString selected;
+        // Two or more agents tiled on the stage, or empty for one agent.
+        TileLayout tiles;
     };
     struct Agent {
         QString category;
@@ -397,6 +428,13 @@ class Workspace final : public QObject {
     // The launch for a new agent, or nullopt with workspaceError().
     std::optional<session::LaunchSpec> agentLaunch(const AgentRequest& request);
     QString insertCategory(const QString& name, bool select);
+    // Starts an agent from a finished launch; the rest of startAgent.
+    QString launchAgent(const AgentRequest& request, const session::LaunchSpec& launch);
+    Category* category(const QString& id);
+    [[nodiscard]] const Category* activeCategory() const;
+    // After an agent leaves a category: off its stage, and one tile is no split.
+    void untile(Category& category, const QString& id);
+    void loadTiles(const QJsonArray& groups);
     QString failed(const QString& message) {
         fail(message);
         return {};

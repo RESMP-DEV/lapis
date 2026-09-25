@@ -842,6 +842,164 @@ void click_visual(QQuickWindow& window, QQuickItem& item) {
     QCoreApplication::sendEvent(&window, &press);
     QCoreApplication::sendEvent(&window, &release);
 }
+void click_with(QQuickWindow& window, QQuickItem& item, Qt::KeyboardModifiers modifiers) {
+    const auto position = item.mapToScene(QPointF(item.width() / 2, item.height() / 2));
+    const auto global = window.mapToGlobal(position);
+    QMouseEvent press(QEvent::MouseButtonPress, position, global, Qt::LeftButton, Qt::LeftButton,
+                      modifiers);
+    QMouseEvent release(QEvent::MouseButtonRelease, position, global, Qt::LeftButton, Qt::NoButton,
+                        modifiers);
+    QCoreApplication::sendEvent(&window, &press);
+    QCoreApplication::sendEvent(&window, &release);
+}
+// Press on `item`, move to `to` in steps as a hand would, and release there.
+void drag_visual(QQuickWindow& window, QQuickItem& item, QPointF to) {
+    const auto from = item.mapToScene(QPointF(item.width() / 2, item.height() / 2));
+    // Qt drops pointer moves that repeat a timestamp, so each event gets its own.
+    static quint64 stamp = 1'000'000;
+    const auto send = [&](QEvent::Type type, QPointF at, Qt::MouseButtons buttons) {
+        QMouseEvent event(type, at, window.mapToGlobal(at),
+                          type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons,
+                          Qt::NoModifier);
+        event.setTimestamp(stamp += 16);
+        QCoreApplication::sendEvent(&window, &event);
+        pump(8);
+    };
+    send(QEvent::MouseButtonPress, from, Qt::LeftButton);
+    constexpr int kSteps = 12;
+    for (int step = 1; step <= kSteps; ++step)
+        send(QEvent::MouseMove, from + (to - from) * step / kSteps, Qt::LeftButton);
+    send(QEvent::MouseButtonRelease, to, Qt::NoButton);
+    pump(80);
+}
+QRectF scene_rect(const QQuickItem& item) {
+    return {item.mapToScene(QPointF()), QSizeF(item.width(), item.height())};
+}
+QStringList strip_ids(const lapis::desktop::Workspace& workspace) {
+    QStringList ids;
+    for (const auto& value : workspace.categorySessions())
+        ids.append(value.value<lapis::desktop::SessionPreview*>()->sessionId());
+    return ids;
+}
+
+// Tiles and drags, through the window as a person would use them.
+void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                           lapis::desktop::KeyMap& keymap) {
+    const auto item = [&window](const QString& name) {
+        auto* found = find_visual(window.contentItem(), name);
+        if (found == nullptr)
+            throw std::runtime_error("missing item " + name.toStdString());
+        return found;
+    };
+    const auto key = [&](const char* action) {
+        send_binding(window, keymap.sequences(QString::fromLatin1(action)).front());
+        pump(80);
+    };
+    auto* stage = item(QStringLiteral("focusedPane"));
+    auto* terminal = qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
+    const auto ids = strip_ids(workspace);
+    CHECK(terminal != nullptr && ids.size() >= 3);
+    CHECK(workspace.selectSession(ids[0]));
+    pump(40);
+
+    // A card dropped on the stage's right half tiles beside the shown agent.
+    drag_visual(window, *item(QStringLiteral("agentTab_") + ids[1]),
+                stage->mapToScene(QPointF(stage->width() * 0.92, stage->height() * 0.5)));
+    CHECK(workspace.stageTiles().size() == 2);
+    CHECK(workspace.focusedSession() == workspace.session(ids[1]));
+    auto* left = item(QStringLiteral("tile_") + ids[0]);
+    auto* right = item(QStringLiteral("tile_") + ids[1]);
+    CHECK(scene_rect(*left).right() <= scene_rect(*right).left());
+    // The selected tile's terminal is the stage terminal, inside its tile; the
+    // other tile draws its own agent, live and at its own size.
+    CHECK(terminal->document() == workspace.session(ids[1]));
+    CHECK(scene_rect(*right).contains(scene_rect(*terminal)));
+    auto* other = qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("tileTerminal_") + ids[0]));
+    CHECK(other != nullptr && other->isVisible() && other->interactive() &&
+          other->document() == workspace.session(ids[0]));
+    CHECK(other->gridSize().width() > 10 && other->gridSize().width() < terminal->gridSize().width() * 2);
+
+    // Clicking a tile selects it; the keys move between tiles.
+    click_visual(window, *other);
+    pump(40);
+    CHECK(workspace.focusedSession() == workspace.session(ids[0]));
+    key("tileRight");
+    CHECK(workspace.focusedSession() == workspace.session(ids[1]));
+    key("tileLeft");
+    CHECK(workspace.focusedSession() == workspace.session(ids[0]));
+
+    // A divider drag shares the space differently; agents resize once, at the end.
+    const auto before = left->width();
+    auto* divider = item(QStringLiteral("tileDivider_root"));
+    drag_visual(window, *divider,
+                divider->mapToScene(QPointF(divider->width() / 2 + 140, divider->height() / 2)));
+    CHECK(left->width() > before + 80);
+    CHECK(!terminal->holdResize() && !other->holdResize());
+
+    // A strip agent that is not tiled takes the selected tile.
+    click_visual(window, *item(QStringLiteral("agentTab_") + ids[2]));
+    pump(40);
+    auto tiled = workspace.stageTiles();
+    CHECK(tiled.size() == 2 && workspace.focusedSession() == workspace.session(ids[2]));
+    CHECK(tiled[0].toMap().value(QStringLiteral("sessionId")).toString() == ids[2]);
+
+    // The selected tile can fill the stage and come back.
+    key("zoomTile");
+    CHECK(!item(QStringLiteral("tile_") + ids[1])->isVisible());
+    key("zoomTile");
+    CHECK(item(QStringLiteral("tile_") + ids[1])->isVisible());
+
+    // A tile dragged by its name bar back to the strip leaves the stage.
+    auto* strip = item(QStringLiteral("agentTabs"));
+    drag_visual(window, *item(QStringLiteral("tilePress_") + ids[2]),
+                strip->mapToScene(QPointF(strip->width() * 0.5, strip->height() * 0.5)));
+    CHECK(workspace.stageTiles().isEmpty());
+    CHECK(workspace.tileSession(ids[1], ids[0], QStringLiteral("bottom")));
+    pump(60);
+    CHECK(workspace.stageTiles().size() == 2);
+    click_visual(window, *item(QStringLiteral("untile_") + ids[1]));
+    pump(60);
+    CHECK(workspace.stageTiles().isEmpty());
+
+    // Dragging a card along the strip reorders it.
+    const auto order = strip_ids(workspace);
+    auto* last_card = item(QStringLiteral("agentTab_") + order.constLast());
+    drag_visual(window, *item(QStringLiteral("agentTab_") + order[0]),
+                last_card->mapToScene(QPointF(last_card->width() - 4, last_card->height() / 2)));
+    CHECK(strip_ids(workspace).constLast() == order[0]);
+    CHECK(workspace.placeSessions({order[0]}, workspace.activeCategoryId(), 0));
+    CHECK(strip_ids(workspace) == order);
+
+    // Command-click picks a second card; dragging either carries both to a
+    // category in the rail.
+#ifdef Q_OS_MACOS
+    const auto toggle = Qt::MetaModifier;
+#else
+    const auto toggle = Qt::ControlModifier;
+#endif
+    const auto home = workspace.activeCategoryId();
+    const auto elsewhere = workspace.createCategory(QStringLiteral("Drop target"));
+    CHECK(!elsewhere.isEmpty());
+    pump(60);
+    CHECK(workspace.selectSession(ids[1]));
+    pump(40);
+    click_with(window, *item(QStringLiteral("agentTab_") + ids[2]), toggle);
+    pump(40);
+    CHECK(item(QStringLiteral("pickedCue_") + ids[2])->isVisible());
+    auto* target = item(QStringLiteral("category_") + elsewhere);
+    drag_visual(window, *item(QStringLiteral("agentTab_") + ids[2]),
+                target->mapToScene(QPointF(target->width() / 2, target->height() / 2)));
+    const auto moved = strip_ids(workspace);
+    CHECK(!moved.contains(ids[1]) && !moved.contains(ids[2]));
+    CHECK(workspace.agentPlace(ids[1]).value(QStringLiteral("category")).toString() ==
+          QStringLiteral("Drop target"));
+    // Back where they were, so later checks see the original strip.
+    CHECK(workspace.placeSessions({ids[1], ids[2]}, home, 1));
+    CHECK(workspace.selectCategory(home));
+    CHECK(workspace.removeCategory(elsewhere));
+    pump(60);
+    CHECK(strip_ids(workspace) == order);
+}
 void check_composition_navigation(lapis::desktop::Workspace& workspace,
                                   lapis::desktop::UiPreview& preview,
                                   lapis::desktop::TerminalSurface& terminal) {
@@ -1760,6 +1918,7 @@ int run_strip_ui_tests() {
     CHECK(QMetaObject::invokeMethod(category_form, "close"));
     wait_popup(*category_form, false);
 
+    check_tiles_and_drags(*window, workspace, keymap);
     check_agent_search(*window, workspace, keymap, *terminal);
     check_usage(*window, *usage, keymap, *terminal);
     CHECK(preview.diagnostics().isEmpty());

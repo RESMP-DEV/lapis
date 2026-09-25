@@ -784,6 +784,15 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
     return root;
 }
 
+void TerminalSurface::setHoldResize(bool hold) {
+    if (hold_resize_ == hold)
+        return;
+    hold_resize_ = hold;
+    emit holdResizeChanged();
+    if (!hold)
+        requestResize();
+}
+
 void TerminalSurface::setInteractive(bool enabled) {
     if (interactive_ == enabled)
         return;
@@ -886,7 +895,7 @@ void TerminalSurface::requestResize() {
         grid_size_ = grid;
         emit gridSizeChanged();
     }
-    if (!interactive_ || !document_ || !document_->live() || grid.isEmpty())
+    if (!interactive_ || hold_resize_ || !document_ || !document_->live() || grid.isEmpty())
         return;
     document_->resizeTerminal(
         {static_cast<std::uint16_t>(grid.width()), static_cast<std::uint16_t>(grid.height())});

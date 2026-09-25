@@ -458,7 +458,25 @@ void KeyMap::apply_defaults() {
         {QStringLiteral("searchAgents"), {modifier + QStringLiteral("K")}},
         {QStringLiteral("nextAttention"), {modifier + QStringLiteral("J")}},
         {QStringLiteral("toggleSidebar"), {modifier + QStringLiteral("B")}},
+        // Tiles: split with a new agent like the selected one, as iTerm2's
+        // Command-D does, and move between tiles.
+        {QStringLiteral("splitRight"), {modifier + QStringLiteral("D")}},
     };
+#ifdef Q_OS_MACOS
+    bindings_.insert(QStringLiteral("splitDown"), {QStringLiteral("Meta+Shift+D")});
+    bindings_.insert(QStringLiteral("tileLeft"), {QStringLiteral("Meta+Ctrl+Left")});
+    bindings_.insert(QStringLiteral("tileRight"), {QStringLiteral("Meta+Ctrl+Right")});
+    bindings_.insert(QStringLiteral("tileUp"), {QStringLiteral("Meta+Ctrl+Up")});
+    bindings_.insert(QStringLiteral("tileDown"), {QStringLiteral("Meta+Ctrl+Down")});
+    bindings_.insert(QStringLiteral("zoomTile"), {QStringLiteral("Meta+Shift+Return")});
+#else
+    bindings_.insert(QStringLiteral("splitDown"), {QStringLiteral("Ctrl+Alt+Shift+D")});
+    bindings_.insert(QStringLiteral("tileLeft"), {QStringLiteral("Ctrl+Alt+Left")});
+    bindings_.insert(QStringLiteral("tileRight"), {QStringLiteral("Ctrl+Alt+Right")});
+    bindings_.insert(QStringLiteral("tileUp"), {QStringLiteral("Ctrl+Alt+Up")});
+    bindings_.insert(QStringLiteral("tileDown"), {QStringLiteral("Ctrl+Alt+Down")});
+    bindings_.insert(QStringLiteral("zoomTile"), {QStringLiteral("Ctrl+Shift+Return")});
+#endif
 #ifdef Q_OS_MACOS
     bindings_.insert(QStringLiteral("nextCategory"),
                      {QStringLiteral("Meta+Alt+Right"), QStringLiteral("Meta+Shift+Down")});
