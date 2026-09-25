@@ -1419,6 +1419,19 @@ void check_usage(QQuickWindow& window, lapis::desktop::Usage& usage, lapis::desk
           required_visual(window, QStringLiteral("usageMeter_claude")) != nullptr);
     CHECK(meter->mapToScene({0, 0}).y() >
           required_visual(window, QStringLiteral("newCategoryButton"))->mapToScene({0, 0}).y());
+    // The meter reads what is left: 96% used is 4% left, red; 41% used is
+    // 59% left, green, with the longer bar.
+    auto* codex_left = required_visual(window, QStringLiteral("usageLeft_codex"));
+    auto* claude_left = required_visual(window, QStringLiteral("usageLeft_claude"));
+    CHECK(codex_left->property("text").toString() == QStringLiteral("4% left wk"));
+    CHECK(claude_left->property("text").toString() == QStringLiteral("59% left 5h"));
+    CHECK(codex_left->property("color").value<QColor>() ==
+          window.property("scarceColor").value<QColor>());
+    CHECK(claude_left->property("color").value<QColor>() ==
+          window.property("plentyColor").value<QColor>());
+    pump(260); // past the bars' motion
+    CHECK(required_visual(window, QStringLiteral("usageBar_codex"))->width() <
+          required_visual(window, QStringLiteral("usageBar_claude"))->width());
     capture_step(window, "usage-meter");
     click_visual(window, *meter);
     auto* details = window.findChild<QObject*>(QStringLiteral("usageDialog"));

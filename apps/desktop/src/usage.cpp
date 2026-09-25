@@ -338,23 +338,29 @@ QHash<QString, TokenLedger::Days> TokenLedger::days() const {
 }
 
 namespace {
-// Each window with where it ends if use keeps its pace so far, shown only once
-// a tenth of the window has passed.
+// Each window with where it ends if use keeps its pace so far (the share used
+// by the reset, and when it runs out if that comes first), shown only once a
+// tenth of the window has passed.
 QVariantList window_list(const PlanLimits& limits, const QDateTime& now) {
     QVariantList windows;
     for (const auto& window : limits.windows) {
         double pace = -1;
+        QDateTime runs_out;
         if (window.minutes > 0 && window.resets.isValid()) {
             const double length = window.minutes * 60.0;
             const double elapsed = length - static_cast<double>(now.secsTo(window.resets));
             if (elapsed >= length * 0.1 && elapsed <= length)
                 pace = window.percent * length / elapsed;
+            if (pace > 100 && window.percent < 100)
+                runs_out = now.addSecs(
+                    static_cast<qint64>((100 - window.percent) * elapsed / window.percent));
         }
         windows.append(QVariantMap{{QStringLiteral("label"), window.label},
                                    {QStringLiteral("percent"), window.percent},
                                    {QStringLiteral("resets"), window.resets},
                                    {QStringLiteral("minutes"), window.minutes},
-                                   {QStringLiteral("pace"), pace}});
+                                   {QStringLiteral("pace"), pace},
+                                   {QStringLiteral("runsOut"), runs_out}});
     }
     return windows;
 }

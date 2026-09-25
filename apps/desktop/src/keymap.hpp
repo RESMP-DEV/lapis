@@ -48,6 +48,9 @@ struct Theme {
     const char* attention_text{};
     const char* activity{};
     const char* fault{};
+    // A usage gauge: plenty left (green) and nearly none (red).
+    const char* plenty{};
+    const char* scarce{};
     int corner_radius{2};
     int motion_ms{100};
     bool mono_chrome{};

@@ -11,6 +11,7 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QTimeZone>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 
@@ -591,6 +592,40 @@ cat >/dev/null
     require(first_percent(accounts(usage, "codex")) == 40, "the last answer is kept");
 }
 
+// A window used faster than it lasts says when it runs out: 80% used half way
+// through a week runs out in another 21 hours, at 160% by the reset.
+void tells_when_a_window_runs_out() {
+    QTemporaryDir dir;
+    require(dir.isValid(), "temporary directory");
+    const auto resets = QDateTime::currentDateTime().addSecs(qint64{7} * 24 * 3600 / 2);
+    const auto codex = dir.filePath(QStringLiteral("codex"));
+    write(codex,
+          "#!/bin/sh\nread -r line\necho '{\"id\":1,\"result\":{}}'\nread -r line\nread -r line\n"
+          "echo '{\"id\":2,\"result\":{\"rateLimits\":{\"primary\":{\"usedPercent\":80,"
+          "\"windowDurationMins\":10080,\"resetsAt\":" +
+              QByteArray::number(resets.toSecsSinceEpoch()) + "}}}}'\ncat >/dev/null\n");
+    QFile::setPermissions(codex,
+                          QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    Usage usage([&](const QString& id) { return id == QLatin1String("codex") ? codex : QString(); },
+                {dir.filePath(QStringLiteral("none")), dir.filePath(QStringLiteral("none"))});
+    usage.refresh();
+    wait_for([&] { return !accounts(usage, "codex").isEmpty() && !usage.counting(); },
+             "Codex answers");
+    const auto window = accounts(usage, "codex")
+                            .front()
+                            .toMap()
+                            .value(QStringLiteral("windows"))
+                            .toList()
+                            .front()
+                            .toMap();
+    const auto runs_out = window.value(QStringLiteral("runsOut")).toDateTime();
+    require(std::abs(window.value(QStringLiteral("pace")).toDouble() - 160) < 1,
+            "at this pace, 160% by the reset");
+    require(runs_out.isValid() &&
+                std::abs(QDateTime::currentDateTime().secsTo(runs_out) - qint64{21} * 3600) < 300,
+            "at this pace, it runs out in 21 hours");
+}
+
 // A month of synthetic transcripts: how fast the first count and a rescan run.
 void counts_a_month_quickly() {
     QTemporaryDir home;
@@ -768,6 +803,7 @@ int main(int argc, char** argv) {
         counts_tokens_from_transcripts();
         reads_plan_limits();
         asks_every_signed_in_cli();
+        tells_when_a_window_runs_out();
         counts_a_month_quickly();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

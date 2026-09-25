@@ -1923,7 +1923,11 @@ A prototype, deliberately simpler than the SSH design first proposed:
   `usage.machines` is asked the same way over `ssh -T -o BatchMode=yes` in an
   interactive login shell (Kimi's port forwarded, and its server stopped when
   the connection closes); OMP is asked here only, since its broker is usually
-  shared. That machine's tokens are counted by `count_tokens.py`, compiled in
+  shared. Gauges read what is left rather than what is used (asked on
+  September 24: a full week should be a full green bar): green with plenty,
+  the theme's attention colour under 30%, red under 10%, from `plenty` and
+  `scarce` colours every theme defines; a window used faster than it lasts
+  says when it runs out. That machine's tokens are counted by `count_tokens.py`, compiled in
   and sent to its python3 over ssh every 30 minutes at `nice 19`, returning
   UTC hours that this Mac turns into local days; it follows the same rules as
   the desktop's counter and has its own tests. Live on September 24, three

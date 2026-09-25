@@ -38,6 +38,8 @@ ApplicationWindow {
     readonly property color attentionTextColor: appearance ? appearance.attentionText : "#1a0d0b"
     readonly property color activityColor: appearance ? appearance.activity : "#74a8ff"
     readonly property color faultColor: appearance ? appearance.fault : "#ee7a8a"
+    readonly property color plentyColor: appearance && appearance.plenty ? appearance.plenty : "#6fdc8c"
+    readonly property color scarceColor: appearance && appearance.scarce ? appearance.scarce : "#ff5f6d"
     readonly property color paneColor: backgroundColor
     readonly property int chromeRadius: appearance ? appearance.cornerRadius : 2
     readonly property int motionDuration: appearance ? appearance.motionDuration : 100
@@ -237,6 +239,11 @@ ApplicationWindow {
     // categories; the config picks which and in what order.
     function usageRows() {
         return usageShown ? usage.meter : []
+    }
+    // A usage gauge reads what is left: green with plenty, the attention
+    // colour under 30%, red under 10%.
+    function gaugeColor(left) {
+        return left < 10 ? scarceColor : left < 30 ? attentionColor : plentyColor
     }
     readonly property var commandEntries: {
         const agent = workspace.focusedSession
@@ -668,6 +675,9 @@ ApplicationWindow {
         mutedColor: window.mutedTextColor
         accentColor: window.focusedBorderColor
         faultColor: window.faultColor
+        plentyColor: window.plentyColor
+        scarceColor: window.scarceColor
+        attentionColor: window.attentionColor
         borderColor: window.borderColor
         selectionColor: window.focusedColor
         monoFamily: window.monoFamily
@@ -2012,7 +2022,7 @@ ApplicationWindow {
                     hoverEnabled: true
                     enabled: window.interactionArmed
                     onClicked: window.openUsageDialog()
-                    Accessible.name: qsTr("Usage: %1").arg(rows.map(row => row.name + " " + Math.round(row.percent) + "%").join(", "))
+                    Accessible.name: qsTr("Usage: %1").arg(rows.map(row => qsTr("%1 %2% left").arg(row.name).arg(Math.round(Math.max(0, 100 - row.percent)))).join(", "))
                     ToolTip.visible: hovered
                     ToolTip.delay: 600
                     ToolTip.text: qsTr("Plan usage")
@@ -2039,6 +2049,9 @@ ApplicationWindow {
                                 delegate: ColumnLayout {
                                     id: meterRow
                                     required property var modelData
+                                    // What is left of the tightest window.
+                                    readonly property real remaining: Math.max(0, Math.min(100, 100 - modelData.percent))
+                                    readonly property color tone: window.gaugeColor(remaining)
                                     objectName: "usageMeter_" + modelData.id
                                     Layout.fillWidth: true
                                     spacing: 3
@@ -2054,8 +2067,9 @@ ApplicationWindow {
                                             Layout.minimumWidth: 0
                                         }
                                         PlainText {
-                                            text: Math.round(meterRow.modelData.percent) + "% " + meterRow.modelData.label
-                                            color: meterRow.modelData.percent >= 90 ? window.faultColor : window.textColor
+                                            objectName: "usageLeft_" + meterRow.modelData.id
+                                            text: qsTr("%1% left %2").arg(Math.round(meterRow.remaining)).arg(meterRow.modelData.label)
+                                            color: meterRow.tone
                                             font.family: window.monoFamily
                                             font.pixelSize: window.readoutFont
                                         }
@@ -2065,9 +2079,10 @@ ApplicationWindow {
                                         Layout.preferredHeight: 2
                                         color: window.borderColor
                                         Rectangle {
-                                            width: parent.width * Math.min(100, meterRow.modelData.percent) / 100
+                                            objectName: "usageBar_" + meterRow.modelData.id
+                                            width: parent.width * meterRow.remaining / 100
                                             height: parent.height
-                                            color: meterRow.modelData.percent >= 90 ? window.faultColor : window.focusedBorderColor
+                                            color: meterRow.tone
                                             Behavior on width {
                                                 enabled: window.motionEnabled
                                                 NumberAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }

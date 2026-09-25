@@ -67,9 +67,10 @@ void themes_are_complete() {
         const auto& theme = themes[i];
         require(theme.name != nullptr && *theme.name != '\0', "theme needs a name");
         require(theme.label != nullptr && *theme.label != '\0', "theme needs a label");
-        const char* fields[] = {
-            theme.background, theme.surface,   theme.card,           theme.border,   theme.text,
-            theme.muted_text, theme.attention, theme.focused_border, theme.activity, theme.fault};
+        const char* fields[] = {theme.background, theme.surface,        theme.card,
+                                theme.border,     theme.text,           theme.muted_text,
+                                theme.attention,  theme.focused_border, theme.activity,
+                                theme.fault,      theme.plenty,         theme.scarce};
         for (const char* value : fields)
             require(value != nullptr && *value == '#', "theme colour must be a hex literal");
         // Keyboard focus, activity, pending requests and faults each keep one
@@ -81,6 +82,9 @@ void themes_are_complete() {
             for (std::size_t b = a + 1; b < semantic.size(); ++b)
                 require(semantic.at(a).compare(semantic.at(b), Qt::CaseInsensitive) != 0,
                         "focus, activity, attention and fault colours must differ");
+        require(QString::fromLatin1(theme.plenty)
+                        .compare(QString::fromLatin1(theme.scarce), Qt::CaseInsensitive) != 0,
+                "a usage gauge tells plenty from scarce");
         // Names are the config keys, so a duplicate would make one unreachable.
         for (std::size_t j = i + 1; j < themes.size(); ++j)
             require(QString::fromLatin1(themes[i].name) != QString::fromLatin1(themes[j].name),

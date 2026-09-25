@@ -18,6 +18,9 @@ Dialog {
     property color mutedColor: "#94aab7"
     property color accentColor: "#70d8c5"
     property color faultColor: "#ee7a8a"
+    property color plentyColor: "#6fdc8c"
+    property color scarceColor: "#ff5f6d"
+    property color attentionColor: "#ffb454"
     property color borderColor: "#263c48"
     property color selectionColor: "#193638"
     property string monoFamily: "monospace"
@@ -58,8 +61,19 @@ Dialog {
         return hours < 20 ? qsTr("resets %1").arg(Qt.formatTime(when, "h:mm ap"))
                           : qsTr("resets %1").arg(Qt.formatDateTime(when, "ddd h:mm ap"))
     }
-    function barColor(percent) {
-        return percent >= 90 ? faultColor : accentColor
+    // Bars read what is left: green with plenty, the attention colour under
+    // 30%, red under 10%.
+    function gaugeColor(left) {
+        return left < 10 ? scarceColor : left < 30 ? attentionColor : plentyColor
+    }
+    function paceText(limit) {
+        if (limit.percent >= 100)
+            return ""
+        if (limit.runsOut && !isNaN(limit.runsOut.getTime()))
+            return qsTr("at this pace, runs out %1").arg(Qt.formatDateTime(limit.runsOut, "ddd h:mm ap"))
+        if (limit.pace >= 0)
+            return qsTr("at this pace, %1% left at reset").arg(Math.round(Math.max(0, 100 - limit.pace)))
+        return ""
     }
     function markFor(id) {
         return id === "antigravity" ? "agy" : id
@@ -221,6 +235,8 @@ Dialog {
                                         delegate: ColumnLayout {
                                             id: windowRow
                                             required property var modelData
+                                            readonly property real remaining: Math.max(0, Math.min(100, 100 - modelData.percent))
+                                            readonly property color tone: usagePopup.gaugeColor(remaining)
                                             Layout.fillWidth: true
                                             spacing: 2
                                             RowLayout {
@@ -239,10 +255,10 @@ Dialog {
                                                     radius: 3
                                                     color: usagePopup.borderColor
                                                     Rectangle {
-                                                        width: parent.width * Math.min(100, windowRow.modelData.percent) / 100
+                                                        width: parent.width * windowRow.remaining / 100
                                                         height: parent.height
                                                         radius: parent.radius
-                                                        color: usagePopup.barColor(windowRow.modelData.percent)
+                                                        color: windowRow.tone
                                                         Behavior on width {
                                                             enabled: usagePopup.motionEnabled
                                                             NumberAnimation { duration: usagePopup.motionDuration; easing.type: Easing.OutCubic }
@@ -250,10 +266,10 @@ Dialog {
                                                     }
                                                 }
                                                 Readout {
-                                                    text: Math.round(windowRow.modelData.percent) + "%"
-                                                    color: usagePopup.textColor
+                                                    text: qsTr("%1% left").arg(Math.round(windowRow.remaining))
+                                                    color: windowRow.tone
                                                     horizontalAlignment: Text.AlignRight
-                                                    Layout.preferredWidth: 44
+                                                    Layout.preferredWidth: 72
                                                 }
                                             }
                                             Readout {
@@ -261,11 +277,10 @@ Dialog {
                                                 Layout.leftMargin: 130
                                                 visible: text.length > 0
                                                 text: [usagePopup.resetText(windowRow.modelData.resets),
-                                                       windowRow.modelData.pace >= 0 && windowRow.modelData.percent < 100 ?
-                                                           qsTr("at this pace %1% by then").arg(Math.round(windowRow.modelData.pace)) : ""]
+                                                       usagePopup.paceText(windowRow.modelData)]
                                                       .filter(part => part.length > 0).join("  ·  ")
-                                                color: windowRow.modelData.pace > 100 && windowRow.modelData.percent < 100 ?
-                                                           usagePopup.faultColor : usagePopup.mutedColor
+                                                color: windowRow.modelData.runsOut && !isNaN(windowRow.modelData.runsOut.getTime()) ?
+                                                           usagePopup.scarceColor : usagePopup.mutedColor
                                                 elide: Text.ElideRight
                                             }
                                         }
@@ -353,7 +368,7 @@ Dialog {
                 Layout.fillWidth: true
                 text: usagePopup.machine && usagePopup.machine.counting ?
                           qsTr("Counting tokens in the transcripts…") :
-                          qsTr("Limits as each signed-in CLI reports them, checked every five minutes. Tokens from Codex and Claude transcripts, without prices.")
+                          qsTr("What is left of each plan, as each signed-in CLI reports it, checked every five minutes. Tokens from Codex and Claude transcripts, without prices.")
                 textFormat: Text.PlainText
                 color: usagePopup.mutedColor
                 font.pixelSize: usagePopup.readoutFont

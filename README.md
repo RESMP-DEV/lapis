@@ -193,10 +193,12 @@ sleeping while it is plugged in, so the phone can reach it.
 
 `usage.show` puts plan usage under the categories: every plan a CLI here is
 signed in to (Codex, Claude, Grok and Kimi, plus every account OMP's logins
-hold), each at its tightest window. `usage.meter` picks which appear and in
+hold), each showing what is left of its tightest window: a green bar with
+plenty left, orange under 30%, red under 10%. `usage.meter` picks which appear and in
 what order; one that is not signed in is left out. Clicking it opens a
 dashboard per machine, this Mac and each ssh host in `usage.machines`: every
-account's windows with reset times and where the current pace ends, and the
+account's windows with what is left, reset times, and when the current pace
+runs out or how much it leaves at the reset, and the
 Codex and Claude tokens used on that machine today, this month and per day
 for 30 days, by model. Each CLI is asked through its own interface every five
 minutes, without a prompt, a hook or a saved session; another machine's CLIs

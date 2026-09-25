@@ -98,7 +98,8 @@ class Usage final : public QObject {
     Q_OBJECT
     // This Mac first: [{host, name, note, counting, providers: [{id, name,
     //   counted, accounts: [{label, source, plan, note, resetCredits, checked,
-    //   windows: [{label, percent, resets, minutes, pace}]}],
+    //   windows: [{label, percent (used), resets, minutes, pace (used by
+    //   the reset at this pace), runsOut (when, if before the reset)}]}],
     //   today, month: {total, input, cacheRead, cacheWrite, output},
     //   days: [30 day totals, oldest first], models: [{name, total}]}]}]
     Q_PROPERTY(QVariantList machines READ machines NOTIFY changed)
