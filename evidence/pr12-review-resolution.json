@@ -1,0 +1,40 @@
+{
+  "recorded_at": "2026-09-25T08:37:07.930337+00:00",
+  "pr": 12,
+  "source_revision": "a94d0b6728bcc0692f66b11fd58f26589a19d347",
+  "source_sha256": {
+    "apps/desktop/src/keymap.cpp": "7c6abbfce6ec0ccfc473f75b3508fae2e5cb86bbbc547bb40a33a495fdbd9fac",
+    "apps/desktop/src/workspace.cpp": "c6f594c8ecda20a6be1fc91540a1cc8222897c6f2646317395aa56081d1f709f",
+    "apps/desktop/tests/keymap_test.cpp": "b9ed54cb37bcd1107f2e167092e7b4b3ff172d737a0a87ede7ffde39f52f6f26",
+    "apps/desktop/tests/workspace_test.cpp": "440a4382fa93f11ee70db518b632031ebb77477e3587468d373e819740f1ac57",
+    "evidence/pr11-review-resolution.json": "bce971d0db54ddb1e29aa83050afd615bf678b43901153124d0d8e033793cab8",
+    "scripts/tests/test_breakit.py": "ea7e7e11947e37855aa7cdba86786e5df66fcc0336076cec469104b247ffa1bf",
+    "tools/qa/breakit.py": "b58acfcbfb04212741a5b3dc6b74bde4293cfcf386a65ac84fbc8c2eaaa70831"
+  },
+  "validation": [
+    "Focused workspace: pass at 7af6ddc, 5.06s; workspace source unchanged by subsequent keymap/receipt merges",
+    "Scoped workspace clang-tidy/Cppcheck: pass",
+    "Common QA/keymap changes verified on PR11 and assembled PR13"
+  ],
+  "thread_dispositions": [
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l6715",
+      "disposition": "fixed",
+      "reply_body": "restartAgent now rejects preview and unpersisted explicit workspaces before looking up or mutating an agent. Existing explicit/preview workspace cases assert the persisted-workspace diagnostic. Focused workspace checks pass, including the assembled downstream branches."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P49",
+      "disposition": "inapplicable",
+      "reply_body": "These process tools attest observer-qualified Codex identity, so searching arbitrary PATH entries would let workspace-controlled executables supply that identity. The system-path restriction is intentional on the qualified macOS target; missing tools leave observer recovery unavailable rather than trusting a substitute. Linux/Nix qualification remains deferred, and saved observer resume records are a separate path."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7P5P",
+      "disposition": "inapplicable",
+      "reply_body": "A timeout or unknown socket error does not prove the service is gone. Treating it as down could start a duplicate agent. Connection-refused and missing-endpoint errors are the definite-down cases; other errors retain the conservative still-running/unknown behavior. The proposed timeout change would weaken the restart guard."
+    }
+  ],
+  "limitations": [
+    "No merge into main performed. Optional reviewer availability is separate from required repository gates.",
+    "macOS remains the qualified desktop target; no Linux qualification in this pass."
+  ]
+}
