@@ -1,11 +1,15 @@
 #include "platform_preferences.hpp"
 #import <AppKit/AppKit.h>
+#include <QGuiApplication>
 #include <QQuickWindow>
 namespace lapis::desktop {
 bool system_reduced_motion() {
     return [[NSWorkspace sharedWorkspace] accessibilityDisplayShouldReduceMotion];
 }
 void style_window_chrome(QQuickWindow& window) {
+    // Other Qt platform plugins use opaque IDs that are not Cocoa objects.
+    if (QGuiApplication::platformName() != QStringLiteral("cocoa"))
+        return;
     if (!window.isVisible())
         return; // Do not create a native window while it is hidden or closing.
     // Qt exposes its native NSView through WId. This is a borrowed view/window;

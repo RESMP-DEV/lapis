@@ -192,19 +192,22 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
         if (options.launch || !options.endpoint.isEmpty()) {
             const auto launch = options.launch ? session::validate_launch(*options.launch)
                                                : session::shell_launch(rootDirectory());
+            const auto endpoint = session::posix::prepare_endpoint(
+                options.endpoint.isEmpty() ? defaultEndpoint() : options.endpoint);
             add("Agent", launch.directory.toUtf8().constData(), "Connecting", "#87cbac", "");
             sessions_.front()->setSessionId(QStringLiteral("shell"));
             const auto harness = harness_id(launch.agent);
-            const Agent agent{active_category_, options.endpoint, launch, harness};
+            const Agent agent{active_category_, endpoint, launch, harness};
             sessions_.front()->setHarnessId(harness);
             sessions_.front()->setStatusSource(statusSource(agent));
             agents_.insert(QStringLiteral("shell"), agent);
-            sessions_.front()->startLive(session::posix::prepare_endpoint(options.endpoint.isEmpty()
-                                                                              ? defaultEndpoint()
-                                                                              : options.endpoint),
-                                         launch, options.mode);
             watch(sessions_.front().get());
+            update_log_directory_ = QFileInfo(endpoint).absolutePath();
             restoreSelection();
+            if (options.mode == session::wire::AttachMode::create &&
+                deferForUpdate(QStringLiteral("shell")))
+                return;
+            sessions_.front()->startLive(endpoint, launch, options.mode);
             return;
         }
         storage_path_ =
@@ -1482,8 +1485,9 @@ void Workspace::finishUpdate(const QString& harness, QProcess* process, const QS
 
 // Beside the registry; the previous log is kept once it passes 256 KiB.
 void Workspace::logUpdate(const QString& line) const {
-    const auto path = QDir(QFileInfo(storage_path_).absolutePath())
-                          .filePath(QStringLiteral("harness-updates.log"));
+    const auto directory = update_log_directory_.isEmpty() ? QFileInfo(storage_path_).absolutePath()
+                                                           : update_log_directory_;
+    const auto path = QDir(directory).filePath(QStringLiteral("harness-updates.log"));
     if (QFileInfo(path).size() > qint64{256} * 1024) {
         QFile::remove(path + QStringLiteral(".1"));
         QFile::rename(path, path + QStringLiteral(".1"));

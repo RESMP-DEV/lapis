@@ -226,8 +226,9 @@ struct WorkspaceOptions {
     // Restart agents whose session service is gone (after a reboot or crash),
     // resuming each recorded conversation. Off unless the app asks for it.
     bool restoreAgents{};
-    // Run a CLI's own update command before a new agent of it starts, at most
-    // every 30 minutes per CLI, so agents never open on an update prompt.
+    // Run a supported CLI's own update command before a new agent of it
+    // starts, at most every 30 minutes per CLI, so agents never open on an
+    // update prompt. Existing-session reconnect and discovery do not update.
     bool updateHarnesses{};
     // With restoreAgents, only start agents whose services are gone and leave
     // running services alone (the login helper; a window reattaches later).
@@ -326,6 +327,7 @@ class Workspace final : public QObject {
     void drainUpdater(QProcess* process);
     void finishUpdate(const QString& harness, QProcess* process, const QString& outcome);
     void logUpdate(const QString& line) const;
+    QString update_log_directory_;
     // Records conversations for agents whose services do not.
     QTimer conversation_timer_;
     std::shared_ptr<std::atomic_bool> probing_{std::make_shared<std::atomic_bool>(false)};

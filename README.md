@@ -200,6 +200,11 @@ qualified build and defaults Codex's update prompt to off
 Explicit user settings are preserved. Reattaching to a running agent keeps its
 recorded launch arguments.
 
+Explicit Claude creation (`--claude --new-session --socket PATH -- PROGRAM`)
+also updates before starting. Reconnect and `--discover` only attach to the
+existing session and do not update it. Use `--no-harness-updates` when qualifying
+a pinned executable or deliberately keeping the installed version.
+
 Upgrading lapis does not disturb running agents: quit the old build and open
 the new one, and it reattaches to the same processes. Launch fingerprints,
 the service protocol, the workspace registry and resume records are kept

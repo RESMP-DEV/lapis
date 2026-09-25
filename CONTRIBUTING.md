@@ -508,6 +508,10 @@ resize, interrupt, GUI detach with continuing output, reattach to the same child
 and screen, and explicit exit. Distinguish service death from GUI detachment.
 Keep raw output/captures private under `build/` and socket/state under `runtime/`.
 Do not use `--smoke-input` while Codex is running: that probe sends shell commands.
+For explicit desktop creation against a pinned executable, pass
+`--no-harness-updates` before `--`. Normal explicit Claude creation otherwise
+updates before launch; reconnect and discovery do not update. Exercise updater
+behavior with disposable fake executables, not an installed CLI.
 
 The no-prompt check clears its draft with Ctrl-C, verifies the cleared screen,
 then uses the empty-composer Ctrl-D quit shortcut. It submits no model prompt.
