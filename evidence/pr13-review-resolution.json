@@ -151,5 +151,65 @@
     "No new latency percentile or VoiceOver-device qualification.",
     "A default Cocoa input attempt observed host interference; the passing input evidence uses explicit --background mode. Native OS input/GPU acceptance was not repeated.",
     "Initial Simulator packaging and gateway-fixture failures were diagnosed before the passing final run. Sanitizer configuration reuses -Xclang -fobjc-dispatch-method=legacy for installed LLVM/Apple linker compatibility."
+  ],
+  "followups": [
+    {
+      "recorded_at": "2026-09-25T10:23:48.579808+00:00",
+      "base_revision": "a4ec38559d0d2343d3c81a786a00652e4e4420a4",
+      "source_sha256": {
+        "apps/ios/Lapis/Models.swift": "44238ac76a342f0aad3b7f9ab108d4899911b18e75f84e24d41471d19f9f265c",
+        "apps/ios/Lapis/Gateway.swift": "3c7fff46cd64e37cb6859d01451a6441321cf7a12de81c9085d271d6e5d58626",
+        "scripts/install_ios_app.py": "0cc19b806f3799eecc1694bab16f2fb7d5e6251095177ab4df8853e2c4f8b75f",
+        "scripts/tests/test_install_ios_app.py": "7cac4a9ff51d57e8f2a9398a7164a3e7f92f0ff09a19b63d37de8940a348b0ec"
+      },
+      "validation": [
+        "just quality: pass, 146 tests including all three LiveServiceTests; 12.466 seconds for Python tests",
+        "python3 scripts/check_ios_remote.py --only testRotationWhileComposing --only testSendScreenToMac: pass; 18.483 and 13.496 seconds; one capture saved",
+        "Native Foundation loopback AgentSession probe: fixed source sends [[100,30],[110,35]]; original source sends only [[110,35]]; unchanged reopen emits no duplicate",
+        "Native Gateway.capture with 20 MiB JSON and a throttled receiver: pass in 20.750 seconds with the existing 15-second request inactivity timeout"
+      ],
+      "thread_dispositions": [
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6l8K8c",
+          "disposition": "inapplicable",
+          "reply_body": "The 15-second value is an inactivity timeout, not a total request-duration limit. I exercised the actual Gateway.capture with a 20 MiB JSON body against a throttled loopback receiver: it completed successfully in 20.750 seconds with the existing session. The headless Simulator capture case also passed and saved a capture. This does not qualify arbitrary tailnet throughput, but it disproves the claimed automatic failure for transfers lasting over 15 seconds. Progress feedback is a separate UX enhancement; retaining the current transport here."
+        },
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6l8K8u",
+          "disposition": "already-fixed",
+          "reply_body": "The current code already defines keyboardOnly as (keyboardShown || composing) && grid.columns == current.columns. A changed column count therefore takes the new grid.rows, including while composing. testRotationWhileComposing passed again in the headless iOS Simulator (18.483 seconds); that test checks the actual PTY grid. No further source change is needed for this finding."
+        },
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6l8K8y",
+          "disposition": "fixed",
+          "reply_body": "The first frame now sends the latest stored size if it differs from the opening request, then subsequent frames do not replay it. A native Foundation HTTP/SSE probe opens at 80x24, resizes to 90x25 then 100x30 before attachment, and observes exactly one 100x30 input, followed by a live 110x35 resize. An unchanged reopen sends no duplicate. The same probe against the prior Models.swift misses 100x30, confirming the regression. The focused Simulator rotation and capture tests also pass."
+        },
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6l8K83",
+          "disposition": "inapplicable",
+          "reply_body": "The encoder writes cursor_rgb.has_value() and value_or(0) unconditionally; QDataStream serializes these bools as one byte. The prefix is 16 bytes for revision/grid/cursor position + 8 flag/shape bytes + 8 default-color bytes + 5 optional-cursor-color bytes + 24 history bytes = 61. The 1024-byte palette puts the pool count at 1085. The existing offsets are correct. All three LiveServiceTests passed against actual C++ service snapshots in just quality, and both selected Simulator tests rendered successfully. Changing to 64/1088 would corrupt the working wire format."
+        },
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6l8K88",
+          "disposition": "inapplicable",
+          "reply_body": "choose_profile hashes the DER certificates embedded in each candidate profile DeveloperCertificates array and intersects that exact set with installed signing identity hashes. The chosen usable[0] therefore belongs to the selected profile; it cannot be an unrelated installed certificate from a different profile as described. team, profile and identity are returned together from that candidate. Explicit team selection could be a separate operator feature, but the claimed missing certificate/profile binding is already enforced."
+        },
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6l8K9C",
+          "disposition": "fixed",
+          "reply_body": "--build-only now uses an explicit --host or an empty default gateway and never calls mac_host(). Normal installation retains its existing host discovery. Added one regression with absent/explicit host subcases: both assert the build argument and that neither Tailscale discovery nor phone discovery runs. just quality passes all 146 Python tests, including the live gateway cases."
+        },
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6l8K9J",
+          "disposition": "inapplicable",
+          "reply_body": "pending_history_ represents work not yet accepted by the history worker. try_pending_history resets it immediately when history_.read returns true, before the asynchronous result reaches send_history. Dropping a result for a vanished view therefore cannot requeue that accepted read. A disconnected requester can leave one pending read to finish admission, but the completion-to-progress infinite loop described here does not occur. The live history/scrollback service test passed in this quality run."
+        }
+      ],
+      "limitations": [
+        "Native loopback probes are one-off diagnostics retained in the coordinator ignored build/worktree-cleanup-20260925 directory; they are not additional default-suite tests.",
+        "No physical iPhone or real Tailscale throughput qualification. Unchanged adapters retain prior evidence with original revision and scope.",
+        "The original source_revision, source_sha256 and validation above remain historical evidence; this followup identifies the new checked source."
+      ]
+    }
   ]
 }

@@ -109,9 +109,16 @@ final class AgentSession {
                     case let .attached(attached):
                         self.shared = attached.shared
                     case let .frame(frame, json):
+                        let firstFrame = self.state == .connecting
                         self.frame = frame
                         self.lastFrameJSON = json
                         self.state = .live
+                        // The stream request carries the opening size. A later
+                        // rotation while connecting must reach the service once.
+                        if firstFrame, let size = self.size,
+                           size.columns != columns || size.rows != rows {
+                            self.send(Input(resize: [size.columns, size.rows]))
+                        }
                         self.followNewHistory()
                     case let .status(status):
                         self.state = .closed(AgentSession.explain(status), reopen: status.state == "disconnected")

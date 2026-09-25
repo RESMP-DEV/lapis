@@ -3,7 +3,8 @@
 Signs with an installed Apple Development identity and a development
 provisioning profile that covers dev.lapis.remote (a wildcard profile works)
 and includes the phone. The app's default gateway is this Mac's Tailscale
-name. Without --device, the one paired iPhone that devicectl can reach is used.
+name. With --build-only, omit --host to leave the gateway unset without querying
+Tailscale. Without --device, the one paired iPhone that devicectl can reach is used.
 
     uv run --no-project python scripts/install_ios_app.py [--device ID] [--build-only]
         [--wait MINUTES]
@@ -244,7 +245,8 @@ def main():
         "--device", help="devicectl identifier; defaults to the paired iPhone"
     )
     parser.add_argument(
-        "--host", help="gateway host; defaults to this Mac's Tailscale name"
+        "--host",
+        help="gateway host; defaults to this Mac's Tailscale name when installing",
     )
     parser.add_argument("--build-only", action="store_true")
     parser.add_argument(
@@ -254,7 +256,7 @@ def main():
         help="minutes to wait for the phone to become reachable",
     )
     args = parser.parse_args()
-    app = build(args.host or mac_host())
+    app = build(args.host or ("" if args.build_only else mac_host()))
     if args.build_only:
         return 0
     deadline = time.monotonic() + args.wait * 60
