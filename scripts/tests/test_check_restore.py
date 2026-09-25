@@ -1,6 +1,8 @@
 """Restore probe uses shared wire framing and isolated model listeners."""
 
 import json
+import os
+import plistlib
 import socket
 import subprocess
 import sys
@@ -11,9 +13,43 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from scripts import check_restore as restore
+from scripts import restore_at_login as login
 
 
 class RestoreProbeTests(unittest.TestCase):
+    def test_installed_agent_retains_custom_data_locations(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            desktop = root / "desktop"
+            desktop.touch()
+            plist = root / "agent.plist"
+            paths = {
+                "CODEX_HOME": str(root / "custom codex"),
+                "CLAUDE_CONFIG_DIR": str(root / "custom claude"),
+                "LAPIS_HISTORY_ROOT": str(root / "custom history"),
+            }
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        **paths,
+                        "PATH": "/fixture/.venv/bin:/usr/bin",
+                        "ANTHROPIC_AUTH_TOKEN": "fixture-only",
+                    },
+                    clear=True,
+                ),
+                patch.object(login, "DESKTOP", desktop),
+                patch.object(login, "PLIST", plist),
+                patch.object(login, "LOG", root / "restore.log"),
+                patch.object(login, "launchctl"),
+                patch("builtins.print"),
+            ):
+                login.install()
+            env = plistlib.loads(plist.read_bytes())["EnvironmentVariables"]
+            self.assertEqual(env, {**paths, "PATH": "/usr/bin"})
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(login.environment(), {})
+
     def test_idle_screen_keeps_the_cached_shared_wire_snapshot(self):
         client = Mock(cached_snapshot={"text": "retained terminal"})
         client.receive.side_effect = socket.timeout

@@ -1730,8 +1730,11 @@ agents to a reboot is the user's main pain point). `lapis_desktop
 platform): it restarts only cards whose services are gone, waits up to 90
 seconds for each to accept input, and exits, leaving services it did not start
 for a window to reattach. `scripts/restore_at_login.py` installs it as the
-`dev.lapis.restore` LaunchAgent with the installing shell's PATH, since agents
-inherit the helper's environment. The helper and a window share the registry
+`dev.lapis.restore` LaunchAgent with the installing shell's PATH, locale, shell
+and explicitly set `CODEX_HOME`, `CLAUDE_CONFIG_DIR` and `LAPIS_HISTORY_ROOT`,
+since agents inherit the helper's environment. Other environment variables,
+including provider tokens, are not copied into the plist. Reinstall the helper
+after changing these directory overrides. The helper and a window share the registry
 lock. The helper writes its process ID to `<registry>.restoring` (owner-only)
 while it holds the lock, because QLockFile records the process name rather
 than the application name; a window finding that marker waits up to two
