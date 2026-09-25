@@ -416,6 +416,12 @@ int main(int argc, char** argv) {
         };
         configure();
         QObject::connect(&keymap, &KeyMap::changed, &workspace, configure);
+        // The models each installed CLI lists, for both new-agent forms.
+        HarnessModels models(&harness_program, QDir::homePath());
+        if (!isolated) {
+            workspace.setHarnessModels(&models);
+            models.start();
+        }
         if (headless)
             return run_headless(workspace, serve);
         // The window owns the workspace: the phone's requests come here.

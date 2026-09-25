@@ -203,6 +203,7 @@ struct AgentCard: View {
 struct HarnessBadge: View {
     let harness: String
     let accent: Color
+    var size: CGFloat = 42
 
     var body: some View {
         ZStack {
@@ -215,15 +216,15 @@ struct HarnessBadge: View {
                     .resizable()
                     .renderingMode(.template)
                     .scaledToFit()
-                    .frame(width: 22, height: 22)
+                    .frame(width: size * 0.52, height: size * 0.52)
                     .foregroundStyle(accent)
             } else {
                 Text(String(harness.prefix(2)).uppercased())
-                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .font(.system(size: size / 3, weight: .bold, design: .monospaced))
                     .foregroundStyle(accent)
             }
         }
-        .frame(width: 42, height: 42)
+        .frame(width: size, height: size)
         .accessibilityLabel(harness)
     }
 }

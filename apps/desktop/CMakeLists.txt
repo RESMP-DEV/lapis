@@ -8,6 +8,7 @@ add_library(lapis_desktop_view STATIC
     src/agent_search.cpp src/agent_search.hpp
     src/usage.cpp src/usage.hpp
     src/usage_limits.cpp src/usage_limits.hpp
+    src/harness_models.cpp src/harness_models.hpp
     src/attention_view.cpp
     src/keymap.cpp src/keymap.hpp
     src/live_connection.cpp src/live_connection.hpp
@@ -48,6 +49,10 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_agent_search_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME agent-search COMMAND lapis_agent_search_tests)
     set_tests_properties(agent-search PROPERTIES TIMEOUT 60)
+    add_executable(lapis_harness_models_tests tests/harness_models_test.cpp)
+    target_link_libraries(lapis_harness_models_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME harness-models COMMAND lapis_harness_models_tests)
+    set_tests_properties(harness-models PROPERTIES TIMEOUT 60)
     add_executable(lapis_usage_tests tests/usage_test.cpp)
     target_link_libraries(lapis_usage_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME usage COMMAND lapis_usage_tests)

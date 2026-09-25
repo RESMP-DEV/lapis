@@ -124,15 +124,19 @@ uv run --no-project python scripts/lapis.py run
 ```
 
 Use **New agent** (Command-T), choose a harness with arrows and Return, then
-enter a project folder and press Return. Codex, Claude, OMP, Grok, Kimi, OpenCode,
-Gemini and Antigravity appear in the picker; missing executables are marked
-unavailable. Escape returns from the folder step to harness selection. The field
+enter a project folder and press Return. Claude, Codex, OpenCode, Grok, OMP,
+Antigravity and Kimi appear in the picker, in that order; missing executables
+are marked unavailable. Escape returns from the folder step to harness selection. The field
 starts at your platform home directory; arrows select folder suggestions and
 Tab or Return completes the selected folder. The browse button opens the native
-folder picker. Chips under the folder choose a model (for CLIs with a model
-flag) and an approval mode (Ask, Accept edits, Plan, Auto or Full access, as far
-as the CLI has them), each passed as that CLI's own flag; Default passes nothing
-and leaves the CLI's own setting. Everything else stays in each CLI's own config.
+folder picker. Chips under the folder choose a model, from the models the CLI
+itself lists for your account (its default first; Kimi, OpenCode and OMP from
+their config, recent models and roles), and one of three approval modes:
+Accept edits, Auto or Full access, each passed as that CLI's own flag. The mode
+stays when the CLI changes; a CLI without it (OMP, OpenCode and Antigravity
+have no Auto, Kimi and OpenCode no Accept edits) uses its nearest, less access
+first. The next agent starts with the same CLI, mode and model. Everything else
+stays in each CLI's own config.
 To add your own flags to every new agent of a harness (lapis adds none itself),
 set `harnessArguments` in `lapis.json`, for example
 `{"harnessArguments": {"claude": ["--dangerously-skip-permissions"]}}`; shell
@@ -176,8 +180,9 @@ per machine where they differ:
   "newAgent": {
     "harness": "codex",
     "folder": "~/dev",
+    "mode": "edits",
     "machines": {"devbox": {"folder": "~/work"}},
-    "models": {"codex": ["gpt-6-astra", "gpt-6-sol"], "claude": ["opus", "sonnet"]}
+    "models": {"codex": ["gpt-6-astra", "gpt-6-sol"]}
   },
   "alerts": {"sound": true, "finished": true, "repeat": 3},
   "keepAwake": true,
@@ -326,12 +331,14 @@ awake.
 **+** on a category (or in the toolbar) starts an agent from the phone: pick the
 machine (this Mac, or an ssh host from your ssh config and shell history,
 reachable and most used first), the CLI, the category, a folder (starting at
-that machine's `newAgent` folder), and optionally a model and approval mode, and
-it opens as a new tab in that category in lapis on the Mac, then on the phone
-once it runs. Folders are browsed from an index of the machine's folders (visible
-ones alphabetically, hidden ones last), with the folders where you have started
-the most Codex, Claude Code and lapis agents marked at the top, and searched by
-typing a few of their letters; both run on the phone. The list, the CLIs, the
+that machine's `newAgent` folder), a model and an approval mode, and it opens
+as a new tab in that category in lapis on the Mac, then on the phone once it
+runs. Another machine keeps the chosen CLI when it has it, and the mode and
+each CLI's model are remembered. The folder opens its own screen: the ten
+folders where you have started the most Codex, Claude Code and lapis agents,
+most first, then the machine's folders to browse (visible ones
+alphabetically, hidden ones last), or a search by a few of their letters;
+both run on the phone. The list, the CLIs, the
 machines, the folder indexes and each running agent's screen are fetched in
 the background, so opening the sheet or an agent does not wait. A shown agent on the Mac keeps the stage. This needs lapis running on
 the Mac: an open window, or the login helper (`scripts/restore_at_login.py`),

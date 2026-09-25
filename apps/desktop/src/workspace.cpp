@@ -39,15 +39,19 @@ struct Harness {
     // has none: its observer accepts only qualified binaries, so lapis keeps
     // the qualified build and turns off Codex's update prompt instead.
     const char* update;
+    // Offered in the new-agent pickers; a retired CLI is kept only so saved
+    // agents of it still restore.
+    bool offered;
 };
-constexpr std::array harness_catalog{Harness{"codex", "Codex", "codex", nullptr},
-                                     Harness{"claude", "Claude", "claude", "update"},
-                                     Harness{"omp", "OMP", "omp", "update"},
-                                     Harness{"grok", "Grok", "grok", "update"},
-                                     Harness{"kimi", "Kimi", "kimi", "upgrade"},
-                                     Harness{"opencode", "OpenCode", "opencode", "upgrade"},
-                                     Harness{"gemini", "Gemini", "gemini", nullptr},
-                                     Harness{"agy", "Antigravity", "agy", "update"}};
+// In the order the pickers offer them.
+constexpr std::array harness_catalog{Harness{"claude", "Claude", "claude", "update", true},
+                                     Harness{"codex", "Codex", "codex", nullptr, true},
+                                     Harness{"opencode", "OpenCode", "opencode", "upgrade", true},
+                                     Harness{"grok", "Grok", "grok", "update", true},
+                                     Harness{"omp", "OMP", "omp", "update", true},
+                                     Harness{"agy", "Antigravity", "agy", "update", true},
+                                     Harness{"kimi", "Kimi", "kimi", "upgrade", true},
+                                     Harness{"gemini", "Gemini", "gemini", nullptr, false}};
 // Arguments lapis always gives a new agent of a CLI, before the user's own.
 QStringList defaultArguments(const QString& harness) {
     if (harness == QLatin1String("codex"))
@@ -80,43 +84,36 @@ QString harnessExecutable(const Harness& harness) {
     paths << QStringLiteral("/opt/homebrew/bin") << QStringLiteral("/usr/local/bin");
     return QStandardPaths::findExecutable(QLatin1String(harness.command), paths);
 }
-// Named approval modes, and the flags each CLI takes for them (checked
-// against each CLI's --help, September 24). Only a CLI's own modes are
-// offered; no mode passes no flag, leaving the CLI's own setting.
+// Three approval modes, and the flags each CLI takes for them (checked
+// against each CLI's --help, September 24). A CLI is offered only those it
+// has: OMP, OpenCode and Antigravity have no Auto, and Kimi and OpenCode no
+// Accept edits.
 struct ModeFlags {
     const char* harness;
     const char* mode;
     std::array<const char*, 4> flags;
 };
 constexpr std::array mode_flags{
-    ModeFlags{"codex", "ask", {"-a", "on-request", "-s", "workspace-write"}},
+    // Codex applies edits in the workspace without asking in on-request.
+    ModeFlags{"codex", "edits", {"-a", "on-request", "-s", "workspace-write"}},
     ModeFlags{"codex", "auto", {"-a", "never", "-s", "workspace-write"}},
     ModeFlags{"codex", "full", {"--dangerously-bypass-approvals-and-sandbox"}},
-    ModeFlags{"claude", "ask", {"--permission-mode", "manual"}},
     ModeFlags{"claude", "edits", {"--permission-mode", "acceptEdits"}},
-    ModeFlags{"claude", "plan", {"--permission-mode", "plan"}},
     ModeFlags{"claude", "auto", {"--permission-mode", "auto"}},
     ModeFlags{"claude", "full", {"--permission-mode", "bypassPermissions"}},
-    ModeFlags{"grok", "ask", {"--permission-mode", "default"}},
     ModeFlags{"grok", "edits", {"--permission-mode", "acceptEdits"}},
-    ModeFlags{"grok", "plan", {"--permission-mode", "plan"}},
     ModeFlags{"grok", "auto", {"--permission-mode", "auto"}},
     ModeFlags{"grok", "full", {"--permission-mode", "bypassPermissions"}},
     ModeFlags{"kimi", "auto", {"--yolo"}},
     ModeFlags{"kimi", "full", {"--auto"}},
-    ModeFlags{"omp", "ask", {"--approval-mode=always-ask"}},
     ModeFlags{"omp", "edits", {"--approval-mode=write"}},
     ModeFlags{"omp", "full", {"--approval-mode=yolo"}},
     ModeFlags{"opencode", "full", {"--auto"}},
     ModeFlags{"agy", "edits", {"--mode", "accept-edits"}},
-    ModeFlags{"agy", "plan", {"--mode", "plan"}},
     ModeFlags{"agy", "full", {"--dangerously-skip-permissions"}},
 };
-constexpr std::array<std::pair<const char*, const char*>, 5> mode_names{{{"ask", "Ask"},
-                                                                         {"edits", "Accept edits"},
-                                                                         {"plan", "Plan"},
-                                                                         {"auto", "Auto"},
-                                                                         {"full", "Full access"}}};
+constexpr std::array<std::pair<const char*, const char*>, 3> mode_names{
+    {{"edits", "Accept edits"}, {"auto", "Auto"}, {"full", "Full access"}}};
 QStringList modeArguments(const QString& harness, const QString& mode) {
     for (const auto& entry : mode_flags)
         if (harness == QLatin1String(entry.harness) && mode == QLatin1String(entry.mode)) {
@@ -811,14 +808,42 @@ void SessionPreview::setHarnessId(const QString& id) {
     emit identityChanged();
     emit statusChanged();
 }
+// The models a CLI offers the person; a list in the config replaces the
+// rest, with the CLI's default kept first.
+std::vector<ModelChoice> Workspace::modelChoices(const QString& harness) const {
+    auto found = harness_models_ ? harness_models_->models(harness) : std::vector<ModelChoice>{};
+    const auto configured = agent_defaults_.models.value(harness);
+    if (configured.isEmpty())
+        return found;
+    std::vector<ModelChoice> picked;
+    const auto fallback = std::find_if(found.begin(), found.end(),
+                                       [](const ModelChoice& model) { return model.isDefault; });
+    if (fallback != found.end())
+        picked.push_back(*fallback);
+    for (const auto& name : configured) {
+        const auto known = std::find_if(found.begin(), found.end(),
+                                        [&](const ModelChoice& model) { return model.id == name; });
+        if (fallback == found.end() || fallback->id != name)
+            picked.push_back({.id = name,
+                              .name = known == found.end() ? name : known->name,
+                              .isDefault = false});
+    }
+    return picked;
+}
+
 QVariantList Workspace::availableHarnesses() const {
     QVariantList result;
     for (const auto& harness : harness_catalog) {
+        if (!harness.offered)
+            continue;
         const auto program = harnessExecutable(harness);
         const auto id = QString::fromLatin1(harness.id);
-        QStringList models;
+        QVariantList models;
         if (!modelArguments(id, QStringLiteral("x")).isEmpty())
-            models = agent_defaults_.models.value(id);
+            for (const auto& model : modelChoices(id))
+                models.append(QVariantMap{{QStringLiteral("id"), model.id},
+                                          {QStringLiteral("name"), model.name},
+                                          {QStringLiteral("default"), model.isDefault}});
         result.append(QVariantMap{{QStringLiteral("id"), id},
                                   {QStringLiteral("name"), QString::fromLatin1(harness.label)},
                                   {QStringLiteral("installed"), !program.isEmpty()},
@@ -887,6 +912,7 @@ QVariantMap Workspace::agentDefaults() const {
         machines.insert(it.key(), it.value());
     return {{QStringLiteral("harness"), agent_defaults_.harness},
             {QStringLiteral("folder"), agent_defaults_.folder},
+            {QStringLiteral("mode"), agent_defaults_.mode},
             {QStringLiteral("machines"), machines}};
 }
 std::optional<session::LaunchSpec> Workspace::agentLaunch(const AgentRequest& request) {

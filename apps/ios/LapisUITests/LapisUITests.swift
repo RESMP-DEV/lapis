@@ -196,15 +196,19 @@ final class LapisUITests: XCTestCase {
         XCTAssertTrue(app.buttons["category-Later"].isSelected, "the tapped category is chosen")
         let edits = app.buttons["mode-edits"]
         XCTAssertTrue(edits.waitForExistence(timeout: 5), "the CLI's approval modes are offered")
+        XCTAssertTrue(app.buttons["mode-auto"].exists && app.buttons["mode-full"].exists,
+                      "always the same three modes")
         edits.tap()
         XCTAssertTrue(edits.isSelected)
+        app.buttons["folderRow"].tap()
         let search = app.textFields["folderSearch"]
-        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        XCTAssertTrue(search.waitForExistence(timeout: 5), "the folder opens its own screen")
         search.tap()
         search.typeText(folder)
         let typed = app.buttons["useTyped"]
         XCTAssertTrue(typed.waitForExistence(timeout: 5), "a typed path can be used as is")
         typed.tap()
+        XCTAssertTrue(app.buttons["startAgent"].waitForExistence(timeout: 5), "back to the form")
         snap("9-new-agent")
         app.buttons["startAgent"].tap()
         let terminal = app.descendants(matching: .any)["terminal"]
@@ -226,16 +230,30 @@ final class LapisUITests: XCTestCase {
         XCTAssertTrue(plus.waitForExistence(timeout: 30))
         XCTAssertTrue(app.buttons["agent-echo agent"].waitForExistence(timeout: 30))
         plus.tap()
+        let beta = app.buttons["machine-beta"]
+        let alpha = app.buttons["machine-alpha"]
+        XCTAssertTrue(beta.waitForExistence(timeout: 10) && alpha.exists, "ssh machines are offered")
+        XCTAssertLessThan(beta.frame.minX, alpha.frame.minX, "the more used machine comes first")
+        // Choices stay while others change: another machine keeps the CLI,
+        // another CLI keeps the mode.
+        let grok = app.buttons["harness-grok"]
+        XCTAssertTrue(grok.waitForExistence(timeout: 15))
+        grok.tap()
+        app.buttons["mode-full"].tap()
+        beta.tap()
+        app.buttons["machine-mac"].tap()
+        XCTAssertTrue(grok.waitForExistence(timeout: 5) && grok.isSelected, "the CLI stays across machines")
+        XCTAssertTrue(app.buttons["mode-full"].isSelected, "and so does the mode")
+        let folderRow = app.buttons["folderRow"]
+        XCTAssertTrue(folderRow.waitForExistence(timeout: 20))
+        folderRow.tap()
         let frequent = app.buttons["frequent-b"]
         XCTAssertTrue(frequent.waitForExistence(timeout: 20), "the most used folder is offered")
         XCTAssertTrue(frequent.isSelected, "and chosen to start with")
         XCTAssertTrue(app.buttons["frequent-dev/lapis"].exists)
         XCTAssertLessThan(frequent.frame.minY, app.buttons["frequent-dev/lapis"].frame.minY,
                           "more agents started there, higher in the list")
-        let beta = app.buttons["machine-beta"]
-        let alpha = app.buttons["machine-alpha"]
-        XCTAssertTrue(beta.waitForExistence(timeout: 10) && alpha.exists, "ssh machines are offered")
-        XCTAssertLessThan(beta.frame.minX, alpha.frame.minX, "the more used machine comes first")
+        XCTAssertFalse(frequent.label.contains(where: \.isNumber), "no counts, only the order")
         app.buttons["folderUp"].tap()
         let visible = app.buttons["folder-dev"]
         let hidden = app.buttons["folder-.hidden"]
@@ -250,7 +268,8 @@ final class LapisUITests: XCTestCase {
         XCTAssertTrue(found.waitForExistence(timeout: 5), "fuzzy search finds the folder")
         snap("12-folder-search")
         found.tap()
-        XCTAssertTrue(app.staticTexts["currentFolder"].label.hasSuffix("~/dev/lapis"))
+        XCTAssertTrue(folderRow.waitForExistence(timeout: 5), "choosing returns to the form")
+        XCTAssertTrue(folderRow.label.hasSuffix("~/dev/lapis"))
         app.buttons["Cancel"].tap()
     }
 

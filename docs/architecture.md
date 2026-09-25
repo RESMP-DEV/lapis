@@ -1378,8 +1378,9 @@ folder picker; no name, model or execution-policy settings are inserted before
 launch. Folder discovery uses Qt's asynchronous `Qt.labs.folderlistmodel` module
 from the pinned Qt 6.11.2 SDK. Suggestions clear immediately when input changes,
 show at most 100 entries and inspect at most 4096 model rows per update.
-The allowlisted CLI launchers are Codex, Claude, OMP, Grok, Kimi, OpenCode,
-Gemini and Antigravity. Discovery resolves executables from PATH and their
+The allowlisted CLI launchers are Claude, Codex, OpenCode, Grok, OMP,
+Antigravity and Kimi, offered in that order (September 24); Gemini is no
+longer offered but stays known so saved Gemini agents restore. Discovery resolves executables from PATH and their
 standard per-user install locations; launch revalidates availability. Codex
 retains its managed observer and Claude runs under the service's Claude Code
 hook adapter. The others use the existing direct PTY transport and have no
@@ -1943,6 +1944,28 @@ A prototype, deliberately simpler than the SSH design first proposed:
   Reading this Mac's 6.9 GB of the last 30 days took 5.6 s once and 0.31 s per
   later check. No prices are shown: lapis has no published price list for
   current models to read.
+- New-agent choices (September 24, from using the phone form). Changing one
+  choice keeps the others: another machine keeps the CLI while it has it (the
+  phone had reset it to the first CLI), and the mode stays across CLIs and
+  agents. There are three modes and no "Default": Accept edits, Auto and Full
+  access. Codex: `-a on-request -s workspace-write`, `-a never -s
+  workspace-write`, `--dangerously-bypass-approvals-and-sandbox`. Claude and
+  Grok: `--permission-mode acceptEdits`, `auto`, `bypassPermissions`. OMP:
+  `--approval-mode=write` and `yolo`. Kimi: `--yolo` for Auto, `--auto` for
+  Full. OpenCode: `--auto` for Full. Antigravity: `--mode accept-edits` and
+  `--dangerously-skip-permissions`. A CLI without the chosen mode uses its
+  nearest, less access first, and shows the others unavailable. Models come
+  from each CLI (`HarnessModels`, hourly and in the background): Codex
+  app-server `model/list`; Claude's `initialize` control request, whose
+  default is the model its "default" entry names; `grok models`; `agy models`;
+  Kimi's config aliases; OpenCode's favourite and recent models; OMP's
+  configured roles, then the models its 40 newest sessions switched to (OMP
+  lists 940 and OpenCode 593, so what was used ranks them); at most eight,
+  the default first and started without the flag. `newAgent.models` still
+  replaces a CLI's list, and `newAgent.mode` sets the first mode. The phone
+  shows the CLIs as large cards two and a half across, the models wrapped,
+  the modes as three buttons, and the folder on its own screen (search, the
+  ten most used without counts, browsing).
 - Not yet: structured requests and approvals on the phone (agents' own prompts
   are answered through the key bar), push notifications, serving the phone
   after the window quits (only the login helper hosts without a window), and

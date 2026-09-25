@@ -1,6 +1,7 @@
 #ifndef LAPIS_DESKTOP_WORKSPACE_HPP
 #define LAPIS_DESKTOP_WORKSPACE_HPP
 
+#include "harness_models.hpp"
 #include "keymap.hpp"
 #include <lapis/session/terminal.hpp>
 
@@ -277,6 +278,7 @@ class Workspace final : public QObject {
     [[nodiscard]] bool previewMode() const { return preview_mode_; }
     [[nodiscard]] QString homeDirectory() const;
     Q_INVOKABLE [[nodiscard]] QVariantList availableHarnesses() const;
+    [[nodiscard]] std::vector<ModelChoice> modelChoices(const QString& harness) const;
     Q_INVOKABLE [[nodiscard]] QString displayPath(const QString& directory) const;
     [[nodiscard]] SessionPreview* session(const QString& id) const;
     // Development fixture v1 only. No calls are accepted in a live workspace.
@@ -304,6 +306,8 @@ class Workspace final : public QObject {
     // its folder as the card shows it ("~/x", or "host:~/x" over ssh).
     [[nodiscard]] QVariantMap agentPlace(const QString& id) const;
     void setAgentDefaults(const AgentDefaults& defaults) { agent_defaults_ = defaults; }
+    // Where the new-agent forms' model lists come from; lapis keeps it.
+    void setHarnessModels(const HarnessModels* models) { harness_models_ = models; }
     // Starts an agent; returns its id, or "" with workspaceError(). Without
     // `select` the category's selection is left alone, so an agent started
     // from another device never takes the stage from a shown agent.
@@ -350,6 +354,7 @@ class Workspace final : public QObject {
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
     QHash<QString, QStringList> harness_arguments_;
     AgentDefaults agent_defaults_;
+    const HarnessModels* harness_models_{};
     bool restore_agents_{};
     bool update_harnesses_{};
     bool headless_{};

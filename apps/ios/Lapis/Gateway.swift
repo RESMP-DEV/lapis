@@ -35,9 +35,22 @@ struct Harness: Codable, Identifiable, Hashable {
     let id: String
     let name: String
     let installed: Bool
-    // Models and approval modes the Mac can start it with; older Macs send none.
-    let models: [String]?
+    // Models the CLI lists (its default first) and the approval modes it
+    // has; older Macs send none.
+    let models: [ModelChoice]?
     let modes: [AgentMode]?
+}
+
+struct ModelChoice: Codable, Hashable, Identifiable {
+    let id: String
+    let name: String
+    // The CLI's own default: started without naming a model.
+    let isDefault: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case isDefault = "default"
+    }
 }
 
 struct AgentMode: Codable, Hashable, Identifiable {
@@ -50,6 +63,7 @@ struct AgentMode: Codable, Hashable, Identifiable {
 struct AgentDefaults: Codable {
     let harness: String?
     let folder: String?
+    let mode: String?
     let machines: [String: String]?
 }
 

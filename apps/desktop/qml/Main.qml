@@ -474,7 +474,11 @@ ApplicationWindow {
             attentionDialog.showSession(workspace.focusedSession)
     }
 
-    property string lastHarness: "codex"
+    // What the last new agent was started with, kept for the next one: the
+    // CLI, the approval mode across CLIs, and each CLI's model.
+    property string lastHarness: ""
+    property string lastMode: ""
+    property var lastModels: ({})
     function openNewAgentDialog() {
         if (terminalBusy)
             return
@@ -492,6 +496,8 @@ ApplicationWindow {
                        defaults.folder.startsWith("~/") ? workspace.homeDirectory + defaults.folder.slice(1) :
                        defaults.folder
         agentDirectoryField.text = (folder.length > 0 ? folder.replace(/\/+$/, "") : workspace.homeDirectory) + "/"
+        agentDialog.preferredMode = window.lastMode.length > 0 ? window.lastMode :
+                                    defaults.mode && defaults.mode.length > 0 ? defaults.mode : "edits"
         openFresh(agentDialog)
     }
     // Command-W: close the focused agent. A running agent is confirmed first,
@@ -545,8 +551,9 @@ ApplicationWindow {
             agentDialog.localError = folderIssue
             return
         }
+        const model = agentDialog.chosenModel && !agentDialog.chosenModel.default ? agentDialog.chosenModel.id : ""
         if (!workspace.createAgent(agentDirectoryField.text.trim(), title, agentDialog.selectedHarness,
-                                   agentDialog.selectedModel, agentDialog.selectedMode)) {
+                                   model, agentDialog.selectedMode)) {
             agentDialog.localError = workspace.workspaceError.length > 0 ? workspace.workspaceError :
                                                                           qsTr("Could not start %1.").arg(agentDialog.harnessName)
             return
@@ -1139,20 +1146,46 @@ ApplicationWindow {
         property int phase: 0
         property var harnesses: []
         readonly property var choices: harnesses
-        property string selectedHarness: "codex"
-        // This agent's model and approval mode; "" leaves the CLI's own setting.
+        property string selectedHarness: "claude"
+        // This agent's model (one the CLI lists) and approval mode. The mode
+        // stays across CLIs; a CLI without it uses its nearest, less access
+        // first, and the preference returns on a CLI that has it.
         property string selectedModel: ""
-        property string selectedMode: ""
+        property string preferredMode: "edits"
         readonly property var selectedItem: harnesses.find(h => h.id === selectedHarness)
         readonly property string harnessName: selectedItem ? selectedItem.name : selectedHarness
-        readonly property var modelChoices: [""].concat(selectedItem && selectedItem.models ? selectedItem.models : [])
-        readonly property var modeChoices: [{id: "", name: qsTr("Default")}].concat(selectedItem && selectedItem.modes ? selectedItem.modes : [])
+        readonly property var modelChoices: selectedItem && selectedItem.models ? selectedItem.models : []
+        readonly property var chosenModel: modelChoices.find(m => m.id === selectedModel)
+                                           || modelChoices.find(m => m.default) || modelChoices[0] || null
+        readonly property var modeOptions: [{id: "edits", name: qsTr("Accept edits")},
+                                            {id: "auto", name: qsTr("Auto")},
+                                            {id: "full", name: qsTr("Full access")}]
+        function offers(mode) {
+            return !!(selectedItem && selectedItem.modes && selectedItem.modes.some(m => m.id === mode))
+        }
+        readonly property string selectedMode: {
+            const order = modeOptions.map(m => m.id)
+            const at = Math.max(0, order.indexOf(preferredMode))
+            for (const index of [at, at - 1, at - 2, at + 1, at + 2])
+                if (index >= 0 && index < order.length && offers(order[index]))
+                    return order[index]
+            return ""
+        }
+        function chooseModel(id) {
+            selectedModel = id
+            const models = Object.assign({}, window.lastModels)
+            models[selectedHarness] = id
+            window.lastModels = models
+        }
+        function chooseMode(id) {
+            preferredMode = id
+            window.lastMode = id
+        }
         function chooseHarness(index) {
             const item = choices[index]
             if (!item || !item.installed) return
             selectedHarness = item.id
-            selectedModel = ""
-            selectedMode = ""
+            selectedModel = window.lastModels[item.id] || ""
             window.lastHarness = item.id
             phase = 1
             Qt.callLater(function() {
@@ -1297,34 +1330,38 @@ ApplicationWindow {
                 }
                 // Model and approval mode for this agent, as the CLI's own flags.
                 Flow {
-                    visible: agentDialog.phase === 1 && agentDialog.modelChoices.length > 1
+                    visible: agentDialog.phase === 1 && agentDialog.modelChoices.length > 0
                     Layout.fillWidth: true
                     spacing: 6
                     PlainLabel { text: qsTr("Model"); color: window.mutedTextColor; height: window.tabHeight; verticalAlignment: Text.AlignVCenter; width: 52 }
                     Repeater {
                         model: agentDialog.modelChoices
                         delegate: CommandButton {
-                            required property string modelData
-                            objectName: "model_" + (modelData.length > 0 ? modelData : "default")
-                            text: modelData.length > 0 ? modelData : qsTr("Default")
-                            selected: modelData === agentDialog.selectedModel
-                            onClicked: agentDialog.selectedModel = modelData
+                            required property var modelData
+                            objectName: "model_" + modelData.id
+                            text: modelData.name
+                            selected: agentDialog.chosenModel !== null && modelData.id === agentDialog.chosenModel.id
+                            onClicked: agentDialog.chooseModel(modelData.id)
                         }
                     }
                 }
-                Flow {
-                    visible: agentDialog.phase === 1 && agentDialog.modeChoices.length > 1
+                // Always one of three; a CLI without one shows it unavailable.
+                RowLayout {
+                    visible: agentDialog.phase === 1 && agentDialog.selectedMode.length > 0
                     Layout.fillWidth: true
                     spacing: 6
-                    PlainLabel { text: qsTr("Mode"); color: window.mutedTextColor; height: window.tabHeight; verticalAlignment: Text.AlignVCenter; width: 52 }
+                    PlainLabel { text: qsTr("Mode"); color: window.mutedTextColor; Layout.preferredHeight: window.tabHeight; verticalAlignment: Text.AlignVCenter; Layout.preferredWidth: 52 }
                     Repeater {
-                        model: agentDialog.modeChoices
+                        model: agentDialog.modeOptions
                         delegate: CommandButton {
                             required property var modelData
-                            objectName: "mode_" + (modelData.id.length > 0 ? modelData.id : "default")
+                            objectName: "mode_" + modelData.id
                             text: modelData.name
+                            enabled: agentDialog.offers(modelData.id)
                             selected: modelData.id === agentDialog.selectedMode
-                            onClicked: agentDialog.selectedMode = modelData.id
+                            Layout.fillWidth: true
+                            Accessible.description: enabled ? "" : qsTr("%1 has no such mode").arg(agentDialog.harnessName)
+                            onClicked: agentDialog.chooseMode(modelData.id)
                         }
                     }
                 }

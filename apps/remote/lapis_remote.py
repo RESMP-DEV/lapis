@@ -379,14 +379,13 @@ class AgentHistory:
 # Where each agent CLI is found: PATH, then the per-user install folders the
 # desktop also searches.
 HARNESS_COMMANDS = (
-    "codex",
     "claude",
-    "omp",
-    "grok",
-    "kimi",
+    "codex",
     "opencode",
-    "gemini",
+    "grok",
+    "omp",
     "agy",
+    "kimi",
 )
 HARNESS_FOLDERS = (
     "~/.local/bin",

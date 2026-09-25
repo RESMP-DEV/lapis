@@ -480,15 +480,8 @@ void KeyMap::apply_defaults() {
     show_usage_ = true;
     usage_meter_.clear();
     usage_machines_.clear();
-    // Models offered until the config names its own; each CLI's default
-    // (no flag) is always offered as well.
+    // Each CLI lists its own models (HarnessModels) unless the config names some.
     agent_defaults_ = {};
-    agent_defaults_.models.insert(
-        QStringLiteral("codex"),
-        {QStringLiteral("gpt-6-astra"), QStringLiteral("gpt-6-sol"), QStringLiteral("gpt-6-luna")});
-    agent_defaults_.models.insert(
-        QStringLiteral("claude"),
-        {QStringLiteral("opus"), QStringLiteral("sonnet"), QStringLiteral("haiku")});
     terminal_font_family_.clear();
     harness_arguments_.clear();
     terminal_font_size_ = kTerminalFontSizeDefault;
@@ -670,6 +663,10 @@ void KeyMap::load_agent_defaults(const QJsonValue& value) {
     };
     agent_defaults_.harness = text(section.value(QStringLiteral("harness")));
     agent_defaults_.folder = text(section.value(QStringLiteral("folder")));
+    const auto mode = text(section.value(QStringLiteral("mode")));
+    if (mode == QLatin1String("edits") || mode == QLatin1String("auto") ||
+        mode == QLatin1String("full"))
+        agent_defaults_.mode = mode;
     const auto machines = section.value(QStringLiteral("machines")).toObject();
     for (auto it = machines.begin(); it != machines.end() && it.key().size() <= 128; ++it) {
         const auto folder = text(it.value().toObject().value(QStringLiteral("folder")));

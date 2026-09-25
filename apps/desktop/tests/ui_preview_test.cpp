@@ -7,6 +7,7 @@
 #include <QAccessible>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QJSValue>
 #include <QQmlEngine>
 #include <QQmlProperty>
 #include <QQuickStyle>
@@ -1267,15 +1268,30 @@ int run_attention_ui_tests() {
     wait_popup(*new_agent, true);
     auto* harnesses = find_visual(window->contentItem(), QStringLiteral("harnessChoices"));
     CHECK(harnesses != nullptr && harnesses->hasActiveFocus());
-    const QVariantList choices{QVariantMap{{QStringLiteral("id"), QStringLiteral("codex")},
-                                           {QStringLiteral("name"), QStringLiteral("Codex")},
-                                           {QStringLiteral("installed"), true}},
-                               QVariantMap{{QStringLiteral("id"), QStringLiteral("claude")},
-                                           {QStringLiteral("name"), QStringLiteral("Claude")},
-                                           {QStringLiteral("installed"), true}},
-                               QVariantMap{{QStringLiteral("id"), QStringLiteral("omp")},
-                                           {QStringLiteral("name"), QStringLiteral("OMP")},
-                                           {QStringLiteral("installed"), true}}};
+    const auto mode = [](const char* id) {
+        return QVariantMap{{QStringLiteral("id"), QString::fromLatin1(id)},
+                           {QStringLiteral("name"), QString::fromLatin1(id)}};
+    };
+    const auto model = [](const char* id, const char* name, bool fallback) {
+        return QVariantMap{{QStringLiteral("id"), QString::fromLatin1(id)},
+                           {QStringLiteral("name"), QString::fromLatin1(name)},
+                           {QStringLiteral("default"), fallback}};
+    };
+    const QVariantList choices{
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("codex")},
+                    {QStringLiteral("name"), QStringLiteral("Codex")},
+                    {QStringLiteral("installed"), true}},
+        QVariantMap{
+            {QStringLiteral("id"), QStringLiteral("claude")},
+            {QStringLiteral("name"), QStringLiteral("Claude")},
+            {QStringLiteral("installed"), true},
+            {QStringLiteral("models"), QVariantList{model("opus", "Opus 5.5", true),
+                                                    model("claude-fable-5-1", "Fable 5.1", false)}},
+            {QStringLiteral("modes"), QVariantList{mode("edits"), mode("auto"), mode("full")}}},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("omp")},
+                    {QStringLiteral("name"), QStringLiteral("OMP")},
+                    {QStringLiteral("installed"), true},
+                    {QStringLiteral("modes"), QVariantList{mode("edits"), mode("full")}}}};
     CHECK(new_agent->setProperty("harnesses", choices));
     CHECK(harnesses->setProperty("currentIndex", 0));
     if (const auto path = qEnvironmentVariable("LAPIS_WORKSPACE_CAPTURE_PREFIX"); !path.isEmpty())
@@ -1285,6 +1301,26 @@ int run_attention_ui_tests() {
     pump(30);
     CHECK(new_agent->property("selectedHarness").toString() == QStringLiteral("claude"));
     CHECK(new_agent->property("phase").toInt() == 1);
+    // The mode and each CLI's model stay while the CLI changes: OMP has no
+    // Auto, so it uses Accept edits, and Claude gets Auto and Fable back.
+    const auto call = [&](const char* method, const QVariant& value) {
+        CHECK(QMetaObject::invokeMethod(new_agent, method, Q_ARG(QVariant, value)));
+        pump(20);
+    };
+    CHECK(new_agent->property("selectedMode").toString() == QStringLiteral("edits"));
+    call("chooseMode", QStringLiteral("auto"));
+    call("chooseModel", QStringLiteral("claude-fable-5-1"));
+    CHECK(new_agent->property("selectedMode").toString() == QStringLiteral("auto"));
+    call("chooseHarness", 2);
+    CHECK(new_agent->property("selectedMode").toString() == QStringLiteral("edits"));
+    CHECK(!find_visual(window->contentItem(), QStringLiteral("mode_auto"))->isEnabled());
+    call("chooseHarness", 1);
+    CHECK(new_agent->property("selectedMode").toString() == QStringLiteral("auto"));
+    CHECK(new_agent->property("selectedModel").toString() == QStringLiteral("claude-fable-5-1"));
+    call("chooseMode", QStringLiteral("full"));
+    call("chooseHarness", 2);
+    CHECK(new_agent->property("selectedMode").toString() == QStringLiteral("full"));
+    call("chooseHarness", 1);
     auto* folder = find_visual(window->contentItem(), QStringLiteral("agentDirectoryField"));
     CHECK(folder != nullptr && folder->hasActiveFocus());
     send_binding(*window, QStringLiteral("Esc"));

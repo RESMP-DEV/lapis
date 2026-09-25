@@ -79,7 +79,9 @@ inline constexpr int kTerminalFontSizeMaximum = 32;
 struct AgentDefaults {
     QString harness;
     QString folder;
+    QString mode; // edits, auto or full; empty until the config names one
     QHash<QString, QString> machineFolders;
+    // Names a CLI offers instead of the models it lists itself.
     QHash<QString, QStringList> models;
 };
 

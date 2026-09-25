@@ -764,7 +764,7 @@ void config_reloads_when_edited_elsewhere() {
         dir, R"({"version": 1, "theme": "graphite", "keepAwake": false, "showUsage": false,
                  "usage": {"meter": ["grok", "codex", "grok"], "machines": ["devbox", "-oProxy=x", "two words"]},
                  "alerts": {"sound": false, "repeat": 5},
-                 "newAgent": {"harness": "claude", "folder": "~/dev",
+                 "newAgent": {"harness": "claude", "folder": "~/dev", "mode": "full",
                               "machines": {"devbox": {"folder": "~/work"}},
                               "models": {"codex": ["gpt-6-sol"], "grok": ["-oBad", "grok-4.7"]}}})");
     KeyMap keymap;
@@ -773,15 +773,16 @@ void config_reloads_when_edited_elsewhere() {
     const auto& defaults = keymap.agentDefaults();
     require(defaults.harness == QStringLiteral("claude") &&
                 defaults.folder == QStringLiteral("~/dev") &&
-                defaults.machineFolders.value(QStringLiteral("devbox")) == QStringLiteral("~/work"),
+                defaults.machineFolders.value(QStringLiteral("devbox")) ==
+                    QStringLiteral("~/work") &&
+                defaults.mode == QStringLiteral("full"),
             "new-agent defaults are read");
-    require(
-        defaults.models.value(QStringLiteral("codex")) ==
-                QStringList{QStringLiteral("gpt-6-sol")} &&
-            defaults.models.value(QStringLiteral("grok")) ==
-                QStringList{QStringLiteral("grok-4.7")} &&
-            defaults.models.value(QStringLiteral("claude")).contains(QStringLiteral("opus")),
-        "configured models replace the built-in list; names that look like options are dropped");
+    require(defaults.models.value(QStringLiteral("codex")) ==
+                    QStringList{QStringLiteral("gpt-6-sol")} &&
+                defaults.models.value(QStringLiteral("grok")) ==
+                    QStringList{QStringLiteral("grok-4.7")} &&
+                !defaults.models.contains(QStringLiteral("claude")),
+            "configured models replace what a CLI lists; names that look like options are dropped");
     require(!keymap.alertSound() && keymap.finishSound() && keymap.alertRepeat() == 5 &&
                 !keymap.keepAwake() && !keymap.showUsage(),
             "alerts, keeping awake and usage are read, with defaults for what is missing");
