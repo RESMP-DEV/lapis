@@ -240,7 +240,7 @@ Status decode_status(const QByteArray& payload) {
     return {static_cast<StatusCode>(code), std::move(text)};
 }
 QByteArray frame(Kind kind, const QByteArray& payload) {
-    check(kind >= Kind::hello && kind <= Kind::attention_retry);
+    check(kind >= Kind::hello && kind <= Kind::terminate);
     check(payload.size() + 1 <= max_frame_bytes);
     QByteArray result;
     QDataStream out(&result, QIODevice::WriteOnly);
@@ -269,8 +269,7 @@ bool take_frame(QByteArray& buffer, qsizetype& consumed, Frame& result) {
     if (available < static_cast<qsizetype>(size) + 4)
         return false;
     const auto kind = static_cast<quint8>(header[4]);
-    check(kind >= static_cast<quint8>(Kind::hello) &&
-          kind <= static_cast<quint8>(Kind::attention_retry));
+    check(kind >= static_cast<quint8>(Kind::hello) && kind <= static_cast<quint8>(Kind::terminate));
     result = {static_cast<Kind>(kind), buffer.mid(consumed + 5, static_cast<qsizetype>(size) - 1)};
     consumed += static_cast<qsizetype>(size) + 4;
     if (consumed > buffer.size() / 2) {

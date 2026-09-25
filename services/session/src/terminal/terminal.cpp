@@ -602,6 +602,20 @@ TerminalCell Terminal::Impl::extract_cell(TerminalSnapshot& snapshot) {
                   style.invisible,
                   style.strikethrough,
                   style.overline};
+    // Erased cells can store their background directly in the cell instead of
+    // in its style. Reading only STYLE loses TUI panel fills on blank cells.
+    // Preserve indexed colors so subsequent palette updates still apply.
+    GhosttyCellContentTag content{};
+    require_success(ghostty_cell_get(raw, GHOSTTY_CELL_DATA_CONTENT_TAG, &content));
+    if (content == GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE) {
+        GhosttyColorPaletteIndex index{};
+        require_success(ghostty_cell_get(raw, GHOSTTY_CELL_DATA_COLOR_PALETTE, &index));
+        cell.style.background = {ColorKind::indexed, index};
+    } else if (content == GHOSTTY_CELL_CONTENT_BG_COLOR_RGB) {
+        GhosttyColorRgb background{};
+        require_success(ghostty_cell_get(raw, GHOSTTY_CELL_DATA_COLOR_RGB, &background));
+        cell.style.background = {ColorKind::rgb, rgb_from(background)};
+    }
     return cell;
 }
 

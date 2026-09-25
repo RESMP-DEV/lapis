@@ -1,0 +1,52 @@
+{
+  "recorded_at": "2026-09-22T22:48:55.717944+00:00",
+  "issue": "Erased colored cells lose background-only content tags during Ghostty snapshot extraction",
+  "source_sha256": {
+    "services/session/src/terminal/terminal.cpp": "d12c16e497d51283b5ad701801758b3daffcc58cb1400107614d0d89df75688a",
+    "services/session/tests/terminal/terminal_test.cpp": "ce1a58401aeda7b21c43187e93e788dec1a9225a4ed2e1296c1e3d6652c824fa",
+    "apps/desktop/tests/terminal_render_test.cpp": "7c37b51deb88175c2afc6b2aa7bc152f44e0c525403a923297e45415f778973e"
+  },
+  "before": {
+    "regression_failed": true,
+    "log": "build/composer-background/before-test.log"
+  },
+  "after": {
+    "terminal_behavior_passed": true,
+    "asan_ubsan_passed": true,
+    "clang_tidy_passed": true,
+    "logs": [
+      "build/composer-background/after-test.log",
+      "build/composer-background/asan-test.log",
+      "build/composer-background/tidy.log"
+    ]
+  },
+  "service_binary_sha256": "cf22d2c04a24f6ddef7e30b4a994262acb0210731dbe819025d13d7a25c71e3d",
+  "limits": [
+    "Existing service-owned agents were not restarted; only newly started services use the rebuilt binary",
+    "Prior failure was the jump-host SSH route; direct ssh to the Linux test host is verified and documented"
+  ],
+  "linux_verified_at": "2026-09-22T22:52:24.389541+00:00",
+  "linux": {
+    "ssh_route": "ssh <linux-host>",
+    "build_seconds": 2.96,
+    "normal_tests_seconds": 1.62,
+    "normal_suites": [
+      "terminal-behavior",
+      "terminal-render"
+    ],
+    "normal_passed": true,
+    "asan_ubsan_lsan_suites": [
+      "terminal-behavior",
+      "history-store",
+      "local-protocol",
+      "terminal-render"
+    ],
+    "asan_passed": true,
+    "asan_seconds": 2.16,
+    "suppressions": false,
+    "logs": "~/lapis-agent-workspace/build/composer-background/",
+    "capture": "build/composer-background/composer.png",
+    "capture_visually_inspected": true,
+    "scope": "Synthetic composer escape-sequence regression through actual Ghostty and Qt Vulkan surface, software rendering; not a live Codex screenshot"
+  }
+}

@@ -3,9 +3,12 @@
 ## Purpose and scope
 
 Build lapis into a portable desktop workspace for supervising many live CLI
-agents. Sessions stay ready to display; a GPU-accelerated interface provides fast
-switching, previews, and an attention-driven carousel. Codex is the first agent
-integration. Each additional CLI gets an independent, verified adapter.
+agents. Categories own ordered agent tabs and remember their selections. One
+GPU-accelerated terminal stage shows the selected agent. A strip of throttled
+live previews under the stage is the category's navigation; previews never take
+input or resize a terminal. There is no tab row and no tiling. Normal use has no
+shell sessions or sample cards. Codex is the first agent integration.
+Each additional CLI gets an independent, verified adapter.
 
 The project name is `lapis`, always lowercase and one word. The canonical GitHub
 repository is `RESMP-DEV/lapis`. Work from the repository root and keep these names
@@ -89,8 +92,10 @@ architecture document instead of creating another status or roadmap file.
 
 ## Visual and motion direction
 
-Use a minimal blend of Apple and Material design: mostly opaque surfaces, clear
-hierarchy, restrained borders and color, and readable terminal typography. Motion
+Use a tactical command-room interface with restrained spacecraft styling: dark
+opaque surfaces, clear category/tab hierarchy, quiet luminous selection edges,
+and readable terminal typography. Theme treatments coordinate color, typography,
+border shape and motion; do not add decorative telemetry or animate glyphs. Motion
 should make feedback immediate and changes easy to follow. Keep transitions short,
 interruptible and consistent; do not defer input until an animation finishes or
 animate terminal glyphs. Prefer position/color feedback over blur, transparency or
@@ -108,6 +113,26 @@ to avoid duplicate runs; retain the original revision and scope of reused eviden
 Quality/maintenance tasks do not authorize feature wiring or resuming a tabled
 milestone. Review findings must distinguish defects from optional preferences;
 keep cleanup scoped and preserve other contributors' changes.
+
+Default test execution belongs on the Linux test host. Do not open test
+windows, post keyboard events, or change input sources on the user's Mac during
+ordinary development. A necessary macOS-specific acceptance pass must be explicitly
+scheduled with the user. Linux or headless results do not replace Apple-specific
+input/IME qualification. Until remote access and dependencies are verified,
+report testing as blocked rather than silently falling back to Mac GUI tests.
+
+The Linux test host's ssh name, route and checkout path are machine-local and
+are not recorded in this public repository; keep them in your own agent notes.
+Run `uv run --no-project python scripts/lapis.py linux-gui` in that checkout for the full
+software-rendered GUI check, or supply focused command arguments after `linux-gui`.
+The wrapper creates its own virtual display and window manager and does not use
+the shared physical GPU. Keep native GPU qualification separate.
+
+During edits in the configured Linux checkout, build the affected CMake target
+and run focused CTest cases with `--no-tests=error`. `lapis.py build` and bare
+`linux-gui` run the full validation gate, including all clang-tidy analyses;
+reserve those for integration checkpoints and handoff rather than every edit.
+
 
 ## Responsiveness and resource policy
 
@@ -211,7 +236,9 @@ vulnerability clearance.
 
 Keep reproducible scripts and sanitized receipts in the repository, generated
 builds/logs under ignored `build/`, and local runtime state under ignored
-`runtime/`. Never commit credentials, private transcripts, or raw user prompts.
+`runtime/`. Never commit credentials, private transcripts, or raw user prompts,
+nor machine identities: host and device names, network addresses, account IDs
+and usernames in paths. Sweep each diff, commit message and PR text for them.
 Keep `.sindexer/` in the root `.gitignore`. Preserve the instruction symlink.
 
 ## Completion and review

@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <lapis/session/attention.hpp>
 #include <memory>
 
@@ -16,6 +17,8 @@ class Observer final : public QObject {
     explicit Observer(session::attention::State& state, QObject* parent = nullptr);
     ~Observer() override;
     static QString qualifiedBinarySha256();
+    // Every executable digest whose request behavior has been qualified live.
+    static QStringList qualifiedBinarySha256s();
     void start(const QString& socket, const QString& binary_sha256);
     void reconnect(); // Explicit only; no response retransmission.
     void stop();

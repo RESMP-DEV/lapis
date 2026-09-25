@@ -651,6 +651,14 @@ checkpoint. The production adapter has since added styles, tagged colors, wrap
 spacers and cursor data. The experimental header is
 not a serialized service contract. Dirty-row APIs exist in Ghostty but incremental
 damage extraction has not been qualified; begin with bounded full snapshots.
+
+The September 22 composer-background repair also reads Ghostty's raw-cell
+background-only content tags. Erased cells can keep their RGB or palette-index
+background there rather than in the style; ignoring these tags removed the empty
+parts of TUI input panels. The regression covers colored erase-line and
+erase-character operations, subsequent palette changes, and resetting to the
+default background. The fix is in the session-service snapshot adapter, so an
+already running service does not acquire it when only its GUI reconnects.
 Measure allocation churn when building the production extraction path; the
 correctness probe uses per-cell scratch buffers and is not a performance baseline.
 
@@ -954,6 +962,12 @@ fixture in its private Codex home; it does not change the user's trust settings.
 
 ### Milestone 3: supervising two live sessions on macOS
 
+**Superseded in the desktop by the category workspace below.** Its flat
+manifest (`--workspace`), aggregate supervisor queue and carousel UI were removed
+when the agent strip landed; the service, transport, Codex pin and Claude Code
+adapter it qualified are retained. This section remains the record of that
+qualification.
+
 **All three checkpoints qualified together on macOS; evidence is recorded in
 the [workspace receipt](../evidence/milestone-three-workspace.json).**
 Its consolidation record refreshes the retained-workspace, two-source Codex and
@@ -1256,6 +1270,415 @@ configuration and an explicitly selected test provider; normal launches inherit
 the user's configuration. The
 [Claude hook receipt](../evidence/claude-code-hooks.json) records separate runtime
 and GUI evidence; reproducible procedures are in CONTRIBUTING.
+
+### Daily-use agent workspace direction (September 21 review)
+
+#### Penthouse comparison (September 22, read-only Opus 5.5 review)
+
+The Mac has three separate app implementations, not interchangeable clones:
+`dev/tools/penthouse` at `8baeb32` is the early Tauri room/timeline shell;
+`dev/penthouse` at `81b0601` is the archived Rust/GPUI chat-first app;
+`dev/tools/ghostty` at `64a549f1e` is the later terminal-first fork, whose launcher
+selects `macos/build/ReleaseLocal/Penthouse.app`. The separate marketing site is
+at `dev/sites/penthouse.sh`, revision `db47ca1`. No running Penthouse app was
+observed; a current production deployment was not established. Both later app
+repositories call themselves paused as of August 21.
+
+A second Linux host's `dev/penthouse-spike` is an unversioned remote-driver copy
+with no desktop app. Its older single-file driver exactly matches the Mac's SSH
+spike. Of 19 shared driver/schema/replay files, 8 match and 11 differ; none
+exists only on that host. The Mac has later native-resume, agent-option,
+model-discovery, OMP and tool-update work. The Linux test host has hook/resume
+helpers but no app checkout found in the
+home-directory search through depth four. No Penthouse files were changed or
+merged. Local receipts: `build/penthouse-review/reconciliation.json` and
+`build/penthouse-review/opus-review.txt`.
+
+The review's adaptations are now implemented in the desktop presentation layer,
+with no service, protocol or dependency change:
+
+- [x] Quiet hierarchy. Categories are unfilled group labels: the active one has a
+  2-pixel leading focus edge and full-weight text, and the first four show a
+  fixed-width recall number for their shortcut. Agent tabs remain the filled
+  session cells. The narrow selector uses the same edge and an outlined `+N`
+  count for requests in hidden categories.
+- [x] Semantic colors. Each theme adds `activity` and `fault` tokens.
+  `focusedBorder` marks selection and terminal keyboard ownership; the stage edge drops to the
+  neutral border whenever a dialog owns input. `attention` means pending
+  requests only. A lost connection and form/workspace errors use `fault`; an
+  ended process is neutral. Every status class also has its own tab mark: dot
+  working, diamond pending request, ring ready or turn finished, square lost
+  connection, dash ended, hollow box opening or unknown. The selected tab keeps
+  its text label.
+- [x] One configurable fixed-width family. `terminalFont` in `lapis.json`
+  (`family`, `size` 10–32 pixels, default 16) is edited only in Appearance and
+  applies live. The GUI resolves it; a missing or proportional family falls
+  back to the platform fixed-width font and Appearance says so. The terminal,
+  paths, shortcut keycaps, status labels and counts share the resolved family;
+  names and prose keep the UI face. Explicit ANSI colors are untouched.
+- [x] Tactile controls. Commands separates keyboard selection (filled row with a
+  focus edge) from pointer hover (lighter wash), and shows shortcuts as
+  fixed-width keycaps. Appearance uses one hover/press/selection treatment, a
+  font family picker previewed in each face, and a size stepper. Feedback is
+  color only, within the theme's motion duration; reduced motion and
+  zero-duration themes change instantly. Dialogs open without an enter
+  transition, so typing is never gated. The sidebar remains one discrete resize.
+- [x] Stable tab geometry is preserved through selection, status changes and
+  long names.
+- [x] Preserve opaque terminal rendering. The Ghostty fork's ink shader classifies
+  pixels by brightness (`smoothstep(0.16, 0.34, brightest)`), so it can replace
+  intentional dark terminal colors, not just the background. This is a concrete
+  fidelity concern from source inspection, not a measured rendering result.
+
+A font change rebuilds the retained terminal rows once and requests the new cell
+grid as one resize; a failed configuration save rolls back without applying the
+tentative font. Linux software-rendered tests cover font persistence and
+rollback, live grid change, fallback, semantic state distinction, the stage
+focus edge and five viewports in both default and minimal-density/24-pixel
+variants. The synthetic fixture scales its fixed-size snapshot to the stage, so
+larger terminal text is verified through the requested grid rather than those
+captures. Linux ThreadSanitizer stopped on reports in Qt startup paths; it does
+not provide race-clearance evidence for this change. The coordinator rebuilt
+and opened the Mac app with the existing agent, verified Menlo in Appearance
+and the shared readouts, and exercised a live text-size change from 16 to 17
+pixels and back. The full Mac native IME/paste suite was not rerun. The
+[integration receipt](../evidence/penthouse-ui.json) records source hashes,
+reused checks and final coordinator checks. Four activity/fault colors were
+raised so those text tokens exceed 4.5:1 contrast against both normal and
+selected tab fills in all six themes.
+
+The proposed game direction is RTS-style group recall for categories and tabs,
+with restrained cockpit typography and game-menu feedback inside Commands and
+Appearance. These are design analogies, not evidence that Penthouse copied a
+particular game. Do not import the chat/timeline hierarchy or draw scenery over
+agent output. The reviewer inferred that all mascots were rejected from removal
+of one joke shortcut; that broader preference is unproven and is not adopted.
+The review's continuous-resize concern is also source-based, not profiled.
+
+#### Implemented workspace
+
+On macOS the native title bar uses the current window theme color, with its
+default gray material, separator and duplicate visible caption removed. Native
+traffic-light controls, the titled-window type and title-bar drag region remain
+unchanged; the window title is retained for accessibility and window management.
+The AppKit helper runs on visibility and theme-color changes and does not create
+hidden windows. Linux retains its window-manager-owned decorations. This styling
+does not resize the client area or replace native window controls with QML.
+
+The workspace has no sidebar wordmark or separate project breadcrumb row.
+Category labels and agent tabs share a top edge and row height. Commands lives
+at the right of the tab row; a collapsed sidebar still exposes the category
+selector above it. Project paths remain in default tab titles and useful tab
+tooltips, including custom-named sessions.
+
+The new-agent form first selects an installed harness, then asks for a project
+folder starting at the platform home directory. It supports keyboard folder completion and an optional native
+folder picker; no name, model or execution-policy settings are inserted before
+launch. Folder discovery uses Qt's asynchronous `Qt.labs.folderlistmodel` module
+from the pinned Qt 6.11.2 SDK. Suggestions clear immediately when input changes,
+show at most 100 entries and inspect at most 4096 model rows per update.
+The allowlisted CLI launchers are Codex, Claude, OMP, Grok, Kimi, OpenCode,
+Gemini and Antigravity. Discovery resolves executables from PATH and their
+standard per-user install locations; launch revalidates availability. Codex
+retains its managed observer and Claude runs under the service's Claude Code
+hook adapter. The others use the existing direct PTY transport and have no
+activity or approval observation capability yet; a connected TUI does not imply
+working, finished or approved. No global hooks, model flags or approval flags
+are installed. Native Codex and Claude startup and same-process
+reconnection have been exercised without model turns. OMP currently exits even
+outside lapis because its configured credential broker is unreachable.
+Default new tabs and window titles show the home-relative project path; existing explicit names are retained.
+Marks identify the harness, not dynamically detected model-provider metadata.
+`qml/AgentMark.qml` reuses Penthouse's Codex, Claude, OMP, Grok, Kimi and OpenCode
+`assets/logos` paths; other harnesses use initials. The Codex asset cites
+OpenAI's brand page and the Wikimedia 2025 symbol. These remain brand assets,
+not new software dependencies or endorsements. Redundant theme-name hover tooltips are removed; truncated tab paths
+can still reveal their full location.
+
+#### Agent strip, attention pulse and closing agents (September 22)
+
+The user first asked for IDE-style Command-W and iTerm2-style tiling; split
+panes were built and then removed the same evening at the user's request
+("we don't want window tiling at all"). A preview strip removed that morning
+was reinstated and now replaces the tab row, superseding the "no preview
+windows" direction below.
+
+The strip under the stage lists the category's agents in tab order as live
+previews and is the category's navigation. Each card is a `TerminalSurface`
+with `interactive` off, so it never takes input or resizes a PTY;
+`frameInterval: 250` coalesces output redraws to four per second, and
+`minimumScale: 0.5` draws the rows ending three lines below the cursor instead
+of an unreadable whole screen. The list instantiates only visible cards and
+drops its model while hidden. Selection scrolls like Neovim's `sidescrolloff`:
+the selected card may approach either edge but 40% of the neighboring card (or
+the trailing new-agent card) stays in view. Short windows shrink the cards
+rather than hiding the strip; `previewsVisible` hides it. Requests and Commands
+sit at the foot of the category rail, or beside the category selector when the
+rail is collapsed. Categories take Command-Option-left/right (as originally
+approved) and Command-Shift-up/down.
+
+An agent that goes from working to finished or idle, or gains a request,
+while another agent is selected is marked `unseen`; selecting it
+clears the mark. Its card edge pulses slowly (1.8 s period; ink for a finished
+turn, the attention color for a request) and its category shows a pulsing dot;
+reduced motion keeps both steady. Activity comes from three declared sources:
+
+- Codex: the managed app-server observer (working, idle, turn completed, requests).
+- Claude: new Claude agents launch in `AgentMode::claude`; the session service
+  passes its hook relay to that one process and reports turns, permission
+  prompts and input requests through the same attention snapshot as Codex (see
+  [Claude Code hooks](#claude-code-hooks-an-observation-only-extension)).
+  Requests must still be answered in Claude's own TUI. The registry records
+  `"mode": "claude"`; Claude agents saved before the adapter keep terminal mode,
+  because their running service was created with that launch fingerprint.
+  An earlier desktop-side hook file (`--settings <endpoint>.hooks.json`, polled
+  every 400 ms) was replaced by the adapter before merge.
+- Other harnesses: an output estimate labelled "Output active"/"Quiet": three
+  frames within 1.5 s mark activity and 4 s of silence after it a pause,
+  ignoring the first 3 s after attaching (screen replay). It is advisory and
+  never reads as a finished turn.
+
+Command-W closes the focused agent. An ended or fixture agent closes at once. A
+reachable running agent is confirmed and then ended through a client frame,
+`terminate` (kind 15, an additive v6 client kind): the service sends SIGHUP to
+the agent's verified process group, SIGTERM after 1.5 s and SIGKILL after 3 s,
+and the ordinary exit path reports `ended`, after which the card closes and its
+right neighbor (or left, at the end) takes the stage. A service built before
+this change rejects the frame and drops the attachment while its agent keeps
+running; the desktop reports that, reattaches and keeps the card. An
+unreachable agent can only be abandoned after a confirmation stating it may
+still be running. The window's close button and Command-Q still only detach.
+The [receipt](../evidence/agent-strip.json) records the checks.
+
+The session service clears parent-session markers from its environment before
+starting any agent or Codex backend. A desktop opened from a Claude Code
+terminal otherwise passed `CLAUDE_CODE_CHILD_SESSION`, the parent's session ID
+and messaging socket down, and the resulting Claude agent ran as that session's
+child with transcript saving off. The list covers Claude Code's session
+variables and `AI_AGENT`, Grok's `GROK_AGENT`/`GROK_SESSION_ID`, OpenCode's
+`OPENCODE`/`OPENCODE_PID`, OMP's `PI_SESSION_FILE`/`PI_TOOL_BRIDGE_*` and Codex's
+sandbox flags. Claude, Grok and `AI_AGENT` names were observed on this Mac; the
+others come from the harness binaries. User configuration such as
+`CLAUDE_CODE_EFFORT_LEVEL` is preserved. `workspace` exercises the real service.
+
+The OLED black theme (`oled`) makes the background, surfaces and resting cards
+`#000000`; borders, text and selection carry the structure, and only hover and
+the selected tab light a faint fill. No terminal override is needed: the pinned
+Ghostty engine's default background is already `#000000`, so a live agent is
+black unless it sets its own background (OSC 11). The navy seen behind an
+unreachable agent was lapis's sample palette, which every session's placeholder
+screen used to receive; only preview fixtures get it now, so a live agent's
+placeholder matches its first real frame in every theme. OLED text and status
+colors measure at least 5.6:1 against black, hover and selected fills.
+
+Registry version 2 stores harness identity and an optional validated Codex
+`resumeThread` UUID. Version 1 records remain readable and default to Codex.
+Older readers reject version 2 rather than relaunching another harness as Codex.
+The resume identity maps to native `codex resume UUID`, not an arbitrary command.
+
+The September 22 implementation request supersedes the preview/layout discussion
+below: workspace -> category -> ordered agent tabs, with exactly one terminal
+stage and no product preview windows. Each category retains its selected agent;
+moving an agent preserves its process, history and identity. The Command theme
+uses a tactical command-room structure and restrained spacecraft styling.
+Categories are user organization, not working/waiting/finished state buckets.
+
+The workspace chrome now exposes category navigation, agent tabs, a small new-agent
+button and Commands. Commands is searchable and scrollable, shows configured
+shortcuts and explains unavailable actions. Category editing, agent management,
+recovery and Appearance remain discoverable there without permanent toolbar buttons.
+Command-Shift-P opens it; Command-B retracts the sidebar and persists the preference.
+Command-V remains paste, and Command-Shift-brackets stays within the current category.
+Default agent tabs show the home-relative project path and carry status.
+Truncated paths and custom-named sessions reveal the full path on hover.
+Pending requests remain visible.
+The [Commands follow-up receipt](../evidence/command-palette.json) records 20 Linux
+CTest suites, the full 51-check gate, affected sanitizer suites, and the rebuilt
+Mac window with its existing agent restored. Earlier live protocol and native
+IME qualification remains attached to the earlier workspace receipt below.
+
+The current implementation adds a private, atomically written workspace registry,
+independent per-category selection, agent creation/rename/move/reorder, real status
+projection, a responsive rail/selector, coordinated themes, and machine-local
+window geometry. The old six-session content remains an explicit automated
+fixture only. All 20 Linux CTest suites have passed; current Mac Codex 0.155.1 passed
+live headless approval/input/reconnect/cancellation qualification, and two real
+Codex processes survived workspace destruction/restoration with unchanged PIDs.
+The full analyzer gate, all 20 ASan/UBSan suites with leak detection, 15 service/GUI
+integration cases and 10 capture checks pass. The scheduled final Mac pass also passed all 20 native keyboard/IME cases and
+12 live desktop-response cases, restoring clipboard and input-source state.
+The final normal workspace was opened and visually inspected on the Mac.
+[Current evidence](../evidence/agent-workspace.json) records the delivered build
+and its platform limits.
+
+
+The user's daily-use product is an agent workspace, not a general terminal
+emulator. Normal launch must show only actual agent sessions. PTYs and terminal
+rendering remain infrastructure for agent TUIs; standalone shell launch and sample
+cards belong to explicit development/qualification paths. Demo mode must use the
+same presentation components and state contracts with clearly synthetic data,
+without adding fixture cards to a live workspace. These are implementation
+requirements for the next milestone, not claims about the current build.
+
+Independent source reviews by Fable 5.1 and Grok 4.7 Fast examined `79be97a`.
+Their common finding is a product-contract gap: `workspace.cpp` creates a shell
+and five fixtures in live mode, while `AttentionSnapshot.activity` reaches the
+desktop but is not used by the visible activity text. `LiveConnection::report`
+instead fills that text with transport diagnostics. The 980-by-700 minimum and
+forced built-in-screen placement also conflict with ordinary tiled-window use.
+The review receipt is [product-workspace-review.json](../evidence/product-workspace-review.json).
+No GUI replay or new runtime qualification was performed for this review.
+
+The settled direction is one workspace with real retained sessions, a readable
+project/agent identity, and a concise state treatment shared by the selected
+session and its navigation entry. Keep connection, agent activity, process
+lifetime, pending requests and the last turn outcome independent in the model.
+Present the action the user needs most prominently, without displaying every
+internal state as a competing badge. A stale source must visibly disable responses;
+a pending request must remain discoverable even after a turn ends. Working,
+ready for another prompt, turn finished, interrupted/failed, reconnecting and
+observation unavailable are distinct conditions. Never call a task done based
+on a completed turn or output silence. Failed/interrupted turn preservation
+requires extending the current lossy mapping, not merely changing a label.
+Detailed transport errors remain available through session details and contextual
+recovery actions; they are not the permanent top-left headline.
+
+First launch should offer a clear project and supported-agent start action.
+Managed Codex is the first qualified adapter, not a promise that every installed
+CLI can provide reliable status. Restore saved identities on subsequent launch
+without implicitly creating a replacement when an old endpoint is unreachable.
+A second agent in the same directory must receive a distinct session identity;
+launch arguments or directory hashes alone are not session IDs. Keep unsupported
+binary observation/response limitations explicit and preserve qualification gates.
+Do not silently fall back to a shell. Closing the window detaches the view;
+stopping an agent is a separate explicit action. Dock activation/relaunch must
+recover a usable window without accumulating hidden GUI processes. (Superseded
+September 22: Command-W now closes the focused agent, as in an IDE; the close
+button and Command-Q detach. See "Agent strip, attention pulse and closing agents" above.)
+
+Window placement belongs to the user and OS. Normal launch should restore valid
+geometry or let the OS place a new window. Explicit screen overrides remain for
+qualification. Restore against currently available displays and recover an
+accessible frame after a display is removed. Window geometry is machine-local
+runtime state, not a reason to rewrite tracked project configuration. Saving geometry
+may tighten a current-user-owned real runtime directory to mode 0700 when a project
+tool created it with the default umask. The repair uses an open directory descriptor
+and rechecks its identity; symlinked or foreign-owned directories and permissive
+existing geometry files remain rejected. Restoring geometry does not change permissions.
+Native window-manager positioning should work without a dedicated Raycast integration
+or changes to global shortcuts.
+
+The original review suggested retaining layout choices. The later category-first
+request instead selects one terminal stage and removes the product layout picker.
+Adapt navigation to the actual viewport and real session count. Narrow or short windows collapse the preview rail/strip
+before sacrificing the active agent. Dialogs must clamp and scroll, controls must
+remain reachable at larger font sizes, and thumbnails must not resize a PTY.
+An intentionally active tiled terminal needs an explicit readable-size policy;
+otherwise fall back to a focused pane instead of shrinking the agent to a tiny
+interactive preview. Exact breakpoints and minimum dimensions remain test targets,
+not conclusions from estimated font metrics. Avoid treating a wallpaper of tiny
+terminal previews as the primary session-navigation mechanism.
+
+On macOS, use familiar Command-based workspace navigation, preserve terminal
+Control chords and Command-left/right line editing, and keep all bindings
+reconfigurable. Linux gets appropriate platform defaults in the same contract;
+its qualification is already underway and is not deferred by this review.
+Verify actual Qt shortcut precedence rather than assuming keyPressEvent proves
+which handler wins. Navigation must respect held keys, paste, IME and modals.
+Opening a request may select its details, but must not pre-arm an approval or
+make an incidental Return approve a command. Keep explicit responses, preserved
+drafts and no attention-driven focus stealing.
+
+Implementation order and acceptance:
+
+1. Establish the live/demo boundary, a truthful status presentation and an
+   actionable empty state, sharing presentation with the explicit demo. Cover
+   unknown/stale sources, simultaneous requests and failed/interrupted turns.
+2. Integrate with the other developer's current multi-session work before
+   assigning overlapping files. Deliver two real retained agent sessions with
+   separate identities, creation, manual switching and restoration. Qualify one
+   noisy session beside an interactive session; closing the GUI must preserve
+   both, and reopening must not start duplicate agents.
+3. Qualify keyboard routing and adaptive/native window behavior together. Proposed
+   viewport cases are 640x480, 700x900, 980x700, 1400x960 and 2560x1080 logical
+   pixels, including larger fonts, long names, multiple requests, reduced motion,
+   screen removal and each supported layout. Verify bounds, input ownership and
+   readability, not just that a screenshot can be written. These cases have not
+   yet been exercised. Routine coverage stays on the Linux test host; native Mac window-manager
+   and input acceptance is separately scheduled.
+
+Automatic carousel, 32-session scale, additional adapters and packaging remain
+later milestones. Do not add an unmeasured threading rewrite to solve a styling
+problem. Conversely, C++ alone proves no memory advantage: measure GUI, service
+and agent memory separately, warm-switch/input tails and idle work on the same
+workload before making comparative claims. The main product risk is truthful
+looking but stale agent status; source epochs and reconciliation gates must remain
+visible in behavior even when diagnostics are visually quieter.
+
+#### Break-it QA, selection and follow-up fixes (September 23)
+
+`tools/qa/breakit.py` drives the real GUI on the Linux test host's isolated display with
+synthetic X11 input. Its agents are `tools/qa/fake_agent.py` installed under
+harness names on a private PATH; scenarios cover creation, typing while
+switching, finish pulses, floods, categories, closing running and signal-ignoring
+agents, crashes, GUI SIGKILL and quit/restore, service SIGKILL, rapid shortcuts and
+five window sizes, checking the registry, processes and GUI warnings. `--soak`
+runs 32 bursting agents across four categories and samples GUI/service memory and
+CPU. `scripts/fake_models.py` serves scripted OpenAI Responses and Anthropic
+Messages replies so the installed Codex and Claude Code binaries can be exercised
+without model usage; Codex's question tool needs Plan mode. Two Codex Computer Use
+sessions drove an isolated macOS copy; a copy started by macOS without its fake
+environment reached real models once, so such copies need an environment that
+survives any launch path and a guard that stops services without it.
+
+Decisions from these runs:
+
+- The committed `lapis.json` carries no keybinding overrides. It had kept the
+  pre-strip bindings, which replaced platform defaults on fresh checkouts
+  (Control-W detached the window and Control-Q quit, both terminal chords).
+- Claude Code's `idle_prompt` notice is advisory in the desktop: snapshots drop
+  `idle` requests, so a finished Claude turn reads **Turn finished** and pulses
+  once instead of showing a request with no response. The adapter still reports
+  it; other clients may rank it.
+- A new Codex 0.155.1 agent has a thread but no rollout until its first turn;
+  `thread/resume` answers "no rollout found" and the observer retries each
+  second. The observer keeps "Waiting for Codex thread history" through those
+  retries, and the card reads **No prompt yet** (held across an older
+  service's retry messages). Other reconciliation still reads **Status pending**.
+  Verified with a fresh agent against the fake model, not only from source.
+- Ended or unreachable agents get a stage bar with the service's reason and the
+  close key. Agents sharing a default title are numbered. Narrow cards drop the
+  status text; the new-agent card drops its hint rather than overflow. A card's
+  accessibility press action selects it.
+- Selection is in screen cells. The selected text is captured when chosen, so a
+  redrawing agent cannot change what is copied; the highlight clears when that
+  text moves or changes, or on typing. Command-C (Control-Shift-C elsewhere)
+  copies and never reaches the agent. The wheel pages archived history on the
+  normal screen and sends arrow keys on the alternate screen.
+- Endpoint permission errors name the directory and the `chmod 700` fix; existing
+  directories are still never chmodded.
+- The Dock badge (`QGuiApplication::setBadgeNumber`) counts agents that finished
+  unseen or have an actionable request, across categories. A new request while
+  the window is inactive calls `QWindow::alert(1000)`: one bounce, not a
+  persistent alert; finished turns only update the badge.
+- `nextAttention` (Command-J) is the manual half of the attention queue: it walks
+  categories and strips from the selected agent, taking pending requests before
+  unseen finished turns. Pinning, snoozing, aging and the opt-in carousel remain
+  unported from the flat supervisor.
+- `harnessArguments` in `lapis.json` is explicit user configuration for new
+  agents (shell aliases do not reach lapis launches). The registry saves each
+  agent's full argument list, since arguments are part of the launch
+  fingerprint; adapters still reject conflicting flags such as Claude's
+  `--settings`.
+
+Each agent and each Codex backend runs under a group guard process that kills its
+group when the service's pipe closes; SIGKILL of the service alone removed the
+backend on the Linux test host. Guards share the service's command line, so cleanup that kills
+every matching process also kills the guards and leaves backends running.
+Observed but not changed: Linux TSan reports frees and mutexes on Qt's uninstrumented
+threads in five GUI suites, identically on the pre-merge base, so TSan remains a
+macOS qualification. Native Mac selection, wheel and window-manager behavior are
+not yet exercised.
 
 ### Following milestones
 

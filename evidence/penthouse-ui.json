@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-22T20:59:23.987989+00:00",
+  "source_base": "79be97a1d9927fa9858bb4daed2a9ba8704f6598",
+  "source_state": "uncommitted working tree on feature/agent-workspace",
+  "implementation_model": "claude-opus-5-5",
+  "isolated_snapshot": "395d7c539b12bd2ecbb8f7a78ddb9f0e88a84f8b",
+  "worker_report": "~/dev/lapis-opus-ui/build/opus-ui/result.json",
+  "guidance": "https://claude.dev/blog/getting-the-most-out-of-opus-5-5/",
+  "source_sha256": {
+    "CONTRIBUTING.md": "028de227542260414f936fd52537dde01495a0ce4b9e25ba229a3343169f277c",
+    "README.md": "7faa40830b0198beaa53fe7be2a50c7d78a31ccc4205ff8c518da2857a929a08",
+    "apps/desktop/qml/AttentionDialog.qml": "c0737b32ff84112fbb828d6cd3797d7846519fd9638fb55ce43bfaea59c4b4ff",
+    "apps/desktop/qml/Commands.qml": "7e3c460ec4196c522e3ae3aa187aaa7fb390fdc595a590ec846d59997eb9fc42",
+    "apps/desktop/qml/Main.qml": "089ec13e19677b61f9f9f139b1e8b2b0e7835036c20b1e83ce4db0285513816d",
+    "apps/desktop/qml/Settings.qml": "ecfc7fed6ef85b715f84c7c2e97165eb230e4889cc7a3c63113b008396afa2e2",
+    "apps/desktop/src/keymap.cpp": "8c0940ad3d7ede8afed426a70ea144af0f9797fa9751fca2dccf58511e328772",
+    "apps/desktop/src/keymap.hpp": "57683c77ab005dc7702d05fef311c650ff800f5bb15627eb0f5facbc8cd5dd54",
+    "apps/desktop/src/terminal_surface.cpp": "b3751c1ae1254701a8ce5143e91a7660b84e99871dad014794bcdcd3eaffd361",
+    "apps/desktop/src/terminal_surface.hpp": "b226a69c0d0f916386a8b8b064ae7bfdd1baf52a58b3dba4cd02d6ccfae83e16",
+    "apps/desktop/src/ui_preview.cpp": "988b9a923ade4fd130d66b0f17072793e37a55cf64c8bcb945337aefbb924cf7",
+    "apps/desktop/src/ui_preview.hpp": "130887ba605f595738b992a381dcdeb6a336e5651f288da0e11165f9535de9ce",
+    "apps/desktop/tests/keymap_test.cpp": "ea704e55bd600672dc307140310ce13af9f1dfa19ead6d3ab4b0c00a6c999a95",
+    "apps/desktop/tests/ui_preview_test.cpp": "f82258ffd46c3751de8e0ffd48e24db068690505e071317e32178f2b814975c7",
+    "docs/architecture.md": "aad33e6a864f44905d742bbe08f5d74bdc16eeb1e81776082eef2a152a71ce89"
+  },
+  "implementation": [
+    "Quiet category group labels and filled stable agent tabs",
+    "Distinct activity/fault/attention colors with non-color status marks",
+    "Persistent shared fixed-width font family and size, editable only in Appearance",
+    "Font changes rebuild cached rows and update resize/IME metrics; failed writes do not apply tentative settings",
+    "Commands keycap hints and distinct hover/selection; reduced-motion-aware color feedback"
+  ],
+  "coordinator_corrections": [
+    "Raised four activity/fault text colors to exceed 4.5:1 against normal and selected tab fills",
+    "Used platform-formatted shortcut hints in Appearance",
+    "Qualified TSan limitations and Mac evidence in architecture"
+  ],
+  "validation": {
+    "coordinator_linux_full_gate": {
+      "passed": true,
+      "checks": 51,
+      "ctest_suites": 20,
+      "ctest_seconds": 8.06,
+      "artifact": "build/opus-ui/integration-receipt.json",
+      "scope": "After color corrections, before final Appearance shortcut label formatting"
+    },
+    "coordinator_final_ui": {
+      "passed": true,
+      "suites": [
+        "ui-preview",
+        "appearance-input"
+      ],
+      "artifact": "~/lapis-agent-workspace/build/opus-ui/final-ui.log",
+      "scope": "Final QML including Appearance shortcut label"
+    },
+    "worker_quality": {
+      "passed": true,
+      "artifact": "~/dev/lapis-opus-ui/build/opus-ui/remote/quality-receipt.json"
+    },
+    "worker_threaded_asan_ubsan_lsan": {
+      "passed": true,
+      "suites": 7,
+      "suppressions": false,
+      "artifact": "~/dev/lapis-opus-ui/build/opus-ui/remote/asan-test-threaded.log",
+      "scope": "Worker source hashes in result.json; coordinator changes afterwards are four color literals and one shortcut-label binding"
+    },
+    "worker_ui_check": {
+      "passed": true,
+      "checks": 10,
+      "artifact": "~/dev/lapis-opus-ui/build/opus-ui/remote/ui-check-receipt.json"
+    },
+    "mac": {
+      "built_and_opened": true,
+      "existing_agent_restored": true,
+      "resolved_system_font": "Menlo",
+      "live_font_size_exercised": [
+        16,
+        17,
+        16
+      ],
+      "original_config_bytes_restored": true,
+      "native_ime_paste_suite_rerun": false,
+      "binary_sha256": "e34bb8a4a23b60bbc2c4ee850ed55e7584985f2c2fe49d837e4ba5cc24cdfcb7"
+    }
+  },
+  "contrast_minimum_ratios": {
+    "lapis": {
+      "activity": 5.404,
+      "fault": 4.788
+    },
+    "graphite": {
+      "activity": 5.339,
+      "fault": 4.968
+    },
+    "daylight": {
+      "activity": 5.067,
+      "fault": 5.007
+    },
+    "solarized": {
+      "activity": 4.886,
+      "fault": 4.679
+    },
+    "amber": {
+      "activity": 8.098,
+      "fault": 6.546
+    },
+    "contrast": {
+      "activity": 9.509,
+      "fault": 7.426
+    }
+  },
+  "limitations": [
+    "Linux ThreadSanitizer stopped on reports in Qt startup paths; no race-clearance claim or false-positive classification",
+    "Linux GUI uses software rendering",
+    "Full Mac native IME/paste qualification was not repeated",
+    "Synthetic snapshot captures scale existing terminal grids; live Mac font resize was separately inspected"
+  ],
+  "screenshots_reviewed_by_coordinator": [
+    "~/dev/lapis-opus-ui/build/opus-ui/shots/ws-640x480.png",
+    "~/dev/lapis-opus-ui/build/opus-ui/shots/ws-1400x960.png",
+    "~/dev/lapis-opus-ui/build/opus-ui/shots/ws-appearance.png",
+    "~/dev/lapis-opus-ui/build/opus-ui/shots/ws-commands.png",
+    "~/dev/lapis-opus-ui/build/opus-ui/shots/ws-theme-contrast.png"
+  ],
+  "git": "No publish, commit on the working branch, or PR; original dirty work preserved. Snapshot commit exists only for isolated worker baseline."
+}

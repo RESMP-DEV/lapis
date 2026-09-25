@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-22T20:21:22.774744+00:00",
+  "source_base": "79be97a1d9927fa9858bb4daed2a9ba8704f6598",
+  "source_state": "uncommitted working tree; follows evidence/agent-workspace.json",
+  "source_sha256": {
+    "apps/desktop/qml/Main.qml": "01fb60856bf169b9169a715bbd80b6d8857a8ba9a6b2d725e907aec56d3e686e",
+    "apps/desktop/qml/Commands.qml": "0b6270d1e21276a2fb3c1831e504422e2d8518f8d004829ff959376dbefc3052",
+    "apps/desktop/src/keymap.cpp": "24c8109448093477eaf19552e2b2e2a830e55ad5de100fdddfb2c679b460eb48",
+    "apps/desktop/src/keymap.hpp": "f01382dd03d83f1141578d6a57a8808313d9eb4f1375fbf05d9973fa2938cd38",
+    "apps/desktop/tests/ui_preview_test.cpp": "a90e0bc7038a87dbbb969ffa88a7b8099d3f788bfc6326d9ee3b9e5cb7188ab0",
+    "apps/desktop/tests/keymap_test.cpp": "d4ae7fc62e3c78a002b639b638b92b1d2b7595d5a5ffa2bbe06fbd88bc7c1623"
+  },
+  "changes": [
+    "Searchable scrollable Commands with configured shortcuts and disabled explanations",
+    "Persistent retractable category sidebar",
+    "Reduced toolbar, selected-tab status, optional project-derived agent name",
+    "Stable tab width and reserved status slot across selection, reviewed by Opus 5.5"
+  ],
+  "shortcuts_macos": {
+    "commands": "Command-Shift-P",
+    "sidebar": "Command-B",
+    "agent_tabs": "Command-Shift-[ / ]",
+    "paste": "Command-V unchanged"
+  },
+  "validation": {
+    "linux_full_gate": {
+      "passed": true,
+      "checks": 51,
+      "ctest_suites": 20,
+      "ctest_seconds": 7.07,
+      "artifact": "~/lapis-agent-workspace/build/reports/desktop/receipt.json",
+      "scope": "Before final stable-tab-width correction; focused UI suites rerun after correction"
+    },
+    "linux_asan_ubsan": {
+      "passed": true,
+      "suites": [
+        "keymap",
+        "ui-preview",
+        "appearance-input"
+      ],
+      "leak_detection": true,
+      "suppressions": false,
+      "seconds": 4.46,
+      "artifact": "~/lapis-agent-workspace/build/command-palette/asan-test.log",
+      "scope": "Before final QML stable-tab-width correction"
+    },
+    "quality": {
+      "passed": true,
+      "artifact": "build/reports/quality/receipt.json"
+    },
+    "mac": {
+      "built": true,
+      "opened": true,
+      "existing_session_restored": true,
+      "commands_overlay_visually_inspected": true,
+      "native_ime_suite_rerun": false,
+      "binary_sha256": "9d4d895d45e1ea4f67dd576255c0aad20e25aafda031dc31b2117b53ff08918c"
+    },
+    "linux_final_ui": {
+      "passed": true,
+      "suites": [
+        "ui-preview",
+        "appearance-input"
+      ],
+      "seconds": 3.79,
+      "artifact": "~/lapis-agent-workspace/build/command-palette/final-test.log",
+      "covers": "Stable tab widths, palette navigation, sidebar persistence integration, IME guards and viewports"
+    }
+  },
+  "visual_evidence": [
+    "build/command-palette/ui-commands.png",
+    "build/command-palette/ui-1400x960.png"
+  ],
+  "limits": [
+    "Linux GUI evidence uses software rendering",
+    "No new live model or protocol qualification; service and adapter behavior unchanged by this follow-up",
+    "Penthouse design review is separate from implemented changes"
+  ]
+}

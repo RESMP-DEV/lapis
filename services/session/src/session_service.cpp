@@ -867,6 +867,9 @@ class SessionService final : public QObject {
         case wire::Kind::history_request:
             request_history(control.payload);
             return;
+        case wire::Kind::terminate:
+            end_agent(control.payload);
+            return;
         case wire::Kind::text:
             bytes = control.payload;
             break;
@@ -909,6 +912,15 @@ class SessionService final : public QObject {
         }
         if (!pty_.writeBytes(bytes))
             throw std::runtime_error("PTY input queue full");
+    }
+    // Only an explicit close from an attached client ends the agent; detaching
+    // or GUI exit never does. The ordinary exit path then reports `ended`.
+    void end_agent(const QByteArray& payload) {
+        if (!payload.isEmpty())
+            throw std::runtime_error("Terminate message must be empty");
+        // Reaped children may still be draining output/history before `ended`.
+        if (pty_.processId() != 0 && !pty_.hangup())
+            throw std::runtime_error("Agent process could not be ended");
     }
     void apply_resize(TerminalSize size) {
         if (!pty_.resize(size))
@@ -1011,8 +1023,32 @@ class SessionService final : public QObject {
     QString codex_error_;
     QString decision_error_;
 };
+
+// A desktop opened from inside another agent's terminal passes that agent's
+// per-session markers down to this service. Agents lapis launches are
+// top-level sessions of every harness: with Claude Code's markers a new agent
+// reports to the parent's messaging socket and does not save its transcript,
+// and other harnesses similarly detect a parent agent, sandbox or tool bridge.
+// Only markers a harness sets for its own children are removed; user settings
+// such as CLAUDE_CODE_EFFORT_LEVEL or GROK_DEFAULT_MODEL stay intact.
+void clear_parent_session_markers() {
+    for (const char* name :
+         {// Claude Code, and the cross-harness marker it sets.
+          "CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID",
+          "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH",
+          "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID",
+          "CLAUDE_EFFORT", "AI_AGENT",
+          // Codex sandboxed commands.
+          "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED",
+          // Grok, OpenCode and OMP child sessions and tool bridges.
+          "GROK_AGENT", "GROK_SESSION_ID", "OPENCODE", "OPENCODE_PID", "PI_SESSION_FILE",
+          "PI_TOOL_BRIDGE_SESSION", "PI_TOOL_BRIDGE_URL", "PI_TOOL_BRIDGE_TOKEN"})
+        qunsetenv(name);
+}
 } // namespace
 int main(int argc, char** argv) {
+    // Before any agent or Codex backend inherits the environment.
+    clear_parent_session_markers();
     QStringList arguments;
     for (int index = 0; index < argc; ++index)
         arguments.append(QString::fromLocal8Bit(argv[index]));

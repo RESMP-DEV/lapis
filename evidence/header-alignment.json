@@ -1,0 +1,34 @@
+{
+  "recorded_at": "2026-09-23T01:22:37.208032+00:00",
+  "source_state": "uncommitted working tree",
+  "source_sha256": {
+    "apps/desktop/qml/Main.qml": "58ddb5093c922b33aedaaf72db16f3c98912fc79fa4f62b999bd7f742fcf057f",
+    "apps/desktop/tests/ui_preview_test.cpp": "013edbfa93342494c84c4f31029f12fd1f0a76fc8751b479ec83b7818a7de146"
+  },
+  "changes": [
+    "Removed sidebar lapis wordmark",
+    "Removed redundant project breadcrumb row",
+    "Moved Commands onto agent-tab row",
+    "Aligned category and tab top edges and row heights",
+    "Kept full-path tooltip for custom names and truncated paths"
+  ],
+  "validation": {
+    "linux_suites": [
+      "window-state",
+      "ui-preview",
+      "appearance-input"
+    ],
+    "passed": true,
+    "seconds": 5.51,
+    "alignment_assertions": "wide viewports, default/minimal densities and enlarged text",
+    "clang_tidy": true,
+    "quality": true,
+    "mac_built_opened_and_visually_checked": true,
+    "agents_preserved": true
+  },
+  "screenshots": [
+    "build/header-alignment/ui-1400x960.png",
+    "build/header-alignment/ui-640x480.png"
+  ],
+  "binary_sha256": "2f7c7b9fe273565803a4d16ca5a695b74f77b3f1c6db2aed646daebdd106e272"
+}

@@ -6,3 +6,5 @@ reviews:
     base_branches:
       - main
       - feature/agent-strip
+      - feature/session-continuity
+      - feature/cli-updates

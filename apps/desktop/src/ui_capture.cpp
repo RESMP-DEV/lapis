@@ -28,42 +28,28 @@ QQuickItem* visual_item(QQuickItem& parent, const QString& name) {
     return nullptr;
 }
 QJsonObject view_state(QQuickWindow& window, Workspace& workspace) {
-    QJsonArray cards;
+    QJsonArray sessions;
     for (const auto& entry : workspace.sessions()) {
         auto* session = entry.value<SessionPreview*>();
-        auto* item = visual_item(*window.contentItem(),
-                                 QStringLiteral("sessionCard_") + session->sessionId());
-        QJsonObject card{{"id", session->sessionId()},
-                         {"pending", session->attentionPending()},
-                         {"serial", static_cast<qint64>(session->attentionSerial())},
-                         {"requests", session->attentionCount()}};
-        if (item) {
-            card.insert("width", item->width());
-            card.insert("height", item->height());
-            card.insert("x", item->x());
-            card.insert("y", item->y());
-            card.insert("cue_running", item->property("cueRunning").toBool());
-            card.insert("cue_level", item->property("cueLevel").toDouble());
-        }
-        cards.append(card);
+        sessions.append(QJsonObject{{"id", session->sessionId()},
+                                    {"pending", session->attentionPending()},
+                                    {"requests", session->attentionCount()},
+                                    {"status", session->statusKind()}});
     }
-    auto* focused = window.findChild<QQuickItem*>(QStringLiteral("focusedPane"));
-    const auto size = workspace.focusedSession()->snapshot().size;
+    const auto* selected = workspace.focusedSession();
+    const auto size = selected ? selected->snapshot().size : session::TerminalSize{0, 0};
     auto* terminal = visual_item(*window.contentItem(), QStringLiteral("liveTerminal"));
-    // Blocks mode hides the single pane and promotes the focused tile instead,
-    // so either surface owning focus means the session owns the keyboard.
-    auto* tile = visual_item(*window.contentItem(), QStringLiteral("cardTerminal_") +
-                                                        workspace.focusedSession()->sessionId());
-    const bool owns_focus = (terminal && terminal->hasFocus()) || (tile && tile->hasFocus());
     return {
-        {"terminal_owns_focus", owns_focus},
+        {"terminal_owns_focus", terminal && terminal->hasActiveFocus()},
         {"window_active", window.isActive()},
         {"focus", window.activeFocusItem() ? window.activeFocusItem()->objectName() : QString{}},
-        {"cards", cards},
+        {"sessions", sessions},
+        {"selected_session", selected ? selected->sessionId() : QString{}},
+        {"category", workspace.activeCategoryId()},
         {"terminal_columns", size.columns},
         {"terminal_rows", size.rows},
-        {"pane_height", focused ? focused->height() : 0},
-        {"pane_width", focused ? focused->width() : 0}};
+        {"pane_height", terminal ? terminal->height() : 0},
+        {"pane_width", terminal ? terminal->width() : 0}};
 }
 void type_smoke_text(QQuickWindow& window, const QString& text) {
     for (const QChar character : text) {
@@ -119,7 +105,9 @@ class Capture final : public QObject {
         timeout_.setInterval(15000 + options_.delay_ms);
         connect(&timeout_, &QTimer::timeout, this, [this] {
             qCritical() << "Window capture timed out; active:" << window_.isActive()
-                        << "input ready:" << workspace_.focusedSession()->inputReady()
+                        << "input ready:"
+                        << (workspace_.focusedSession() &&
+                            workspace_.focusedSession()->inputReady())
                         << "smoke sent:" << sent_ << "focus:"
                         << (window_.activeFocusItem() ? window_.activeFocusItem()->objectName()
                                                       : QString{});
@@ -138,21 +126,23 @@ class Capture final : public QObject {
             return;
         if (!window_.isActive())
             return;
-        if (!workspace_.previewMode() && !workspace_.focusedSession()->liveSnapshotReady())
+        if (!workspace_.previewMode() && workspace_.focusedSession() &&
+            !workspace_.focusedSession()->liveSnapshotReady())
             return;
         try {
             if (options_.smoke_input && !sent_) {
                 // Screen restoration precedes asynchronous identity persistence.
                 // Do not discard the one-shot command while input is still gated.
-                if (workspace_.focusedSession()->inputReady())
+                if (workspace_.focusedSession() && workspace_.focusedSession()->inputReady())
                     sent_ = send_smoke_input(window_, preview_);
                 return;
             }
             const auto marker = QStringLiteral("LAPIS_INPUT_%1_OK")
                                     .arg(QCoreApplication::applicationPid())
                                     .toStdU32String();
-            if (options_.smoke_input && workspace_.focusedSession()->snapshot().graphemes.find(
-                                            marker) == std::u32string::npos)
+            if (options_.smoke_input && (!workspace_.focusedSession() ||
+                                         workspace_.focusedSession()->snapshot().graphemes.find(
+                                             marker) == std::u32string::npos))
                 return;
             started_ = true;
             before_ = view_state(window_, workspace_);

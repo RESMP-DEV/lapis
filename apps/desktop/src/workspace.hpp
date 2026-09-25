@@ -6,14 +6,17 @@
 #include "launch_spec.hpp"
 #include "transport/attention_protocol.hpp"
 #include "transport/local_protocol.hpp"
-#include "workspace_registry.hpp"
 
 #include <QColor>
+#include <QHash>
+#include <QJsonArray>
+#include <QJsonValue>
+#include <QLockFile>
 #include <QMap>
 #include <QObject>
-#include <QPointer>
 #include <QSet>
 #include <QString>
+#include <QTimer>
 #include <QVariantList>
 
 #include <memory>
@@ -26,7 +29,7 @@ class LiveConnection;
 
 class SessionPreview final : public QObject {
     Q_OBJECT
-    Q_PROPERTY(QString sessionId READ sessionId NOTIFY connectionChanged)
+    Q_PROPERTY(QString sessionId READ sessionId CONSTANT)
     Q_PROPERTY(bool attentionPending READ attentionPending NOTIFY attentionChanged)
     Q_PROPERTY(QString attentionReason READ attentionReason NOTIFY attentionChanged)
     Q_PROPERTY(quint32 attentionSerial READ attentionSerial NOTIFY attentionChanged)
@@ -35,11 +38,16 @@ class SessionPreview final : public QObject {
     Q_PROPERTY(bool attentionReady READ attentionReady NOTIFY attentionChanged)
     Q_PROPERTY(QString attentionDiagnostic READ attentionDiagnostic NOTIFY attentionChanged)
     Q_PROPERTY(QVariantList attentionRequests READ attentionRequests NOTIFY attentionChanged)
-    Q_PROPERTY(QString title READ title CONSTANT)
+    Q_PROPERTY(QString title READ title NOTIFY identityChanged)
+    Q_PROPERTY(QString statusLabel READ statusLabel NOTIFY statusChanged)
+    Q_PROPERTY(QString statusKind READ statusKind NOTIFY statusChanged)
+    Q_PROPERTY(QString agentName READ agentName NOTIFY identityChanged)
+    Q_PROPERTY(QString harnessId READ harnessId NOTIFY identityChanged)
     Q_PROPERTY(QString directory READ directory CONSTANT)
     Q_PROPERTY(QString activity READ activity NOTIFY snapshotChanged)
     Q_PROPERTY(bool live READ live CONSTANT)
     Q_PROPERTY(bool inputReady READ inputReady NOTIFY connectionChanged)
+    Q_PROPERTY(bool reachable READ reachable NOTIFY connectionChanged)
     Q_PROPERTY(QString connectionState READ connectionState NOTIFY connectionChanged)
     Q_PROPERTY(QString serviceSessionId READ serviceSessionId NOTIFY connectionChanged)
     Q_PROPERTY(QVariantMap snapshotTiming READ snapshotTiming NOTIFY snapshotChanged)
@@ -47,14 +55,18 @@ class SessionPreview final : public QObject {
     Q_PROPERTY(bool historyRequestPending READ historyRequestPending NOTIFY historyChanged)
     Q_PROPERTY(QString historyMessage READ historyMessage NOTIFY historyChanged)
     Q_PROPERTY(QColor accent READ accent CONSTANT)
+    // True while a close request waits for the process to end; cleared if the
+    // service rejects the close and the agent remains attached.
+    Q_PROPERTY(bool closing READ closing NOTIFY statusChanged)
+    // Finished a turn or started needing a response while another agent was
+    // selected; cleared when this agent is selected.
+    Q_PROPERTY(bool unseen READ unseen NOTIFY unseenChanged)
   public:
     SessionPreview(QString title, QString directory, QString activity, QColor accent,
                    std::string_view content);
     ~SessionPreview() override;
     void startLive(const QString& endpoint, const session::LaunchSpec& launch,
                    session::wire::AttachMode mode = session::wire::AttachMode::reconnect);
-    void restoreLive(const WorkspaceEntry& entry);
-    [[nodiscard]] std::optional<WorkspaceEntry> reconnectEntry() const;
     Q_INVOKABLE void reconnect();
     Q_INVOKABLE void discoverSession();
     Q_INVOKABLE void startNewSession();
@@ -62,6 +74,27 @@ class SessionPreview final : public QObject {
     Q_INVOKABLE void newerHistory();
     Q_INVOKABLE void returnToLive();
     Q_INVOKABLE bool respondAttention(const QString& token, const QVariantMap& response);
+    // Ask the session service to end this agent's process. Returns false when
+    // the request could not be queued on a synchronized connection.
+    bool terminate();
+    [[nodiscard]] bool closing() const { return closing_; }
+    void setClosing(bool closing);
+    [[nodiscard]] bool unseen() const { return unseen_; }
+    void setUnseen(bool unseen);
+    // Where activity comes from: a service-side observer (the Codex app-server,
+    // Claude Code's hook relay) or, for other CLIs, an output-timing estimate.
+    enum class StatusSource : std::uint8_t { observer, output };
+    void setStatusSource(StatusSource source) { status_source_ = source; }
+    [[nodiscard]] StatusSource statusSource() const { return status_source_; }
+    // Output estimate windows: ignore replays for `settle_ms` after attaching,
+    // treat three frames within `burst_ms` as activity, and `quiet_ms` of
+    // silence after it as a pause. Tests shorten them.
+    struct OutputTiming {
+        qint64 settle_ms{3000};
+        qint64 burst_ms{1500};
+        int quiet_ms{4000};
+    };
+    void setOutputTimingForTesting(const OutputTiming& timing) { output_timing_ = timing; }
     void applyAttention(session::wire::AttentionSnapshot snapshot);
     void invalidateAttention();
     void retryAttention(const session::wire::AttentionDecision& decision);
@@ -74,6 +107,8 @@ class SessionPreview final : public QObject {
     [[nodiscard]] bool inputReady() const {
         return input_ready_ && !history_active_ && !history_request_pending_;
     }
+    // Synchronized with its service, even while a history page is showing.
+    [[nodiscard]] bool reachable() const { return input_ready_; }
     [[nodiscard]] const QString& connectionState() const { return connection_state_; }
     [[nodiscard]] const QString& serviceSessionId() const { return service_session_id_; }
     void applySnapshot(session::TerminalSnapshot snapshot);
@@ -89,12 +124,16 @@ class SessionPreview final : public QObject {
     void sendText(const QByteArray& bytes, bool paste = false);
     void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
     void resizeTerminal(session::TerminalSize size);
-    void setSessionId(const QString& id) {
-        if (session_id_ != id) {
-            session_id_ = id;
-            emit connectionChanged();
-        }
+    [[nodiscard]] QString statusLabel() const;
+    [[nodiscard]] QString statusKind() const;
+    [[nodiscard]] QString agentName() const;
+    [[nodiscard]] const QString& harnessId() const { return harness_id_; }
+    void setHarnessId(const QString& id);
+    void rename(const QString& title) {
+        title_ = title;
+        emit identityChanged();
     }
+    void setSessionId(const QString& id) { session_id_ = id; }
     [[nodiscard]] const QString& sessionId() const { return session_id_; }
     [[nodiscard]] bool attentionPending() const { return attentionCount() != 0; }
     [[nodiscard]] QString attentionReason() const;
@@ -115,21 +154,39 @@ class SessionPreview final : public QObject {
     [[nodiscard]] const session::TerminalSnapshot& snapshot() const { return snapshot_; }
 
   signals:
+    void identityChanged();
+    void statusChanged();
     void connectionChanged();
     void snapshotChanged();
     void historyChanged();
     void attentionChanged();
     void attentionArrived();
+    void unseenChanged();
 
   private:
     std::unique_ptr<LiveConnection> live_;
+    QString harness_id_{QStringLiteral("codex")};
     QString session_id_;
     QMap<QString, QString> requests_;
     std::optional<session::wire::AttentionSnapshot> attention_;
     QSet<QString> submitted_attention_;
     quint32 attention_serial_{};
+    bool awaiting_first_prompt_{};
     bool live_snapshot_ready_{};
     bool live_snapshot_received_{};
+    bool closing_{};
+    bool unseen_{};
+    StatusSource status_source_{StatusSource::observer};
+    // Output estimate: several frames close together read as activity, and a
+    // few quiet seconds after that as a pause. Neither implies a finished task.
+    void noteOutput();
+    [[nodiscard]] QString unobservedStatusKind() const;
+    std::vector<qint64> output_times_;
+    bool output_active_{};
+    bool output_quiet_{};
+    qint64 ready_since_{};
+    OutputTiming output_timing_;
+    QTimer quiet_timer_;
     bool history_active_{};
     bool history_request_pending_{};
     quint64 history_page_id_{};
@@ -158,84 +215,126 @@ struct WorkspaceOptions {
     QString endpoint;
     std::optional<session::LaunchSpec> launch;
     session::wire::AttachMode mode{session::wire::AttachMode::reconnect};
-    QString manifest{}; // Empty retains the explicit single-session connection path.
+    QString storagePath{};
 };
 
 class Workspace final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList sessions READ sessions NOTIFY sessionsChanged)
-    Q_PROPERTY(bool registryEnabled READ registryEnabled CONSTANT)
-    Q_PROPERTY(bool loading READ loading NOTIFY workspaceChanged)
-    Q_PROPERTY(bool canAddSessions READ canAddSessions NOTIFY workspaceChanged)
-    Q_PROPERTY(bool canRetrySave READ canRetrySave NOTIFY workspaceChanged)
-    Q_PROPERTY(QString status READ status NOTIFY workspaceChanged)
-    Q_PROPERTY(QString defaultSessionDirectory READ defaultSessionDirectory CONSTANT)
+    Q_PROPERTY(QVariantList categories READ categories NOTIFY categoriesChanged)
+    // Agents in any category that finished unseen or wait on a request.
+    Q_PROPERTY(int attentionAgents READ attentionAgents NOTIFY categoriesChanged)
+    Q_PROPERTY(QVariantList categorySessions READ categorySessions NOTIFY sessionsChanged)
+    Q_PROPERTY(QString activeCategoryId READ activeCategoryId NOTIFY categoryChanged)
+    Q_PROPERTY(QString workspaceError READ workspaceError NOTIFY errorChanged)
     Q_PROPERTY(bool previewMode READ previewMode CONSTANT)
-    Q_PROPERTY(int focusedIndex READ focusedIndex WRITE setFocusedIndex NOTIFY focusChanged)
+    Q_PROPERTY(QString homeDirectory READ homeDirectory CONSTANT)
+    Q_PROPERTY(int focusedIndex READ focusedIndex NOTIFY focusChanged)
     Q_PROPERTY(
         lapis::desktop::SessionPreview* focusedSession READ focusedSession NOTIFY focusChanged)
   public:
     explicit Workspace(WorkspaceMode mode = WorkspaceMode::live, WorkspaceOptions options = {});
-    ~Workspace() override;
-    [[nodiscard]] bool registryEnabled() const { return !manifest_.isEmpty(); }
-    [[nodiscard]] bool loading() const { return loading_; }
-    [[nodiscard]] bool canAddSessions() const;
-    [[nodiscard]] bool canRetrySave() const;
-    Q_INVOKABLE void retrySave();
-    [[nodiscard]] const QString& status() const { return status_; }
-    [[nodiscard]] const QString& defaultSessionDirectory() const {
-        return default_session_directory_;
-    }
-    Q_INVOKABLE bool addSession(bool codex, const QString& directory, const QString& endpoint = {});
-    Q_INVOKABLE bool addClaudeSession(const QString& directory, const QString& endpoint = {});
-    Q_INVOKABLE bool removeSession(const QString& id);
-    Q_INVOKABLE void setInteractionBlocked(const QString& reason, bool blocked);
-    [[nodiscard]] bool interactionBlocked() const { return !interaction_blocks_.isEmpty(); }
-    // Automatic requests are synchronous and never join the deferred manual queue.
-    bool focusAutomatically(const QString& id);
     [[nodiscard]] bool previewMode() const { return preview_mode_; }
+    [[nodiscard]] QString homeDirectory() const;
+    Q_INVOKABLE [[nodiscard]] QVariantList availableHarnesses() const;
+    Q_INVOKABLE [[nodiscard]] QString displayPath(const QString& directory) const;
     [[nodiscard]] SessionPreview* session(const QString& id) const;
-
-  private:
-    bool createSession(session::AgentMode agent, const QString& directory, const QString& endpoint);
-
-  public:
     // Development fixture v1 only. No calls are accepted in a live workspace.
     bool requestAttention(const PreviewRequest& request);
     bool resolveAttention(const PreviewRequest& request);
     Q_INVOKABLE bool replayAttention(const QString& scenario);
-    // Manual traversal of the flat session list, including labelled fixtures.
-    // Category grouping is not implemented.
+    [[nodiscard]] QVariantList categories() const;
+    [[nodiscard]] QVariantList categorySessions() const;
+    [[nodiscard]] const QString& activeCategoryId() const { return active_category_; }
+    [[nodiscard]] const QString& workspaceError() const { return error_; }
+    Q_INVOKABLE void clearError();
+    Q_INVOKABLE bool addCategory(const QString& name);
+    Q_INVOKABLE bool renameCategory(const QString& id, const QString& name);
+    Q_INVOKABLE bool removeCategory(const QString& id);
+    Q_INVOKABLE bool selectCategory(const QString& id);
+    Q_INVOKABLE void nextCategory(int delta = 1);
+    Q_INVOKABLE bool selectSession(const QString& id);
+    Q_INVOKABLE bool createAgent(const QString& directory, const QString& title,
+                                 const QString& harness = QStringLiteral("codex"));
+    // Close an agent's tab. A reachable agent is ended through its
+    // session service first and its tab closes once the process exits. An
+    // unreachable one keeps its tab unless `abandon` accepts that it may still
+    // be running without one.
+    Q_INVOKABLE bool closeSession(const QString& id, bool abandon = false);
+    Q_INVOKABLE bool moveSession(const QString& id, const QString& categoryId);
+    Q_INVOKABLE bool renameSession(const QString& id, const QString& title);
+    Q_INVOKABLE bool moveSessionBy(const QString& id, int delta);
+    Q_INVOKABLE bool removeSession(const QString& id);
     Q_INVOKABLE void nextSession(int delta = 1);
+    // Selects the next agent, in any category, with a pending request, or else
+    // one that finished while unseen; false when none is waiting.
+    Q_INVOKABLE bool nextAttention();
     [[nodiscard]] QVariantList sessions() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;
-    void setFocusedIndex(int index);
+    [[nodiscard]] int attentionAgents() const;
+    // Arguments from lapis.json added to each new agent of a harness.
+    void setHarnessArguments(QHash<QString, QStringList> arguments) {
+        harness_arguments_ = std::move(arguments);
+    }
   signals:
     void focusChanged();
+    // An agent received a new request.
+    void requestArrived();
     void sessionsChanged();
-    void workspaceChanged();
-    void interactionChanged();
-    void manualNavigationRequested();
+    void categoriesChanged();
+    void categoryChanged();
+    void errorChanged();
 
   private:
     [[nodiscard]] static QString rootDirectory();
     [[nodiscard]] static QString defaultEndpoint();
-    class Storage;
-    std::unique_ptr<Storage> storage_;
-    void loadRegistry();
-    void persistRegistry(bool retry = false);
-    void appendSession(std::unique_ptr<SessionPreview> session);
-    void flushFocus();
-    QString manifest_;
-    QString status_;
-    QString default_session_directory_;
-    QPointer<SessionPreview> pending_focus_;
-    QSet<QString> interaction_blocks_;
-    bool loading_{};
-    bool registry_ready_{};
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
-    int focused_index_{};
+    QHash<QString, QStringList> harness_arguments_;
+    struct Category {
+        QString id;
+        QString name;
+        QString selected;
+    };
+    struct Agent {
+        QString category;
+        QString endpoint;
+        session::LaunchSpec launch;
+        QString harness{QStringLiteral("codex")};
+    };
+    std::vector<Category> categories_;
+    QMap<QString, Agent> agents_;
+    QString active_category_{QStringLiteral("general")};
+    QString storage_path_;
+    std::unique_ptr<QLockFile> registry_lock_;
+    QString error_;
+    bool storage_failed_{};
+    bool fail(const QString& message);
+    struct RegistryState {
+        std::vector<Category> categories;
+        QMap<QString, Agent> agents;
+        QString active;
+        int focused{-1};
+    };
+    [[nodiscard]] RegistryState checkpoint() const;
+    void rollback(const RegistryState& previous);
+    bool mutableRegistry();
+    bool commit(const RegistryState& previous);
+    bool save(const QString& renamedId = {}, const QString& renamedTitle = {});
+    void restore();
+    void loadCategories(const QJsonArray& groups);
+    void loadAgents(const QJsonArray& agents);
+    void finishClosing(SessionPreview* item);
+    [[nodiscard]] static SessionPreview::StatusSource statusSource(const Agent& agent);
+    [[nodiscard]] static QStringList savedArguments(const QJsonValue& value);
+    void noteStatus(SessionPreview* item);
+    QHash<const SessionPreview*, QString> last_kind_;
+    bool batching_categories_{};
+    bool discardSession(const QString& id);
+    void changed();
+    void restoreSelection();
+    void watch(SessionPreview* item);
+    int focused_index_{-1};
     bool preview_mode_{};
 };
 

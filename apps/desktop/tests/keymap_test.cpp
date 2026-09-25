@@ -14,7 +14,11 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QKeySequence>
+#include <QList>
+#include <QPair>
 #include <QTemporaryDir>
+#include <array>
 #include <iostream>
 #include <stdexcept>
 
@@ -59,16 +63,34 @@ void themes_are_complete() {
         const auto& theme = themes[i];
         require(theme.name != nullptr && *theme.name != '\0', "theme needs a name");
         require(theme.label != nullptr && *theme.label != '\0', "theme needs a label");
-        const char* fields[] = {theme.background, theme.surface,       theme.card,
-                                theme.border,     theme.text,          theme.muted_text,
-                                theme.attention,  theme.focused_border};
+        const char* fields[] = {
+            theme.background, theme.surface,   theme.card,           theme.border,   theme.text,
+            theme.muted_text, theme.attention, theme.focused_border, theme.activity, theme.fault};
         for (const char* value : fields)
             require(value != nullptr && *value == '#', "theme colour must be a hex literal");
+        // Keyboard focus, activity, pending requests and faults each keep one
+        // meaning, so no two of them may share a colour within a theme.
+        const std::array semantic{
+            QString::fromLatin1(theme.focused_border), QString::fromLatin1(theme.activity),
+            QString::fromLatin1(theme.attention), QString::fromLatin1(theme.fault)};
+        for (std::size_t a = 0; a < semantic.size(); ++a)
+            for (std::size_t b = a + 1; b < semantic.size(); ++b)
+                require(semantic.at(a).compare(semantic.at(b), Qt::CaseInsensitive) != 0,
+                        "focus, activity, attention and fault colours must differ");
         // Names are the config keys, so a duplicate would make one unreachable.
         for (std::size_t j = i + 1; j < themes.size(); ++j)
             require(QString::fromLatin1(themes[i].name) != QString::fromLatin1(themes[j].name),
                     "theme names must be unique");
     }
+}
+
+// OLED black leaves every resting surface unlit.
+void oled_theme_is_black() {
+    const auto& oled = lapis::desktop::theme_for(QStringLiteral("oled"));
+    require(QString::fromLatin1(oled.name) == QStringLiteral("oled"), "oled theme exists");
+    for (const char* value : {oled.background, oled.surface, oled.card})
+        require(QString::fromLatin1(value) == QStringLiteral("#000000"),
+                "OLED resting surfaces are pure black");
 }
 
 // A selection is applied in memory and written to disk immediately, so the
@@ -343,9 +365,13 @@ void nonregular_config_paths_are_rejected() {
 // The dialog must expose both platform spellings without changing custom
 // sequences loaded from the user's config.
 void default_settings_chords_are_shared() {
-    const QStringList expected{QStringLiteral("Ctrl+,"), QStringLiteral("Meta+,")};
+#ifdef Q_OS_MACOS
+    const QStringList expected{QStringLiteral("Meta+,")};
+#else
+    const QStringList expected{QStringLiteral("Ctrl+Shift+,")};
+#endif
     require(default_settings_shortcuts() == expected,
-            "exported settings defaults must contain both chords");
+            "settings defaults must preserve terminal Control chords");
     KeyMap keymap;
     require(keymap.actionSequences(QStringLiteral("openSettings")) == expected,
             "KeyMap defaults must use the exported settings chords");
@@ -360,6 +386,51 @@ void default_settings_chords_are_shared() {
     const QStringList custom = keymap.actionSequences(QStringLiteral("openSettings"));
     require(custom == QStringList{QStringLiteral("Alt+F4")},
             "custom bindings must replace defaults exactly, with only surrounding space trimmed");
+    using lapis::desktop::shifted_punctuation;
+    const auto control_shift = Qt::ControlModifier | Qt::ShiftModifier;
+    require(shifted_punctuation(QKeyCombination(control_shift, Qt::Key_Comma)) ==
+                QKeyCombination(control_shift, Qt::Key_Less),
+            "X11's Ctrl+Shift+< is the Ctrl+Shift+, chord");
+    require(!shifted_punctuation(QKeyCombination(Qt::ControlModifier, Qt::Key_Comma)) &&
+                !shifted_punctuation(QKeyCombination(control_shift, Qt::Key_P)),
+            "only Shift with punctuation has a shifted form");
+}
+
+void navigation_defaults_preserve_terminal_editing() {
+    KeyMap keymap;
+    require(keymap.sequences(QStringLiteral("focusLeft")).isEmpty() &&
+                keymap.sequences(QStringLiteral("focusRight")).isEmpty(),
+            "line-editing arrows must not change the focused agent");
+    const QStringList actions{QStringLiteral("nextCategory"), QStringLiteral("previousCategory"),
+                              QStringLiteral("nextWindow"),   QStringLiteral("previousWindow"),
+                              QStringLiteral("newAgent"),     QStringLiteral("newCategory"),
+                              QStringLiteral("closeAgent"),   QStringLiteral("quit")};
+    // Command-W closes an agent; closing the window has no default key.
+    require(keymap.sequences(QStringLiteral("detachWindow")).isEmpty(),
+            "the window closes only from its own control or Quit");
+    for (const auto* removed : {"splitRight", "nextPane", "zoomPane", "paneLeft", "dividerLeft"})
+        require(keymap.sequences(QString::fromLatin1(removed)).isEmpty(), "no tiling actions");
+#ifdef Q_OS_MACOS
+    require(keymap.sequences(QStringLiteral("nextCategory")) ==
+                QStringList({QStringLiteral("Meta+Alt+Right"), QStringLiteral("Meta+Shift+Down")}),
+            "categories keep Command-Option-arrows and gain Command-Shift-arrows");
+#endif
+    QStringList seen;
+    for (const auto& action : actions) {
+        const auto sequences = keymap.sequences(action);
+        require(!sequences.isEmpty(), "workspace actions need defaults");
+        for (const auto& sequence : sequences) {
+            require(!seen.contains(sequence), "workspace shortcuts must be distinct");
+#ifdef Q_OS_MACOS
+            require(sequence.startsWith(QStringLiteral("Meta+")),
+                    "Mac workspace shortcuts must use Command");
+#else
+            require(sequence.startsWith(QStringLiteral("Ctrl+Shift+")),
+                    "Linux workspace shortcuts must preserve terminal Control commands");
+#endif
+            seen.append(sequence);
+        }
+    }
 }
 
 // Configured text must produce a valid QKeySequence. Known actions
@@ -457,6 +528,72 @@ void malformed_values_fall_back() {
     require(!keymap.diagnostic().isEmpty(), "falling back should be reported");
 }
 
+// Per-harness launch arguments are literal lists; malformed entries are
+// reported and dropped without affecting the valid ones or the rest of the file.
+void harness_arguments_are_literal_lists() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    const QDir dir(directory.path());
+    const QString path = write_config(
+        QDir(directory.path()),
+        R"({"theme": "oled", "harnessArguments": {"claude": ["--dangerously-skip-permissions"],)"
+        R"( "grok": "--yolo", "kimi": ["", 3]}})");
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "harness arguments load with the rest of the file");
+    require(keymap.harnessArguments().value(QStringLiteral("claude")) ==
+                QStringList{QStringLiteral("--dangerously-skip-permissions")},
+            "a list of strings is kept literally");
+    require(!keymap.harnessArguments().contains(QStringLiteral("grok")) &&
+                !keymap.harnessArguments().contains(QStringLiteral("kimi")),
+            "a string or a list with empty or non-string items is dropped");
+    require(keymap.diagnostic().contains(QStringLiteral("harnessArguments")),
+            "dropped entries are reported");
+    require(keymap.themeName() == QStringLiteral("oled"), "other settings still apply");
+    require(keymap.setTheme(QStringLiteral("graphite")), "persist an appearance change");
+    require(read_config(path)
+                    .value(QStringLiteral("harnessArguments"))
+                    .toObject()
+                    .value(QStringLiteral("claude"))
+                    .toArray()
+                    .size() == 1,
+            "saving appearance keeps the harness arguments");
+
+    const QString long_name(40, QLatin1Char('n'));
+    const QString invalid_name = write_config(
+        dir,
+        QStringLiteral(R"({"harnessArguments":{"%1":["--qualified"]}})").arg(long_name).toUtf8());
+    KeyMap overlong_name;
+    overlong_name.setSourcePathForTesting(invalid_name);
+    require(overlong_name.load(), "an overlong harness name still loads other defaults");
+    require(overlong_name.harnessArguments().isEmpty(), "an overlong harness name is dropped");
+    require(overlong_name.diagnostic().contains(QStringLiteral("at most 32 characters")),
+            "the diagnostic names the harness-name bound");
+
+    const QString long_argument = QStringLiteral("--%1").arg(QString(1025, QLatin1Char('x')));
+    const QString invalid_argument = write_config(
+        dir,
+        QStringLiteral(R"({"harnessArguments":{"claude":["%1"]}})").arg(long_argument).toUtf8());
+    KeyMap overlong_argument;
+    overlong_argument.setSourcePathForTesting(invalid_argument);
+    require(overlong_argument.load(), "an overlong argument still loads other defaults");
+    require(overlong_argument.harnessArguments().isEmpty(), "an overlong argument is dropped");
+    require(overlong_argument.diagnostic().contains(QStringLiteral("at most 1024 characters")),
+            "the diagnostic names the argument bound");
+
+    const QString empty_name =
+        write_config(dir, R"({"harnessArguments":{"":["--dropped"],"claude":["--kept"]}})");
+    KeyMap empty_key;
+    empty_key.setSourcePathForTesting(empty_name);
+    require(empty_key.load(), "an empty harness key still loads the rest of the file");
+    require(!empty_key.harnessArguments().contains(QString()) &&
+                empty_key.harnessArguments().value(QStringLiteral("claude")) ==
+                    QStringList{QStringLiteral("--kept")},
+            "an empty harness key is dropped without affecting a valid key");
+    require(empty_key.diagnostic().contains(QStringLiteral("Ignoring harnessArguments for ''")),
+            "an empty harness key is reported");
+}
+
 // The dialog builds its controls from these lists, so they must agree with the
 // names the setters accept.
 void advertised_names_are_accepted() {
@@ -488,12 +625,148 @@ void advertised_names_are_accepted() {
     require(static_cast<int>(CardDensity::Comfortable) == 0, "density order is part of the file");
 }
 
+void sidebar_preference_and_commands() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "sidebar fixture directory");
+    const auto path = write_config(QDir(directory.path()), R"({"retained":true})");
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load() && keymap.sidebarVisible(), "sidebar defaults visible");
+    QList<QPair<bool, bool>> observed;
+    QObject::connect(&keymap, &KeyMap::changed, &keymap,
+                     [&] { observed.append({keymap.sidebarVisible(), keymap.previewsVisible()}); });
+    require(keymap.setSidebarVisible(false), "hide sidebar persists");
+    require(keymap.setPreviewsVisible(false), "hide previews persists");
+    require(observed == QList<QPair<bool, bool>>{{false, true}, {false, false}},
+            "successful visibility saves emit each settled state once");
+    KeyMap restored;
+    restored.setSourcePathForTesting(path);
+    require(restored.load() && !restored.sidebarVisible(), "hidden sidebar survives restart");
+    require(read_config(path).value(QStringLiteral("retained")).toBool(),
+            "sidebar preserves unrelated settings");
+#ifdef Q_OS_MACOS
+    const auto paste = QKeySequence(QStringLiteral("Meta+V"))[0];
+#else
+    const auto paste = QKeySequence(QStringLiteral("Ctrl+Shift+V"))[0];
+#endif
+    for (const auto& action : {QStringLiteral("toggleSidebar"), QStringLiteral("openCommands")}) {
+        const auto bindings = keymap.sequences(action);
+        require(!bindings.isEmpty(), "new workspace actions have shortcuts");
+        for (const auto& binding : bindings)
+            require(QKeySequence(binding)[0] != paste, "workspace shortcuts must not steal paste");
+    }
+    require(!restored.previewsVisible(), "hidden previews survive restart");
+    observed.clear();
+    QObject::connect(&restored, &KeyMap::changed, &restored, [&] {
+        observed.append({restored.sidebarVisible(), restored.previewsVisible()});
+    });
+    static_cast<void>(write_config(QDir(directory.path()), "{broken"));
+    require(!restored.setSidebarVisible(true) && !restored.sidebarVisible(),
+            "failed sidebar save rolls back");
+    require(!restored.setPreviewsVisible(true) && !restored.previewsVisible(),
+            "failed preview save rolls back");
+    require(observed == QList<QPair<bool, bool>>{{false, false}, {false, false}},
+            "failed visibility saves never publish tentative values");
+}
+
+// The terminal font is validated, written immediately, restored on restart and
+// rolled back when the file cannot be saved.
+void terminal_font_persists_and_rolls_back() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "font fixture directory");
+    const QDir dir(directory.path());
+    const QString path =
+        write_config(dir, R"({"retained":true,"terminalFont":{"size":20,"ligatures":false}})");
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "font fixture loads");
+    require(keymap.terminalFontFamily().isEmpty(), "font family defaults to the system font");
+    require(keymap.terminalFontSize() == 20, "the explicit non-default font size is loaded");
+
+    require(keymap.setTerminalFontSize(22), "valid font size applies");
+    require(keymap.setTerminalFontFamily(QStringLiteral("  Test Mono  ")),
+            "font family applies with surrounding space trimmed");
+    require(keymap.terminalFontFamily() == QStringLiteral("Test Mono"), "trimmed family stored");
+    QJsonObject font = read_config(path).value(QStringLiteral("terminalFont")).toObject();
+    require(font.value(QStringLiteral("size")).toInt() == 22, "font size written");
+    require(font.value(QStringLiteral("family")).toString() == QStringLiteral("Test Mono"),
+            "font family written");
+    require(!font.value(QStringLiteral("ligatures")).toBool(true),
+            "unrelated terminalFont keys survive a write");
+    require(read_config(path).value(QStringLiteral("retained")).toBool(),
+            "font save preserves unrelated settings");
+
+    KeyMap restored;
+    restored.setSourcePathForTesting(path);
+    require(restored.load(), "saved font config reloads");
+    require(restored.terminalFontSize() == 22 &&
+                restored.terminalFontFamily() == QStringLiteral("Test Mono"),
+            "font survives a restart");
+
+    require(!keymap.setTerminalFontSize(lapis::desktop::kTerminalFontSizeMinimum - 1),
+            "below-minimum font sizes are rejected");
+    require(!keymap.setTerminalFontSize(lapis::desktop::kTerminalFontSizeMaximum + 1),
+            "above-maximum font sizes are rejected");
+    require(!keymap.setTerminalFontFamily(QStringLiteral("Bad\nName")),
+            "control characters in a family name are rejected");
+    require(!keymap.setTerminalFontFamily(QString(129, QLatin1Char('M'))),
+            "an over-length family name is rejected");
+    require(keymap.terminalFontSize() == 22 &&
+                keymap.terminalFontFamily() == QStringLiteral("Test Mono"),
+            "rejected font values do not change the selection");
+
+    require(keymap.setTerminalFontFamily(QString()), "empty family restores the system font");
+    font = read_config(path).value(QStringLiteral("terminalFont")).toObject();
+    require(!font.contains(QStringLiteral("family")), "the default family is not written");
+
+    const QByteArray malformed = "{unfinished user edit";
+    static_cast<void>(write_config(dir, malformed));
+    require(!keymap.setTerminalFontSize(24), "font size save fails on a malformed file");
+    require(keymap.terminalFontSize() == 22, "failed font size save rolls back");
+    require(!keymap.setTerminalFontFamily(QStringLiteral("Other Mono")),
+            "font family save fails on a malformed file");
+    require(keymap.terminalFontFamily().isEmpty(), "failed font family save rolls back");
+    require(keymap.diagnostic().contains(QStringLiteral("Could not save")),
+            "failed font save is visible");
+    QFile raw(path);
+    require(raw.open(QIODevice::ReadOnly), "read malformed font config");
+    require(raw.readAll() == malformed, "failed font save preserves malformed bytes");
+    raw.close();
+
+    for (const auto* value : {"null", "42", "[1,2,3]", "\"system mono\""}) {
+        const QByteArray contents = QByteArray("{\"terminalFont\":") + value + "}";
+        static_cast<void>(write_config(dir, contents));
+        const bool previous = keymap.sidebarVisible();
+        require(!keymap.setSidebarVisible(!previous) && keymap.sidebarVisible() == previous,
+                "appearance save rolls back instead of replacing a malformed font value");
+        require(keymap.diagnostic().contains(QStringLiteral("terminalFont must be an object")),
+                "malformed font save explains the rejected update");
+        require(raw.open(QIODevice::ReadOnly), "read malformed font value");
+        require(raw.readAll() == contents, "malformed font value remains byte-for-byte intact");
+        raw.close();
+    }
+
+    const QString invalid =
+        write_config(dir, R"({"terminalFont":{"family":"Tab\tName","size":16.5}})");
+    KeyMap fallback;
+    fallback.setSourcePathForTesting(invalid);
+    require(fallback.load(), "invalid font values still load the file");
+    require(fallback.terminalFontFamily().isEmpty() &&
+                fallback.terminalFontSize() == lapis::desktop::kTerminalFontSizeDefault,
+            "invalid font values fall back to defaults");
+    require(fallback.diagnostic().contains(QStringLiteral("terminalFont.family")) &&
+                fallback.diagnostic().contains(QStringLiteral("terminalFont.size")),
+            "each invalid font value is reported");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     QCoreApplication application(argc, argv);
     try {
         themes_are_complete();
+        oled_theme_is_black();
+        sidebar_preference_and_commands();
         selection_persists();
         layout_cycle_persists_from_every_layout();
         layout_cycle_preserves_malformed_config();
@@ -505,10 +778,13 @@ int main(int argc, char** argv) {
         zero_byte_file_initializes();
         nonregular_config_paths_are_rejected();
         default_settings_chords_are_shared();
+        navigation_defaults_preserve_terminal_editing();
         configured_shortcuts_are_validated();
         unknown_names_are_rejected();
         malformed_values_fall_back();
+        harness_arguments_are_literal_lists();
         advertised_names_are_accepted();
+        terminal_font_persists_and_rolls_back();
     } catch (const std::exception& error) {
         std::cerr << "keymap_test: " << error.what() << '\n';
         return 1;

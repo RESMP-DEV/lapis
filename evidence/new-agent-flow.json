@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-22T21:18:28.096192+00:00",
+  "source_base": "79be97a1d9927fa9858bb4daed2a9ba8704f6598",
+  "source_state": "uncommitted working tree",
+  "changes": [
+    "Folder-only new-agent form starts at platform home",
+    "Asynchronous bounded keyboard folder suggestions; native picker retained",
+    "OpenAI mark identifies Codex; default new titles use home-relative project paths",
+    "Existing custom names preserved; redundant theme tooltips removed"
+  ],
+  "source_sha256": {
+    "apps/desktop/qml/Main.qml": "0da104928292c656a817b31f7e8c7e3602b2fb3bbeca080b4f9b98ec85d1f4bf",
+    "apps/desktop/qml/Settings.qml": "1af0e0c3c92530f1fdc6d384c51a401ac65ca01f307e3340323b726d25b00710",
+    "apps/desktop/qml/AgentMark.qml": "0134e3dbf601c6af40b9962ae9ae119500427ba95bb91e63cf5f7ab8d06e386b",
+    "apps/desktop/CMakeLists.txt": "f98fda1ce9cb4de3389cef0b21a5f57a8ba3a91b59ed71ff5cea156d7e666d18",
+    "apps/desktop/src/workspace.cpp": "f9c1ffd1fc8236453b7b3e00410c3a4ade10452e21feec929f21bfd606e1c42e",
+    "apps/desktop/src/workspace.hpp": "10b0471e78fcf6715845b7f2928d780aafb14f2c76efa22c23ea35d20b0ebef3",
+    "apps/desktop/tests/workspace_test.cpp": "dfc121ae05defd5b001064fcb229c2ad0b96be9bba2f0ed6f5beb12866719ce1",
+    "apps/desktop/tests/ui_preview_test.cpp": "0e7be8da7d41a6d9d0cb07d939df4a7f2c03be6d32747e99c9c477fff8aa321d"
+  },
+  "validation": {
+    "linux_full_gate": {
+      "passed": true,
+      "checks": 51,
+      "artifact": "build/new-agent/desktop-receipt.json"
+    },
+    "linux_focused": {
+      "passed": true,
+      "suites": [
+        "workspace",
+        "ui-preview",
+        "appearance-input"
+      ],
+      "seconds": 5.71
+    },
+    "linux_final_ui": {
+      "passed": true,
+      "seconds": 5.73
+    },
+    "linux_asan_ubsan_lsan": {
+      "passed": true,
+      "suites": 3,
+      "seconds": 5.63,
+      "suppressions": false,
+      "scope": "Before final nodiscard and automatic-move style corrections only",
+      "artifact": "~/lapis-agent-workspace/build/new-agent/asan-test.log"
+    },
+    "quality": {
+      "passed": true,
+      "artifact": "build/new-agent/quality.log"
+    },
+    "mac": {
+      "built_and_opened": true,
+      "existing_agent_restored": true,
+      "new_agent_form_tested_on_linux": true,
+      "native_input_suite_rerun": false,
+      "binary_sha256": "47776c617202b87a3dfae68c424bcc9600e31ede1879db554f4126878cc5748b"
+    }
+  },
+  "screenshot_reviewed": "build/new-agent/final-new-agent.png",
+  "limits": [
+    "Codex is the only supported launch harness",
+    "Icon identifies the harness brand, not live model-provider metadata",
+    "Folder-only interpretation follows the final correction; harness-selection clarification received no reply",
+    "Linux tests use isolated software rendering; no Mac GUI test suite was run"
+  ]
+}

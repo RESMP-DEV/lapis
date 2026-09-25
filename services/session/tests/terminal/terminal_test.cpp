@@ -454,6 +454,28 @@ void grapheme_cap() {
     require(terminal.snapshot().text(0) == U"Z", "snapshot extraction failure prevented recovery");
 }
 
+void erased_backgrounds() {
+    Terminal terminal({16, 4});
+    // TUIs paint input panels by erasing with a background, then drawing text.
+    terminal.feed("\x1b[48;2;47;50;57m\x1b[2K> text\x1b[0m");
+    terminal.feed("\x1b[2;1H\x1b[48;5;4m\x1b[16X\x1b[0m");
+    const auto snapshot = terminal.snapshot();
+    for (std::size_t column = 0; column < 16; ++column) {
+        require(snapshot.cell_background(column) == 0x2f3239U,
+                "erase-line background must extend beyond printed text");
+        require(cell(snapshot, column, 1).style.background == TerminalColor{ColorKind::indexed, 4},
+                "erase-character background must retain its palette index");
+    }
+    terminal.feed("\x1b]4;4;rgb:12/34/56\x1b\\");
+    const auto recolored = terminal.snapshot();
+    require(recolored.cell_background(16) == 0x123456U,
+            "erased indexed backgrounds follow palette changes");
+    terminal.feed("\x1b[1;1H\x1b[2K");
+    const auto cleared = terminal.snapshot();
+    require(cleared.cell_background(0) == cleared.background_rgb,
+            "default erase clears the explicit background");
+}
+
 struct Case {
     std::string_view name;
     void (*run)(){};
@@ -463,6 +485,7 @@ constexpr std::array cases{
     Case{"ascii_cursor", ascii_cursor},
     Case{"fragmented_utf8", fragmented_utf8},
     Case{"styles_and_colors", styles_and_colors},
+    Case{"erased_backgrounds", erased_backgrounds},
     Case{"alternate_screen", alternate_screen},
     Case{"resize_and_wrap_spacer", resize_and_wrap_spacer},
     Case{"input_modes", input_modes},

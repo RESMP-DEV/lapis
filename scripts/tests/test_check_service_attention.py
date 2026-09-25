@@ -1,6 +1,11 @@
 """Behavioral regressions for the managed-service attention stream."""
 
+import contextlib
+import io
+import json
 import socket
+import stat
+import tempfile
 import sys
 import unittest
 from pathlib import Path
@@ -14,8 +19,178 @@ from check_service_attention import (
     View,
     cleanup_service,
     exercise,
+    fixture_options,
+    fixture_trust_prompt,
+    initialize_fixture_owner,
+    parse_args,
+    question_turn,
+    verify_runtime_model,
     selected_question_answers,
 )
+
+
+class AuthenticationPreflightTests(unittest.IsolatedAsyncioTestCase):
+    async def test_account_is_checked_without_refresh_before_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            owner = SimpleNamespace(
+                rpc=AsyncMock(return_value={"account": {"type": "chatgpt"}})
+            )
+            with patch(
+                "check_service_attention.initialize",
+                AsyncMock(return_value={"codexHome": str(home)}),
+            ):
+                await initialize_fixture_owner(owner, home, True)
+            owner.rpc.assert_awaited_once_with("account/read", {"refreshToken": False})
+
+    async def test_wrong_home_and_missing_account_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            owner = SimpleNamespace(rpc=AsyncMock(return_value={"account": None}))
+            with patch(
+                "check_service_attention.initialize",
+                AsyncMock(return_value={"codexHome": str(home)}),
+            ):
+                with self.assertRaisesRegex(CheckError, "will not start a login flow"):
+                    await initialize_fixture_owner(owner, home, True)
+            owner.rpc.reset_mock()
+            with patch(
+                "check_service_attention.initialize",
+                AsyncMock(return_value={"codexHome": str(home / "wrong")}),
+            ):
+                with self.assertRaisesRegex(CheckError, "private fixture home"):
+                    await initialize_fixture_owner(owner, home, True)
+            owner.rpc.assert_not_called()
+
+
+class OnboardingTests(unittest.TestCase):
+    def test_only_disposable_directory_trust_is_acknowledged(self):
+        directory = Path("/private/fixture/cwd")
+        prompt = f"{directory}\nDo you trust the contents of this directory?\nYes, continue\nPress enter to continue"
+        self.assertTrue(fixture_trust_prompt(prompt, directory))
+        self.assertFalse(fixture_trust_prompt(prompt, Path("/other/project")))
+        self.assertFalse(
+            fixture_trust_prompt("Welcome to Codex\nPress enter to continue", directory)
+        )
+
+    def test_login_menu_never_receives_trust_confirmation(self):
+        for label in (
+            "Sign in with ChatGPT",
+            "Finish signing in",
+            "Sign in with Device Code",
+        ):
+            with (
+                self.subTest(label=label),
+                self.assertRaisesRegex(CheckError, "will not start a login flow"),
+            ):
+                fixture_trust_prompt(
+                    label + "\nPress enter to continue", Path("/private/fixture/cwd")
+                )
+
+
+class ProviderOptionsTests(unittest.TestCase):
+    def test_live_modes_are_explicit_and_exclusive(self):
+        defaults = parse_args([])
+        self.assertFalse(defaults.live_openai or defaults.live_glm)
+        self.assertEqual(parse_args(["--live-openai"]).model, "gpt-6-astra")
+        self.assertEqual(parse_args(["--live-glm"]).model, "zai,glm-5.3")
+        custom = parse_args(["--live-openai", "--model", "candidate", "--desktop"])
+        self.assertEqual(custom.model, "candidate")
+        self.assertTrue(custom.desktop)
+        for arguments in [
+            ["--live-openai", "--live-glm"],
+            ["--desktop"],
+            ["--model", "candidate"],
+            ["--live-glm", "--model", "candidate"],
+            ["--live-openai", "--model", " "],
+        ]:
+            with (
+                self.subTest(arguments=arguments),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                with self.assertRaises(SystemExit) as raised:
+                    parse_args(arguments)
+                self.assertEqual(raised.exception.code, 2)
+
+    def test_openai_copies_private_auth_without_write_through(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            user = root / "user"
+            (user / ".codex").mkdir(parents=True)
+            auth = user / ".codex" / "auth.json"
+            auth.write_text("not a real credential")
+            runtime = root / "private"
+            (runtime / "home").mkdir(parents=True)
+            args = parse_args(["--live-openai"])
+            with patch("check_service_attention.Path.home", return_value=user):
+                options = fixture_options(args, runtime)
+            copied = runtime / "home" / "auth.json"
+            self.assertFalse(copied.is_symlink())
+            self.assertEqual(copied.read_bytes(), auth.read_bytes())
+            self.assertEqual(stat.S_IMODE(copied.stat().st_mode), 0o600)
+            copied.write_text("refreshed fixture credential")
+            self.assertEqual(auth.read_text(), "not a real credential")
+            config = dict(option.split("=", 1) for option in options[1::2])
+            self.assertEqual(json.loads(config["model_provider"]), "openai")
+            self.assertEqual(json.loads(config["model"]), "gpt-6-astra")
+            self.assertEqual(json.loads(config["cli_auth_credentials_store"]), "file")
+            self.assertEqual(json.loads(config["forced_login_method"]), "chatgpt")
+            self.assertNotIn("model_providers.lapis_probe.base_url", config)
+            for key in [
+                "features.apps",
+                "features.plugins",
+                "agents.enabled",
+                "features.multi_agent",
+                "features.multi_agent_v2",
+                "analytics.enabled",
+            ]:
+                self.assertFalse(json.loads(config[key]))
+
+    def test_missing_auth_fails_before_service_launch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "home").mkdir()
+            with patch("check_service_attention.Path.home", return_value=root):
+                with self.assertRaisesRegex(CheckError, "existing.*auth.json login"):
+                    fixture_options(parse_args(["--live-openai"]), root)
+            self.assertFalse((root / "home" / "auth.json").exists())
+
+    def test_glm_and_no_turn_do_not_access_auth(self):
+        for arguments in [[], ["--live-glm"]]:
+            with (
+                self.subTest(arguments=arguments),
+                patch(
+                    "check_service_attention.Path.home",
+                    side_effect=AssertionError("unexpected auth access"),
+                ),
+            ):
+                options = fixture_options(parse_args(arguments), Path("fixture"))
+                self.assertIn('model_provider="lapis_probe"', options)
+
+    def test_runtime_provider_and_model_must_match(self):
+        args = parse_args(["--live-openai"])
+        verify_runtime_model({"model": "gpt-6-astra", "modelProvider": "openai"}, args)
+        for runtime in [
+            {"model": "other", "modelProvider": "openai"},
+            {"model": "gpt-6-astra", "modelProvider": "lapis_probe"},
+            {},
+        ]:
+            with self.subTest(runtime=runtime):
+                with self.assertRaisesRegex(
+                    CheckError, "Unexpected runtime model/provider"
+                ):
+                    verify_runtime_model(runtime, args)
+
+
+class ModelPropagationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_question_fixture_uses_selected_model(self):
+        owner = SimpleNamespace(rpc=AsyncMock(return_value={}))
+        await question_turn(owner, "fixture-thread", "color", "selected-model")
+        method, params = owner.rpc.call_args.args
+        self.assertEqual(method, "turn/start")
+        self.assertEqual(
+            params["collaborationMode"]["settings"]["model"], "selected-model"
+        )
 
 
 class StreamSocket:

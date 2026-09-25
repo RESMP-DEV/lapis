@@ -87,6 +87,8 @@ int main(int argc, char** argv) {
         require(QFile::permissions(shared).testFlag(QFile::ReadOther));
         const auto existing = temporary.filePath(QStringLiteral("existing"));
         require(QDir().mkdir(existing));
+        require(QFile::setPermissions(existing,
+                                      QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
         const auto nested = existing + QStringLiteral("/nested");
         require(QDir().mkdir(nested));
         require(

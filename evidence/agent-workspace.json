@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-22T20:02:56.748316+00:00",
+  "source_base": "79be97a1d9927fa9858bb4daed2a9ba8704f6598",
+  "branch": "feature/agent-workspace",
+  "source_state": "uncommitted working tree",
+  "ready_for_use": true,
+  "pending_acceptance": [],
+  "implementation": [
+    "One terminal stage; no product shell sessions, thumbnails or fixture cards.",
+    "Persistent categories and category-owned tabs with remembered selection and stable moves.",
+    "Managed Codex creation, project folder picker, rename and order controls.",
+    "Source-derived working, waiting, finished-turn and unavailable states; no silence inference.",
+    "Command theme with coordinated palette, typography, borders and motion; responsive category selector.",
+    "Private atomic registry with transactional failure rollback and lifetime writer exclusion.",
+    "Machine-local geometry restoration; consistent view detach, owned agents remain alive.",
+    "Composition and paste guard both navigation and modal entry; approvals remain explicit."
+  ],
+  "validation": {
+    "linux_normal": {
+      "passed": true,
+      "ctest_suites": 20,
+      "gate_checks": 51,
+      "artifact": "~/lapis-agent-workspace/build/reports/desktop/receipt.json"
+    },
+    "linux_asan_ubsan": {
+      "passed": true,
+      "ctest_suites": 20,
+      "leak_detection": true,
+      "suppressions": false,
+      "artifact": "~/lapis-agent-workspace/build/agent-workspace/asan-final.log"
+    },
+    "python_quality": {
+      "passed": true,
+      "tests": 107,
+      "artifact": "build/reports/quality/receipt.json"
+    },
+    "tool_detectors": {
+      "passed": true,
+      "checks": 12,
+      "artifact": "~/lapis-agent-workspace/build/reports/tool-verification/receipt.json"
+    },
+    "linux_service_gui": {
+      "passed": true,
+      "checks": 15,
+      "artifact": "~/lapis-agent-workspace/build/agent-workspace/cli-final.json"
+    },
+    "linux_captures": {
+      "passed": true,
+      "checks": 10,
+      "viewports": [
+        "640x480",
+        "700x900",
+        "980x700",
+        "1400x960",
+        "2560x1080"
+      ],
+      "larger_text_and_menu_bounds": true,
+      "artifact": "~/lapis-agent-workspace/build/agent-workspace/captures/receipt.json"
+    },
+    "mac_live_protocol": {
+      "timestamp": "2026-09-22T06:42:16.745919+00:00",
+      "checks": [
+        "managed TUI startup and attention attachment",
+        "duplicate decision sent after first decision",
+        "real command approval over service IPC",
+        "pending request survives same-child reattachment",
+        "stale token rejected",
+        "source resolution and successful continuation",
+        "invalid answers rejected with an exact retry token",
+        "real user-input answer over service IPC and successful continuation",
+        "archived source disables replies; restored source reconciles in a fresh epoch",
+        "new request after source recovery is cancelled by an observed turn interruption",
+        "two simultaneous real approvals retain distinct identities and resolve independently"
+      ],
+      "passed": true,
+      "live_model_turn": true,
+      "configured_model": "gpt-6-astra",
+      "configured_provider": "openai",
+      "desktop_controls": false,
+      "codex_sha256": "8eaf1ad12fe6bf89b1710330f58900014322c7c5af677e43be116d8ac5fc0a9e",
+      "source": "ordinary TUI created thread, service-owned backend and observer",
+      "model": "gpt-6-astra",
+      "model_provider": "openai",
+      "last_attention": {
+        "ready": true,
+        "connected": true,
+        "diagnostic": "Codex synchronized",
+        "activity": 3
+      },
+      "last_request_count": 0,
+      "service_reaped": true,
+      "owned_process_groups_cleaned": true,
+      "elapsed_seconds": 43.256
+    },
+    "mac_real_workspace_lifecycle": {
+      "cleanupComplete": true,
+      "modelTurns": 0,
+      "passed": true,
+      "samePidsAfterReconnect": true,
+      "servicePids": [
+        96159,
+        96196
+      ],
+      "terminalPids": [
+        96176,
+        96256
+      ]
+    },
+    "mac_build": {
+      "passed": true,
+      "app": "build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop",
+      "sha256": "ef65b4b379cf297d5afcd2f450ef009ffecec41517703eb045bb62da890d9efe"
+    },
+    "native_mac": {
+      "passed": true,
+      "cases": 20,
+      "clipboard_restored": true,
+      "input_source_restored": true,
+      "enabled_sources_restored": true,
+      "artifact": "build/agent-workspace/native-final.json"
+    },
+    "mac_live_desktop": {
+      "timestamp": "2026-09-22T20:01:20.607382+00:00",
+      "checks": [
+        "managed TUI startup and attention attachment",
+        "real command approval through desktop controls",
+        "real command approval over service IPC",
+        "pending request survives same-child reattachment",
+        "stale token rejected",
+        "source resolution and successful continuation",
+        "invalid answers rejected with an exact retry token",
+        "real user-input answer through desktop controls",
+        "real user-input answer over service IPC and successful continuation",
+        "archived source disables replies; restored source reconciles in a fresh epoch",
+        "new request after source recovery is cancelled by an observed turn interruption",
+        "two simultaneous real approvals retain distinct identities and resolve independently"
+      ],
+      "passed": true,
+      "live_model_turn": true,
+      "configured_model": "gpt-6-astra",
+      "configured_provider": "openai",
+      "desktop_controls": true,
+      "codex_sha256": "8eaf1ad12fe6bf89b1710330f58900014322c7c5af677e43be116d8ac5fc0a9e",
+      "source": "ordinary TUI created thread, service-owned backend and observer",
+      "model": "gpt-6-astra",
+      "model_provider": "openai",
+      "last_attention": {
+        "ready": true,
+        "connected": true,
+        "diagnostic": "Codex synchronized",
+        "activity": 3
+      },
+      "last_request_count": 0,
+      "service_reaped": true,
+      "owned_process_groups_cleaned": true,
+      "elapsed_seconds": 36.608
+    },
+    "mac_visual": {
+      "passed": true,
+      "method": "Live CUA accessibility and screenshot inspection",
+      "window": "lapis \u00b7 General",
+      "normal_workspace": true,
+      "sample_cards": false,
+      "old_demo_view_closed": true,
+      "left_open_for_user": true
+    }
+  },
+  "review": {
+    "model": "claude-opus-5",
+    "result": "No blockers reported; six findings inspected, persistence and latent null/metadata/focus issues repaired.",
+    "artifact": "build/agent-workspace/final-review.txt",
+    "followup": "Added failed-write rollback, partial-corruption, aged-live-lock, paste guard and visible-stage modal assertions. Global MetaCall drain is intentional; teardown disables reentry and hidden-window input before QML deletion."
+  },
+  "upstream_evidence": {
+    "qt_signal_proxy": "https://github.com/qt/qtdeclarative/blob/v6.11.2/src/qml/qml/qqmlengine.cpp#L269",
+    "qt_lifetime_lock": "https://doc.qt.io/qt-6/qlockfile.html#details"
+  },
+  "limits": [
+    "Linux uses CPU Mesa Vulkan in a private Xvfb/Openbox display; physical GPU/Wayland/input are not qualified.",
+    "The Linux test host's Codex login is expired; its binary was not added to the qualified hash. Mac0.155.1 live protocol was exercised.",
+    "Vendor libraries are not sanitizer-instrumented; no memory or frame-rate comparison with Cursor is claimed.",
+    "No automatic carousel, second adapter, 32-session qualification or distributable packaging is claimed."
+  ],
+  "source_sha256": {
+    "adapters/codex/src/observer.cpp": "18fa01331741affb8cceade889662ff74f233616b60075a86aafa504056326ee",
+    "adapters/codex/tests/observer_test.cpp": "cbc819705cdd5c8238a2a462b6a4a645a43447478aec31149b5dd80c92ade73f",
+    "apps/desktop/CMakeLists.txt": "9665db462915639bf226eb88868a9663bbc3c9ecfe8e236b3513a4308f3355d6",
+    "apps/desktop/qml/Main.qml": "36fed7e9f539128b65c015e009f105a46559a2470c3a8128cbbd4dd5852b36ae",
+    "apps/desktop/qml/Settings.qml": "1819e10eb7857dd20048dc5376ca701f623445ae5b7bc736a004c847de171080",
+    "apps/desktop/src/attention_view.cpp": "9ce9ef75e67f441f268102a8ef9b559736719faa49affd728a80394e6393f972",
+    "apps/desktop/src/keymap.cpp": "4dc75d98c72544b66ceebbe8284bf8b46f1ee0642c394e4ef71867a84ee120ef",
+    "apps/desktop/src/keymap.hpp": "ee9307e544df96662827d45f4e06ddd84c1b93c27da1872256521921e1d57eb3",
+    "apps/desktop/src/main.cpp": "64a25f65c9c13c592f206bf3237252f1a65015223a54b63077969cdfd70b2fbf",
+    "apps/desktop/src/terminal_surface.cpp": "d3a7e2642e0f032027d2c7c8a9d3f1fbe0fac3808e6431e7a2023ec137cab521",
+    "apps/desktop/src/terminal_surface.hpp": "18abd366cf7ce8179169b6ed7eef5911ede4d06d0174da7b25a13285d38906c8",
+    "apps/desktop/src/ui_capture.cpp": "a73a907bf572a3af6859a7e254120f6ea3b8f39a459995caed8fd7746b40512a",
+    "apps/desktop/src/ui_preview.cpp": "48fa220ca5d88c88bf580fe823fc67c8def386ec56b19e4aa2df08c4d4b971f2",
+    "apps/desktop/src/ui_preview.hpp": "498c1992473815ee51eb81c3a37df21dcaee185c771ac0d31c78ab73b62c5092",
+    "apps/desktop/src/workspace.cpp": "b8d86e101c5deec75f580be99d11dfa0300e0df8b610f53212de31794c4c9440",
+    "apps/desktop/src/workspace.hpp": "ad998d23751f76245f15b4ace2f77b5642bfbd01f3e0884bf19487b190f88324",
+    "apps/desktop/tests/keymap_test.cpp": "e4dfe1bfbb97c92d5a6e5d2c1a74aeb4b4f1abc1df6214081cc2942a556f72f0",
+    "apps/desktop/tests/terminal_input_test.cpp": "cc06fdad3503873a74598b8513cd66430804ae96a16a468f61f767bd71bd25ce",
+    "apps/desktop/tests/ui_preview_test.cpp": "1f590724861a4b5c4e35ff3ce5e60959e628291af57bc710dcaa87cd09817375",
+    "apps/desktop/tests/window_state_test.cpp": "67fb0058740a0b4ba164a2463ca1605d7955f5199849888edc31b4157908b7ce",
+    "apps/desktop/tests/workspace_live_probe.cpp": "add378ca20be2f7b9b5b07d638f6658a334d06337507dd6ce43df1507fecc9d1",
+    "apps/desktop/tests/workspace_test.cpp": "ccd4dab30521fee16540f7b23cc9ae8cf2417219dad613933fbec530f4fda97e",
+    "scripts/check_cli_launch.py": "3fa35727f754e5c0bf810033b573934441e92fb4d4b6b94567877df262ebb2f3",
+    "scripts/check_cpp.py": "42e447c9ebbbf8fec67e4306396e793b499add536deb65fb81d8f12fe4844912",
+    "scripts/check_service_attention.py": "55f0b0537b2e3e8b3f00c990ebd07b99d48a62f96b5db14ee53bc6ceca219119",
+    "scripts/check_ui_preview.py": "24f1419fe69bb8f6db70a7a2c1a1bd5d90ba189da5e3ba673dcbbf1b657b9967",
+    "scripts/lapis.py": "3937a038d02cc8037695167c71a6c94cb91ed197db9370cce15b0998fabe7d94",
+    "scripts/tests/test_check_service_attention.py": "696d908e891310e3b7573b3cf509ba967ab32dc9d5c9f56e198fa0c913ae3e38",
+    "scripts/tests/test_lapis.py": "4ae0575b9628aa5fc81f02411c0f57e72101644650be0514c72f721cbd992e4d",
+    "services/session/src/platform/posix/pty_process.cpp": "14ba42c574132f60fdbd2df1edb8e2e45c86052c8ba3bd0c0a147f5c724e5bfd",
+    "services/session/tests/launch_spec_test.cpp": "e3fb2e8db869d91a911a83a7a6a2b440d2f28cf8faf6dd7688b3651df8bf5568",
+    "tools/terminal_probe/ghostty/sources.json": "5f856cd6f40419540e2dd65ca693aac742f2ce3a7df199509ec829ea1a32b389"
+  }
+}

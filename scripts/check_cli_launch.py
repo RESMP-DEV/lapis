@@ -18,6 +18,11 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+if __package__:
+    from . import lapis
+else:
+    import lapis
+
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = 6
 HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
@@ -410,6 +415,8 @@ for line in sys.stdin:
 
 def run_capture(desktop, options, artifacts, name, expect_success=True):
     options = list(options)
+    if "--ui-preview" not in options and "--codex" not in options:
+        options.insert(0, "--development-shell")
     if (
         expect_success
         and "--socket" in options
@@ -1006,7 +1013,11 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
                     remaining = deadline - time.monotonic()
                     require(remaining > 0, "Backpressured client did not disconnect")
                     client.socket.settimeout(remaining)
-                    chunk = client.socket.recv(65536)
+                    try:
+                        chunk = client.socket.recv(65536)
+                    except ConnectionResetError:
+                        # Linux may reset a peer closed with unread request bytes.
+                        break
                     if not chunk:
                         break
                     received_bytes += len(chunk)
@@ -1129,6 +1140,8 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
                     program,
                 ],
                 ["--socket", ""],
+                ["--new-session"],
+                ["--discover"],
             ]
         ):
             run_capture(
@@ -1257,8 +1270,6 @@ def main():
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     artifacts = Path(tempfile.mkdtemp(prefix="run-", dir=args.output.parent))
-    runtime_root = ROOT / "runtime"
-    runtime_root.mkdir(exist_ok=True)
     receipt = {
         "schema": "lapis.cli-launch-check/1",
         "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -1268,6 +1279,7 @@ def main():
         "scope": "Controlled fixture, optional Qt captures and optional no-prompt Codex TUI; no agent attention qualification.",
     }
     try:
+        runtime_root = lapis.private_runtime_dir()
         if args.codex:
             executable = Path(shutil.which(args.codex) or args.codex).resolve(
                 strict=True
@@ -1289,6 +1301,7 @@ def main():
         receipt["passed"] = all(check["passed"] for check in receipt["checks"])
     except (
         CheckError,
+        lapis.SetupError,
         OSError,
         ValueError,
         EOFError,

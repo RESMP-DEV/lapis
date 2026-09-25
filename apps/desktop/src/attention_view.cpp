@@ -24,6 +24,74 @@ QString token(const session::wire::AttentionSnapshot& snapshot,
            ':' + QString::number(pending.revision) + ':' + request_id;
 }
 } // namespace
+// A connected agent without an observer reads from the output estimate.
+QString SessionPreview::unobservedStatusKind() const {
+    if (status_source_ == StatusSource::output && (output_active_ || output_quiet_))
+        return output_active_ ? QStringLiteral("working") : QStringLiteral("idle");
+    return QStringLiteral("unknown");
+}
+QString SessionPreview::statusKind() const {
+    if (live()) {
+        if (connection_state_ == QStringLiteral("ended"))
+            return QStringLiteral("ended");
+        if (connection_state_ == QStringLiteral("connecting") ||
+            connection_state_ == QStringLiteral("synchronizing"))
+            return QStringLiteral("connecting");
+        if (!input_ready_)
+            return QStringLiteral("disconnected");
+        if (!attention_)
+            return unobservedStatusKind();
+        if (!attention_->ready || !attention_->connected)
+            return QStringLiteral("unknown");
+    }
+    if (attention_ && (!attention_->ready || !attention_->connected))
+        return QStringLiteral("unknown");
+    if (attentionPending())
+        return QStringLiteral("waiting");
+    if (!attention_)
+        return QStringLiteral("unknown");
+    switch (attention_->activity) {
+    case session::attention::Activity::working:
+        return QStringLiteral("working");
+    case session::attention::Activity::idle:
+        return QStringLiteral("idle");
+    case session::attention::Activity::turn_completed:
+        return QStringLiteral("finished");
+    case session::attention::Activity::unknown:
+        return QStringLiteral("unknown");
+    }
+    return QStringLiteral("unknown");
+}
+QString SessionPreview::statusLabel() const {
+    const auto kind = statusKind();
+    if (closing_ && kind != QStringLiteral("ended"))
+        return QStringLiteral("Ending agent");
+    if (!attention_ && status_source_ == StatusSource::output &&
+        (kind == QStringLiteral("working") || kind == QStringLiteral("idle")))
+        return kind == QStringLiteral("working") ? QStringLiteral("Output active")
+                                                 : QStringLiteral("Quiet");
+    if (kind == QStringLiteral("working"))
+        return QStringLiteral("Working");
+    if (kind == QStringLiteral("waiting"))
+        return QStringLiteral("Needs your response");
+    if (kind == QStringLiteral("finished"))
+        return QStringLiteral("Turn finished");
+    if (kind == QStringLiteral("idle"))
+        return QStringLiteral("Ready");
+    if (kind == QStringLiteral("connecting"))
+        return QStringLiteral("Opening agent");
+    if (kind == QStringLiteral("disconnected"))
+        return QStringLiteral("Unavailable");
+    if (kind == QStringLiteral("ended"))
+        return QStringLiteral("Ended");
+    if (harnessId() != QStringLiteral("codex") && input_ready_)
+        return QStringLiteral("Connected");
+    if (attention_ && attention_->connected && !attention_->ready && awaiting_first_prompt_)
+        return QStringLiteral("No prompt yet");
+    if (attention_ && attention_->connected && !attention_->ready)
+        return QStringLiteral("Status pending");
+    return QStringLiteral("Status unavailable");
+}
 bool SessionPreview::hasAttentionSource() const { return attention_ && attention_->available; }
 bool SessionPreview::attentionReady() const {
     return input_ready_ && attention_ && attention_->ready && attention_->connected;
@@ -67,6 +135,11 @@ QVariantList SessionPreview::attentionRequests() const {
     return values;
 }
 void SessionPreview::applyAttention(session::wire::AttentionSnapshot snapshot) {
+    // Claude Code's idle notice follows a finished turn and has no response;
+    // the finished turn already marks the agent, so only actionable requests
+    // count toward attention, the Requests list and the unseen mark.
+    std::erase_if(snapshot.requests,
+                  [](const auto& item) { return item.pending.request.reason == "idle"; });
     bool arrived = false;
     QSet<QString> current;
     for (const auto& item : snapshot.requests) {
@@ -82,6 +155,16 @@ void SessionPreview::applyAttention(session::wire::AttentionSnapshot snapshot) {
             arrived = true;
     }
     submitted_attention_.intersect(current);
+    // A new Codex session has no thread rollout until its first prompt (Codex
+    // 0.155.1 answers resume with "no rollout found"). Services built before
+    // the observer kept that diagnostic briefly report reconciliation on each
+    // one-second retry; that does not end the wait.
+    const auto& diagnostic = snapshot.diagnostic;
+    const bool waiting = diagnostic == QLatin1String("Waiting for Codex thread history") ||
+                         diagnostic == QLatin1String("Waiting for a persistent Codex thread");
+    const bool retrying = diagnostic == QLatin1String("Reconciling Codex requests");
+    awaiting_first_prompt_ =
+        snapshot.connected && !snapshot.ready && (waiting || (retrying && awaiting_first_prompt_));
     attention_ = std::move(snapshot);
     if (arrived)
         ++attention_serial_;

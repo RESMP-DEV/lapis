@@ -16,25 +16,14 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_BUILD = ROOT / "build" / "desktop"
-DESKTOP_BINARY = (
-    DESKTOP_BUILD
-    / "apps"
-    / "desktop"
-    / "lapis_desktop.app"
-    / "Contents"
-    / "MacOS"
-    / "lapis_desktop"
-)
 GHOSTTY_RUNS = ROOT / "build" / "terminal-probe" / "reproduce" / "ghostty" / "runs"
 RUNTIME_DIR = ROOT / "runtime"
 DEFAULT_SOCKET = RUNTIME_DIR / "desktop-v6.sock"
-# Window tests belong on the laptop panel, not a large external display. Override
-# with LAPIS_SCREEN, or pass --screen to the app directly.
-DEFAULT_SCREEN = "built-in"
 # This must mirror every value-taking desktop option declared by add_options()
 # in apps/desktop/src/main.cpp. Qt owns the parser; there is no shared manifest.
 VALUE_OPTIONS = frozenset(
@@ -47,9 +36,25 @@ VALUE_OPTIONS = frozenset(
         "--screen",
         "--socket",
         "--trace",
-        "--workspace",
     }
 )
+LAVAPIPE_ICDS = (
+    Path("/usr/share/vulkan/icd.d/lvp_icd.json"),
+    Path("/usr/share/vulkan/icd.d/lvp_icd.x86_64.json"),
+)
+
+
+def desktop_binary_path():
+    """CMake emits a macOS bundle and a plain executable on Linux."""
+    directory = DESKTOP_BUILD / "apps" / "desktop"
+    if sys.platform == "darwin":
+        directory /= "lapis_desktop.app/Contents/MacOS"
+    return directory / "lapis_desktop"
+
+
+def default_screen():
+    """Normal launch leaves display placement to the OS and saved geometry."""
+    return ""
 
 
 class SetupError(RuntimeError):
@@ -116,11 +121,60 @@ def ghostty_prefix():
 
 def environment():
     """Environment overrides required by CMake and the desktop app."""
-    screen = os.environ.get("LAPIS_SCREEN", DEFAULT_SCREEN)
-    return {
+    screen = os.environ.get("LAPIS_SCREEN", default_screen())
+    overrides = {
+        **llvm_environment(),
         "LAPIS_GHOSTTY_PREFIX": str(ghostty_prefix()),
         "LAPIS_SCREEN": screen,
     }
+    prefix = linux_qt_prefix()
+    if prefix is not None:
+        prefixes = os.environ.get("CMAKE_PREFIX_PATH", "").split(os.pathsep)
+        prefixes = [value for value in prefixes if value]
+        if str(prefix) not in prefixes:
+            prefixes.append(str(prefix))
+        overrides["CMAKE_PREFIX_PATH"] = os.pathsep.join(prefixes)
+    return overrides
+
+
+def llvm_environment():
+    """Use the complete Linux LLVM bundle unless the caller selected another."""
+    if sys.platform != "linux" or "LAPIS_LLVM_BIN" in os.environ:
+        return {}
+    directory = Path("/usr/lib/llvm-22/bin")
+    if all(
+        (directory / name).is_file() and os.access(directory / name, os.X_OK)
+        for name in ("clang++", "clangd", "clang-format", "clang-tidy")
+    ):
+        return {"LAPIS_LLVM_BIN": str(directory)}
+    return {}
+
+
+def linux_qt_prefix():
+    """Find the project-local pinned Linux SDK without changing shell settings."""
+    prefix = ROOT / "build/deps/qt/6.11.2/gcc_64"
+    if sys.platform == "linux" and (prefix / "lib/cmake/Qt6/Qt6Config.cmake").is_file():
+        return prefix
+    return None
+
+
+def qt_qmake():
+    """Query explicit Linux SDKs first, then the local SDK and PATH tools."""
+    if sys.platform == "linux":
+        prefixes = [
+            Path(value)
+            for value in os.environ.get("CMAKE_PREFIX_PATH", "").split(os.pathsep)
+            if value
+        ]
+        local = linux_qt_prefix()
+        if local is not None:
+            prefixes.append(local)
+        for prefix in prefixes:
+            qmake = prefix / "bin/qmake"
+            if qmake.is_file() and os.access(qmake, os.X_OK):
+                return str(qmake)
+        return shutil.which("qmake6") or shutil.which("qmake")
+    return shutil.which("qmake")
 
 
 def run_python_script(name, arguments, *, needs_ghostty=True):
@@ -131,19 +185,20 @@ def run_python_script(name, arguments, *, needs_ghostty=True):
     result = subprocess.run(
         [sys.executable, str(script), *arguments],
         cwd=ROOT,
-        env={**os.environ, **(environment() if needs_ghostty else {})},
+        env={**os.environ, **(environment() if needs_ghostty else llvm_environment())},
         check=False,
     )
     return result.returncode
 
 
 def desktop_binary():
-    if not DESKTOP_BINARY.is_file():
+    binary = desktop_binary_path()
+    if not binary.is_file():
         raise SetupError(
-            f"The desktop app is not built: {DESKTOP_BINARY}\n"
+            f"The desktop app is not built: {binary}\n"
             "Build it with: python3 scripts/lapis.py build"
         )
-    return DESKTOP_BINARY
+    return binary
 
 
 def private_runtime_dir():
@@ -199,20 +254,17 @@ def launch(arguments):
     app_arguments = arguments[:separator]
     separator_program = separator < len(arguments) - 1
     if not any(a == "--screen" or a.startswith("--screen=") for a in app_arguments):
-        screen = os.environ.get("LAPIS_SCREEN", DEFAULT_SCREEN)
+        screen = os.environ.get("LAPIS_SCREEN", default_screen())
         if screen:
             arguments[:0] = ["--screen", screen]
     command = [desktop_binary(), *arguments]
+    # A bare launch opens the saved category workspace. Explicit sessions and
+    # the development shell use the private qualification socket.
     if (
         not separator_program
         and "--ui-preview" not in app_arguments
-        and not any(
-            a in ("--socket", "--workspace")
-            or a.startswith(("--socket=", "--workspace="))
-            for a in app_arguments
-        )
+        and not any(a == "--socket" or a.startswith("--socket=") for a in app_arguments)
     ):
-        private_runtime_dir()
         explicit_session = any(
             a
             in (
@@ -222,15 +274,14 @@ def launch(arguments):
                 "--codex",
                 "--claude",
                 "--smoke-input",
+                "--development-shell",
             )
             or a.startswith("--cwd=")
             for a in app_arguments
         ) or has_positional_program(app_arguments)
-        command[1:1] = (
-            ["--socket", str(DEFAULT_SOCKET)]
-            if explicit_session
-            else ["--workspace", str(RUNTIME_DIR / "workspace-v1.json")]
-        )
+        if explicit_session:
+            private_runtime_dir()
+            command[1:1] = ["--socket", str(DEFAULT_SOCKET)]
     os.environ.update(environment())
     return _run(command, check=False).returncode
 
@@ -249,27 +300,33 @@ def command_doctor():
     rows.append(
         (
             "Desktop app",
-            "ok" if DESKTOP_BINARY.is_file() else "missing",
+            "ok" if desktop_binary_path().is_file() else "missing",
             "built"
-            if DESKTOP_BINARY.is_file()
+            if desktop_binary_path().is_file()
             else "run: python3 scripts/lapis.py build",
         )
     )
+    qmake = qt_qmake()
     qt = (
         subprocess.run(
-            ["qmake", "-query", "QT_VERSION"],
+            [qmake, "-query", "QT_VERSION"],
             capture_output=True,
             text=True,
             check=False,
         ).stdout.strip()
-        if shutil.which("qmake")
+        if qmake
         else ""
     )
     rows.append(
         (
             "Qt",
             "ok" if qt == "6.11.2" else "check",
-            qt or "not found; brew bundle --file Brewfile",
+            qt
+            or (
+                "not found; install Qt 6.11.2 under build/deps/qt/6.11.2/gcc_64"
+                if sys.platform == "linux"
+                else "not found; brew bundle --file Brewfile"
+            ),
         )
     )
     try:
@@ -347,6 +404,82 @@ def command_smoke(arguments):
     return launch(["--smoke-input", "--capture", str(capture), *arguments])
 
 
+def command_linux_gui(arguments):
+    """Run isolated software-rendered GUI checks; this is not GPU qualification."""
+    if sys.platform != "linux":
+        raise SetupError("linux-gui requires Linux")
+    xvfb, openbox = shutil.which("xvfb-run"), shutil.which("openbox")
+    xprop = shutil.which("xprop")
+    if not xvfb or not openbox or not xprop:
+        raise SetupError("linux-gui requires xvfb-run and openbox plus xprop")
+    icd = next((path for path in LAVAPIPE_ICDS if path.is_file()), None)
+    if icd is None:
+        raise SetupError("linux-gui requires the Mesa lavapipe Vulkan driver")
+    command = list(arguments) or [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "build",
+    ]
+    # User arguments remain positional shell arguments, never shell source.
+    script = """
+"$1" --sm-disable &
+wm=$!
+xprop=$2
+shift 2
+cleanup() { kill "$wm" 2>/dev/null || :; wait "$wm" 2>/dev/null || :; }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+attempt=0
+while :; do
+    if ! kill -0 "$wm" 2>/dev/null; then
+        echo 'linux-gui: openbox exited before becoming ready; inspect its startup errors' >&2
+        exit 1
+    fi
+    property=$("$xprop" -root _NET_SUPPORTING_WM_CHECK 2>/dev/null)
+    case "$property" in *'window id # 0x'*) break ;; esac
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 50 ]; then
+        echo 'linux-gui: openbox did not become ready within 2.5 seconds; check Xvfb/openbox setup' >&2
+        exit 1
+    fi
+    sleep 0.05
+done
+"$@"
+status=$?
+exit "$status"
+"""
+    with tempfile.TemporaryDirectory(prefix="lapis-linux-gui-") as runtime:
+        env = {
+            **os.environ,
+            **environment(),
+            "XDG_RUNTIME_DIR": runtime,
+            "LAPIS_SCREEN": "",
+            "QT_QPA_PLATFORM": "xcb",
+            "QT_IM_MODULE": "compose",
+            "VK_DRIVER_FILES": str(icd),
+            "VK_ICD_FILENAMES": str(icd),
+            "LIBGL_ALWAYS_SOFTWARE": "1",
+            "GALLIUM_DRIVER": "llvmpipe",
+        }
+        return _run(
+            [
+                xvfb,
+                "--auto-servernum",
+                "--server-args=-screen 0 1600x1200x24 -nolisten tcp",
+                "/bin/sh",
+                "-c",
+                script,
+                "lapis-linux-gui",
+                openbox,
+                xprop,
+                *command,
+            ],
+            env=env,
+            check=False,
+        ).returncode
+
+
 COMMANDS = {
     "quality": lambda a: run_python_script("check_quality.py", a, needs_ghostty=False),
     "check": lambda a: run_python_script("check_cpp.py", ["dev", *a]),
@@ -363,6 +496,7 @@ COMMANDS = {
     "gui": command_gui,
     "ui": command_ui,
     "ui-debug": command_ui_debug,
+    "linux-gui": command_linux_gui,
     "smoke": command_smoke,
     "doctor": lambda _: command_doctor(),
     "bootstrap": lambda _: command_bootstrap(),
@@ -384,6 +518,7 @@ DESCRIPTIONS = {
     "gui": "Alias for run",
     "ui": "Open the isolated QML fixture for visual iteration",
     "ui-debug": "Open the isolated fixture under lldb",
+    "linux-gui": "Run build or supplied argv in isolated Linux software graphics",
     "smoke": "Drive Qt input through the PTY and capture the window",
     "doctor": "Report which local dependencies are ready",
     "bootstrap": "Build the pinned Ghostty VT dependency",

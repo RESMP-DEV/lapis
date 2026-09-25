@@ -134,7 +134,6 @@ QStringList NativeInputDriver::enabledSources() {
     return result;
 }
 void NativeInputDriver::activate(QWindow& window) { activate_test_window(window); }
-
 void NativeInputDriver::key(std::uint16_t code, NativeModifiers flags) {
     for (const bool down : {true, false}) {
         Handle<CGEventRef> event(CGEventCreateKeyboardEvent(nullptr, code, down));
