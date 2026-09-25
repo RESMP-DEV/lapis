@@ -73,6 +73,11 @@ void explicitAgentIdentity() {
                 "explicit attach selects the correct status source");
         require(!workspace.createAgent(directory.path(), QStringLiteral("Blocked")),
                 "an explicit attach cannot create an unpersisted managed agent");
+        require(!workspace.restartAgent(QStringLiteral("shell")),
+                "an explicit attach cannot restart an unpersisted managed agent");
+        require(workspace.workspaceError() ==
+                    QStringLiteral("Restart requires a persisted workspace."),
+                "explicit restart rejection names the persistence requirement");
         require(workspace.sessions().size() == 1, "rejected creation leaves the attach intact");
     }
 }
@@ -91,6 +96,10 @@ void projectPaths() {
 void categoriesAndIdentity() {
     Workspace workspace(WorkspaceMode::preview);
     auto* original = workspace.session(QStringLiteral("renderer"));
+    require(!workspace.restartAgent(QStringLiteral("renderer")),
+            "a preview cannot restart its sample agents");
+    require(workspace.workspaceError() == QStringLiteral("Restart requires a persisted workspace."),
+            "preview restart rejection names the persistence requirement");
     int list_changes = 0;
     QObject::connect(&workspace, &Workspace::sessionsChanged, &workspace, [&] { ++list_changes; });
     require(workspace.selectSession(QStringLiteral("renderer")), "select existing agent");
