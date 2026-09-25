@@ -1,0 +1,38 @@
+{
+  "recorded_at": "2026-09-25T08:37:08.546679+00:00",
+  "pr": 15,
+  "source_revision": "f1f45459eecf08f92cba8c3274a40211a7749747",
+  "source_sha256": {
+    "CONTRIBUTING.md": "bd4a5987bea89ed5ccf563c70195f26b8bead06f14f6417434277ab86dcfd908",
+    "README.md": "cd4ebd2631bc5e1c6e93caab484175f435da4a9ddeb5c046aab43c55260a4cdb",
+    "apps/desktop/src/keymap.cpp": "7c6abbfce6ec0ccfc473f75b3508fae2e5cb86bbbc547bb40a33a495fdbd9fac",
+    "apps/desktop/src/main.cpp": "7307d1a640fb5237a05d2294eb71c3856722eb584f334103d2ceb2b56fab2294",
+    "apps/desktop/src/platform_preferences.mm": "be9797fe68fc908cd7f4829e9c83c48db468a81f2f0440b20f8e253b0ea94596",
+    "apps/desktop/src/workspace.cpp": "d1bf725d9f3e5a4616d529673734bfd967b7d2f13bf8a73b0a8e1ccfcc724aa5",
+    "apps/desktop/src/workspace.hpp": "75e12c0255d6b9d1ca236cb33b1e9a08ed70cb680a766b6c9b136bdf95da946e",
+    "apps/desktop/tests/keymap_test.cpp": "b9ed54cb37bcd1107f2e167092e7b4b3ff172d737a0a87ede7ffde39f52f6f26",
+    "apps/desktop/tests/workspace_test.cpp": "9eac355d1950f2f47e8231c48c43e95aa5261f77d3e0d3294dca5cd532f8fdc7",
+    "docs/architecture.md": "0c761109bbb9a4f58caff6d298a378dd5d9fbb18bc601c8c069111b7bbd254f8",
+    "evidence/pr11-review-resolution.json": "bce971d0db54ddb1e29aa83050afd615bf678b43901153124d0d8e033793cab8",
+    "evidence/pr12-review-resolution.json": "ee76ee55c2e2b694d12aa49392328ebaac3485134191e5e0926b3f77be60f799",
+    "evidence/pr14-review-resolution.json": "08b6ff0cbb3aa34fb5fa7351fe608f609d1c4d85c2f4fd64d77e00707dfcabcc",
+    "scripts/tests/test_breakit.py": "ea7e7e11947e37855aa7cdba86786e5df66fcc0336076cec469104b247ffa1bf",
+    "tools/qa/breakit.py": "b58acfcbfb04212741a5b3dc6b74bde4293cfcf386a65ac84fbc8c2eaaa70831"
+  },
+  "validation": [
+    "workspace: pass at d2834e5, 17.50s",
+    "ASan/UBSan workspace: pass at d2834e5, 23.30s",
+    "TSan workspace: pass at d2834e5, 68.17s",
+    "Seven-case native CLI parser probe includes restoreOnly=true and updateHarnesses=false for --restore-agents; pass",
+    "Scoped workspace/main/platform_preferences clang-tidy/Cppcheck: pass",
+    "Common keymap/QA source subsequently merged unchanged from verified PR11; existing service/PTY receipts retain their original revisions"
+  ],
+  "thread_dispositions": [],
+  "limitations": [
+    "No merge into main performed. Optional reviewer availability is separate from required repository gates.",
+    "macOS remains the qualified desktop target; no Linux qualification in this pass.",
+    "CLI option values were observed under LLDB at Workspace construction, before window creation; actual updater/attachment behavior is covered separately by the workspace fixture.",
+    "Offscreen full-application rendering is unavailable for the required Vulkan backend. A Cocoa-window cast crash exposed by that attempt was guarded by checking the cocoa platform.",
+    "No installed agent CLI was updated."
+  ]
+}
