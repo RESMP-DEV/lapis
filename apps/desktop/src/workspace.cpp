@@ -683,6 +683,8 @@ bool Workspace::createAgent(const QString& directory, const QString& title,
         return false;
     if (preview_mode_)
         return fail(QStringLiteral("Agent launch is disabled in the preview fixture."));
+    if (storage_path_.isEmpty())
+        return fail(QStringLiteral("Agent launch requires a persisted workspace."));
     if (sessions_.size() >= 128 || !validName(title))
         return fail(QStringLiteral(
             "Use an agent name of 1–80 characters; at most 128 agents are supported."));
@@ -761,10 +763,18 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
         if (entry == agents_.cend())
             return saveError(QStringLiteral("Missing agent metadata."));
         const auto& agent = entry.value();
-        const auto resume = agent.launch.arguments.size() == 2 &&
-                                    agent.launch.arguments.front() == QStringLiteral("resume")
-                                ? agent.launch.arguments.at(1)
-                                : QString{};
+        const auto configured_resume =
+            agent.launch.arguments.size() == 2 &&
+                    agent.launch.arguments.front() == QStringLiteral("resume")
+                ? agent.launch.arguments.at(1)
+                : QString{};
+        // The marker is a native identity for the Codex adapter. Do not publish
+        // a configured value that restore would reject; the literal argument
+        // list remains authoritative and is still persisted below.
+        const auto resume =
+            agent.harness == QStringLiteral("codex") && !QUuid(configured_resume).isNull()
+                ? configured_resume
+                : QString{};
         agents.append(QJsonObject{
             {"id", item->sessionId()},
             {"title", item->sessionId() == renamedId ? renamedTitle : item->title()},

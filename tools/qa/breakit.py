@@ -218,7 +218,6 @@ class Run:
         self.output.mkdir(parents=True, exist_ok=True)
         self.bin.mkdir(exist_ok=True)
         self.project.mkdir(exist_ok=True)
-        (self.project / "nested").mkdir(exist_ok=True)
         agent = ROOT / "tools/qa/fake_agent.py"
         for name in FAKE_NAMES:
             link = self.bin / name

@@ -5,6 +5,7 @@ import json
 import os
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -243,6 +244,25 @@ class LauncherTests(unittest.TestCase):
 
         self.assertEqual(os.lstat(self.runtime), before)
         self.assertEqual(marker.read_text(), "kept")
+
+    def test_cli_check_rejects_unsafe_runtime_before_exercise(self):
+        from scripts import check_cli_launch
+
+        self.runtime.mkdir(mode=0o755)
+        self.runtime.chmod(0o755)
+        output = self.temporary_root / "cli-receipt.json"
+        with (
+            patch.object(lapis, "RUNTIME_DIR", self.runtime),
+            patch.object(sys, "argv", ["check_cli_launch", "--output", str(output)]),
+            patch.object(check_cli_launch, "exercise") as exercise,
+            redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(check_cli_launch.main(), 1)
+        exercise.assert_not_called()
+        receipt = json.loads(output.read_text())
+        self.assertFalse(receipt["passed"])
+        self.assertIn("mode 0700", receipt["error"])
+        self.assertEqual(stat.S_IMODE(self.runtime.stat().st_mode), 0o755)
 
     def test_unsafe_runtime_permissions_are_rejected_without_repair(self):
         for mode in (0o750, 0o701, 0o777, 0o500, 0o1700):
