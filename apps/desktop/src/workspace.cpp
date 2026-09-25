@@ -18,8 +18,10 @@
 #include <QUuid>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <iterator>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 #include <QDir>
@@ -1156,15 +1158,40 @@ void Workspace::lockRegistry() {
     if (!registry_lock_->tryLock(0)) {
         // The login helper holds the workspace only while it restarts agents
         // and names itself in a marker holding its process ID; a window opened
-        // meanwhile waits for it.
-        qint64 holder{};
-        QString host;
-        QString name;
-        const bool helper = registry_lock_->getLockInfo(&holder, &host, &name) &&
-                            marker.open(QIODevice::ReadOnly) &&
-                            marker.read(32).trimmed().toLongLong() == holder;
-        marker.close();
-        if (!helper || restore_only_ || !registry_lock_->tryLock(120000))
+        // meanwhile waits for it. The helper takes the lock before writing the
+        // marker, so briefly re-read around that gap; a stale marker from the
+        // previous helper is replaced by the new process ID there.
+        const auto marker_pid = [&marker] {
+            qint64 pid{};
+            if (marker.open(QIODevice::ReadOnly)) {
+                pid = marker.read(32).trimmed().toLongLong();
+                marker.close();
+            }
+            return pid;
+        };
+        if (restore_only_)
+            throw std::runtime_error("This workspace is already open in another lapis window");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        bool acquired = false;
+        for (;;) {
+            // A short-lived helper can exit without ever publishing its marker.
+            // Taking the now-free lock is sufficient evidence to continue.
+            if (registry_lock_->tryLock(0)) {
+                acquired = true;
+                break;
+            }
+            qint64 holder{};
+            QString host;
+            QString name;
+            const bool helper =
+                registry_lock_->getLockInfo(&holder, &host, &name) && marker_pid() == holder;
+            if (helper)
+                break;
+            if (std::chrono::steady_clock::now() >= deadline)
+                throw std::runtime_error("This workspace is already open in another lapis window");
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        if (!acquired && !registry_lock_->tryLock(120000))
             throw std::runtime_error("This workspace is already open in another lapis window");
     }
     if (restore_only_ && marker.open(QIODevice::WriteOnly | QIODevice::Truncate)) {

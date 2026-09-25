@@ -327,15 +327,19 @@ int main(int argc, char** argv) {
 #endif
     QCoreApplication::setAttribute(Qt::AA_MacDontSwapCtrlAndMeta);
     // The login helper shows nothing: no window and no Dock icon.
-    const bool restore_only = arguments.contains(QStringLiteral("--restore-agents"));
+    // Parse the same option definitions before creating the application so a
+    // child argument cannot select headless mode. process() below handles help
+    // and parse errors once the application name and translation context exist.
+    QCommandLineParser parser;
+    parser.setOptionsAfterPositionalArgumentsMode(QCommandLineParser::ParseAsPositionalArguments);
+    add_options(parser);
+    const bool restore_only =
+        parser.parse(arguments) && parser.isSet(QStringLiteral("restore-agents"));
     if (restore_only && !qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(application_argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("lapis"));
     QCoreApplication::setOrganizationName(QStringLiteral("lapis"));
-    QCommandLineParser parser;
-    parser.setOptionsAfterPositionalArgumentsMode(QCommandLineParser::ParseAsPositionalArguments);
-    add_options(parser);
     parser.process(arguments);
     if (!valid_options(parser) || !valid_connection_options(parser))
         return 2;
