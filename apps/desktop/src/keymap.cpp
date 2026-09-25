@@ -17,10 +17,12 @@
 #include <algorithm>
 #include <array>
 
+#include <utility>
+
 namespace lapis::desktop {
 namespace {
-// Qt reports macOS Command as Meta, so "Ctrl" keeps working across platforms
-// while "Meta" (or "Cmd") reaches the same modifier on this host.
+// main() sets AA_MacDontSwapCtrlAndMeta: Command is Meta and physical
+// Control remains Control. Persist shortcuts using that application contract.
 constexpr int kMaximumSequencesPerAction = 4;
 constexpr int kMaximumActions = 64;
 constexpr qint64 kMaximumConfigBytes = qint64{1024} * 1024;
@@ -628,7 +630,8 @@ void KeyMap::load_harness_arguments(const QJsonValue& value) {
         const auto list = it.value().toArray();
         QStringList arguments;
         const bool valid =
-            it.key().size() <= 32 && it.value().isArray() && list.size() <= 32 &&
+            !it.key().isEmpty() && it.key().size() <= 32 && it.value().isArray() &&
+            list.size() <= 32 &&
             std::all_of(list.begin(), list.end(), [&arguments](const QJsonValue& item) {
                 const auto text = item.toString();
                 if (!item.isString() || text.isEmpty() || text.size() > 1024 ||
@@ -1027,7 +1030,7 @@ bool KeyMap::persist() {
         return fail(file.errorString());
     if (file.write(contents) != contents.size() || !file.commit())
         return fail(file.errorString());
-    known_contents_ = contents;
+    known_contents_ = std::move(contents);
     watch();
     diagnostic_.clear();
     emit changed();

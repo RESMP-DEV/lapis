@@ -1,0 +1,2 @@
+# Preserve PDF asset bytes and keep Git's text/whitespace filters off them.
+*.pdf binary

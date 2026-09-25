@@ -47,12 +47,19 @@ class ProtocolDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
                 reader, writer = await asyncio.open_connection(
                     *server.sockets[0].getsockname()
                 )
-                writer.write(b"GET /models HTTP/1.1\r\nContent-Length: 0\r\n\r\n")
-                await writer.drain()
-                head = await reader.readuntil(b"\r\n\r\n")
-                writer.close()
-                await writer.wait_closed()
+                try:
+                    writer.write(b"GET /models HTTP/1.1\r\nContent-Length: 0\r\n\r\n")
+                    await writer.drain()
+                    response = await asyncio.wait_for(reader.read(), 2)
+                finally:
+                    writer.close()
+                    await writer.wait_closed()
+                head, body = response.split(b"\r\n\r\n", 1)
                 self.assertTrue(head.startswith(b"HTTP/1.1 200 OK\r\n"))
+                self.assertIn(b"Content-Type: application/json", head)
+                self.assertEqual(
+                    json.loads(body), {"object": "list", "data": [], "models": []}
+                )
             finally:
                 server.close()
                 await server.wait_closed()

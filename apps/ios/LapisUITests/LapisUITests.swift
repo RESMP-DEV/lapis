@@ -180,7 +180,12 @@ final class LapisUITests: XCTestCase {
         let menu = app.buttons["viewMenu"]
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
         menu.tap()
-        app.buttons["Send screen to Mac"].tap()
+        let capture = app.buttons["Send screen to Mac"]
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND hittable == true"), object: capture
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+        capture.tap()
         let sent = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Sent to the Mac"))
         XCTAssertTrue(sent.firstMatch.waitForExistence(timeout: 15), "the Mac saved the capture")
         app.buttons["OK"].tap()

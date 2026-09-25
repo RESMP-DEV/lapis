@@ -1749,9 +1749,12 @@ Qt starts, so an agent argument after `--` cannot select headless mode.
 The helper and a window share the registry
 lock. The helper writes its process ID to `<registry>.restoring` (owner-only)
 while it holds the lock, because QLockFile records the process name rather
-than the application name; a window finding that marker waits up to two
-minutes for the lock (longer than the helper's own limit), while a second
-window, or a helper finding a window, fails at once.
+than the application name. A window allows up to two seconds for a missing
+or stale marker to be published, taking the lock immediately if it becomes
+free meanwhile. Once the marker identifies the holder as a helper, the
+window waits up to two minutes and requests handover from a windowless host.
+A second ordinary window fails after the marker grace; a duplicate headless
+helper, or a helper finding a window, fails immediately.
 
 Gaps found by simulated power loss are closed in the service. A Codex build
 the observer has not qualified reports no thread, so the service also reads
@@ -1761,7 +1764,8 @@ the conversation in use. Codex keeps every loaded thread's rollout open,
 including the previous conversation after `/new` or `/resume` (observed with
 Codex 0.156.1), so the rule is the main thread written last: subagent threads,
 whose rollout's first line has a `{"subagent": ...}` source and a parent
-thread, are left out, and unreadable files are skipped. The desktop's minute
+thread, are left out. Unreadable, malformed, oversized or non-`session_meta`
+headers cannot qualify a main thread and are skipped. The desktop's minute
 check applies the same rule to services that predate the scan, replacing a
 saved thread only when it is still open and another main thread was written
 after it. Codex 0.156 listens through a symlink it removes only on a clean

@@ -24,8 +24,10 @@
 #include <QUuid>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <iterator>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 #include <QDir>
@@ -80,6 +82,32 @@ bool hasCodexUpdateSetting(const QStringList& arguments) {
     }
     return false;
 }
+// Returns true once the lock holder identifies itself as a helper, or false
+// if the lock becomes available before its marker is published.
+bool waitForHelperMarker(QLockFile& lock, QFile& marker) {
+    const auto marker_pid = [&marker] {
+        qint64 pid{};
+        if (marker.open(QIODevice::ReadOnly)) {
+            pid = marker.read(32).trimmed().toLongLong();
+            marker.close();
+        }
+        return pid;
+    };
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    for (;;) {
+        if (lock.tryLock(0))
+            return false;
+        qint64 holder{};
+        QString host;
+        QString name;
+        if (lock.getLockInfo(&holder, &host, &name) && marker_pid() == holder)
+            return true;
+        if (std::chrono::steady_clock::now() >= deadline)
+            throw std::runtime_error("This workspace is already open in another lapis window");
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+}
+
 QString resumeOption(const QString& harness);
 
 bool managedResumeMatches(const QStringList& arguments, qsizetype index, const QString& option,
@@ -1620,26 +1648,21 @@ void Workspace::lockRegistry() {
     registry_lock_->setStaleLockTime(0);
     QFile marker(storage_path_ + QStringLiteral(".restoring"));
     if (!registry_lock_->tryLock(0)) {
-        // The login helper holds the workspace only while it restarts agents
-        // and names itself in a marker holding its process ID; a window opened
-        // meanwhile waits for it.
-        qint64 holder{};
-        QString host;
-        QString name;
-        const bool helper = registry_lock_->getLockInfo(&holder, &host, &name) &&
-                            marker.open(QIODevice::ReadOnly) &&
-                            marker.read(32).trimmed().toLongLong() == holder;
-        marker.close();
-        if (!helper || headless_)
+        if (headless_)
             throw std::runtime_error("This workspace is already open in another lapis window");
-        // A windowless host keeps serving until asked; the login helper exits
-        // once its agents answer. Either way, wait at most two minutes.
-        QElapsedTimer waited;
-        waited.start();
-        while (!registry_lock_->tryLock(500)) {
-            if (waited.elapsed() >= 120000)
-                throw std::runtime_error("This workspace is already open in another lapis window");
-            WorkspaceControl::requestHandover(storage_path_);
+        // Helpers take the lock before publishing their PID. Re-read briefly
+        // through a missing or stale marker, accepting a lock freed meanwhile.
+        if (waitForHelperMarker(*registry_lock_, marker)) {
+            // A windowless host keeps serving until asked; the login helper exits
+            // once its agents answer. Either way, wait at most two minutes.
+            QElapsedTimer waited;
+            waited.start();
+            while (!registry_lock_->tryLock(500)) {
+                if (waited.elapsed() >= 120000)
+                    throw std::runtime_error(
+                        "This workspace is already open in another lapis window");
+                WorkspaceControl::requestHandover(storage_path_);
+            }
         }
     }
     if (headless_ && marker.open(QIODevice::WriteOnly | QIODevice::Truncate)) {

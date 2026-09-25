@@ -1,0 +1,69 @@
+{
+  "schema": "lapis.pr-triage/1",
+  "recorded_at": "2026-09-25",
+  "pr": 14,
+  "reviewed_base": "12ec9c85febe2e0469dcc5a6bbbe715241af74a7",
+  "tested_code_revision": "236ccb8d7143ecd109568a635d4b489c71124f4b",
+  "platform": "macOS arm64",
+  "source_sha256": {
+    ".coderabbit.yaml": "265b90971e6b351748325f5b0e5fe998ba39982809a755a57e01f258907c55bc",
+    "CONTRIBUTING.md": "9de8595a23208d956e4775ddf4ca6aec871798990ea50e96987fa14a4fa8bffe",
+    "README.md": "a329f91aff8d310ec6e1ce3907eb32592c9dad3462c4fc7681521f9e72e9e960",
+    "apps/desktop/src/keymap.cpp": "7478e234ec1dead37308d230366e1b9e12759f684a15dac56a5ae8ea0076f009",
+    "apps/desktop/src/main.cpp": "113da19125891c4634d46bb487c5e3efc1ce3c28d92f25a4328efd4abd7f2191",
+    "apps/desktop/src/workspace.cpp": "1341018b80c55436f579bc89148f4ec692c71db4a8fa79c03182f589e82ee863",
+    "apps/desktop/tests/keymap_test.cpp": "bc495a8a9581826eb34f136bcf6fda27c69853f7b3a2e7cddff23e2baf9ea1dd",
+    "apps/desktop/tests/live_connection_test.cpp": "8bd9fcad11d14d297445d6b94ae8aea59db9889636ac21e9ddefab93bcc0b553",
+    "apps/desktop/tests/native_input_probe.cpp": "817cbd448453eeac42e9c427cc231a81aaac575ad3b72ece3daf45eab04823ef",
+    "apps/desktop/tests/window_state_test.cpp": "f0a4f58ffd2e93bf742678b616bdb9b03922477d7acbeb97d0885bdc875676b3",
+    "apps/desktop/tests/workspace_live_probe.cpp": "1f36b7840c965d6b3c1fd37335f89e2e3b13f5c58f5c91b00568912ebbcf649e",
+    "apps/desktop/tests/workspace_test.cpp": "e46609eed82e605f0c417a7653a2c0cf695c5f496add548c518fa0765cda4fc5",
+    "docs/architecture.md": "6722d97d47f7616965579d7eacfb27d95b0e5540d5f054f622c0388075cff893",
+    "scripts/check_cli_launch.py": "04d72acc18c5ec3283c020eda67abf8d23949c2b4b58e5037a709a8eff4c535b",
+    "scripts/check_service_attention.py": "bda1aac0860c82f4a5733556493bccaa2fdb0c47442f19271ddba74a21147b54",
+    "scripts/tests/test_breakit.py": "73ceb770d88fd4da73011defcc5fd34b87a7d6930793a0d02085bb180dced7c7",
+    "scripts/tests/test_check_service_attention.py": "9264189459ae4cff2121d02b99ad127dbe99b3789f05fa8eaa3dd6f71038d8ea",
+    "scripts/tests/test_fake_models.py": "c18d0ed5f5b38f5ebf20effa9431a8a56974d48f36a8d9bb79628b84754ed739",
+    "scripts/tests/test_lapis.py": "758cfd9558fb1b67e5f8708edbe08bcefa199c44375b39d11844f0010f19b1b0",
+    "services/session/src/agent_checkpoint.cpp": "306990d563499c108b1ec72d0a9c50c8990091130f0be872abd088a01769e098",
+    "services/session/src/agent_checkpoint.hpp": "70cee9e33c78b5d417a5fbae52764ef2aeff0f74fdac4ae01b172e6e35c9ab9d",
+    "services/session/src/session_service.cpp": "97e9868410bc5e0a1e4736b6ed103aff8e3ea2e6fbea4aa1542bc83caddd4062",
+    "services/session/tests/agent_checkpoint_test.cpp": "6ae3391884bc75da4bfbb7fa135d0f6410c3dc7c51ffcc51825c01d1dc6efcf4",
+    "tools/qa/breakit.py": "7835c1751d62062f0187dd10490dd9f9fc886f2386a9169edab2350a9f525782",
+    "tools/qa/fake_agent.py": "16921edaa9843e54dd7aedc37e5536897a93272b8e3d57331dc9b01f3832bfc0"
+  },
+  "scope": "CLI updater review and inherited continuity reconciliation",
+  "review_items": {
+    "formal_unresolved_threads": 0,
+    "reviewed_scope": "Complete introduced feature and prior Kimi review bodies"
+  },
+  "changes": [
+    "Clarify that lapis adds the Codex startup-update setting; preserve user-specified harness options"
+  ],
+  "checks": [
+    {
+      "command": "just quality",
+      "passed": true,
+      "python_tests": 124
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R '^workspace$' --no-tests=error --output-on-failure",
+      "passed": true,
+      "note": "TMPDIR=/tmp QT_QPA_PLATFORM=offscreen; fake updater proves deferred start and recent-update reuse, without updating real CLIs."
+    },
+    {
+      "command": "clang-format --dry-run --Werror; clang-tidy -p build/desktop; cppcheck --library=qt",
+      "passed": true,
+      "scope": "Feature C++ translation units against current base"
+    }
+  ],
+  "independent_review": "Scoped GLM source and review assessment; parent inspected changes and ran integration checks.",
+  "review_service_state": {
+    "github_content": "Original publication was deferred by local reviewer cooldowns. The claimed GitHub midnight reset was incorrect; see pr14-review-followup.json.",
+    "new_head_reviews": "Pending after push; earlier reviews are not approval of these fixes"
+  },
+  "limitations": [
+    "No foreground or native-input qualification in this pass. Offscreen render suites require Vulkan and were not qualified.",
+    "No merge performed."
+  ]
+}

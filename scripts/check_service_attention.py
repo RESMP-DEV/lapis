@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import os
 import shutil
 import socket
 import struct
@@ -439,14 +440,18 @@ def fixture_trust_prompt(screen, directory):
 
 
 def fixture_options(args, runtime):
-    """Keep the subscriber's configuration private; share only the auth-file path."""
+    """Copy login state into the disposable home so refresh cannot rewrite the source."""
     if not args.live_openai:
         return probe_configuration_arguments()
     auth = Path.home() / ".codex" / "auth.json"
     require(
         auth.is_file(), "--live-openai requires an existing ~/.codex/auth.json login"
     )
-    (runtime / "home" / "auth.json").symlink_to(auth)
+    destination = runtime / "home" / "auth.json"
+    with auth.open("rb") as source:
+        descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as target:
+            shutil.copyfileobj(source, target)
     config = {
         "model": args.model,
         "model_provider": "openai",
@@ -785,7 +790,7 @@ def parse_args(argv=None):
     live.add_argument(
         "--live-openai",
         action="store_true",
-        help="Explicitly run live fixtures using the existing OpenAI login. The fixture links ~/.codex/auth.json, and Codex rewrites that file in place when it refreshes the login, so an interrupted run can leave it empty and require codex login",
+        help="Explicitly run live fixtures using the existing OpenAI login. The fixture copies ~/.codex/auth.json into its disposable home; refreshed credentials are not written back",
     )
     parser.add_argument("--model", help="OpenAI model; defaults to gpt-6-astra")
     parser.add_argument(

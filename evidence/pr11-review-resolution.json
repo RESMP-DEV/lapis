@@ -1,0 +1,68 @@
+{
+  "recorded_at": "2026-09-25T08:37:07.396471+00:00",
+  "pr": 11,
+  "source_revision": "88fc5ac76cc3fe2c6ebf8b2985b747144ab708f4",
+  "source_sha256": {
+    "apps/desktop/src/keymap.cpp": "7c6abbfce6ec0ccfc473f75b3508fae2e5cb86bbbc547bb40a33a495fdbd9fac",
+    "apps/desktop/tests/keymap_test.cpp": "b9ed54cb37bcd1107f2e167092e7b4b3ff172d737a0a87ede7ffde39f52f6f26",
+    "scripts/tests/test_breakit.py": "aa6f30075e56cd8685da2e1c35cecbbac82a991180661a02c1d0abf6ef2704c0",
+    "tools/qa/breakit.py": "e76d196f4789d15e8151e9011b3ef9ee7323c9b0b5614c4b69cd0cc854334414"
+  },
+  "validation": [
+    "just quality: pass",
+    "ctest --test-dir build/desktop -R ^keymap$ --no-tests=error --output-on-failure: pass, 0.09s",
+    "clang-format, scoped clang-tidy and Cppcheck on keymap.cpp/keymap_test.cpp: pass",
+    "Python QA regression: two consecutive runs preserve absent/existing config and registry"
+  ],
+  "thread_dispositions": [
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7FRo",
+      "disposition": "fixed",
+      "reply_body": "Appearance saves now refuse a non-object terminalFont value with a diagnostic and roll back the tentative selection. The original file stays byte-for-byte intact. The keymap regression covers null, a number, an array and a string; keymap and scoped static analysis pass."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7FR6",
+      "disposition": "inapplicable",
+      "reply_body": "The guard deliberately treats a disconnected or replaced view as an unknown process lifetime. A service-owned agent can still be running after its view disconnects; clearing live_ or allowing ordinary removal would discard that identity. The existing Close action provides the explicit abandon path for an unreachable agent, and Commands offers Reconnect. No removal-policy change is needed."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7FR_",
+      "disposition": "duplicate-inapplicable",
+      "reply_body": "Duplicate of the disconnected-view removal finding. Transport loss is not proof of process exit. removeSession preserves that distinction; closeSession(id, true) is the explicit unreachable-agent abandonment path. Retaining this safeguard."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7FSF",
+      "disposition": "inapplicable",
+      "reply_body": "Registry loading must preserve the original launch fingerprint even when an executable or directory has disappeared: the service may still be alive and reconnectable. Rejecting that row in loadAgents would reject the whole saved workspace and prevent recovery. This PR reconnects saved services; restart validation belongs at launch time, and the stacked continuity PR validates the executable/directory in restoredLaunch. Retaining structural validation during registry loading."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7FSJ",
+      "disposition": "duplicate-inapplicable",
+      "reply_body": "Duplicate of the missing-executable restore finding. Reconnecting an existing service does not launch the saved program, and dropping or rejecting its registry row would lose the recovery path. Launch-time validation is handled by restoredLaunch in the stacked continuity work; loadAgents intentionally preserves saved identity."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7FSL",
+      "disposition": "inapplicable",
+      "reply_body": "terminate() returning false means no termination request was sent (the view is not input-ready or its transport rejected the write). There is no pending close for finishClosing to finish. The current error already says to reconnect or exit the agent. Setting closing=true in this branch would falsely mark an unsent request as pending; a successfully sent request still sets closing and enables the legacy-service reconnect path."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7FSR",
+      "disposition": "duplicate-inapplicable",
+      "reply_body": "Duplicate of the failed-terminate finding. finishClosing handles a sent close request, including rejection by an older service; terminate()==false leaves no request to reconcile. The existing diagnostic explicitly offers reconnect/exit, so keeping closing=false is intentional."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7FVL",
+      "disposition": "fixed",
+      "reply_body": "The harness snapshots both configuration and registry state during prepare and restores them after stopping its writers, including deleting files that were originally absent. Repeated cleanup is idempotent. A background regression exercises two consecutive runs for both a fresh runtime and --keep."
+    },
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6l7FZV",
+      "disposition": "duplicate-fixed",
+      "reply_body": "Covered by the same QA cleanup repair: original registry/configuration bytes are restored, originally absent files are removed, and a second cleanup cannot delete the restored files. The repeated-run regression passes for fresh and --keep fixtures."
+    }
+  ],
+  "limitations": [
+    "No merge into main performed. Optional reviewer availability is separate from required repository gates.",
+    "macOS remains the qualified desktop target; no Linux qualification in this pass."
+  ]
+}
