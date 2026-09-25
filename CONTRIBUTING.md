@@ -637,8 +637,11 @@ as the Dock does, to confirm it takes the login shell's PATH. None of these open
 a window; a window launch of the packaged app is a separate, scheduled check.
 `notices` regenerates `third_party/qt/NOTICES.txt` from the Qt build's SBOM and
 `third_party/moltenvk/NOTICES.txt` from MoltenVK's pinned revisions; rerun it
-when either version changes. A release attaches the DMG and the three Qt source
-archives from `build/release/downloads/`.
+when either version changes. `release --tag vX.Y.Z` (add `--draft` to review
+first) refuses a DMG without a stapled ticket or a commit not yet pushed, then
+creates the GitHub release with the DMG and the three Qt source archives. The
+download page in `site/` is published to GitHub Pages by
+`.github/workflows/site.yml` when it changes on `main`.
 
 ## Checks
 

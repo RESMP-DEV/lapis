@@ -9,6 +9,7 @@ Vulkan on and everything else bundled (arm64, macOS 14 and later).
     uv run --no-project python scripts/package_macos.py dmg       # signed DMG
     uv run --no-project python scripts/package_macos.py notarize --profile NAME
     uv run --no-project python scripts/package_macos.py all --profile NAME
+    uv run --no-project python scripts/package_macos.py release --tag v0.1.0
 
 Signing uses the keychain's Developer ID Application identity (or
 LAPIS_SIGN_IDENTITY). Notarizing uses a notarytool keychain profile, made once
@@ -900,6 +901,36 @@ def command_verify(arguments):
     print("The app passed every check", flush=True)
 
 
+def command_release(arguments):
+    """Attach the notarized DMG and the Qt sources to a GitHub release."""
+    run(["xcrun", "stapler", "validate", DMG])
+    commit = capture(["git", "-C", ROOT, "rev-parse", "HEAD"]).strip()
+    if capture(["git", "-C", ROOT, "branch", "-r", "--contains", commit]).strip() == "":
+        raise PackageError("Push the commit the app was built from first")
+    version = arguments.tag.removeprefix("v")
+    notes = "\n".join(
+        [
+            f"lapis {version} for Apple silicon Macs with macOS 14 or later.",
+            "",
+            "Open lapis-macos-arm64.dmg and drag lapis to Applications.",
+            f"SHA-256: {sha256(DMG)}",
+            "",
+            "The Qt archives are the exact sources of the Qt frameworks inside the",
+            "app, which it uses under the LGPL-3.0. Notices are in",
+            "lapis.app/Contents/Resources/Notices.",
+        ]
+    )
+    sources = [
+        DOWNLOADS / f"{name}-everywhere-src-{QT_VERSION}.tar.xz" for name in QT_MODULES
+    ]
+    run(
+        ["gh", "release", "create", arguments.tag, "--target", commit]
+        + ["--title", f"lapis {version}", "--notes", notes]
+        + (["--draft"] if arguments.draft else [])
+        + [DMG, *sources]
+    )
+
+
 def command_all(arguments):
     command_qt(arguments)
     command_app(arguments)
@@ -924,6 +955,9 @@ def main():
         step.add_argument(
             "--profile", required=True, help="notarytool keychain profile"
         )
+    release = commands.add_parser("release", help="Publish a GitHub release")
+    release.add_argument("--tag", required=True, help="for example v0.1.0")
+    release.add_argument("--draft", action="store_true", help="Leave it as a draft")
     verify = commands.add_parser("verify", help="Check the bundle before release")
     verify.add_argument(
         "--notarized", action="store_true", help="Also check Gatekeeper"
@@ -937,6 +971,7 @@ def main():
         "dmg": command_dmg,
         "notarize": command_notarize,
         "verify": command_verify,
+        "release": command_release,
         "all": command_all,
     }
     try:

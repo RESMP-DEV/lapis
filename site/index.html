@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lapis</title>
+<meta name="description" content="lapis is a Mac workspace for the coding agents you already run. One terminal on stage, a live strip of every other agent, and a nudge when one finishes or needs you.">
+<meta property="og:title" content="lapis">
+<meta property="og:description" content="A Mac workspace for supervising many live coding agents at once.">
+<meta property="og:image" content="icon.png">
+<meta name="theme-color" content="#090f16">
+<link rel="icon" type="image/png" href="favicon.png">
+<style>
+:root {
+  --background: #090f16;
+  --surface: #0e1822;
+  --card: #14222e;
+  --card-hover: #1b303e;
+  --border: #263c48;
+  --focus: #70d8c5;
+  --text: #e4eef1;
+  --muted: #94aab7;
+  --attention: #ffb76b;
+  --activity: #74a8ff;
+  --lapis: #5b84ff;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--text);
+  font: 17px/1.55 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+header.top {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 0;
+}
+.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 600; font-size: 19px; letter-spacing: -0.01em; }
+.brand img { width: 32px; height: 32px; }
+nav.links { display: flex; gap: 22px; align-items: center; font-size: 15px; }
+nav.links a { color: var(--muted); text-decoration: none; }
+nav.links a:hover { color: var(--text); }
+
+.hero { padding: 72px 0 40px; display: grid; grid-template-columns: 1.05fr 1fr; gap: 56px; align-items: center; }
+.hero h1 { font-size: clamp(38px, 5.2vw, 60px); line-height: 1.04; letter-spacing: -0.03em; margin: 0 0 22px; font-weight: 700; }
+.hero h1 .quiet { color: var(--muted); }
+.hero p.lede { font-size: 19px; color: var(--muted); margin: 0 0 32px; max-width: 34em; }
+.hero p.lede strong { color: var(--text); font-weight: 500; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.button {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 13px 20px; border-radius: 10px; font-weight: 600; font-size: 16px;
+  text-decoration: none; border: 1px solid var(--border);
+  transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+.button.primary { background: var(--focus); color: #06201c; border-color: var(--focus); }
+.button.primary:hover { background: #8ae3d3; }
+.button.secondary { background: var(--surface); }
+.button.secondary:hover { background: var(--card); border-color: #34505e; }
+.button:active { transform: translateY(1px); }
+.button svg { width: 18px; height: 18px; flex: none; }
+.fine { font-size: 14px; color: var(--muted); margin-top: 14px; }
+
+/* A drawing of the workspace: the stage above, the agent strip below. */
+.workspace {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  padding: 14px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
+}
+.workspace .bar { display: flex; gap: 6px; margin-bottom: 12px; }
+.workspace .bar span { width: 10px; height: 10px; border-radius: 50%; background: var(--border); }
+.workspace .bar b { margin-left: auto; font-weight: 500; color: var(--muted); font-size: 11.5px; }
+.stage {
+  background: var(--background); border: 1px solid var(--focus); border-radius: 9px;
+  padding: 14px 16px; min-height: 212px; color: var(--text);
+  box-shadow: 0 0 0 1px rgba(112, 216, 197, 0.12), 0 0 22px rgba(112, 216, 197, 0.08);
+}
+.stage .dim { color: var(--muted); }
+.stage .ok { color: #7bd88f; }
+.stage .you { color: var(--focus); }
+.cursor { display: inline-block; width: 7px; height: 14px; background: var(--text); vertical-align: -2px; }
+.strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+.agent {
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 9px; min-height: 76px; font-size: 10.5px; color: var(--muted); overflow: hidden;
+}
+.agent .name { color: var(--text); font-family: var(--sans); font-weight: 600; font-size: 11.5px; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+.agent .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--activity); }
+.agent.focused { border-color: var(--focus); background: #193638; }
+.agent.focused .dot { background: var(--focus); }
+.agent.waiting { border-color: var(--attention); animation: pulse 2.4s ease-in-out infinite; }
+.agent.waiting .dot { background: var(--attention); }
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 183, 107, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(255, 183, 107, 0.18); }
+}
+
+section { padding: 56px 0; }
+section h2 { font-size: 30px; letter-spacing: -0.02em; margin: 0 0 12px; }
+section p.intro { color: var(--muted); margin: 0 0 32px; max-width: 40em; }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.feature { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 22px; }
+.feature h3 { margin: 0 0 8px; font-size: 17px; letter-spacing: -0.01em; }
+.feature p { margin: 0; color: var(--muted); font-size: 15.5px; }
+.clis { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.clis span { font-family: var(--mono); font-size: 13.5px; padding: 6px 11px; border-radius: 999px; background: var(--card); border: 1px solid var(--border); }
+
+.steps { counter-reset: step; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; padding: 0; margin: 0; list-style: none; }
+.steps li { counter-increment: step; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 22px; color: var(--muted); font-size: 15.5px; }
+.steps li::before { content: counter(step); display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--card); border: 1px solid var(--border); color: var(--focus); font-weight: 700; font-size: 14px; margin-bottom: 12px; }
+.steps li strong { display: block; color: var(--text); font-size: 17px; margin-bottom: 6px; }
+code { font-family: var(--mono); font-size: 0.92em; background: var(--card); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; }
+
+footer { border-top: 1px solid var(--border); margin-top: 32px; padding: 28px 0 48px; color: var(--muted); font-size: 14px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; }
+footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
+footer a { color: var(--muted); }
+
+@media (max-width: 900px) {
+  .hero { grid-template-columns: 1fr; padding-top: 40px; gap: 40px; }
+  .grid, .steps { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 600px) {
+  .wrap { padding: 0 16px; }
+  nav.links a.hide-small { display: none; }
+  .grid, .steps { grid-template-columns: 1fr; }
+  .strip { grid-template-columns: repeat(2, 1fr); }
+  .stage { min-height: 0; }
+  .hero p.lede { font-size: 17px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent.waiting { animation: none; box-shadow: 0 0 0 3px rgba(255, 183, 107, 0.18); }
+  .button { transition: none; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="./"><img src="icon.png" alt="" width="32" height="32">lapis</a>
+    <nav class="links">
+      <a class="hide-small" href="#features">Features</a>
+      <a class="hide-small" href="#install">Install</a>
+      <a href="https://github.com/RESMP-DEV/lapis">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="hero">
+      <div>
+        <h1>Every agent,<br><span class="quiet">in one view.</span></h1>
+        <p class="lede">lapis is a Mac workspace for the coding agents you already run.
+          <strong>One terminal on stage, a live strip of every other agent below it</strong>,
+          and a nudge the moment one finishes or needs an answer.</p>
+        <div class="actions">
+          <a class="button primary" href="https://github.com/RESMP-DEV/lapis/releases/latest/download/lapis-macos-arm64.dmg">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>
+            Download for Mac
+          </a>
+          <a class="button secondary" href="https://github.com/RESMP-DEV/lapis">View the source</a>
+        </div>
+        <p class="fine">Apple silicon, macOS 14 or later. Free and open source under the MIT License.</p>
+      </div>
+
+      <div class="workspace" role="img" aria-label="Drawing of the lapis workspace: the selected agent's terminal above a strip of four live agent previews, one of them waiting for an answer.">
+        <div class="bar"><span></span><span></span><span></span><b>api-server</b></div>
+        <div class="stage">
+          <div class="dim">~/dev/api-server</div>
+          <div>&nbsp;</div>
+          <div><span class="you">&gt;</span> add rate limiting to the upload route</div>
+          <div>&nbsp;</div>
+          <div class="dim">Reading routes/upload.ts</div>
+          <div class="dim">Editing middleware/limit.ts</div>
+          <div><span class="ok">&#10003;</span> 14 tests passed</div>
+          <div>&nbsp;</div>
+          <div><span class="you">&gt;</span> <span class="cursor"></span></div>
+        </div>
+        <div class="strip">
+          <div class="agent focused"><div class="name"><span class="dot"></span>Claude</div>api-server<br>&gt; _</div>
+          <div class="agent waiting"><div class="name"><span class="dot"></span>Codex</div>billing<br>Allow npm install?</div>
+          <div class="agent"><div class="name"><span class="dot"></span>OpenCode</div>docs<br>Writing guide.md</div>
+          <div class="agent"><div class="name"><span class="dot"></span>Grok</div>infra<br>Planning 3 steps</div>
+        </div>
+      </div>
+    </div>
+
+    <section id="features">
+      <h2>Built for running many agents at once</h2>
+      <p class="intro">Keep a whole team of agents moving without losing track of which one is waiting on you.</p>
+      <div class="grid">
+        <div class="feature">
+          <h3>One stage, every agent in view</h3>
+          <p>The selected agent gets a full GPU-drawn terminal. Every other agent in the category shows its latest lines in the strip underneath, four times a second.</p>
+        </div>
+        <div class="feature">
+          <h3>Knows when an agent needs you</h3>
+          <p>A card pulses when its agent finishes a turn or asks for approval, and the Dock badge counts them. New requests never move your keyboard focus while you type.</p>
+        </div>
+        <div class="feature">
+          <h3>Agents outlive the window</h3>
+          <p>Each agent runs in its own session process. Close or restart lapis and you reattach to the same running agents, history included.</p>
+        </div>
+        <div class="feature">
+          <h3>Your plans at a glance</h3>
+          <p>See what is left of each signed-in plan, green when there is plenty and red when it is nearly gone, on this Mac and on the machines you add.</p>
+        </div>
+        <div class="feature">
+          <h3>Keyboard first</h3>
+          <p>Command-T starts an agent, Command-K finds one, and every binding, theme and default lives in one <code>lapis.json</code> that applies as soon as it changes.</p>
+        </div>
+        <div class="feature">
+          <h3>Categories for your work</h3>
+          <p>Group agents by project or task. Each category keeps its own order and remembers which agent you were watching.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Uses the agents you already have</h2>
+      <p class="intro">lapis starts the command-line agents installed on your Mac, signed in as you, with the model and approval mode you pick. It holds no keys and needs no account.</p>
+      <div class="clis">
+        <span>Claude Code</span><span>Codex</span><span>OpenCode</span><span>Grok</span><span>OMP</span><span>Antigravity</span><span>Kimi</span>
+      </div>
+    </section>
+
+    <section id="install">
+      <h2>Install</h2>
+      <p class="intro">lapis is a signed Mac app for Apple silicon.</p>
+      <ol class="steps">
+        <li><strong>Download</strong>Get <a href="https://github.com/RESMP-DEV/lapis/releases/latest/download/lapis-macos-arm64.dmg">lapis-macos-arm64.dmg</a> from the latest release.</li>
+        <li><strong>Drag to Applications</strong>Open the disk image and drag lapis into your Applications folder.</li>
+        <li><strong>Start an agent</strong>Open lapis and press Command-T. Agents get the same PATH and settings as your terminal. Settings live in <code>~/.lapis</code>.</li>
+      </ol>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>lapis is MIT licensed. It carries Qt (LGPL-3.0), MoltenVK and Ghostty's terminal library.</span>
+    <nav>
+      <a href="https://github.com/RESMP-DEV/lapis">Source</a>
+      <a href="https://github.com/RESMP-DEV/lapis/releases">Releases</a>
+      <a href="https://github.com/RESMP-DEV/lapis/tree/main/third_party">Notices</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>
