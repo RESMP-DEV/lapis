@@ -64,6 +64,12 @@ void scanner_rejects_unusable_checkpoints() {
             "an unknown agent is refused");
     require(!scanner.scan(sequence({{"agent", "pi"}, {"session_id", "abc"}})),
             "an agent without a lapis resume route is refused");
+    require(!scanner.scan(sequence({{"agent", "claude"}, {"session_id", "abc"}, {"version", 2}})),
+            "an unknown checkpoint schema version is refused");
+    const auto forged = scanner.scan(sequence(
+        {{"agent", "claude"}, {"session_id", "abc"}, {"version", 1}, {"source", "observer"}}));
+    require(forged && forged->source == lapis::session::ResumeSource::terminal,
+            "terminal data cannot attest to observer provenance");
     require(!scanner.scan(sequence({{"agent", "claude"}, {"session_id", "has space"}})),
             "an identity with whitespace is refused");
     require(!scanner.scan(sequence(
@@ -86,18 +92,43 @@ void scanner_rejects_unusable_checkpoints() {
             "a later checkpoint is still found after an oversized one");
 }
 
+// A valid OSC payload can still be forged. The service must accept only the
+// agent identity consistent with the CLI it actually launched.
+void checkpoints_are_bound_to_the_launched_agent() {
+    using lapis::session::AgentMode;
+    using lapis::session::checkpoint_agent_for_launch;
+    using lapis::session::LaunchSpec;
+    require(
+        checkpoint_agent_for_launch({QStringLiteral("/x/codex"), {}, {}, {}, AgentMode::codex}) ==
+            QStringLiteral("codex"),
+        "managed Codex checkpoints are named codex");
+    require(
+        checkpoint_agent_for_launch({QStringLiteral("/x/claude"), {}, {}, {}, AgentMode::claude}) ==
+            QStringLiteral("claude"),
+        "managed Claude checkpoints are named claude");
+    require(checkpoint_agent_for_launch(
+                {QStringLiteral("/opt/tools/Kimi"), {}, {}, {}, AgentMode::terminal}) ==
+                QStringLiteral("kimi"),
+            "terminal checkpoints use the launched executable name");
+    require(checkpoint_agent_for_launch(
+                {QStringLiteral("/opt/tools/other"), {}, {}, {}, AgentMode::terminal}) ==
+                QStringLiteral("other"),
+            "terminal checkpoints do not inherit another harness name");
+}
+
 // Records are private files; unsafe existing files are never read or replaced.
 void records_are_private() {
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
     const auto endpoint = QDir(directory.path()).filePath(QStringLiteral("agent.sock"));
     require(!lapis::session::read_resume_record(endpoint), "no record yet");
-    lapis::session::write_resume_record(endpoint,
-                                        {QStringLiteral("claude"), QStringLiteral("s-1")});
+    lapis::session::write_resume_record(endpoint, {QStringLiteral("claude"), QStringLiteral("s-1"),
+                                                   lapis::session::ResumeSource::observer});
     const auto record = lapis::session::read_resume_record(endpoint);
     require(record && record->agent == QStringLiteral("claude") &&
-                record->session_id == QStringLiteral("s-1"),
-            "a written record reads back");
+                record->session_id == QStringLiteral("s-1") &&
+                record->source == lapis::session::ResumeSource::observer,
+            "a written record preserves observer provenance");
     const auto record_path = endpoint + QStringLiteral(".resume");
     QFile foreign_case(record_path);
     require(foreign_case.open(QIODevice::WriteOnly | QIODevice::Truncate),
@@ -109,13 +140,16 @@ void records_are_private() {
     foreign_case.close();
     const auto normalized = lapis::session::read_resume_record(endpoint);
     require(normalized && normalized->agent == QStringLiteral("claude") &&
-                normalized->session_id == QStringLiteral("s-1"),
+                normalized->session_id == QStringLiteral("s-1") &&
+                normalized->source == lapis::session::ResumeSource::terminal,
             "record agents use the same lowercase spelling as checkpoints");
     QFile wrong_version(record_path);
     require(wrong_version.open(QIODevice::WriteOnly | QIODevice::Truncate),
             "open the record for a version test");
-    const QJsonObject version_two{{"version", 2}, {"agent", "claude"}, {"session_id", "s-1"}};
-    require(wrong_version.write(QJsonDocument(version_two).toJson(QJsonDocument::Compact)) > 0 &&
+    const QJsonObject unsupported_version{
+        {"version", 3}, {"agent", "claude"}, {"session_id", "s-1"}};
+    require(wrong_version.write(QJsonDocument(unsupported_version).toJson(QJsonDocument::Compact)) >
+                    0 &&
                 wrong_version.setPermissions(QFile::ReadOwner | QFile::WriteOwner),
             "write a wrong-version test record");
     wrong_version.close();
@@ -178,6 +212,7 @@ int main() {
     try {
         scanner_finds_checkpoints();
         scanner_rejects_unusable_checkpoints();
+        checkpoints_are_bound_to_the_launched_agent();
         records_are_private();
         codex_threads_from_open_files();
         std::cout << "Agent checkpoints across reads, identity and host checks, and private "

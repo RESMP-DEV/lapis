@@ -18,6 +18,11 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+if __package__:
+    from . import lapis
+else:
+    import lapis
+
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = 6
 HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
@@ -1265,8 +1270,6 @@ def main():
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     artifacts = Path(tempfile.mkdtemp(prefix="run-", dir=args.output.parent))
-    runtime_root = ROOT / "runtime"
-    runtime_root.mkdir(mode=0o700, exist_ok=True)
     receipt = {
         "schema": "lapis.cli-launch-check/1",
         "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -1276,6 +1279,7 @@ def main():
         "scope": "Controlled fixture, optional Qt captures and optional no-prompt Codex TUI; no agent attention qualification.",
     }
     try:
+        runtime_root = lapis.private_runtime_dir()
         if args.codex:
             executable = Path(shutil.which(args.codex) or args.codex).resolve(
                 strict=True
@@ -1297,6 +1301,7 @@ def main():
         receipt["passed"] = all(check["passed"] for check in receipt["checks"])
     except (
         CheckError,
+        lapis.SetupError,
         OSError,
         ValueError,
         EOFError,

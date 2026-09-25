@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "observed_at": "2026-09-24T08:58:08.952340+00:00",
+  "recorded_at": "2026-09-24T08:58:08.952340+00:00",
   "scope": "PR #12 second review batch, including the updated PR #11 base",
   "reviewed_head": "8c2c5c0e7a4cd9cef08eced438ec608cef10041d",
   "baseline_for_validation": "5dd6c55f978c39f8f6284a3e28cfe4c3ec7932b9",
@@ -152,12 +152,12 @@
   ],
   "checks": [
     {
-      "command": "just desktop",
+      "command": ["just", "desktop"],
       "result": "passed: all 22 CTest suites, formatting, compiler warnings, clang-tidy and Cppcheck",
       "receipt": "build/pr-bot-round2/pr12-desktop-full-receipt.json"
     },
     {
-      "command": "just quality",
+      "command": ["just", "quality"],
       "result": "passed: 122 Python tests, Ruff and common quality checks",
       "receipt": "build/pr-bot-round2/pr12-quality-full-receipt.json"
     },

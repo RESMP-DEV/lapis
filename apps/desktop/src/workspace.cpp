@@ -12,6 +12,7 @@
 #include <QPointer>
 #include <QProcess>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QStandardPaths>
 #include <QThreadPool>
 #include <QUuid>
@@ -50,6 +51,13 @@ QStringList defaultArguments(const QString& harness) {
         return {QStringLiteral("-c"), QStringLiteral("check_for_update_on_startup=false")};
     return {};
 }
+QString resumeOption(const QString& harness);
+
+bool managedResumeMatches(const QStringList& arguments, qsizetype index, const QString& option,
+                          const QString& identity) {
+    return index >= 0 && index + 1 < arguments.size() && arguments.at(index) == option &&
+           arguments.at(index + 1) == identity;
+}
 
 QString harness_id(session::AgentMode mode) {
     switch (mode) {
@@ -81,6 +89,7 @@ constexpr std::string_view kPreviewPalette =
     "\x1b]4;2;rgb:87/cb/ac\x1b\\\x1b]4;4;rgb:9c/b4/ee\x1b\\"
     "\x1b]4;3;rgb:df/bb/7b\x1b\\\x1b]4;5;rgb:ba/a4/e8\x1b\\"
     "\x1b]4;8;rgb:75/83/98\x1b\\";
+constexpr qsizetype max_saved_arguments = 64;
 } // namespace
 
 SessionPreview::SessionPreview(QString title, QString directory, QString activity, QColor accent,
@@ -702,6 +711,8 @@ bool Workspace::createAgent(const QString& directory, const QString& title,
         return false;
     if (preview_mode_)
         return fail(QStringLiteral("Agent launch is disabled in the preview fixture."));
+    if (storage_path_.isEmpty())
+        return fail(QStringLiteral("Agent launch requires a persisted workspace."));
     if (sessions_.size() >= 128 || !validName(title))
         return fail(QStringLiteral(
             "Use an agent name of 1–80 characters; at most 128 agents are supported."));
@@ -785,10 +796,18 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
         if (entry == agents_.cend())
             return saveError(QStringLiteral("Missing agent metadata."));
         const auto& agent = entry.value();
-        const auto resume = agent.launch.arguments.size() == 2 &&
-                                    agent.launch.arguments.front() == QStringLiteral("resume")
-                                ? agent.launch.arguments.at(1)
-                                : QString{};
+        const auto configured_resume =
+            agent.launch.arguments.size() == 2 &&
+                    agent.launch.arguments.front() == QStringLiteral("resume")
+                ? agent.launch.arguments.at(1)
+                : QString{};
+        // The marker is a native identity for the Codex adapter. Do not publish
+        // a configured value that restore would reject; the literal argument
+        // list remains authoritative and is still persisted below.
+        const auto resume =
+            agent.harness == QStringLiteral("codex") && !QUuid(configured_resume).isNull()
+                ? configured_resume
+                : QString{};
         auto serialized = QJsonObject{
             {"id", item->sessionId()},
             {"title", item->sessionId() == renamedId ? renamedTitle : item->title()},
@@ -801,8 +820,13 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
             {"resumeThread", resume},
             {"arguments", QJsonArray::fromStringList(agent.launch.arguments)},
             {"directory", agent.launch.directory}};
+        const auto resume_option = resumeOption(agent.harness);
         if (agent.managed_resume_index >= 0 &&
-            agent.managed_resume_index + 1 < agent.launch.arguments.size())
+            agent.managed_resume_index + 1 < agent.launch.arguments.size() &&
+            !resume_option.isEmpty() &&
+            agent.launch.arguments.at(agent.managed_resume_index) == resume_option &&
+            agent.launch.arguments.at(agent.managed_resume_index + 1) ==
+                agent.managed_resume_identity)
             serialized.insert(QStringLiteral("managedResume"),
                               QJsonObject{{"index", agent.managed_resume_index},
                                           {"identity", agent.managed_resume_identity}});
@@ -862,6 +886,7 @@ QString resumeOption(const QString& harness) {
 // Services built before resume records keep none. A Codex agent's app-server,
 // found by the backend socket it listens on, still holds its rollout open.
 std::optional<QString> openCodexThread(const QString& endpoint) {
+    // Only platform-owned process tools may attest an observer identity.
     const auto lsof = QStandardPaths::findExecutable(
         QStringLiteral("lsof"), {QStringLiteral("/usr/sbin"), QStringLiteral("/usr/bin")});
     const auto ps = QStandardPaths::findExecutable(
@@ -938,22 +963,27 @@ bool conversationSaved(const session::ResumeRecord& record) {
 } // namespace
 void Workspace::recordConversations() {
     QStringList endpoints;
-    for (const auto& agent : std::as_const(agents_))
-        if (agent.harness == QLatin1String("codex") && !session::read_resume_record(agent.endpoint))
+    for (const auto& agent : std::as_const(agents_)) {
+        if (agent.harness != QLatin1String("codex"))
+            continue;
+        const auto record = session::read_resume_record(agent.endpoint);
+        if (!record || record->source != session::ResumeSource::observer)
             endpoints.append(agent.endpoint);
+    }
     if (endpoints.isEmpty() || probing_->exchange(true))
         return;
     // Process listing is slow enough to keep off the GUI thread; the worker
     // touches only files beside each endpoint.
     QThreadPool::globalInstance()->start([endpoints, busy = probing_] {
+        const auto done = qScopeGuard([busy] { busy->store(false); });
         for (const auto& endpoint : endpoints)
             if (const auto thread = openCodexThread(endpoint))
                 try {
-                    session::write_resume_record(endpoint, {QStringLiteral("codex"), *thread});
+                    session::write_resume_record(endpoint, {QStringLiteral("codex"), *thread,
+                                                            session::ResumeSource::observer});
                 } catch (const std::exception& error) {
                     qWarning().noquote() << "Resume record not saved:" << error.what();
                 }
-        busy->store(false);
     });
 }
 // Restart an ended or unreachable agent in its card, resuming its conversation.
@@ -1002,23 +1032,33 @@ bool Workspace::serviceRunning(const QString& endpoint) {
 auto Workspace::restoredLaunch(const Agent& agent, QString* diagnostic)
     -> std::optional<ResumeLaunch> {
     auto launch = agent.launch;
-    if (!QFileInfo(launch.program).isExecutable())
-        if (const auto* harness = findHarness(agent.harness))
-            launch.program = harnessExecutable(*harness);
+    if (const auto* harness = findHarness(agent.harness);
+        harness && !QFileInfo(launch.program).isExecutable())
+        launch.program = harnessExecutable(*harness);
     if (launch.program.isEmpty() || !QFileInfo(launch.directory).isDir())
         return std::nullopt;
     const auto option = resumeOption(agent.harness);
     ResumeLaunch plan{std::move(launch), agent.managed_resume_index, agent.managed_resume_identity};
-    if (const auto record = session::read_resume_record(agent.endpoint);
-        !option.isEmpty() && record && record->agent == agent.harness &&
-        conversationSaved(*record)) {
+    const auto record = session::read_resume_record(agent.endpoint);
+    if (record && record->source != session::ResumeSource::observer) {
+        // Retire only a proven lapis-owned pair. Explicit user arguments stay
+        // authoritative, including when old derived metadata no longer matches.
+        const auto index = plan.managed_resume_index;
+        if (managedResumeMatches(plan.launch.arguments, index, option,
+                                 plan.managed_resume_identity)) {
+            plan.launch.arguments.remove(index, 2);
+            plan.managed_resume_index = -1;
+            plan.managed_resume_identity.clear();
+        }
+        qWarning().noquote() << "Automatic resume skipped: checkpoint has no observer provenance";
+    }
+    if (!option.isEmpty() && record && record->source == session::ResumeSource::observer &&
+        record->agent == agent.harness && conversationSaved(*record)) {
         if (plan.managed_resume_index >= 0) {
             // Replace only the pair whose provenance the registry recorded.
             // A newer service checkpoint, including one after /clear, wins.
-            if (plan.managed_resume_index + 1 < plan.launch.arguments.size() &&
-                plan.launch.arguments.at(plan.managed_resume_index) == option &&
-                plan.launch.arguments.at(plan.managed_resume_index + 1) ==
-                    plan.managed_resume_identity) {
+            if (managedResumeMatches(plan.launch.arguments, plan.managed_resume_index, option,
+                                     plan.managed_resume_identity)) {
                 plan.launch.arguments[plan.managed_resume_index + 1] = record->session_id;
                 plan.managed_resume_identity = record->session_id;
             }
@@ -1028,11 +1068,18 @@ auto Workspace::restoredLaunch(const Agent& agent, QString* diagnostic)
                                            (option.startsWith(QLatin1Char('-')) &&
                                             argument.startsWith(option + QLatin1Char('=')));
                                 })) {
-            // No provenance means any matching argument is user-owned. Add a
-            // managed pair only when the user supplied no such option at all.
-            plan.managed_resume_index = static_cast<int>(plan.launch.arguments.size());
-            plan.managed_resume_identity = record->session_id;
-            plan.launch.arguments += QStringList{option, record->session_id};
+            // savedArguments() is the durable limit; an uncounted append must
+            // not turn a loadable registry into one the next startup rejects.
+            if (plan.launch.arguments.size() + 2 > max_saved_arguments) {
+                qWarning().noquote() << "Resume record not added: saved launch already has"
+                                     << plan.launch.arguments.size() << "arguments";
+            } else {
+                // No provenance means any matching argument is user-owned. Add a
+                // managed pair only when the user supplied no such option at all.
+                plan.managed_resume_index = static_cast<int>(plan.launch.arguments.size());
+                plan.managed_resume_identity = record->session_id;
+                plan.launch.arguments += QStringList{option, record->session_id};
+            }
         }
     }
     try {
@@ -1047,7 +1094,7 @@ auto Workspace::restoredLaunch(const Agent& agent, QString* diagnostic)
 }
 QStringList Workspace::savedArguments(const QJsonValue& value) {
     const auto list = value.toArray();
-    if (!value.isArray() || list.size() > 64)
+    if (!value.isArray() || list.size() > max_saved_arguments)
         throw std::runtime_error("Invalid agent arguments");
     QStringList arguments;
     for (const auto& item : list) {
@@ -1066,8 +1113,12 @@ void Workspace::loadManagedResume(const QJsonValue& value, Agent& agent) {
     if (index < 0 || index >= agent.launch.arguments.size() - 1 ||
         !session::valid_resume_identity(identity) || option.isEmpty() ||
         agent.launch.arguments.at(index) != option ||
-        agent.launch.arguments.at(index + 1) != identity)
-        throw std::runtime_error("Invalid managed resume provenance");
+        agent.launch.arguments.at(index + 1) != identity) {
+        // Provenance is derived state. A stale index/identity loses automatic
+        // replacement only; it must not make the entire workspace unloadable.
+        qWarning().noquote() << "Ignoring invalid managed resume provenance";
+        return;
+    }
     agent.managed_resume_index = index;
     agent.managed_resume_identity = identity;
 }

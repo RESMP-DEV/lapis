@@ -1680,20 +1680,28 @@ card still in the workspace whose service is gone when lapis opens is restarted
 in place, with `AttachMode::create` at its endpoint, instead of staying
 unreachable; this deliberately replaces the earlier rule against implicitly
 replacing an unreachable endpoint, and Command-W remains the way to remove an
-agent. Each service keeps `<endpoint>.resume` (owner-only JSON: agent and
-conversation) from the Codex observer's thread, the Claude adapter's session, or
-OSC 1337 `SetUserVar=agent_checkpoint=<base64 JSON>` in PTY output, the sequence
-the user's `iterm-agent-checkpoint` session-start hooks already print. Remote
-hosts, unknown agents, unsupported resume-record versions and identities that
-could be options are refused. When lapis adds a resume option, the registry records
-the argument index and identity as optional `managedResume` provenance. Later
-restores update only that recorded pair from a newer checkpoint (`codex resume`,
-`claude --resume`, `omp --resume`, `grok -r`, `opencode --session`, `kimi --session`,
-`agy --conversation`). Explicit user arguments, including `--option=value`, remain
-authoritative. Older records without provenance retain their arguments as user
-owned. Claude and Codex resume only when their transcript or rollout exists,
-since hooks report a conversation before anything is saved. Without a usable
-checkpoint or an explicit resume argument, the CLI starts fresh.
+agent. Each service keeps `<endpoint>.resume` as owner-only JSON with the agent,
+conversation and provenance. Version 2 distinguishes an independent observer
+from advisory OSC 1337 `SetUserVar=agent_checkpoint=<base64 JSON>` printed in
+terminal output. Printed fields cannot claim observer provenance, replace a
+managed Codex/Claude observer, or downgrade an already observed record. Version 1
+records remain readable as advisory until a current observer or the Codex rollout
+probe confirms the conversation. Unknown versions and malformed sources fail
+closed.
+
+Automatic resume uses only observer records. Codex and Claude currently provide
+that independent channel; other CLIs' printed checkpoints remain advisory and
+restart fresh unless the user explicitly supplied a resume argument. Remote
+hosts, unknown agents and identities that could be options are refused. When
+lapis adds a resume pair, the registry records its index and identity as
+`managedResume`; later verified observations update only that pair. An advisory
+record retires a still-matching lapis-owned pair. Stale provenance loses automatic
+updating instead of making the whole workspace unloadable. Explicit user
+arguments, including `--option=value`, remain authoritative. A managed append
+cannot exceed the same 64-argument limit enforced by the registry loader.
+Claude and Codex also require a saved transcript or rollout. The known native
+flags for other harnesses remain available to explicit configuration and future
+verified adapters; an OSC payload alone does not qualify such an adapter.
 A service is gone only when its socket refuses or is missing. Real Claude Code
 2.1.280 and Codex 0.155.1 were checked headless against the fake model: the
 record appeared, and the resumed agent showed the earlier exchange.
@@ -1703,8 +1711,9 @@ another must leave running agents untouched, so these are compatibility
 contracts rather than implementation details: the launch fingerprint (pinned by
 known SHA-256 values in the `launch-spec` suite for terminal, Codex and Claude
 modes), service IPC version 6 with only additive frames, registry versions 1
-and 2 on read, the `LAPIS-S1` descriptor, resume record version 1, and the
-Claude hook relay's command line. Changing any of them needs a migration that
+and 2 on read, the `LAPIS-S1` descriptor, and the
+Claude hook relay's command line. Resume records now write version 2 and read
+version 1 without assuming observer provenance. Changing these contracts needs a migration that
 still reattaches services started by the previous build. For Codex services
 started before resume records existed, the desktop recovers the thread every
 60 seconds: it finds the app-server by its exact `app-server --listen
@@ -1712,7 +1721,8 @@ unix://<endpoint>.codex` command line and takes the earliest rollout it holds
 open (later ones are subagents); this was checked against real Codex 0.155.1
 with the fake model after deleting the record. Restart agent (Commands) applies
 the restore path to one ended or unreachable card and refuses while its service
-answers. Antigravity resumes with `agy --conversation`.
+answers. Explicit Antigravity resumes use `agy --conversation`; its printed
+checkpoint does not authorize automatic resume.
 
 CLI updates (September 24, requested so agents never open on an update
 prompt). Before a new agent starts, the desktop runs that CLI's own
