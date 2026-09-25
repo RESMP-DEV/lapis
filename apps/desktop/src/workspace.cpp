@@ -1098,6 +1098,9 @@ QString Workspace::startAgent(const AgentRequest& request) {
     }
 }
 QString Workspace::launchAgent(const AgentRequest& request, const session::LaunchSpec& launch) {
+    // An explicit attach has no registry to record the agent in.
+    if (storage_path_.isEmpty())
+        return failed(QStringLiteral("Agent launch requires a persisted workspace."));
     try {
         auto id = newId();
         const auto endpoint = session::posix::prepare_endpoint(
@@ -1346,6 +1349,8 @@ void Workspace::recordConversations() {
 bool Workspace::restartAgent(const QString& id) {
     if (!mutableRegistry())
         return false;
+    if (preview_mode_ || storage_path_.isEmpty())
+        return fail(QStringLiteral("Restart requires a persisted workspace."));
     const auto entry = agents_.find(id);
     auto* item = session(id);
     if (entry == agents_.end() || item == nullptr)
