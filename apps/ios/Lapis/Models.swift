@@ -104,7 +104,7 @@ final class AgentSession {
         task = Task { [weak self] in
             do {
                 for try await event in events {
-                    guard let self else { return }
+                    guard !Task.isCancelled, let self else { return }
                     switch event {
                     case let .attached(attached):
                         self.shared = attached.shared
@@ -125,10 +125,14 @@ final class AgentSession {
                         return
                     }
                 }
+                // Cancellation can end AsyncThrowingStream normally. An old
+                // stream must not close the connection started by a new open().
+                guard !Task.isCancelled else { return }
                 self?.closedByGateway()
             } catch is CancellationError {
             } catch let failure as URLError where failure.code == .cancelled {
             } catch {
+                guard !Task.isCancelled else { return }
                 self?.state = .closed(describe(error), reopen: true)
             }
         }

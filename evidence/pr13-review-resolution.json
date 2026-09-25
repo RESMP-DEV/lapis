@@ -1,4 +1,5 @@
 {
+  "schema": "lapis.pr-review-resolution/1",
   "recorded_at": "2026-09-25T08:37:08.852496+00:00",
   "pr": 13,
   "source_revision": "82954d1532041fb8cd9467ea90d5994d9c5dda60",
@@ -209,6 +210,57 @@
         "Native loopback probes are one-off diagnostics retained in the coordinator ignored build/worktree-cleanup-20260925 directory; they are not additional default-suite tests.",
         "No physical iPhone or real Tailscale throughput qualification. Unchanged adapters retain prior evidence with original revision and scope.",
         "The original source_revision, source_sha256 and validation above remain historical evidence; this followup identifies the new checked source."
+      ]
+    },
+    {
+      "recorded_at": "2026-09-25T10:57:30.214704+00:00",
+      "base_revision": "7b8ac952c266c73f4fb344153952eed41798e5f0",
+      "source_sha256": {
+        "CONTRIBUTING.md": "48c137b98c20db37c9da5b88b7fed953ff90217913b6ac785fee92c1028e5663",
+        "apps/desktop/CMakeLists.txt": "64c83c2662bd80fe436e34fd39d66df4793372da68927855897643f0b2ba00da",
+        "apps/desktop/tests/workspace_test.cpp": "529c12c2a0afd29906eb165850485bf5ee141b43bc90a1f91731cd08139dbe9d",
+        "apps/ios/Lapis/Models.swift": "4f743b74c1450e9394cba962f011b4197baf2239449ff8d8a44893dea15375b9",
+        "services/session/src/session_service.cpp": "cf1a99ef45ce80191c6a9ba77ec8bc192ce6d2ef71a04cb8469f28a496faad67"
+      },
+      "validation": [
+        "Native Foundation HTTP/SSE reopen probe: pass; matched original source fails because cancelled stream changes new connecting state to closed.",
+        "Normal CTest: local-protocol 0.08s, workspace 6.12s, live-connection 1.09s; all pass.",
+        "Workspace ASan/UBSan: pass, 10.46s.",
+        "Workspace TSan: isolated executable passes in 40.783s. Initial CTest run hit its 30s test limit while making progress; raised the CTest limit to 120s and verified the generated test property without repeating unchanged behavioral coverage.",
+        "Scoped clang-format, clang-tidy and Cppcheck: pass for the two changed C++ translation units.",
+        "just quality: pass, 146 Python tests including the live gateway/service cases."
+      ],
+      "thread_dispositions": [
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6l9zw6",
+          "disposition": "fixed",
+          "reply_body": "The fixture now uses a disposable primary takeover, requires the original desktop to become unready/replaced, then reconnects it. It verifies new output in both directions after that real reattachment while the phone remains joined. Workspace passed in the normal, ASan/UBSan and TSan builds."
+        },
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6l9zxA",
+          "disposition": "fixed",
+          "reply_body": "Cancelled stream tasks now stop before processing queued events, reporting normal stream completion, or reporting an error. A native Foundation loopback probe holds the reopened stream before its first frame: the old source incorrectly reports closed, while the fix remains connecting and sends the 120x40 resize when the new frame arrives. The probe also checks initial connecting resize and live resize."
+        },
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6l9zxD",
+          "disposition": "fixed",
+          "reply_body": "Removed only the obsolete statement that joined views cannot page history. The receipt retains the separate structured-response and agent-ending limits and its dated observations."
+        },
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6l9zxS",
+          "disposition": "fixed",
+          "reply_body": "Declared schema lapis.pr-review-resolution/1 and documented it in CONTRIBUTING.md. Root evidence remains the original dated observation; each followups entry carries its own base revision, source digests, validation and limits."
+        },
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6l9zxg",
+          "disposition": "fixed",
+          "reply_body": "detach_client now clears deferred history only when the desktop attachment owns it. drop_view applies the corresponding departing-view owner check. Unrelated joined-view requests therefore remain queued across desktop detach. The live gateway/history and genuine reconnect cases pass. A forced full-queue admission case was not exercised; the owner checks were also reviewed against request_history and try_pending_history."
+        }
+      ],
+      "limitations": [
+        "No forced full-history-queue admission test. A proposed archive-lock fixture was rejected because blocking execution alone does not prove queue admission was deferred.",
+        "Loopback model checks are background diagnostics, not physical iPhone or native input acceptance. Prior unchanged rendering/adapter evidence keeps its original revision.",
+        "The published release and PR16 need these fixes separately; this receipt qualifies the PR13 source identified here."
       ]
     }
   ]

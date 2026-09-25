@@ -952,11 +952,46 @@ void joinedViewStaysInSync() {
             "the phone shows what the desktop typed");
     require(agent->inputReady() && agent->connectionState() == QStringLiteral("ready"),
             "the desktop was never replaced");
+    {
+        // A ready connection ignores reconnect(). Replace it first so this
+        // fixture exercises service detach/attach while the phone stays joined.
+        namespace wire = lapis::session::wire;
+        QLocalSocket disposable;
+        disposable.connectToServer(options.endpoint);
+        require(disposable.waitForConnected(3000), "the disposable client connects");
+        const auto takeover =
+            wire::frame(wire::Kind::attach,
+                        wire::encode_attach({.mode = wire::AttachMode::discover,
+                                             .fingerprint = lapis::session::launch_fingerprint(
+                                                 lapis::session::validate_launch(*options.launch)),
+                                             .expected = {}}));
+        require(disposable.write(takeover) == takeover.size() &&
+                    disposable.waitForBytesWritten(3000),
+                "the disposable takeover was sent");
+        require(waitFor(
+                    [agent] {
+                        return !agent->inputReady() &&
+                               agent->connectionState() == QStringLiteral("replaced");
+                    },
+                    5000),
+                "the takeover really detached the desktop");
+        disposable.abort();
+    }
     agent->reconnect();
     require(waitFor([agent] { return agent->inputReady(); }, 10000), "the desktop reattaches");
     phone.type("after reconnect\r");
     require(phone.waitForText(QStringLiteral("got:after reconnect"), 5000),
             "the joined view survives the desktop reattaching");
+    require(waitFor(
+                [agent] {
+                    return screenText(agent->snapshot())
+                        .contains(QStringLiteral("got:after reconnect"));
+                },
+                5000),
+            "the reattached desktop receives the phone's new output");
+    agent->sendText("reattached mac\r");
+    require(phone.waitForText(QStringLiteral("got:reattached mac"), 5000),
+            "the phone receives input from the new desktop attachment");
     require(workspace.closeSession(agent->sessionId()) &&
                 waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
             "the joined fixture closes");
