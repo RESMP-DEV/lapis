@@ -1,12 +1,14 @@
 #ifndef LAPIS_DESKTOP_KEYMAP_HPP
 #define LAPIS_DESKTOP_KEYMAP_HPP
 
+#include <QFileSystemWatcher>
 #include <QHash>
 #include <QJsonValue>
 #include <QKeyCombination>
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -46,6 +48,9 @@ struct Theme {
     const char* attention_text{};
     const char* activity{};
     const char* fault{};
+    // A usage gauge: plenty left (green) and nearly none (red).
+    const char* plenty{};
+    const char* scarce{};
     int corner_radius{2};
     int motion_ms{100};
     bool mono_chrome{};
@@ -67,6 +72,18 @@ struct Theme {
 inline constexpr int kTerminalFontSizeDefault = 16;
 inline constexpr int kTerminalFontSizeMinimum = 10;
 inline constexpr int kTerminalFontSizeMaximum = 32;
+
+// Defaults for new agents, from the config's "newAgent" section: the CLI,
+// the folder to start in on this Mac and on each ssh machine, and the models
+// offered per CLI (the CLI's own default is always offered too).
+struct AgentDefaults {
+    QString harness;
+    QString folder;
+    QString mode; // edits, auto or full; empty until the config names one
+    QHash<QString, QString> machineFolders;
+    // Names a CLI offers instead of the models it lists itself.
+    QHash<QString, QStringList> models;
+};
 
 // User-editable keybindings, layout, theme, and card density, loaded from
 // lapis.json at the project root. Missing or malformed input falls back to
@@ -95,6 +112,23 @@ class KeyMap final : public QObject {
     Q_PROPERTY(int terminalFontSizeMinimum READ terminalFontSizeMinimum CONSTANT)
     Q_PROPERTY(int terminalFontSizeMaximum READ terminalFontSizeMaximum CONSTANT)
     Q_PROPERTY(int terminalFontSizeDefault READ terminalFontSizeDefault CONSTANT)
+    // A chime when an agent needs you, repeated while it waits unseen, and
+    // another when a Codex or Claude turn ends out of view.
+    Q_PROPERTY(bool alertSound READ alertSound NOTIFY changed)
+    Q_PROPERTY(bool finishSound READ finishSound NOTIFY changed)
+    Q_PROPERTY(int alertRepeat READ alertRepeat NOTIFY changed)
+    // A system notification for the same moments while lapis is in the
+    // background; clicking it shows the agent.
+    Q_PROPERTY(bool notify READ notify NOTIFY changed)
+    // The app that opens an agent's folder ("Cursor", a .app path or a
+    // command); empty picks the first installed of a few common editors.
+    Q_PROPERTY(QString editor READ editor NOTIFY changed)
+    // Keep this Mac from sleeping on power, so the phone can reach it.
+    Q_PROPERTY(bool keepAwake READ keepAwake NOTIFY changed)
+    // Plan usage under the categories, and the dashboard's machines.
+    Q_PROPERTY(bool showUsage READ showUsage NOTIFY changed)
+    Q_PROPERTY(QStringList usageMeter READ usageMeter NOTIFY changed)
+    Q_PROPERTY(QStringList usageMachines READ usageMachines NOTIFY changed)
   public:
     explicit KeyMap(QObject* parent = nullptr);
 
@@ -105,7 +139,10 @@ class KeyMap final : public QObject {
     [[nodiscard]] const QString& sourcePath() const { return source_path_; }
     // Point the config at another file. Used by tests so they never touch the
     // user's real lapis.json; not part of the QML surface.
-    void setSourcePathForTesting(const QString& path) { source_path_ = path; }
+    void setSourcePathForTesting(const QString& path) {
+        source_path_ = path;
+        watch();
+    }
     [[nodiscard]] const QString& diagnostic() const { return diagnostic_; }
 
     [[nodiscard]] QStringList sequences(const QString& action) const;
@@ -149,6 +186,24 @@ class KeyMap final : public QObject {
     [[nodiscard]] const QHash<QString, QStringList>& harnessArguments() const {
         return harness_arguments_;
     }
+    Q_INVOKABLE bool setAlertSound(bool on);
+    Q_INVOKABLE bool setFinishSound(bool on);
+    Q_INVOKABLE bool setAlertRepeat(int times);
+    Q_INVOKABLE bool setKeepAwake(bool on);
+    Q_INVOKABLE bool setNotify(bool on);
+    Q_INVOKABLE bool setShowUsage(bool on);
+    [[nodiscard]] bool alertSound() const { return alert_sound_; }
+    [[nodiscard]] bool finishSound() const { return finish_sound_; }
+    [[nodiscard]] int alertRepeat() const { return alert_repeat_; }
+    [[nodiscard]] bool notify() const { return notify_; }
+    [[nodiscard]] const QString& editor() const { return editor_; }
+    [[nodiscard]] bool keepAwake() const { return keep_awake_; }
+    [[nodiscard]] bool showUsage() const { return show_usage_; }
+    // The meter's plans in order (empty: every signed-in plan), and the ssh
+    // hosts with a usage dashboard beside this Mac.
+    [[nodiscard]] const QStringList& usageMeter() const { return usage_meter_; }
+    [[nodiscard]] const QStringList& usageMachines() const { return usage_machines_; }
+    [[nodiscard]] const AgentDefaults& agentDefaults() const { return agent_defaults_; }
     [[nodiscard]] static int terminalFontSizeMinimum() { return kTerminalFontSizeMinimum; }
     [[nodiscard]] static int terminalFontSizeMaximum() { return kTerminalFontSizeMaximum; }
     [[nodiscard]] static int terminalFontSizeDefault() { return kTerminalFontSizeDefault; }
@@ -164,6 +219,13 @@ class KeyMap final : public QObject {
     void apply_defaults();
     void load_terminal_font(const QJsonValue& value);
     void load_harness_arguments(const QJsonValue& value);
+    void load_alerts(const QJsonObject& root);
+    void load_usage(const QJsonObject& root);
+    void load_agent_defaults(const QJsonValue& value);
+    // The file is watched, so an edit from anywhere (an agent included)
+    // applies at once; the window's own saves are recognised and skipped.
+    void watch();
+    void fileTouched();
     [[nodiscard]] static QString default_source_path();
     // Rewrite only the appearance keys, preserving keybindings and categories
     // as they appear on disk. Returns false when the file was not written.
@@ -181,6 +243,19 @@ class KeyMap final : public QObject {
     bool loaded_{};
     bool sidebar_visible_{true};
     bool previews_visible_{true};
+    bool alert_sound_{true};
+    bool finish_sound_{true};
+    int alert_repeat_{3};
+    bool keep_awake_{true};
+    bool notify_{true};
+    QString editor_;
+    bool show_usage_{true};
+    QStringList usage_meter_;
+    QStringList usage_machines_;
+    AgentDefaults agent_defaults_;
+    QFileSystemWatcher watcher_;
+    QTimer settle_;
+    QByteArray known_contents_;
 };
 } // namespace lapis::desktop
 #endif // LAPIS_DESKTOP_KEYMAP_HPP

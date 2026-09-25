@@ -1,4 +1,5 @@
 #include "terminal_surface.hpp"
+#include "cell_shapes.hpp"
 #include <QScopeGuard>
 
 #include <QClipboard>
@@ -12,6 +13,8 @@
 #include <QMouseEvent>
 #include <QQuickWindow>
 #include <QRegularExpression>
+#include <QSGFlatColorMaterial>
+#include <QSGGeometryNode>
 #include <QSGSimpleRectNode>
 #include <QSGTextNode>
 #include <QStringList>
@@ -119,6 +122,60 @@ void add_rectangle(QSGNode& node, const QRectF& bounds, const QColor& value) {
     node.appendChildNode(rectangle.release());
 }
 
+// A line of `width` through the points, as a triangle strip.
+void add_stroke(QSGNode& node, const std::vector<QPointF>& stroke, qreal width,
+                const QColor& value) {
+    std::vector<QPointF> points;
+    for (const auto& point : stroke)
+        if (points.empty() ||
+            std::hypot(point.x() - points.back().x(), point.y() - points.back().y()) > 0.01)
+            points.push_back(point);
+    if (points.size() < 2)
+        return;
+    auto geometry = std::make_unique<QSGGeometry>(QSGGeometry::defaultAttributes_Point2D(),
+                                                  static_cast<int>(points.size() * 2));
+    geometry->setDrawingMode(QSGGeometry::DrawTriangleStrip);
+    auto* vertices = geometry->vertexDataAsPoint2D();
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        const QPointF direction =
+            points[std::min(i + 1, points.size() - 1)] - points[i > 0 ? i - 1 : 0];
+        const qreal length = std::hypot(direction.x(), direction.y());
+        const QPointF normal =
+            length > 0 ? QPointF(-direction.y(), direction.x()) * (width / 2 / length) : QPointF();
+        vertices[2 * i].set(static_cast<float>(points[i].x() + normal.x()),
+                            static_cast<float>(points[i].y() + normal.y()));
+        vertices[(2 * i) + 1].set(static_cast<float>(points[i].x() - normal.x()),
+                                  static_cast<float>(points[i].y() - normal.y()));
+    }
+    auto stroke_node = std::make_unique<QSGGeometryNode>();
+    stroke_node->setGeometry(geometry.release());
+    stroke_node->setFlag(QSGNode::OwnsGeometry);
+    auto material = std::make_unique<QSGFlatColorMaterial>();
+    material->setColor(value);
+    stroke_node->setMaterial(material.release());
+    stroke_node->setFlag(QSGNode::OwnsMaterial);
+    node.appendChildNode(stroke_node.release());
+}
+
+void add_shapes(QSGNode& node, const CellShapes& shapes, const QColor& value) {
+    for (const auto& fill : shapes.fills) {
+        QColor shade = value;
+        shade.setAlphaF(static_cast<float>(value.alphaF() * fill.alpha));
+        add_rectangle(node, fill.rect, shade);
+    }
+    add_stroke(node, shapes.stroke, shapes.width, value);
+}
+
+// The shapes for a cell's character when it is a block element or box
+// drawing; empty for anything drawn from the font.
+CellShapes shapes_for(const session::TerminalSnapshot& snapshot, std::size_t index,
+                      const QRectF& bounds, qreal ratio) {
+    const auto grapheme = snapshot.text(index);
+    if (grapheme.size() != 1 || snapshot.cells[index].kind != session::CellKind::narrow)
+        return {};
+    return cell_shapes(grapheme.front(), bounds, ratio);
+}
+
 struct RowGeometry {
     qreal cell_width;
     qreal row_height;
@@ -224,8 +281,13 @@ bool safe_ascii_cell(const session::TerminalCell& cell, const QString& value,
     return styled.horizontalAdvance(value) == cell_width;
 }
 
+// Block and box characters are drawn as shapes filling their cells, over the
+// row's backgrounds, so they join across rows; everything else is text.
 void add_row(QSGNode& backgrounds, QSGTextNode& glyphs, const session::TerminalSnapshot& snapshot,
-             std::size_t row, const QFont& font, qreal cell_width, qreal row_height) {
+             std::size_t row, const QFont& font, const RowGeometry& geometry, qreal ratio) {
+    const qreal cell_width = geometry.cell_width;
+    const qreal row_height = geometry.row_height;
+    std::vector<std::pair<CellShapes, QColor>> shapes;
     QString text;
     QList<QTextLayout::FormatRange> formats;
     session::TerminalStyle previous{};
@@ -300,6 +362,16 @@ void add_row(QSGNode& backgrounds, QSGTextNode& glyphs, const session::TerminalS
             flush_run();
             continue;
         }
+        if (auto drawn = shapes_for(
+                snapshot, index,
+                QRectF(static_cast<qreal>(column) * cell_width, top, cell_width, row_height),
+                ratio);
+            !drawn.empty()) {
+            flush_run();
+            shapes.emplace_back(std::move(drawn),
+                                text_format(snapshot, index).foreground().color());
+            continue;
+        }
         const QString value = grapheme_text(snapshot, index);
         const bool safe_cell = safe_ascii_cell(cell, value, metrics, bold_metrics, italic_metrics,
                                                bold_italic_metrics, cell_width);
@@ -319,6 +391,8 @@ void add_row(QSGNode& backgrounds, QSGTextNode& glyphs, const session::TerminalS
     }
     flush_background(snapshot.size.columns);
     flush_run();
+    for (const auto& [drawn, ink] : shapes)
+        add_shapes(backgrounds, drawn, ink);
 }
 
 void add_cursor(QSGNode& overlays, QQuickWindow& window, const session::TerminalSnapshot& snapshot,
@@ -361,6 +435,12 @@ void add_cursor(QSGNode& overlays, QQuickWindow& window, const session::Terminal
     const auto grapheme = snapshot.text(index);
     if (grapheme.empty() || cell.style.invisible || cell.kind == session::CellKind::wide_tail)
         return;
+    if (const auto drawn =
+            shapes_for(snapshot, index, rectangle, window.effectiveDevicePixelRatio());
+        !drawn.empty()) {
+        add_shapes(overlays, drawn, color(snapshot.cell_background(index)));
+        return;
+    }
     QFont cursor_font = font;
     cursor_font.setBold(cell.style.bold);
     cursor_font.setItalic(cell.style.italic);
@@ -457,7 +537,8 @@ class TerminalNode final : public QSGTransformNode {
                 auto text = std::unique_ptr<QSGTextNode>(window.createTextNode());
                 text->setColor(color(next.foreground_rgb));
                 text->setRenderType(QSGTextNode::QtRendering);
-                add_row(*backgrounds, *text, next, row, font, cell_width, row_height);
+                add_row(*backgrounds, *text, next, row, font, RowGeometry{cell_width, row_height},
+                        window.effectiveDevicePixelRatio());
                 add_decorations(*decorations, next, row, font, RowGeometry{cell_width, row_height});
                 row_node->appendChildNode(backgrounds.release());
                 row_node->appendChildNode(text.release());
@@ -703,6 +784,15 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
     return root;
 }
 
+void TerminalSurface::setHoldResize(bool hold) {
+    if (hold_resize_ == hold)
+        return;
+    hold_resize_ = hold;
+    emit holdResizeChanged();
+    if (!hold)
+        requestResize();
+}
+
 void TerminalSurface::setInteractive(bool enabled) {
     if (interactive_ == enabled)
         return;
@@ -805,7 +895,7 @@ void TerminalSurface::requestResize() {
         grid_size_ = grid;
         emit gridSizeChanged();
     }
-    if (!interactive_ || !document_ || !document_->live() || grid.isEmpty())
+    if (!interactive_ || hold_resize_ || !document_ || !document_->live() || grid.isEmpty())
         return;
     document_->resizeTerminal(
         {static_cast<std::uint16_t>(grid.width()), static_cast<std::uint16_t>(grid.height())});
@@ -1061,10 +1151,78 @@ RowText row_text(const session::TerminalSnapshot& snapshot, int row) {
     return result;
 }
 
+// Every case-insensitive occurrence of `needle` in one row, as columns.
+std::vector<TerminalMatch> row_matches(const session::TerminalSnapshot& snapshot, int row,
+                                       const QString& needle) {
+    std::vector<TerminalMatch> matches;
+    const auto line = row_text(snapshot, row);
+    for (auto at = line.text.indexOf(needle, 0, Qt::CaseInsensitive); at >= 0;
+         at = line.text.indexOf(needle, at + 1, Qt::CaseInsensitive))
+        matches.push_back({row, line.columns[at], line.columns[at + needle.size() - 1]});
+    return matches;
+}
+
 bool printable_url_character(char32_t value) {
     return QChar::isPrint(value) && QChar::category(value) != QChar::Other_Format;
 }
 } // namespace
+
+std::optional<TerminalMatch> terminal_find(const session::TerminalSnapshot& snapshot,
+                                           const QString& needle, QPoint from, bool backwards) {
+    const int rows = snapshot.size.rows;
+    if (needle.isEmpty() || rows <= 0 || snapshot.size.columns <= 0)
+        return std::nullopt;
+    const int step = backwards ? -1 : 1;
+    for (int row = std::clamp(from.y(), 0, rows - 1); row >= 0 && row < rows; row += step) {
+        auto matches = row_matches(snapshot, row, needle);
+        if (backwards)
+            std::reverse(matches.begin(), matches.end());
+        for (const auto& match : matches) {
+            const bool after = row > from.y() || match.first_column > from.x();
+            const bool before = row < from.y() || match.first_column < from.x();
+            if (backwards ? before : after)
+                return match;
+        }
+    }
+    return std::nullopt;
+}
+
+bool TerminalSurface::pasteText(const QString& text) {
+    if (!document_ || text.isEmpty() || !interactive_ || !document_->live())
+        return false;
+    if (document_->historyActive())
+        document_->returnToLive();
+    if (!acceptsTerminalInput())
+        return false;
+    clearSelection();
+    document_->sendText(text.toUtf8(), true);
+    return true;
+}
+
+bool TerminalSurface::findText(const QString& text, bool backwards) {
+    if (!document_)
+        return false;
+    const auto& snapshot = document_->snapshot();
+    const QPoint start =
+        selection_anchor_
+            ? *selection_anchor_
+            : (backwards ? QPoint(snapshot.size.columns, snapshot.size.rows - 1) : QPoint(-1, 0));
+    const auto match = terminal_find(snapshot, text, start, backwards);
+    if (!match)
+        return false;
+    setSelection(QPoint(match->first_column, match->row), QPoint(match->last_column, match->row));
+    return true;
+}
+
+int TerminalSurface::countMatches(const QString& text) const {
+    if (!document_ || text.isEmpty())
+        return 0;
+    const auto& snapshot = document_->snapshot();
+    int count = 0;
+    for (int row = 0; row < snapshot.size.rows; ++row)
+        count += static_cast<int>(row_matches(snapshot, row, text).size());
+    return count;
+}
 
 QString terminal_url_at(const session::TerminalSnapshot& snapshot, int column, int row) {
     const int rows = snapshot.size.rows;

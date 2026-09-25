@@ -105,8 +105,8 @@ Qualify engines independently of upstream GUIs. Keep C++20 until an evidenced
 decision changes it.
 
 The [engine experiment](../evidence/terminal-engine-probe.json) records pinned
-builds and runtime results. The production adapter now reuses that pinned library;
-distribution packaging remains unfinished.
+builds and runtime results. The production adapter now reuses that pinned library,
+and the [downloadable Mac app](#the-downloadable-mac-app-september-25) links it.
 
 ## Portable rendering
 
@@ -144,8 +144,8 @@ Qt's default macOS transaction layer produced five-second display-lock stalls in
 this Vulkan window. Setting `QT_MTL_NO_TRANSACTION=1` selected the plain
 CAMetalLayer path and removed the warnings in the same threaded-render-loop
 capture. This workaround is isolated to macOS startup and tied to Qt 6.11.2;
-revalidate it on upgrades. Continuous resize, presentation timing and packaging
-still need qualification. Linux rendering, if scheduled later, needs its own evidence. Compare native Metal if later matched measurements warrant it; no
+revalidate it on upgrades. Continuous resize and presentation timing still need
+qualification. Linux rendering, if scheduled later, needs its own evidence. Compare native Metal if later matched measurements warrant it; no
 second custom renderer is needed for that comparison.
 
 Avoid OpenGL-only `QQuickFramebufferObject` and upstream private renderer APIs.
@@ -215,6 +215,11 @@ rows move to the bounded disk archive described in the completion contract below
 The GUI decodes owned snapshots and routes text, navigation, Control-letter input,
 paste and resize. The focused pane chooses the PTY dimensions; scaled previews do
 not resize it. Cell-grid/font fallback has native Vulkan regression coverage.
+Block elements (U+2580-259F) and box drawing, rounded corners included, are
+drawn as shapes filling their cells (`cell_shapes`, the iPhone's geometry),
+not from the font: rows add 3 px of line spacing, and font glyphs for them left
+lines through logos such as Claude Code's, which paints its eyes on a black cell
+background (fixed September 24).
 Qt and automated macOS keyboard/paste/Japanese IME ownership are tested;
 selection/copy and a terminal accessibility tree remain open. The renderer retains
 static scene nodes and lets Qt schedule updates and brief hover transitions.
@@ -332,7 +337,7 @@ missing dependencies cannot silently omit its tests. The existing archive runner
 owns downloads and source verification, while `cmake/Ghostty.cmake` checks build
 provenance and imports the library. Reuse the build across C++ check modes.
 [Dependency notices](../third_party/ghostty/NOTICES.txt) collect the upstream texts;
-remaining source-provenance/SBOM limits are explicit. No binary is packaged yet.
+remaining source-provenance/SBOM limits are explicit. The Mac app ships them.
 
 The coordinator owns shared headers, build files and these documents. For future
 parallel work, commit the shared contract first, assign disjoint files and one
@@ -682,7 +687,8 @@ simdutf header identifies 9.0.0 while wrapper metadata says 5.2.8. The receipt h
 the observed dependency/license inventory and retrieved notice references. The
 shared dependency scanner cannot recognize this C++/Zig graph; direct OSV commit
 queries returned no advisories for the queried pins, which is not full coverage
-or vulnerability clearance. Runtime dependency packaging remains unfinished.
+or vulnerability clearance. The notices now include uucode's referenced Unicode and
+Hoehrmann texts and simdutf's 9.0.0 texts, and the Mac app carries them.
 
 ### Deliver milestone 1: one persistent terminal
 
@@ -1378,8 +1384,9 @@ folder picker; no name, model or execution-policy settings are inserted before
 launch. Folder discovery uses Qt's asynchronous `Qt.labs.folderlistmodel` module
 from the pinned Qt 6.11.2 SDK. Suggestions clear immediately when input changes,
 show at most 100 entries and inspect at most 4096 model rows per update.
-The allowlisted CLI launchers are Codex, Claude, OMP, Grok, Kimi, OpenCode,
-Gemini and Antigravity. Discovery resolves executables from PATH and their
+The allowlisted CLI launchers are Claude, Codex, OpenCode, Grok, OMP,
+Antigravity and Kimi, offered in that order (September 24); Gemini is no
+longer offered but stays known so saved Gemini agents restore. Discovery resolves executables from PATH and their
 standard per-user install locations; launch revalidates availability. Codex
 retains its managed observer and Claude runs under the service's Claude Code
 hook adapter. The others use the existing direct PTY transport and have no
@@ -1391,7 +1398,9 @@ outside lapis because its configured credential broker is unreachable.
 Default new tabs and window titles show the home-relative project path; existing explicit names are retained.
 Marks identify the harness, not dynamically detected model-provider metadata.
 `qml/AgentMark.qml` reuses Penthouse's Codex, Claude, OMP, Grok, Kimi and OpenCode
-`assets/logos` paths; other harnesses use initials. The Codex asset cites
+`assets/logos` paths; the Antigravity arch is the path in CodexBar's
+`ProviderIcon-antigravity.svg`, matching Antigravity.app's icon; other
+harnesses use initials. The phone's `Mark-*` PDFs are the same paths. The Codex asset cites
 OpenAI's brand page and the Wikimedia 2025 symbol. These remain brand assets,
 not new software dependencies or endorsements. Redundant theme-name hover tooltips are removed; truncated tab paths
 can still reveal their full location.
@@ -1730,20 +1739,22 @@ agents to a reboot is the user's main pain point). `lapis_desktop
 --restore-agents` runs the restore path without a window (offscreen Qt
 platform): it restarts only cards whose services are gone, waits up to 90
 seconds for each to accept input, and exits, leaving services it did not start
-for a window to reattach. `scripts/restore_at_login.py` installs it as the
-`dev.lapis.restore` LaunchAgent with the installing shell's PATH, locale, shell
-and explicitly set `CODEX_HOME`, `CLAUDE_CONFIG_DIR` and `LAPIS_HISTORY_ROOT`,
-since agents inherit the helper's environment. Other environment variables,
-including provider tokens, are not copied into the plist. Reinstall the helper
-after changing these directory overrides. The helper and a window share the registry
+for a window to reattach (with `--serve`, it then hosts the workspace for the
+phone until a window takes it; see phone access below). `scripts/restore_at_login.py` installs it as the
+`dev.lapis.restore` LaunchAgent with the installing shell's PATH, since agents
+inherit the helper's environment. It also preserves `CODEX_HOME`,
+`CLAUDE_CONFIG_DIR` and `LAPIS_HISTORY_ROOT`; reinstall the development helper
+when these locations change. Top-level restore/serve flags are parsed before
+Qt starts, so an agent argument after `--` cannot select headless mode.
+The helper and a window share the registry
 lock. The helper writes its process ID to `<registry>.restoring` (owner-only)
 while it holds the lock, because QLockFile records the process name rather
-than the application name; a window finding that marker waits up to two
-minutes for the lock (longer than the helper's own limit). A window allows a
-bounded two-second grace period for a helper that has taken the lock but not
-yet published its marker, and acquires the lock if that helper exits meanwhile.
-A competing window fails after that grace period; a helper finding any holder
-fails immediately.
+than the application name. A window allows up to two seconds for a missing
+or stale marker to be published, taking the lock immediately if it becomes
+free meanwhile. Once the marker identifies the holder as a helper, the
+window waits up to two minutes and requests handover from a windowless host.
+A second ordinary window fails after the marker grace; a duplicate headless
+helper, or a helper finding a window, fails immediately.
 
 Gaps found by simulated power loss are closed in the service. A Codex build
 the observer has not qualified reports no thread, so the service also reads
@@ -1753,7 +1764,8 @@ the conversation in use. Codex keeps every loaded thread's rollout open,
 including the previous conversation after `/new` or `/resume` (observed with
 Codex 0.156.1), so the rule is the main thread written last: subagent threads,
 whose rollout's first line has a `{"subagent": ...}` source and a parent
-thread, are left out. Unreadable, malformed and oversized headers are skipped. The desktop's minute
+thread, are left out. Unreadable, malformed, oversized or non-`session_meta`
+headers cannot qualify a main thread and are skipped. The desktop's minute
 check applies the same rule to services that predate the scan, replacing a
 saved thread only when it is still open and another main thread was written
 after it. Codex 0.156 listens through a symlink it removes only on a clean
@@ -1767,13 +1779,14 @@ then start another with `/new` and `/clear`. Two rounds of SIGKILL on every
 process, with stale sockets left behind, are each followed by the helper; the
 second runs as a launchd job with the LaunchAgent's minimal environment
 (launchd kills a job's process group when it exits; services leave it through
-`startDetached`'s new session). Codex and Claude must show their earlier exchange,
-accept a follow-up, and keep the verified identity with exactly one resume
-argument; the fake model must receive the growing conversation. The four
-OSC-only stand-ins must restart fresh without injecting their advisory IDs into
-argv. The probe uses the existing CLI test wire client and an ephemeral local
-model port, so it runs independently of the phone PR and other local listeners.
-A final helper run with everything alive must restart nothing.
+`startDetached`'s new session). Codex and Claude must return to their observed
+conversation, show that exchange, accept a follow-up, and keep the identity
+with exactly one resume argument; the model must receive the growing context.
+The four stand-ins provide terminal-only advisory checkpoints, so they must
+restart fresh without injecting that unverified identity into their arguments.
+The fixture waits for observer provenance where required and binds its fake
+model to an ephemeral loopback port. A final helper run with everything alive
+must restart nothing.
 
 CLI updates (September 24, requested so agents never open on an update
 prompt). Before a new agent starts, the desktop runs that CLI's own
@@ -1781,34 +1794,22 @@ non-interactive update command (Claude `update`, OMP `update`, Grok `update`,
 Kimi `upgrade`, OpenCode `upgrade`, Antigravity `update`) with no input and a
 two-minute limit, at most every 30 minutes per CLI; the card shows Updating
 <CLI> and starts the agent when the update ends, whatever its outcome, and
-the output is logged beside the registry. On POSIX, the updater owns a new
-process group. A guard retains group membership after the leader exits, so
-cleanup never signals a recycled leader PID. Normal exit, timeout and desktop
-teardown stop the group, including installer children that remain in it. Queued
-agents wait for both leader exit and the guard's cleanup acknowledgment.
-Repeated restarts cannot bypass the queue or create duplicate services.
-Output is drained during execution into an 8 KiB tail, with the existing
-600-character log limit. Running agents keep their binary.
+the output is logged beside the registry. Running agents keep their binary.
 Codex is not updated: the observer accepts only qualified binary digests, and
 an unqualified build loses turn status and requests, so lapis keeps the
-qualified build and defaults Codex to `check_for_update_on_startup=false`.
-Newly spawned restored Codex agents receive this default too, while existing
-explicit config overrides and live reattachment arguments remain unchanged.
-Literal prompt words after `--` do not count as config options. The saved-argument
-cap remains 64: if there is no room for the default pair, the original arguments
-are preserved and the omission is diagnosed instead of breaking registry reload.
+qualified build and launches Codex with `check_for_update_on_startup=false`.
 Automating Codex requalification (the probes against the fake model rather
 than a live one) is the step that would let Codex update too. Restored and
 reattached agents are not updated.
 
-Explicit Claude creation through `--new-session` uses the same update queue as
-managed new agents. Reconnect and discovery retain their attachment semantics
-and never run an updater. Deferred explicit starts retain the normalized socket
-endpoint, and their update log lives beside that endpoint. The
-`--no-harness-updates` flag disables updates for pinned-binary qualification and
-operator-selected launches; fixture `WorkspaceOptions` keep updates off by
-default. Codex remains pinned, and arbitrary explicit programs do not gain an
-inferred updater command.
+Explicit supported-CLI creation shares this queue, and `--no-harness-updates`
+disables it. Headless restore/serve keeps its existing no-update policy. Each
+updater has an isolated process group and a retained guard; timeout, leader exit
+and desktop teardown stop installer descendants too. A queued agent starts only
+after the leader exits and the guard acknowledges cleanup. Restart cannot bypass
+the queue. Output is drained while the updater runs into an 8 KiB tail. Restored
+Codex launches receive the qualified-binary update setting only after the old
+service is gone, preserving explicit configuration and resume-argument provenance.
 
 Phone access (September 23, requested for use on the go without signing in).
 A prototype, deliberately simpler than the SSH design first proposed:
@@ -1843,11 +1844,9 @@ A prototype, deliberately simpler than the SSH design first proposed:
   service for the terminal's modes) and resize. The phone's grid is applied to
   the PTY; the software keyboard covering the screen does not resize it.
   Width changes, including rotation while composing, also update the row count.
-  Input POSTs are serialized, including compound paste/Enter requests. Closing
-  a view cancels its pending input; overload is reported after 128 queued requests.
-  Brief inactive transitions preserve the stream and loaded history; returning
-  from the background reattaches it. Immutable history pages retain their wrapped
-  rows and accessibility text until the page set or fitting width changes.
+  A size changed during connection is sent once after the first frame. Cancelled
+  streams cannot mutate or close a replacement connection. Deferred history
+  belongs to the requesting attachment and survives another attachment leaving.
 - Admission replaces keys or pairing: the gateway binds only the Mac's
   Tailscale address and serves a request only when `tailscale whois` gives the
   Mac owner's login on an iOS device, or the Mac itself. The Mac's tailnet is
@@ -1865,9 +1864,7 @@ A prototype, deliberately simpler than the SSH design first proposed:
   terminals draw them, so logos and borders join across rows; rows wider than
   the phone (history archived at a desktop size) wrap instead of scrolling
   sideways. `scripts/check_ios_remote.py` compiles it and its UI tests
-  directly and runs them in a headless simulator against disposable services.
-  Its loopback fixture supplies synthetic Tailscale status metadata and checks
-  gateway readiness; it does not qualify real tailnet admission. It runs
+  directly and runs them in a headless simulator against disposable services,
   with a Mac-side client attached the way the desktop is, which must see the
   phone's typing, answer it and never be replaced;
   The agent menu's Send screen to Mac posts a screenshot and the frame it drew
@@ -1877,15 +1874,260 @@ A prototype, deliberately simpler than the SSH design first proposed:
   profile and installs it with `devicectl`. Both bypass Xcode's build service,
   which deadlocked on this Mac: the kernel's pipe memory was exhausted by
   long-running agent processes, leaving new pipes 512 bytes deep.
+- Starting agents from the phone (September 24, requested so a walk away from
+  the Mac is not a reason to wait). The registry has one writer, the lapis
+  process holding its lock, so the gateway asks that process instead of
+  editing the file: `<registry folder>/workspace-control.sock` (owner-only, in
+  the private runtime folder) takes one JSON line per connection and answers
+  with one. Version 1 requests are `harnesses` (the catalog with `installed`
+  as that process's PATH finds it), `createAgent` (category, harness, folder
+  with `~` expanded, optional title defaulting to the folder's name) and
+  `handover`. `createAgent` runs the desktop's own new-agent path, including
+  the CLI update first, in the named category without touching its
+  selection, so an agent shown on the Mac keeps the stage and keyboard; only
+  a category with nothing selected shows the new agent. The gateway exposes
+  `GET /api/harnesses` and `POST /api/agents` behind the same admission and
+  answers 503 when no lapis process owns the workspace. The phone's sheet
+  offers the Mac's installed CLIs, the folders of agents already there and the
+  categories, then waits (up to 150 seconds) until the agent's service answers
+  before opening it.
+- Folders, machines and prefetch (September 24, requested so the phone never
+  makes you type or wait). The gateway builds a folder index per machine in
+  the background: folders under home to depth four (generated and package
+  folders listed but not opened, hidden folders listed and opened only at
+  home), capped at 30,000, and the twelve most used folders, counted from
+  Codex rollouts (interactive main threads), Claude Code sessions per project
+  and the workspace's agents. Another machine's index comes from the same
+  code run over `ssh -o BatchMode=yes` in an interactive login shell, which
+  also reports where each CLI is; the absolute path goes into that agent's
+  launch. `GET /api/folders[?machine=][&have=version]` answers `unchanged`
+  when the phone holds the current version, and gzips otherwise. Machines
+  (`GET /api/machines`) are the ssh config's named hosts plus hosts reached
+  at least three times in zsh or bash history, ordered reachable first, then
+  by use; reachability is a TCP connection to the host or its first jump
+  host, never a login, so a hardware key is never asked for a touch. The
+  desktop starts a remote agent as `ssh -t <host> 'cd <folder> && exec
+  "${SHELL:-/bin/sh}" -lic <cli>'` with each word quoted, in terminal mode,
+  and never updates a remote CLI first. The phone keeps the list, CLIs,
+  machines and indexes on disk per Mac, refreshes them in the background,
+  and searches an index in memory, narrowing each keystroke from the last
+  query's matches. `GET /api/agents/<id>/screen` joins briefly without
+  resizing and never takes an agent over, so the phone can show each running
+  agent's screen the moment it is opened; the first history page is fetched
+  when the live screen arrives. The gateway keeps HTTP/1.1 connections alive
+  and closes any connection it refuses a request on.
+- The windowless host. With no window open nothing would own the workspace,
+  so `lapis_desktop --serve` keeps it without a window (offscreen Qt
+  platform), serving the same socket and leaving running services for a
+  window to reattach; the login LaunchAgent runs `--restore-agents --serve`.
+  It writes the helper marker beside the lock. A window finding that marker
+  sends `handover` every half second while it waits (at most two minutes) for
+  the lock; the host answers, then exits, and the window takes the workspace.
+  A window refuses `handover`. Qualified by `phoneStartsAnAgentInItsCategory`
+  and `windowTakesTheWorkspaceFromTheHost` (workspace suite, the second
+  against the real binary), the gateway suite against a stand-in socket and
+  the real host, and `testStartAnAgentFromThePhone` in the simulator against
+  the real host.
+- Alerts, live configuration, model and mode, search and usage (September 24,
+  requested after a Cursor settings review; each CLI's other settings stay in
+  its own config). `lapis.json` is watched (the file and its folder, settled
+  for 150 ms, the app's own writes recognized by content) and applies without
+  a restart, so an agent can edit it. It holds `alerts` (`sound`, `finished`,
+  `repeat`), `keepAwake`, `usage` (`show`, `meter`, `machines`) and `newAgent` (`harness`, `folder`,
+  `machines.<host>.folder`, `models.<cli>`); a model that looks like an option
+  is dropped. Chimes are synthesized WAVs, no audio files: two glassy taps
+  (sine with an octave shimmer and a short inharmonic strike), rising E6 to A6
+  at -12 dBFS when an agent needs you, falling and at -18 dBFS when a Codex or
+  Claude turn ends out of view. A request chimes at once and every four
+  seconds while it waits unseen, up to `repeat` times (default three), with
+  at most one chime per 1.5 s; looking at the agent, answering or closing it
+  stops it. macOS plays them through NSSound; Linux is silent. Keep awake
+  runs `caffeinate -s -w <gateway pid>` from the gateway while the setting is
+  on, so it sleeps normally on battery and ends with the gateway. The new-agent
+  form, desktop and phone, offers a model (CLIs with a model flag) and an
+  approval mode (Ask, Accept edits, Plan, Auto, Full access, only those the
+  CLI has), mapped per CLI to flags checked against each `--help`; Default
+  passes nothing. Command-K searches agents with a purpose-built index,
+  rebuilt when it opens: letters in order over name, folder, category, CLI and
+  machine, substrings on screen lines; 128 agents with 60 lines each index in
+  0.71 ms, and queries take p50 0.07, p95 0.65, p99 0.68 ms on the M4 Max.
+  Usage shows whatever plans are signed in, since plans change often: each
+  CLI is asked in its own interface every five minutes while shown, at most
+  three at a time. Codex app-server `account/rateLimits/read`; Claude Code's
+  `get_usage` control request over stream-json with `--setting-sources ""` and
+  `--no-session-persistence`; Grok's ACP `_x.ai/billing` from `grok agent
+  --no-leader stdio`; Kimi's `/api/v1/oauth/usage` from a `kimi web --no-open`
+  on a free loopback port, authorized by the token it prints (Kimi's access
+  token lasts 15 minutes, and refreshing it outside the CLI would rotate its
+  refresh token); OMP's ACP `_omp/usage` after `session/new`, with
+  `--session-dir` in a folder deleted afterwards, since ACP sessions are saved
+  even with `--no-session`. No prompt is sent, none of the person's hooks run
+  and nothing is saved; each answers in 0.5 to 2.2 s. An error answer means
+  not signed in, and that plan is left out. OMP's accounts are matched to a
+  CLI's sign-in by account ID or by a window of the same length ending at the
+  same time at the same use, and shown once. Another machine in
+  `usage.machines` is asked the same way over `ssh -T -o BatchMode=yes` in an
+  interactive login shell (Kimi's port forwarded, and its server stopped when
+  the connection closes); OMP is asked here only, since its broker is usually
+  shared. Gauges read what is left rather than what is used (asked on
+  September 24: a full week should be a full green bar): green with plenty,
+  the theme's attention colour under 30%, red under 10%, from `plenty` and
+  `scarce` colours every theme defines; a window used faster than it lasts
+  says when it runs out. That machine's tokens are counted by `count_tokens.py`, compiled in
+  and sent to its python3 over ssh every 30 minutes at `nice 19`, returning
+  UTC hours that this Mac turns into local days; it follows the same rules as
+  the desktop's counter and has its own tests. Live on September 24, three
+  machines settled in 7.1 s, and counting the last 30 days of a Linux host's transcripts
+  over ssh took 1.4 s. Token totals come
+  from the transcripts, read on a background thread and then only as they
+  grow: Codex's running totals as differences, with a file's first report
+  and any decrease counted as that call alone (forks can start from the
+  parent's total, and Codex repeats reports unchanged); Claude messages once
+  across lines and resumed sessions at the largest usage any line reported
+  (earlier lines can carry partial output counts). September's totals match
+  ccusage exactly for Codex and to the live session's growth for Claude.
+  Reading this Mac's 6.9 GB of the last 30 days took 5.6 s once and 0.31 s per
+  later check. No prices are shown: lapis has no published price list for
+  current models to read.
+- New-agent choices (September 24, from using the phone form). Changing one
+  choice keeps the others: another machine keeps the CLI while it has it (the
+  phone had reset it to the first CLI), and the mode stays across CLIs and
+  agents. There are three modes and no "Default": Accept edits, Auto and Full
+  access. Codex: `-a on-request -s workspace-write`, `-a never -s
+  workspace-write`, `--dangerously-bypass-approvals-and-sandbox`. Claude and
+  Grok: `--permission-mode acceptEdits`, `auto`, `bypassPermissions`. OMP:
+  `--approval-mode=write` and `yolo`. Kimi: `--yolo` for Auto, `--auto` for
+  Full. OpenCode: `--auto` for Full. Antigravity: `--mode accept-edits` and
+  `--dangerously-skip-permissions`. A CLI without the chosen mode uses its
+  nearest, less access first, and shows the others unavailable. Models come
+  from each CLI (`HarnessModels`, hourly and in the background): Codex
+  app-server `model/list`; Claude's `initialize` control request, whose
+  default is the model its "default" entry names; `grok models`; `agy models`;
+  Kimi's config aliases; OpenCode's favourite and recent models; OMP's
+  configured roles, then the models its 40 newest sessions switched to (OMP
+  lists 940 and OpenCode 593, so what was used ranks them); at most eight,
+  the default first and started without the flag. `newAgent.models` still
+  replaces a CLI's list, and `newAgent.mode` sets the first mode, Full access
+  when unset (asked the same day). `newAgent.folder` is the preset folder on
+  every machine unless `machines` names one, preselected when the machine's
+  index has it. The phone's list has one **+** (a new agent or a new
+  category; `createCategory` on the control socket adds it without moving
+  the window) and closes an agent with a swipe (`closeAgent`, as Command-W).
+  `LAPIS_CONFIG` points a check's lapis at its own config. The phone
+  shows the CLIs as large cards two and a half across, the models wrapped,
+  the modes as three buttons, and the folder on its own screen (search, the
+  ten most used without counts, browsing).
 - Not yet: structured requests and approvals on the phone (agents' own prompts
-  are answered through the key bar), push notifications, and restoring agents
-  without the desktop open, which needs a per-user background process; these
-  remain proposed.
+  are answered through the key bar), push notifications, serving the phone
+  after the window quits (only the login helper hosts without a window), and
+  a machine choice in the desktop's own new-agent form; these remain
+  proposed.
 
 Observed but not changed: Linux TSan reports frees and mutexes on Qt's uninstrumented
 threads in five GUI suites, identically on the pre-merge base, so TSan remains a
 macOS qualification. Native Mac selection, wheel and window-manager behavior are
 not yet exercised.
+
+### The downloadable Mac app (September 25)
+
+A release is `lapis.app` in a signed DMG, built by `scripts/package_macos.py`
+(procedure in [Contributing](../CONTRIBUTING.md#build-the-mac-app)).
+
+- **Qt built for lapis.** The official Qt 6.11.2 macOS binaries are built without
+  Vulkan (`QT_FEATURE_vulkan` is off), and Homebrew's Qt requires macOS 26 and
+  brings glib, ICU, OpenSSL and a dozen other libraries. The release builds
+  qtbase, qtshadertools and qtdeclarative 6.11.2 from their pinned source archives
+  with Vulkan, bundled FreeType, HarfBuzz, PCRE2, libpng and libjpeg, no D-Bus,
+  glib, ICU, OpenSSL, widgets or SQL, only the Basic Controls style, arm64 and
+  macOS 14. Its install prefix is a neutral path and build paths are remapped, so
+  nothing in the app names the build machine.
+- **MoltenVK without a loader.** The app bundles Homebrew's MoltenVK 1.4.2 (system
+  frameworks only, macOS 12 and later) and points `QT_VULKAN_LIB` at it; Qt
+  resolves `vkGetInstanceProcAddr` from it directly. The Vulkan loader is not
+  shipped. A developer build still uses the loader it was configured with.
+- **Data in `~/.lapis`.** `LAPIS_PACKAGE` removes the checkout path, session
+  service path and Vulkan path from the build. The app keeps `lapis.json` and
+  `runtime/` in `~/.lapis` (overridable with `LAPIS_HOME`). Agent sockets live in
+  `runtime/`, and `~/Library/Application Support/lapis/runtime/<uuid>.sock` would
+  pass the roughly 104-byte socket path limit for longer user names.
+- **The login shell's environment.** Opened from Finder, the Dock or a LaunchAgent,
+  the process is launchd's child with a PATH of system folders, so agents could not
+  find node, git or the person's API keys. On macOS, when its parent is launchd,
+  lapis runs the login shell once (`-i -l -c`, 8-second limit, stdin closed) and
+  takes its environment, as VS Code does; any other start keeps its environment.
+- **Signing and notarization.** Every framework, plugin and executable is signed
+  inside out with the hardened runtime and a timestamp; the app has only the JIT
+  entitlement for the QML engine. Notarization staples the app, then the DMG.
+- **Licenses.** Qt is used under LGPL-3.0 as separate frameworks the user can
+  replace; its notices come from the build's SBOM, and each release attaches the
+  exact Qt source archives. MoltenVK's notices cover SPIRV-Cross, SPIRV-Tools,
+  SPIRV-Headers, Vulkan-Headers and cereal at MoltenVK's pinned revisions.
+- **Release checks.** `verify` checks every Mach-O for arm64, macOS 14 and links,
+  sweeps the bundle for the build machine's user name, host name and Homebrew
+  path, creates a Vulkan instance with a Metal surface on the bundled MoltenVK,
+  queries the windowless host, and starts the app under launchd to confirm the
+  login shell's PATH. Highway's assertion text inside Ghostty's library names its
+  Zig cache path; packaging shortens that string to the header name in place.
+
+The published 0.2.0 arm64 package was independently checked on September 25:
+strict deep code-signature verification, stapled app and DMG notarization tickets,
+and the appcast's Ed25519 signature and asset length pass. This read-only check
+did not launch the app and applies to the published `ed177847` artifact, before
+the subsequent integration fixes. It does not establish presentation, an actual
+update, or launch on a second Mac. macOS 14 and 15 remain unqualified; Intel Macs
+are not built. The package now includes the login item and Sparkle update support
+described below; the Python phone gateway remains a separate developer tool.
+
+### Tiles, dragging and desktop integration (September 25)
+
+The user asked for tiles again, having split terminals everywhere else ("a
+native feature that I would want coming in"), this time by dragging strip
+cards onto the stage; this supersedes the September 22 removal above. Tiles
+are per category and the strip stays the navigation.
+
+- **Layout.** `TileLayout` is a plain binary tree (a leaf per agent, a split
+  side by side or stacked with a ratio), so it rolls back with the rest of the
+  registry and is saved per category as `tiles`. Unknown or repeated agents and
+  malformed splits are dropped on load; at most eight tiles. Workspace exposes
+  the active category's tiles and dividers in unit coordinates.
+- **Selection.** The selected agent is always one of the tiles. Clicking a strip
+  agent that is not tiled puts it in the selected tile, as selecting a card
+  always showed it on the stage; its previous agent stays in the strip.
+- **Rendering.** The selected tile's terminal is the existing stage surface,
+  moved to that tile, so focus, IME and every earlier stage behavior are
+  unchanged. Other tiles are interactive surfaces with input disabled: they
+  size their agents and draw live, and a click selects them. Tile and divider
+  delegates are keyed by agent and split path and only move when a divider
+  does, so a drag never rebuilds a terminal. `holdResize` keeps every agent's
+  size during a divider drag and sends one resize when it ends; a resize per
+  cell would make each agent redraw many times a second.
+- **Dragging.** One mouse area per card or tile name bar turns a press into a
+  click or, after eight pixels, a drag; a TapHandler and DragHandler pair inside
+  the strip's list lost clicks. A ghost with `Drag` keys carries agents or a
+  category to drop areas on the stage (edge to split, middle to swap), the strip
+  (an insertion marker), the rail's categories and its **+**. A drop is applied
+  after the drag ends, because it can replace the very card being dragged.
+  `Drag.Internal` was not used: it starts a platform drag that takes the mouse.
+  Qt drops synthetic pointer moves that repeat a timestamp, which the UI tests
+  must set.
+- **Find** searches the page shown, row by row and case-insensitively, using the
+  terminal's selection for the match, and pages into older history when the
+  page has no more.
+- **Notifications** use UNUserNotificationCenter for the chime's moments while
+  lapis is not the active app, one per agent (a newer one replaces it); the
+  first asks permission. **Reopen** keeps the last ten closed agents' resume
+  launches for the session. The downloaded app's **login item** is an
+  SMAppService agent in `Contents/Library/LaunchAgents` running
+  `--restore-agents --serve`.
+- **Updates.** Sparkle 2.10.0 reads `appcast.xml` from the latest release's
+  assets. The EdDSA private key exists only in the release Mac's login keychain;
+  the release step exports it through `generate_keys` (which created it and so
+  needs no prompt) for one `sign_update` call. Losing that key means installed
+  copies can no longer verify updates, so it must be backed up.
+
+Multiple windows (a category in its own window) were deferred: tiles cover a
+split on one display, and a second stage with its own focus and layout would
+touch every part of the workspace.
 
 ### Following milestones
 
@@ -1900,7 +2142,7 @@ planned; they are not implied by Milestone 3 passing.
 | 5: independent adapter and platform completion | Stable adapter capability contract; separate adapter/platform owners | Second CLI independently exercises observation/response/reconciliation; macOS and named Linux backends have actual lifecycle, native input and rendering evidence |
 
 Dependency notices, a complete bundled inventory/SBOM and redistribution obligations
-must be closed before publishing binaries. This release requirement is independent
+must be closed before publishing binaries; the Mac app's are collected above. This release requirement is independent
 of a local milestone passing. Keep current implementation status in the README;
 the tables here define work order and acceptance only.
 

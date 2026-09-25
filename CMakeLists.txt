@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(lapis VERSION 0.1.0 LANGUAGES CXX)
+project(lapis VERSION 0.2.0 LANGUAGES CXX)
 
 if(NOT CMAKE_SYSTEM_NAME MATCHES "^(Darwin|Linux)$")
     message(FATAL_ERROR "lapis targets macOS and Linux")
@@ -13,6 +13,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(cmake/ProjectOptions.cmake)
 
 option(LAPIS_BUILD_DESKTOP "Build the live desktop preview and local session service" OFF)
+option(LAPIS_PACKAGE "Build the desktop as the downloadable app (see scripts/package_macos.py)" OFF)
 
 include(CTest)
 add_subdirectory(services/session)

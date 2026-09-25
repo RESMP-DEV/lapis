@@ -1,0 +1,248 @@
+{
+  "schema": "lapis.pr-review-resolution/1",
+  "recorded_at": "2026-09-25T11:11:26.456619+00:00",
+  "base_revision": "ed1778474c29cea14a7e7b3b6b6820a8a73d3749",
+  "main_revision": "06b84cf0489bd81ed3ab3baccbca301d87d201b8",
+  "source_sha256": {
+    "CONTRIBUTING.md": "f63652e546b9facd36691d415cfdbc57abe2c66828abc71987a8225d1010ad85",
+    "README.md": "41de8c916685f0558a7b5f41906403247145cfb107b7bf459b2e9798bab56a35",
+    "apps/desktop/CMakeLists.txt": "c8a78b9718243cef13540cd39927e098c74d1a0e9de9337b891cde98583e8ce0",
+    "apps/desktop/src/main.cpp": "0060a69ccef2612f4678c6f44abd1240f798838263cbb5670e046d274ae02ce6",
+    "apps/desktop/src/platform/updater_process.cpp": "cbdeb71bc4432040061d3b09a7e0f3913bb53f2c54381fd69772178a24a43a29",
+    "apps/desktop/src/platform/updater_process.hpp": "eb93388ec9a7835c92e4910675d347b2bc2636b866663217dc764d668f40a831",
+    "apps/desktop/src/platform_preferences.mm": "67d7e4091ca42f99ca4dd42b292da5fb8876269c10b5915337c7d55e0d55a696",
+    "apps/desktop/src/workspace.cpp": "edc86d95efa9b98e6d86d8b22930f3601a218eb603324eab9602c030b732ec75",
+    "apps/desktop/src/workspace.hpp": "f6bb632fbb11bbb1da92fe7241e73602c97ed417339690cd419343229dc6bdb1",
+    "apps/desktop/tests/workspace_test.cpp": "34d442568ab94fd2f0e5c0145e39d914799e8cfe11ede1125592b672bb5756ed",
+    "apps/ios/Lapis/Models.swift": "548f0f762668f73dac1273e7e8574fd205c926c2ce4cd236d8baabb713e82d7a",
+    "docs/architecture.md": "546fc4a358359d6d8b2846571e9181941d56d66f483b06452e02c9764862d50c",
+    "scripts/check_ios_remote.py": "e7f540602069e615a7edbebbc4e619e859795cf4662f026835af01f542aa40ef",
+    "scripts/check_restore.py": "e507940371c4daa99871fa8f45a54e1d706d892812ec8a9c2927be571e7979f8",
+    "scripts/fake_models.py": "07a8013225cfb0a4e3546bebcd8574446ed3419a98d59ff8fc031c41952cc483",
+    "scripts/install_ios_app.py": "0cc19b806f3799eecc1694bab16f2fb7d5e6251095177ab4df8853e2c4f8b75f",
+    "scripts/restore_at_login.py": "c3a2b1702a1372c36bdd6daa218462a91e660aedba953bf58e8b751d88d1db2e",
+    "scripts/tests/test_check_restore.py": "50efd528dbb730ee34fbf95022bef28479859b81429e6c9ce269cf6dac820a96",
+    "scripts/tests/test_install_ios_app.py": "7cac4a9ff51d57e8f2a9398a7164a3e7f92f0ff09a19b63d37de8940a348b0ec",
+    "scripts/tests/test_restore_at_login.py": "c89bf4d62195c0bd4bb579522c2168ad19e5da86e275f7ca829e585dfa43e79d",
+    "services/session/src/platform/posix/process_group_guard.cpp": "31379d953fd18836749ff66d1b07fdf2b866eb78229ddc80747381dffcf6d783",
+    "services/session/src/platform/posix/process_group_guard.hpp": "58c9aa0e3d51a694e6ff0a9b6d726adcc86ff75027631338c0e2fb635b2f8d95",
+    "services/session/src/session_service.cpp": "64afea974d7731577a9f07852240dcc59a8068bb7c78deafd2c9aadd119a81d4"
+  },
+  "platform": {
+    "os": "macOS 26.7",
+    "architecture": "arm64"
+  },
+  "provenance": {
+    "PR13": "d5011856c78412976970a56e6216a0f3be566af9",
+    "PR14": "cf7d18ac1c71a443778beadaffcebbeb4783af72",
+    "PR15": "939894e1bea83d3391a2970cf64664cccc3e6ea8",
+    "method": "Adapted reviewed changes to the release branch; retained tiles, dragging, new phone flows and the windowless host."
+  },
+  "changes": [
+    "Restore updater process-group cleanup, cleanup acknowledgment before queued launch, bounded output, queued restart refusal, explicit-create updates and the opt-out.",
+    "Parse top-level headless flags before Qt construction without consuming literal child arguments; preserve custom agent data directories in the development login helper.",
+    "Keep selection in the tile tree when selecting an untiled agent in an inactive category with stale selection.",
+    "Keep cancelled phone stream tasks from closing a reopened connection; replay connection-time resize on the first frame; clear deferred history only for its owning attachment.",
+    "Retain the manual-reference-counted chime cache across autorelease pools and balance newly cached sound ownership.",
+    "Restore focused iOS runner selection, explicit XCTest dependencies, disposable gateway readiness, and cleanup restricted to the run-owned simulator and processes.",
+    "Restore the reviewed reboot probe and ephemeral fake-model readiness. Reuse existing login-environment coverage instead of adding its duplicate from the older test file."
+  ],
+  "validation": [
+    {
+      "command": "cmake --build build/desktop --parallel 6",
+      "result": "pass"
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen TMPDIR=/tmp ctest --test-dir build/desktop -R '^(session-platform-ownership|launch-spec|local-protocol|pty-process|workspace|live-connection|tile-layout|app-environment)$' --output-on-failure --no-tests=error",
+      "result": "8/8 pass; workspace repeated after final C++ edits: pass, 14.00s. Unchanged remaining cases reused."
+    },
+    {
+      "command": "ctest --test-dir build/desktop-asan -R '^(workspace|pty-process|live-connection)$' --output-on-failure --no-tests=error",
+      "result": "3/3 pass, 23.39s; desktop-enabled ASan/UBSan."
+    },
+    {
+      "command": "ctest --test-dir build/desktop-tsan -R '^(workspace|pty-process|live-connection)$' --output-on-failure --no-tests=error",
+      "result": "3/3 pass, 97.57s; workspace 77.55s. The updater fixture gives instrumented startup a longer budget; production deadlines are unchanged."
+    },
+    {
+      "command": "clang-format --dry-run --Werror on changed C++/Objective-C++ files; clang-tidy and Cppcheck with the selected native compile database",
+      "result": "pass, seven translation units; Cppcheck skips Objective-C++."
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --output build/worktree-cleanup-20260925/pr16-cli.json",
+      "result": "14/14 background CLI cases pass; unchanged service binary reused after desktop-only edits."
+    },
+    {
+      "command": "just quality",
+      "result": "pass, 162 Python tests including live service/gateway, login environment and ephemeral fake-model listener checks."
+    },
+    {
+      "command": "uv run --no-project python scripts/check_ios_remote.py --only testRotationWhileComposing --only testSyncedWithTheMac --only testTakenElsewhereThenReopened",
+      "result": "3/3 headless Simulator cases pass; Mac client saw phone input and was never closed."
+    },
+    {
+      "command": "uv run --no-project python scripts/check_ios_remote.py --only testStartAnAgentFromThePhone",
+      "result": "pass; the host observed agent creation, closure and new category."
+    },
+    {
+      "command": "SHELL=<disposable login shell without user startup files> uv run --no-project python scripts/check_restore.py",
+      "result": "pass; both power-loss rounds, including launchd. Codex context grew 3 to 7 items; Claude grew 2 to 8 messages. Four terminal-only advisory fixtures restart fresh. Final helper restart leaves processes unchanged."
+    },
+    {
+      "command": "Native Foundation HTTP/SSE probe compiled with the release Models.swift, Gateway.swift and FolderSearch.swift",
+      "result": "pass: initial connection resize, live resize and cancelled-old-stream isolation on reopen; resize sequence 100x30, 110x35, 120x40."
+    },
+    {
+      "command": "Native Qt Core parse/process reuse probe",
+      "result": "4/4 cases pass; --restore-agents and --serve are options only before the child argument separator. No GUI."
+    }
+  ],
+  "cli_identities": {
+    "codex": {
+      "version": "codex-cli 0.0.0",
+      "sha256": "e1e083ab281668d370b5aa4d21a2803158723380ef1a04be80ffa459e700d407"
+    },
+    "claude": {
+      "version": "2.1.280 (Claude Code)",
+      "sha256": "387a5c5dcdbb815085edf0baf79591f9d8894efe922bceaf3d75b1b08055229d"
+    }
+  },
+  "published_artifact": {
+    "tag": "v0.2.0",
+    "source_revision": "ed1778474c29cea14a7e7b3b6b6820a8a73d3749",
+    "dmg_sha256": "082ce7f49e0acdd9572f3c2d0aa46d3a2fae48ccec33f3689d7277f058ee0a92",
+    "checks": "Strict deep code signature, app and DMG stapled tickets, appcast Ed25519 signature and asset length, arm64 and bundle metadata pass.",
+    "limits": "Read-only mounted artifact, detached afterward; app not launched. Gatekeeper assessment reported accepted with a security-disabled override, so it is not enforcement evidence. The published artifact does not contain these subsequent source fixes."
+  },
+  "initial_failures": [
+    "First consolidation build exposed duplicate declaration, declaration ordering, initializer ordering and a stray test parenthesis; fixed before runtime validation.",
+    "An initial quality run used stale build products; rebuilt current source before the passing run.",
+    "Initial TSan updater startup exceeded the fixture deadline. The final instrumented run passes with a bounded startup allowance.",
+    "Initial restore probe still expected terminal-only checkpoint resume. Restored the reviewed provenance-aware fixture; the final live check passes.",
+    "A proposed desktop child-argv diagnostic used an invalid --qml combination and exercised only option rejection; excluded from acceptance. Qt Core contract checks and normal workspace/restore execution supply the reported evidence."
+  ],
+  "review_state": {
+    "PR13": "Five new CodeRabbit findings fixed, replied to and resolved at d501185.",
+    "Kimi": "Baseline PR16 ed177847 review completed with no findings; it does not cover this follow-up.",
+    "GLM5.2_and_MiniMax_M3": "Quota-deferred until 2026-09-26 07:00 UTC. Local webhook queue confirmed both profiles pending for the open PRs. Not approvals.",
+    "CodeRabbit": "PR13 new-head review explicitly limited at 10:59:50 UTC for 24 minutes. PR16 automatic review previously skipped; no additional invocation during this reset window.",
+    "worker_review": "Independent read-only final audit stopped at provider 429 before a final report. Coordinator reviewed affected contracts; earlier implementation worker results were compiled and tested."
+  },
+  "limitations": [
+    "macOS is the active platform. No new Linux qualification, physical iPhone check, native desktop interaction, full current-head GUI sweep, performance or actual reboot claim.",
+    "Published baseline UI/package observations retain their original revision; modified source has not been signed, notarized, installed or released.",
+    "Notifications, real CLI self-updates, audible playback, OS login UI and a real Sparkle update were not invoked.",
+    "No forced full-history-queue admission case; pending history ownership was source-reviewed and covered by ordinary live history/reconnect checks.",
+    "Raw logs and one-off diagnostics are local under ignored build/worktree-cleanup-20260925; committed evidence is sanitized."
+  ],
+  "merge_followup": {
+    "recorded_at": "2026-09-25T11:48:13.691610+00:00",
+    "release_parent": "fddae1928da62b3b4e44dae27d68da44b2d4e3fd",
+    "integration_parent": "f558ad883ca44e8866f48cd7f79dc851f92c4d4a",
+    "main_before_release_merge": "5f689020c58da02aed1a89e31e4d0c853b4a4340",
+    "source_sha256": {
+      ".coderabbit.yaml": "265b90971e6b351748325f5b0e5fe998ba39982809a755a57e01f258907c55bc",
+      ".gitattributes": "2013dc2feca6f40ee5847811b04298209f0b4e2d51970a469ed216a574da3c24",
+      "apps/desktop/src/keymap.cpp": "749a0e904fd70039fb81f278be835fb5b7e8808ce814955556c57198c73002a5",
+      "apps/desktop/src/workspace.cpp": "fe63fb3720e43538c3f573a2cd516536128605ec5ce9589b408ccaba4b34cd29",
+      "apps/desktop/tests/keymap_test.cpp": "551844b7b08ba5b9748fdead988560845daa59fb98c5291c2064dbd208f59f35",
+      "apps/desktop/tests/live_connection_test.cpp": "8bd9fcad11d14d297445d6b94ae8aea59db9889636ac21e9ddefab93bcc0b553",
+      "apps/desktop/tests/native_input_probe.cpp": "817cbd448453eeac42e9c427cc231a81aaac575ad3b72ece3daf45eab04823ef",
+      "apps/desktop/tests/window_state_test.cpp": "f0a4f58ffd2e93bf742678b616bdb9b03922477d7acbeb97d0885bdc875676b3",
+      "apps/desktop/tests/workspace_live_probe.cpp": "1f36b7840c965d6b3c1fd37335f89e2e3b13f5c58f5c91b00568912ebbcf649e",
+      "apps/desktop/tests/workspace_test.cpp": "9755ba949acb2d4ed093e3d007b1e1b941b01494f877f8f916d773b74cfd1b8c",
+      "apps/ios/LapisUITests/LapisUITests.swift": "0e8572d64653b79eaab0be8a59fd5f1a3694e5bb2a551c2984ba6f03ac26dfe7",
+      "apps/remote/lapis_remote.py": "7389f524eb0bc245fc0090f3c7e41e9fcaa5f308b75ee01beec51e55bfca6dfd",
+      "docs/architecture.md": "1d82a26f7bc3e357c0698c9860d8853d0afab7382303bc1e2e5a76d8cc20932e",
+      "scripts/check_cli_launch.py": "04d72acc18c5ec3283c020eda67abf8d23949c2b4b58e5037a709a8eff4c535b",
+      "scripts/check_service_attention.py": "bda1aac0860c82f4a5733556493bccaa2fdb0c47442f19271ddba74a21147b54",
+      "scripts/tests/test_check_service_attention.py": "9264189459ae4cff2121d02b99ad127dbe99b3789f05fa8eaa3dd6f71038d8ea",
+      "scripts/tests/test_fake_models.py": "c18d0ed5f5b38f5ebf20effa9431a8a56974d48f36a8d9bb79628b84754ed739",
+      "scripts/tests/test_lapis.py": "758cfd9558fb1b67e5f8708edbe08bcefa199c44375b39d11844f0010f19b1b0",
+      "scripts/tests/test_lapis_remote.py": "d12a2e38d50309460292e5d069ec5ee7cd071eadb7a7d73abb6576e9015f86d0",
+      "services/session/src/agent_checkpoint.cpp": "dac6c96e0e62dd13dc530812fc694874eff9c7f0c980fbb765f4629212581acd",
+      "services/session/tests/agent_checkpoint_test.cpp": "4aed95e6adf018dcd4fe9c2ac89e2ea15902f22770480142a8ffb4cf7640bbaf",
+      "tools/qa/breakit.py": "b58acfcbfb04212741a5b3dc6b74bde4293cfcf386a65ac84fbc8c2eaaa70831",
+      "tools/qa/fake_agent.py": "965605bd550b00b046da0f0ecc733b7748c82260ad9b79fa5770434e63fc42f4"
+    },
+    "changes": [
+      "Merge the complete reviewed PR11-PR15 ancestry into the newer release implementation; preserve tiles, dragging, phone joins, CLI updater and windowless-host contracts.",
+      "Retain strict Codex session_meta header validation, missing/stale helper PID publication grace, immediate duplicate-headless rejection and existing control-socket handover.",
+      "Retain capture object validation, unique capture names and exclusive writes; restore both capture regressions and the unknown-registry-version regression.",
+      "Retain empty harness-key rejection, private disposable auth copies, private CLI runtime validation and cooperative fake-agent output shutdown.",
+      "Extract the bounded marker identification loop to meet cognitive-complexity policy; move saved keymap contents once its last read is complete.",
+      "Wait for the iOS capture menu item to become hittable; update architecture contracts for marker grace and rollout qualification.",
+      "Preserve original review receipts and classify PDF assets as binary without changing asset bytes."
+    ],
+    "validation": [
+      {
+        "command": "cmake --build build/desktop --parallel 6",
+        "result": "pass; all native targets rebuilt, including metadata-only probes"
+      },
+      {
+        "command": "QT_QPA_PLATFORM=offscreen TMPDIR=/tmp ctest --test-dir build/desktop -R \"^(agent-checkpoint|workspace|keymap|live-connection|window-state)$\" --output-on-failure --no-tests=error",
+        "result": "agent-checkpoint, workspace, keymap and live-connection passed; window-state unavailable with offscreen renderer (Vulkan required), not counted as a pass"
+      },
+      {
+        "command": "QT_QPA_PLATFORM=offscreen TMPDIR=/tmp ctest --test-dir build/desktop -R \"^(workspace|keymap)$\" --output-on-failure --no-tests=error",
+        "result": "2/2 pass after helper extraction and keymap move"
+      },
+      {
+        "command": "cmake --build build/desktop --parallel 4 --target lapis_workspace_tests; QT_QPA_PLATFORM=offscreen TMPDIR=/tmp ctest --test-dir build/desktop -R \"^workspace$\" --output-on-failure --no-tests=error",
+        "result": "pass, 17.81 s; adds unknown-version rejection and preservation assertions after the sanitizer checkpoint"
+      },
+      {
+        "command": "desktop-enabled ASan/UBSan and TSan: workspace, agent-checkpoint, keymap",
+        "result": "3/3 in each build; ASan 30.03 s, TSan 89.56 s; final production code, before addition of the separately tested unknown-version case",
+        "workspace_test_sha256": "95fc52da1e9e97658fbd3053944d4c995baac8ba7f9cc6fc93ed3ccd028ec0d5"
+      },
+      {
+        "command": "clang-format --dry-run --Werror; clang-tidy on 10 changed translation units; Cppcheck selected compile database",
+        "result": "pass after keymap move and helper extraction; workspace-test clang-tidy repeated after restoring the version regression"
+      },
+      {
+        "command": "just quality",
+        "result": "pass; 165 Python tests, no skips; includes live gateway service, malformed capture bodies, same-second captures, auth copy and runtime-permission cases"
+      },
+      {
+        "command": "python3 scripts/check_cli_launch.py --output build/worktree-cleanup-20260925/merge16-cli.json",
+        "result": "14/14 pass"
+      },
+      {
+        "command": "SHELL=<disposable login shell without startup files> uv run --no-project python scripts/check_restore.py",
+        "result": "pass; two power-loss cycles, second via launchd; native Codex/Claude context resumed, four advisory agents fresh; already-running helper creates no duplicates"
+      },
+      {
+        "command": "uv run --no-project python scripts/check_ios_remote.py --only testSendScreenToMac",
+        "result": "pass, 14.248 s; one capture saved and acknowledged; headless simulator only"
+      },
+      {
+        "command": "python3 tools/qa/fake_agent.py with LAPIS_FAKE_BURST=0.01, wide input and EOF",
+        "result": "pass; concurrent burst and Unicode output present, exit 0, empty stderr"
+      }
+    ],
+    "reuse": [
+      "The original receipt above remains dated to its source hashes. No QML, terminal renderer or Swift product implementation changed relative to fddae192. Reuse its broader CLI-adapter, rotation/reopen/creation, Foundation network and package observations only for their unchanged surfaces.",
+      "Native-input probe changes label evidence scope; they do not change injected events. Recompiled and statically checked without claiming new physical or foreground-input acceptance.",
+      "Window-state changed only unused includes; the offscreen attempt cannot supply Vulkan/native-window evidence. No foreground fallback was used.",
+      "The added unknown-version test ran in the final normal workspace suite. Sanitizers cover the final production implementation and the original workspace cases; their test-source digest records the earlier checkpoint."
+    ],
+    "failures_resolved": [
+      "Initial Python lint identified a missing patch import in the restored capture test; added import and reran quality successfully.",
+      "Initial static analysis found an unnecessary keymap copy and excessive lock-helper cognitive complexity; corrected both and reran affected builds, CTests, ASan/TSan and static checks.",
+      "Initial iOS capture selection left its menu open, so no request reached the gateway. Added an explicit hittable predicate; corrected its first invalid predicate syntax; final capture test passes."
+    ],
+    "review": {
+      "threads": "All existing PR11-PR16 threads resolved at 2026-09-25 11:45 UTC refresh; refresh again before final merge.",
+      "kimi": "No findings on fddae192 (PR16), 1b216b4 (PR14), f558ad8 (PR15); final PR16 head awaits webhook review.",
+      "coderabbit": "PR13 incremental review pending at merge after acknowledged request. Other recent runs explicitly quota-limited until approximately 12:33 UTC; PR16 additionally reported 192 files over its 100-file review limit. Skipped/unavailable, not approval; no retries during cooldown.",
+      "minimax_m3_and_glm": "Quota-deferred until 2026-09-26 07:00 UTC; not polled or invoked before reset.",
+      "local_glm": "CCR GLM-5.3-FlashX completed independent merge audit; all three findings addressed: unknown-version regression and two architecture descriptions."
+    },
+    "limitations": [
+      "macOS qualification only. No new physical-device, native foreground/window, performance, real reboot or self-update claim.",
+      "No tags, release assets, installation, signing or notarization changed; the published app remains its original revision.",
+      "Local full logs and failed attempts remain under ignored build/worktree-cleanup-20260925; source hashes exclude this receipt to avoid a circular digest."
+    ]
+  }
+}

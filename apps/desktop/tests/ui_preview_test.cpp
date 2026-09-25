@@ -1,10 +1,13 @@
+#include "agent_search.hpp"
 #include "keymap.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include "ui_preview.hpp"
+#include "usage.hpp"
 #include <QAccessible>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QJSValue>
 #include <QQmlEngine>
 #include <QQmlProperty>
 #include <QQuickStyle>
@@ -839,6 +842,224 @@ void click_visual(QQuickWindow& window, QQuickItem& item) {
     QCoreApplication::sendEvent(&window, &press);
     QCoreApplication::sendEvent(&window, &release);
 }
+void click_with(QQuickWindow& window, QQuickItem& item, Qt::KeyboardModifiers modifiers) {
+    const auto position = item.mapToScene(QPointF(item.width() / 2, item.height() / 2));
+    const auto global = window.mapToGlobal(position);
+    QMouseEvent press(QEvent::MouseButtonPress, position, global, Qt::LeftButton, Qt::LeftButton,
+                      modifiers);
+    QMouseEvent release(QEvent::MouseButtonRelease, position, global, Qt::LeftButton, Qt::NoButton,
+                        modifiers);
+    QCoreApplication::sendEvent(&window, &press);
+    QCoreApplication::sendEvent(&window, &release);
+}
+// Press on `item`, move to `to` in steps as a hand would, and release there.
+void drag_visual(QQuickWindow& window, QQuickItem& item, QPointF to) {
+    const auto from = item.mapToScene(QPointF(item.width() / 2, item.height() / 2));
+    // Qt drops pointer moves that repeat a timestamp, so each event gets its own.
+    static quint64 stamp = 1'000'000;
+    const auto send = [&](QEvent::Type type, QPointF at, Qt::MouseButtons buttons) {
+        QMouseEvent event(type, at, window.mapToGlobal(at),
+                          type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons,
+                          Qt::NoModifier);
+        event.setTimestamp(stamp += 16);
+        QCoreApplication::sendEvent(&window, &event);
+        pump(8);
+    };
+    send(QEvent::MouseButtonPress, from, Qt::LeftButton);
+    constexpr int kSteps = 12;
+    for (int step = 1; step <= kSteps; ++step)
+        send(QEvent::MouseMove, from + (to - from) * step / kSteps, Qt::LeftButton);
+    send(QEvent::MouseButtonRelease, to, Qt::NoButton);
+    pump(80);
+}
+QRectF scene_rect(const QQuickItem& item) {
+    return {item.mapToScene(QPointF()), QSizeF(item.width(), item.height())};
+}
+QStringList strip_ids(const lapis::desktop::Workspace& workspace) {
+    QStringList ids;
+    for (const auto& value : workspace.categorySessions())
+        ids.append(value.value<lapis::desktop::SessionPreview*>()->sessionId());
+    return ids;
+}
+
+// Tiles and drags, through the window as a person would use them.
+void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                           lapis::desktop::KeyMap& keymap) {
+    const auto item = [&window](const QString& name) {
+        auto* found = find_visual(window.contentItem(), name);
+        if (found == nullptr)
+            throw std::runtime_error("missing item " + name.toStdString());
+        return found;
+    };
+    const auto key = [&](const char* action) {
+        send_binding(window, keymap.sequences(QString::fromLatin1(action)).front());
+        pump(80);
+    };
+    auto* stage = item(QStringLiteral("focusedPane"));
+    auto* terminal =
+        qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
+    const auto ids = strip_ids(workspace);
+    CHECK(terminal != nullptr && ids.size() >= 3);
+    CHECK(workspace.selectSession(ids[0]));
+    pump(40);
+
+    // A card dropped on the stage's right half tiles beside the shown agent.
+    drag_visual(window, *item(QStringLiteral("agentTab_") + ids[1]),
+                stage->mapToScene(QPointF(stage->width() * 0.92, stage->height() * 0.5)));
+    CHECK(workspace.stageTiles().size() == 2);
+    CHECK(workspace.focusedSession() == workspace.session(ids[1]));
+    auto* left = item(QStringLiteral("tile_") + ids[0]);
+    auto* right = item(QStringLiteral("tile_") + ids[1]);
+    CHECK(scene_rect(*left).right() <= scene_rect(*right).left());
+    // The selected tile's terminal is the stage terminal, inside its tile; the
+    // other tile draws its own agent, live and at its own size.
+    CHECK(terminal->document() == workspace.session(ids[1]));
+    CHECK(scene_rect(*right).contains(scene_rect(*terminal)));
+    auto* other = qobject_cast<lapis::desktop::TerminalSurface*>(
+        item(QStringLiteral("tileTerminal_") + ids[0]));
+    CHECK(other != nullptr && other->isVisible() && other->interactive() &&
+          other->document() == workspace.session(ids[0]));
+    CHECK(other->gridSize().width() > 10 &&
+          other->gridSize().width() < terminal->gridSize().width() * 2);
+
+    // Clicking a tile selects it; the keys move between tiles.
+    click_visual(window, *other);
+    pump(40);
+    CHECK(workspace.focusedSession() == workspace.session(ids[0]));
+    key("tileRight");
+    CHECK(workspace.focusedSession() == workspace.session(ids[1]));
+    key("tileLeft");
+    CHECK(workspace.focusedSession() == workspace.session(ids[0]));
+
+    // A divider drag shares the space differently; agents resize once, at the end.
+    const auto before = left->width();
+    auto* divider = item(QStringLiteral("tileDivider_root"));
+    drag_visual(window, *divider,
+                divider->mapToScene(QPointF(divider->width() / 2 + 140, divider->height() / 2)));
+    CHECK(left->width() > before + 80);
+    CHECK(!terminal->holdResize() && !other->holdResize());
+
+    // A strip agent that is not tiled takes the selected tile.
+    click_visual(window, *item(QStringLiteral("agentTab_") + ids[2]));
+    pump(40);
+    auto tiled = workspace.stageTiles();
+    CHECK(tiled.size() == 2 && workspace.focusedSession() == workspace.session(ids[2]));
+    CHECK(tiled[0].toMap().value(QStringLiteral("sessionId")).toString() == ids[2]);
+
+    // The selected tile can fill the stage and come back.
+    key("zoomTile");
+    CHECK(!item(QStringLiteral("tile_") + ids[1])->isVisible());
+    key("zoomTile");
+    CHECK(item(QStringLiteral("tile_") + ids[1])->isVisible());
+
+    // A tile dragged by its name bar back to the strip leaves the stage.
+    auto* strip = item(QStringLiteral("agentTabs"));
+    drag_visual(window, *item(QStringLiteral("tilePress_") + ids[2]),
+                strip->mapToScene(QPointF(strip->width() * 0.5, strip->height() * 0.5)));
+    CHECK(workspace.stageTiles().isEmpty());
+    CHECK(workspace.tileSession(ids[1], ids[0], QStringLiteral("bottom")));
+    pump(60);
+    CHECK(workspace.stageTiles().size() == 2);
+    click_visual(window, *item(QStringLiteral("untile_") + ids[1]));
+    pump(60);
+    CHECK(workspace.stageTiles().isEmpty());
+
+    // Dragging a card along the strip reorders it.
+    const auto order = strip_ids(workspace);
+    auto* last_card = item(QStringLiteral("agentTab_") + order.constLast());
+    drag_visual(window, *item(QStringLiteral("agentTab_") + order[0]),
+                last_card->mapToScene(QPointF(last_card->width() - 4, last_card->height() / 2)));
+    CHECK(strip_ids(workspace).constLast() == order[0]);
+    CHECK(workspace.placeSessions({order[0]}, workspace.activeCategoryId(), 0));
+    CHECK(strip_ids(workspace) == order);
+
+    // Command-click picks a second card; dragging either carries both to a
+    // category in the rail.
+#ifdef Q_OS_MACOS
+    const auto toggle = Qt::MetaModifier;
+#else
+    const auto toggle = Qt::ControlModifier;
+#endif
+    const auto home = workspace.activeCategoryId();
+    const auto elsewhere = workspace.createCategory(QStringLiteral("Drop target"));
+    CHECK(!elsewhere.isEmpty());
+    pump(60);
+    CHECK(workspace.selectSession(ids[1]));
+    pump(40);
+    click_with(window, *item(QStringLiteral("agentTab_") + ids[2]), toggle);
+    pump(40);
+    CHECK(item(QStringLiteral("pickedCue_") + ids[2])->isVisible());
+    auto* target = item(QStringLiteral("category_") + elsewhere);
+    drag_visual(window, *item(QStringLiteral("agentTab_") + ids[2]),
+                target->mapToScene(QPointF(target->width() / 2, target->height() / 2)));
+    const auto moved = strip_ids(workspace);
+    CHECK(!moved.contains(ids[1]) && !moved.contains(ids[2]));
+    CHECK(workspace.agentPlace(ids[1]).value(QStringLiteral("category")).toString() ==
+          QStringLiteral("Drop target"));
+    // Back where they were, so later checks see the original strip.
+    CHECK(workspace.placeSessions({ids[1], ids[2]}, home, 1));
+    CHECK(workspace.selectCategory(home));
+    CHECK(workspace.removeCategory(elsewhere));
+    pump(60);
+    CHECK(strip_ids(workspace) == order);
+}
+// Command-F finds text on the page shown; Command-plus and zero change the
+// text size; categories reorder.
+void check_find_and_text_size(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                              lapis::desktop::KeyMap& keymap) {
+    const auto item = [&window](const QString& name) {
+        auto* found = find_visual(window.contentItem(), name);
+        if (found == nullptr)
+            throw std::runtime_error("missing item " + name.toStdString());
+        return found;
+    };
+    const auto key = [&](const char* action) {
+        send_binding(window, keymap.sequences(QString::fromLatin1(action)).front());
+        pump(80);
+    };
+    const auto type = [&window](const QString& text) {
+        for (const auto character : text) {
+            QKeyEvent press(QEvent::KeyPress, 0, Qt::NoModifier, QString(character));
+            QKeyEvent release(QEvent::KeyRelease, 0, Qt::NoModifier, QString(character));
+            QCoreApplication::sendEvent(&window, &press);
+            QCoreApplication::sendEvent(&window, &release);
+        }
+        pump(60);
+    };
+    auto* terminal =
+        qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
+    for (const auto& value : workspace.categorySessions()) {
+        auto* session = value.value<lapis::desktop::SessionPreview*>();
+        if (session->title() == QStringLiteral("Codex"))
+            CHECK(workspace.selectSession(session->sessionId()));
+    }
+    pump(60);
+    key("find");
+    auto* bar = item(QStringLiteral("findBar"));
+    CHECK(bar->isVisible());
+    type(QStringLiteral("ready"));
+    CHECK(terminal->selectedText() == QStringLiteral("Ready"));
+    CHECK(terminal->countMatches(QStringLiteral("ready")) == 1);
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QCoreApplication::sendEvent(&window, &escape);
+    pump(60);
+    CHECK(!bar->isVisible() && terminal->selectedText().isEmpty());
+
+    const int size = keymap.terminalFontSize();
+    key("textBigger");
+    CHECK(keymap.terminalFontSize() == size + 1 && terminal->fontPixelSize() == size + 1);
+    key("textSmaller");
+    CHECK(keymap.terminalFontSize() == size);
+    key("textReset");
+    CHECK(keymap.terminalFontSize() == keymap.terminalFontSizeDefault());
+
+    const auto second = workspace.createCategory(QStringLiteral("Moved up"));
+    CHECK(workspace.placeCategory(second, 0));
+    CHECK(workspace.categories().constFirst().toMap().value(QStringLiteral("id")).toString() ==
+          second);
+    CHECK(workspace.removeCategory(second));
+    pump(40);
+}
 void check_composition_navigation(lapis::desktop::Workspace& workspace,
                                   lapis::desktop::UiPreview& preview,
                                   lapis::desktop::TerminalSurface& terminal) {
@@ -877,7 +1098,8 @@ void check_composition_navigation(lapis::desktop::Workspace& workspace,
         workspace.categories()[1].toMap().value(QStringLiteral("id")).toString();
     for (const auto& name :
          {QStringLiteral("agentTab_shell"), QStringLiteral("category_") + other_category,
-          QStringLiteral("newAgentButton"), QStringLiteral("commandsButton")}) {
+          QStringLiteral("newAgentButton"), QStringLiteral("newCategoryButton"),
+          QStringLiteral("commandsButton")}) {
         if (auto* strip = find_visual(preview.window()->contentItem(), QStringLiteral("agentTabs")))
             CHECK(QMetaObject::invokeMethod(strip, name == QStringLiteral("newAgentButton")
                                                        ? "positionViewAtEnd"
@@ -1264,15 +1486,30 @@ int run_attention_ui_tests() {
     wait_popup(*new_agent, true);
     auto* harnesses = find_visual(window->contentItem(), QStringLiteral("harnessChoices"));
     CHECK(harnesses != nullptr && harnesses->hasActiveFocus());
-    const QVariantList choices{QVariantMap{{QStringLiteral("id"), QStringLiteral("codex")},
-                                           {QStringLiteral("name"), QStringLiteral("Codex")},
-                                           {QStringLiteral("installed"), true}},
-                               QVariantMap{{QStringLiteral("id"), QStringLiteral("claude")},
-                                           {QStringLiteral("name"), QStringLiteral("Claude")},
-                                           {QStringLiteral("installed"), true}},
-                               QVariantMap{{QStringLiteral("id"), QStringLiteral("omp")},
-                                           {QStringLiteral("name"), QStringLiteral("OMP")},
-                                           {QStringLiteral("installed"), true}}};
+    const auto mode = [](const char* id) {
+        return QVariantMap{{QStringLiteral("id"), QString::fromLatin1(id)},
+                           {QStringLiteral("name"), QString::fromLatin1(id)}};
+    };
+    const auto model = [](const char* id, const char* name, bool fallback) {
+        return QVariantMap{{QStringLiteral("id"), QString::fromLatin1(id)},
+                           {QStringLiteral("name"), QString::fromLatin1(name)},
+                           {QStringLiteral("default"), fallback}};
+    };
+    const QVariantList choices{
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("codex")},
+                    {QStringLiteral("name"), QStringLiteral("Codex")},
+                    {QStringLiteral("installed"), true}},
+        QVariantMap{
+            {QStringLiteral("id"), QStringLiteral("claude")},
+            {QStringLiteral("name"), QStringLiteral("Claude")},
+            {QStringLiteral("installed"), true},
+            {QStringLiteral("models"), QVariantList{model("opus", "Opus 5.5", true),
+                                                    model("claude-fable-5-1", "Fable 5.1", false)}},
+            {QStringLiteral("modes"), QVariantList{mode("edits"), mode("auto"), mode("full")}}},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("omp")},
+                    {QStringLiteral("name"), QStringLiteral("OMP")},
+                    {QStringLiteral("installed"), true},
+                    {QStringLiteral("modes"), QVariantList{mode("edits"), mode("full")}}}};
     CHECK(new_agent->setProperty("harnesses", choices));
     CHECK(harnesses->setProperty("currentIndex", 0));
     if (const auto path = qEnvironmentVariable("LAPIS_WORKSPACE_CAPTURE_PREFIX"); !path.isEmpty())
@@ -1282,6 +1519,26 @@ int run_attention_ui_tests() {
     pump(30);
     CHECK(new_agent->property("selectedHarness").toString() == QStringLiteral("claude"));
     CHECK(new_agent->property("phase").toInt() == 1);
+    // The mode and each CLI's model stay while the CLI changes: OMP has no
+    // Auto, so it uses Accept edits, and Claude gets Auto and Fable back.
+    const auto call = [&](const char* method, const QVariant& value) {
+        CHECK(QMetaObject::invokeMethod(new_agent, method, Q_ARG(QVariant, value)));
+        pump(20);
+    };
+    CHECK(new_agent->property("selectedMode").toString() == QStringLiteral("full"));
+    call("chooseMode", QStringLiteral("auto"));
+    call("chooseModel", QStringLiteral("claude-fable-5-1"));
+    CHECK(new_agent->property("selectedMode").toString() == QStringLiteral("auto"));
+    call("chooseHarness", 2);
+    CHECK(new_agent->property("selectedMode").toString() == QStringLiteral("edits"));
+    CHECK(!find_visual(window->contentItem(), QStringLiteral("mode_auto"))->isEnabled());
+    call("chooseHarness", 1);
+    CHECK(new_agent->property("selectedMode").toString() == QStringLiteral("auto"));
+    CHECK(new_agent->property("selectedModel").toString() == QStringLiteral("claude-fable-5-1"));
+    call("chooseMode", QStringLiteral("full"));
+    call("chooseHarness", 2);
+    CHECK(new_agent->property("selectedMode").toString() == QStringLiteral("full"));
+    call("chooseHarness", 1);
     auto* folder = find_visual(window->contentItem(), QStringLiteral("agentDirectoryField"));
     CHECK(folder != nullptr && folder->hasActiveFocus());
     send_binding(*window, QStringLiteral("Esc"));
@@ -1350,6 +1607,158 @@ void finish_turn(lapis::desktop::SessionPreview& session) {
     session.applyAttention(state);
 }
 
+QQuickItem* required_visual(QQuickWindow& window, const QString& name) {
+    auto* found = find_visual(window.contentItem(), name);
+    if (found == nullptr)
+        throw std::runtime_error("missing item " + name.toStdString());
+    return found;
+}
+void press_action(QQuickWindow& window, const lapis::desktop::KeyMap& keymap, const char* action) {
+    send_binding(window, keymap.sequences(QString::fromLatin1(action)).front());
+    pump(260); // Longer than the strip's scroll animation.
+}
+void capture_step(QQuickWindow& window, const char* name) {
+    if (const auto path = qEnvironmentVariable("LAPIS_WORKSPACE_CAPTURE_PREFIX"); !path.isEmpty())
+        CHECK(window.grabWindow().save(path + QString::fromLatin1(name) + QStringLiteral(".png")));
+}
+
+void check_agent_search(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                        const lapis::desktop::KeyMap& keymap,
+                        lapis::desktop::TerminalSurface& terminal) {
+    // Command-K finds an agent by name; Return shows it and gives it the keys.
+    CHECK(workspace.selectSession(QStringLiteral("shell")));
+    pump(30);
+    press_action(window, keymap, "searchAgents");
+    auto* finder = window.findChild<QObject*>(QStringLiteral("searchDialog"));
+    CHECK(finder != nullptr);
+    wait_popup(*finder, true);
+    auto* field = required_visual(window, QStringLiteral("agentSearchField"));
+    CHECK(field->hasActiveFocus());
+    field->setProperty("text", QStringLiteral("wsnotes"));
+    pump(30);
+    CHECK(required_visual(window, QStringLiteral("agentResult_notes")) != nullptr);
+    send_binding(window, QStringLiteral("Return"));
+    wait_popup(*finder, false);
+    CHECK(focused_id(workspace) == QStringLiteral("notes") && terminal.hasActiveFocus());
+    // Escape leaves the focused agent alone.
+    press_action(window, keymap, "searchAgents");
+    wait_popup(*finder, true);
+    required_visual(window, QStringLiteral("agentSearchField"))
+        ->setProperty("text", QStringLiteral("shell"));
+    pump(30);
+    send_binding(window, QStringLiteral("Escape"));
+    wait_popup(*finder, false);
+    CHECK(focused_id(workspace) == QStringLiteral("notes"));
+}
+
+void check_usage(QQuickWindow& window, lapis::desktop::Usage& usage, lapis::desktop::KeyMap& keymap,
+                 lapis::desktop::TerminalSurface& terminal) {
+    // Plan usage sits under the categories, each CLI at its tightest window,
+    // and opens the details; the setting hides it.
+    usage.refresh();
+    QElapsedTimer asked;
+    asked.start();
+    const auto remote_ready = [&usage] {
+        const auto machines = usage.machines();
+        return machines.size() == 2 &&
+               machines.back().toMap().value(QStringLiteral("providers")).toList().size() >= 2;
+    };
+    while ((usage.meter().size() < 2 || usage.counting() || !remote_ready()) &&
+           asked.elapsed() < 15000)
+        pump(20);
+    pump(60);
+    auto* meter = required_visual(window, QStringLiteral("usageMeter"));
+    CHECK(meter->isVisible());
+    CHECK(required_visual(window, QStringLiteral("usageMeter_codex")) != nullptr &&
+          required_visual(window, QStringLiteral("usageMeter_claude")) != nullptr);
+    CHECK(meter->mapToScene({0, 0}).y() >
+          required_visual(window, QStringLiteral("newCategoryButton"))->mapToScene({0, 0}).y());
+    // The meter reads what is left: 96% used is 4% left, red; 41% used is
+    // 59% left, green, with the longer bar.
+    auto* codex_left = required_visual(window, QStringLiteral("usageLeft_codex"));
+    auto* claude_left = required_visual(window, QStringLiteral("usageLeft_claude"));
+    CHECK(codex_left->property("text").toString() == QStringLiteral("4% left wk"));
+    CHECK(claude_left->property("text").toString() == QStringLiteral("59% left 5h"));
+    CHECK(codex_left->property("color").value<QColor>() ==
+          window.property("scarceColor").value<QColor>());
+    CHECK(claude_left->property("color").value<QColor>() ==
+          window.property("plentyColor").value<QColor>());
+    pump(260); // past the bars' motion
+    CHECK(required_visual(window, QStringLiteral("usageBar_codex"))->width() <
+          required_visual(window, QStringLiteral("usageBar_claude"))->width());
+    capture_step(window, "usage-meter");
+    click_visual(window, *meter);
+    auto* details = window.findChild<QObject*>(QStringLiteral("usageDialog"));
+    CHECK(details != nullptr);
+    wait_popup(*details, true);
+    CHECK(required_visual(window, QStringLiteral("usage_codex")) != nullptr &&
+          required_visual(window, QStringLiteral("usage_claude")) != nullptr);
+    CHECK(
+        required_visual(window, QStringLiteral("usageToday_claude"))->property("text").toString() ==
+        QStringLiteral("0"));
+    capture_step(window, "usage-details");
+    // Each configured machine has its own tab.
+    click_visual(window, *required_visual(window, QStringLiteral("usageMachine_devbox")));
+    pump(60);
+    CHECK(details->property("machineIndex").toInt() == 1);
+    CHECK(required_visual(window, QStringLiteral("usageAccount_codex_0")) != nullptr);
+    capture_step(window, "usage-devbox");
+    send_binding(window, QStringLiteral("Escape"));
+    wait_popup(*details, false);
+    CHECK(terminal.hasActiveFocus());
+    CHECK(keymap.setShowUsage(false));
+    pump(30);
+    CHECK(!meter->isVisible());
+}
+
+// Stand-ins for the two CLIs' usage answers; no transcripts.
+std::unique_ptr<lapis::desktop::Usage> fake_usage(const QTemporaryDir& config) {
+    const auto fake = [&config](const QString& name, const QByteArray& body) {
+        const auto path = config.filePath(name);
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly) && file.write("#!/bin/sh\n" + body) > 0);
+        file.close();
+        CHECK(QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                              QFileDevice::ExeOwner));
+        return path;
+    };
+    const auto codex_cli = fake(QStringLiteral("codex"), R"(read -r line
+echo '{"id":1,"result":{}}'
+read -r line
+read -r line
+echo '{"id":2,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":96,"windowDurationMins":10080,"resetsAt":4102444800},"planType":"pro"}}}'
+cat >/dev/null
+)");
+    const auto claude_cli = fake(QStringLiteral("claude"), R"(read -r line
+echo '{"type":"control_response","response":{"subtype":"success","request_id":"usage","response":{"subscription_type":"max","rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":41,"resets_at":"2099-01-01T00:00:00+00:00"},"seven_day":{"utilization":23,"resets_at":"2099-01-01T00:00:00+00:00"}}}}}'
+cat >/dev/null
+)");
+    // devbox: ssh runs the command here, where a login shell finds the same
+    // stand-ins.
+    const auto dir = config.path().toUtf8();
+    const auto shell =
+        fake(QStringLiteral("login-shell"), "for last; do :; done\nPATH='" + dir +
+                                                R"(:/usr/bin:/bin' exec /bin/sh -c "$last")"
+                                                "\n");
+    const auto ssh = fake(QStringLiteral("ssh"), R"(while [ $# -gt 0 ]; do
+  case "$1" in -T) shift ;; -o|-L) shift 2 ;; *) break ;; esac
+done
+shift
+HOME=')" + dir + R"(' SHELL=')" + shell.toUtf8() + R"(' exec /bin/sh -c "$1"
+)");
+    auto usage = std::make_unique<lapis::desktop::Usage>(
+        [codex_cli, claude_cli, ssh](const QString& id) {
+            return id == QLatin1String("codex")    ? codex_cli
+                   : id == QLatin1String("claude") ? claude_cli
+                   : id == QLatin1String("ssh")    ? ssh
+                                                   : QString();
+        },
+        lapis::desktop::TokenLedger::Roots{config.filePath(QStringLiteral("none")),
+                                           config.filePath(QStringLiteral("none"))});
+    usage->setMachines({QStringLiteral("devbox")});
+    return usage;
+}
+
 // The agent strip is the category's navigation: live previews in tab order
 // that never take input or resize a terminal, keep part of the neighboring
 // card in view as selection moves, and pulse an agent that finished or needs a
@@ -1361,10 +1770,14 @@ int run_strip_ui_tests() {
     CHECK(config.isValid());
     KeyMap keymap;
     keymap.setSourcePathForTesting(config.filePath(QStringLiteral("strip.json")));
+    AgentSearch search(&workspace);
+    const auto usage = fake_usage(config);
     UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),
-                                  .keymap = &keymap});
+                                  .keymap = &keymap,
+                                  .agentSearch = &search,
+                                  .usage = usage.get()});
     CHECK(preview.load());
     auto* window = preview.window();
     window->resize(1400, 960);
@@ -1544,6 +1957,31 @@ int run_strip_ui_tests() {
     wait_popup(*picker, true);
     CHECK(QMetaObject::invokeMethod(picker, "close"));
     wait_popup(*picker, false);
+
+    // The + under the last category opens the category form and shows its key.
+    auto* new_category = item(QStringLiteral("newCategoryButton"));
+    auto* last_category =
+        item(QStringLiteral("category_") +
+             workspace.categories().constLast().toMap().value(QStringLiteral("id")).toString());
+    CHECK(new_category->mapToScene({0, 0}).y() >
+          last_category->mapToScene({0, last_category->height()}).y() - 1);
+#ifdef Q_OS_MACOS
+    const QString category_key = QString(QChar(0x2318)) + QLatin1Char('N');
+#else
+    const QString category_key = QStringLiteral("Ctrl+Shift+N");
+#endif
+    CHECK(item(QStringLiteral("newCategoryHint"))->property("text").toString() == category_key);
+    click_visual(*window, *new_category);
+    auto* category_form = window->findChild<QObject*>(QStringLiteral("categoryDialog"));
+    CHECK(category_form != nullptr);
+    wait_popup(*category_form, true);
+    CHECK(QMetaObject::invokeMethod(category_form, "close"));
+    wait_popup(*category_form, false);
+
+    check_tiles_and_drags(*window, workspace, keymap);
+    check_find_and_text_size(*window, workspace, keymap);
+    check_agent_search(*window, workspace, keymap, *terminal);
+    check_usage(*window, *usage, keymap, *terminal);
     CHECK(preview.diagnostics().isEmpty());
     return EXIT_SUCCESS;
 }

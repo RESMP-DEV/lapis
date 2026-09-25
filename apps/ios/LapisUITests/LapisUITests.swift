@@ -9,7 +9,7 @@ final class LapisUITests: XCTestCase {
         continueAfterFailure = false
         let host = ProcessInfo.processInfo.environment["LAPIS_HOST"] ?? "127.0.0.1:7350"
         app = XCUIApplication()
-        app.launchArguments = ["-gatewayHost", host, "-terminalFontSize", "12"]
+        app.launchArguments = ["-gatewayHost", host, "-terminalFontSize", "12", "-resetCache", "1"]
         app.launch()
     }
 
@@ -25,6 +25,12 @@ final class LapisUITests: XCTestCase {
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
         let result = XCTWaiter().wait(for: [expectation], timeout: timeout)
         XCTAssertEqual(result, .completed, "screen never showed \(text); it showed: \(element.value ?? "")")
+    }
+
+    private func waitForGone(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+                                                    object: element)
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
     }
 
     private func openAgent(_ title: String) -> XCUIElement {
@@ -174,7 +180,12 @@ final class LapisUITests: XCTestCase {
         let menu = app.buttons["viewMenu"]
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
         menu.tap()
-        app.buttons["Send screen to Mac"].tap()
+        let capture = app.buttons["Send screen to Mac"]
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND hittable == true"), object: capture
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+        capture.tap()
         let sent = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Sent to the Mac"))
         XCTAssertTrue(sent.firstMatch.waitForExistence(timeout: 15), "the Mac saved the capture")
         app.buttons["OK"].tap()
@@ -232,6 +243,123 @@ final class LapisUITests: XCTestCase {
 
     // The Mac stays attached while the phone uses the agent, and what either
     // types shows on both. The harness's Mac-side client answers the phone.
+    // The phone starts an agent through the Mac's lapis: it opens as a new tab
+    // in the chosen category there, and on the phone once it runs.
+    func testStartAnAgentFromThePhone() throws {
+        let folder = ProcessInfo.processInfo.environment["LAPIS_NEW_AGENT_FOLDER"] ?? ""
+        try XCTSkipIf(folder.isEmpty, "the check provides a folder and the Mac's lapis")
+        let add = app.buttons["add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 30), "one plus")
+        XCTAssertFalse(app.buttons["newAgent-Later"].exists, "and none beside each category")
+        add.tap()
+        app.buttons["New agent"].tap()
+        let grok = app.buttons["harness-grok"]
+        XCTAssertTrue(grok.waitForExistence(timeout: 15), "the Mac's CLIs are offered")
+        grok.tap()
+        app.buttons["category-Later"].tap()
+        XCTAssertTrue(app.buttons["category-Later"].isSelected, "the tapped category is chosen")
+        XCTAssertTrue(app.buttons["mode-full"].isSelected || app.buttons["mode-edits"].isSelected)
+        let edits = app.buttons["mode-edits"]
+        XCTAssertTrue(edits.waitForExistence(timeout: 5), "the CLI's approval modes are offered")
+        XCTAssertTrue(app.buttons["mode-auto"].exists && app.buttons["mode-full"].exists,
+                      "always the same three modes")
+        edits.tap()
+        XCTAssertTrue(edits.isSelected)
+        app.buttons["folderRow"].tap()
+        let search = app.textFields["folderSearch"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5), "the folder opens its own screen")
+        search.tap()
+        search.typeText(folder)
+        let typed = app.buttons["useTyped"]
+        XCTAssertTrue(typed.waitForExistence(timeout: 5), "a typed path can be used as is")
+        typed.tap()
+        XCTAssertTrue(app.buttons["startAgent"].waitForExistence(timeout: 5), "back to the form")
+        snap("9-new-agent")
+        app.buttons["startAgent"].tap()
+        let terminal = app.descendants(matching: .any)["terminal"]
+        XCTAssertTrue(terminal.waitForExistence(timeout: 60), "the new agent opens on the phone")
+        waitFor(terminal, valueContaining: "lapis fake agent")
+        submit("started from the phone")
+        waitFor(terminal, valueContaining: "echo: started from the phone")
+        snap("10-new-agent-open")
+        // Back in the list, it swipes away like a notification, and the Mac
+        // closes it.
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let card = app.buttons["agent-phone-project"]
+        XCTAssertTrue(card.waitForExistence(timeout: 15))
+        card.swipeLeft()
+        let close = app.buttons["Close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "swiping offers Close")
+        close.tap()
+        XCTAssertTrue(waitForGone(card, timeout: 20), "the closed agent leaves the list")
+        // A category from the phone.
+        app.buttons["add"].tap()
+        app.buttons["New category"].tap()
+        let name = app.alerts.textFields.firstMatch
+        XCTAssertTrue(name.waitForExistence(timeout: 5), "the new category asks for a name")
+        name.typeText("Ideas")
+        app.alerts.buttons["Create"].tap()
+        XCTAssertTrue(app.staticTexts["category-Ideas"].waitForExistence(timeout: 20),
+                      "the new category is listed")
+    }
+
+    // Folders come from the Mac's index: the most used ones first and marked,
+    // then the current folder's folders with hidden ones last; typing finds
+    // folders by their letters. Machines are ordered by how often ssh reached
+    // them.
+    func testFoldersAndMachines() throws {
+        try XCTSkipIf(ProcessInfo.processInfo.environment["LAPIS_FOLDER_FIXTURE"] == nil,
+                      "the check provides a folder fixture")
+        let add = app.buttons["add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["agent-echo agent"].waitForExistence(timeout: 30))
+        add.tap()
+        app.buttons["New agent"].tap()
+        let beta = app.buttons["machine-beta"]
+        let alpha = app.buttons["machine-alpha"]
+        XCTAssertTrue(beta.waitForExistence(timeout: 10) && alpha.exists, "ssh machines are offered")
+        XCTAssertLessThan(beta.frame.minX, alpha.frame.minX, "the more used machine comes first")
+        // Choices stay while others change: another machine keeps the CLI,
+        // another CLI keeps the mode.
+        let grok = app.buttons["harness-grok"]
+        XCTAssertTrue(grok.waitForExistence(timeout: 15))
+        grok.tap()
+        app.buttons["mode-full"].tap()
+        beta.tap()
+        app.buttons["machine-mac"].tap()
+        XCTAssertTrue(grok.waitForExistence(timeout: 5) && grok.isSelected, "the CLI stays across machines")
+        XCTAssertTrue(app.buttons["mode-full"].isSelected, "and so does the mode")
+        let folderRow = app.buttons["folderRow"]
+        XCTAssertTrue(folderRow.waitForExistence(timeout: 20))
+        folderRow.tap()
+        let preset = app.buttons["presetFolder"]
+        XCTAssertTrue(preset.waitForExistence(timeout: 20), "the config's preset folder is offered")
+        XCTAssertTrue(preset.isSelected && preset.label.contains("~/dev"), "and chosen to start with")
+        let frequent = app.buttons["frequent-b"]
+        XCTAssertTrue(frequent.waitForExistence(timeout: 20), "the most used folders follow")
+        XCTAssertTrue(app.buttons["frequent-dev/lapis"].exists)
+        XCTAssertLessThan(frequent.frame.minY, app.buttons["frequent-dev/lapis"].frame.minY,
+                          "more agents started there, higher in the list")
+        XCTAssertFalse(frequent.label.contains(where: \.isNumber), "no counts, only the order")
+        app.buttons["folderUp"].tap()
+        let visible = app.buttons["folder-dev"]
+        let hidden = app.buttons["folder-.hidden"]
+        XCTAssertTrue(visible.waitForExistence(timeout: 5) && hidden.exists)
+        XCTAssertLessThan(app.buttons["folder-a"].frame.minY, visible.frame.minY, "alphabetical")
+        XCTAssertLessThan(visible.frame.minY, hidden.frame.minY, "hidden folders come last")
+        snap("11-folders")
+        let search = app.textFields["folderSearch"]
+        search.tap()
+        search.typeText("dvlp")
+        let found = app.buttons["result-dev/lapis"]
+        XCTAssertTrue(found.waitForExistence(timeout: 5), "fuzzy search finds the folder")
+        snap("12-folder-search")
+        found.tap()
+        XCTAssertTrue(folderRow.waitForExistence(timeout: 5), "choosing returns to the form")
+        XCTAssertTrue(folderRow.label.hasSuffix("~/dev/lapis"))
+        app.buttons["Cancel"].tap()
+    }
+
     func testSyncedWithTheMac() throws {
         guard ProcessInfo.processInfo.environment["LAPIS_MAC_CLIENT"] == "1" else {
             throw XCTSkip("needs the harness's Mac-side client")

@@ -1,4 +1,5 @@
 #include "keymap.hpp"
+#include "app_paths.hpp"
 
 #include <QDebug>
 #include <QDir>
@@ -15,6 +16,8 @@
 #include <QVariantMap>
 #include <algorithm>
 #include <array>
+
+#include <utility>
 
 namespace lapis::desktop {
 namespace {
@@ -48,6 +51,8 @@ constexpr std::array<Theme, 7> kThemes = {{
      .attention_text = "#201509",
      .activity = "#74a8ff",
      .fault = "#ee7a8a",
+     .plenty = "#7bd88f",
+     .scarce = "#ef6b73",
      .heading_tracking = 2.0},
     {.name = "graphite",
      .label = "Graphite",
@@ -64,6 +69,8 @@ constexpr std::array<Theme, 7> kThemes = {{
      .attention_text = "#1a1408",
      .activity = "#6fa8dc",
      .fault = "#ec7b84",
+     .plenty = "#8fc98c",
+     .scarce = "#e86a6f",
      .corner_radius = 4,
      .motion_ms = 140,
      .heading_tracking = 0.5},
@@ -82,6 +89,8 @@ constexpr std::array<Theme, 7> kThemes = {{
      .attention_text = "#ffffff",
      .activity = "#0a6558",
      .fault = "#803ba0",
+     .plenty = "#2f8f4e",
+     .scarce = "#b3261e",
      .corner_radius = 6,
      .motion_ms = 140,
      .heading_tracking = 0.5},
@@ -99,7 +108,9 @@ constexpr std::array<Theme, 7> kThemes = {{
      .attention = "#dc322f",
      .attention_text = "#fdf6e3",
      .activity = "#66d7cd",
-     .fault = "#b7bcff"},
+     .fault = "#b7bcff",
+     .plenty = "#859900",
+     .scarce = "#e0443f"},
     {.name = "amber",
      .label = "Amber",
      .background = "#17120a",
@@ -115,6 +126,8 @@ constexpr std::array<Theme, 7> kThemes = {{
      .attention_text = "#1a1008",
      .activity = "#8fd0dc",
      .fault = "#d09cff",
+     .plenty = "#a3c96b",
+     .scarce = "#ff5a4a",
      .corner_radius = 0,
      .motion_ms = 80,
      .mono_chrome = true,
@@ -134,6 +147,8 @@ constexpr std::array<Theme, 7> kThemes = {{
      .attention_text = "#000000",
      .activity = "#4dd2ff",
      .fault = "#ff7af5",
+     .plenty = "#5cff8a",
+     .scarce = "#ff3b3b",
      .corner_radius = 0,
      .motion_ms = 0,
      .heading_tracking = 0.0},
@@ -155,6 +170,8 @@ constexpr std::array<Theme, 7> kThemes = {{
      .attention_text = "#000000",
      .activity = "#6aa6ff",
      .fault = "#ff6f86",
+     .plenty = "#6fdc8c",
+     .scarce = "#ff5f6d",
      .heading_tracking = 1.0},
 }};
 
@@ -337,10 +354,47 @@ namespace {
 KeyMap::KeyMap(QObject* parent) : QObject(parent) {
     apply_defaults();
     source_path_ = default_source_path();
+    // Editors and agents often replace the file rather than write in place,
+    // so the folder is watched too, and bursts of events settle first.
+    settle_.setSingleShot(true);
+    settle_.setInterval(150);
+    connect(&settle_, &QTimer::timeout, this, &KeyMap::fileTouched);
+    connect(&watcher_, &QFileSystemWatcher::fileChanged, &settle_, qOverload<>(&QTimer::start));
+    connect(&watcher_, &QFileSystemWatcher::directoryChanged, &settle_,
+            qOverload<>(&QTimer::start));
+    watch();
 }
 
+void KeyMap::watch() {
+    if (!watcher_.files().isEmpty())
+        watcher_.removePaths(watcher_.files());
+    if (!watcher_.directories().isEmpty())
+        watcher_.removePaths(watcher_.directories());
+    const QFileInfo info(source_path_);
+    if (info.dir().exists())
+        watcher_.addPath(info.absolutePath());
+    if (info.exists())
+        watcher_.addPath(info.absoluteFilePath());
+}
+
+void KeyMap::fileTouched() {
+    watch(); // a replaced file is a new file to watch
+    QFile file(source_path_);
+    QByteArray contents;
+    if (file.open(QIODevice::ReadOnly))
+        contents = file.read(kMaximumConfigBytes + 1);
+    if (contents == known_contents_)
+        return;
+    qInfo().noquote() << "lapis config changed on disk; reloading";
+    static_cast<void>(reload());
+}
+
+// lapis.json at the project root, or LAPIS_CONFIG's file (checks keep theirs
+// apart from the person's).
 QString KeyMap::default_source_path() {
-    return QDir(QStringLiteral(LAPIS_PROJECT_ROOT)).filePath(QStringLiteral("lapis.json"));
+    if (const auto set = qEnvironmentVariable("LAPIS_CONFIG"); !set.isEmpty())
+        return QFileInfo(set).absoluteFilePath();
+    return QDir(data_directory()).filePath(QStringLiteral("lapis.json"));
 }
 
 // Parse a requested layout. Returns false for an unrecognised name so the
@@ -388,8 +442,10 @@ void KeyMap::apply_defaults() {
     const QString modifier = QStringLiteral("Ctrl+Shift+");
 #endif
     // Command-W closes the focused agent, as in an IDE. Closing the window is
-    // the window's own control or Quit. Categories answer to both the original
-    // Command-Option-left/right and the vertical Command-Shift-up/down.
+    // the window's own control or Quit. As in a browser, Command-T opens an
+    // agent (a tab) and Command-N a category (a window). Categories answer to
+    // both the original Command-Option-left/right and the vertical
+    // Command-Shift-up/down.
     bindings_ = {
         {QStringLiteral("quit"), {modifier + QStringLiteral("Q")}},
         {QStringLiteral("closeAgent"), {modifier + QStringLiteral("W")}},
@@ -399,10 +455,38 @@ void KeyMap::apply_defaults() {
         {QStringLiteral("category4"), {modifier + QStringLiteral("4")}},
         {QStringLiteral("openSettings"), default_settings_shortcuts()},
         {QStringLiteral("reloadConfig"), {modifier + QStringLiteral("R")}},
-        {QStringLiteral("newAgent"), {modifier + QStringLiteral("N")}},
+        {QStringLiteral("newAgent"), {modifier + QStringLiteral("T")}},
+        {QStringLiteral("newCategory"), {modifier + QStringLiteral("N")}},
+        {QStringLiteral("searchAgents"), {modifier + QStringLiteral("K")}},
         {QStringLiteral("nextAttention"), {modifier + QStringLiteral("J")}},
         {QStringLiteral("toggleSidebar"), {modifier + QStringLiteral("B")}},
+        // Tiles: split with a new agent like the selected one, as iTerm2's
+        // Command-D does, and move between tiles.
+        {QStringLiteral("splitRight"), {modifier + QStringLiteral("D")}},
+        // Text size, find, and bringing back the last closed agent.
+        {QStringLiteral("textBigger"),
+         {modifier + QStringLiteral("="), modifier + QStringLiteral("+")}},
+        {QStringLiteral("textSmaller"), {modifier + QStringLiteral("-")}},
+        {QStringLiteral("textReset"), {modifier + QStringLiteral("0")}},
+        {QStringLiteral("find"), {modifier + QStringLiteral("F")}},
     };
+#ifdef Q_OS_MACOS
+    bindings_.insert(QStringLiteral("splitDown"), {QStringLiteral("Meta+Shift+D")});
+    bindings_.insert(QStringLiteral("tileLeft"), {QStringLiteral("Meta+Ctrl+Left")});
+    bindings_.insert(QStringLiteral("tileRight"), {QStringLiteral("Meta+Ctrl+Right")});
+    bindings_.insert(QStringLiteral("tileUp"), {QStringLiteral("Meta+Ctrl+Up")});
+    bindings_.insert(QStringLiteral("tileDown"), {QStringLiteral("Meta+Ctrl+Down")});
+    bindings_.insert(QStringLiteral("zoomTile"), {QStringLiteral("Meta+Shift+Return")});
+    bindings_.insert(QStringLiteral("reopenAgent"), {QStringLiteral("Meta+Shift+T")});
+#else
+    bindings_.insert(QStringLiteral("splitDown"), {QStringLiteral("Ctrl+Alt+Shift+D")});
+    bindings_.insert(QStringLiteral("tileLeft"), {QStringLiteral("Ctrl+Alt+Left")});
+    bindings_.insert(QStringLiteral("tileRight"), {QStringLiteral("Ctrl+Alt+Right")});
+    bindings_.insert(QStringLiteral("tileUp"), {QStringLiteral("Ctrl+Alt+Up")});
+    bindings_.insert(QStringLiteral("tileDown"), {QStringLiteral("Ctrl+Alt+Down")});
+    bindings_.insert(QStringLiteral("zoomTile"), {QStringLiteral("Ctrl+Shift+Return")});
+    bindings_.insert(QStringLiteral("reopenAgent"), {QStringLiteral("Ctrl+Alt+Shift+T")});
+#endif
 #ifdef Q_OS_MACOS
     bindings_.insert(QStringLiteral("nextCategory"),
                      {QStringLiteral("Meta+Alt+Right"), QStringLiteral("Meta+Shift+Down")});
@@ -410,7 +494,6 @@ void KeyMap::apply_defaults() {
                      {QStringLiteral("Meta+Alt+Left"), QStringLiteral("Meta+Shift+Up")});
     bindings_.insert(QStringLiteral("nextWindow"), {QStringLiteral("Meta+Shift+]")});
     bindings_.insert(QStringLiteral("previousWindow"), {QStringLiteral("Meta+Shift+[")});
-    bindings_.insert(QStringLiteral("newCategory"), {QStringLiteral("Meta+Shift+N")});
     bindings_.insert(QStringLiteral("openCommands"), {QStringLiteral("Meta+Shift+P")});
 #else
     bindings_.insert(QStringLiteral("nextCategory"),
@@ -419,11 +502,21 @@ void KeyMap::apply_defaults() {
                      {modifier + QStringLiteral("Alt+Left"), modifier + QStringLiteral("Up")});
     bindings_.insert(QStringLiteral("nextWindow"), {QStringLiteral("Ctrl+Shift+]")});
     bindings_.insert(QStringLiteral("previousWindow"), {QStringLiteral("Ctrl+Shift+[")});
-    bindings_.insert(QStringLiteral("newCategory"), {QStringLiteral("Ctrl+Shift+Alt+N")});
     bindings_.insert(QStringLiteral("openCommands"), {QStringLiteral("Ctrl+Shift+P")});
 #endif
     sidebar_visible_ = true;
     previews_visible_ = true;
+    alert_sound_ = true;
+    finish_sound_ = true;
+    alert_repeat_ = 3;
+    notify_ = true;
+    keep_awake_ = true;
+    editor_.clear();
+    show_usage_ = true;
+    usage_meter_.clear();
+    usage_machines_.clear();
+    // Each CLI lists its own models (HarnessModels) unless the config names some.
+    agent_defaults_ = {};
     terminal_font_family_.clear();
     harness_arguments_.clear();
     terminal_font_size_ = kTerminalFontSizeDefault;
@@ -514,7 +607,11 @@ bool KeyMap::load() {
 
     load_terminal_font(root.value(QStringLiteral("terminalFont")));
     load_harness_arguments(root.value(QStringLiteral("harnessArguments")));
+    load_alerts(root);
+    load_usage(root);
+    load_agent_defaults(root.value(QStringLiteral("newAgent")));
 
+    known_contents_ = contents;
     loaded_ = true;
     emit changed();
     return true;
@@ -560,6 +657,69 @@ void KeyMap::load_harness_arguments(const QJsonValue& value) {
             continue;
         }
         harness_arguments_.insert(it.key(), arguments);
+    }
+}
+
+void KeyMap::load_alerts(const QJsonObject& root) {
+    const auto alerts = root.value(QStringLiteral("alerts")).toObject();
+    alert_sound_ = alerts.value(QStringLiteral("sound")).toBool(true);
+    finish_sound_ = alerts.value(QStringLiteral("finished")).toBool(true);
+    alert_repeat_ = std::clamp(alerts.value(QStringLiteral("repeat")).toInt(3), 1, 10);
+    notify_ = alerts.value(QStringLiteral("notify")).toBool(true);
+    keep_awake_ = root.value(QStringLiteral("keepAwake")).toBool(true);
+    editor_ = root.value(QStringLiteral("editor")).toString().left(1024);
+}
+
+// {"usage": {"show": true, "meter": ["codex", "claude", "grok"], "machines":
+// ["devbox"]}}; an older top-level "showUsage" still counts.
+void KeyMap::load_usage(const QJsonObject& root) {
+    const auto usage = root.value(QStringLiteral("usage")).toObject();
+    show_usage_ = usage.value(QStringLiteral("show"))
+                      .toBool(root.value(QStringLiteral("showUsage")).toBool(true));
+    const auto names = [](const QJsonValue& value, qsizetype longest) {
+        QStringList list;
+        for (const auto& item : value.toArray()) {
+            const auto name = item.toString().trimmed();
+            // Names only: nothing that could be read as an option.
+            if (!name.isEmpty() && name.size() <= longest && !name.startsWith(QLatin1Char('-')) &&
+                !name.contains(QLatin1Char(' ')) && !list.contains(name) && list.size() < 32)
+                list << name;
+        }
+        return list;
+    };
+    usage_meter_ = names(usage.value(QStringLiteral("meter")), 32);
+    usage_machines_ = names(usage.value(QStringLiteral("machines")), 128);
+}
+
+// Paths are kept as written (~ is the machine's home); the new-agent forms
+// check them where they are used.
+void KeyMap::load_agent_defaults(const QJsonValue& value) {
+    const auto section = value.toObject();
+    const auto text = [](const QJsonValue& item) {
+        const auto string = item.toString().trimmed();
+        return string.size() <= 4096 && !string.contains(QChar::Null) ? string : QString();
+    };
+    agent_defaults_.harness = text(section.value(QStringLiteral("harness")));
+    agent_defaults_.folder = text(section.value(QStringLiteral("folder")));
+    const auto mode = text(section.value(QStringLiteral("mode")));
+    if (mode == QLatin1String("edits") || mode == QLatin1String("auto") ||
+        mode == QLatin1String("full"))
+        agent_defaults_.mode = mode;
+    const auto machines = section.value(QStringLiteral("machines")).toObject();
+    for (auto it = machines.begin(); it != machines.end() && it.key().size() <= 128; ++it) {
+        const auto folder = text(it.value().toObject().value(QStringLiteral("folder")));
+        if (!folder.isEmpty())
+            agent_defaults_.machineFolders.insert(it.key(), folder);
+    }
+    const auto models = section.value(QStringLiteral("models")).toObject();
+    for (auto it = models.begin(); it != models.end(); ++it) {
+        QStringList names;
+        for (const auto& item : it.value().toArray()) {
+            const auto name = text(item);
+            if (!name.isEmpty() && !name.startsWith(QLatin1Char('-')) && names.size() < 24)
+                names << name;
+        }
+        agent_defaults_.models.insert(it.key(), names);
     }
 }
 
@@ -631,6 +791,8 @@ QVariantList KeyMap::themes() const {
             {QStringLiteral("attentionText"), QString::fromLatin1(theme.attention_text)},
             {QStringLiteral("activity"), QString::fromLatin1(theme.activity)},
             {QStringLiteral("fault"), QString::fromLatin1(theme.fault)},
+            {QStringLiteral("plenty"), QString::fromLatin1(theme.plenty)},
+            {QStringLiteral("scarce"), QString::fromLatin1(theme.scarce)},
             {QStringLiteral("cornerRadius"), theme.corner_radius},
             {QStringLiteral("motionDuration"), theme.motion_ms},
             {QStringLiteral("monoChrome"), theme.mono_chrome},
@@ -845,6 +1007,17 @@ bool KeyMap::persist() {
     else
         font.insert(QStringLiteral("family"), terminal_font_family_);
     root.insert(QStringLiteral("terminalFont"), font);
+    QJsonObject alerts = root.value(QStringLiteral("alerts")).toObject();
+    alerts.insert(QStringLiteral("sound"), alert_sound_);
+    alerts.insert(QStringLiteral("finished"), finish_sound_);
+    alerts.insert(QStringLiteral("repeat"), alert_repeat_);
+    alerts.insert(QStringLiteral("notify"), notify_);
+    root.insert(QStringLiteral("alerts"), alerts);
+    root.insert(QStringLiteral("keepAwake"), keep_awake_);
+    root.remove(QStringLiteral("showUsage"));
+    QJsonObject usage = root.value(QStringLiteral("usage")).toObject();
+    usage.insert(QStringLiteral("show"), show_usage_);
+    root.insert(QStringLiteral("usage"), usage);
     if (!root.contains(QStringLiteral("version")))
         root.insert(QStringLiteral("version"), 1);
     QByteArray contents = format_config(root) + '\n';
@@ -857,9 +1030,36 @@ bool KeyMap::persist() {
         return fail(file.errorString());
     if (file.write(contents) != contents.size() || !file.commit())
         return fail(file.errorString());
+    known_contents_ = std::move(contents);
+    watch();
     diagnostic_.clear();
     emit changed();
     return true;
+}
+
+bool KeyMap::setAlertSound(bool on) {
+    alert_sound_ = on;
+    return save();
+}
+bool KeyMap::setFinishSound(bool on) {
+    finish_sound_ = on;
+    return save();
+}
+bool KeyMap::setAlertRepeat(int times) {
+    alert_repeat_ = std::clamp(times, 1, 10);
+    return save();
+}
+bool KeyMap::setNotify(bool on) {
+    notify_ = on;
+    return save();
+}
+bool KeyMap::setKeepAwake(bool on) {
+    keep_awake_ = on;
+    return save();
+}
+bool KeyMap::setShowUsage(bool on) {
+    show_usage_ = on;
+    return save();
 }
 
 } // namespace lapis::desktop

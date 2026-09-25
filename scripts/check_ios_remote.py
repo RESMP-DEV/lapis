@@ -6,6 +6,8 @@ Starts, all disposable and on this Mac:
   scripts/fake_models.py, so no model usage is spent ("codex fake",
   "claude fake"),
 - a registry entry whose service is not running ("parked"),
+- the windowless lapis host (lapis_desktop --serve) owning the registry, with
+  fake_agent.py installed as grok, so the phone can start an agent through it,
 - the gateway (apps/remote/lapis_remote.py) on 127.0.0.1 with --allow-local.
 
 Then it runs the LapisUITests on a headless simulator (no Simulator window)
@@ -22,6 +24,7 @@ import argparse
 import json
 import plistlib
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -29,13 +32,15 @@ import sys
 import tempfile
 import threading
 import time
-import uuid
-import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE = ROOT / "build" / "desktop" / "services" / "session" / "lapis_session_service"
+DESKTOP = (
+    ROOT / "build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop"
+)
 APP_SOURCES = ROOT / "apps" / "ios" / "Lapis"
 TEST_SOURCES = ROOT / "apps" / "ios" / "LapisUITests"
 BUILD = ROOT / "build" / "ios"
@@ -412,14 +417,15 @@ def main():
         "--only", action="append", help="UI test method; repeat to select several"
     )
     args = parser.parse_args()
-    if not SERVICE.exists():
-        raise SystemExit(f"missing {SERVICE}; build the desktop first")
+    if not SERVICE.exists() or not DESKTOP.exists():
+        raise SystemExit("missing the desktop build; build the desktop first")
     sdk = tool("xcrun", "--sdk", "iphonesimulator", "--show-sdk-path")
     platform = tool("xcrun", "--sdk", "iphonesimulator", "--show-sdk-platform-path")
     build_app(sdk)
     build_ui_tests(sdk, platform)
 
-    runtime = Path(tempfile.mkdtemp(prefix="lapis-ios-", dir="/tmp"))
+    # Resolved: the lapis host writes endpoints under the real /private/tmp.
+    runtime = Path(tempfile.mkdtemp(prefix="lapis-ios-", dir="/tmp")).resolve()
     run = Run(runtime)
     booted_here = False
     try:
@@ -546,6 +552,57 @@ def main():
                 }
             )
         )
+        # The Mac's lapis, windowless: it owns the registry and starts the
+        # agents the phone asks for, with fake_agent.py as the grok CLI.
+        bin_dir = runtime / "bin"
+        bin_dir.mkdir()
+        shutil.copy2(fake, bin_dir / "grok")
+        (bin_dir / "grok").chmod(0o755)
+        new_folder = runtime / "phone-project"
+        new_folder.mkdir()
+        # A preset folder for every machine, as the person's config may set.
+        (runtime / "lapis.json").write_text(
+            json.dumps({"version": 1, "newAgent": {"folder": "~/dev"}}) + "\n"
+        )
+        run.start(
+            "host",
+            [str(DESKTOP), "--serve", "--registry", str(registry)],
+            {
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "LAPIS_HISTORY_ROOT": str(runtime / "history"),
+                # Its own config: never the person's lapis.json.
+                "LAPIS_CONFIG": str(runtime / "lapis.json"),
+            },
+        )
+        deadline = time.monotonic() + 20
+        while not lapis_remote.service_answers(
+            str(runtime / lapis_remote.CONTROL_NAME)
+        ):
+            if time.monotonic() > deadline:
+                raise SystemExit("the lapis host did not start")
+            time.sleep(0.1)
+        # What the phone browses and ranks: a small home, Codex and Claude
+        # histories naming its folders, and ssh machines with a history.
+        fixture = runtime / "fixture"
+        home = fixture / "home"
+        for folder in ("a", "b", "dev/lapis", ".hidden"):
+            (home / folder).mkdir(parents=True)
+        day = fixture / "codex" / "sessions" / "2026" / "09" / "24"
+        day.mkdir(parents=True)
+        for index in range(2):
+            meta = {"cwd": str(home / "dev" / "lapis"), "source": "cli"}
+            (
+                day
+                / f"rollout-2026-09-24T12-00-0{index}-01a0d4b2-0000-7000-8000-00000000000{index}.jsonl"
+            ).write_text(json.dumps({"type": "session_meta", "payload": meta}) + "\n")
+        project = fixture / "claude" / "projects" / "-home-b"
+        project.mkdir(parents=True)
+        for index in range(3):
+            (project / f"0000000{index}-0000-4000-8000-000000000000.jsonl").write_text(
+                json.dumps({"cwd": str(home / "b"), "entrypoint": "cli"}) + "\n"
+            )
+        (fixture / "ssh_config").write_text("Host alpha beta\n")
+        (fixture / "history").write_text("ssh beta\n" * 3 + "ssh alpha\n")
         # Only loopback clients are admitted in this disposable fixture. Supply
         # status metadata without depending on the operator's Tailscale account.
         tailscale = runtime / "tailscale-fixture"
@@ -563,6 +620,16 @@ def main():
             [
                 python,
                 str(ROOT / "apps" / "remote" / "lapis_remote.py"),
+                "--folders-home",
+                str(home),
+                "--codex-home",
+                str(fixture / "codex"),
+                "--claude-home",
+                str(fixture / "claude"),
+                "--ssh-config",
+                str(fixture / "ssh_config"),
+                "--shell-history",
+                str(fixture / "history"),
                 "--registry",
                 str(registry),
                 "--bind",
@@ -639,6 +706,8 @@ def main():
                 "LAPIS_HOST": f"127.0.0.1:{PORT}",
                 "LAPIS_ECHO_ID": echo_id,
                 "LAPIS_MAC_CLIENT": "1",
+                "LAPIS_NEW_AGENT_FOLDER": str(new_folder),
+                "LAPIS_FOLDER_FIXTURE": "1",
             }
         )
         command = [
@@ -655,6 +724,31 @@ def main():
         ]
         for method in args.only or []:
             command += ["-only-testing", f"LapisUITests/LapisUITests/{method}"]
+
+        # The agent the phone starts is closed from the phone later in the same
+        # test, so its launch is caught while it exists.
+        def phone_agents():
+            return [
+                item
+                for item in lapis_remote.load_workspace(registry)["agents"]
+                if item["category"] == "later"
+                and item["harness"] == "grok"
+                and Path(item["directory"]).resolve() == new_folder
+            ]
+
+        launched = []
+        watching = threading.Event()
+
+        def watch():
+            while not watching.is_set():
+                try:
+                    launched.extend(item["arguments"] for item in phone_agents())
+                except (OSError, ValueError, KeyError, lapis_remote.GatewayError):
+                    pass
+                watching.wait(0.3)
+
+        watcher = threading.Thread(target=watch, daemon=True)
+        watcher.start()
         with (BUILD / "test.log").open("wb") as log:
             outcome = subprocess.run(
                 command,
@@ -662,6 +756,8 @@ def main():
                 stdout=log,
                 stderr=log,
             )
+        watching.set()
+        watcher.join()
         screens = BUILD / "screens" / stamp
         screens.mkdir(parents=True, exist_ok=True)
         subprocess.run(
@@ -695,9 +791,54 @@ def main():
             return 1
         if (not args.only or "testSendScreenToMac" in args.only) and not captures:
             return 1
+        if not args.only or "testStartAnAgentFromThePhone" in args.only:
+            started = any(
+                arguments[-2:] == ["--permission-mode", "acceptEdits"]
+                for arguments in launched
+            )
+            closed = not phone_agents()
+            made = any(
+                category["name"] == "Ideas"
+                for category in lapis_remote.load_workspace(registry)["categories"]
+            )
+            print(
+                f"Mac: the phone started an agent in Later: {started}, closed it: "
+                f"{closed}, made a category: {made}"
+            )
+            if not (started and closed and made):
+                return 1
         return outcome.returncode
     finally:
         run.stop()
+        # Agents the host started run in their own sessions. Match the exact
+        # fixture executable or the service's endpoint, not an arbitrary path
+        # mention. A shebang script appears after its interpreter in ps.
+        fixture_agent = str(runtime / "bin" / "grok")
+        for row in subprocess.run(
+            ["ps", "-axo", "pid=,command="], capture_output=True, text=True
+        ).stdout.splitlines():
+            fields = row.split(None, 1)
+            if len(fields) != 2:
+                continue
+            try:
+                command = shlex.split(fields[1])
+            except ValueError:
+                continue
+            owned_agent = fixture_agent in command[:2]
+            owned_service = (
+                len(command) > 1
+                and command[0] == str(SERVICE)
+                and any(
+                    Path(argument).parent == runtime
+                    and Path(argument).suffix == ".sock"
+                    for argument in command[1:]
+                )
+            )
+            if owned_agent or owned_service:
+                try:
+                    os.kill(int(fields[0]), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError, ValueError):
+                    pass
         if booted_here:
             simulator(["shutdown", device["udid"]], check=False)
         shutil.rmtree(runtime, ignore_errors=True)

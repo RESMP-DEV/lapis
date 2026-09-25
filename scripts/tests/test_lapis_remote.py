@@ -1,6 +1,7 @@
 """The iPhone gateway: snapshots, launch identity, admission and a live service."""
 
 import base64
+import gzip
 import http.client
 import json
 import os
@@ -13,15 +14,27 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps" / "remote"))
 import lapis_remote as remote  # noqa: E402
 
 SERVICE = ROOT / "build" / "desktop" / "services" / "session" / "lapis_session_service"
+DESKTOP = next(
+    (
+        path
+        for path in (
+            ROOT
+            / "build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop",
+            ROOT / "build/desktop/apps/desktop/lapis_desktop",
+        )
+        if path.is_file()
+    ),
+    None,
+)
 
 
 def snapshot(columns, rows, cells, *, cursor=(0, 0), palette=None, alternate=False):
@@ -296,8 +309,9 @@ class AdmissionTests(unittest.TestCase):
 class Server:
     """A gateway on 127.0.0.1 with a local-only admission rule."""
 
-    def __init__(self, test, registry_text, runtime=None):
+    def __init__(self, test, registry_text, runtime=None, **gateway):
         self.test = test
+        self.gateway = gateway
         if runtime is None:
             self.directory = Path(tempfile.mkdtemp(prefix="lr-", dir="/tmp"))
             self.test.addCleanup(shutil.rmtree, self.directory, True)
@@ -312,7 +326,9 @@ class Server:
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), remote.Handler)
         self.httpd.daemon_threads = True
         self.port = self.httpd.server_address[1]
-        remote.Handler.gateway = remote.Gateway(self.registry, auth, self.port)
+        remote.Handler.gateway = remote.Gateway(
+            self.registry, auth, self.port, **self.gateway
+        )
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         return self
 
@@ -380,6 +396,493 @@ class CaptureTests(unittest.TestCase):
             for number, name in enumerate(saved):
                 path = server.directory / "phone-captures" / (name + ".png")
                 self.assertEqual(path.read_bytes(), png + bytes([number]))
+
+
+class FakeDesktop:
+    """A stand-in for the lapis window's workspace-control socket."""
+
+    def __init__(self, directory, answer):
+        self.path = Path(directory) / remote.CONTROL_NAME
+        self.answer = answer
+        self.requests = []
+
+    def __enter__(self):
+        self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.listener.bind(str(self.path))
+        self.listener.listen()
+        threading.Thread(target=self.serve, daemon=True).start()
+        return self
+
+    def serve(self):
+        while True:
+            try:
+                connection, _ = self.listener.accept()
+            except OSError:
+                return
+            with connection:
+                data = b""
+                while not data.endswith(b"\n"):
+                    chunk = connection.recv(4096)
+                    if not chunk:
+                        break
+                    data += chunk
+                request = json.loads(data)
+                self.requests.append(request)
+                connection.sendall(json.dumps(self.answer(request)).encode() + b"\n")
+
+    def __exit__(self, *_):
+        self.listener.close()
+        self.path.unlink(missing_ok=True)
+
+
+class StartAgentTests(unittest.TestCase):
+    def answer(self, request):
+        if request["request"] == "harnesses":
+            return {
+                "ok": True,
+                "harnesses": [{"id": "codex", "name": "Codex", "installed": True}],
+            }
+        if request["category"] == "gone":
+            return {"ok": False, "error": "Unknown category."}
+        return {"ok": True, "id": "new-agent", "updating": True}
+
+    def test_the_phone_starts_an_agent_through_the_mac(self):
+        with (
+            Server(self, "{}") as server,
+            FakeDesktop(server.directory, self.answer) as desktop,
+        ):
+            status, listed = server.request("GET", "/api/harnesses")
+            self.assertEqual(status, 200)
+            self.assertEqual(listed["harnesses"][0]["id"], "codex")
+            status, started = server.request(
+                "POST",
+                "/api/agents",
+                {
+                    "harness": "codex",
+                    "directory": "~/dev/x",
+                    "category": "later",
+                    "title": "x",
+                },
+            )
+            self.assertEqual(
+                (status, started), (200, {"id": "new-agent", "updating": True})
+            )
+            self.assertEqual(
+                desktop.requests[-1],
+                {
+                    "version": 1,
+                    "request": "createAgent",
+                    "category": "later",
+                    "harness": "codex",
+                    "directory": "~/dev/x",
+                    "title": "x",
+                },
+            )
+
+    def test_refusals_and_malformed_requests(self):
+        with (
+            Server(self, "{}") as server,
+            FakeDesktop(server.directory, self.answer) as desktop,
+        ):
+            status, refused = server.request(
+                "POST",
+                "/api/agents",
+                {"harness": "codex", "directory": "/tmp", "category": "gone"},
+            )
+            self.assertEqual((status, refused), (422, {"error": "Unknown category."}))
+            asked = len(desktop.requests)
+            for body in (
+                {"harness": "codex", "directory": "/tmp"},
+                {"harness": "codex", "directory": "x" * 5000, "category": "later"},
+                {
+                    "harness": "codex",
+                    "directory": "/tmp",
+                    "category": "later",
+                    "title": 1,
+                },
+                ["not", "an", "object"],
+            ):
+                status, _ = server.request("POST", "/api/agents", body)
+                self.assertEqual(status, 400, body)
+            status, _ = server.request(
+                "POST",
+                "/api/agents",
+                {
+                    "harness": "codex",
+                    "directory": "~",
+                    "category": "later",
+                    "machine": "-oX",
+                },
+            )
+            self.assertEqual(status, 400)
+            self.assertEqual(len(desktop.requests), asked, "bad requests reach nothing")
+            status, _ = server.request(
+                "POST",
+                "/api/agents",
+                {
+                    "harness": "codex",
+                    "directory": "~/x",
+                    "category": "later",
+                    "machine": "devbox",
+                    "model": "gpt-6-sol",
+                    "mode": "full",
+                },
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                {k: desktop.requests[-1][k] for k in ("machine", "model", "mode")},
+                {"machine": "devbox", "model": "gpt-6-sol", "mode": "full"},
+            )
+
+    def test_categories_and_closing_go_through_the_mac(self):
+        def answer(request):
+            if request["request"] == "createCategory":
+                return {"ok": True, "id": "cat-1"}
+            if request["request"] == "closeAgent" and request["id"] == "gone":
+                return {"ok": False, "error": "No such agent"}
+            return {"ok": True}
+
+        with (
+            Server(self, "{}") as server,
+            FakeDesktop(server.directory, answer) as desktop,
+        ):
+            status, made = server.request(
+                "POST", "/api/categories", {"name": " Later "}
+            )
+            self.assertEqual((status, made), (200, {"id": "cat-1"}))
+            self.assertEqual(
+                desktop.requests[-1],
+                {"version": 1, "request": "createCategory", "name": "Later"},
+            )
+            asked = len(desktop.requests)
+            for body in ({"name": ""}, {"name": "x" * 81}, {"name": 3}, ["x"]):
+                status, _ = server.request("POST", "/api/categories", body)
+                self.assertEqual(status, 400, body)
+            self.assertEqual(len(desktop.requests), asked, "bad names reach nothing")
+            status, closed = server.request("POST", "/api/agents/a1/close", {})
+            self.assertEqual((status, closed), (200, {"ok": True}))
+            self.assertEqual(
+                desktop.requests[-1],
+                {"version": 1, "request": "closeAgent", "id": "a1"},
+            )
+            status, refused = server.request("POST", "/api/agents/gone/close", {})
+            self.assertEqual((status, refused), (422, {"error": "No such agent"}))
+
+    def test_without_lapis_on_the_mac(self):
+        with Server(self, "{}") as server:
+            status, reply = server.request(
+                "POST",
+                "/api/agents",
+                {"harness": "codex", "directory": "/tmp", "category": "later"},
+            )
+            self.assertEqual(status, 503)
+            self.assertIn("not running on the Mac", reply["error"])
+
+
+@unittest.skipUnless(DESKTOP and SERVICE.is_file(), "desktop build required")
+class WindowlessHostTests(unittest.TestCase):
+    """The real windowless host (lapis_desktop --serve) behind the gateway."""
+
+    def setUp(self):
+        self.runtime = Path(tempfile.mkdtemp(prefix="lh-", dir="/tmp")).resolve()
+        self.addCleanup(shutil.rmtree, self.runtime, True)
+        (self.runtime / "bin").mkdir()
+        (self.runtime / "project").mkdir()
+        grok = self.runtime / "bin" / "grok"
+        grok.write_text('#!/bin/sh\necho "grok ready in $(pwd)"\nexec sleep 600\n')
+        grok.chmod(0o755)
+        (self.runtime / "workspace.json").write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "activeCategory": "general",
+                    "categories": [
+                        {"id": "general", "name": "General"},
+                        {"id": "later", "name": "Later"},
+                    ],
+                    "agents": [],
+                }
+            )
+        )
+        environment = {
+            **os.environ,
+            "PATH": f"{self.runtime / 'bin'}:{os.environ.get('PATH', '')}",
+            "LAPIS_HISTORY_ROOT": str(self.runtime / "history"),
+        }
+        self.host = subprocess.Popen(
+            [
+                str(DESKTOP),
+                "--serve",
+                "--registry",
+                str(self.runtime / "workspace.json"),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env=environment,
+        )
+        self.addCleanup(self.stop)
+        control = str(self.runtime / remote.CONTROL_NAME)
+        deadline = time.monotonic() + 15
+        while not remote.service_answers(control):
+            self.assertLess(time.monotonic(), deadline, "the host did not start")
+            time.sleep(0.1)
+
+    def stop(self):
+        rows = subprocess.run(
+            ["ps", "-axo", "pid=,command="], capture_output=True, text=True
+        ).stdout.splitlines()
+        for row in rows:
+            if str(self.runtime) in row:
+                try:
+                    os.kill(int(row.split(None, 1)[0]), 9)
+                except (ProcessLookupError, ValueError):
+                    pass
+        self.host.wait(10)
+
+    def test_the_host_starts_an_agent_in_its_category(self):
+        with Server(
+            self, (self.runtime / "workspace.json").read_text(), self.runtime
+        ) as server:
+            status, listed = server.request("GET", "/api/harnesses")
+            self.assertEqual(status, 200)
+            self.assertTrue(
+                any(h["id"] == "grok" and h["installed"] for h in listed["harnesses"])
+            )
+            status, started = server.request(
+                "POST",
+                "/api/agents",
+                {
+                    "harness": "grok",
+                    "directory": str(self.runtime / "project"),
+                    "category": "later",
+                },
+            )
+            self.assertEqual(status, 200, started)
+            deadline = time.monotonic() + 15
+            while True:
+                status, listing = server.request("GET", "/api/agents")
+                later = next(c for c in listing["categories"] if c["id"] == "later")
+                agent = next(
+                    (a for a in later["agents"] if a["id"] == started["id"]), None
+                )
+                if agent and agent["running"]:
+                    break
+                self.assertLess(time.monotonic(), deadline, "the new agent never ran")
+                time.sleep(0.2)
+            self.assertEqual(agent["title"], "project")
+            status, refused = server.request(
+                "POST",
+                "/api/agents",
+                {"harness": "grok", "directory": "/tmp", "category": "gone"},
+            )
+            self.assertEqual((status, refused["error"]), (422, "Unknown category."))
+
+
+def mkdirs(root, *paths):
+    for path in paths:
+        (Path(root) / path).mkdir(parents=True, exist_ok=True)
+
+
+def rollout(codex_home, name, meta):
+    day = Path(codex_home) / "sessions" / "2026" / "09" / "24"
+    day.mkdir(parents=True, exist_ok=True)
+    (day / f"rollout-2026-09-24T12-00-00-{name}.jsonl").write_text(
+        json.dumps({"type": "session_meta", "payload": meta}) + "\n{}\n"
+    )
+
+
+class FolderTests(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="lf-", dir="/tmp")).resolve()
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.home = self.root / "home"
+        mkdirs(
+            self.home,
+            "b",
+            "a/node_modules/x",
+            "a/App.app/Contents",
+            "a/sub/deep/deeper/deepest",
+            ".hidden/inner",
+            "dev/lapis/.github/workflows",
+        )
+        (self.home / "link").symlink_to(self.home / "a")
+        self.codex = self.root / "codex"
+        self.claude = self.root / "claude"
+        lapis = str(self.home / "dev" / "lapis")
+        for index, meta in enumerate(
+            [
+                {"cwd": lapis, "source": "cli"},
+                {"cwd": lapis, "source": "cli"},
+                {"cwd": lapis, "source": {"subagent": {}}, "parent_thread_id": "x"},
+                {"cwd": str(self.home / "b"), "source": "exec"},
+            ]
+        ):
+            rollout(self.codex, f"01a0d4b2-0000-7000-8000-00000000000{index}", meta)
+        project = self.claude / "projects" / "-home-b"
+        project.mkdir(parents=True)
+        for index in range(3):
+            (project / f"0000000{index}-0000-4000-8000-000000000000.jsonl").write_text(
+                json.dumps({"type": "summary"})
+                + "\n"
+                + json.dumps({"cwd": str(self.home / "b"), "entrypoint": "cli"})
+            )
+        (project / "agent-1234.jsonl").write_text(json.dumps({"cwd": "/elsewhere"}))
+        # Automation (claude -p) is not an agent someone opened.
+        (project / "10000000-0000-4000-8000-000000000000.jsonl").write_text(
+            json.dumps({"cwd": str(self.home / "a"), "entrypoint": "sdk-cli"})
+        )
+
+    def test_what_is_listed_and_descended(self):
+        folders = remote.scan_folders(str(self.home))
+        for listed in (
+            "a",
+            "a/node_modules",
+            "a/App.app",
+            "a/sub/deep/deeper",
+            ".hidden",
+            ".hidden/inner",
+            "dev/lapis/.github",
+        ):
+            self.assertIn(listed, folders)
+        for skipped in (
+            "a/node_modules/x",
+            "a/App.app/Contents",
+            "a/sub/deep/deeper/deepest",
+            "dev/lapis/.github/workflows",
+            "link",
+        ):
+            self.assertNotIn(skipped, folders)
+        self.assertEqual(folders, sorted(folders))
+
+    def test_folders_are_ranked_by_agents_started_there(self):
+        registry = self.root / "workspace.json"
+        registry.write_text(
+            json.dumps(
+                {
+                    "agents": [
+                        {
+                            "id": "a1",
+                            "endpoint": str(self.root / "a1.sock"),
+                            "directory": str(self.home / "b"),
+                            "program": "/bin/sh",
+                        }
+                    ]
+                }
+            )
+        )
+        counts = remote.AgentHistory(self.codex, self.claude).counts(registry)
+        self.assertEqual(counts[str(self.home / "dev" / "lapis")], 2)
+        self.assertEqual(
+            counts[str(self.home / "b")], 4
+        )  # 3 Claude sessions and 1 agent
+        self.assertNotIn("/elsewhere", counts)
+        self.assertNotIn(str(self.home / "a"), counts)
+
+    def test_the_phone_downloads_the_index_once(self):
+        index = remote.FolderIndex(
+            self.root / "workspace.json",
+            home=self.home,
+            codex_home=self.codex,
+            claude_home=self.claude,
+        )
+        with Server(self, "{}", folders=index) as server:
+            status, body = server.request("GET", "/api/folders")
+            self.assertEqual(status, 200)
+            self.assertIn("dev/lapis", body["folders"])
+            self.assertEqual(
+                body["frequent"],
+                [{"path": "b", "count": 3}, {"path": "dev/lapis", "count": 2}],
+            )
+            status, again = server.request(
+                "GET", f"/api/folders?have={body['version']}"
+            )
+            self.assertEqual(again, {"version": body["version"], "unchanged": True})
+            connection = server.connection()
+            connection.request(
+                "GET",
+                "/api/folders",
+                headers={"X-Lapis-Client": "ios", "Accept-Encoding": "gzip"},
+            )
+            response = connection.getresponse()
+            self.assertEqual(response.getheader("Content-Encoding"), "gzip")
+            self.assertEqual(json.loads(gzip.decompress(response.read())), body)
+            # The connection stays open for the phone's next request.
+            connection.request("GET", "/api/health", headers={"X-Lapis-Client": "ios"})
+            self.assertEqual(connection.getresponse().status, 200)
+            connection.close()
+
+
+class MachineTests(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="lm-", dir="/tmp")).resolve()
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def test_hosts_from_config_and_history(self):
+        included = self.root / "extra config"
+        included.write_text("Host gpubox\n  HostName 10.0.0.2\n")
+        config = self.root / "config"
+        config.write_text(
+            f'Include "{included}"\nHost devbox devbox-lan\nHost *\nHost i-* mi-*\n# Host commented\n'
+        )
+        self.assertEqual(
+            remote.ssh_config_hosts(config), ["gpubox", "devbox", "devbox-lan"]
+        )
+        history = self.root / "zsh_history"
+        history.write_text(
+            ": 1700000000:0;ssh devbox\n"
+            ": 1700000001:0;ssh -p 22 me@gpubox 'ls'\n"
+            "mosh devbox\n"
+            "ssh -J jump devbox uptime\n"
+            "echo ssh nobody\n" + "ssh -o ProxyCommand=x cloud\n" * 3
+        )
+        counts = remote.history_hosts([history])
+        self.assertEqual(counts["devbox"], 3)
+        self.assertEqual(counts["gpubox"], 1)
+        self.assertEqual(counts["cloud"], 3)
+        self.assertNotIn("nobody", counts)
+
+    def test_machines_are_ordered_by_availability_then_use(self):
+        config = self.root / "config"
+        config.write_text("Host devbox gpubox oldbox\n")
+        history = self.root / "history"
+        history.write_text(
+            "ssh oldbox\n" * 9
+            + "ssh devbox\n" * 5
+            + "ssh gpubox\n"
+            + "ssh gone\n" * 4
+            + "ssh live\n" * 3
+        )
+        original = remote.reachable
+        remote.reachable = lambda name, timeout=1.5: (
+            name in ("devbox", "gpubox", "live")
+        )
+        self.addCleanup(setattr, remote, "reachable", original)
+        machines = remote.MachineList(self.root / "none.json", config, [history])
+        machines.build()
+        self.assertEqual(
+            [(m["name"], m["available"]) for m in machines.machines],
+            [("devbox", True), ("live", True), ("gpubox", True), ("oldbox", False)],
+        )
+
+
+@unittest.skipUnless(shutil.which("caffeinate"), "macOS only")
+class KeepAwakeTests(unittest.TestCase):
+    def test_the_mac_stays_awake_only_while_the_setting_is_on(self):
+        directory = Path(tempfile.mkdtemp(prefix="lk-", dir="/tmp"))
+        self.addCleanup(shutil.rmtree, directory, True)
+        config = directory / "lapis.json"
+        config.write_text("{}")
+        keeper = remote.KeepAwake(config)
+        self.addCleanup(lambda: keeper.process and keeper.process.terminate())
+        keeper.apply()
+        self.assertIsNotNone(keeper.process, "on by default")
+        self.assertIsNone(keeper.process.poll())
+        self.assertIn("-s", keeper.process.args)
+        config.write_text('{"keepAwake": false}')
+        keeper.apply()
+        self.assertIsNone(keeper.process, "off when the config says so")
 
 
 class Events:
@@ -464,15 +967,24 @@ class LiveServiceTests(unittest.TestCase):
                 ],
             }
         )
-        # A listening socket can precede PTY startup under instrumentation.
-        # Establish protocol readiness before exercising joined phone views.
-        agent = {**json.loads(self.registry)["agents"][0], "mode": ""}
-        remote.WireSession(agent, mode=remote.DISCOVER).close()
 
     def stop(self):
         if self.service.poll() is None:
             os.killpg(self.service.pid, 15)
             self.service.wait(10)
+
+    def test_a_screen_is_read_without_resizing_or_taking_the_agent(self):
+        with Server(self, self.registry, self.runtime) as server:
+            path = f"/api/agents/{self.identifier}/screen"
+            status, first = server.request("GET", path)
+            self.assertEqual(status, 200)
+            self.assertIn("ready", screen_text(first))
+            status, second = server.request("GET", path)
+            self.assertEqual(
+                (first["columns"], first["rows"]), (second["columns"], second["rows"])
+            )
+            status, listing = server.request("GET", "/api/agents")
+            self.assertFalse(listing["categories"][0]["agents"][0]["onPhone"])
 
     def test_list_stream_type_resize_and_replace(self):
         with Server(self, self.registry, self.runtime) as server:

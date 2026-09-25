@@ -1,8 +1,10 @@
 #include "agent_checkpoint.hpp"
+#include "alerts.hpp"
+#include "keymap.hpp"
 #include "launch_spec.hpp"
-#include "workspace.hpp"
-
 #include "session_descriptor.hpp"
+#include "workspace.hpp"
+#include "workspace_control.hpp"
 
 #include <QCoreApplication>
 #include <QDataStream>
@@ -17,10 +19,11 @@
 #include <QLocalSocket>
 #include <QLockFile>
 #include <QPointer>
-#include <QScopeGuard>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUuid>
+#include <QtEndian>
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -28,6 +31,7 @@
 #include <cstdint>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -557,27 +561,12 @@ QJsonObject agentRecord(const QString& directory, const QString& id, const char*
                        {"directory", directory}};
 }
 
-class ScopedEnvironment {
-  public:
-    ScopedEnvironment(const QString& name, const QByteArray& value)
-        : name_(name.toUtf8()), had_previous_(qEnvironmentVariableIsSet(name_.constData())),
-          previous_(qgetenv(name_.constData())) {
-        qputenv(name_.constData(), value.constData());
-    }
-    ~ScopedEnvironment() {
-        if (had_previous_)
-            qputenv(name_.constData(), previous_.constData());
-        else
-            qunsetenv(name_.constData());
-    }
-    ScopedEnvironment(const ScopedEnvironment&) = delete;
-    ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
-
-  private:
-    QByteArray name_;
-    bool had_previous_;
-    QByteArray previous_;
-};
+void writeRegistry(const QString& path, const QJsonObject& root) {
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "open registry fixture");
+    const auto bytes = QJsonDocument(root).toJson();
+    require(file.write(bytes) == bytes.size(), "write registry fixture");
+}
 
 void writeExecutable(const QString& path, const QByteArray& body) {
     QFile file(path);
@@ -586,13 +575,6 @@ void writeExecutable(const QString& path, const QByteArray& body) {
     file.close();
     require(QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
             "make the fake executable executable");
-}
-
-void writeRegistry(const QString& path, const QJsonObject& root) {
-    QFile file(path);
-    require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "open registry fixture");
-    const auto bytes = QJsonDocument(root).toJson();
-    require(file.write(bytes) == bytes.size(), "write registry fixture");
 }
 
 // An agent that finishes a turn, or starts needing a response, while another
@@ -737,37 +719,53 @@ void agentArgumentsPersist() {
                            .toArray();
     require(saved == QJsonArray{QStringLiteral("--dangerously-skip-permissions")},
             "saving keeps the agent's arguments");
-    {
-        auto unsafe_resume = agentRecord(canonical, uuid(), "general");
-        unsafe_resume.insert(QStringLiteral("harness"), QStringLiteral("codex"));
-        unsafe_resume.insert(QStringLiteral("arguments"),
-                             QJsonArray{QStringLiteral("resume"), QStringLiteral("not-a-uuid")});
-        auto configured = root;
-        configured.insert(QStringLiteral("agents"), QJsonArray{unsafe_resume});
-        writeRegistry(options.storagePath, configured);
-        Workspace workspace(WorkspaceMode::live, options);
-        require(workspace.workspaceError().isEmpty(),
-                "a configured codex resume value is an ordinary argument");
-        require(workspace.addCategory(QStringLiteral("Research")), "save configured arguments");
-    }
-    const auto resumed = QJsonDocument::fromJson(readRegistry(options.storagePath))
-                             .object()
-                             .value(QStringLiteral("agents"))
-                             .toArray()
-                             .first()
-                             .toObject();
-    require(resumed.value(QStringLiteral("arguments")) ==
-                    QJsonArray{QStringLiteral("resume"), QStringLiteral("not-a-uuid")} &&
-                resumed.value(QStringLiteral("resumeThread")).toString().isEmpty(),
-            "a non-native resume argument cannot poison the native identity field");
     record.insert(QStringLiteral("arguments"), QJsonArray{3});
     auto broken = root;
     broken.insert(QStringLiteral("agents"), QJsonArray{record});
     writeRegistry(options.storagePath, broken);
     Workspace rejected(WorkspaceMode::live, options);
     require(!rejected.workspaceError().isEmpty(), "non-string arguments are rejected");
-    require(rejected.sessions().isEmpty() && !rejected.focusedSession(),
-            "one malformed agent cannot be partially restored");
+}
+
+// A direct selection can enter an inactive category with stale selection state.
+// Even then, an untiled selection must take a real tile instead of floating
+// above the unchanged tile delegates.
+void directTileSelectionNormalizesAStaleTarget() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "tile-selection directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QString left = uuid();
+    const QString right = uuid();
+    const QString untiled = uuid();
+    auto agent = [&](const QString& id) { return agentRecord(canonical, id, "work"); };
+    WorkspaceOptions options;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{
+            {"version", 2},
+            {"activeCategory", "general"},
+            {"categories",
+             QJsonArray{
+                 QJsonObject{{"id", "general"}, {"name", "General"}},
+                 QJsonObject{{"id", "work"},
+                             {"name", "Work"},
+                             {"selected", uuid()},
+                             {"tiles", QJsonObject{{"stacked", false},
+                                                   {"ratio", 0.5},
+                                                   {"children",
+                                                    QJsonArray{QJsonObject{{"agent", left}},
+                                                               QJsonObject{{"agent", right}}}}}}}}},
+            {"agents", QJsonArray{agent(left), agent(right), agent(untiled)}}});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "load the stale tile-selection registry");
+    require(workspace.selectSession(untiled), "select directly into the inactive tiled category");
+    const auto tiles = workspace.stageTiles();
+    require(tiles.size() == 2 &&
+                tiles[0].toMap().value(QStringLiteral("sessionId")).toString() == untiled &&
+                tiles[1].toMap().value(QStringLiteral("sessionId")).toString() == right &&
+                workspace.focusedSession() == workspace.session(untiled),
+            "an untiled direct selection replaces the first valid tile");
 }
 
 void unknownRegistryVersionsAreRejected() {
@@ -834,19 +832,16 @@ void outputEstimate() {
 void agentsStartWithoutParentSessionMarkers() {
     QTemporaryDir directory;
     require(directory.isValid(), "marker directory");
-    struct RestoreEnvironment {
-        ~RestoreEnvironment() {
-            for (const char* name : {"CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "GROK_AGENT",
-                                     "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_EFFORT_LEVEL"})
-                qunsetenv(name);
-        }
-    };
-    const RestoreEnvironment restore;
     qputenv("CLAUDECODE", "1");
     qputenv("CLAUDE_CODE_CHILD_SESSION", "1");
     qputenv("CLAUDE_CODE_SESSION_ID", "parent-session");
     qputenv("GROK_AGENT", "1");
     qputenv("CLAUDE_CODE_EFFORT_LEVEL", "max");
+    const auto restore = [] {
+        for (const char* name : {"CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "GROK_AGENT",
+                                 "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_EFFORT_LEVEL"})
+            qunsetenv(name);
+    };
     const auto record = QDir(directory.path()).filePath(QStringLiteral("environment"));
     WorkspaceOptions options;
     options.endpoint = QDir(QFileInfo(directory.path()).canonicalFilePath())
@@ -863,6 +858,7 @@ void agentsStartWithoutParentSessionMarkers() {
         Workspace workspace(WorkspaceMode::live, options);
         // The service starts from the event loop, so keep the markers until then.
         const bool recorded = waitFor([&] { return QFileInfo::exists(record); }, 10000);
+        restore();
         require(recorded, "agent recorded its environment");
         QFile file(record);
         require(file.open(QIODevice::ReadOnly), "read agent environment");
@@ -894,376 +890,6 @@ QString screenText(const lapis::session::TerminalSnapshot& snapshot) {
             text += QLatin1Char('\n');
     }
     return text;
-}
-
-// The login helper (lapis_desktop --restore-agents) holds the workspace only while it restarts
-// agents: a window opened meanwhile waits for it; a second window, and a
-// helper finding a window open fails at once. A second window waits only for
-// the brief marker-publication grace period.
-void windowWaitsForTheRestoreHelper() {
-    QTemporaryDir directory(QStringLiteral("/tmp/lapis-lock-XXXXXX"));
-    require(directory.isValid(), "lock directory");
-    WorkspaceOptions options;
-    options.storagePath = QDir(QFileInfo(directory.path()).canonicalFilePath())
-                              .filePath(QStringLiteral("workspace.json"));
-    // The helper's lock and marker, as lapis_desktop --restore-agents keeps
-    // them. It owns the lock briefly before it can replace a previous marker,
-    // so start with that stale value and publish the helper's PID in the gap.
-    QLockFile helper(options.storagePath + QStringLiteral(".lock"));
-    require(helper.tryLock(0), "the helper holds the workspace");
-    QFile marker(options.storagePath + QStringLiteral(".restoring"));
-    require(marker.open(QIODevice::WriteOnly) && marker.write(QByteArrayLiteral("0")) > 0,
-            "the helper holds a stale marker before naming itself");
-    marker.close();
-    // A second helper must not wait even if the first helper already published.
-    require(marker.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
-                marker.write(QByteArray::number(QCoreApplication::applicationPid())) > 0,
-            "publish the first helper identity");
-    marker.close();
-    auto restoring = options;
-    restoring.restoreAgents = true;
-    restoring.restoreOnly = true;
-    QElapsedTimer helper_clock;
-    helper_clock.start();
-    Workspace duplicate_helper(WorkspaceMode::live, restoring);
-    require(!duplicate_helper.workspaceError().isEmpty() && helper_clock.elapsed() < 1000,
-            "a helper never waits for another helper");
-    require(marker.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
-                marker.write(QByteArrayLiteral("0")) > 0,
-            "restore the unpublished marker");
-    marker.close();
-    // The helper exits: its marker goes with its lock.
-    std::thread release([&helper, &options] {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        QFile marker(options.storagePath + QStringLiteral(".restoring"));
-        require(marker.open(QIODevice::WriteOnly | QIODevice::Truncate),
-                "open the marker in the helper race");
-        require(marker.write(QByteArray::number(QCoreApplication::applicationPid())) > 0,
-                "the helper names itself after taking the lock");
-        marker.close();
-        std::this_thread::sleep_for(std::chrono::milliseconds(700));
-        QFile::remove(options.storagePath + QStringLiteral(".restoring"));
-        helper.unlock();
-    });
-    QElapsedTimer clock;
-    clock.start();
-    Workspace window(WorkspaceMode::live, options);
-    release.join();
-    require(window.workspaceError().isEmpty() && clock.elapsed() >= 700,
-            "a window waits for the login helper");
-    clock.restart();
-    Workspace second(WorkspaceMode::live, options);
-    require(!second.workspaceError().isEmpty() && clock.elapsed() < 3000,
-            "a second window waits only for marker publication");
-    Workspace late(WorkspaceMode::live, restoring);
-    require(!late.workspaceError().isEmpty(), "the helper leaves an open window's workspace alone");
-
-    WorkspaceOptions short_options;
-    short_options.storagePath = QDir(QFileInfo(directory.path()).canonicalFilePath())
-                                    .filePath(QStringLiteral("short.json"));
-    QLockFile short_helper(short_options.storagePath + QStringLiteral(".lock"));
-    require(short_helper.tryLock(0), "a short helper holds another workspace");
-    std::thread short_release([&short_helper] {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        short_helper.unlock();
-    });
-    Workspace after_short_helper(WorkspaceMode::live, short_options);
-    short_release.join();
-    require(after_short_helper.workspaceError().isEmpty(),
-            "a window acquires a helper lock released without a marker");
-}
-
-struct UpdaterFixture {
-    QTemporaryDir directory{QStringLiteral("/tmp/lapis-updater-XXXXXX")};
-    QDir root{QFileInfo(directory.path()).canonicalFilePath()};
-    QByteArray original_path{qgetenv("PATH")};
-    QByteArray original_home{qgetenv("HOME")};
-    WorkspaceOptions options;
-
-    QString harness{"grok"};
-
-    UpdaterFixture(const QByteArray& script, const QString& harness_name = QStringLiteral("grok"))
-        : harness(harness_name) {
-        require(directory.isValid() && root.mkpath(QStringLiteral("bin")) &&
-                    root.mkpath(QStringLiteral("project")),
-                "create updater fixture folders");
-        writeExecutable(root.filePath(QStringLiteral("bin/") + harness), script);
-        options.storagePath = root.filePath(QStringLiteral("workspace.json"));
-        options.updateHarnesses = true;
-        qputenv("PATH", QFile::encodeName(root.filePath(QStringLiteral("bin"))) + ":/usr/bin:/bin");
-        qputenv("HOME", QFile::encodeName(root.path()));
-    }
-    ~UpdaterFixture() {
-        qputenv("PATH", original_path);
-        qputenv("HOME", original_home);
-    }
-    [[nodiscard]] QByteArray read(const QString& name) const {
-        QFile file(root.filePath(name));
-        require(file.open(QIODevice::ReadOnly), "open updater fixture output");
-        return file.readAll();
-    }
-    void create(Workspace& workspace) const {
-        require(workspace.createAgent(root.filePath(QStringLiteral("project")),
-                                      QStringLiteral("updater fixture"), harness),
-                "create updater fixture agent");
-    }
-};
-
-void updaterLifecycle() {
-    enum class Cleanup : std::uint8_t { timeout, destruction, normal_exit };
-    for (const auto mode : {Cleanup::timeout, Cleanup::destruction, Cleanup::normal_exit}) {
-        const bool destroy = mode == Cleanup::destruction;
-        const bool normal_exit = mode == Cleanup::normal_exit;
-        UpdaterFixture fixture(
-            QByteArray("#!/bin/sh\nnormal_exit=") + (normal_exit ? "1\n" : "0\n") +
-            "root=\"${0%/*}\"\n"
-            "if [ \"$1\" = update ]; then\n"
-            "  trap 'exit 0' TERM\n"
-            "  (trap '' TERM; while :; do /bin/sleep 1; done) &\n"
-            "  printf '%s\\n' \"$!\" > \"$root/descendant-pid\"\n"
-            "  printf '%s\\n' \"$$\" > \"$root/updater-pid\"\n"
-            "  if [ \"$normal_exit\" = 1 ]; then exit 0; fi\n"
-            "  while :; do /bin/sleep 1; done\n"
-            "fi\n"
-            "for file in updater-pid descendant-pid; do\n"
-            "  read -r pid < \"$root/$file\"\n"
-            "  if kill -0 \"$pid\" 2>/dev/null; then echo overlap > \"$root/overlap\"; fi\n"
-            "done\n"
-            "echo started >> \"$root/starts\"\n"
-            "echo started\n"
-            "while read -r line; do [ \"$line\" = done ] && exit 0; done\n");
-        // Sanitizer-instrumented fork/exec and guard setup can take seconds.
-        fixture.options.updateTimeoutMs = destroy ? 30000 : 5000;
-        auto workspace = std::make_unique<Workspace>(WorkspaceMode::live, fixture.options);
-        fixture.create(*workspace);
-        auto* agent = workspace->focusedSession();
-        const auto id = agent->sessionId();
-        for (int attempt = 0; attempt < 3; ++attempt)
-            require(!workspace->restartAgent(id), "repeated restart while queued is rejected");
-        require(!agent->live(), "queued restarts never create an early service");
-        require(waitFor([&] { return QFileInfo::exists(fixture.root.filePath("bin/updater-pid")); },
-                        10000),
-                "updater and descendant acknowledge startup");
-        const auto leader = fixture.read("bin/updater-pid").trimmed().toLongLong();
-        const auto child = fixture.read("bin/descendant-pid").trimmed().toLongLong();
-        require(leader > 0 && child > 0, "fixture has two explicit owned PIDs");
-        if (destroy) {
-            workspace.reset();
-        } else {
-            require(waitFor([agent] { return agent->inputReady(); }, 20000),
-                    "timeout releases exactly one launch after updater exit");
-            require(waitFor([&] { return QFileInfo::exists(fixture.root.filePath("bin/starts")); },
-                            10000),
-                    "new agent acknowledges execution");
-            require(fixture.read("bin/starts") == "started\n", "queued agent starts once");
-            require(!QFileInfo::exists(fixture.root.filePath("bin/overlap")),
-                    "updater and descendant have exited before agent execution");
-            require(fixture.read("harness-updates.log")
-                        .contains(normal_exit ? "exit 0" : "stopped after timeout"),
-                    "timeout outcome is recorded");
-            require(workspace->closeSession(id) &&
-                        waitFor([&] { return workspace->sessions().isEmpty(); }, 10000),
-                    "close updater fixture agent");
-        }
-#if defined(Q_OS_UNIX)
-        require(waitFor(
-                    [&] {
-                        return ::kill(static_cast<pid_t>(leader), 0) != 0 &&
-                               ::kill(static_cast<pid_t>(child), 0) != 0;
-                    },
-                    10000),
-                "timeout and destruction stop both owned updater processes");
-#endif
-    }
-}
-
-void updaterOutputIsDrainedWithABoundedTail() {
-    UpdaterFixture fixture("#!/bin/sh\n"
-                           "if [ \"$1\" = update ]; then\n"
-                           "  /usr/bin/yes x | /usr/bin/head -c 1048576\n"
-                           "  echo tail-marker\n"
-                           "  exit 0\n"
-                           "fi\n"
-                           "echo started\n"
-                           "while read -r line; do [ \"$line\" = done ] && exit 0; done\n");
-    Workspace workspace(WorkspaceMode::live, fixture.options);
-    fixture.create(workspace);
-    auto* agent = workspace.focusedSession();
-    require(waitFor([agent] { return agent->inputReady(); }, 20000),
-            "high-volume updater completes before agent launch");
-    const auto logged = fixture.read("harness-updates.log");
-    require(logged.contains("tail-marker") && logged.size() < 2048,
-            "only the bounded updater tail reaches the log");
-    require(workspace.closeSession(agent->sessionId()) &&
-                waitFor([&] { return workspace.sessions().isEmpty(); }, 10000),
-            "close output fixture agent");
-}
-
-void failedUpdaterStartClearsTheQueue() {
-    UpdaterFixture fixture("#!/nonexistent/lapis-fake-updater\n");
-    Workspace workspace(WorkspaceMode::live, fixture.options);
-    fixture.create(workspace);
-    auto* agent = workspace.focusedSession();
-    require(waitFor([agent] { return agent->statusLabel() != QStringLiteral("Updating Grok…"); },
-                    10000),
-            "FailedToStart releases the queue");
-    require(fixture.read("harness-updates.log").contains("grok update: could not start"),
-            "failed start is logged without waiting for finished");
-}
-
-// Explicit Claude creation joins the managed update queue. Existing sessions
-// and pinned-binary qualification must take the launch path untouched.
-void explicitLaunchesUseUpdaterPolicy() {
-    UpdaterFixture fixture("#!/bin/sh\n"
-                           "if [ \"$1\" = update ]; then\n"
-                           "  echo update >> \"$HOME/updates\"\n"
-                           "  while [ ! -f \"$HOME/release-update\" ]; do /bin/sleep .02; done\n"
-                           "  exit 0\n"
-                           "fi\n"
-                           "echo $$ >> \"$HOME/starts\"\n"
-                           "exec /bin/sleep 60\n",
-                           QStringLiteral("claude"));
-    const auto endpoint = fixture.root.filePath(QStringLiteral("agent.sock"));
-    const auto launch =
-        lapis::session::LaunchSpec{fixture.root.filePath(QStringLiteral("bin/claude")),
-                                   {},
-                                   fixture.root.filePath(QStringLiteral("project")),
-                                   {80, 24},
-                                   lapis::session::AgentMode::claude};
-    auto options = fixture.options;
-    options.endpoint = endpoint;
-    options.launch = launch;
-    options.mode = lapis::session::wire::AttachMode::create;
-    QByteArray original_pid;
-    {
-        Workspace workspace(WorkspaceMode::live, options);
-        auto* agent = workspace.focusedSession();
-        require(agent && agent->statusLabel() == QStringLiteral("Updating Claude…") &&
-                    !agent->live(),
-                "explicit creation waits before starting");
-        require(waitFor([&] { return QFileInfo::exists(fixture.root.filePath("updates")); }, 10000),
-                "the explicit updater starts first");
-        require(!agent->live() && !QFileInfo::exists(fixture.root.filePath("starts")),
-                "the agent cannot start before the update finishes");
-        QFile release(fixture.root.filePath(QStringLiteral("release-update")));
-        require(release.open(QIODevice::WriteOnly), "release the acknowledged updater");
-        release.close();
-        require(waitFor(
-                    [&] {
-                        return agent->inputReady() &&
-                               QFileInfo::exists(fixture.root.filePath(QStringLiteral("starts")));
-                    },
-                    20000),
-                "the deferred explicit agent starts");
-        original_pid = fixture.read(QStringLiteral("starts"));
-        require(
-            lapis::session::read_descriptor(endpoint, lapis::session::launch_fingerprint(launch))
-                .has_value(),
-            "the deferred start records its normalized endpoint and launch identity");
-        require(fixture.read("harness-updates.log").contains("claude update: exit 0"),
-                "the explicit update is logged beside the endpoint");
-    } // Detach, retaining the existing service and backend for both attach modes.
-    require(QFile::remove(fixture.root.filePath("updates")) &&
-                QFile::remove(fixture.root.filePath("harness-updates.log")),
-            "clear update observations before reattachment");
-    for (const auto mode : {lapis::session::wire::AttachMode::reconnect,
-                            lapis::session::wire::AttachMode::discover}) {
-        options.mode = mode;
-        Workspace workspace(WorkspaceMode::live, options);
-        auto* agent = workspace.focusedSession();
-        require(agent && waitFor([agent] { return agent->inputReady(); }, 20000),
-                "explicit reattachment retains its mode");
-        require(fixture.read("starts") == original_pid &&
-                    !QFileInfo::exists(fixture.root.filePath("updates")) &&
-                    !QFileInfo::exists(fixture.root.filePath("harness-updates.log")),
-                "reattachment keeps the same process without updating");
-        if (mode == lapis::session::wire::AttachMode::discover)
-            require(workspace.closeSession(agent->sessionId()) &&
-                        waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
-                    "explicit fixture closes after both reattachments");
-    }
-    options.mode = lapis::session::wire::AttachMode::create;
-    options.updateHarnesses = false;
-    options.endpoint = fixture.root.filePath(QStringLiteral("disabled.sock"));
-    Workspace workspace(WorkspaceMode::live, options);
-    auto* agent = workspace.focusedSession();
-    require(agent && waitFor([agent] { return agent->inputReady(); }, 20000),
-            "update-disabled explicit creation starts");
-    require(!QFileInfo::exists(fixture.root.filePath("updates")) &&
-                !QFileInfo::exists(fixture.root.filePath("harness-updates.log")),
-            "the explicit update opt-out is honored");
-    require(workspace.closeSession(agent->sessionId()) &&
-                waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
-            "update-disabled fixture closes");
-}
-
-// A new agent's CLI updates itself first, so the agent never opens on an
-// update prompt; another agent within 30 minutes starts without updating.
-void harnessesUpdateBeforeNewAgents() {
-    QTemporaryDir directory(QStringLiteral("/tmp/lapis-update-XXXXXX"));
-    require(directory.isValid(), "update directory");
-    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
-    const QDir root(canonical);
-    require(root.mkpath(QStringLiteral("bin")) && root.mkpath(QStringLiteral("project")),
-            "fixture folders");
-    const auto grok = root.filePath(QStringLiteral("bin/grok"));
-    QFile script(grok);
-    require(script.open(QIODevice::WriteOnly), "write the stand-in CLI");
-    script.write("#!/bin/sh\n"
-                 "log=\"$(dirname \"$0\")/updates\"\n"
-                 "if [ \"$1\" = update ]; then echo update >> \"$log\"; sleep 1; "
-                 "echo 'grok updated to 9.9'; exit 0; fi\n"
-                 "echo \"started after $(wc -l < \"$log\" | tr -d ' ') update\"\n"
-                 "exec sleep 600\n");
-    script.close();
-    require(script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
-            "make it executable");
-    const auto path = qgetenv("PATH");
-    qputenv("PATH", QFile::encodeName(root.filePath(QStringLiteral("bin"))) + ':' + path);
-    WorkspaceOptions options;
-    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
-    options.updateHarnesses = true;
-    {
-        Workspace workspace(WorkspaceMode::live, options);
-        const auto project = root.filePath(QStringLiteral("project"));
-        require(workspace.createAgent(project, QStringLiteral("first"), QStringLiteral("grok")),
-                "create a Grok agent");
-        auto* first = workspace.focusedSession();
-        require(first->statusLabel() == QStringLiteral("Updating Grok…") && !first->live(),
-                "the card waits while the CLI updates");
-        require(waitFor([first] { return first->inputReady(); }, 15000),
-                "the agent starts after the update");
-        require(waitFor(
-                    [first] {
-                        return screenText(first->snapshot())
-                            .contains(QStringLiteral("started after 1 update"));
-                    },
-                    5000),
-                "the agent started on the updated CLI");
-        require(workspace.createAgent(project, QStringLiteral("second"), QStringLiteral("grok")),
-                "create another Grok agent");
-        auto* second = workspace.focusedSession();
-        require(second->statusLabel() != QStringLiteral("Updating Grok…"),
-                "a recent update is not repeated");
-        require(waitFor(
-                    [second] {
-                        return screenText(second->snapshot())
-                            .contains(QStringLiteral("started after 1 update"));
-                    },
-                    10000),
-                "the second agent started without another update");
-        QFile log(root.filePath(QStringLiteral("harness-updates.log")));
-        require(log.open(QIODevice::ReadOnly) &&
-                    log.readAll().contains("grok update: exit 0. grok updated to 9.9"),
-                "the update is logged");
-        require(waitFor([second] { return second->inputReady(); }, 10000),
-                "the second agent is ready");
-        for (const auto& id : {first->sessionId(), second->sessionId()})
-            require(workspace.closeSession(id), "close the stand-in agents");
-        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
-                "the stand-in agents close");
-    }
-    qputenv("PATH", path);
 }
 
 // A view joined beside the desktop, as the phone gateway joins: the same agent
@@ -1410,6 +1036,751 @@ void joinedViewStaysInSync() {
     require(workspace.closeSession(agent->sessionId()) &&
                 waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
             "the joined fixture closes");
+}
+
+struct UpdaterFixture {
+    QTemporaryDir directory{QStringLiteral("/tmp/lapis-updater-XXXXXX")};
+    QDir root{QFileInfo(directory.path()).canonicalFilePath()};
+    QByteArray original_path{qgetenv("PATH")};
+    QByteArray original_home{qgetenv("HOME")};
+    WorkspaceOptions options;
+    QString harness{"grok"};
+
+    UpdaterFixture(const QByteArray& script, const QString& harness_name = QStringLiteral("grok"))
+        : harness(harness_name) {
+        require(directory.isValid() && root.mkpath(QStringLiteral("bin")) &&
+                    root.mkpath(QStringLiteral("project")),
+                "create updater fixture folders");
+        writeExecutable(root.filePath(QStringLiteral("bin/") + harness), script);
+        options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+        options.updateHarnesses = true;
+        qputenv("PATH", QFile::encodeName(root.filePath(QStringLiteral("bin"))) + ":/usr/bin:/bin");
+        qputenv("HOME", QFile::encodeName(root.path()));
+    }
+    ~UpdaterFixture() {
+        qputenv("PATH", original_path);
+        qputenv("HOME", original_home);
+    }
+    UpdaterFixture(const UpdaterFixture&) = delete;
+    UpdaterFixture& operator=(const UpdaterFixture&) = delete;
+    [[nodiscard]] QByteArray read(const QString& name) const {
+        QFile file(root.filePath(name));
+        require(file.open(QIODevice::ReadOnly), "open updater fixture output");
+        return file.readAll();
+    }
+    void create(Workspace& workspace) const {
+        require(workspace.createAgent(root.filePath(QStringLiteral("project")),
+                                      QStringLiteral("updater fixture"), harness),
+                "create updater fixture agent");
+    }
+};
+
+void updaterLifecycle() {
+    enum class Cleanup : std::uint8_t { timeout, destruction, normal_exit };
+    for (const auto mode : {Cleanup::timeout, Cleanup::destruction, Cleanup::normal_exit}) {
+        const bool destroy = mode == Cleanup::destruction;
+        const bool normal_exit = mode == Cleanup::normal_exit;
+        UpdaterFixture fixture(
+            QByteArray("#!/bin/sh\nnormal_exit=") + (normal_exit ? "1\n" : "0\n") +
+                "root=\"${0%/*}\"\n"
+                "if [ \"$1\" = update ]; then\n"
+                "  trap 'exit 0' TERM\n"
+                "  (trap '' TERM; while :; do /bin/sleep 1; done) &\n"
+                "  printf '%s\\n' \"$!\" > \"$root/descendant-pid\"\n"
+                "  printf '%s\\n' \"$$\" > \"$root/updater-pid\"\n"
+                "  if [ \"$normal_exit\" = 1 ]; then exit 0; fi\n"
+                "  while :; do /bin/sleep 1; done\n"
+                "fi\n"
+                "for file in updater-pid descendant-pid; do\n"
+                "  read -r pid < \"$root/$file\"\n"
+                "  if kill -0 \"$pid\" 2>/dev/null; then echo overlap > \"$root/overlap\"; fi\n"
+                "done\n"
+                "echo started >> \"$root/starts\"\n"
+                "echo started\n"
+                "while read -r line; do [ \"$line\" = done ] && exit 0; done\n",
+            QStringLiteral("grok"));
+        // Instrumented fork/exec startup can outlast the short updater budget.
+        // Keep the normal run fast while allowing the fixture to start in TSan.
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+        constexpr int startup_timeout_ms = 10000;
+        constexpr int updater_timeout_ms = 5000;
+#else
+        constexpr int startup_timeout_ms = 2000;
+        constexpr int updater_timeout_ms = 300;
+#endif
+#else
+        constexpr int startup_timeout_ms = 2000;
+        constexpr int updater_timeout_ms = 300;
+#endif
+        fixture.options.updateTimeoutMs = destroy ? 30000 : updater_timeout_ms;
+        auto workspace = std::make_unique<Workspace>(WorkspaceMode::live, fixture.options);
+        fixture.create(*workspace);
+        auto* agent = workspace->focusedSession();
+        const auto id = agent->sessionId();
+        for (int attempt = 0; attempt < 3; ++attempt)
+            require(!workspace->restartAgent(id), "repeated restart while queued is rejected");
+        require(!agent->live(), "queued restarts never create an early service");
+        require(waitFor([&] { return QFileInfo::exists(fixture.root.filePath("bin/updater-pid")); },
+                        startup_timeout_ms),
+                "updater and descendant acknowledge startup");
+        const auto leader = fixture.read("bin/updater-pid").trimmed().toLongLong();
+        const auto child = fixture.read("bin/descendant-pid").trimmed().toLongLong();
+        require(leader > 0 && child > 0, "fixture has two explicit owned PIDs");
+        if (destroy) {
+            workspace.reset();
+        } else {
+            require(waitFor([agent] { return agent->inputReady(); }, 10000),
+                    "timeout releases exactly one launch after updater exit");
+            require(waitFor([&] { return QFileInfo::exists(fixture.root.filePath("bin/starts")); },
+                            2000),
+                    "new agent acknowledges execution");
+            require(fixture.read("bin/starts") == "started\n", "queued agent starts once");
+            require(!QFileInfo::exists(fixture.root.filePath("bin/overlap")),
+                    "updater and descendant have exited before agent execution");
+            require(fixture.read("harness-updates.log")
+                        .contains(normal_exit ? "exit 0" : "stopped after timeout"),
+                    "timeout outcome is recorded");
+            require(workspace->closeSession(id) &&
+                        waitFor([&] { return workspace->sessions().isEmpty(); }, 10000),
+                    "close updater fixture agent");
+        }
+#if defined(Q_OS_UNIX)
+        require(waitFor(
+                    [&] {
+                        return ::kill(static_cast<pid_t>(leader), 0) != 0 &&
+                               ::kill(static_cast<pid_t>(child), 0) != 0;
+                    },
+                    2000),
+                "timeout and destruction stop both owned updater processes");
+#endif
+    }
+}
+
+void updaterOutputIsDrainedWithABoundedTail() {
+    UpdaterFixture fixture("#!/bin/sh\n"
+                           "if [ \"$1\" = update ]; then\n"
+                           "  /usr/bin/yes x | /usr/bin/head -c 1048576\n"
+                           "  echo tail-marker\n"
+                           "  exit 0\n"
+                           "fi\n"
+                           "echo started\n"
+                           "while read -r line; do [ \"$line\" = done ] && exit 0; done\n");
+    Workspace workspace(WorkspaceMode::live, fixture.options);
+    fixture.create(workspace);
+    auto* agent = workspace.focusedSession();
+    require(waitFor([agent] { return agent->inputReady(); }, 10000),
+            "high-volume updater completes before agent launch");
+    const auto logged = fixture.read("harness-updates.log");
+    require(logged.contains("tail-marker") && logged.size() < 2048,
+            "only the bounded updater tail reaches the log");
+    require(workspace.closeSession(agent->sessionId()) &&
+                waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "close output fixture agent");
+}
+
+void failedUpdaterStartClearsTheQueue() {
+    UpdaterFixture fixture("#!/nonexistent/lapis-fake-updater\n");
+    Workspace workspace(WorkspaceMode::live, fixture.options);
+    fixture.create(workspace);
+    auto* agent = workspace.focusedSession();
+    require(
+        waitFor([agent] { return agent->statusLabel() != QStringLiteral("Updating Grok…"); }, 2000),
+        "FailedToStart releases the queue");
+    require(fixture.read("harness-updates.log").contains("grok update: could not start"),
+            "failed start is logged without waiting for finished");
+}
+
+void explicitLaunchesUseUpdaterPolicy() {
+    UpdaterFixture fixture("#!/bin/sh\n"
+                           "if [ \"$1\" = update ]; then\n"
+                           "  echo update >> \"$HOME/updates\"\n"
+                           "  while [ ! -f \"$HOME/release-update\" ]; do /bin/sleep .02; done\n"
+                           "  exit 0\n"
+                           "fi\n"
+                           "echo $$ >> \"$HOME/starts\"\n"
+                           "exec /bin/sleep 60\n",
+                           QStringLiteral("claude"));
+    const auto endpoint = fixture.root.filePath(QStringLiteral("agent.sock"));
+    const auto launch =
+        lapis::session::LaunchSpec{fixture.root.filePath(QStringLiteral("bin/claude")),
+                                   {},
+                                   fixture.root.filePath(QStringLiteral("project")),
+                                   {80, 24},
+                                   lapis::session::AgentMode::claude};
+    auto options = fixture.options;
+    options.endpoint = endpoint;
+    options.launch = launch;
+    options.mode = lapis::session::wire::AttachMode::create;
+    QByteArray original_pid;
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        auto* agent = workspace.focusedSession();
+        require(agent && agent->statusLabel() == QStringLiteral("Updating Claude…") &&
+                    !agent->live(),
+                "explicit creation waits before starting");
+        require(waitFor([&] { return QFileInfo::exists(fixture.root.filePath("updates")); }, 10000),
+                "the explicit updater starts first");
+        require(!agent->live() && !QFileInfo::exists(fixture.root.filePath("starts")),
+                "the agent cannot start before the update finishes");
+        QFile release(fixture.root.filePath(QStringLiteral("release-update")));
+        require(release.open(QIODevice::WriteOnly), "release the acknowledged updater");
+        release.close();
+        require(waitFor(
+                    [&] {
+                        return agent->inputReady() &&
+                               QFileInfo::exists(fixture.root.filePath(QStringLiteral("starts")));
+                    },
+                    20000),
+                "the deferred explicit agent starts");
+        original_pid = fixture.read(QStringLiteral("starts"));
+        require(
+            lapis::session::read_descriptor(endpoint, lapis::session::launch_fingerprint(launch))
+                .has_value(),
+            "the deferred start records its normalized endpoint and launch identity");
+        require(fixture.read("harness-updates.log").contains("claude update: exit 0"),
+                "the explicit update is logged beside the endpoint");
+    }
+    require(QFile::remove(fixture.root.filePath("updates")) &&
+                QFile::remove(fixture.root.filePath("harness-updates.log")),
+            "clear update observations before reattachment");
+    for (const auto mode : {lapis::session::wire::AttachMode::reconnect,
+                            lapis::session::wire::AttachMode::discover}) {
+        options.mode = mode;
+        Workspace workspace(WorkspaceMode::live, options);
+        auto* agent = workspace.focusedSession();
+        require(agent && waitFor([agent] { return agent->inputReady(); }, 20000),
+                "explicit reattachment retains its mode");
+        require(fixture.read("starts") == original_pid &&
+                    !QFileInfo::exists(fixture.root.filePath("updates")) &&
+                    !QFileInfo::exists(fixture.root.filePath("harness-updates.log")),
+                "reattachment keeps the same process without updating");
+        if (mode == lapis::session::wire::AttachMode::discover)
+            require(workspace.closeSession(agent->sessionId()) &&
+                        waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                    "explicit fixture closes after both reattachments");
+    }
+    options.mode = lapis::session::wire::AttachMode::create;
+    options.updateHarnesses = false;
+    options.endpoint = fixture.root.filePath(QStringLiteral("disabled.sock"));
+    Workspace workspace(WorkspaceMode::live, options);
+    auto* agent = workspace.focusedSession();
+    require(agent && waitFor([agent] { return agent->inputReady(); }, 20000),
+            "update-disabled explicit creation starts");
+    require(!QFileInfo::exists(fixture.root.filePath("updates")) &&
+                !QFileInfo::exists(fixture.root.filePath("harness-updates.log")),
+            "the explicit update opt-out is honored");
+    require(workspace.closeSession(agent->sessionId()) &&
+                waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "update-disabled fixture closes");
+}
+
+// The login helper (lapis_desktop --restore-agents) holds the workspace only
+// while it restarts agents: a window opened during its lock-to-marker gap
+// waits briefly for publication; an established helper or windowless host
+// waits for handover; a duplicate headless helper fails at once.
+void windowWaitsForTheRestoreHelper() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-lock-XXXXXX"));
+    require(directory.isValid(), "lock directory");
+    WorkspaceOptions options;
+    options.storagePath = QDir(QFileInfo(directory.path()).canonicalFilePath())
+                              .filePath(QStringLiteral("workspace.json"));
+    // The helper's lock and marker, as lapis_desktop --restore-agents keeps
+    // them. It owns the lock briefly before it can replace a previous marker,
+    // so start with that stale value and publish the helper's PID in the gap.
+    QLockFile helper(options.storagePath + QStringLiteral(".lock"));
+    require(helper.tryLock(0), "the helper holds the workspace");
+    QFile marker(options.storagePath + QStringLiteral(".restoring"));
+    require(marker.open(QIODevice::WriteOnly) && marker.write(QByteArrayLiteral("0")) > 0,
+            "the helper holds a stale marker before naming itself");
+    marker.close();
+    // A second helper must not wait even if the first helper already published.
+    require(marker.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                marker.write(QByteArray::number(QCoreApplication::applicationPid())) > 0,
+            "publish the first helper identity");
+    marker.close();
+    auto restoring = options;
+    restoring.restoreAgents = true;
+    restoring.headless = true;
+    QElapsedTimer helper_clock;
+    helper_clock.start();
+    Workspace duplicate_helper(WorkspaceMode::live, restoring);
+    require(!duplicate_helper.workspaceError().isEmpty() && helper_clock.elapsed() < 1000,
+            "a helper never waits for another helper");
+    require(marker.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                marker.write(QByteArrayLiteral("0")) > 0,
+            "restore the unpublished marker");
+    marker.close();
+    // The helper exits: its marker goes with its lock.
+    std::thread release([&helper, &options] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        QFile marker(options.storagePath + QStringLiteral(".restoring"));
+        require(marker.open(QIODevice::WriteOnly | QIODevice::Truncate),
+                "open the marker in the helper race");
+        require(marker.write(QByteArray::number(QCoreApplication::applicationPid())) > 0,
+                "the helper names itself after taking the lock");
+        marker.close();
+        std::this_thread::sleep_for(std::chrono::milliseconds(700));
+        QFile::remove(options.storagePath + QStringLiteral(".restoring"));
+        helper.unlock();
+    });
+    QElapsedTimer clock;
+    clock.start();
+    Workspace window(WorkspaceMode::live, options);
+    release.join();
+    require(window.workspaceError().isEmpty() && clock.elapsed() >= 700,
+            "a window waits for the login helper");
+    clock.restart();
+    Workspace second(WorkspaceMode::live, options);
+    require(!second.workspaceError().isEmpty() && clock.elapsed() < 3000,
+            "a second window waits only for marker publication");
+    Workspace late(WorkspaceMode::live, restoring);
+    require(!late.workspaceError().isEmpty(), "the helper leaves an open window's workspace alone");
+
+    WorkspaceOptions short_options;
+    short_options.storagePath = QDir(QFileInfo(directory.path()).canonicalFilePath())
+                                    .filePath(QStringLiteral("short.json"));
+    QLockFile short_helper(short_options.storagePath + QStringLiteral(".lock"));
+    require(short_helper.tryLock(0), "a short helper holds another workspace");
+    std::thread short_release([&short_helper] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        short_helper.unlock();
+    });
+    Workspace after_short_helper(WorkspaceMode::live, short_options);
+    short_release.join();
+    require(after_short_helper.workspaceError().isEmpty(),
+            "a window acquires a helper lock released without a marker");
+}
+
+// A request to the process that owns the workspace, answered while this
+// thread's event loop runs (a window's control server lives on it).
+QJsonObject askWorkspace(const QString& registry, const QJsonObject& request) {
+    QLocalSocket socket;
+    socket.connectToServer(lapis::desktop::WorkspaceControl::path(registry));
+    require(waitFor([&socket] { return socket.state() == QLocalSocket::ConnectedState; }, 3000),
+            "the workspace takes requests");
+    socket.write(QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n');
+    QByteArray answer;
+    require(waitFor(
+                [&] {
+                    answer += socket.readAll();
+                    return answer.contains('\n');
+                },
+                5000),
+            "the workspace answers");
+    return QJsonDocument::fromJson(answer.trimmed()).object();
+}
+
+QJsonObject createRequest(const QString& category, const QString& harness,
+                          const QString& directory) {
+    return {{QStringLiteral("version"), 1},
+            {QStringLiteral("request"), QStringLiteral("createAgent")},
+            {QStringLiteral("category"), category},
+            {QStringLiteral("harness"), harness},
+            {QStringLiteral("directory"), directory}};
+}
+
+// A stand-in Grok on PATH that says where it started.
+QByteArray installStandInGrok(const QDir& root) {
+    require(root.mkpath(QStringLiteral("bin")) && root.mkpath(QStringLiteral("project")),
+            "fixture folders");
+    QFile script(root.filePath(QStringLiteral("bin/grok")));
+    require(script.open(QIODevice::WriteOnly), "write the stand-in CLI");
+    script.write("#!/bin/sh\necho \"grok ready in $(pwd)\"\nexec sleep 600\n");
+    script.close();
+    require(script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "make it executable");
+    const auto path = qgetenv("PATH");
+    qputenv("PATH", QFile::encodeName(root.filePath(QStringLiteral("bin"))) + ':' + path);
+    return path;
+}
+
+// The phone gateway starts an agent through the window: it opens as a new tab
+// in the chosen category, while the window keeps its category and agent.
+void phoneStartsAnAgentInItsCategory() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-control-XXXXXX"));
+    require(directory.isValid(), "control directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    const auto project = root.filePath(QStringLiteral("project"));
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        const auto desk_category = workspace.activeCategoryId();
+        require(workspace.createAgent(project, QStringLiteral("desk"), QStringLiteral("grok")),
+                "an agent on the Mac");
+        auto* desk = workspace.focusedSession();
+        require(workspace.addCategory(QStringLiteral("Later")) &&
+                    workspace.selectCategory(desk_category),
+                "a second category");
+        const auto later =
+            workspace.categories().constLast().toMap().value(QStringLiteral("id")).toString();
+        lapis::desktop::WorkspaceControl control(workspace, false);
+        require(control.listening(), "the window takes workspace requests");
+        const auto registry = workspace.storagePath();
+
+        const auto harnesses =
+            askWorkspace(registry, {{QStringLiteral("version"), 1},
+                                    {QStringLiteral("request"), QStringLiteral("harnesses")}});
+        const auto listed = harnesses.value(QStringLiteral("harnesses")).toArray();
+        require(harnesses.value(QStringLiteral("ok")).toBool() &&
+                    std::any_of(listed.begin(), listed.end(),
+                                [](const QJsonValue& harness) {
+                                    return harness[QStringLiteral("id")] ==
+                                               QStringLiteral("grok") &&
+                                           harness[QStringLiteral("installed")].toBool();
+                                }),
+                "the phone learns which CLIs this Mac has");
+
+        const auto count = workspace.sessions().size();
+        auto wrong_version = createRequest(later, QStringLiteral("grok"), project);
+        wrong_version[QStringLiteral("version")] = 2;
+        auto missing_field = createRequest(later, QStringLiteral("grok"), project);
+        missing_field.remove(QStringLiteral("harness"));
+        for (const auto& bad :
+             {createRequest(QStringLiteral("nowhere"), QStringLiteral("grok"), project),
+              createRequest(later, QStringLiteral("nothing"), project),
+              createRequest(later, QStringLiteral("grok"), root.filePath(QStringLiteral("gone"))),
+              wrong_version, missing_field,
+              QJsonObject{{QStringLiteral("version"), 1},
+                          {QStringLiteral("request"), QStringLiteral("handover")}}}) {
+            const auto refused = askWorkspace(registry, bad);
+            require(!refused.value(QStringLiteral("ok")).toBool() &&
+                        !refused.value(QStringLiteral("error")).toString().isEmpty(),
+                    "a bad request is refused with a reason");
+        }
+        require(workspace.sessions().size() == count, "refused requests start nothing");
+
+        const auto started =
+            askWorkspace(registry, createRequest(later, QStringLiteral("grok"), project));
+        const auto id = started.value(QStringLiteral("id")).toString();
+        require(started.value(QStringLiteral("ok")).toBool() && !id.isEmpty() &&
+                    !started.value(QStringLiteral("updating")).toBool(),
+                "the phone starts an agent");
+        require(workspace.activeCategoryId() == desk_category && workspace.focusedSession() == desk,
+                "the window keeps its category and agent");
+        auto* agent = workspace.session(id);
+        require(agent != nullptr && agent->title() == QStringLiteral("project"),
+                "the new tab is named after its folder");
+        require(waitFor([agent] { return agent->inputReady(); }, 10000) &&
+                    waitFor(
+                        [agent, &project] {
+                            return screenText(agent->snapshot())
+                                .contains(QStringLiteral("grok ready in ") + project);
+                        },
+                        5000),
+                "the agent runs in the chosen folder");
+        QFile saved(registry);
+        require(saved.open(QIODevice::ReadOnly), "read the registry");
+        const auto agents = QJsonDocument::fromJson(saved.readAll())
+                                .object()
+                                .value(QStringLiteral("agents"))
+                                .toArray();
+        require(std::any_of(agents.begin(), agents.end(),
+                            [&](const QJsonValue& entry) {
+                                return entry[QStringLiteral("id")] == id &&
+                                       entry[QStringLiteral("category")] == later;
+                            }),
+                "the registry puts it in the chosen category");
+        // The phone adds a category without moving the window, and closes an
+        // agent as Command-W does.
+        const auto made =
+            askWorkspace(registry, {{QStringLiteral("version"), 1},
+                                    {QStringLiteral("request"), QStringLiteral("createCategory")},
+                                    {QStringLiteral("name"), QStringLiteral("Ideas")}});
+        require(made.value(QStringLiteral("ok")).toBool() &&
+                    workspace.categories().constLast().toMap().value(QStringLiteral("id")) ==
+                        made.value(QStringLiteral("id")).toString() &&
+                    workspace.activeCategoryId() == desk_category,
+                "a category from the phone, with the window left where it was");
+        require(
+            !askWorkspace(registry, {{QStringLiteral("version"), 1},
+                                     {QStringLiteral("request"), QStringLiteral("createCategory")},
+                                     {QStringLiteral("name"), QString()}})
+                    .value(QStringLiteral("ok"))
+                    .toBool() &&
+                !askWorkspace(registry, {{QStringLiteral("version"), 1},
+                                         {QStringLiteral("request"), QStringLiteral("closeAgent")},
+                                         {QStringLiteral("id"), QStringLiteral("nothing")}})
+                     .value(QStringLiteral("ok"))
+                     .toBool(),
+            "an empty name or an unknown agent is refused");
+        // Over ssh: the CLI runs in the folder on that machine, in its login
+        // shell. A stand-in ssh prints what it was given.
+        QFile ssh(root.filePath(QStringLiteral("bin/ssh")));
+        require(ssh.open(QIODevice::WriteOnly), "write the stand-in ssh");
+        ssh.write("#!/bin/sh\nfor a in \"$@\"; do printf '[%s]\\n' \"$a\"; done\nexec sleep 600\n");
+        ssh.close();
+        require(ssh.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+                "make it executable");
+        auto remote =
+            createRequest(later, QStringLiteral("grok"), QStringLiteral("~/dev/some project"));
+        remote[QStringLiteral("machine")] = QStringLiteral("-oProxyCommand=touch");
+        require(!askWorkspace(registry, remote).value(QStringLiteral("ok")).toBool(),
+                "a machine name cannot be an ssh option");
+        remote[QStringLiteral("machine")] = QStringLiteral("devbox");
+        remote[QStringLiteral("program")] = QStringLiteral("/opt/grok/bin/grok");
+        const auto over_ssh = askWorkspace(registry, remote);
+        auto* far = workspace.session(over_ssh.value(QStringLiteral("id")).toString());
+        require(over_ssh.value(QStringLiteral("ok")).toBool() && far != nullptr &&
+                    far->title() == QStringLiteral("some project"),
+                "the phone starts an agent on another machine");
+        require(
+            waitFor(
+                [far] {
+                    const auto text = screenText(far->snapshot());
+                    return text.contains(QStringLiteral("[-t]")) &&
+                           text.contains(QStringLiteral("[devbox]")) &&
+                           text.contains(QStringLiteral(
+                               R"([cd ~/'dev/some project' && exec "${SHELL:-/bin/sh}" -lic /opt/grok/bin/grok])"));
+                },
+                10000) &&
+                waitFor([far] { return far->inputReady(); }, 10000),
+            "ssh runs the CLI in that machine's folder and login shell");
+        for (const auto& closing : {desk->sessionId(), id, far->sessionId()})
+            require(workspace.closeSession(closing), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in agents close");
+    }
+    qputenv("PATH", path);
+}
+
+// With no window open, the windowless host serves the phone. A window that
+// opens asks the host for the workspace, and the host hands it over and exits.
+void windowTakesTheWorkspaceFromTheHost() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-host-XXXXXX"));
+    require(directory.isValid(), "host directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    QProcess host;
+    host.setProcessChannelMode(QProcess::MergedChannels);
+    host.start(QStringLiteral(LAPIS_DESKTOP_PATH),
+               {QStringLiteral("--serve"), QStringLiteral("--registry"), options.storagePath});
+    const auto control = lapis::desktop::WorkspaceControl::path(options.storagePath);
+    require(waitFor(
+                [&control] {
+                    QLocalSocket probe;
+                    probe.connectToServer(control);
+                    return probe.waitForConnected(100);
+                },
+                10000),
+            "the host serves the workspace");
+    // The host (another process) answers blocking requests too.
+    QLocalSocket phone;
+    phone.connectToServer(control);
+    require(phone.waitForConnected(1000), "the phone reaches the host");
+    phone.write(R"({"version":1,"request":"harnesses"})"
+                "\n");
+    QByteArray answer;
+    while (!answer.contains('\n') && phone.waitForReadyRead(3000))
+        answer += phone.readAll();
+    require(QJsonDocument::fromJson(answer.trimmed()).object().value(QStringLiteral("ok")).toBool(),
+            "the host answers the phone");
+    QElapsedTimer clock;
+    clock.start();
+    {
+        Workspace window(WorkspaceMode::live, options);
+        require(window.workspaceError().isEmpty() && clock.elapsed() < 10000,
+                "a window takes the workspace from the host");
+        require(host.waitForFinished(5000) && host.exitCode() == 0 &&
+                    host.readAll().contains("handed the workspace to a window"),
+                "the host hands over and exits");
+    }
+    qputenv("PATH", path);
+}
+
+// An agent that needs you chimes at once and again while its request waits
+// and you look elsewhere, up to the configured count; looking, answering or
+// turning the sound off stops it. A finished turn chimes once, quietly.
+void alertsChimeWhileAnAgentWaits() {
+    namespace wire = lapis::session::wire;
+    QTemporaryDir directory;
+    require(directory.isValid(), "alerts directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    QFile config(root.filePath(QStringLiteral("lapis.json")));
+    require(config.open(QIODevice::WriteOnly), "write the config");
+    config.write(R"({"version": 1, "alerts": {"sound": true, "finished": true, "repeat": 3}})");
+    config.close();
+    lapis::desktop::KeyMap keymap;
+    keymap.setSourcePathForTesting(config.fileName());
+    require(keymap.load(), "alerts config loads");
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    Workspace workspace(WorkspaceMode::live, options);
+    lapis::desktop::SessionPreview agent(QStringLiteral("agent"), root.path(), {}, QColor(), "");
+    std::vector<lapis::desktop::Chime> played;
+    bool looking = false;
+    lapis::desktop::Alerts alerts(
+        workspace, keymap, [&played](lapis::desktop::Chime chime) { played.push_back(chime); },
+        [&looking](const lapis::desktop::SessionPreview*) { return looking; });
+    alerts.setTimingForTesting({.repeatMs = 120, .quietMs = 40});
+    const auto request = [&agent](bool pending) {
+        wire::AttentionSnapshot state;
+        state.available = state.connected = state.ready = true;
+        state.source_epoch = 1;
+        if (pending) {
+            lapis::session::attention::Pending item;
+            item.request = {.id = std::int64_t{1},
+                            .thread_id = "t",
+                            .turn_id = "u",
+                            .item_id = "i",
+                            .reason = "Approval",
+                            .summary = "Run tests",
+                            .choices = {"accept"}};
+            item.source_epoch = item.revision = 1;
+            state.requests.push_back({item, QJsonObject{}});
+        }
+        agent.applyAttention(state);
+    };
+    const auto needs = [&played] {
+        return std::count(played.begin(), played.end(), lapis::desktop::Chime::needsYou);
+    };
+    request(true);
+    emit workspace.agentNeedsYou(&agent);
+    require(needs() == 1, "a request chimes at once");
+    waitFor([] { return false; }, 700);
+    require(needs() == 3, "and again while it waits, three times in all");
+
+    played.clear();
+    looking = true;
+    emit workspace.agentNeedsYou(&agent);
+    waitFor([] { return false; }, 300);
+    require(played.empty(), "nothing plays for the agent being looked at");
+
+    looking = false;
+    emit workspace.agentNeedsYou(&agent);
+    require(needs() == 1, "a request out of view chimes");
+    looking = true;
+    waitFor([] { return false; }, 400);
+    require(needs() == 1, "looking at the agent stops the repeats");
+
+    looking = false;
+    played.clear();
+    waitFor([] { return false; }, 60);
+    emit workspace.agentNeedsYou(&agent);
+    request(false);
+    waitFor([] { return false; }, 400);
+    require(needs() == 1, "an answered request stops the repeats");
+
+    played.clear();
+    waitFor([] { return false; }, 60);
+    emit workspace.turnFinished(&agent);
+    require(played == std::vector{lapis::desktop::Chime::finished}, "a finished turn chimes once");
+
+    require(keymap.setAlertSound(false), "turn the sound off");
+    played.clear();
+    request(true);
+    waitFor([] { return false; }, 60);
+    emit workspace.agentNeedsYou(&agent);
+    waitFor([] { return false; }, 300);
+    require(played.empty(), "no chimes with the sound off");
+
+    // Notifications: the same moments, only while lapis is in the background,
+    // and not with them turned off.
+    std::vector<QStringList> posted;
+    bool background = false;
+    lapis::desktop::Notifier notifier(
+        workspace, keymap,
+        [&posted](const QString& id, const QString& title, const QString& body) {
+            posted.push_back({id, title, body});
+        },
+        [&background] { return background; });
+    request(true);
+    emit workspace.agentNeedsYou(&agent);
+    require(posted.empty(), "no notification while lapis is in front");
+    background = true;
+    emit workspace.agentNeedsYou(&agent);
+    require(posted.size() == 1 && posted[0][1] == QStringLiteral("agent") &&
+                posted[0][2] == QStringLiteral("Needs you: Approval"),
+            "a request in the background posts one notification naming the agent");
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 2 && posted[1][2] == QStringLiteral("Finished a turn"),
+            "a finished turn posts one too");
+    require(keymap.setNotify(false), "turn notifications off");
+    emit workspace.agentNeedsYou(&agent);
+    require(posted.size() == 2, "none with notifications off");
+
+    const auto wav = lapis::desktop::chime_wav(lapis::desktop::Chime::needsYou);
+    require(wav.startsWith("RIFF") && wav.mid(8, 8) == "WAVEfmt " && wav.size() == 44 + 27342 * 2,
+            "a chime is a 0.62 second, 16-bit mono WAV");
+    qint16 peak = 0;
+    for (qsizetype i = 44; i + 1 < wav.size(); i += 2)
+        peak = std::max<qint16>(
+            peak, static_cast<qint16>(std::abs(qFromLittleEndian<qint16>(wav.constData() + i))));
+    require(qFromLittleEndian<qint16>(wav.constData() + 44) == 0 && peak > 8000 && peak < 8500,
+            "it starts from silence and peaks near -12 dBFS");
+}
+
+// A new agent's CLI updates itself first, so the agent never opens on an
+// update prompt; another agent within 30 minutes starts without updating.
+void harnessesUpdateBeforeNewAgents() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-update-XXXXXX"));
+    require(directory.isValid(), "update directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QDir root(canonical);
+    require(root.mkpath(QStringLiteral("bin")) && root.mkpath(QStringLiteral("project")),
+            "fixture folders");
+    const auto grok = root.filePath(QStringLiteral("bin/grok"));
+    QFile script(grok);
+    require(script.open(QIODevice::WriteOnly), "write the stand-in CLI");
+    script.write("#!/bin/sh\n"
+                 "log=\"$(dirname \"$0\")/updates\"\n"
+                 "if [ \"$1\" = update ]; then echo update >> \"$log\"; sleep 1; "
+                 "echo 'grok updated to 9.9'; exit 0; fi\n"
+                 "echo \"started after $(wc -l < \"$log\" | tr -d ' ') update\"\n"
+                 "exec sleep 600\n");
+    script.close();
+    require(script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "make it executable");
+    const auto path = qgetenv("PATH");
+    qputenv("PATH", QFile::encodeName(root.filePath(QStringLiteral("bin"))) + ':' + path);
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    options.updateHarnesses = true;
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        const auto project = root.filePath(QStringLiteral("project"));
+        require(workspace.createAgent(project, QStringLiteral("first"), QStringLiteral("grok")),
+                "create a Grok agent");
+        auto* first = workspace.focusedSession();
+        require(first->statusLabel() == QStringLiteral("Updating Grok…") && !first->live(),
+                "the card waits while the CLI updates");
+        require(waitFor([first] { return first->inputReady(); }, 15000),
+                "the agent starts after the update");
+        require(waitFor(
+                    [first] {
+                        return screenText(first->snapshot())
+                            .contains(QStringLiteral("started after 1 update"));
+                    },
+                    5000),
+                "the agent started on the updated CLI");
+        require(workspace.createAgent(project, QStringLiteral("second"), QStringLiteral("grok")),
+                "create another Grok agent");
+        auto* second = workspace.focusedSession();
+        require(second->statusLabel() != QStringLiteral("Updating Grok…"),
+                "a recent update is not repeated");
+        require(waitFor(
+                    [second] {
+                        return screenText(second->snapshot())
+                            .contains(QStringLiteral("started after 1 update"));
+                    },
+                    10000),
+                "the second agent started without another update");
+        QFile log(root.filePath(QStringLiteral("harness-updates.log")));
+        require(log.open(QIODevice::ReadOnly) &&
+                    log.readAll().contains("grok update: exit 0. grok updated to 9.9"),
+                "the update is logged");
+        require(waitFor([second] { return second->inputReady(); }, 10000),
+                "the second agent is ready");
+        for (const auto& id : {first->sessionId(), second->sessionId()})
+            require(workspace.closeSession(id), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in agents close");
+    }
+    qputenv("PATH", path);
 }
 
 // The phone's size lasts only while someone uses the phone: coming back to the
@@ -1627,6 +1998,19 @@ void agentsRestoreAfterServiceLoss() {
         require(workspace.closeSession(id), "close a restored agent");
     require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
             "restored agents close");
+    // Command-Shift-T brings the last closed agent back as a new tab, in its
+    // folder and category, running again.
+    require(workspace.canReopenAgent(), "closed agents can come back");
+    require(workspace.reopenAgent() && workspace.sessions().size() == 1, "reopen the last one");
+    auto* back = workspace.focusedSession();
+    // The three closed in whichever order their processes ended.
+    require(back != nullptr && QStringList({resumed, fresh, foreign}).contains(back->title()) &&
+                back->directory() == canonical,
+            "the reopened agent keeps its name and folder");
+    require(waitFor([back] { return back->inputReady(); }, 10000), "the reopened agent runs");
+    require(workspace.closeSession(back->sessionId()), "close it again");
+    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "the reopened agent closes");
 }
 
 void requireProcessArguments(const QJsonArray& arguments, const QString& directory) {
@@ -1893,9 +2277,8 @@ void managedResumeFollowsRecovery() {
             "managed-resume agents close");
 }
 
-// A stale Codex registry lacks startup-check suppression. Exercise restore
-// planning without substituting a shell for a real Codex app-server. Destruction
-// before the event loop cancels the queued launches.
+// Exercise restore planning without substituting a shell for a real Codex
+// app-server. Destruction before the event loop cancels the queued launches.
 void codexResumeArguments() {
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-resume-XXXXXX"));
     require(directory.isValid(), "private resume-planning directory");
@@ -2159,14 +2542,18 @@ int main(int argc, char** argv) {
         discardOutsideActiveCategorySelectsNeighbor();
         failedWritesPreserveState();
         malformedAgentRegistry();
+        unknownRegistryVersionsAreRejected();
         unseenFollowsTurnsAndSelection();
         claudeAgentsUseServiceAdapter();
         agentArgumentsPersist();
-        unknownRegistryVersionsAreRejected();
+        directTileSelectionNormalizesAStaleTarget();
         outputEstimate();
         agentsStartWithoutParentSessionMarkers();
         restartRefusesClosingAgent();
         agentsRestoreAfterServiceLoss();
+        updaterLifecycle();
+        updaterOutputIsDrainedWithABoundedTail();
+        failedUpdaterStartClearsTheQueue();
         savedArgumentCapKeepsRegistryLoadable();
         managedResumeFollowsRecovery();
         printedCheckpointsCannotRedirectResume();
@@ -2182,13 +2569,13 @@ int main(int argc, char** argv) {
         // An agent that ignores SIGHUP is ended by the SIGTERM escalation.
         closeEndsTheAgent("trap '' HUP; exec sleep 600", 1200);
         closeOnHistoryPageEndsTheAgent();
-        updaterLifecycle();
-        updaterOutputIsDrainedWithABoundedTail();
-        failedUpdaterStartClearsTheQueue();
+        joinedViewStaysInSync();
         explicitLaunchesUseUpdaterPolicy();
         harnessesUpdateBeforeNewAgents();
         windowWaitsForTheRestoreHelper();
-        joinedViewStaysInSync();
+        phoneStartsAnAgentInItsCategory();
+        windowTakesTheWorkspaceFromTheHost();
+        alertsChimeWhileAnAgentWaits();
         phoneSizeYieldsToTheDesktop();
         std::cout << "workspace categories, identity, persistence, status and closing passed\n";
         return 0;

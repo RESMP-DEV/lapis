@@ -7,6 +7,7 @@
 #include <QFont>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
+#include <QPoint>
 #include <QPointer>
 #include <QQuickItem>
 #include <QSize>
@@ -24,6 +25,17 @@ namespace lapis::desktop {
 // when the cell is not part of one.
 [[nodiscard]] QString terminal_url_at(const session::TerminalSnapshot& snapshot, int column,
                                       int row);
+// A case-insensitive match of `needle` within one screen row.
+struct TerminalMatch {
+    int row{};
+    int first_column{};
+    int last_column{};
+};
+// The next match after the cell `from` (column, row), or the one before it
+// when `backwards`; searching wraps around neither end of the screen.
+[[nodiscard]] std::optional<TerminalMatch> terminal_find(const session::TerminalSnapshot& snapshot,
+                                                         const QString& needle, QPoint from,
+                                                         bool backwards);
 
 class TerminalSurface : public QQuickItem {
     Q_OBJECT
@@ -39,6 +51,9 @@ class TerminalSurface : public QQuickItem {
     // that end at the cursor, where agent TUIs keep their prompt and output.
     Q_PROPERTY(
         qreal minimumScale READ minimumScale WRITE setMinimumScale NOTIFY minimumScaleChanged)
+    // While true the agent keeps its size: a divider or window being dragged
+    // resizes the terminal once, when the drag ends, not every step.
+    Q_PROPERTY(bool holdResize READ holdResize WRITE setHoldResize NOTIFY holdResizeChanged)
     Q_PROPERTY(bool composing READ composing NOTIFY inputOwnershipChanged)
     Q_PROPERTY(bool pasting READ pasting NOTIFY inputOwnershipChanged)
     // Requested family; empty or unavailable/proportional names use the
@@ -53,6 +68,16 @@ class TerminalSurface : public QQuickItem {
     Q_PROPERTY(QString selectedText READ selectedText NOTIFY selectionChanged)
   public:
     explicit TerminalSurface(QQuickItem* parent = nullptr);
+    // Text as if pasted (bracketed when the agent asked for it): what files
+    // dropped on the terminal become.
+    Q_INVOKABLE bool pasteText(const QString& text);
+    // Selects the next match on the page shown (older first when
+    // `backwards`), starting from the current selection; false when there is
+    // none left on this page.
+    Q_INVOKABLE bool findText(const QString& text, bool backwards);
+    // How many times the page shown contains the text.
+    Q_INVOKABLE int countMatches(const QString& text) const;
+    Q_INVOKABLE void clearSelectedText() { clearSelection(); }
     ~TerminalSurface() override;
     [[nodiscard]] SessionPreview* document() const { return document_.data(); }
     void setDocument(SessionPreview* document);
@@ -60,6 +85,8 @@ class TerminalSurface : public QQuickItem {
     void setInteractive(bool enabled);
     [[nodiscard]] int frameInterval() const { return frame_interval_; }
     [[nodiscard]] qreal minimumScale() const { return minimum_scale_; }
+    [[nodiscard]] bool holdResize() const { return hold_resize_; }
+    void setHoldResize(bool hold);
     void setMinimumScale(qreal scale);
     void setFrameInterval(int milliseconds);
     [[nodiscard]] bool composing() const { return !preedit_.isEmpty(); }
@@ -79,6 +106,7 @@ class TerminalSurface : public QQuickItem {
     void interactiveChanged();
     void frameIntervalChanged();
     void minimumScaleChanged();
+    void holdResizeChanged();
     void inputOwnershipChanged();
     void fontChanged();
     void gridSizeChanged();
@@ -140,6 +168,7 @@ class TerminalSurface : public QQuickItem {
     int font_pixel_size_{kTerminalFontSizeDefault};
     QSize grid_size_;
     bool interactive_{};
+    bool hold_resize_{};
     int frame_interval_{};
     qreal minimum_scale_{};
     QTimer throttle_;

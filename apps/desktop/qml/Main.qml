@@ -38,12 +38,15 @@ ApplicationWindow {
     readonly property color attentionTextColor: appearance ? appearance.attentionText : "#1a0d0b"
     readonly property color activityColor: appearance ? appearance.activity : "#74a8ff"
     readonly property color faultColor: appearance ? appearance.fault : "#ee7a8a"
+    readonly property color plentyColor: appearance && appearance.plenty ? appearance.plenty : "#6fdc8c"
+    readonly property color scarceColor: appearance && appearance.scarce ? appearance.scarce : "#ff5f6d"
     readonly property color paneColor: backgroundColor
     readonly property int chromeRadius: appearance ? appearance.cornerRadius : 2
     readonly property int motionDuration: appearance ? appearance.motionDuration : 100
     // One fixed-width family for the terminal and every machine readout (paths,
     // shortcut hints, states, counts). Human names and prose use the UI face.
     readonly property string monoFamily: liveTerminal.resolvedFontFamily
+    readonly property int terminalFontSize: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSize : 16
     // Composition and paste own the keyboard until they finish.
     readonly property bool terminalBusy: liveTerminal.composing || liveTerminal.pasting
 
@@ -76,6 +79,8 @@ ApplicationWindow {
     readonly property bool motionEnabled: !preview.reducedMotion && active && visible && motionDuration > 0
     readonly property bool inputBlocked: transitionLock
             || commandsDialog.visible
+            || searchDialog.visible
+            || usageDialog.visible
             || settingsDialog.visible
             || attentionDialog.visible
             || agentDialog.visible
@@ -160,7 +165,7 @@ ApplicationWindow {
         if (action === "openCommands")
             return [mac ? "Meta+Shift+P" : "Ctrl+Shift+P"]
         if (action === "newAgent")
-            return [mod + "N"]
+            return [mod + "T"]
         if (action === "reloadConfig")
             return [mod + "R"]
         if (action === "nextWindow")
@@ -168,7 +173,33 @@ ApplicationWindow {
         if (action === "previousWindow")
             return [mac ? "Meta+Shift+[" : "Ctrl+Shift+["]
         if (action === "newCategory")
-            return [mac ? "Meta+Shift+N" : "Ctrl+Shift+Alt+N"]
+            return [mod + "N"]
+        if (action === "searchAgents")
+            return [mod + "K"]
+        if (action === "splitRight")
+            return [mod + "D"]
+        if (action === "splitDown")
+            return [mac ? "Meta+Shift+D" : "Ctrl+Alt+Shift+D"]
+        if (action === "tileLeft")
+            return [mac ? "Meta+Ctrl+Left" : "Ctrl+Alt+Left"]
+        if (action === "tileRight")
+            return [mac ? "Meta+Ctrl+Right" : "Ctrl+Alt+Right"]
+        if (action === "tileUp")
+            return [mac ? "Meta+Ctrl+Up" : "Ctrl+Alt+Up"]
+        if (action === "tileDown")
+            return [mac ? "Meta+Ctrl+Down" : "Ctrl+Alt+Down"]
+        if (action === "zoomTile")
+            return [mac ? "Meta+Shift+Return" : "Ctrl+Shift+Return"]
+        if (action === "textBigger")
+            return [mod + "=", mod + "+"]
+        if (action === "textSmaller")
+            return [mod + "-"]
+        if (action === "textReset")
+            return [mod + "0"]
+        if (action === "find")
+            return [mod + "F"]
+        if (action === "reopenAgent")
+            return [mac ? "Meta+Shift+T" : "Ctrl+Alt+Shift+T"]
         return []
     }
 
@@ -218,6 +249,27 @@ ApplicationWindow {
         if (!interactionArmed) return
         commandsDialog.open()
     }
+    function openSearchDialog() {
+        if (!interactionArmed || dialogsVisible()) return
+        searchDialog.open()
+    }
+    function openUsageDialog() {
+        if (!interactionArmed || dialogsVisible() || !usageAvailable) return
+        usageDialog.open()
+    }
+    readonly property bool usageAvailable: typeof usage !== "undefined" && usage !== null
+    readonly property bool usageShown: usageAvailable && typeof keymap !== "undefined" && keymap !== null
+                                       && keymap.showUsage
+    // Each signed-in plan at its tightest window, for the meter under the
+    // categories; the config picks which and in what order.
+    function usageRows() {
+        return usageShown ? usage.meter : []
+    }
+    // A usage gauge reads what is left: green with plenty, the attention
+    // colour under 30%, red under 10%.
+    function gaugeColor(left) {
+        return left < 10 ? scarceColor : left < 30 ? attentionColor : plentyColor
+    }
     readonly property var commandEntries: {
         const agent = workspace.focusedSession
         const hasAgent = agent !== null
@@ -229,12 +281,31 @@ ApplicationWindow {
         }
         add("newAgent", qsTr("New agent"), "newAgent", true, "", () => window.openNewAgentDialog())
         add("newCategory", qsTr("New category"), "newCategory", true, "", () => window.openCategoryDialog("add"))
+        add("searchAgents", qsTr("Find an agent"), "searchAgents", true, "", () => window.openSearchDialog())
+        add("openUsage", qsTr("Usage"), "", usageAvailable, qsTr("Usage is not available here"), () => window.openUsageDialog())
         add("toggleSidebar", sidebarExpanded ? qsTr("Hide sidebar") : qsTr("Show sidebar"), "toggleSidebar", true, "", () => window.toggleSidebar())
         add("togglePreviews", previewsEnabled ? qsTr("Hide agent previews") : qsTr("Show agent previews"), "togglePreviews", true, "", () => window.togglePreviews())
         add("nextAttention", qsTr("Go to agent that needs you"), "nextAttention", workspace.attentionAgents > 0, qsTr("No agent is waiting"), () => workspace.nextAttention())
         add("nextWindow", qsTr("Next agent in category"), "nextWindow", workspace.categorySessions.length > 1, qsTr("This category needs another agent"), () => workspace.nextSession())
         add("previousWindow", qsTr("Previous agent in category"), "previousWindow", workspace.categorySessions.length > 1, qsTr("This category needs another agent"), () => workspace.nextSession(-1))
         add("closeAgent", qsTr("Close agent"), "closeAgent", hasAgent, needAgent, () => window.closeFocusedAgent())
+        const liveAgent = hasAgent && !workspace.previewMode
+        add("splitRight", qsTr("New agent here, tiled to the right"), "splitRight", liveAgent, needAgent, () => window.splitAgent("right"))
+        add("splitDown", qsTr("New agent here, tiled below"), "splitDown", liveAgent, needAgent, () => window.splitAgent("bottom"))
+        add("reopenAgent", qsTr("Reopen closed agent"), "reopenAgent", workspace.canReopenAgent, qsTr("No agent was closed since lapis opened"), () => window.reopenAgent())
+        add("find", qsTr("Find in terminal"), "find", hasAgent, needAgent, () => findBar.open())
+        add("textBigger", qsTr("Bigger text"), "textBigger", true, "", () => window.changeTextSize(1))
+        add("textSmaller", qsTr("Smaller text"), "textSmaller", true, "", () => window.changeTextSize(-1))
+        add("textReset", qsTr("Default text size"), "textReset", true, "", () => window.changeTextSize(0))
+        const folder = window.focusedFolder()
+        const noFolder = qsTr("Select an agent on this Mac first")
+        add("revealFolder", Qt.platform.os === "osx" ? qsTr("Show folder in Finder") : qsTr("Show folder"), "", folder.length > 0 && desktopAvailable, noFolder, () => desktop.revealFolder(folder))
+        const editor = desktopAvailable ? desktop.editorName : ""
+        add("openEditor", editor.length > 0 ? qsTr("Open folder in %1").arg(editor) : qsTr("Open folder in editor"), "", folder.length > 0 && editor.length > 0, editor.length > 0 ? noFolder : qsTr("Set \"editor\" in lapis.json, or install Cursor, VS Code or Zed"), () => desktop.openInEditor(folder))
+        add("copyPath", qsTr("Copy folder path"), "", folder.length > 0 && desktopAvailable, noFolder, () => desktop.copyText(folder))
+        const tiled = workspace.stageTiles.length > 1
+        add("untile", qsTr("Take agent off the stage"), "", tiled, qsTr("No tiles on the stage"), () => window.untileFocused())
+        add("zoomTile", window.tileZoomed ? qsTr("Show all tiles") : qsTr("Fill the stage with this tile"), "zoomTile", tiled, qsTr("No tiles on the stage"), () => { window.tileZoomed = !window.tileZoomed })
         const stopped = hasAgent && agent.live && (agent.connectionState === "ended" || agent.connectionState === "disconnected")
         add("restartAgent", qsTr("Restart agent"), "", stopped, qsTr("Only an ended or unreachable agent restarts"), () => workspace.restartAgent(agent.sessionId))
         add("nextCategory", qsTr("Next category"), "nextCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory())
@@ -359,7 +430,7 @@ ApplicationWindow {
     }
 
     function dialogsVisible() {
-        return commandsDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
+        return commandsDialog.visible || searchDialog.visible || usageDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
                 || closeAgentDialog.visible || categoryDialog.visible || renameAgentDialog.visible
     }
 
@@ -445,7 +516,11 @@ ApplicationWindow {
             attentionDialog.showSession(workspace.focusedSession)
     }
 
-    property string lastHarness: "codex"
+    // What the last new agent was started with, kept for the next one: the
+    // CLI, the approval mode across CLIs, and each CLI's model.
+    property string lastHarness: ""
+    property string lastMode: ""
+    property var lastModels: ({})
     function openNewAgentDialog() {
         if (terminalBusy)
             return
@@ -454,9 +529,17 @@ ApplicationWindow {
         agentDialog.localError = ""
         agentDialog.harnesses = workspace.availableHarnesses()
         agentDialog.phase = 0
-        const preferred = agentDialog.harnesses.findIndex(h => h.id === window.lastHarness && h.installed)
+        // The config's newAgent defaults: the CLI, then the folder to start in.
+        const defaults = workspace.agentDefaults()
+        const wanted = window.lastHarness.length > 0 ? window.lastHarness : defaults.harness
+        const preferred = agentDialog.harnesses.findIndex(h => h.id === wanted && h.installed)
         harnessChoices.currentIndex = preferred >= 0 ? preferred : Math.max(0, agentDialog.harnesses.findIndex(h => h.installed))
-        agentDirectoryField.text = workspace.homeDirectory + "/"
+        const folder = defaults.folder === "~" ? workspace.homeDirectory :
+                       defaults.folder.startsWith("~/") ? workspace.homeDirectory + defaults.folder.slice(1) :
+                       defaults.folder
+        agentDirectoryField.text = (folder.length > 0 ? folder.replace(/\/+$/, "") : workspace.homeDirectory) + "/"
+        agentDialog.preferredMode = window.lastMode.length > 0 ? window.lastMode :
+                                    defaults.mode && defaults.mode.length > 0 ? defaults.mode : "full"
         openFresh(agentDialog)
     }
     // Command-W: close the focused agent. A running agent is confirmed first,
@@ -510,7 +593,9 @@ ApplicationWindow {
             agentDialog.localError = folderIssue
             return
         }
-        if (!workspace.createAgent(agentDirectoryField.text.trim(), title, agentDialog.selectedHarness)) {
+        const model = agentDialog.chosenModel && !agentDialog.chosenModel.default ? agentDialog.chosenModel.id : ""
+        if (!workspace.createAgent(agentDirectoryField.text.trim(), title, agentDialog.selectedHarness,
+                                   model, agentDialog.selectedMode)) {
             agentDialog.localError = workspace.workspaceError.length > 0 ? workspace.workspaceError :
                                                                           qsTr("Could not start %1.").arg(agentDialog.harnessName)
             return
@@ -535,6 +620,10 @@ ApplicationWindow {
                                                                              qsTr("Could not save the category.")
             return
         }
+        // Agents dropped on the rail's + come along into the new category.
+        if (categoryDialog.mode !== "rename" && pendingCategoryAgents.length > 0)
+            workspace.placeSessions(pendingCategoryAgents, workspace.activeCategoryId, 1 << 20)
+        pendingCategoryAgents = []
         categoryDialog.localError = ""
         categoryDialog.close()
     }
@@ -569,6 +658,198 @@ ApplicationWindow {
         if (!session)
             return
         workspace.moveSessionBy(session.sessionId, delta)
+    }
+
+    // Several agents picked with Command-click or Shift-click, to drag together.
+    property var selectedAgents: []
+    // What a drag carries: agent ids from the strip or a tile, or a category.
+    property var draggedAgents: []
+    property string dragSource: ""
+    property string draggedCategory: ""
+    // Agents waiting for the category being created from a drop on its +.
+    property var pendingCategoryAgents: []
+    // The selected tile fills the stage until this is turned off again.
+    property bool tileZoomed: false
+    readonly property int toggleModifier: Qt.platform.os === "osx" ? Qt.MetaModifier : Qt.ControlModifier
+
+    function stripIds() {
+        return workspace.categorySessions.map(session => session.sessionId)
+    }
+    function isAgentSelected(id) {
+        return selectedAgents.indexOf(id) >= 0
+    }
+    function clearAgentSelection() {
+        if (selectedAgents.length > 0)
+            selectedAgents = []
+    }
+    // A plain click shows the agent; Command-click adds or removes it from a
+    // selection, and Shift-click selects the run from the shown agent to it.
+    function clickAgent(id, modifiers) {
+        const focused = workspace.focusedSession ? workspace.focusedSession.sessionId : ""
+        if (modifiers & toggleModifier) {
+            let chosen = selectedAgents.length > 0 || focused === "" ? selectedAgents.slice() : [focused]
+            const at = chosen.indexOf(id)
+            if (at >= 0)
+                chosen.splice(at, 1)
+            else
+                chosen.push(id)
+            selectedAgents = chosen
+            return
+        }
+        if (modifiers & Qt.ShiftModifier) {
+            const ids = stripIds()
+            const from = Math.max(0, ids.indexOf(focused))
+            const to = ids.indexOf(id)
+            if (to >= 0) {
+                selectedAgents = ids.slice(Math.min(from, to), Math.max(from, to) + 1)
+                return
+            }
+        }
+        clearAgentSelection()
+        if (workspace.selectSession(id))
+            preview.deferTerminalFocus()
+    }
+    // Dragging a selected card carries the whole selection, in strip order.
+    function agentsToDrag(id) {
+        if (!isAgentSelected(id) || selectedAgents.length < 2)
+            return [id]
+        return stripIds().filter(candidate => isAgentSelected(candidate))
+    }
+    function beginDrag(kind, label, scenePosition) {
+        dragGhost.label = label
+        dragGhost.Drag.keys = [kind]
+        moveDragGhost(scenePosition)
+        dragGhost.Drag.active = true
+    }
+    function beginAgentDrag(ids, source, scenePosition) {
+        if (ids.length === 0)
+            return
+        draggedAgents = ids
+        dragSource = source
+        const first = workspace.categorySessions.find(session => session.sessionId === ids[0])
+        const label = ids.length > 1 ? qsTr("%1 agents").arg(ids.length) : first ? agentTabTitle(first) : ""
+        beginDrag("lapis-agents", label, scenePosition)
+    }
+    function beginCategoryDrag(id, name, scenePosition) {
+        draggedCategory = id
+        beginDrag("lapis-category", name, scenePosition)
+    }
+    function moveDragGhost(scenePosition) {
+        dragGhost.x = scenePosition.x - dragGhost.Drag.hotSpot.x
+        dragGhost.y = scenePosition.y - dragGhost.Drag.hotSpot.y
+    }
+    function endDrag() {
+        if (dragGhost.Drag.active)
+            dragGhost.Drag.drop()
+        dragGhost.Drag.active = false
+        // The drop's changes wait for the drag to finish (queueDrop).
+        Qt.callLater(() => {
+            draggedAgents = []
+            dragSource = ""
+            draggedCategory = ""
+        })
+    }
+    // Apply a drop after the dragging card's handler returns: the change can
+    // replace the very card being dragged.
+    function queueDrop(apply) {
+        Qt.callLater(apply)
+    }
+    function dropOnStrip(visualIndex) {
+        const ids = draggedAgents
+        if (ids.length === 0)
+            return
+        if (dragSource === "tile")
+            workspace.untileSession(ids[0])
+        // Positions count the agents that stay where they are.
+        const strip = stripIds()
+        let index = 0
+        for (let i = 0; i < Math.min(visualIndex, strip.length); ++i)
+            if (ids.indexOf(strip[i]) < 0)
+                ++index
+        workspace.placeSessions(ids, workspace.activeCategoryId, index)
+        clearAgentSelection()
+    }
+    function dropOnCategory(categoryId) {
+        if (draggedAgents.length > 0 && categoryId !== workspace.activeCategoryId)
+            workspace.placeSessions(draggedAgents, categoryId, 1 << 20)
+        clearAgentSelection()
+    }
+    function dropOnNewCategory() {
+        if (draggedAgents.length === 0)
+            return
+        pendingCategoryAgents = draggedAgents
+        clearAgentSelection()
+        openCategoryDialog("add")
+    }
+    function dropCategory(targetIndex) {
+        const from = categoryIndex(draggedCategory)
+        if (from < 0)
+            return
+        workspace.placeCategory(draggedCategory, from < targetIndex ? targetIndex - 1 : targetIndex)
+    }
+    // Dropped on a tile's edge: the agents tile beside it, one after another;
+    // on its center, the first takes its place.
+    function dropOnStage(target, edge) {
+        let beside = target
+        for (const id of draggedAgents) {
+            if (id === beside)
+                continue
+            if (!workspace.tileSession(id, beside, edge) || edge === "center")
+                break
+            beside = id
+        }
+        clearAgentSelection()
+        preview.deferTerminalFocus()
+    }
+    function splitAgent(edge) {
+        if (!interactionArmed || workspace.focusedSession === null)
+            return
+        tileZoomed = false
+        if (workspace.splitAgent(edge).length > 0)
+            preview.deferTerminalFocus()
+    }
+    function focusTile(direction) {
+        if (interactionArmed && workspace.focusTile(direction))
+            preview.deferTerminalFocus()
+    }
+    readonly property bool desktopAvailable: typeof desktop !== "undefined" && desktop !== null
+    // Command-plus, minus and zero: the terminal text size, saved to the config.
+    function changeTextSize(delta) {
+        if (typeof keymap === "undefined" || keymap === null)
+            return
+        const next = delta === 0 ? keymap.terminalFontSizeDefault : keymap.terminalFontSize + delta
+        keymap.setTerminalFontSize(Math.max(keymap.terminalFontSizeMinimum,
+                                            Math.min(keymap.terminalFontSizeMaximum, next)))
+    }
+    function reopenAgent() {
+        if (interactionArmed && workspace.reopenAgent())
+            preview.deferTerminalFocus()
+    }
+    // The selected agent's folder on this Mac, or "" for one over ssh.
+    function focusedFolder() {
+        const session = workspace.focusedSession
+        if (!session || workspace.previewMode)
+            return ""
+        const place = workspace.agentPlace(session.sessionId)
+        return place.machine && place.machine.length > 0 ? "" : session.directory
+    }
+    // Dropped files become their paths, quoted for a shell, as in Terminal.
+    function pastePaths(urls) {
+        const quoted = []
+        for (const url of urls) {
+            const text = url.toString()
+            if (!text.startsWith("file://"))
+                continue
+            const path = decodeURIComponent(text.slice(7))
+            quoted.push("'" + path.replace(/'/g, "'\\''") + "'")
+        }
+        if (quoted.length > 0)
+            liveTerminal.pasteText(quoted.join(" ") + " ")
+    }
+    function untileFocused() {
+        const session = workspace.focusedSession
+        if (session)
+            workspace.untileSession(session.sessionId)
     }
 
     function recoveryAvailable() {
@@ -611,6 +892,48 @@ ApplicationWindow {
         autoRepeat: false
         onActivated: window.toggleSidebar()
     }
+    Search {
+        id: searchDialog
+        engine: (typeof agentSearch !== "undefined") ? agentSearch : null
+        surfaceColor: window.surfaceColor
+        textColor: window.textColor
+        mutedColor: window.mutedTextColor
+        accentColor: window.focusedBorderColor
+        selectionColor: window.focusedColor
+        hoverColor: window.hoveredCardColor
+        borderColor: window.borderColor
+        monoFamily: window.monoFamily
+        uiFont: window.chromeFont
+        readoutFont: window.readoutFont
+        chromeRadius: window.chromeRadius
+        motionDuration: window.motionDuration
+        motionEnabled: window.motionEnabled
+        onChosen: function(sessionId) { Qt.callLater(function() { workspace.selectSession(sessionId) }) }
+        onClosed: preview.deferTerminalFocus()
+    }
+    Usage {
+        id: usageDialog
+        engine: window.usageAvailable ? usage : null
+        surfaceColor: window.surfaceColor
+        cardColor: window.cardColor
+        textColor: window.textColor
+        mutedColor: window.mutedTextColor
+        accentColor: window.focusedBorderColor
+        faultColor: window.faultColor
+        plentyColor: window.plentyColor
+        scarceColor: window.scarceColor
+        attentionColor: window.attentionColor
+        borderColor: window.borderColor
+        selectionColor: window.focusedColor
+        monoFamily: window.monoFamily
+        uiFont: window.chromeFont
+        readoutFont: window.readoutFont
+        chromeRadius: window.chromeRadius
+        motionDuration: window.motionDuration
+        motionEnabled: window.motionEnabled
+        onClosed: preview.deferTerminalFocus()
+    }
+
     Commands {
         id: commandsDialog
         commands: window.commandEntries
@@ -669,6 +992,112 @@ ApplicationWindow {
         enabled: window.shortcutsArmed
         autoRepeat: false
         onActivated: window.closeFocusedAgent()
+    }
+    // Tiles, as in iTerm2: Command-D splits right with a new agent like this
+    // one, Command-Shift-D below it; Command-Control-arrows move between tiles
+    // and Command-Shift-Return fills the stage with the selected tile.
+    // A press that clicks, or once it moves a few pixels, drags. One mouse
+    // area rather than a TapHandler and DragHandler pair, which inside the
+    // strip's list lost clicks.
+    component DragOrClick: MouseArea {
+        id: area
+        signal tapped(int modifiers)
+        signal dragStarted(point scenePosition)
+        signal dragMoved(point scenePosition)
+        signal dragEnded()
+        property point pressedAt
+        property bool dragging: false
+        acceptedButtons: Qt.LeftButton
+        preventStealing: true
+        onPressed: function(mouse) {
+            pressedAt = Qt.point(mouse.x, mouse.y)
+            dragging = false
+        }
+        onPositionChanged: function(mouse) {
+            const scene = area.mapToItem(null, mouse.x, mouse.y)
+            if (!dragging && Math.hypot(mouse.x - pressedAt.x, mouse.y - pressedAt.y) >= 8) {
+                dragging = true
+                dragStarted(scene)
+            }
+            if (dragging)
+                dragMoved(scene)
+        }
+        onReleased: function(mouse) {
+            if (dragging) {
+                dragging = false
+                dragEnded()
+            } else {
+                tapped(mouse.modifiers)
+            }
+        }
+        onCanceled: if (dragging) {
+                        dragging = false
+                        dragEnded()
+                    }
+    }
+    component ActionShortcut: Shortcut {
+        required property string action
+        objectName: action + "Shortcut"
+        sequences: window.bindings(action)
+        context: Qt.WindowShortcut
+        enabled: window.shortcutsArmed
+        autoRepeat: false
+    }
+    ActionShortcut { action: "textBigger"; onActivated: window.changeTextSize(1) }
+    ActionShortcut { action: "textSmaller"; onActivated: window.changeTextSize(-1) }
+    ActionShortcut { action: "textReset"; onActivated: window.changeTextSize(0) }
+    ActionShortcut { action: "find"; onActivated: if (workspace.focusedSession !== null) findBar.open() }
+    ActionShortcut { action: "reopenAgent"; onActivated: window.reopenAgent() }
+    ActionShortcut { action: "splitRight"; onActivated: window.splitAgent("right") }
+    ActionShortcut { action: "splitDown"; onActivated: window.splitAgent("bottom") }
+    ActionShortcut { action: "tileLeft"; onActivated: window.focusTile("left") }
+    ActionShortcut { action: "tileRight"; onActivated: window.focusTile("right") }
+    ActionShortcut { action: "tileUp"; onActivated: window.focusTile("top") }
+    ActionShortcut { action: "tileDown"; onActivated: window.focusTile("bottom") }
+    ActionShortcut {
+        action: "zoomTile"
+        onActivated: if (workspace.stageTiles.length > 1)
+                         window.tileZoomed = !window.tileZoomed
+    }
+    // What a drag carries, under the pointer. Drop targets read its keys:
+    // agents for the strip, the rail and the stage; a category for the rail.
+    Rectangle {
+        id: dragGhost
+        objectName: "dragGhost"
+        property string label: ""
+        // Above the window's content; not on Qt's popup overlay, which a child
+        // would make visible and able to take clicks.
+        z: 1000
+        visible: Drag.active
+        width: Math.min(260, ghostText.implicitWidth + 24)
+        height: Math.max(28, window.readoutFont + 14)
+        radius: window.chromeRadius
+        color: window.cardColor
+        border.width: 1
+        border.color: window.focusedBorderColor
+        opacity: 0.92
+        Drag.hotSpot.x: 14
+        Drag.hotSpot.y: height / 2
+        PlainText {
+            id: ghostText
+            anchors.centerIn: parent
+            width: Math.min(implicitWidth, 236)
+            text: dragGhost.label
+            color: window.textColor
+            elide: Text.ElideRight
+            font.family: window.monoFamily
+            font.pixelSize: window.readoutFont
+        }
+    }
+    Connections {
+        target: workspace
+        function onTilesChanged() {
+            if (workspace.stageTiles.length < 2)
+                window.tileZoomed = false
+        }
+        function onCategoryChanged() {
+            window.clearAgentSelection()
+        }
     }
     Shortcut {
         objectName: "nextAttentionShortcut"
@@ -733,6 +1162,14 @@ ApplicationWindow {
         enabled: window.shortcutsArmed
         autoRepeat: false
         onActivated: window.openNewAgentDialog()
+    }
+    Shortcut {
+        objectName: "searchAgentsShortcut"
+        sequences: window.bindings("searchAgents")
+        context: Qt.WindowShortcut
+        enabled: window.shortcutsArmed
+        autoRepeat: false
+        onActivated: window.openSearchDialog()
     }
     Shortcut {
         objectName: "newCategoryShortcut"
@@ -1011,6 +1448,24 @@ ApplicationWindow {
         fontSizeDefault: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeDefault : 16
         motionDuration: window.motionDuration
         motionEnabled: window.motionEnabled
+        alertSound: (typeof keymap !== "undefined" && keymap !== null) ? keymap.alertSound : true
+        finishSound: (typeof keymap !== "undefined" && keymap !== null) ? keymap.finishSound : true
+        alertRepeat: (typeof keymap !== "undefined" && keymap !== null) ? keymap.alertRepeat : 3
+        keepAwake: (typeof keymap !== "undefined" && keymap !== null) ? keymap.keepAwake : true
+        showUsage: (typeof keymap !== "undefined" && keymap !== null) ? keymap.showUsage : true
+        notify: (typeof keymap !== "undefined" && keymap !== null) ? keymap.notify : true
+        loginAvailable: window.desktopAvailable && desktop.launchAtLoginAvailable
+        launchAtLogin: window.desktopAvailable && desktop.launchAtLogin
+        updatesAvailable: window.desktopAvailable && desktop.updatesAvailable
+        onNotifyChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setNotify(on) }
+        onLaunchAtLoginChosen: function(on) { if (window.desktopAvailable) desktop.setLaunchAtLogin(on) }
+        onCheckUpdates: if (window.desktopAvailable) desktop.checkForUpdates()
+        onAlertSoundChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setAlertSound(on) }
+        onFinishSoundChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setFinishSound(on) }
+        onAlertRepeatChosen: function(times) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setAlertRepeat(times) }
+        onKeepAwakeChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setKeepAwake(on) }
+        onShowUsageChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setShowUsage(on) }
+        onChimePlayed: function(needsYou) { if (typeof alerts !== "undefined" && alerts !== null) alerts.preview(needsYou) }
         onClosed: preview.deferTerminalFocus()
         onFontFamilyChosen: function(name) {
             if (typeof keymap !== "undefined" && keymap !== null)
@@ -1042,15 +1497,46 @@ ApplicationWindow {
         property int phase: 0
         property var harnesses: []
         readonly property var choices: harnesses
-        property string selectedHarness: "codex"
-        readonly property string harnessName: {
-            const item = harnesses.find(h => h.id === selectedHarness)
-            return item ? item.name : selectedHarness
+        property string selectedHarness: "claude"
+        // This agent's model (one the CLI lists) and approval mode. The mode
+        // stays across CLIs; a CLI without it uses its nearest, less access
+        // first, and the preference returns on a CLI that has it.
+        property string selectedModel: ""
+        property string preferredMode: "full"
+        readonly property var selectedItem: harnesses.find(h => h.id === selectedHarness)
+        readonly property string harnessName: selectedItem ? selectedItem.name : selectedHarness
+        readonly property var modelChoices: selectedItem && selectedItem.models ? selectedItem.models : []
+        readonly property var chosenModel: modelChoices.find(m => m.id === selectedModel)
+                                           || modelChoices.find(m => m.default) || modelChoices[0] || null
+        readonly property var modeOptions: [{id: "edits", name: qsTr("Accept edits")},
+                                            {id: "auto", name: qsTr("Auto")},
+                                            {id: "full", name: qsTr("Full access")}]
+        function offers(mode) {
+            return !!(selectedItem && selectedItem.modes && selectedItem.modes.some(m => m.id === mode))
+        }
+        readonly property string selectedMode: {
+            const order = modeOptions.map(m => m.id)
+            const at = Math.max(0, order.indexOf(preferredMode))
+            for (const index of [at, at - 1, at - 2, at + 1, at + 2])
+                if (index >= 0 && index < order.length && offers(order[index]))
+                    return order[index]
+            return ""
+        }
+        function chooseModel(id) {
+            selectedModel = id
+            const models = Object.assign({}, window.lastModels)
+            models[selectedHarness] = id
+            window.lastModels = models
+        }
+        function chooseMode(id) {
+            preferredMode = id
+            window.lastMode = id
         }
         function chooseHarness(index) {
             const item = choices[index]
             if (!item || !item.installed) return
             selectedHarness = item.id
+            selectedModel = window.lastModels[item.id] || ""
             window.lastHarness = item.id
             phase = 1
             Qt.callLater(function() {
@@ -1192,6 +1678,43 @@ ApplicationWindow {
                     }
                     AgentMark { harnessId: agentDialog.selectedHarness; ink: window.textColor; Layout.preferredWidth: 24; Layout.preferredHeight: 24 }
                     PlainLabel { text: agentDialog.harnessName; color: window.textColor; font.pixelSize: window.chromeFont + 2 }
+                }
+                // Model and approval mode for this agent, as the CLI's own flags.
+                Flow {
+                    visible: agentDialog.phase === 1 && agentDialog.modelChoices.length > 0
+                    Layout.fillWidth: true
+                    spacing: 6
+                    PlainLabel { text: qsTr("Model"); color: window.mutedTextColor; height: window.tabHeight; verticalAlignment: Text.AlignVCenter; width: 52 }
+                    Repeater {
+                        model: agentDialog.modelChoices
+                        delegate: CommandButton {
+                            required property var modelData
+                            objectName: "model_" + modelData.id
+                            text: modelData.name
+                            selected: agentDialog.chosenModel !== null && modelData.id === agentDialog.chosenModel.id
+                            onClicked: agentDialog.chooseModel(modelData.id)
+                        }
+                    }
+                }
+                // Always one of three; a CLI without one shows it unavailable.
+                RowLayout {
+                    visible: agentDialog.phase === 1 && agentDialog.selectedMode.length > 0
+                    Layout.fillWidth: true
+                    spacing: 6
+                    PlainLabel { text: qsTr("Mode"); color: window.mutedTextColor; Layout.preferredHeight: window.tabHeight; verticalAlignment: Text.AlignVCenter; Layout.preferredWidth: 52 }
+                    Repeater {
+                        model: agentDialog.modeOptions
+                        delegate: CommandButton {
+                            required property var modelData
+                            objectName: "mode_" + modelData.id
+                            text: modelData.name
+                            enabled: agentDialog.offers(modelData.id)
+                            selected: modelData.id === agentDialog.selectedMode
+                            Layout.fillWidth: true
+                            Accessible.description: enabled ? "" : qsTr("%1 has no such mode").arg(agentDialog.harnessName)
+                            onClicked: agentDialog.chooseMode(modelData.id)
+                        }
+                    }
                 }
                 RowLayout {
                     visible: agentDialog.phase === 1
@@ -1366,7 +1889,10 @@ ApplicationWindow {
             categoryNameField.forceActiveFocus()
             categoryNameField.selectAll()
         })
-        onClosed: categoryDialog.localError = ""
+        onClosed: {
+            categoryDialog.localError = ""
+            window.pendingCategoryAgents = []
+        }
 
         contentItem: ScrollView {
             id: categoryScroll
@@ -1591,6 +2117,30 @@ ApplicationWindow {
                 }
             }
         }
+        ActionItem {
+            objectName: "revealFolderAction"
+            text: Qt.platform.os === "osx" ? qsTr("Show in Finder") : qsTr("Show folder")
+            visible: window.desktopAvailable && window.focusedFolder().length > 0
+            onTriggered: desktop.revealFolder(window.focusedFolder())
+        }
+        ActionItem {
+            objectName: "openEditorAction"
+            text: window.desktopAvailable ? qsTr("Open in %1").arg(desktop.editorName) : ""
+            visible: window.desktopAvailable && desktop.editorName.length > 0 && window.focusedFolder().length > 0
+            onTriggered: desktop.openInEditor(window.focusedFolder())
+        }
+        ActionItem {
+            objectName: "copyPathAction"
+            text: qsTr("Copy path")
+            visible: window.desktopAvailable && window.focusedFolder().length > 0
+            onTriggered: desktop.copyText(window.focusedFolder())
+        }
+        ActionItem {
+            objectName: "untileAgentAction"
+            text: qsTr("Take off the stage")
+            visible: workspace.focusedSession !== null && stage.tileIds.indexOf(workspace.focusedSession.sessionId) >= 0
+            onTriggered: window.untileFocused()
+        }
         MenuSeparator {}
         ActionItem {
             objectName: "closeAgentAction"
@@ -1738,8 +2288,12 @@ ApplicationWindow {
 
                         background: Rectangle {
                             radius: window.chromeRadius
-                            color: categoryButton.hovered && !categoryButton.marked ? window.hoveredCardColor :
+                            color: categoryDrop.containsDrag && categoryDrop.acceptsAgents ?
+                                       Qt.alpha(window.focusedBorderColor, 0.18) :
+                                   categoryButton.hovered && !categoryButton.marked ? window.hoveredCardColor :
                                                                                        window.surfaceColor
+                            border.width: categoryDrop.containsDrag && categoryDrop.acceptsAgents ? 1 : 0
+                            border.color: window.focusedBorderColor
                             Behavior on color {
                                 enabled: window.motionEnabled
                                 ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
@@ -1813,6 +2367,204 @@ ApplicationWindow {
                             onTapped: {
                                 workspace.selectCategory(categoryButton.modelData.id)
                                 window.popupAt(categoryMenu, categoryButton)
+                            }
+                        }
+                        // Drag a category up or down the rail to reorder it.
+                        DragHandler {
+                            target: null
+                            enabled: window.interactionArmed
+                            xAxis.enabled: false
+                            onActiveChanged: active ?
+                                window.beginCategoryDrag(categoryButton.modelData.id, categoryButton.modelData.name,
+                                                         centroid.scenePosition) :
+                                window.endDrag()
+                            onCentroidChanged: if (active)
+                                                   window.moveDragGhost(centroid.scenePosition)
+                        }
+                        // Agents dropped here move to this category; a category
+                        // dropped here goes above or below this one.
+                        DropArea {
+                            id: categoryDrop
+                            anchors.fill: parent
+                            keys: ["lapis-agents", "lapis-category"]
+                            readonly property bool acceptsAgents: window.draggedAgents.length > 0
+                                                                   && !categoryButton.marked
+                            property bool below: false
+                            onPositionChanged: function(drag) { below = drag.y > height / 2 }
+                            onDropped: function(drop) {
+                                const category = categoryButton.modelData.id
+                                if (window.draggedCategory.length > 0) {
+                                    const at = categoryButton.index + (below ? 1 : 0)
+                                    window.queueDrop(() => window.dropCategory(at))
+                                } else {
+                                    window.queueDrop(() => window.dropOnCategory(category))
+                                }
+                                drop.accept()
+                            }
+                        }
+                        Rectangle {
+                            objectName: "categoryDropMarker"
+                            visible: categoryDrop.containsDrag && !categoryDrop.acceptsAgents
+                                     && window.draggedCategory !== categoryButton.modelData.id
+                            x: 4
+                            width: parent.width - 8
+                            height: 2
+                            y: categoryDrop.below ? parent.height - 1 : -1
+                            color: window.focusedBorderColor
+                        }
+                    }
+
+                    // A quiet plus right under the last category, in the recall
+                    // column, with its shortcut as a readout.
+                    footer: Item {
+                        width: categoryList.width
+                        height: window.tabHeight + categoryList.spacing
+                        Button {
+                            id: newCategoryButton
+                            objectName: "newCategoryButton"
+                            y: categoryList.spacing
+                            width: parent.width
+                            height: window.tabHeight
+                            padding: 0
+                            focusPolicy: Qt.NoFocus
+                            hoverEnabled: true
+                            enabled: window.interactionArmed
+                            onClicked: window.openCategoryDialog("add")
+                            Accessible.name: qsTr("New category")
+                            ToolTip.visible: hovered
+                            ToolTip.delay: 600
+                            ToolTip.text: qsTr("New category")
+
+                            // Agents dropped on the + start a category of their own.
+                            DropArea {
+                                id: newCategoryDrop
+                                anchors.fill: parent
+                                keys: ["lapis-agents"]
+                                onDropped: function(drop) {
+                                    window.queueDrop(() => window.dropOnNewCategory())
+                                    drop.accept()
+                                }
+                            }
+                            background: Rectangle {
+                                radius: window.chromeRadius
+                                border.width: newCategoryDrop.containsDrag ? 1 : 0
+                                border.color: window.focusedBorderColor
+                                color: newCategoryDrop.containsDrag ? Qt.alpha(window.focusedBorderColor, 0.18) :
+                                       newCategoryButton.hovered ? window.hoveredCardColor : window.surfaceColor
+                                Behavior on color {
+                                    enabled: window.motionEnabled
+                                    ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                                }
+                            }
+                            contentItem: Item {
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 10
+                                    anchors.rightMargin: 6
+                                    spacing: 8
+                                    PlainText {
+                                        text: "+"
+                                        color: newCategoryButton.hovered ? window.textColor : window.mutedTextColor
+                                        font.pixelSize: window.chromeFont
+                                        Layout.alignment: Qt.AlignVCenter
+                                    }
+                                    PlainText {
+                                        objectName: "newCategoryHint"
+                                        text: window.shortcutText("newCategory")
+                                        color: window.mutedTextColor
+                                        font.family: window.monoFamily
+                                        font.pixelSize: window.readoutFont
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                        Layout.minimumWidth: 0
+                                        Layout.alignment: Qt.AlignVCenter
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Plan usage: each CLI's tightest window, opening the details.
+                Button {
+                    id: usageMeter
+                    objectName: "usageMeter"
+                    readonly property var rows: window.usageRows()
+                    visible: rows.length > 0
+                    Layout.fillWidth: true
+                    implicitHeight: meterRows.implicitHeight + 14
+                    padding: 0
+                    focusPolicy: Qt.NoFocus
+                    hoverEnabled: true
+                    enabled: window.interactionArmed
+                    onClicked: window.openUsageDialog()
+                    Accessible.name: qsTr("Usage: %1").arg(rows.map(row => qsTr("%1 %2% left").arg(row.name).arg(Math.round(Math.max(0, 100 - row.percent)))).join(", "))
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 600
+                    ToolTip.text: qsTr("Plan usage")
+
+                    background: Rectangle {
+                        radius: window.chromeRadius
+                        color: usageMeter.hovered ? window.hoveredCardColor : window.surfaceColor
+                        Behavior on color {
+                            enabled: window.motionEnabled
+                            ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                        }
+                    }
+                    contentItem: Item {
+                        ColumnLayout {
+                            id: meterRows
+                            anchors.fill: parent
+                            anchors.topMargin: 7
+                            anchors.bottomMargin: 7
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 6
+                            spacing: 6
+                            Repeater {
+                                model: usageMeter.rows
+                                delegate: ColumnLayout {
+                                    id: meterRow
+                                    required property var modelData
+                                    // What is left of the tightest window.
+                                    readonly property real remaining: Math.max(0, Math.min(100, 100 - modelData.percent))
+                                    readonly property color tone: window.gaugeColor(remaining)
+                                    objectName: "usageMeter_" + modelData.id
+                                    Layout.fillWidth: true
+                                    spacing: 3
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+                                        PlainText {
+                                            text: meterRow.modelData.name
+                                            color: usageMeter.hovered ? window.textColor : window.mutedTextColor
+                                            font.pixelSize: window.readoutFont
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                        }
+                                        PlainText {
+                                            objectName: "usageLeft_" + meterRow.modelData.id
+                                            text: qsTr("%1% left %2").arg(Math.round(meterRow.remaining)).arg(meterRow.modelData.label)
+                                            color: meterRow.tone
+                                            font.family: window.monoFamily
+                                            font.pixelSize: window.readoutFont
+                                        }
+                                    }
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 2
+                                        color: window.borderColor
+                                        Rectangle {
+                                            objectName: "usageBar_" + meterRow.modelData.id
+                                            width: parent.width * meterRow.remaining / 100
+                                            height: parent.height
+                                            color: meterRow.tone
+                                            Behavior on width {
+                                                enabled: window.motionEnabled
+                                                NumberAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -2083,20 +2835,204 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 Layout.minimumHeight: 120
                 color: window.paneColor
-                // The stage edge carries the focus accent only while it owns input.
-                border.color: liveTerminal.interactive ? window.focusedBorderColor : window.borderColor
+                // The stage edge carries the focus accent only while it owns input;
+                // with tiles, the selected tile's edge does.
+                border.color: !tiled && liveTerminal.interactive ? window.focusedBorderColor : window.borderColor
                 border.width: 1
                 radius: window.chromeRadius
                 clip: true
 
+                // Tiles: two or more agents side by side or stacked, as the
+                // category keeps them. Delegates are keyed by agent and only move
+                // when a divider does, so a drag never rebuilds a terminal.
+                readonly property var tiles: workspace.stageTiles
+                readonly property bool tiled: tiles.length > 1
+                readonly property bool zoomed: tiled && window.tileZoomed
+                readonly property string focusedId: workspace.focusedSession ? workspace.focusedSession.sessionId : ""
+                readonly property int inset: 6
+                readonly property int gap: 6
+                readonly property int headerHeight: tiled ? Math.max(22, window.readoutFont + 10) : 0
+                // A divider is moving: agents keep their size until it stops.
+                property bool resizing: false
+                property var tileIds: []
+                property var dividerPaths: []
+                function syncTiles() {
+                    const ids = tiles.map(tile => tile.sessionId)
+                    if (JSON.stringify(ids) !== JSON.stringify(tileIds))
+                        tileIds = ids
+                    const paths = workspace.stageDividers.map(divider => divider.path)
+                    if (JSON.stringify(paths) !== JSON.stringify(dividerPaths))
+                        dividerPaths = paths
+                }
+                onTilesChanged: syncTiles()
+                Component.onCompleted: syncTiles()
+                function tileOf(id) {
+                    return tiles.find(tile => tile.sessionId === id) || null
+                }
+                function dividerOf(path) {
+                    return workspace.stageDividers.find(divider => divider.path === path) || null
+                }
+                readonly property rect whole: Qt.rect(inset, inset, width - 2 * inset, height - 2 * inset)
+                // A tile's frame in stage pixels, a gap between neighbors.
+                function frameOf(tile) {
+                    if (!tile || !tiled || zoomed)
+                        return whole
+                    const w = width - 2 * inset
+                    const h = height - 2 * inset
+                    const half = gap / 2
+                    const left = inset + tile.x * w + (tile.x > 0.0001 ? half : 0)
+                    const top = inset + tile.y * h + (tile.y > 0.0001 ? half : 0)
+                    const right = inset + (tile.x + tile.width) * w - (tile.x + tile.width < 0.9999 ? half : 0)
+                    const bottom = inset + (tile.y + tile.height) * h - (tile.y + tile.height < 0.9999 ? half : 0)
+                    return Qt.rect(left, top, Math.max(0, right - left), Math.max(0, bottom - top))
+                }
+                readonly property rect focusedFrame: tiled ? frameOf(tileOf(focusedId)) : whole
+
+                Repeater {
+                    model: stage.tiled ? stage.tileIds : []
+                    delegate: Item {
+                        id: tileFrame
+                        required property string modelData
+                        readonly property var tile: stage.tileOf(modelData)
+                        readonly property var session: tile ? tile.session : null
+                        readonly property bool selectedTile: modelData === stage.focusedId
+                        readonly property rect frame: stage.frameOf(tile)
+                        objectName: "tile_" + modelData
+                        x: frame.x
+                        y: frame.y
+                        width: frame.width
+                        height: frame.height
+                        visible: session !== null && (!stage.zoomed || selectedTile)
+
+                        Rectangle {
+                            anchors.fill: parent
+                            color: "transparent"
+                            radius: window.chromeRadius
+                            border.width: 1
+                            border.color: tileFrame.selectedTile && liveTerminal.interactive ?
+                                              window.focusedBorderColor : window.borderColor
+                        }
+                        // The tile's name bar: select it, drag it elsewhere on the
+                        // stage or back to the strip, or take it off the stage.
+                        Item {
+                            id: tileHeader
+                            objectName: "tileHeader_" + tileFrame.modelData
+                            x: 1
+                            y: 1
+                            width: parent.width - 2
+                            height: stage.headerHeight - 2
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 8
+                                anchors.rightMargin: 2
+                                spacing: 6
+                                AgentMark {
+                                    harnessId: tileFrame.session ? tileFrame.session.harnessId : ""
+                                    visible: !workspace.previewMode
+                                    ink: tileFrame.selectedTile ? window.textColor : window.mutedTextColor
+                                    Layout.preferredWidth: 12
+                                    Layout.preferredHeight: 12
+                                }
+                                StatusMark {
+                                    kind: tileFrame.session ? tileFrame.session.statusKind : ""
+                                    Layout.preferredWidth: 8
+                                    Layout.preferredHeight: 8
+                                    Layout.alignment: Qt.AlignVCenter
+                                }
+                                PlainText {
+                                    text: tileFrame.session ? window.agentTabTitle(tileFrame.session) : ""
+                                    color: tileFrame.selectedTile ? window.textColor : window.mutedTextColor
+                                    font.family: window.monoFamily
+                                    font.pixelSize: window.readoutFont
+                                    font.weight: tileFrame.selectedTile ? Font.DemiBold : Font.Normal
+                                    elide: Text.ElideMiddle
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                                PlainText {
+                                    visible: tileFrame.width >= 260 && tileFrame.session !== null
+                                    text: tileFrame.session ? tileFrame.session.statusLabel : ""
+                                    color: window.statusColor(tileFrame.session ? tileFrame.session.statusKind : "")
+                                    font.family: window.monoFamily
+                                    font.pixelSize: window.readoutFont
+                                    Layout.maximumWidth: tileFrame.width * 0.35
+                                    elide: Text.ElideRight
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                                Rectangle {
+                                    objectName: "untile_" + tileFrame.modelData
+                                    Layout.preferredWidth: stage.headerHeight - 6
+                                    Layout.preferredHeight: stage.headerHeight - 6
+                                    Layout.alignment: Qt.AlignVCenter
+                                    radius: window.chromeRadius
+                                    color: untileHover.hovered ? window.hoveredCardColor : "transparent"
+                                    Accessible.role: Accessible.Button
+                                    Accessible.name: qsTr("Take off the stage")
+                                    PlainText {
+                                        anchors.centerIn: parent
+                                        text: "×"
+                                        color: untileHover.hovered ? window.textColor : window.mutedTextColor
+                                        font.pixelSize: window.chromeFont
+                                    }
+                                    HoverHandler { id: untileHover }
+                                    TapHandler {
+                                        enabled: window.interactionArmed
+                                        onTapped: workspace.untileSession(tileFrame.modelData)
+                                    }
+                                    ToolTip.visible: untileHover.hovered
+                                    ToolTip.delay: 600
+                                    ToolTip.text: qsTr("Take off the stage; the agent keeps running")
+                                }
+                            }
+                            DragOrClick {
+                                objectName: "tilePress_" + tileFrame.modelData
+                                anchors.fill: parent
+                                anchors.rightMargin: stage.headerHeight
+                                enabled: window.interactionArmed
+                                cursorShape: dragging ? Qt.ClosedHandCursor : Qt.ArrowCursor
+                                onTapped: function(modifiers) { window.clickAgent(tileFrame.modelData, 0) }
+                                onDoubleClicked: window.tileZoomed = !window.tileZoomed
+                                onDragStarted: function(scene) { window.beginAgentDrag([tileFrame.modelData], "tile", scene) }
+                                onDragMoved: function(scene) { window.moveDragGhost(scene) }
+                                onDragEnded: window.endDrag()
+                            }
+                        }
+                        // The other tiles' terminals: sized and drawn live, and a
+                        // click selects the tile. The selected tile is liveTerminal.
+                        TerminalSurface {
+                            objectName: "tileTerminal_" + tileFrame.modelData
+                            x: 4
+                            y: stage.headerHeight
+                            width: parent.width - 8
+                            height: Math.max(0, parent.height - y - 4)
+                            document: tileFrame.session
+                            visible: !tileFrame.selectedTile
+                            enabled: false
+                            interactive: visible && tileFrame.visible && window.visible && document !== null
+                            holdResize: stage.resizing
+                            fontFamily: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontFamily : ""
+                            fontPixelSize: window.terminalFontSize
+                        }
+                        TapHandler {
+                            enabled: window.interactionArmed && !tileFrame.selectedTile
+                            onTapped: window.clickAgent(tileFrame.modelData, 0)
+                        }
+                    }
+                }
+
                 TerminalSurface {
                     id: liveTerminal
                     objectName: "liveTerminal"
-                    anchors.fill: parent
-                    anchors.margins: 6
+                    x: stage.tiled ? stage.focusedFrame.x + 4 : stage.inset
+                    y: stage.tiled ? stage.focusedFrame.y + stage.headerHeight : stage.inset
+                    width: stage.tiled ? stage.focusedFrame.width - 8 : stage.width - 2 * stage.inset
+                    height: stage.tiled ? Math.max(0, stage.focusedFrame.height - stage.headerHeight - 4)
+                                        : stage.height - 2 * stage.inset
                     document: workspace.focusedSession
                     fontFamily: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontFamily : ""
-                    fontPixelSize: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSize : 16
+                    fontPixelSize: window.terminalFontSize
+                    holdResize: stage.resizing
                     visible: document !== null
                     enabled: visible
                     // A history page stays interactive for the wheel, selection and
@@ -2108,6 +3044,59 @@ ApplicationWindow {
                                                forceActiveFocus()
                 }
 
+                // Dividers between tiles: drag to share the space differently.
+                Repeater {
+                    model: stage.tiled && !stage.zoomed ? stage.dividerPaths : []
+                    delegate: Item {
+                        id: divider
+                        required property string modelData
+                        readonly property var line: stage.dividerOf(modelData)
+                        readonly property real spanX: stage.width - 2 * stage.inset
+                        readonly property real spanY: stage.height - 2 * stage.inset
+                        readonly property bool stacked: line !== null && line.stacked
+                        objectName: "tileDivider_" + (modelData.length > 0 ? modelData : "root")
+                        visible: line !== null
+                        x: line === null ? 0 : stacked ? stage.inset + line.x * spanX : stage.inset + line.x * spanX - 5
+                        y: line === null ? 0 : stacked ? stage.inset + line.y * spanY - 5 : stage.inset + line.y * spanY
+                        width: line === null ? 0 : stacked ? line.width * spanX : 10
+                        height: line === null ? 0 : stacked ? 10 : line.height * spanY
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: divider.stacked ? parent.width - 16 : 2
+                            height: divider.stacked ? 2 : parent.height - 16
+                            radius: 1
+                            color: window.focusedBorderColor
+                            opacity: dividerDrag.active ? 0.9 : dividerHover.hovered ? 0.5 : 0
+                        }
+                        HoverHandler {
+                            id: dividerHover
+                            cursorShape: divider.stacked ? Qt.SplitVCursor : Qt.SplitHCursor
+                        }
+                        DragHandler {
+                            id: dividerDrag
+                            target: null
+                            enabled: window.interactionArmed
+                            cursorShape: divider.stacked ? Qt.SplitVCursor : Qt.SplitHCursor
+                            property real ratio: 0.5
+                            onActiveChanged: {
+                                stage.resizing = active
+                                if (!active && divider.line !== null)
+                                    workspace.setTileRatio(divider.modelData, ratio, true)
+                            }
+                            onCentroidChanged: {
+                                if (!active || divider.line === null)
+                                    return
+                                const at = stage.mapFromItem(null, centroid.scenePosition.x, centroid.scenePosition.y)
+                                const area = divider.line
+                                ratio = divider.stacked ?
+                                    (at.y - stage.inset - area.areaY * divider.spanY) / (area.areaHeight * divider.spanY) :
+                                    (at.x - stage.inset - area.areaX * divider.spanX) / (area.areaWidth * divider.spanX)
+                                workspace.setTileRatio(divider.modelData, ratio, false)
+                            }
+                        }
+                    }
+                }
+
                 // An ended or unreachable agent keeps its last screen; say so on the
                 // stage instead of leaving a cursor that looks live.
                 Rectangle {
@@ -2116,10 +3105,10 @@ ApplicationWindow {
                     readonly property var session: workspace.focusedSession
                     readonly property string connection: session && session.live ? session.connectionState : ""
                     visible: connection === "ended" || connection === "disconnected"
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.margins: 8
+                    anchors.left: liveTerminal.left
+                    anchors.right: liveTerminal.right
+                    anchors.bottom: liveTerminal.bottom
+                    anchors.margins: 2
                     height: endedText.implicitHeight + 14
                     radius: window.chromeRadius
                     color: window.surfaceColor
@@ -2170,6 +3159,237 @@ ApplicationWindow {
                         onClicked: window.openNewAgentDialog()
                     }
                 }
+
+                // Agents dragged over the stage: an edge of a tile splits it, its
+                // middle swaps the agent in.
+                DropArea {
+                    id: stageDrop
+                    objectName: "stageDrop"
+                    anchors.fill: parent
+                    keys: ["lapis-agents"]
+                    enabled: stage.focusedId.length > 0
+                    property string target: ""
+                    property string edge: ""
+                    property rect hint: Qt.rect(0, 0, 0, 0)
+                    function update(px, py) {
+                        let chosen = ""
+                        let frame = stage.whole
+                        if (stage.tiled && !stage.zoomed) {
+                            for (const tile of stage.tiles) {
+                                const candidate = stage.frameOf(tile)
+                                if (px >= candidate.x && px <= candidate.x + candidate.width
+                                        && py >= candidate.y && py <= candidate.y + candidate.height) {
+                                    chosen = tile.sessionId
+                                    frame = candidate
+                                }
+                            }
+                        } else {
+                            chosen = stage.focusedId
+                        }
+                        target = chosen
+                        if (chosen.length === 0)
+                            return
+                        const u = (px - frame.x) / Math.max(1, frame.width)
+                        const v = (py - frame.y) / Math.max(1, frame.height)
+                        const dx = Math.min(u, 1 - u)
+                        const dy = Math.min(v, 1 - v)
+                        if (dx > 0.3 && dy > 0.3)
+                            edge = "center"
+                        else if (dx < dy)
+                            edge = u < 0.5 ? "left" : "right"
+                        else
+                            edge = v < 0.5 ? "top" : "bottom"
+                        hint = edge === "left" ? Qt.rect(frame.x, frame.y, frame.width / 2, frame.height)
+                             : edge === "right" ? Qt.rect(frame.x + frame.width / 2, frame.y, frame.width / 2, frame.height)
+                             : edge === "top" ? Qt.rect(frame.x, frame.y, frame.width, frame.height / 2)
+                             : edge === "bottom" ? Qt.rect(frame.x, frame.y + frame.height / 2, frame.width, frame.height / 2)
+                             : frame
+                    }
+                    onEntered: function(drag) { update(drag.x, drag.y) }
+                    onPositionChanged: function(drag) { update(drag.x, drag.y) }
+                    onExited: target = ""
+                    onDropped: function(drop) {
+                        const chosen = target
+                        const side = edge
+                        target = ""
+                        if (chosen.length > 0)
+                            window.queueDrop(() => window.dropOnStage(chosen, side))
+                        drop.accept()
+                    }
+                }
+                // Files dragged in from Finder: their paths, quoted, are pasted into
+                // the terminal they land on.
+                DropArea {
+                    id: fileDrop
+                    objectName: "fileDrop"
+                    anchors.fill: parent
+                    keys: ["text/uri-list"]
+                    enabled: workspace.focusedSession !== null
+                    onDropped: function(drop) {
+                        if (!drop.hasUrls)
+                            return
+                        if (stage.tiled && !stage.zoomed)
+                            for (const tile of stage.tiles) {
+                                const frame = stage.frameOf(tile)
+                                if (drop.x >= frame.x && drop.x <= frame.x + frame.width
+                                        && drop.y >= frame.y && drop.y <= frame.y + frame.height)
+                                    workspace.selectSession(tile.sessionId)
+                            }
+                        const urls = drop.urls
+                        Qt.callLater(() => window.pastePaths(urls))
+                        drop.acceptProposedAction()
+                    }
+                }
+                Rectangle {
+                    objectName: "fileDropHint"
+                    visible: fileDrop.containsDrag
+                    anchors.fill: parent
+                    anchors.margins: 3
+                    radius: window.chromeRadius
+                    color: Qt.alpha(window.focusedBorderColor, 0.08)
+                    border.width: 2
+                    border.color: window.focusedBorderColor
+                }
+
+                // Command-F: find text in the selected terminal, the page shown
+                // and then older history pages. Return goes older, Shift-Return newer.
+                Rectangle {
+                    id: findBar
+                    objectName: "findBar"
+                    visible: false
+                    z: 20
+                    anchors.top: parent.top
+                    anchors.right: parent.right
+                    anchors.topMargin: stage.tiled ? stage.focusedFrame.y + stage.headerHeight + 4 : 10
+                    anchors.rightMargin: stage.tiled ? stage.width - stage.focusedFrame.x - stage.focusedFrame.width + 8 : 12
+                    width: Math.min(380, stage.width - 24)
+                    height: findRow.implicitHeight + 12
+                    radius: window.chromeRadius
+                    color: window.surfaceColor
+                    border.width: 1
+                    border.color: window.focusedBorderColor
+                    property string status: ""
+                    property string paging: ""
+                    property int pages: 0
+                    function open() {
+                        visible = true
+                        status = ""
+                        findField.forceActiveFocus()
+                        findField.selectAll()
+                    }
+                    function close() {
+                        visible = false
+                        paging = ""
+                        liveTerminal.clearSelectedText()
+                        preview.deferTerminalFocus()
+                    }
+                    function search(older) {
+                        if (findField.text.length === 0)
+                            return
+                        if (liveTerminal.findText(findField.text, older)) {
+                            status = ""
+                            return
+                        }
+                        // Nothing more on this page: fetch the next page of history.
+                        const session = workspace.focusedSession
+                        if (older && session && session.live && pages < 500) {
+                            paging = "older"
+                            ++pages
+                            status = qsTr("Searching history…")
+                            session.olderHistory()
+                        } else if (!older && session && session.historyActive && pages < 500) {
+                            paging = "newer"
+                            ++pages
+                            session.newerHistory()
+                        } else {
+                            status = qsTr("No more matches")
+                        }
+                    }
+                    Connections {
+                        target: workspace.focusedSession
+                        enabled: findBar.visible && findBar.paging.length > 0
+                        function onHistoryChanged() {
+                            const session = workspace.focusedSession
+                            if (!session || session.historyRequestPending)
+                                return
+                            const older = findBar.paging === "older"
+                            findBar.paging = ""
+                            liveTerminal.clearSelectedText()
+                            if (liveTerminal.findText(findField.text, older)) {
+                                findBar.status = ""
+                                return
+                            }
+                            if (session.historyMessage.length > 0 || !session.historyActive)
+                                findBar.status = qsTr("No more matches")
+                            else
+                                findBar.search(older)
+                        }
+                    }
+                    RowLayout {
+                        id: findRow
+                        anchors.fill: parent
+                        anchors.margins: 6
+                        spacing: 6
+                        TextField {
+                            id: findField
+                            objectName: "findField"
+                            Layout.fillWidth: true
+                            placeholderText: qsTr("Find")
+                            font.family: window.monoFamily
+                            font.pixelSize: window.readoutFont + 1
+                            onTextEdited: {
+                                findBar.pages = 0
+                                liveTerminal.clearSelectedText()
+                                findBar.search(true)
+                            }
+                            Keys.onReturnPressed: function(event) {
+                                findBar.pages = 0
+                                findBar.search(!(event.modifiers & Qt.ShiftModifier))
+                            }
+                            Keys.onEnterPressed: function(event) {
+                                findBar.pages = 0
+                                findBar.search(!(event.modifiers & Qt.ShiftModifier))
+                            }
+                            Keys.onEscapePressed: findBar.close()
+                        }
+                        PlainText {
+                            objectName: "findStatus"
+                            text: findBar.status.length > 0 ? findBar.status :
+                                  findField.text.length > 0 ? qsTr("%1 here").arg(liveTerminal.countMatches(findField.text)) : ""
+                            color: window.mutedTextColor
+                            font.family: window.monoFamily
+                            font.pixelSize: window.readoutFont
+                        }
+                        CommandButton {
+                            text: "↑"
+                            Accessible.name: qsTr("Older match")
+                            onClicked: { findBar.pages = 0; findBar.search(true) }
+                        }
+                        CommandButton {
+                            text: "↓"
+                            Accessible.name: qsTr("Newer match")
+                            onClicked: { findBar.pages = 0; findBar.search(false) }
+                        }
+                        CommandButton {
+                            text: "×"
+                            Accessible.name: qsTr("Close find")
+                            onClicked: findBar.close()
+                        }
+                    }
+                }
+
+                Rectangle {
+                    objectName: "stageDropHint"
+                    visible: stageDrop.containsDrag && stageDrop.target.length > 0
+                    x: stageDrop.hint.x
+                    y: stageDrop.hint.y
+                    width: stageDrop.hint.width
+                    height: stageDrop.hint.height
+                    radius: window.chromeRadius
+                    color: Qt.alpha(window.focusedBorderColor, 0.16)
+                    border.width: 2
+                    border.color: window.focusedBorderColor
+                }
             }
 
             ListView {
@@ -2184,6 +3404,8 @@ ApplicationWindow {
                 spacing: 8
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
+                // Pressing and moving a card drags it; the wheel and trackpad scroll.
+                interactive: false
                 // Hidden cards release their surfaces; off-screen ones are not
                 // kept, so only what is visible renders.
                 model: visible ? workspace.categorySessions : []
@@ -2193,6 +3415,55 @@ ApplicationWindow {
                 currentIndex: window.focusedTabIndex()
                 readonly property real cardWidth: Math.round(height * 1.9)
                 ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
+                WheelHandler {
+                    onWheel: function(event) {
+                        const pixels = Math.abs(event.pixelDelta.x) > Math.abs(event.pixelDelta.y) ?
+                                           event.pixelDelta.x : event.pixelDelta.y
+                        const angle = Math.abs(event.angleDelta.x) > Math.abs(event.angleDelta.y) ?
+                                          event.angleDelta.x : event.angleDelta.y
+                        const delta = pixels !== 0 ? pixels : angle / 2
+                        const limit = Math.max(0, agentTabs.contentWidth - agentTabs.width)
+                        stripScroll.stop()
+                        agentTabs.contentX = Math.max(0, Math.min(agentTabs.contentX - delta, limit))
+                    }
+                }
+                // Agents dragged along the strip land between the cards the
+                // marker shows; a tile dragged here leaves the stage.
+                DropArea {
+                    id: stripDrop
+                    objectName: "stripDrop"
+                    parent: agentTabs
+                    anchors.fill: parent
+                    keys: ["lapis-agents"]
+                    property int index: -1
+                    function update(px) {
+                        const step = agentTabs.cardWidth + agentTabs.spacing
+                        index = Math.max(0, Math.min(workspace.categorySessions.length,
+                                                     Math.round((px + agentTabs.contentX) / step)))
+                    }
+                    onEntered: function(drag) { update(drag.x) }
+                    onPositionChanged: function(drag) { update(drag.x) }
+                    onExited: index = -1
+                    onDropped: function(drop) {
+                        const at = index
+                        index = -1
+                        if (at >= 0)
+                            window.queueDrop(() => window.dropOnStrip(at))
+                        drop.accept()
+                    }
+                }
+                Rectangle {
+                    objectName: "stripDropMarker"
+                    parent: agentTabs
+                    visible: stripDrop.containsDrag && stripDrop.index >= 0
+                    x: stripDrop.index * (agentTabs.cardWidth + agentTabs.spacing) - agentTabs.contentX
+                       - agentTabs.spacing / 2 - 1
+                    y: 4
+                    width: 3
+                    height: agentTabs.height - 8
+                    radius: 1
+                    color: window.focusedBorderColor
+                }
 
                 // Like Neovim's sidescrolloff: selection may approach either edge,
                 // but part of the neighboring card stays in view so the next one
@@ -2239,7 +3510,12 @@ ApplicationWindow {
                     required property int index
                     readonly property bool marked: workspace.focusedSession !== null
                                                    && workspace.focusedSession.sessionId === modelData.sessionId
+                    // Tiled on the stage beside the selected agent.
+                    readonly property bool onStage: stage.tileIds.indexOf(modelData.sessionId) >= 0
+                    readonly property bool picked: window.isAgentSelected(modelData.sessionId)
                     objectName: "agentTab_" + modelData.sessionId
+                    opacity: window.dragSource === "strip" && window.draggedAgents.indexOf(modelData.sessionId) >= 0 ?
+                                 0.45 : 1
                     width: agentTabs.cardWidth
                     height: agentTabs.height
                     Accessible.role: Accessible.Button
@@ -2254,9 +3530,9 @@ ApplicationWindow {
                         anchors.fill: parent
                         color: agentTab.marked ? window.focusedColor : window.paneColor
                         radius: window.chromeRadius
-                        border.width: agentTab.marked ? 2 : 1
-                        border.color: agentTab.marked ? window.focusedBorderColor :
-                                      agentHover.hovered ? window.mutedTextColor : window.borderColor
+                        border.width: agentTab.marked || agentTab.picked ? 2 : 1
+                        border.color: agentTab.marked || agentTab.picked ? window.focusedBorderColor :
+                                      agentHover.hovered || agentTab.onStage ? window.mutedTextColor : window.borderColor
                         Behavior on border.color {
                             enabled: window.motionEnabled
                             ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
@@ -2340,19 +3616,31 @@ ApplicationWindow {
                         height: parent.height - y - 6
                         document: agentTab.modelData
                         fontFamily: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontFamily : ""
-                        fontPixelSize: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSize : 16
+                        fontPixelSize: window.terminalFontSize
                         interactive: false
                         enabled: false
                         frameInterval: 250
                         minimumScale: 0.5
                     }
+                    // Picked for a drag with Command-click or Shift-click.
+                    Rectangle {
+                        objectName: "pickedCue_" + agentTab.modelData.sessionId
+                        anchors.fill: parent
+                        visible: agentTab.picked && !agentTab.marked
+                        radius: window.chromeRadius
+                        color: Qt.alpha(window.focusedBorderColor, 0.08)
+                    }
                     HoverHandler { id: agentHover }
-                    TapHandler {
+                    DragOrClick {
+                        objectName: "cardPress_" + agentTab.modelData.sessionId
+                        anchors.fill: parent
                         enabled: window.interactionArmed
-                        onTapped: {
-                            workspace.selectSession(agentTab.modelData.sessionId)
-                            preview.deferTerminalFocus()
+                        onTapped: function(modifiers) { window.clickAgent(agentTab.modelData.sessionId, modifiers) }
+                        onDragStarted: function(scene) {
+                            window.beginAgentDrag(window.agentsToDrag(agentTab.modelData.sessionId), "strip", scene)
                         }
+                        onDragMoved: function(scene) { window.moveDragGhost(scene) }
+                        onDragEnded: window.endDrag()
                     }
                     TapHandler {
                         acceptedButtons: Qt.RightButton

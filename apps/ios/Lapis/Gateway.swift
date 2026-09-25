@@ -4,18 +4,18 @@ import Foundation
 // Tailscale. It admits only the Mac owner's iOS devices, so there is nothing
 // to sign in to here.
 
-struct WorkspaceListing: Decodable {
+struct WorkspaceListing: Codable {
     let categories: [AgentCategory]
     let activeCategory: String
 }
 
-struct AgentCategory: Decodable, Identifiable {
+struct AgentCategory: Codable, Identifiable {
     let id: String
     let name: String
     let agents: [Agent]
 }
 
-struct Agent: Decodable, Identifiable, Hashable {
+struct Agent: Codable, Identifiable, Hashable {
     let id: String
     let title: String
     let harness: String
@@ -28,6 +28,83 @@ struct Agent: Decodable, Identifiable, Hashable {
     let place: String?
 
     var location: String { place ?? directory }
+}
+
+// An agent CLI the Mac can start, as its lapis reports it.
+struct Harness: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let installed: Bool
+    // Models the CLI lists (its default first) and the approval modes it
+    // has; older Macs send none.
+    let models: [ModelChoice]?
+    let modes: [AgentMode]?
+}
+
+struct ModelChoice: Codable, Hashable, Identifiable {
+    let id: String
+    let name: String
+    // The CLI's own default: started without naming a model.
+    let isDefault: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case isDefault = "default"
+    }
+}
+
+struct AgentMode: Codable, Hashable, Identifiable {
+    let id: String
+    let name: String
+}
+
+// lapis.json's newAgent defaults: the CLI, and the folder on this Mac and on
+// each ssh machine ("~/dev" style).
+struct AgentDefaults: Codable {
+    let harness: String?
+    let folder: String?
+    let mode: String?
+    let machines: [String: String]?
+}
+
+// An agent to start, as a new tab in `category` on the Mac: on the Mac, or
+// over ssh on `machine`.
+struct NewAgent: Encodable {
+    let harness: String
+    let directory: String
+    let category: String
+    let machine: String?
+    let model: String?
+    let mode: String?
+}
+
+// An ssh host the Mac can start agents on, most used first.
+struct Machine: Codable, Identifiable, Hashable {
+    let name: String
+    let uses: Int
+    let available: Bool
+    var id: String { name }
+}
+
+struct FrequentFolder: Codable, Hashable {
+    let path: String
+    let count: Int
+}
+
+// A machine's folders; `unchanged` when the phone already holds `version`.
+struct FolderPayload: Codable {
+    let version: String
+    let unchanged: Bool?
+    let home: String?
+    let folders: [String]?
+    let frequent: [FrequentFolder]?
+    let harnesses: [String: String]?
+}
+
+struct StartedAgent: Decodable {
+    let id: String
+    // The CLI updates itself before the agent starts.
+    let updating: Bool
 }
 
 struct ScreenFrame: Decodable {
@@ -200,6 +277,73 @@ struct Gateway {
         let (data, response) = try await Gateway.requests.data(for: request("api/agents"))
         try Gateway.check(response, data)
         return try JSONDecoder().decode(WorkspaceListing.self, from: data)
+    }
+
+    func harnesses() async throws -> (harnesses: [Harness], defaults: AgentDefaults?) {
+        struct Listing: Decodable {
+            let harnesses: [Harness]
+            let defaults: AgentDefaults?
+        }
+        let (data, response) = try await Gateway.requests.data(for: request("api/harnesses"))
+        try Gateway.check(response, data)
+        let listing = try JSONDecoder().decode(Listing.self, from: data)
+        return (listing.harnesses, listing.defaults)
+    }
+
+    func start(_ agent: NewAgent) async throws -> StartedAgent {
+        var request = request("api/agents")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(agent)
+        let (data, response) = try await Gateway.requests.data(for: request)
+        try Gateway.check(response, data)
+        return try JSONDecoder().decode(StartedAgent.self, from: data)
+    }
+
+    // A new category on the Mac; its id.
+    func createCategory(named name: String) async throws -> String {
+        struct Made: Decodable { let id: String }
+        var request = request("api/categories")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["name": name])
+        let (data, response) = try await Gateway.requests.data(for: request)
+        try Gateway.check(response, data)
+        return try JSONDecoder().decode(Made.self, from: data).id
+    }
+
+    // Ends the agent on the Mac, as Command-W does there.
+    func close(agent: String) async throws {
+        var request = request("api/agents/\(agent)/close")
+        request.httpMethod = "POST"
+        let (data, response) = try await Gateway.requests.data(for: request)
+        try Gateway.check(response, data)
+    }
+
+    func machines() async throws -> [Machine] {
+        struct Listing: Decodable { let machines: [Machine] }
+        let (data, response) = try await Gateway.requests.data(for: request("api/machines"))
+        try Gateway.check(response, data)
+        return try JSONDecoder().decode(Listing.self, from: data).machines
+    }
+
+    // Another machine's first report is read over ssh, so allow it time.
+    func folders(machine: String, have: String?) async throws -> FolderPayload {
+        var query: [URLQueryItem] = []
+        if !machine.isEmpty { query.append(URLQueryItem(name: "machine", value: machine)) }
+        if let have { query.append(URLQueryItem(name: "have", value: have)) }
+        var request = request("api/folders", query: query)
+        request.timeoutInterval = 45
+        let (data, response) = try await Gateway.requests.data(for: request)
+        try Gateway.check(response, data)
+        return try JSONDecoder().decode(FolderPayload.self, from: data)
+    }
+
+    // The agent's current screen, read without resizing it.
+    func screen(agent: String) async throws -> ScreenFrame {
+        let (data, response) = try await Gateway.requests.data(for: request("api/agents/\(agent)/screen"))
+        try Gateway.check(response, data)
+        return try JSONDecoder().decode(ScreenFrame.self, from: data)
     }
 
     func send(_ input: Input, to agent: String) async throws {

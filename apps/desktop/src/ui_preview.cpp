@@ -1,4 +1,5 @@
 #include "ui_preview.hpp"
+#include "app_paths.hpp"
 
 #include <QDebug>
 #include <QDir>
@@ -375,8 +376,8 @@ bool UiPreview::geometryPersistenceEnabled() const {
 
 void UiPreview::restoreGeometry(QQuickWindow& target) {
     if (options_.geometryPath.isEmpty())
-        options_.geometryPath = QDir(QStringLiteral(LAPIS_PROJECT_ROOT))
-                                    .filePath(QStringLiteral("runtime/window.json"));
+        options_.geometryPath =
+            QDir(data_directory()).filePath(QStringLiteral("runtime/window.json"));
     if (!privateGeometryPath(options_.geometryPath, false))
         return;
     QFile file(options_.geometryPath);
@@ -414,8 +415,8 @@ void UiPreview::saveGeometry() {
     if (!normal_geometry_.isValid())
         return;
     if (options_.geometryPath.isEmpty())
-        options_.geometryPath = QDir(QStringLiteral(LAPIS_PROJECT_ROOT))
-                                    .filePath(QStringLiteral("runtime/window.json"));
+        options_.geometryPath =
+            QDir(data_directory()).filePath(QStringLiteral("runtime/window.json"));
     if (!privateGeometryPath(options_.geometryPath, true)) {
         qWarning() << "Window geometry not saved: runtime path must be private and owned by you";
         return;
@@ -470,6 +471,15 @@ bool UiPreview::loadCandidate() {
     // QML reads `keymap.actionSequences(...)`. Absent keymap keeps the literals.
     if (options_.keymap != nullptr)
         candidate->rootContext()->setContextProperty(QStringLiteral("keymap"), options_.keymap);
+    if (options_.alerts)
+        candidate->rootContext()->setContextProperty(QStringLiteral("alerts"), options_.alerts);
+    if (options_.agentSearch)
+        candidate->rootContext()->setContextProperty(QStringLiteral("agentSearch"),
+                                                     options_.agentSearch);
+    if (options_.usage)
+        candidate->rootContext()->setContextProperty(QStringLiteral("usage"), options_.usage);
+    if (options_.desktop)
+        candidate->rootContext()->setContextProperty(QStringLiteral("desktop"), options_.desktop);
     candidate->setInitialProperties({{QStringLiteral("visible"), false}});
 
     QString candidateDiagnostics;

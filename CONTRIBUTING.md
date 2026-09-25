@@ -375,7 +375,8 @@ The committed `lapis.json` holds defaults only (see
   selects a category.
 - Command-J (`nextAttention`) selects the next agent in any category with a pending
   request, then one that finished unseen; Linux uses Control-Shift-J.
-- Command-N starts the new-agent form; Command-Shift-N starts the category form.
+- Command-T starts the new-agent form; Command-N (or the + under the categories) starts
+  the category form.
   Command-Shift-P opens the searchable, scrollable Commands palette. Command-B
   toggles the sidebar; `sidebarVisible` persists in `lapis.json`. Command-V remains paste.
   Command-comma opens Appearance. Command-W (`closeAgent`) closes the focused
@@ -508,10 +509,6 @@ resize, interrupt, GUI detach with continuing output, reattach to the same child
 and screen, and explicit exit. Distinguish service death from GUI detachment.
 Keep raw output/captures private under `build/` and socket/state under `runtime/`.
 Do not use `--smoke-input` while Codex is running: that probe sends shell commands.
-For explicit desktop creation against a pinned executable, pass
-`--no-harness-updates` before `--`. Normal explicit Claude creation otherwise
-updates before launch; reconnect and discovery do not update. Exercise updater
-behavior with disposable fake executables, not an installed CLI.
 
 The no-prompt check clears its draft with Ctrl-C, verifies the cleared screen,
 then uses the empty-composer Ctrl-D quit shortcut. It submits no model prompt.
@@ -606,6 +603,54 @@ service and types into its shell. Use it only with a dedicated test session;
 `--ui-preview` deliberately rejects that combination. Debugging starts from a
 reproducible symptom; a screenshot alone does not establish an application defect.
 
+### Build the Mac app
+
+`scripts/package_macos.py` makes the downloadable `lapis.app` and its DMG on an
+Apple silicon Mac with Xcode, Homebrew's `vulkan-headers` and `molten-vk`, and a
+bootstrapped Ghostty build. Everything goes under ignored `build/release/`.
+
+```sh
+uv run --no-project python scripts/package_macos.py qt       # once: Qt from pinned source
+uv run --no-project python scripts/package_macos.py app      # build, bundle, sign
+uv run --no-project python scripts/package_macos.py verify   # release checks
+uv run --no-project python scripts/package_macos.py notarize --profile NAME
+uv run --no-project python scripts/package_macos.py verify --notarized
+```
+
+The official Qt binaries have no Vulkan and Homebrew's need macOS 26 and a
+dozen more libraries, so `qt` builds qtbase, qtshadertools and qtdeclarative
+6.11.2 from their pinned archives with Vulkan on, bundled third-party code, and
+arm64 for macOS 14. The app build (`LAPIS_PACKAGE=ON`) compiles in no path from
+the build machine: it keeps its data in `~/.lapis`, runs the session service
+beside its executable, and loads the bundled MoltenVK directly. `app` signs with
+the keychain's one Developer ID Application identity (or `LAPIS_SIGN_IDENTITY`)
+and the hardened runtime. `notarize` needs a notarytool keychain profile, made
+once with `xcrun notarytool store-credentials NAME`, and staples the app and
+then the DMG.
+
+`verify` fails the release when a binary is not arm64-only, needs a macOS newer
+than 14, links anything outside the bundle or the system, or holds the build
+machine's user name, host name or Homebrew path (add more with
+`LAPIS_SWEEP_TERMS`). It also creates a Vulkan instance on the bundled MoltenVK,
+asks the windowless host for its harnesses, and starts the app through launchd,
+as the Dock does, to confirm it takes the login shell's PATH. None of these opens
+a window; a window launch of the packaged app is a separate, scheduled check.
+The app build also bundles Sparkle (pinned by SHA-256) for updates; its
+feed is the `appcast.xml` a release attaches. The update key is created once
+with `build/release/sparkle/bin/generate_keys`, which keeps the private half in
+the login keychain and prints the public half, saved in
+`apps/desktop/macos/update-public-key.txt`. Back the private key up
+(`generate_keys -x FILE`, then store the file somewhere safe and delete it):
+without it, installed copies cannot verify later updates.
+`notices` regenerates `third_party/qt/NOTICES.txt` from the Qt build's SBOM and
+`third_party/moltenvk/NOTICES.txt` from MoltenVK's pinned revisions; rerun it
+when either version changes. `release --tag vX.Y.Z` (add `--draft` to review
+first) refuses a DMG without a stapled ticket or a commit not yet pushed, then
+creates the GitHub release with the DMG, `appcast.xml` and the three Qt source
+archives. The
+download page in `site/` is published to GitHub Pages by
+`.github/workflows/site.yml` when it changes on `main`.
+
 ## Checks
 
 Run from the repository root:
@@ -645,6 +690,7 @@ union of the relevant checks; a check satisfying two rows runs once:
 | Python tooling | `just quality` (includes Ruff and Python unit tests), plus relevant runtime probes |
 | iPhone app or gateway (`apps/ios`, `apps/remote`) | `just quality` (includes the gateway suite, with a live service when the desktop is built) and `uv run --no-project python scripts/check_ios_remote.py --codex --claude` on macOS with an iOS Simulator runtime |
 | Before a release (Mac and iPhone together) | The full Linux gate (`lapis.py linux-gui`, whose workspace suite joins a view beside the real desktop connection and types both ways) and, on the Mac, `just quality` plus `just ios-check`, whose Mac-side client stays attached through every UI test and must see and answer the phone |
+| Mac app packaging (`scripts/package_macos.py`, `apps/desktop/macos`, `LAPIS_PACKAGE`) | `just quality`, then `package_macos.py app` and `verify` on the Mac; `verify --notarized` for a release |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; run `just quality` for shared check/config/instruction changes; no unrelated C++ rebuild |
 
 For focused iPhone UI checks, repeat `--only` to select affected methods in one
@@ -884,12 +930,6 @@ CTest and the actual controls.
 The runtime model/provider and binary hash are recorded. Use `--build-dir` to
 select a sanitizer build and `--output` to isolate receipts from concurrent runs.
 
-For an explicitly selected OpenAI run, `check_service_attention.py --live-openai`
-copies the existing login into a private disposable home with mode `0600`. Codex
-refreshes only that copy; the fixture never writes credentials back to the source.
-This isolates local file writes, but the run still uses the selected account and
-can refresh its login with the provider. No login flow is started by the fixture.
-
 The service fixture uses `on-request` and explicitly asks approval for its one
 whitelisted command. The installed binary rejects `approval_policy="untrusted"`
 in file/CLI config even though its exported RPC schema still advertises that
@@ -1073,14 +1113,10 @@ received bytes for printable/Control/Option keys and Command-V multiline Unicode
 bracketed paste; observes native preedit and commit; checks cancellation and fresh
 composition after history, document detach, window focus and actual attachment
 replacement/reconnect; and verifies commit plus the candidate anchor after resize.
-The current probe covers terminal input and attachment ownership. Its
-`lapis.native-input/2` receipt lists the cases actually exercised; `passed` does
-not attest to category navigation or a workspace carousel. The earlier `/1`
-workspace-supervisor case belongs to the superseded flat workspace described in
-[Milestone 3](docs/architecture.md#milestone-3-supervising-two-live-sessions-on-macos).
-Category navigation during composition and paste is covered separately by
-`ui-preview`'s `check_composition_navigation` Qt fixture. That synthetic coverage
-does not replace native cross-session qualification.
+The workspace case additionally defers focus during an active Japanese IME
+composition, commits to the originating session, and verifies that later US
+input follows the selected workspace session. A native bracketed paste stays
+whole in its originating PTY while an eligible automatic switch is attempted.
 Each native key edge waits for AppKit delivery before the next edge is posted;
 keys are never resent after a deadline. `LAPIS_NATIVE_TRACE=1` logs the probe's
 AppKit key and Qt key/composition events for diagnosis. A delivery deadline is
@@ -1168,9 +1204,6 @@ These commands qualify macOS only. On a Linux qualification host, select its LLV
 compiler and omit the macOS SDK option, then record actual results and dependencies.
 Vendor Qt/MoltenVK/Ghostty remain uninstrumented. Do not reuse sanitizer timings
 as release performance measurements.
-The workspace restart suite allows 120 seconds under TSan because its many
-process restarts took 46 seconds with instrumentation; the normal and ASan
-timeout remains 30 seconds. The allowance bounds stalled checks.
 
 ### What the checks cover
 

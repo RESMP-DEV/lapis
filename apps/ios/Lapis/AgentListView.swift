@@ -4,9 +4,14 @@ struct AgentListView: View {
     @Environment(WorkspaceModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
     @State private var showingSettings = false
+    @State private var path: [Agent] = []
+    @State private var newAgent: NewAgentTarget?
+    @State private var started: Agent?
+    @State private var naming = false
+    @State private var categoryName = ""
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             content
                 .background(Theme.background.ignoresSafeArea())
                 .navigationBarTitleDisplayMode(.inline)
@@ -22,7 +27,28 @@ struct AgentListView: View {
                             .frame(width: 24, height: 24)
                             .accessibilityLabel("lapis")
                     }
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        // The one plus: a new agent or a new category.
+                        Menu {
+                            Button {
+                                if let listing = model.listing {
+                                    newAgent = NewAgentTarget(category: listing.activeCategory)
+                                }
+                            } label: {
+                                Label("New agent", systemImage: "terminal")
+                            }
+                            Button {
+                                categoryName = ""
+                                naming = true
+                            } label: {
+                                Label("New category", systemImage: "folder.badge.plus")
+                            }
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .disabled(model.listing == nil)
+                        .accessibilityLabel("Add")
+                        .accessibilityIdentifier("add")
                         Button {
                             showingSettings = true
                         } label: {
@@ -33,6 +59,21 @@ struct AgentListView: View {
                 }
                 .sheet(isPresented: $showingSettings) {
                     SettingsView()
+                }
+                .alert("New category", isPresented: $naming) {
+                    NewCategoryFields(name: $categoryName) { _ in }
+                }
+                // The agent opens once the sheet has gone.
+                .sheet(item: $newAgent, onDismiss: {
+                    if let agent = started {
+                        started = nil
+                        path.append(agent)
+                    }
+                }) { target in
+                    NewAgentView(categories: model.listing?.categories ?? [],
+                                 category: target.category) { agent in
+                        started = agent
+                    }
                 }
         }
         .task(id: scenePhase) {
@@ -55,39 +96,58 @@ struct AgentListView: View {
                 Button("Settings") { showingSettings = true }
             }
         } else if let listing = model.listing {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    if let error = model.error {
-                        Text(error)
+            // A list, so an agent can be swiped away like a notification:
+            // swiping left offers Close, and a full swipe closes it.
+            List {
+                if let error = model.error {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+                ForEach(listing.categories) { category in
+                    Text(category.name)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .textCase(.uppercase)
+                        .tracking(1.6)
+                        .foregroundStyle(Theme.quiet)
+                        .padding(.top, 14)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 2, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .accessibilityIdentifier("category-\(category.name)")
+                    if category.agents.isEmpty {
+                        Text("No agents")
                             .font(.footnote)
-                            .foregroundStyle(.orange)
-                    }
-                    ForEach(listing.categories) { category in
-                        Text(category.name)
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .textCase(.uppercase)
-                            .tracking(1.6)
                             .foregroundStyle(Theme.quiet)
-                            .padding(.top, 14)
-                            .padding(.leading, 4)
-                        if category.agents.isEmpty {
-                            Text("No agents")
-                                .font(.footnote)
-                                .foregroundStyle(Theme.quiet)
-                                .padding(.leading, 4)
+                            .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 4, trailing: 16))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    }
+                    ForEach(category.agents) { agent in
+                        Button {
+                            path.append(agent)
+                        } label: {
+                            AgentCard(agent: agent)
                         }
-                        ForEach(category.agents) { agent in
-                            NavigationLink(value: agent) {
-                                AgentCard(agent: agent)
+                        .buttonStyle(CardPress())
+                        .accessibilityIdentifier("agent-\(agent.title)")
+                        .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                Task { await model.close(agent) }
+                            } label: {
+                                Label("Close", systemImage: "xmark")
                             }
-                            .buttonStyle(CardPress())
-                            .accessibilityIdentifier("agent-\(agent.title)")
                         }
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 24)
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
             .refreshable { await model.refresh() }
         } else if let error = model.error {
             ContentUnavailableView {
@@ -103,6 +163,36 @@ struct AgentListView: View {
                 .foregroundStyle(Theme.quiet)
         }
     }
+}
+
+// A category's name, created on the Mac when confirmed.
+struct NewCategoryFields: View {
+    @Environment(WorkspaceModel.self) private var model
+    @Binding var name: String
+    let created: (String) -> Void
+
+    var body: some View {
+        TextField("Name", text: $name)
+            .accessibilityIdentifier("categoryName")
+        Button("Create") {
+            let chosen = name.trimmingCharacters(in: .whitespaces)
+            Task {
+                do {
+                    created(try await model.createCategory(named: chosen))
+                } catch {
+                    model.error = describe(error)
+                }
+            }
+        }
+        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+        Button("Cancel", role: .cancel) {}
+    }
+}
+
+// Which category a new agent goes to.
+struct NewAgentTarget: Identifiable {
+    let category: String
+    var id: String { category }
 }
 
 // A card with cut corners and a harness-tinted edge, in the desktop's
@@ -158,6 +248,7 @@ struct AgentCard: View {
 struct HarnessBadge: View {
     let harness: String
     let accent: Color
+    var size: CGFloat = 42
 
     var body: some View {
         ZStack {
@@ -170,15 +261,15 @@ struct HarnessBadge: View {
                     .resizable()
                     .renderingMode(.template)
                     .scaledToFit()
-                    .frame(width: 22, height: 22)
+                    .frame(width: size * 0.52, height: size * 0.52)
                     .foregroundStyle(accent)
             } else {
                 Text(String(harness.prefix(2)).uppercased())
-                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .font(.system(size: size / 3, weight: .bold, design: .monospaced))
                     .foregroundStyle(accent)
             }
         }
-        .frame(width: 42, height: 42)
+        .frame(width: size, height: size)
         .accessibilityLabel(harness)
     }
 }

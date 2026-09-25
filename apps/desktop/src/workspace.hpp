@@ -1,6 +1,9 @@
 #ifndef LAPIS_DESKTOP_WORKSPACE_HPP
 #define LAPIS_DESKTOP_WORKSPACE_HPP
 
+#include "harness_models.hpp"
+#include "keymap.hpp"
+#include "tile_layout.hpp"
 #include <lapis/session/terminal.hpp>
 
 #include "launch_spec.hpp"
@@ -85,6 +88,7 @@ class SessionPreview final : public QObject {
     void setClosing(bool closing);
     // Shown instead of the status while the agent's CLI updates before start.
     void setUpdating(const QString& label);
+    [[nodiscard]] bool updating() const { return !updating_.isEmpty(); }
     [[nodiscard]] bool unseen() const { return unseen_; }
     void setUnseen(bool unseen);
     // Where activity comes from: a service-side observer (the Codex app-server,
@@ -220,6 +224,24 @@ struct PreviewRequest {
     QString reason;
 };
 
+// The installed program of a CLI lapis knows ("codex", "claude", ...), or
+// empty when it is not found on this Mac.
+[[nodiscard]] QString harness_program(const QString& id);
+
+// An agent to start: a CLI in a folder, in a category, on this Mac or over ssh.
+struct AgentRequest {
+    QString category;
+    QString directory; // on `machine`; ~ is that machine's home
+    QString title;
+    QString harness;
+    QString machine; // an ssh host; empty for this Mac
+    QString program; // the CLI's path on `machine`, when known
+    QString model;   // passed with the CLI's model flag; empty for its default
+    QString mode;    // ask, edits, plan, auto or full; empty for the CLI's own setting
+    // Show it on the stage; otherwise the category's selection stays.
+    bool select{};
+};
+
 struct WorkspaceOptions {
     QString endpoint;
     std::optional<session::LaunchSpec> launch;
@@ -232,12 +254,13 @@ struct WorkspaceOptions {
     // starts, at most every 30 minutes per CLI, so agents never open on an
     // update prompt. Existing-session reconnect and discovery do not update.
     bool updateHarnesses{};
-    // With restoreAgents, only start agents whose services are gone and leave
-    // running services alone (the login helper; a window reattaches later).
-    bool restoreOnly{};
     // Production bounds. Tests inject short values so stuck-updater cleanup is
     // observable without waiting two minutes or leaving installer children.
     qint64 updateTimeoutMs{qint64{2} * 60 * 1000};
+    // No window: leave running services for a window to reattach, and hand the
+    // workspace to a window that opens (the login helper and the windowless
+    // host that serves the phone).
+    bool headless{};
 };
 
 class Workspace final : public QObject {
@@ -254,12 +277,22 @@ class Workspace final : public QObject {
     Q_PROPERTY(int focusedIndex READ focusedIndex NOTIFY focusChanged)
     Q_PROPERTY(
         lapis::desktop::SessionPreview* focusedSession READ focusedSession NOTIFY focusChanged)
+    // The active category's tiles, in unit coordinates of the stage: each
+    // {sessionId, session, x, y, width, height}. Empty while the stage shows
+    // one agent.
+    Q_PROPERTY(QVariantList stageTiles READ stageTiles NOTIFY tilesChanged)
+    // Each split's divider line and the area it divides, in the same units:
+    // {path, stacked, x, y, width, height, areaX, areaY, areaWidth, areaHeight}.
+    Q_PROPERTY(QVariantList stageDividers READ stageDividers NOTIFY tilesChanged)
+    // An agent closed since lapis opened can come back with its conversation.
+    Q_PROPERTY(bool canReopenAgent READ canReopenAgent NOTIFY closedChanged)
   public:
     explicit Workspace(WorkspaceMode mode = WorkspaceMode::live, WorkspaceOptions options = {});
     ~Workspace() override;
     [[nodiscard]] bool previewMode() const { return preview_mode_; }
     [[nodiscard]] QString homeDirectory() const;
     Q_INVOKABLE [[nodiscard]] QVariantList availableHarnesses() const;
+    [[nodiscard]] std::vector<ModelChoice> modelChoices(const QString& harness) const;
     Q_INVOKABLE [[nodiscard]] QString displayPath(const QString& directory) const;
     [[nodiscard]] SessionPreview* session(const QString& id) const;
     // Development fixture v1 only. No calls are accepted in a live workspace.
@@ -272,13 +305,30 @@ class Workspace final : public QObject {
     [[nodiscard]] const QString& workspaceError() const { return error_; }
     Q_INVOKABLE void clearError();
     Q_INVOKABLE bool addCategory(const QString& name);
+    // A new category's id, or empty with the reason in workspaceError.
+    QString createCategory(const QString& name);
     Q_INVOKABLE bool renameCategory(const QString& id, const QString& name);
     Q_INVOKABLE bool removeCategory(const QString& id);
     Q_INVOKABLE bool selectCategory(const QString& id);
     Q_INVOKABLE void nextCategory(int delta = 1);
     Q_INVOKABLE bool selectSession(const QString& id);
     Q_INVOKABLE bool createAgent(const QString& directory, const QString& title,
-                                 const QString& harness = QStringLiteral("codex"));
+                                 const QString& harness = QStringLiteral("codex"),
+                                 const QString& model = {}, const QString& mode = {});
+    // The config's new-agent defaults, for the forms: harness, folder, and
+    // the folder on each ssh machine.
+    Q_INVOKABLE [[nodiscard]] QVariantMap agentDefaults() const;
+    // Where an agent is: its category's name, its ssh machine (or ""), and
+    // its folder as the card shows it ("~/x", or "host:~/x" over ssh).
+    [[nodiscard]] QVariantMap agentPlace(const QString& id) const;
+    void setAgentDefaults(const AgentDefaults& defaults) { agent_defaults_ = defaults; }
+    // Where the new-agent forms' model lists come from; lapis keeps it.
+    void setHarnessModels(const HarnessModels* models) { harness_models_ = models; }
+    // Starts an agent; returns its id, or "" with workspaceError(). Without
+    // `select` the category's selection is left alone, so an agent started
+    // from another device never takes the stage from a shown agent.
+    QString startAgent(const AgentRequest& request);
+    [[nodiscard]] const QString& storagePath() const { return storage_path_; }
     // Close an agent's tab. A reachable agent is ended through its
     // session service first and its tab closes once the process exits. An
     // unreachable one keeps its tab unless `abandon` accepts that it may still
@@ -288,6 +338,11 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool moveSession(const QString& id, const QString& categoryId);
     Q_INVOKABLE bool renameSession(const QString& id, const QString& title);
     Q_INVOKABLE bool moveSessionBy(const QString& id, int delta);
+    // Puts agents, in their strip order, at `index` of a category's strip (at
+    // its end when `index` is past it), moving them there from any category.
+    Q_INVOKABLE bool placeSessions(const QStringList& ids, const QString& categoryId, int index);
+    // Moves a category to `index` in the rail.
+    Q_INVOKABLE bool placeCategory(const QString& id, int index);
     Q_INVOKABLE bool removeSession(const QString& id);
     Q_INVOKABLE void nextSession(int delta = 1);
     // Selects the next agent, in any category, with a pending request, or else
@@ -297,6 +352,25 @@ class Workspace final : public QObject {
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;
     [[nodiscard]] int attentionAgents() const;
+    [[nodiscard]] QVariantList stageTiles() const;
+    [[nodiscard]] QVariantList stageDividers() const;
+    // Tiles `id` beside `target` on its category's stage (left, right, top,
+    // bottom), or in its place (center), and selects it. With no target, beside
+    // the selected agent.
+    Q_INVOKABLE bool tileSession(const QString& id, const QString& target, const QString& edge);
+    // Takes an agent off the stage; it keeps running in the strip.
+    Q_INVOKABLE bool untileSession(const QString& id);
+    // Moves a divider; `persist` saves it (once, when a drag ends).
+    Q_INVOKABLE bool setTileRatio(const QString& path, qreal ratio, bool persist);
+    // Selects the tile beside the selected one (left, right, top or bottom).
+    Q_INVOKABLE bool focusTile(const QString& direction);
+    // Starts an agent like the selected one (folder, CLI, model and mode) and
+    // tiles it beside it; returns its id.
+    Q_INVOKABLE QString splitAgent(const QString& edge);
+    // Starts the most recently closed agent again, resuming its conversation
+    // where its CLI can, in its category, and shows it.
+    Q_INVOKABLE bool reopenAgent();
+    [[nodiscard]] bool canReopenAgent() const { return !closed_.empty(); }
     // Arguments from lapis.json added to each new agent of a harness.
     void setHarnessArguments(QHash<QString, QStringList> arguments) {
         harness_arguments_ = std::move(arguments);
@@ -305,19 +379,27 @@ class Workspace final : public QObject {
     void focusChanged();
     // An agent received a new request.
     void requestArrived();
+    // An agent has a new request for you (alerts chime for these).
+    void agentNeedsYou(lapis::desktop::SessionPreview* item);
+    // A Codex or Claude turn ended; terminal agents' output pauses do not count.
+    void turnFinished(lapis::desktop::SessionPreview* item);
     void sessionsChanged();
     void categoriesChanged();
     void categoryChanged();
     void errorChanged();
+    void tilesChanged();
+    void closedChanged();
 
   private:
     [[nodiscard]] static QString rootDirectory();
     [[nodiscard]] static QString defaultEndpoint();
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
     QHash<QString, QStringList> harness_arguments_;
+    AgentDefaults agent_defaults_;
+    const HarnessModels* harness_models_{};
     bool restore_agents_{};
     bool update_harnesses_{};
-    bool restore_only_{};
+    bool headless_{};
     QHash<QString, qint64> harness_checked_ms_;
     QHash<QString, QPointer<QProcess>> harness_updates_;
     QHash<QString, QStringList> starts_after_update_;
@@ -338,6 +420,8 @@ class Workspace final : public QObject {
         QString id;
         QString name;
         QString selected;
+        // Two or more agents tiled on the stage, or empty for one agent.
+        TileLayout tiles;
     };
     struct Agent {
         QString category;
@@ -357,6 +441,27 @@ class Workspace final : public QObject {
     QString error_;
     bool storage_failed_{};
     bool fail(const QString& message);
+    // The launch for a new agent, or nullopt with workspaceError().
+    std::optional<session::LaunchSpec> agentLaunch(const AgentRequest& request);
+    QString insertCategory(const QString& name, bool select);
+    // Starts an agent from a finished launch; the rest of startAgent.
+    QString launchAgent(const AgentRequest& request, const session::LaunchSpec& launch);
+    Category* category(const QString& id);
+    [[nodiscard]] const Category* activeCategory() const;
+    // After an agent leaves a category: off its stage, and one tile is no split.
+    void untile(Category& category, const QString& id);
+    void loadTiles(const QJsonArray& groups);
+    // Where agents moving to `categoryId` go among those that stay: before its
+    // index-th agent, or after its last.
+    [[nodiscard]] std::size_t
+    insertionPoint(const std::vector<std::unique_ptr<SessionPreview>>& staying,
+                   const QString& categoryId, int index) const;
+    // Agents moving into `categoryId` leave their old category's stage.
+    void recategorize(const QStringList& ids, const QString& categoryId);
+    QString failed(const QString& message) {
+        fail(message);
+        return {};
+    }
     struct RegistryState {
         std::vector<Category> categories;
         QMap<QString, Agent> agents;
@@ -384,6 +489,16 @@ class Workspace final : public QObject {
     static void applyStartupDefaults(const Agent& agent, ResumeLaunch& plan);
     [[nodiscard]] static std::optional<ResumeLaunch> restoredLaunch(const Agent& agent,
                                                                     QString* diagnostic = nullptr);
+    struct ClosedAgent {
+        QString category;
+        QString title;
+        QString harness;
+        ResumeLaunch plan;
+        bool remote{};
+    };
+    // Newest last; at most ten.
+    std::vector<ClosedAgent> closed_;
+    void rememberClosed(const Agent& agent, const QString& title);
     [[nodiscard]] static bool serviceRunning(const QString& endpoint);
     void noteStatus(SessionPreview* item);
     QHash<const SessionPreview*, QString> last_kind_;
