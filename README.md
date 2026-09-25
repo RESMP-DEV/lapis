@@ -167,16 +167,15 @@ Close the window (its close button or Command-Q) to detach. Reopen it to
 reconnect the same agents and restore category selections and window
 placement. Closing the window does not stop agents; Command-W on an agent does.
 If an agent's session service is gone when lapis opens (after a reboot or a
-crash), lapis restarts it in its card, like a restored terminal tab: Codex,
-Claude, Grok, OpenCode, OMP, Kimi and Antigravity resume their saved
-conversation with their own resume option; other CLIs, or a conversation with
-no saved transcript yet, start fresh in the same folder. Explicit resume arguments
-remain authoritative; lapis adds a resume selection only when none is already
-present. Codex transcript lookup stays within the `sessions/YYYY/MM/DD` layout
-and does not follow directory symlinks. Each service records
-the conversation beside its endpoint (`<endpoint>.resume`) from the Codex
-observer, the Claude hook adapter, or the `agent_checkpoint` sequence that
-iTerm2 restore hooks print. For Codex agents whose service predates these
+crash), lapis restarts it in its card. Codex and Claude resume saved conversations
+learned through their independent observer or hook adapter. Other CLIs restart
+fresh in the same folder unless explicit user arguments select a conversation.
+Those arguments remain authoritative; lapis only manages a resume selection it
+added itself. Printed `agent_checkpoint` sequences, including iTerm2 restore
+hooks, are advisory and cannot authorize automatic resume. Services store the
+identity and its source beside the endpoint (`<endpoint>.resume`); legacy records
+without provenance remain advisory. Codex transcript lookup stays within the
+`sessions/YYYY/MM/DD` layout and does not follow directory symlinks. For Codex agents whose service predates these
 records, lapis reads the thread from the rollout its app-server holds open.
 Command-W is what removes an agent for good. Restore runs when lapis opens;
 add lapis to Login Items to have it happen at login.
