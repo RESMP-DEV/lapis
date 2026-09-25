@@ -182,7 +182,7 @@
       "command": [
         "build/desktop/apps/desktop/lapis_native_input_probe",
         "--output",
-        "/Users/kearm/lapis/build/pr-bot-round2/pr12-native-input-final.json"
+        "<checkout>/build/pr-bot-round2/pr12-native-input-final.json"
       ],
       "name": "native-final"
     },

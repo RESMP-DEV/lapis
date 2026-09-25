@@ -179,7 +179,7 @@
     }
   },
   "hash_measurement": {
-    "executable": "/Users/kearm/.local/lib/alphaheng/packages/20260918-0034-256a74f9-dirty/bin/codex",
+    "executable": "<home>/.local/lib/alphaheng/packages/20260918-0034-256a74f9-dirty/bin/codex",
     "measurement": "Qt full-file SHA-256; cache not flushed; not cold-disk or service-startup latency",
     "samples": [
       {

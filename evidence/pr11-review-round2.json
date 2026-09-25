@@ -138,21 +138,21 @@
     "cropped_selection": {
       "baseline": {
         "exit_code": 8,
-        "log": "/Users/kearm/lapis/build/pr-bot-round2/terminal-baseline-test.log"
+        "log": "<checkout>/build/pr-bot-round2/terminal-baseline-test.log"
       },
       "fixed": {
         "exit_code": 0,
-        "log": "/Users/kearm/lapis/build/pr-bot-round2/terminal-fixed-test.log"
+        "log": "<checkout>/build/pr-bot-round2/terminal-fixed-test.log"
       }
     },
     "background_category_selection": {
       "baseline": {
         "exit_code": 8,
-        "log": "/Users/kearm/lapis/build/pr-bot-round2/workspace-baseline-test.log"
+        "log": "<checkout>/build/pr-bot-round2/workspace-baseline-test.log"
       },
       "fixed": {
         "exit_code": 0,
-        "log": "/Users/kearm/lapis/build/pr-bot-round2/workspace-fixed-test.log"
+        "log": "<checkout>/build/pr-bot-round2/workspace-fixed-test.log"
       }
     },
     "non_object_json": {
@@ -189,7 +189,7 @@
         "command": [
           "build/desktop/apps/desktop/lapis_native_input_probe",
           "--output",
-          "/Users/kearm/lapis/build/pr-bot-round2/native-input-final.json"
+          "<checkout>/build/pr-bot-round2/native-input-final.json"
         ]
       },
       "sanitizer_builds": {

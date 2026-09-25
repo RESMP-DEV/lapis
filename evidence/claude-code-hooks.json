@@ -162,7 +162,7 @@
       "epoch": 2,
       "submitted": false
     },
-    "desktop_capture": "/Users/kearm/lapis/build/claude-hooks/claude-pending.png",
+    "desktop_capture": "<checkout>/build/claude-hooks/claude-pending.png",
     "question_notice": {
       "id": "call_0ad49bbef0a84770aa9bf90a",
       "thread": "6a677559-6515-4915-8bdd-bd18ad4b7a64",
