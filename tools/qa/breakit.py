@@ -61,14 +61,14 @@ SYMBOLS = {
 
 
 def resumed_pairs(processes, bin_path):
-    """Pair observed argv with the fake harness that actually received it."""
+    """Pair observed argv with the fake harness and working directory."""
     fake_bins = {f"{bin_path}/{name}" for name in FAKE_NAMES}
     seen = set()
     for row in processes:
         words = row["args"].split()
         harness = next((Path(word).name for word in words if word in fake_bins), None)
         if harness:
-            seen.update((harness, word) for word in words)
+            seen.update((harness, row.get("cwd"), word) for word in words)
     return seen
 
 
@@ -230,7 +230,6 @@ class Run:
         self.output.mkdir(parents=True, exist_ok=True)
         self.bin.mkdir(exist_ok=True)
         self.project.mkdir(exist_ok=True)
-        (self.project / "nested").mkdir(exist_ok=True)
         agent = ROOT / "tools/qa/fake_agent.py"
         for name in FAKE_NAMES:
             link = self.bin / name
@@ -311,6 +310,14 @@ class Run:
                         "args": parts[3],
                     }
                 )
+                try:
+                    rows[-1]["cwd"] = os.path.realpath(
+                        os.readlink(f"/proc/{rows[-1]['pid']}/cwd")
+                    )
+                except OSError:
+                    # ps is also used on non-Linux hosts; identity-sensitive
+                    # assertions must fail if the working directory is unknown.
+                    rows[-1]["cwd"] = None
         return rows
 
     def services(self):
@@ -624,19 +631,17 @@ class Run:
     def s_reboot_restore(self):
         """Every service and agent dies, as in a reboot; reopening restores them."""
         conversations = {}
-        for agent in self.agents():
-            record = Path(agent["endpoint"] + ".resume")
-            # Harnesses without a known resume option restart fresh.
-            if record.exists() and agent.get("harness") in (
+        initial_agents = {agent["id"]: agent for agent in self.agents()}
+        for agent in initial_agents.values():
+            path = Path(agent["endpoint"] + ".resume")
+            if path.exists() and agent.get("harness") in (
                 "kimi",
                 "grok",
                 "opencode",
                 "omp",
                 "agy",
             ):
-                conversations[agent["id"]] = json.loads(record.read_text())[
-                    "session_id"
-                ]
+                conversations[agent["id"]] = json.loads(path.read_text())
         if not conversations:
             raise Failure("no agent recorded a conversation")
         os.killpg(self.gui.pid, signal.SIGKILL)
@@ -648,23 +653,45 @@ class Run:
                 pass
         self.wait(lambda: not self.fake_agents(), 10, "every agent is gone")
         self.launch()
-        harness_by_agent = {
-            agent["id"]: agent.get("harness") for agent in self.agents()
-        }
-        expected = {
-            (harness_by_agent[agent_id], conversation)
-            for agent_id, conversation in conversations.items()
-            if agent_id in harness_by_agent
-        }
+        agents_by_id = {agent["id"]: agent for agent in self.agents()}
+        if set(agents_by_id) != set(initial_agents):
+            raise Failure("restore changed the retained agent identities")
+        expected, advisory = set(), set()
+        for agent_id, record in conversations.items():
+            agent = agents_by_id[agent_id]
+            identity = (
+                agent.get("harness"),
+                str(Path(agent["directory"]).resolve()),
+                record["session_id"],
+            )
+            if record.get("source") == "observer":
+                expected.add(identity)
+            elif record["session_id"] not in initial_agents[agent_id].get(
+                "arguments", []
+            ):
+                advisory.add(identity)
+        if len({identity[:2] for identity in expected}) != len(expected):
+            raise Failure(
+                "observer resume assertions need distinct harness/directory pairs"
+            )
+
+        def restored():
+            processes = self.fake_agents()
+            pairs = resumed_pairs(processes, self.bin)
+            return (
+                len(processes) >= self.expected_fakes()
+                and all(row.get("cwd") is not None for row in processes)
+                and expected <= pairs
+                and not advisory.intersection(pairs)
+            )
 
         self.wait(
-            lambda: expected <= resumed_pairs(self.fake_agents(), self.bin),
-            20,
-            "restored agents resume their conversations",
+            restored, 20, "restore uses only observed or explicit resume identities"
         )
         time.sleep(2.0)
         return {
             "resumed": len(expected),
+            "advisory_restarts": len(advisory),
             "screenshot": self.shot("restored-after-reboot"),
         }
 

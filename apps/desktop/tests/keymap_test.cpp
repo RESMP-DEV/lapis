@@ -580,6 +580,18 @@ void harness_arguments_are_literal_lists() {
     require(overlong_argument.harnessArguments().isEmpty(), "an overlong argument is dropped");
     require(overlong_argument.diagnostic().contains(QStringLiteral("at most 1024 characters")),
             "the diagnostic names the argument bound");
+
+    const QString empty_name =
+        write_config(dir, R"({"harnessArguments":{"":["--dropped"],"claude":["--kept"]}})");
+    KeyMap empty_key;
+    empty_key.setSourcePathForTesting(empty_name);
+    require(empty_key.load(), "an empty harness key still loads the rest of the file");
+    require(!empty_key.harnessArguments().contains(QString()) &&
+                empty_key.harnessArguments().value(QStringLiteral("claude")) ==
+                    QStringList{QStringLiteral("--kept")},
+            "an empty harness key is dropped without affecting a valid key");
+    require(empty_key.diagnostic().contains(QStringLiteral("Ignoring harnessArguments for ''")),
+            "an empty harness key is reported");
 }
 
 // The dialog builds its controls from these lists, so they must agree with the
@@ -664,20 +676,19 @@ void terminal_font_persists_and_rolls_back() {
     require(directory.isValid(), "font fixture directory");
     const QDir dir(directory.path());
     const QString path =
-        write_config(dir, R"({"retained":true,"terminalFont":{"size":16,"ligatures":false}})");
+        write_config(dir, R"({"retained":true,"terminalFont":{"size":20,"ligatures":false}})");
     KeyMap keymap;
     keymap.setSourcePathForTesting(path);
     require(keymap.load(), "font fixture loads");
     require(keymap.terminalFontFamily().isEmpty(), "font family defaults to the system font");
-    require(keymap.terminalFontSize() == lapis::desktop::kTerminalFontSizeDefault,
-            "font size defaults to 16 pixels");
+    require(keymap.terminalFontSize() == 20, "the explicit non-default font size is loaded");
 
-    require(keymap.setTerminalFontSize(20), "valid font size applies");
+    require(keymap.setTerminalFontSize(22), "valid font size applies");
     require(keymap.setTerminalFontFamily(QStringLiteral("  Test Mono  ")),
             "font family applies with surrounding space trimmed");
     require(keymap.terminalFontFamily() == QStringLiteral("Test Mono"), "trimmed family stored");
     QJsonObject font = read_config(path).value(QStringLiteral("terminalFont")).toObject();
-    require(font.value(QStringLiteral("size")).toInt() == 20, "font size written");
+    require(font.value(QStringLiteral("size")).toInt() == 22, "font size written");
     require(font.value(QStringLiteral("family")).toString() == QStringLiteral("Test Mono"),
             "font family written");
     require(!font.value(QStringLiteral("ligatures")).toBool(true),
@@ -688,17 +699,19 @@ void terminal_font_persists_and_rolls_back() {
     KeyMap restored;
     restored.setSourcePathForTesting(path);
     require(restored.load(), "saved font config reloads");
-    require(restored.terminalFontSize() == 20 &&
+    require(restored.terminalFontSize() == 22 &&
                 restored.terminalFontFamily() == QStringLiteral("Test Mono"),
             "font survives a restart");
 
-    require(!keymap.setTerminalFontSize(lapis::desktop::kTerminalFontSizeMinimum - 1) &&
-                !keymap.setTerminalFontSize(lapis::desktop::kTerminalFontSizeMaximum + 1),
-            "out-of-range font sizes are rejected");
-    require(!keymap.setTerminalFontFamily(QStringLiteral("Bad\nName")) &&
-                !keymap.setTerminalFontFamily(QString(129, QLatin1Char('M'))),
-            "unusable family names are rejected");
-    require(keymap.terminalFontSize() == 20 &&
+    require(!keymap.setTerminalFontSize(lapis::desktop::kTerminalFontSizeMinimum - 1),
+            "below-minimum font sizes are rejected");
+    require(!keymap.setTerminalFontSize(lapis::desktop::kTerminalFontSizeMaximum + 1),
+            "above-maximum font sizes are rejected");
+    require(!keymap.setTerminalFontFamily(QStringLiteral("Bad\nName")),
+            "control characters in a family name are rejected");
+    require(!keymap.setTerminalFontFamily(QString(129, QLatin1Char('M'))),
+            "an over-length family name is rejected");
+    require(keymap.terminalFontSize() == 22 &&
                 keymap.terminalFontFamily() == QStringLiteral("Test Mono"),
             "rejected font values do not change the selection");
 
@@ -709,7 +722,7 @@ void terminal_font_persists_and_rolls_back() {
     const QByteArray malformed = "{unfinished user edit";
     static_cast<void>(write_config(dir, malformed));
     require(!keymap.setTerminalFontSize(24), "font size save fails on a malformed file");
-    require(keymap.terminalFontSize() == 20, "failed font size save rolls back");
+    require(keymap.terminalFontSize() == 22, "failed font size save rolls back");
     require(!keymap.setTerminalFontFamily(QStringLiteral("Other Mono")),
             "font family save fails on a malformed file");
     require(keymap.terminalFontFamily().isEmpty(), "failed font family save rolls back");
