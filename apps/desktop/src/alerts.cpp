@@ -139,8 +139,7 @@ void Alerts::finished(SessionPreview* item) {
 
 Notifier::Notifier(Workspace& workspace, const KeyMap& config, Post post, Background background,
                    QObject* parent)
-    : QObject(parent), config_(config), post_(std::move(post)),
-      background_(std::move(background)) {
+    : QObject(parent), config_(config), post_(std::move(post)), background_(std::move(background)) {
     connect(&workspace, &Workspace::agentNeedsYou, this,
             [this](SessionPreview* item) { notify(item, true); });
     connect(&workspace, &Workspace::turnFinished, this,

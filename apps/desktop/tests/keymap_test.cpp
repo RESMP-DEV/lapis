@@ -420,8 +420,8 @@ void navigation_defaults_preserve_terminal_editing() {
         require(keymap.sequences(QString::fromLatin1(removed)).isEmpty(),
                 "the old pane actions stay retired");
     // Tiles split with a new agent and move between tiles, as in iTerm2.
-    for (const auto* tiling : {"splitRight", "splitDown", "tileLeft", "tileRight", "tileUp",
-                               "tileDown", "zoomTile"})
+    for (const auto* tiling :
+         {"splitRight", "splitDown", "tileLeft", "tileRight", "tileUp", "tileDown", "zoomTile"})
         require(!keymap.sequences(QString::fromLatin1(tiling)).isEmpty(), "tile actions have keys");
 #ifdef Q_OS_MACOS
     require(keymap.sequences(QStringLiteral("nextCategory")) ==

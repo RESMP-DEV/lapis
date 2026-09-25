@@ -18,8 +18,8 @@ struct KnownEditor {
 };
 // In order of preference when none is configured.
 constexpr std::array kEditors{
-    KnownEditor{"Cursor", "cursor"},       KnownEditor{"Visual Studio Code", "code"},
-    KnownEditor{"Zed", "zed"},             KnownEditor{"Windsurf", "windsurf"},
+    KnownEditor{"Cursor", "cursor"},     KnownEditor{"Visual Studio Code", "code"},
+    KnownEditor{"Zed", "zed"},           KnownEditor{"Windsurf", "windsurf"},
     KnownEditor{"Sublime Text", "subl"},
 };
 

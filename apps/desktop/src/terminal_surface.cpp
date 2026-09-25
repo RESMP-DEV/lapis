@@ -1203,10 +1203,10 @@ bool TerminalSurface::findText(const QString& text, bool backwards) {
     if (!document_)
         return false;
     const auto& snapshot = document_->snapshot();
-    const QPoint start = selection_anchor_
-                             ? *selection_anchor_
-                             : (backwards ? QPoint(snapshot.size.columns, snapshot.size.rows - 1)
-                                          : QPoint(-1, 0));
+    const QPoint start =
+        selection_anchor_
+            ? *selection_anchor_
+            : (backwards ? QPoint(snapshot.size.columns, snapshot.size.rows - 1) : QPoint(-1, 0));
     const auto match = terminal_find(snapshot, text, start, backwards);
     if (!match)
         return false;

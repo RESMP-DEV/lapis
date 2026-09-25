@@ -782,42 +782,18 @@ bool Workspace::placeSessions(const QStringList& ids, const QString& categoryId,
         return fail(QStringLiteral("Agent or category no longer exists."));
     const auto previous = checkpoint();
     std::vector<SessionPreview*> old_order;
+    old_order.reserve(sessions_.size());
     for (const auto& item : sessions_)
         old_order.push_back(item.get());
     std::vector<std::unique_ptr<SessionPreview>> moved;
     std::vector<std::unique_ptr<SessionPreview>> rest;
     for (auto& item : sessions_)
         (moving.contains(item->sessionId()) ? moved : rest).push_back(std::move(item));
-    // Before the index-th agent the destination keeps, or after its last one.
-    auto position = rest.size();
-    std::optional<std::size_t> last;
-    int seen = 0;
-    for (std::size_t i = 0; i < rest.size(); ++i) {
-        if (agents_.value(rest[i]->sessionId()).category != categoryId)
-            continue;
-        if (seen++ == index) {
-            position = i;
-            break;
-        }
-        last = i;
-    }
-    if (position == rest.size() && last)
-        position = *last + 1;
+    const auto position = insertionPoint(rest, categoryId, index);
     rest.insert(rest.begin() + static_cast<std::ptrdiff_t>(position),
                 std::make_move_iterator(moved.begin()), std::make_move_iterator(moved.end()));
     sessions_ = std::move(rest);
-    for (const auto& id : ids) {
-        auto& agent = agents_[id];
-        if (agent.category == categoryId)
-            continue;
-        for (auto& place : categories_) {
-            if (place.id == agent.category)
-                untile(place, id);
-            if (place.selected == id)
-                place.selected.clear();
-        }
-        agent.category = categoryId;
-    }
+    recategorize(ids, categoryId);
     restoreSelection();
     if (!save()) {
         std::vector<std::unique_ptr<SessionPreview>> restored;
@@ -833,6 +809,33 @@ bool Workspace::placeSessions(const QStringList& ids, const QString& categoryId,
     }
     changed();
     return true;
+}
+std::size_t Workspace::insertionPoint(const std::vector<std::unique_ptr<SessionPreview>>& staying,
+                                      const QString& categoryId, int index) const {
+    std::optional<std::size_t> last;
+    int seen = 0;
+    for (std::size_t i = 0; i < staying.size(); ++i) {
+        if (agents_.value(staying[i]->sessionId()).category != categoryId)
+            continue;
+        if (seen++ == index)
+            return i;
+        last = i;
+    }
+    return last ? *last + 1 : staying.size();
+}
+void Workspace::recategorize(const QStringList& ids, const QString& categoryId) {
+    for (const auto& id : ids) {
+        auto& agent = agents_[id];
+        if (agent.category == categoryId)
+            continue;
+        for (auto& place : categories_) {
+            if (place.id == agent.category)
+                untile(place, id);
+            if (place.selected == id)
+                place.selected.clear();
+        }
+        agent.category = categoryId;
+    }
 }
 bool Workspace::placeCategory(const QString& id, int index) {
     if (!mutableRegistry())
@@ -904,17 +907,7 @@ bool Workspace::discardSession(const QString& id) {
         return false;
     }
     last_kind_.remove(item);
-    // Command-Shift-T brings it back, resuming its conversation where it can.
-    if (!preview_mode_)
-        if (auto plan = restoredLaunch(closed_agent)) {
-            closed_.push_back({closed_agent.category, closed_title, closed_agent.harness,
-                               std::move(*plan),
-                               QFileInfo(closed_agent.launch.program).fileName() ==
-                                   QStringLiteral("ssh")});
-            if (closed_.size() > 10)
-                closed_.erase(closed_.begin());
-            emit closedChanged();
-        }
+    rememberClosed(closed_agent, closed_title);
     changed();
     // QML delegates can still hold the removed object during this call stack.
     retained.release()->deleteLater();
@@ -1859,6 +1852,19 @@ SessionPreview::StatusSource Workspace::statusSource(const Agent& agent) {
                ? SessionPreview::StatusSource::output
                : SessionPreview::StatusSource::observer;
 }
+// Command-Shift-T brings it back, resuming its conversation where it can.
+void Workspace::rememberClosed(const Agent& agent, const QString& title) {
+    if (preview_mode_)
+        return;
+    auto plan = restoredLaunch(agent);
+    if (!plan)
+        return;
+    closed_.push_back({agent.category, title, agent.harness, std::move(*plan),
+                       QFileInfo(agent.launch.program).fileName() == QStringLiteral("ssh")});
+    if (closed_.size() > 10)
+        closed_.erase(closed_.begin());
+    emit closedChanged();
+}
 bool Workspace::reopenAgent() {
     if (closed_.empty() || !mutableRegistry())
         return false;
@@ -1894,8 +1900,9 @@ Workspace::Category* Workspace::category(const QString& id) {
     return found == categories_.end() ? nullptr : &*found;
 }
 const Workspace::Category* Workspace::activeCategory() const {
-    const auto found = std::find_if(categories_.begin(), categories_.end(),
-                                    [&](const auto& value) { return value.id == active_category_; });
+    const auto found = std::find_if(categories_.begin(), categories_.end(), [&](const auto& value) {
+        return value.id == active_category_;
+    });
     return found == categories_.end() ? nullptr : &*found;
 }
 void Workspace::untile(Category& category, const QString& id) {
@@ -1913,7 +1920,8 @@ void Workspace::loadTiles(const QJsonArray& groups) {
         for (auto agent = agents_.cbegin(); agent != agents_.cend(); ++agent)
             if (agent->category == place->id)
                 members.insert(agent.key());
-        place->tiles = TileLayout::fromJson(group.value(QStringLiteral("tiles")).toObject(), members);
+        place->tiles =
+            TileLayout::fromJson(group.value(QStringLiteral("tiles")).toObject(), members);
         if (place->tiles.count() < 2)
             place->tiles = {};
     }
@@ -1972,8 +1980,8 @@ bool Workspace::tileSession(const QString& id, const QString& target, const QStr
     if (tiles.empty())
         tiles.place(beside, {}, TileLayout::Edge::center);
     if (!tiles.place(id, beside, *side))
-        return fail(QStringLiteral("The stage holds at most %1 agents.")
-                        .arg(TileLayout::kMaximumTiles));
+        return fail(
+            QStringLiteral("The stage holds at most %1 agents.").arg(TileLayout::kMaximumTiles));
     place->tiles = tiles.count() < 2 ? TileLayout{} : tiles;
     place->selected = id;
     active_category_ = place->id;

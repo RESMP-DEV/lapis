@@ -442,6 +442,13 @@ class Workspace final : public QObject {
     // After an agent leaves a category: off its stage, and one tile is no split.
     void untile(Category& category, const QString& id);
     void loadTiles(const QJsonArray& groups);
+    // Where agents moving to `categoryId` go among those that stay: before its
+    // index-th agent, or after its last.
+    [[nodiscard]] std::size_t
+    insertionPoint(const std::vector<std::unique_ptr<SessionPreview>>& staying,
+                   const QString& categoryId, int index) const;
+    // Agents moving into `categoryId` leave their old category's stage.
+    void recategorize(const QStringList& ids, const QString& categoryId);
     QString failed(const QString& message) {
         fail(message);
         return {};
@@ -481,6 +488,7 @@ class Workspace final : public QObject {
     };
     // Newest last; at most ten.
     std::vector<ClosedAgent> closed_;
+    void rememberClosed(const Agent& agent, const QString& title);
     [[nodiscard]] static bool serviceRunning(const QString& endpoint);
     void noteStatus(SessionPreview* item);
     QHash<const SessionPreview*, QString> last_kind_;

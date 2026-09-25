@@ -40,7 +40,8 @@ std::function<void(const QString&)>& opened_handler() {
 - (void)userNotificationCenter:(UNUserNotificationCenter*)center
        willPresentNotification:(UNNotification*)notification
          withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
-    completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionList);
+    completionHandler(UNNotificationPresentationOptionBanner |
+                      UNNotificationPresentationOptionList);
 }
 @end
 
@@ -78,7 +79,8 @@ void post_notification(const QString& id, const QString& title, const QString& b
     UNUserNotificationCenter* center = notification_center();
     if (center == nil)
         return;
-    UNMutableNotificationContent* content = [[[UNMutableNotificationContent alloc] init] autorelease];
+    UNMutableNotificationContent* content =
+        [[[UNMutableNotificationContent alloc] init] autorelease];
     content.title = title.toNSString();
     content.body = body.toNSString();
     content.userInfo = @{@"agent" : id.toNSString()};
@@ -95,8 +97,8 @@ void post_notification(const QString& id, const QString& title, const QString& b
                           }];
 }
 
-void on_notification_opened(std::function<void(const QString&)> handler) {
-    opened_handler() = std::move(handler);
+void on_notification_opened(const std::function<void(const QString&)>& handler) {
+    opened_handler() = handler;
     static_cast<void>(notification_center());
 }
 

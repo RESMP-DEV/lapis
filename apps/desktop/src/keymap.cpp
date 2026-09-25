@@ -462,7 +462,8 @@ void KeyMap::apply_defaults() {
         // Command-D does, and move between tiles.
         {QStringLiteral("splitRight"), {modifier + QStringLiteral("D")}},
         // Text size, find, and bringing back the last closed agent.
-        {QStringLiteral("textBigger"), {modifier + QStringLiteral("="), modifier + QStringLiteral("+")}},
+        {QStringLiteral("textBigger"),
+         {modifier + QStringLiteral("="), modifier + QStringLiteral("+")}},
         {QStringLiteral("textSmaller"), {modifier + QStringLiteral("-")}},
         {QStringLiteral("textReset"), {modifier + QStringLiteral("0")}},
         {QStringLiteral("find"), {modifier + QStringLiteral("F")}},

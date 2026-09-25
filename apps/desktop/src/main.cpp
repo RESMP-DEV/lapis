@@ -252,6 +252,39 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
     return options;
 }
 
+// Chimes for agents that need you, in the real workspace (the preview
+// fixtures stay silent); looking means the window is active and showing that
+// agent. A notification for the same moments while lapis is in the
+// background, clicking one brings the window to that agent. The downloaded app
+// also starts checking for updates here.
+void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
+                      std::optional<lapis::desktop::Notifier>& notifier,
+                      lapis::desktop::Workspace& workspace, lapis::desktop::KeyMap& keymap,
+                      QPointer<QQuickWindow>& shown) {
+    namespace platform = lapis::desktop::platform;
+    using lapis::desktop::Chime;
+    alerts.emplace(
+        workspace, keymap,
+        [](Chime chime) { lapis::desktop::play_sound(lapis::desktop::chime_wav(chime)); },
+        [&workspace, &shown](const lapis::desktop::SessionPreview* item) {
+            return shown && shown->isActive() && workspace.focusedSession() == item;
+        });
+    notifier.emplace(
+        workspace, keymap,
+        [](const QString& id, const QString& title, const QString& body) {
+            platform::post_notification(id, title, body);
+        },
+        [] { return QGuiApplication::applicationState() != Qt::ApplicationActive; });
+    platform::on_notification_opened([&workspace, &shown](const QString& id) {
+        if (!workspace.selectSession(id) || !shown)
+            return;
+        shown->show();
+        shown->raise();
+        shown->requestActivate();
+    });
+    platform::start_updater();
+}
+
 // At login (a LaunchAgent) or by hand: restart agents whose services are gone,
 // resuming their conversations, and wait until they answer. With --serve, then
 // host the workspace for the phone until a lapis window asks for it. Services
@@ -448,36 +481,11 @@ int main(int argc, char** argv) {
                 ? QUrl::fromLocalFile(
                       QFileInfo(parser.value(QStringLiteral("qml"))).absoluteFilePath())
                 : QUrl(QStringLiteral("qrc:/qml/Main.qml"));
-        // Chimes for agents that need you, only in the real workspace (the
-        // preview fixtures stay silent). Looking means the window is active
-        // and showing that agent.
         QPointer<QQuickWindow> shown;
         std::optional<Alerts> alerts;
-        if (!isolated)
-            alerts.emplace(
-                workspace, keymap, [](Chime chime) { play_sound(chime_wav(chime)); },
-                [&workspace, &shown](const SessionPreview* item) {
-                    return shown && shown->isActive() && workspace.focusedSession() == item;
-                });
-        // A notification for the same moments while lapis is in the
-        // background; clicking one brings the window to that agent.
         std::optional<Notifier> notifier;
-        if (!isolated) {
-            notifier.emplace(
-                workspace, keymap,
-                [](const QString& id, const QString& title, const QString& body) {
-                    platform::post_notification(id, title, body);
-                },
-                [] { return QGuiApplication::applicationState() != Qt::ApplicationActive; });
-            platform::on_notification_opened([&workspace, &shown](const QString& id) {
-                if (!workspace.selectSession(id) || !shown)
-                    return;
-                shown->show();
-                shown->raise();
-                shown->requestActivate();
-            });
-            platform::start_updater();
-        }
+        if (!isolated)
+            alert_for_agents(alerts, notifier, workspace, keymap, shown);
         DesktopActions desktop(keymap);
         AgentSearch agentSearch(&workspace);
         // Plan limits and token totals, only while the setting is on and only

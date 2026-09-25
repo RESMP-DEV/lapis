@@ -128,8 +128,9 @@ std::optional<Node> from_json(const QJsonObject& json, const QSet<QString>& know
 
 bool beside(const QRectF& from, const QRectF& to, TileLayout::Edge direction) {
     const bool across = direction == TileLayout::Edge::left || direction == TileLayout::Edge::right;
-    const qreal overlap = across ? std::min(from.bottom(), to.bottom()) - std::max(from.top(), to.top())
-                                 : std::min(from.right(), to.right()) - std::max(from.left(), to.left());
+    const qreal overlap =
+        across ? std::min(from.bottom(), to.bottom()) - std::max(from.top(), to.top())
+               : std::min(from.right(), to.right()) - std::max(from.left(), to.left());
     if (overlap <= kEpsilon)
         return false;
     switch (direction) {
@@ -209,18 +210,22 @@ bool TileLayout::place(const QString& id, const QString& target, Edge edge) {
         next.remove(id);
     else if (count() >= kMaximumTiles)
         return false;
-    auto* tile = find(*next.root_, target);
+    auto* tile = next.root_ ? find(*next.root_, target) : nullptr;
     if (tile == nullptr)
         return false;
-    const bool first = edge == Edge::left || edge == Edge::top;
-    Node existing = std::move(*tile);
+    Node split{.session = {},
+               .stacked = edge == Edge::top || edge == Edge::bottom,
+               .ratio = 0.5,
+               .children = {}};
     Node added{.session = id, .stacked = false, .ratio = 0.5, .children = {}};
-    *tile = Node{.session = {},
-                 .stacked = edge == Edge::top || edge == Edge::bottom,
-                 .ratio = 0.5,
-                 .children = {}};
-    tile->children.push_back(first ? std::move(added) : std::move(existing));
-    tile->children.push_back(first ? std::move(existing) : std::move(added));
+    if (edge == Edge::left || edge == Edge::top) {
+        split.children.push_back(std::move(added));
+        split.children.push_back(std::move(*tile));
+    } else {
+        split.children.push_back(std::move(*tile));
+        split.children.push_back(std::move(added));
+    }
+    *tile = std::move(split);
     *this = std::move(next);
     return true;
 }
@@ -280,8 +285,8 @@ std::vector<TileLayout::Divider> TileLayout::dividers(const QRectF& bounds) cons
 
 QString TileLayout::neighbor(const QString& id, Edge direction) const {
     const auto all = tiles(QRectF(0, 0, 1, 1));
-    const auto from = std::find_if(all.begin(), all.end(),
-                                   [&](const Tile& tile) { return tile.session == id; });
+    const auto from =
+        std::find_if(all.begin(), all.end(), [&](const Tile& tile) { return tile.session == id; });
     if (from == all.end() || direction == Edge::center)
         return {};
     QString best;

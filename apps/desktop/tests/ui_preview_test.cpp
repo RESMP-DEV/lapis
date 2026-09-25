@@ -896,7 +896,8 @@ void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
         pump(80);
     };
     auto* stage = item(QStringLiteral("focusedPane"));
-    auto* terminal = qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
+    auto* terminal =
+        qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
     const auto ids = strip_ids(workspace);
     CHECK(terminal != nullptr && ids.size() >= 3);
     CHECK(workspace.selectSession(ids[0]));
@@ -914,10 +915,12 @@ void check_tiles_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     // other tile draws its own agent, live and at its own size.
     CHECK(terminal->document() == workspace.session(ids[1]));
     CHECK(scene_rect(*right).contains(scene_rect(*terminal)));
-    auto* other = qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("tileTerminal_") + ids[0]));
+    auto* other = qobject_cast<lapis::desktop::TerminalSurface*>(
+        item(QStringLiteral("tileTerminal_") + ids[0]));
     CHECK(other != nullptr && other->isVisible() && other->interactive() &&
           other->document() == workspace.session(ids[0]));
-    CHECK(other->gridSize().width() > 10 && other->gridSize().width() < terminal->gridSize().width() * 2);
+    CHECK(other->gridSize().width() > 10 &&
+          other->gridSize().width() < terminal->gridSize().width() * 2);
 
     // Clicking a tile selects it; the keys move between tiles.
     click_visual(window, *other);
@@ -1023,7 +1026,8 @@ void check_find_and_text_size(QQuickWindow& window, lapis::desktop::Workspace& w
         }
         pump(60);
     };
-    auto* terminal = qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
+    auto* terminal =
+        qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
     for (const auto& value : workspace.categorySessions()) {
         auto* session = value.value<lapis::desktop::SessionPreview*>();
         if (session->title() == QStringLiteral("Codex"))

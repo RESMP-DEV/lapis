@@ -78,7 +78,8 @@ void ratios_neighbors_and_limits() {
             "the root divider moves");
     require(layout.setRatio({}, 0.99) && near(layout.tiles(kUnit)[0].rect.width(), 0.85),
             "a divider stops before a tile vanishes");
-    require(!layout.setRatio(QStringLiteral("0"), 0.5) && !layout.setRatio(QStringLiteral("9"), 0.5),
+    require(!layout.setRatio(QStringLiteral("0"), 0.5) &&
+                !layout.setRatio(QStringLiteral("9"), 0.5),
             "only splits have ratios");
     require(layout.neighbor(QStringLiteral("a"), Edge::right) == QStringLiteral("b"),
             "right of a full-height tile is the upper one, most in line");
