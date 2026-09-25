@@ -642,6 +642,12 @@ union of the relevant checks; a check satisfying two rows runs once:
 | Before a release (Mac and iPhone together) | The full Linux gate (`lapis.py linux-gui`, whose workspace suite joins a view beside the real desktop connection and types both ways) and, on the Mac, `just quality` plus `just ios-check`, whose Mac-side client stays attached through every UI test and must see and answer the phone |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; run `just quality` for shared check/config/instruction changes; no unrelated C++ rebuild |
 
+For focused iPhone UI checks, repeat `--only` to select affected methods in one
+build/run, for example `scripts/check_ios_remote.py --only testRotationWhileComposing
+--only testSendScreenToMac`. Apply the result-reuse rules below to unchanged
+adapter coverage. Simulator cleanup shuts down only the device that this run
+booted.
+
 ### Claude Code hook qualification
 
 Build with `just desktop`, then run the focused adapter cases and the disposable

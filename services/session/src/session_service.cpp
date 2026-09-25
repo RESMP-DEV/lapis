@@ -706,6 +706,13 @@ class SessionService final : public QObject {
             const auto request = wire::decode_attach(frame.payload);
             if (request.fingerprint != fingerprint_)
                 throw std::runtime_error("Launch mismatch or incompatible attachment protocol");
+            // A peer may finish authentication after stop() notified existing
+            // views. Neither join nor takeover may enter a draining session.
+            if (stopping_) {
+                send_status(incoming, wire::StatusCode::ended, "Session is stopping");
+                incoming->disconnectFromServer();
+                return;
+            }
             if ((request.mode == wire::AttachMode::reconnect && request.expected != identity_) ||
                 (request.mode == wire::AttachMode::create &&
                  request.expected.session_id != identity_.session_id)) {
@@ -1165,7 +1172,9 @@ class SessionService final : public QObject {
                     view->ready_sequence = sequence;
                     view->in_flight = true;
                 }
-            } catch (const std::exception&) {
+            } catch (const std::exception& error) {
+                qWarning().noquote()
+                    << "Snapshot unavailable for view" << view->id << ":" << error.what();
                 failed.push_back(view->id);
             }
         }

@@ -210,6 +210,8 @@ void LiveConnection::begin(wire::AttachMode mode) {
     ready_ = false;
     attempts_ = 0;
     last_sequence_ = 0;
+    shown_size_ = {};
+    claimed_over_.reset();
     attachment_.reset();
     buffer_.clear();
     invalidateHistory();
@@ -358,6 +360,10 @@ void LiveConnection::resize(session::TerminalSize size) {
     wanted_size_ = size;
     if (!ready_)
         return;
+    sendResize(size);
+}
+
+void LiveConnection::sendResize(session::TerminalSize size) {
     QByteArray bytes;
     QDataStream out(&bytes, QIODevice::WriteOnly);
     out << quint16(size.columns) << quint16(size.rows);
@@ -369,10 +375,7 @@ void LiveConnection::claimSize() {
         claimed_over_ == shown_size_)
         return;
     claimed_over_ = shown_size_;
-    QByteArray bytes;
-    QDataStream out(&bytes, QIODevice::WriteOnly);
-    out << quint16(wanted_size_.columns) << quint16(wanted_size_.rows);
-    send(wire::Kind::resize, bytes);
+    sendResize(wanted_size_);
 }
 
 void LiveConnection::setWantedSize(session::TerminalSize size) {

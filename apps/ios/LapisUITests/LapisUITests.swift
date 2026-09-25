@@ -180,6 +180,56 @@ final class LapisUITests: XCTestCase {
         app.buttons["OK"].tap()
     }
 
+    // Read the PTY itself through a fixture command, without focusing the
+    // composer merely to measure it. Each observation has a unique marker.
+    private func terminalSize(_ terminal: XCUIElement) throws -> (columns: Int, rows: Int) {
+        let environment = ProcessInfo.processInfo.environment
+        let host = try XCTUnwrap(environment["LAPIS_HOST"])
+        let identifier = try XCTUnwrap(environment["LAPIS_ECHO_ID"])
+        let marker = String(UUID().uuidString.prefix(6)).lowercased()
+        var request = URLRequest(url: try XCTUnwrap(URL(string: "http://\(host)/api/agents/\(identifier)/input")))
+        request.httpMethod = "POST"
+        request.setValue("ios", forHTTPHeaderField: "X-Lapis-Client")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["text": "size \(marker)\n"])
+        let sent = expectation(description: "query the fixture PTY grid")
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            sent.fulfill()
+        }.resume()
+        wait(for: [sent], timeout: 10)
+        waitFor(terminal, valueContaining: "grid-\(marker)")
+        let text = String(describing: terminal.value ?? "")
+        let line = try XCTUnwrap(text.components(separatedBy: "\n").last { $0.contains("grid-\(marker)") })
+        let fields = line.split(whereSeparator: \.isWhitespace)
+        XCTAssertGreaterThanOrEqual(fields.count, 3)
+        return (try XCTUnwrap(Int(fields[fields.count - 2])), try XCTUnwrap(Int(fields[fields.count - 1])))
+    }
+
+    func testRotationWhileComposing() throws {
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let terminal = openAgent("echo agent")
+        waitFor(terminal, valueContaining: "new conversation")
+        let portrait = try terminalSize(terminal)
+        let composer = app.descendants(matching: .any)["composer"]
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))
+        let covered = try terminalSize(terminal)
+        XCTAssertEqual(covered.columns, portrait.columns)
+        XCTAssertEqual(covered.rows, portrait.rows, "keyboard appearance preserves PTY rows")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let rotated = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                self.app.windows.firstMatch.frame.width > self.app.windows.firstMatch.frame.height
+            }, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [rotated], timeout: 10), .completed)
+        let landscape = try terminalSize(terminal)
+        XCTAssertGreaterThan(landscape.columns, covered.columns)
+        XCTAssertLessThan(landscape.rows, covered.rows, "rotation changes rows while composing")
+    }
+
     // The Mac stays attached while the phone uses the agent, and what either
     // types shows on both. The harness's Mac-side client answers the phone.
     func testSyncedWithTheMac() throws {

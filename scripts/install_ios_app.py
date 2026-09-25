@@ -189,12 +189,38 @@ def reachable_phone():
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as handle:
         output = Path(handle.name)
     try:
-        subprocess.run(
-            ["xcrun", "devicectl", "list", "devices", "--json-output", str(output)],
-            capture_output=True,
-            timeout=60,
-        )
-        devices = json.loads(output.read_text())["result"]["devices"]
+        try:
+            result = subprocess.run(
+                ["xcrun", "devicectl", "list", "devices", "--json-output", str(output)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise SystemExit(
+                "devicectl list devices timed out after 60 seconds"
+            ) from error
+        except OSError as error:
+            raise SystemExit(f"Could not run devicectl: {error}") from error
+        if result.returncode != 0:
+            raise SystemExit(
+                f"devicectl list devices failed:\n{result.stdout}{result.stderr}"
+            )
+        try:
+            devices = json.loads(output.read_text())["result"]["devices"]
+            if not isinstance(devices, list) or not all(
+                isinstance(device, dict)
+                and isinstance(device.get("identifier"), str)
+                and isinstance(device.get("hardwareProperties", {}), dict)
+                and isinstance(device.get("connectionProperties", {}), dict)
+                for device in devices
+            ):
+                raise ValueError("Invalid device records")
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise SystemExit(
+                "devicectl did not return a readable device list:\n"
+                f"{result.stdout}{result.stderr}"
+            ) from error
     finally:
         output.unlink(missing_ok=True)
     phones = [
@@ -203,7 +229,13 @@ def reachable_phone():
         if device.get("hardwareProperties", {}).get("deviceType") == "iPhone"
         and device.get("connectionProperties", {}).get("tunnelState") != "unavailable"
     ]
-    return phones[0]["identifier"] if len(phones) == 1 else None
+    if len(phones) > 1:
+        names = ", ".join(phone.get("name") or phone["identifier"] for phone in phones)
+        raise SystemExit(
+            f"Multiple iPhones are reachable ({names}); pass --device with one of "
+            "their identifiers."
+        )
+    return phones[0]["identifier"] if phones else None
 
 
 def main():

@@ -78,6 +78,9 @@ final class AgentSession {
     private var newerTask: Task<Void, Never>?
     private(set) var lastFrameJSON: Data?
     private var task: Task<Void, Never>?
+    private var inputTask: Task<Void, Never>?
+    private var inputQueue: [Input] = []
+    private var inputEpoch = UUID()
     private(set) var size: (columns: Int, rows: Int)?
 
     init(agent: Agent, gateway: Gateway?) {
@@ -92,7 +95,7 @@ final class AgentSession {
             state = .closed(GatewayError.invalidHost.localizedDescription, reopen: false)
             return
         }
-        task?.cancel()
+        close()
         size = (columns, rows)
         state = .connecting
         history = []
@@ -133,6 +136,10 @@ final class AgentSession {
     func close() {
         task?.cancel()
         task = nil
+        inputEpoch = UUID()
+        inputTask?.cancel()
+        inputTask = nil
+        inputQueue.removeAll()
     }
 
     static func explain(_ status: StreamStatus) -> String {
@@ -152,13 +159,30 @@ final class AgentSession {
     }
 
     func send(_ input: Input) {
-        guard let gateway else { return }
+        guard let gateway, isLive else { return }
+        guard inputQueue.count < 128 else {
+            notice = "Input is still being sent. Wait for the Mac before typing more."
+            return
+        }
+        inputQueue.append(input)
+        guard inputTask == nil else { return }
         let id = agent.id
-        Task { [weak self] in
-            do {
-                try await gateway.send(input, to: id)
-            } catch {
-                self?.notice = describe(error)
+        let epoch = inputEpoch
+        inputTask = Task { [weak self] in
+            defer {
+                if self?.inputEpoch == epoch { self?.inputTask = nil }
+            }
+            while !Task.isCancelled, let self, self.inputEpoch == epoch, !self.inputQueue.isEmpty {
+                let next = self.inputQueue.removeFirst()
+                do {
+                    // A compound paste and Enter completes before the next key.
+                    try await gateway.send(next, to: id)
+                } catch {
+                    guard !Task.isCancelled, self.inputEpoch == epoch else { return }
+                    self.inputQueue.removeAll()
+                    self.notice = describe(error)
+                    return
+                }
             }
         }
     }
@@ -238,6 +262,8 @@ final class AgentSession {
 }
 
 struct HistoryChunk: Identifiable {
+    // Page numbers can be reused by a restarted service; cache by this load.
+    let cacheID = UUID()
     let page: UInt64
     let columns: Int
     let lines: [[Run]]

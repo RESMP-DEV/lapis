@@ -126,12 +126,14 @@ struct Input: Encodable {
 
 enum GatewayError: LocalizedError {
     case invalidHost
+    case unsupportedScheme(String)
     case refused(Int, String)
     case unreadable
 
     var errorDescription: String? {
         switch self {
         case .invalidHost: "Set the Mac's Tailscale name in Settings."
+        case let .unsupportedScheme(scheme): "Unsupported gateway URL scheme: \(scheme). Use http or https."
         case let .refused(code, message): message.isEmpty ? "The Mac answered \(code)." : message
         case .unreadable: "The Mac's answer could not be read."
         }
@@ -151,7 +153,10 @@ struct Gateway {
         guard var parts = URLComponents(string: text), let name = parts.host, !name.isEmpty else {
             throw GatewayError.invalidHost
         }
-        parts.scheme = "http"
+        guard let scheme = parts.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+            throw GatewayError.unsupportedScheme(parts.scheme ?? "")
+        }
+        parts.scheme = scheme
         parts.port = parts.port ?? Gateway.defaultPort
         parts.path = ""
         guard let url = parts.url else { throw GatewayError.invalidHost }

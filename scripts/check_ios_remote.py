@@ -30,6 +30,8 @@ import tempfile
 import threading
 import time
 import uuid
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -275,9 +277,18 @@ def build_ui_tests(sdk, platform):
     )
     frameworks = runner / "Frameworks"
     frameworks.mkdir()
-    for framework in (developer / "Library/Frameworks").glob("*.framework"):
+    # Package XCTest's runtime dependencies, not every Swift Testing overlay.
+    # Some SDK overlays share bundle identifiers and cannot coexist in an app.
+    for name in ("XCTest", "XCUIAutomation", "Testing", "_Testing_Foundation"):
+        framework = developer / "Library/Frameworks" / f"{name}.framework"
         shutil.copytree(framework, frameworks / framework.name, symlinks=True)
-    for name in ("XCTestCore", "XCTAutomationSupport", "XCUnit", "XCTestSupport"):
+    for name in (
+        "XCTestCore",
+        "XCTAutomationSupport",
+        "XCUnit",
+        "XCTestSupport",
+        "ResultDataPublisher",
+    ):
         shutil.copytree(
             developer / f"Library/PrivateFrameworks/{name}.framework",
             frameworks / f"{name}.framework",
@@ -397,7 +408,9 @@ def main():
     parser.add_argument(
         "--claude", action="store_true", help="also run a real Claude Code agent"
     )
-    parser.add_argument("--only", help="one UI test method, e.g. testCodexAgent")
+    parser.add_argument(
+        "--only", action="append", help="UI test method; repeat to select several"
+    )
     args = parser.parse_args()
     if not SERVICE.exists():
         raise SystemExit(f"missing {SERVICE}; build the desktop first")
@@ -533,7 +546,19 @@ def main():
                 }
             )
         )
-        run.start(
+        # Only loopback clients are admitted in this disposable fixture. Supply
+        # status metadata without depending on the operator's Tailscale account.
+        tailscale = runtime / "tailscale-fixture"
+        tailscale.write_text(
+            f"#!{python}\n"
+            "import json, sys\n"
+            "if sys.argv[1:] != ['status', '--json']: sys.exit(1)\n"
+            "print(json.dumps({'Self': {'UserID': 1, 'TailscaleIPs': [], "
+            "'DNSName': 'simulator.invalid'}, "
+            "'User': {'1': {'LoginName': 'simulator-fixture'}}}))\n"
+        )
+        tailscale.chmod(0o700)
+        gateway = run.start(
             "gateway",
             [
                 python,
@@ -545,9 +570,32 @@ def main():
                 "--port",
                 str(PORT),
                 "--allow-local",
+                "--tailscale",
+                str(tailscale),
             ],
         )
-        time.sleep(1.5)
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{PORT}/api/agents",
+                    headers={"X-Lapis-Client": "ios"},
+                )
+                with urllib.request.urlopen(request, timeout=1) as response:
+                    listing = json.load(response)
+                if any(
+                    item["id"] == echo_id
+                    for category in listing["categories"]
+                    for item in category["agents"]
+                ):
+                    break
+            except (OSError, ValueError, KeyError):
+                pass
+            if gateway.poll() is not None or time.monotonic() >= deadline:
+                raise SystemExit(
+                    f"fixture gateway did not start; see {run.logs / 'gateway.log'}"
+                )
+            time.sleep(0.1)
         echo = next(
             item
             for item in lapis_remote.load_workspace(registry)["agents"]
@@ -605,8 +653,8 @@ def main():
             "-collect-test-diagnostics",
             "never",
         ]
-        if args.only:
-            command += ["-only-testing", f"LapisUITests/LapisUITests/{args.only}"]
+        for method in args.only or []:
+            command += ["-only-testing", f"LapisUITests/LapisUITests/{method}"]
         with (BUILD / "test.log").open("wb") as log:
             outcome = subprocess.run(
                 command,
@@ -636,7 +684,7 @@ def main():
         ]
         print("\n".join(summary[-40:]))
         mac.stop()
-        synced = not args.only or args.only == "testSyncedWithTheMac"
+        synced = not args.only or "testSyncedWithTheMac" in args.only
         print(
             f"Mac client: saw the phone {mac.saw_phone}, closed {mac.closed or 'never'}"
         )
@@ -645,13 +693,13 @@ def main():
         print(f"results {results}\nscreens {screens}")
         if mac.closed or (synced and not mac.saw_phone):
             return 1
-        if (not args.only or args.only == "testSendScreenToMac") and not captures:
+        if (not args.only or "testSendScreenToMac" in args.only) and not captures:
             return 1
         return outcome.returncode
     finally:
         run.stop()
         if booted_here:
-            simulator(["shutdown", "all"], check=False)
+            simulator(["shutdown", device["udid"]], check=False)
         shutil.rmtree(runtime, ignore_errors=True)
 
 

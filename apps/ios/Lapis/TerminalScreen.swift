@@ -112,25 +112,44 @@ struct TerminalScreen: View {
         let columns: Int
     }
 
-    private var rows: [Row] {
+    @State private var cache = HistoryCache()
+
+    // Loaded pages are immutable. Retain wrapping and accessibility text while
+    // live frames change; a width or page-set change rebuilds this view's cache.
+    private final class HistoryCache {
+        var pages: [UUID] = []
+        var width = 0
         var rows: [Row] = []
-        func add(_ line: [Run], id: String, columns: Int) {
-            let pieces = TerminalScreen.wrap(line, columns: columns, limit: fitColumns)
-            for (part, runs) in pieces.enumerated() {
-                rows.append(Row(id: "\(id).\(part)", runs: runs, columns: min(columns, fitColumns)))
+        var text = ""
+        var lastLiveText: String?
+        var accessibleText = ""
+
+        func prepare(_ history: [HistoryChunk], width: Int, liveText: String) {
+            let ids = history.map(\.cacheID)
+            if ids != pages || width != self.width {
+                pages = ids
+                self.width = width
+                rows = history.flatMap { chunk in
+                    TerminalScreen.rows(chunk.lines, columns: chunk.columns,
+                                        width: width, prefix: "h\(chunk.page)")
+                }
+                text = history.flatMap(\.lines).map { $0.map(\.text).joined() }
+                    .joined(separator: "\n")
+                lastLiveText = nil
+            }
+            if lastLiveText != liveText {
+                accessibleText = text.isEmpty ? liveText : text + "\n" + liveText
+                lastLiveText = liveText
             }
         }
-        for chunk in history {
-            for (index, line) in chunk.lines.enumerated() {
-                add(line, id: "h\(chunk.page)-\(index)", columns: chunk.columns)
+    }
+
+    private static func rows(_ lines: [[Run]], columns: Int, width: Int, prefix: String) -> [Row] {
+        lines.enumerated().flatMap { index, line in
+            wrap(line, columns: columns, limit: width).enumerated().map { part, runs in
+                Row(id: "\(prefix)-\(index).\(part)", runs: runs, columns: min(columns, width))
             }
         }
-        if let frame {
-            for (index, line) in frame.lines.enumerated() {
-                add(line, id: "live-\(index)", columns: frame.columns)
-            }
-        }
-        return rows
     }
 
     // Splits a row wider than the phone into rows of `limit` cells, the way a
@@ -175,12 +194,11 @@ struct TerminalScreen: View {
 
     private var contentWidth: CGFloat { CGFloat(fitColumns) * metrics.cellWidth + 8 }
 
-    private var accessibleText: String {
-        let earlier = history.flatMap(\.lines).map { $0.map(\.text).joined() }
-        return (earlier + [frame?.text ?? ""]).joined(separator: "\n")
-    }
-
     var body: some View {
+        let _ = cache.prepare(history, width: fitColumns, liveText: frame?.text ?? "")
+        let liveRows = frame.map {
+            Self.rows($0.lines, columns: $0.columns, width: fitColumns, prefix: "live")
+        } ?? []
         let background = frame.flatMap { Color(hex: $0.background) } ?? Theme.background
         let foreground = frame.flatMap { Color(hex: $0.foreground) } ?? .white
         ScrollView(.vertical) {
@@ -188,7 +206,11 @@ struct TerminalScreen: View {
                 if frame != nil {
                     historyEdge
                 }
-                ForEach(rows) { row in
+                ForEach(cache.rows) { row in
+                    TerminalRow(runs: row.runs, columns: row.columns, metrics: metrics,
+                                foreground: foreground, background: background)
+                }
+                ForEach(liveRows) { row in
                     TerminalRow(runs: row.runs, columns: row.columns, metrics: metrics,
                                 foreground: foreground, background: background)
                 }
@@ -207,7 +229,7 @@ struct TerminalScreen: View {
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("terminal")
         .accessibilityLabel("Agent screen")
-        .accessibilityValue(accessibleText)
+        .accessibilityValue(cache.accessibleText)
     }
 
     // Shown above the oldest loaded row: "Earlier output" while more can load.
