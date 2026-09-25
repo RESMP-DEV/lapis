@@ -40,7 +40,8 @@ if(BUILD_TESTING)
     # Closing an agent is exercised against the real session service.
     add_dependencies(lapis_workspace_tests lapis_session_service)
     add_test(NAME workspace COMMAND lapis_workspace_tests)
-    set_tests_properties(workspace PROPERTIES TIMEOUT 30)
+    # TSan process startup makes this service-lifecycle suite exceed 30 seconds.
+    set_tests_properties(workspace PROPERTIES TIMEOUT 120)
     add_executable(lapis_live_connection_tests tests/live_connection_test.cpp)
     target_link_libraries(lapis_live_connection_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME live-connection COMMAND lapis_live_connection_tests)

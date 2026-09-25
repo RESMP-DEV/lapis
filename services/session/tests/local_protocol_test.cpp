@@ -35,10 +35,11 @@ void identity_messages() {
     const auto decoded_attach = wire::decode_attach(attach);
     require(decoded_attach.mode == wire::AttachMode::reconnect &&
             decoded_attach.fingerprint == fingerprint && decoded_attach.expected == identity);
-    for (auto mode : {wire::AttachMode::discover, wire::AttachMode::create}) {
-        const wire::SessionIdentity expected = mode == wire::AttachMode::discover
-                                                   ? wire::SessionIdentity{}
-                                                   : wire::SessionIdentity{session, {}};
+    for (auto mode :
+         {wire::AttachMode::discover, wire::AttachMode::create, wire::AttachMode::join}) {
+        const wire::SessionIdentity expected = mode == wire::AttachMode::create
+                                                   ? wire::SessionIdentity{session, {}}
+                                                   : wire::SessionIdentity{};
         const QByteArray encoded =
             wire::encode_attach({.mode = mode, .fingerprint = fingerprint, .expected = expected});
         const auto decoded = wire::decode_attach(encoded);
@@ -54,6 +55,14 @@ void identity_messages() {
         static_cast<void>(wire::encode_attach(
             {.mode = wire::AttachMode::create, .fingerprint = fingerprint, .expected = identity}));
     });
+    // A join names no session: it adds a view to whichever one answers.
+    rejects([&] {
+        static_cast<void>(wire::encode_attach(
+            {.mode = wire::AttachMode::join, .fingerprint = fingerprint, .expected = identity}));
+    });
+    auto unknown_mode = attach;
+    unknown_mode[36] = char{4};
+    rejects([&] { static_cast<void>(wire::decode_attach(unknown_mode)); });
     rejects([&] { static_cast<void>(wire::decode_attach(attach + 'x')); });
     rejects([&] { static_cast<void>(wire::decode_attach(attach.chopped(1))); });
     auto bad_version = attach;

@@ -16,6 +16,9 @@ class LiveConnection final : public QObject {
     void begin(session::wire::AttachMode mode);
     bool send(session::wire::Kind kind, const QByteArray& payload);
     void resize(session::TerminalSize size);
+    // Takes the size back after another device (a joined phone) resized the
+    // agent: sends this view's size again, once per size shown.
+    void claimSize();
     void setWantedSize(session::TerminalSize size);
     void applyWantedSize();
     void requestHistory(session::wire::HistoryDirection direction, quint64 reference);
@@ -25,6 +28,7 @@ class LiveConnection final : public QObject {
     static constexpr int max_attempts = 30;
     void resetSocket();
     void connectSocket();
+    void sendResize(session::TerminalSize size);
     void receive();
     void handle(const session::wire::Frame& frame);
     void acceptHello(const session::wire::Hello& hello);
@@ -60,6 +64,8 @@ class LiveConnection final : public QObject {
     bool failed_{true};
     session::TerminalSize wanted_size_{100, 30};
     bool wanted_size_requested_{};
+    session::TerminalSize shown_size_{};
+    std::optional<session::TerminalSize> claimed_over_;
 };
 } // namespace lapis::desktop
 #endif

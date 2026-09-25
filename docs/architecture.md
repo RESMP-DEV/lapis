@@ -494,7 +494,8 @@ Implemented contract:
   must not silently present a newly launched child as the old session.
 - Every successful attachment receives a new generation. Input, paste and resize
   identify the session, service epoch and attachment generation; the service
-  rejects stale tuples. A new attachment retires the previous client's authority.
+  rejects stale tuples. A new attachment retires the previous client's authority,
+  except a join (added within v6, September 24), which adds a view beside it.
 - The client distinguishes connecting, synchronizing, ready, disconnected and
   ended/replaced states. It enables terminal input only after applying a full
   snapshot for the accepted identity. An explicit reconnect action makes bounded
@@ -1758,6 +1759,78 @@ endpoint, and their update log lives beside that endpoint. The
 operator-selected launches; fixture `WorkspaceOptions` keep updates off by
 default. Codex remains pinned, and arbitrary explicit programs do not gain an
 inferred updater command.
+
+Phone access (September 23, requested for use on the go without signing in).
+A prototype, deliberately simpler than the SSH design first proposed:
+
+- `apps/remote/lapis_remote.py` is a standard-library gateway on the Mac. It
+  reads `runtime/workspace.json` and attaches to an agent's service only while
+  the phone shows that agent, with the registry's launch fingerprint (checked
+  against the pinned `launch-spec` values). It joins (attach mode 3): the
+  service keeps the desktop attached and adds the phone as a view with its own
+  attachment tuple, first-screen acknowledgement and input; at most four views,
+  which may type, paste, press keys, resize and page history (replies are
+  routed to the attachment that asked) but not answer requests or end the
+  agent. The phone loads older pages as it scrolls within a screen of the top,
+  gathering more than a screen of rows per load since pages can be small, and
+  appends newer pages while history is shown so it stays contiguous with the
+  live screen. The desktop reattaching never retires a view. Each
+  client's last requested size is kept; a resize or typing from a client
+  applies it, like tmux's `window-size latest`, so both devices always show the
+  same screen at the size of the one in use. When the view whose size applies
+  leaves (the phone closes the agent or goes to the background), the service
+  applies the desktop's size again. The desktop also claims its size when
+  someone comes back to it without typing: the window activating, the agent
+  shown on the stage, or the pointer moving over it. It resends its size once
+  per size shown, and ignores hover events repeated at a resting pointer, which
+  Qt Quick sends as the scene changes, so a busy agent under an idle cursor
+  cannot take the size from the phone. A service started before joining existed
+  rejects the mode; the gateway then takes the agent over in discover mode (the
+  desktop card reads replaced until Reconnect agent) and tells the phone.
+  Screens go out as server-sent events of styled runs (text,
+  colours, style, starting column and width in cells, so the phone fills whole
+  rows without seams), at most one per 50 ms; input comes back as POSTed text, paste, named keys (encoded by the
+  service for the terminal's modes) and resize. The phone's grid is applied to
+  the PTY; the software keyboard covering the screen does not resize it.
+  Width changes, including rotation while composing, also update the row count.
+  Input POSTs are serialized, including compound paste/Enter requests. Closing
+  a view cancels its pending input; overload is reported after 128 queued requests.
+  Brief inactive transitions preserve the stream and loaded history; returning
+  from the background reattaches it. Immutable history pages retain their wrapped
+  rows and accessibility text until the page set or fitting width changes.
+- Admission replaces keys or pairing: the gateway binds only the Mac's
+  Tailscale address and serves a request only when `tailscale whois` gives the
+  Mac owner's login on an iOS device, or the Mac itself. The Mac's tailnet is
+  shared with other people and tagged servers; of its 64 peers on
+  September 23 none was admitted, only the Mac itself. Requests with an Origin header,
+  without `X-Lapis-Client`, or with an unknown Host are refused, so a web page
+  on the phone cannot drive an agent. Plain HTTP relies on WireGuard; the app's
+  transport exception is limited to `ts.net` names and local addresses.
+  This assumes active Tailscale on both devices and a trusted configured gateway;
+  ATS exceptions do not authenticate an arbitrary LAN endpoint. Explicit HTTPS
+  URLs retain TLS, and schemes other than HTTP/HTTPS are rejected.
+- `apps/ios` is a SwiftUI app (iOS 17+) with categories and agents, an agent
+  screen drawing the cell grid, a key bar and a message field that pastes and
+  presses Enter. Block elements and box drawing are drawn as cell shapes, as
+  terminals draw them, so logos and borders join across rows; rows wider than
+  the phone (history archived at a desktop size) wrap instead of scrolling
+  sideways. `scripts/check_ios_remote.py` compiles it and its UI tests
+  directly and runs them in a headless simulator against disposable services.
+  Its loopback fixture supplies synthetic Tailscale status metadata and checks
+  gateway readiness; it does not qualify real tailnet admission. It runs
+  with a Mac-side client attached the way the desktop is, which must see the
+  phone's typing, answer it and never be replaced;
+  The agent menu's Send screen to Mac posts a screenshot and the frame it drew
+  to `runtime/phone-captures/` (owner-only files); missing-window and encoding
+  failures use the existing notice alert. `scripts/install_ios_app.py`
+  signs a device build with the development
+  profile and installs it with `devicectl`. Both bypass Xcode's build service,
+  which deadlocked on this Mac: the kernel's pipe memory was exhausted by
+  long-running agent processes, leaving new pipes 512 bytes deep.
+- Not yet: structured requests and approvals on the phone (agents' own prompts
+  are answered through the key bar), push notifications, and restoring agents
+  without the desktop open, which needs a per-user background process; these
+  remain proposed.
 
 Observed but not changed: Linux TSan reports frees and mutexes on Qt's uninstrumented
 threads in five GUI suites, identically on the pre-merge base, so TSan remains a

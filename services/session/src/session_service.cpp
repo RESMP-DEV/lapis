@@ -29,9 +29,11 @@
 #include <exception>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 using namespace lapis::session;
@@ -162,6 +164,9 @@ class SessionService final : public QObject {
         disconnect(&timer_, nullptr, this, nullptr);
         if (client_)
             disconnect(client_, nullptr, this, nullptr);
+        for (const auto& view : views_)
+            if (view->socket)
+                disconnect(view->socket, nullptr, this, nullptr);
         for (auto* retired : retired_)
             disconnect(retired, nullptr, this, nullptr);
         for (auto* pending : pending_)
@@ -427,8 +432,6 @@ class SessionService final : public QObject {
             }
         };
         history_.received = [this](wire::HistoryReply reply) {
-            if (!client_ || !ready_ || reply.attachment != attachment_)
-                return;
             if (!history_error_.isEmpty())
                 reply.message = history_error_ + QStringLiteral(". ") + reply.message;
             send_history(reply);
@@ -532,7 +535,7 @@ class SessionService final : public QObject {
                 terminal_.feed(
                     std::string_view(pending_output_.constData(), static_cast<std::size_t>(size)));
                 pending_output_.remove(0, size);
-                dirty_ = true;
+                mark_dirty();
                 timing_.parse_end_ns = monotonic_ns();
             }
             const auto replies = terminal_.take_replies();
@@ -552,16 +555,26 @@ class SessionService final : public QObject {
         }
         processing_output_ = false;
     }
+    // History replies go to whichever client or joined view asked.
     void send_history(const wire::HistoryReply& reply) {
-        if (!client_ || !ready_ || reply.attachment != attachment_)
+        const bool to_client = client_ && ready_ && reply.attachment == attachment_;
+        const auto* view = to_client ? nullptr : view_for(reply.attachment);
+        QLocalSocket* const destination =
+            to_client ? client_.data() : (view && view->ready ? view->socket.data() : nullptr);
+        if (!destination)
             return;
+        const auto view_id = view ? view->id : 0;
         try {
             auto bytes = wire::frame(wire::Kind::history_page, wire::encode_history_reply(reply));
-            if (client_->bytesToWrite() + bytes.size() > wire::max_frame_bytes)
+            if (destination->bytesToWrite() + bytes.size() > wire::max_frame_bytes)
                 throw std::runtime_error("History response queue full");
-            if (client_->write(bytes) != bytes.size())
+            if (destination->write(bytes) != bytes.size())
                 throw std::runtime_error("History response write failed");
         } catch (const std::exception& error) {
+            if (!to_client) {
+                drop_view(view_id, wire::StatusCode::overloaded, QString::fromUtf8(error.what()));
+                return;
+            }
             send_status(client_, wire::StatusCode::overloaded, QString::fromUtf8(error.what()));
             detach_client();
         }
@@ -573,10 +586,10 @@ class SessionService final : public QObject {
         if (archive_history(true) && history_.read(pending.first, pending.second))
             pending_history_.reset();
     }
-    void request_history(const QByteArray& payload) {
+    void request_history(const wire::Attachment& requester, const QByteArray& payload) {
         const auto request = wire::decode_history_request(payload);
         if (pending_history_) {
-            send_history({attachment_,
+            send_history({requester,
                           request.request_id,
                           0,
                           QStringLiteral("History is busy; try again"),
@@ -586,7 +599,7 @@ class SessionService final : public QObject {
         // Browsing retries storage after a recoverable filesystem failure.
         history_failed_ = false;
         history_error_.clear();
-        pending_history_ = std::pair{attachment_, request};
+        pending_history_ = std::pair{requester, request};
         try_pending_history();
     }
     void finish_session(const QString& message, int exit_code, int remaining = 120) {
@@ -626,6 +639,12 @@ class SessionService final : public QObject {
         if (client_) {
             send_status(client_, wire::StatusCode::ended, message);
             client_->flush();
+        }
+        for (const auto& view : views_) {
+            if (view->socket) {
+                send_status(view->socket, wire::StatusCode::ended, message);
+                view->socket->flush();
+            }
         }
         history_.drain(
             [this, exit_code] {
@@ -687,6 +706,13 @@ class SessionService final : public QObject {
             const auto request = wire::decode_attach(frame.payload);
             if (request.fingerprint != fingerprint_)
                 throw std::runtime_error("Launch mismatch or incompatible attachment protocol");
+            // A peer may finish authentication after stop() notified existing
+            // views. Neither join nor takeover may enter a draining session.
+            if (stopping_) {
+                send_status(incoming, wire::StatusCode::ended, "Session is stopping");
+                incoming->disconnectFromServer();
+                return;
+            }
             if ((request.mode == wire::AttachMode::reconnect && request.expected != identity_) ||
                 (request.mode == wire::AttachMode::create &&
                  request.expected.session_id != identity_.session_id)) {
@@ -697,7 +723,10 @@ class SessionService final : public QObject {
             }
             pending_.remove(incoming);
             disconnect(incoming, nullptr, this, nullptr);
-            activate(incoming);
+            if (request.mode == wire::AttachMode::join)
+                join(incoming);
+            else
+                activate(incoming);
         } catch (const std::exception& error) {
             reject_attachment(incoming, QString::fromUtf8(error.what()));
         }
@@ -719,6 +748,7 @@ class SessionService final : public QObject {
             retire(client_);
         }
         client_ = incoming;
+        client_wanted_.reset();
         attention_dirty_ = true;
         if (codex_observer_ && pty_requested_ && !codex_state_->connected() &&
             codex_backend_.state() == QProcess::Running)
@@ -746,11 +776,16 @@ class SessionService final : public QObject {
         schedule();
     }
     void schedule() {
-        if (client_ && process_started_ && (!snapshot_in_flight_ || ready_) && dirty_ &&
-            !timer_.isActive() && !stopping_)
+        if (!process_started_ || stopping_ || timer_.isActive())
+            return;
+        if ((client_ && (!snapshot_in_flight_ || ready_) && dirty_) || views_due())
             timer_.start();
     }
     void publish() {
+        publish_views();
+        publish_client();
+    }
+    void publish_client() {
         if (!client_ || client_->state() != QLocalSocket::ConnectedState || !dirty_)
             return;
         if (!ready_ && snapshot_in_flight_)
@@ -898,53 +933,73 @@ class SessionService final : public QObject {
             decide_attention(control.payload);
             return;
         case wire::Kind::history_request:
-            request_history(control.payload);
+            request_history(attachment_, control.payload);
             return;
         case wire::Kind::terminate:
             end_agent(control.payload);
             return;
         case wire::Kind::text:
-            bytes = control.payload;
-            break;
-        case wire::Kind::paste: {
-            const auto encoded = terminal_.encode_paste(std::string_view(
-                control.payload.constData(), static_cast<std::size_t>(control.payload.size())));
-            bytes = QByteArray(encoded.data(), static_cast<qsizetype>(encoded.size()));
-            break;
-        }
-        case wire::Kind::key: {
-            if (control.payload.size() != 2)
-                throw std::runtime_error("Invalid key message");
-            const auto key_value = static_cast<unsigned char>(control.payload[0]);
-            if (key_value > static_cast<unsigned char>(TerminalKey::escape))
-                throw std::runtime_error("Unknown key code");
-            const auto key = static_cast<TerminalKey>(key_value);
-            const auto mods = static_cast<unsigned char>(control.payload[1]);
-            const auto encoded = terminal_.encode_key(
-                key, {(mods & 1U) != 0, (mods & 2U) != 0, (mods & 4U) != 0, (mods & 8U) != 0});
-            bytes = QByteArray(encoded.data(), static_cast<qsizetype>(encoded.size()));
-            break;
-        }
-        case wire::Kind::resize: {
-            if (control.payload.size() != 4)
-                throw std::runtime_error("Invalid resize message");
-            QDataStream in(control.payload);
-            quint16 columns{}, rows{};
-            in >> columns >> rows;
-            TerminalSize size{columns, rows};
-            if (columns == 0 || rows == 0 || quint32(columns) * rows > wire::max_cells)
-                throw std::runtime_error("Invalid terminal geometry");
-            if (harvest_offset_)
-                pending_resize_ = size;
-            else
-                apply_resize(size);
+        case wire::Kind::paste:
+        case wire::Kind::key:
+            claim_size(client_wanted_);
+            write_input(frame.kind, control.payload);
             return;
-        }
+        case wire::Kind::resize:
+            client_wanted_ = decode_size(control.payload);
+            claim_size(client_wanted_);
+            return;
         default:
             throw std::runtime_error("Unexpected client message");
         }
-        if (!pty_.writeBytes(bytes))
+    }
+    QByteArray input_bytes(wire::Kind kind, const QByteArray& payload) {
+        if (kind == wire::Kind::text)
+            return payload;
+        if (kind == wire::Kind::paste) {
+            const auto encoded = terminal_.encode_paste(
+                std::string_view(payload.constData(), static_cast<std::size_t>(payload.size())));
+            return {encoded.data(), static_cast<qsizetype>(encoded.size())};
+        }
+        if (payload.size() != 2)
+            throw std::runtime_error("Invalid key message");
+        const auto key_value = static_cast<unsigned char>(payload[0]);
+        if (key_value > static_cast<unsigned char>(TerminalKey::escape))
+            throw std::runtime_error("Unknown key code");
+        const auto mods = static_cast<unsigned char>(payload[1]);
+        const auto encoded = terminal_.encode_key(
+            static_cast<TerminalKey>(key_value),
+            {(mods & 1U) != 0, (mods & 2U) != 0, (mods & 4U) != 0, (mods & 8U) != 0});
+        return {encoded.data(), static_cast<qsizetype>(encoded.size())};
+    }
+    void write_input(wire::Kind kind, const QByteArray& payload) {
+        if (!pty_.writeBytes(input_bytes(kind, payload)))
             throw std::runtime_error("PTY input queue full");
+    }
+    static TerminalSize decode_size(const QByteArray& payload) {
+        if (payload.size() != 4)
+            throw std::runtime_error("Invalid resize message");
+        QDataStream in(payload);
+        quint16 columns{}, rows{};
+        in >> columns >> rows;
+        if (columns == 0 || rows == 0 || quint32(columns) * rows > wire::max_cells)
+            throw std::runtime_error("Invalid terminal geometry");
+        return {columns, rows};
+    }
+    void request_resize(TerminalSize size) {
+        if (harvest_offset_)
+            pending_resize_ = size;
+        else
+            apply_resize(size);
+    }
+    // Several devices can show one agent; the one that last resized or typed
+    // sets the size, as tmux does with window-size latest. `view` is 0 for
+    // the attached client.
+    void claim_size(const std::optional<TerminalSize>& wanted, quint64 view = 0) {
+        if (!wanted)
+            return;
+        size_view_ = view;
+        if (*wanted != pending_resize_.value_or(current_size_))
+            request_resize(*wanted);
     }
     // Only an explicit close from an attached client ends the agent; detaching
     // or GUI exit never does. The ordinary exit path then reports `ended`.
@@ -969,7 +1024,7 @@ class SessionService final : public QObject {
         if (!replies.empty() &&
             !pty_.writeBytes(QByteArray(replies.data(), static_cast<qsizetype>(replies.size()))))
             throw std::runtime_error("PTY reply queue overflow");
-        dirty_ = true;
+        mark_dirty();
         schedule();
     }
     void send_status(QLocalSocket* socket, wire::StatusCode code, const QString& message) const {
@@ -997,13 +1052,208 @@ class SessionService final : public QObject {
         else
             QTimer::singleShot(1000, socket, &QObject::deleteLater);
     }
+    // A view joined beside the client (AttachMode::join), such as the phone
+    // gateway. It receives screens and may type and resize, but never retires
+    // the client, and the client's reattachment never retires it.
+    struct View {
+        quint64 id{};
+        QPointer<QLocalSocket> socket;
+        wire::Attachment attachment;
+        QByteArray buffer;
+        quint64 ready_sequence{};
+        bool ready{};
+        bool in_flight{};
+        bool dirty{true};
+        std::optional<TerminalSize> wanted;
+    };
+    static constexpr std::size_t max_views = 4;
+    View* find_view(quint64 id) {
+        const auto found = std::find_if(views_.begin(), views_.end(),
+                                        [id](const auto& view) { return view->id == id; });
+        return found == views_.end() ? nullptr : found->get();
+    }
+    const View* view_for(const wire::Attachment& attachment) const {
+        const auto found = std::find_if(views_.begin(), views_.end(), [&](const auto& view) {
+            return view->attachment == attachment;
+        });
+        return found == views_.end() ? nullptr : found->get();
+    }
+    void mark_dirty() {
+        dirty_ = true;
+        for (const auto& view : views_)
+            view->dirty = true;
+    }
+    [[nodiscard]] bool views_due() const {
+        return std::any_of(views_.begin(), views_.end(), [](const auto& view) {
+            return view->socket && view->dirty && (view->ready || !view->in_flight);
+        });
+    }
+    void join(QLocalSocket* incoming) {
+        if (!process_started_ || views_.size() >= max_views ||
+            generation_ == std::numeric_limits<quint64>::max()) {
+            send_status(incoming, wire::StatusCode::overloaded,
+                        process_started_ ? QStringLiteral("Too many joined views")
+                                         : QStringLiteral("Session is starting; try again"));
+            incoming->disconnectFromServer();
+            return;
+        }
+        ++generation_;
+        auto view = std::make_unique<View>();
+        view->id = generation_;
+        view->socket = incoming;
+        view->attachment = {.identity = identity_, .generation = generation_};
+        const auto id = view->id;
+        views_.push_back(std::move(view));
+        incoming->setReadBufferSize(wire::max_frame_bytes + 4);
+        connect(incoming, &QLocalSocket::readyRead, this, [this, id] { receive_view(id); });
+        connect(incoming, &QLocalSocket::bytesWritten, this, [this] { schedule(); });
+        connect(incoming, &QLocalSocket::disconnected, this, [this, id] { drop_view(id); });
+        incoming->write(wire::frame(wire::Kind::hello,
+                                    wire::encode_hello({.attachment = views_.back()->attachment,
+                                                        .pid = quint64(pty_.processId())})));
+        QTimer::singleShot(ack_timer_.interval(), this, [this, id] {
+            if (const auto* view = find_view(id); view && !view->ready)
+                drop_view(id, wire::StatusCode::rejected,
+                          QStringLiteral("Attachment ready acknowledgement timed out"));
+        });
+        schedule();
+    }
+    void drop_view(quint64 id, std::optional<wire::StatusCode> code = std::nullopt,
+                   const QString& message = {}) {
+        const auto found = std::find_if(views_.begin(), views_.end(),
+                                        [id](const auto& view) { return view->id == id; });
+        if (found == views_.end())
+            return;
+        if (pending_history_ && (*found)->attachment == pending_history_->first)
+            pending_history_.reset();
+        const QPointer<QLocalSocket> socket = (*found)->socket;
+        views_.erase(found);
+        // A phone that leaves hands the size back to the desktop.
+        if (size_view_ == id) {
+            size_view_ = 0;
+            if (client_ && ready_ && process_started_ && !stopping_) {
+                try {
+                    claim_size(client_wanted_);
+                } catch (const std::exception& error) {
+                    qWarning().noquote() << "Size not restored:" << error.what();
+                }
+            }
+        }
+        if (!socket)
+            return;
+        disconnect(socket, nullptr, this, nullptr);
+        if (code)
+            send_status(socket, *code, message);
+        retire(socket);
+    }
+    void publish_views() {
+        std::optional<TerminalSnapshot> snapshot;
+        std::vector<quint64> failed;
+        for (const auto& view : views_) {
+            if (!view->socket || view->socket->state() != QLocalSocket::ConnectedState ||
+                !view->dirty || (!view->ready && view->in_flight) ||
+                view->socket->bytesToWrite() != 0)
+                continue;
+            try {
+                if (!snapshot)
+                    snapshot = terminal_.snapshot();
+                if (snapshot_sequence_ == std::numeric_limits<quint64>::max())
+                    throw std::overflow_error("Snapshot sequence overflow");
+                const quint64 sequence = ++snapshot_sequence_;
+                timing_.publish_ns = monotonic_ns();
+                const auto bytes =
+                    wire::frame(wire::Kind::snapshot,
+                                wire::encode_snapshot_message({.attachment = view->attachment,
+                                                               .sequence = sequence,
+                                                               .snapshot = *snapshot,
+                                                               .timing = timing_}));
+                if (view->socket->write(bytes) < 0)
+                    throw std::runtime_error("View socket write failed");
+                view->dirty = false;
+                if (!view->ready) {
+                    view->ready_sequence = sequence;
+                    view->in_flight = true;
+                }
+            } catch (const std::exception& error) {
+                qWarning().noquote()
+                    << "Snapshot unavailable for view" << view->id << ":" << error.what();
+                failed.push_back(view->id);
+            }
+        }
+        for (const auto id : failed)
+            drop_view(id, wire::StatusCode::overloaded,
+                      QStringLiteral("Snapshot unavailable for this view"));
+    }
+    void receive_view(quint64 id) {
+        auto* view = find_view(id);
+        if (!view || !view->socket || stopping_)
+            return;
+        try {
+            view->buffer += view->socket->read(wire::max_frame_bytes + 4 - view->buffer.size());
+            wire::Frame frame;
+            qsizetype consumed{};
+            for (int processed = 0; processed < 64; ++processed) {
+                if (!wire::take_frame(view->buffer, consumed, frame)) {
+                    if (consumed != 0)
+                        view->buffer.remove(0, consumed);
+                    return;
+                }
+                handle_view(*view, frame);
+                view = find_view(id);
+                if (!view || stopping_)
+                    return;
+            }
+            if (view->buffer.size() > wire::max_frame_bytes + 4)
+                throw std::runtime_error("Session input overflow");
+            if (consumed != 0)
+                view->buffer.remove(0, consumed);
+            QTimer::singleShot(0, this, [this, id] { receive_view(id); });
+        } catch (const std::exception& error) {
+            if (!stopping_)
+                drop_view(id, wire::StatusCode::rejected, QString::fromUtf8(error.what()));
+        }
+    }
+    void handle_view(View& view, const wire::Frame& frame) {
+        if (!process_started_ || stopping_)
+            throw std::runtime_error("Session is not ready for input");
+        if (frame.kind == wire::Kind::ready) {
+            const auto ready = wire::decode_ready(frame.payload);
+            if (ready.attachment != view.attachment || ready.sequence != view.ready_sequence ||
+                view.ready || !view.in_flight)
+                throw std::runtime_error("Stale or mismatched ready acknowledgement");
+            view.ready = true;
+            view.in_flight = false;
+            schedule();
+            return;
+        }
+        const auto control = wire::decode_control(frame.payload);
+        if (control.attachment != view.attachment || !view.ready)
+            throw std::runtime_error("Stale attachment or view is not ready for input");
+        if (control.payload.size() > qsizetype{64} * 1024)
+            throw std::runtime_error("Input message too large");
+        if (frame.kind == wire::Kind::resize) {
+            view.wanted = decode_size(control.payload);
+            claim_size(view.wanted, view.id);
+            return;
+        }
+        if (frame.kind == wire::Kind::history_request) {
+            request_history(view.attachment, control.payload);
+            return;
+        }
+        if (frame.kind != wire::Kind::text && frame.kind != wire::Kind::paste &&
+            frame.kind != wire::Kind::key)
+            throw std::runtime_error("A joined view may only type, resize and page history");
+        claim_size(view.wanted, view.id);
+        write_input(frame.kind, control.payload);
+    }
     void detach_client() {
         if (!client_)
             return;
         disconnect(client_, nullptr, this, nullptr);
         retire(client_);
         client_ = nullptr;
-        pending_history_.reset();
+        if (pending_history_ && pending_history_->first == attachment_)
+            pending_history_.reset();
         buffer_.clear();
         ready_ = false;
         snapshot_in_flight_ = false;
@@ -1014,6 +1264,9 @@ class SessionService final : public QObject {
     posix::PtyProcess pty_;
     QLocalServer server_;
     QPointer<QLocalSocket> client_;
+    std::optional<TerminalSize> client_wanted_;
+    quint64 size_view_{}; // the joined view whose size applies; 0 for the client
+    std::vector<std::unique_ptr<View>> views_;
     QSet<QLocalSocket*> pending_;
     QSet<QLocalSocket*> retired_;
     QByteArray fingerprint_;
