@@ -24,7 +24,7 @@ struct Agent: Decodable, Identifiable, Hashable {
     let onPhone: Bool
     // "" on this Mac; the ssh host otherwise. Older gateways send neither.
     let machine: String?
-    // "~/dev/infinity" here, "anvil:~/lapis" on another machine.
+    // "~/dev/infinity" here, "devbox:~/lapis" on another machine.
     let place: String?
 
     var location: String { place ?? directory }

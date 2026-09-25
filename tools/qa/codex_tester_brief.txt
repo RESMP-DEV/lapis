@@ -4,7 +4,7 @@ wrong or stale status, lost input, broken keyboard focus, layout problems, confu
 text, and anything that feels slow or wrong. Report what you find; do not fix code.
 
 Target: ONLY the app named "lapis-qa" at
-/Users/infatoshi/dev/lapis-qa/build/desktop/apps/desktop/lapis_desktop.app
+~/dev/lapis-qa/build/desktop/apps/desktop/lapis_desktop.app
 (get it with cua.getApp using that full path). It is a disposable test copy with its
 own data. Never interact with any other application or any other lapis copy, never
 open System Settings, never quit other apps, and never type into a terminal app.
@@ -23,7 +23,7 @@ model reacts to words in your prompt:
 - "flood": prints hundreds of lines.
 - "fail": the model returns an error.
 - anything else: a short reply after a second.
-The project folder for new agents is /Users/infatoshi/dev/lapis-qa/runtime/qa/project.
+The project folder for new agents is ~/dev/lapis-qa/runtime/qa/project.
 
 How lapis works: categories in the left sidebar hold agents; one terminal stage shows
 the selected agent; a strip of live preview cards under the stage is the navigation,

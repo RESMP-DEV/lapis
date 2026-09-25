@@ -186,11 +186,11 @@ class PlaceTests(unittest.TestCase):
         self.assertEqual(place("/bin/codex", [], "/opt/x"), ("", "/opt/x"))
         self.assertEqual(
             place(
-                "/usr/bin/ssh", ["-t", "-p", "22", "me@anvil", "cd ~/lapis && codex"]
+                "/usr/bin/ssh", ["-t", "-p", "22", "me@devbox", "cd ~/lapis && codex"]
             ),
-            ("anvil", "anvil:~/lapis"),
+            ("devbox", "devbox:~/lapis"),
         )
-        self.assertEqual(place("/usr/bin/ssh", ["tetra"]), ("tetra", "tetra:"))
+        self.assertEqual(place("/usr/bin/ssh", ["gpubox"]), ("gpubox", "gpubox:"))
 
 
 def fake_tailscale(peers):

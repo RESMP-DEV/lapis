@@ -21,7 +21,7 @@
     ]
   },
   "hosts": {
-    "anvil": "Linux 7.0.0-31-generic x86_64, 32 CPUs, Qt 6.11.2, clang 22, Xvfb + openbox + Mesa lavapipe (software Vulkan)",
+    "linux": "Linux 7.0.0-31-generic x86_64, 32 CPUs, Qt 6.11.2, clang 22, Xvfb + openbox + Mesa lavapipe (software Vulkan)",
     "mac": "macOS 26.5.1 arm64, Homebrew Qt, compile-only builds plus two Codex Computer Use sessions on an isolated copy"
   },
   "tools": {
@@ -30,35 +30,35 @@
   },
   "checks": [
     {
-      "name": "full desktop gate on anvil (linux-gui: build, 21 CTest suites, clang-tidy, format, cppcheck)",
+      "name": "full desktop gate on the Linux test host (linux-gui: build, 21 CTest suites, clang-tidy, format, cppcheck)",
       "tree": "93ff318",
       "result": "54/54 checks passed"
     },
     {
-      "name": "desktop ASan on anvil, changed and lifecycle suites",
+      "name": "desktop ASan on the Linux test host, changed and lifecycle suites",
       "tree": "0a646cd",
       "result": "10/10 passed (terminal-input, workspace, keymap, ui-preview, window-state, appearance-input, live-connection, local-protocol, pty-process, claude-observer)"
     },
     {
-      "name": "desktop ASan on anvil after the Codex label fix",
+      "name": "desktop ASan on the Linux test host after the Codex label fix",
       "tree": "93ff318",
       "result": "4/4 passed (codex-observer, workspace, terminal-input, ui-preview)"
     },
     {
-      "name": "desktop ASan on anvil, all 21 suites",
+      "name": "desktop ASan on the Linux test host, all 21 suites",
       "tree": "6df2196",
       "result": "21/21 passed"
     },
     {
-      "name": "desktop TSan on anvil, all 21 suites",
+      "name": "desktop TSan on the Linux test host, all 21 suites",
       "tree": "6df2196",
       "result": "15/21 passed; history-store, window-state, ui-preview, appearance-input, terminal-input and terminal-render report races on Qt's uninstrumented threads. The pre-merge base 79be97a fails the same five pre-existing suites with the same signatures (window-state did not exist there). TSan remains a macOS qualification."
     },
     {
-      "name": "ui-check and cli-check on anvil",
+      "name": "ui-check and cli-check on the Linux test host",
       "tree": "0a646cd",
       "result": "both passed; cli-check 15/15 cases",
-      "note": "cli-check needs umask 022 and non-group-writable checkout directories on anvil; with the default umask 002 every service refuses its endpoint path."
+      "note": "cli-check needs umask 022 and non-group-writable checkout directories on the Linux test host; with the default umask 002 every service refuses its endpoint path."
     },
     {
       "name": "quality (ruff, format, unit tests) on macOS",
@@ -86,7 +86,7 @@
       "service_kill",
       "quit_restore"
     ],
-    "final_run": "16/16 scenarios passed on 0a646cd with no GUI warnings (build/qa/final4/receipt.json on anvil)",
+    "final_run": "16/16 scenarios passed on 0a646cd with no GUI warnings (build/qa/final4/receipt.json on the Linux test host)",
     "observations": [
       "close_hung: an agent ignoring SIGHUP and SIGTERM ended 3.9 s after Ctrl+Shift+W (SIGKILL at 3 s)",
       "flood_while_typing: 32 characters typed while a neighbour printed 20000 lines were delivered intact",
@@ -116,7 +116,7 @@
     },
     "gui_cpu_lifetime_percent_end": 197,
     "services_cpu_lifetime_percent_end": 3.2,
-    "note": "Memory plateaued after warm-up. CPU is lavapipe software rendering on anvil and says nothing about Mac GPU cost; profile the snapshot path before drawing conclusions."
+    "note": "Memory plateaued after warm-up. CPU is lavapipe software rendering on the Linux test host and says nothing about Mac GPU cost; profile the snapshot path before drawing conclusions."
   },
   "codex_computer_use": {
     "sessions": 2,
@@ -138,22 +138,22 @@
     "Native macOS keyboard, IME, selection, wheel, link opening, Dock badge and bounce were built and compiled on the Mac but exercised only through Qt tests and the Linux harness",
     "Wheel history shows the service's archived pages; after a fast flood a page can hold a single row, so each step shows a sliver rather than continuous scrollback",
     "Hebrew order and emoji skin-tone modifiers render per cell (known cross-cell shaping gap)",
-    "anvil timing and CPU figures are software-rendered",
-    "The tracked-config unit test reads HEAD:lapis.json and fails in the anvil checkout, whose HEAD is the old base commit"
+    "Linux timing and CPU figures are software-rendered",
+    "The tracked-config unit test reads HEAD:lapis.json and fails in the Linux checkout, whose HEAD is the old base commit"
   ],
   "session_restore": {
     "recorded_at": "2026-09-23T22:25:00Z",
     "checks": [
       "agent-checkpoint suite: sequences split across reads, both terminators, invalid base64, remote host, option-like identity, oversized sequence, private record files",
       "workspace suite: restore off by default; recorded conversation replaces an old resume pair and keeps user flags; unknown resume option restarts fresh; another CLI's conversation is ignored; restored agents run under new services",
-      "break-it reboot_restore on anvil: GUI, services and agents killed, reopened; 4 of 4 agents with a resume option resumed their recorded conversations (17/17 scenarios, no GUI warnings)",
+      "break-it reboot_restore on the Linux test host: GUI, services and agents killed, reopened; 4 of 4 agents with a resume option resumed their recorded conversations (17/17 scenarios, no GUI warnings)",
       "headless real binaries on macOS against the fake model: Claude Code 2.1.280 recorded its session from the iterm-agent-checkpoint hook sequence and `--resume` showed the earlier exchange; Codex 0.155.1 recorded its thread from the observer and `codex resume` showed the earlier prompt",
       "launch-spec suite pins terminal, Codex and Claude launch fingerprints to known SHA-256 values so a new build reattaches to services started by an older one",
       "GUI from an older build quit and a newer build opened on macOS: running agents reattached to the same processes",
       "Codex recovery without a record on macOS: real Codex 0.155.1 turn against the fake model, record deleted, desktop reopened, the thread recovered from the app-server's open rollout matched the original",
       "workspace suite: Restart agent refuses a running agent and restarts an ended one in its card with a new service",
-      "ASan on anvil: agent-checkpoint, workspace, launch-spec, terminal-input and claude-observer suites passed",
-      "full anvil gate 56/56"
+      "ASan on the Linux test host: agent-checkpoint, workspace, launch-spec, terminal-input and claude-observer suites passed",
+      "full Linux gate 56/56"
     ],
     "limitations": [
       "Restore runs when lapis opens; nothing relaunches lapis itself after a reboot",

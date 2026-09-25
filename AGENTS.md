@@ -114,17 +114,16 @@ Quality/maintenance tasks do not authorize feature wiring or resuming a tabled
 milestone. Review findings must distinguish defects from optional preferences;
 keep cleanup scoped and preserve other contributors' changes.
 
-Default test execution belongs on anvil, the Linux test host. Do not open test
+Default test execution belongs on the Linux test host. Do not open test
 windows, post keyboard events, or change input sources on the user's Mac during
 ordinary development. A necessary macOS-specific acceptance pass must be explicitly
 scheduled with the user. Linux or headless results do not replace Apple-specific
 input/IME qualification. Until remote access and dependencies are verified,
 report testing as blocked rather than silently falling back to Mac GUI tests.
 
-The verified anvil checkout is `/home/infatoshi/lapis`; from the Mac, use
-`ssh anvil` (reverified September 22). The older `ssh -J tetra anvil-lan` route
-can fail while direct access still works; do not infer host failure from it. Run
-`uv run --no-project python scripts/lapis.py linux-gui` there for the full
+The Linux test host's ssh name, route and checkout path are machine-local and
+are not recorded in this public repository; keep them in your own agent notes.
+Run `uv run --no-project python scripts/lapis.py linux-gui` in that checkout for the full
 software-rendered GUI check, or supply focused command arguments after `linux-gui`.
 The wrapper creates its own virtual display and window manager and does not use
 the shared physical GPU. Keep native GPU qualification separate.
@@ -237,7 +236,9 @@ vulnerability clearance.
 
 Keep reproducible scripts and sanitized receipts in the repository, generated
 builds/logs under ignored `build/`, and local runtime state under ignored
-`runtime/`. Never commit credentials, private transcripts, or raw user prompts.
+`runtime/`. Never commit credentials, private transcripts, or raw user prompts,
+nor machine identities: host and device names, network addresses, account IDs
+and usernames in paths. Sweep each diff, commit message and PR text for them.
 Keep `.sindexer/` in the root `.gitignore`. Preserve the instruction symlink.
 
 ## Completion and review
