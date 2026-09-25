@@ -7,6 +7,7 @@ import io
 import json
 import importlib
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -59,6 +60,42 @@ def load_breakit_with_xlib_stubs():
 
 
 class SoakTests(unittest.TestCase):
+    def test_cleanup_restores_original_files_and_allows_repeated_runs(self):
+        breakit = load_breakit_with_xlib_stubs()
+        for keep in (False, True):
+            with self.subTest(keep=keep), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                agent = root / "tools/qa/fake_agent.py"
+                agent.parent.mkdir(parents=True)
+                agent.write_text("fixture")
+                config, registry = root / "config.json", root / "workspace.json"
+                if keep:
+                    config.write_bytes(b"original config")
+                    registry.write_bytes(b"original registry")
+                with (
+                    patch.object(breakit, "ROOT", root),
+                    patch.object(breakit, "CONFIG", config),
+                    patch.object(breakit, "REGISTRY", registry),
+                    patch.object(breakit, "Keyboard"),
+                ):
+                    run = breakit.Run(root / "output", keep)
+                    run.services = lambda: []
+                    run.fake_agents = lambda: []
+                    for _ in range(2):
+                        run.prepare()
+                        config.write_bytes(b"changed config")
+                        registry.write_bytes(b"changed registry")
+                        run.cleanup()
+                        run.cleanup()  # Idempotent; never deletes restored bytes.
+                        if keep:
+                            self.assertEqual(config.read_bytes(), b"original config")
+                            self.assertEqual(
+                                registry.read_bytes(), b"original registry"
+                            )
+                        else:
+                            self.assertFalse(config.exists())
+                            self.assertFalse(registry.exists())
+
     def test_empty_sample_window_fails_instead_of_indexing(self):
         breakit = load_breakit_with_xlib_stubs()
         run = breakit.Run.__new__(breakit.Run)

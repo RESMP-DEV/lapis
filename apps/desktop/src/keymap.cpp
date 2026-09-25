@@ -991,6 +991,10 @@ bool KeyMap::persist() {
     root.insert(QStringLiteral("density"), densityName());
     root.insert(QStringLiteral("sidebarVisible"), sidebar_visible_);
     root.insert(QStringLiteral("previewsVisible"), previews_visible_);
+    // A malformed hand-written value must survive an unrelated appearance save.
+    if (root.contains(QStringLiteral("terminalFont")) &&
+        !root.value(QStringLiteral("terminalFont")).isObject())
+        return fail(QStringLiteral("terminalFont must be an object; left unchanged"));
     // Merge into any existing object so unrelated hand-written keys survive.
     QJsonObject font = root.value(QStringLiteral("terminalFont")).toObject();
     font.insert(QStringLiteral("size"), terminal_font_size_);

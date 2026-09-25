@@ -743,6 +743,19 @@ void terminal_font_persists_and_rolls_back() {
     require(raw.readAll() == malformed, "failed font save preserves malformed bytes");
     raw.close();
 
+    for (const auto* value : {"null", "42", "[1,2,3]", "\"system mono\""}) {
+        const QByteArray contents = QByteArray("{\"terminalFont\":") + value + "}";
+        static_cast<void>(write_config(dir, contents));
+        const bool previous = keymap.sidebarVisible();
+        require(!keymap.setSidebarVisible(!previous) && keymap.sidebarVisible() == previous,
+                "appearance save rolls back instead of replacing a malformed font value");
+        require(keymap.diagnostic().contains(QStringLiteral("terminalFont must be an object")),
+                "malformed font save explains the rejected update");
+        require(raw.open(QIODevice::ReadOnly), "read malformed font value");
+        require(raw.readAll() == contents, "malformed font value remains byte-for-byte intact");
+        raw.close();
+    }
+
     const QString invalid =
         write_config(dir, R"({"terminalFont":{"family":"Tab\tName","size":16.5}})");
     KeyMap fallback;
