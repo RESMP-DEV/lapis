@@ -1015,7 +1015,8 @@ void updaterLifecycle() {
             "echo started >> \"$root/starts\"\n"
             "echo started\n"
             "while read -r line; do [ \"$line\" = done ] && exit 0; done\n");
-        fixture.options.updateTimeoutMs = destroy ? 30000 : 300;
+        // Sanitizer-instrumented fork/exec and guard setup can take seconds.
+        fixture.options.updateTimeoutMs = destroy ? 30000 : 5000;
         auto workspace = std::make_unique<Workspace>(WorkspaceMode::live, fixture.options);
         fixture.create(*workspace);
         auto* agent = workspace->focusedSession();
@@ -1024,7 +1025,7 @@ void updaterLifecycle() {
             require(!workspace->restartAgent(id), "repeated restart while queued is rejected");
         require(!agent->live(), "queued restarts never create an early service");
         require(waitFor([&] { return QFileInfo::exists(fixture.root.filePath("bin/updater-pid")); },
-                        2000),
+                        10000),
                 "updater and descendant acknowledge startup");
         const auto leader = fixture.read("bin/updater-pid").trimmed().toLongLong();
         const auto child = fixture.read("bin/descendant-pid").trimmed().toLongLong();
@@ -1032,10 +1033,10 @@ void updaterLifecycle() {
         if (destroy) {
             workspace.reset();
         } else {
-            require(waitFor([agent] { return agent->inputReady(); }, 10000),
+            require(waitFor([agent] { return agent->inputReady(); }, 20000),
                     "timeout releases exactly one launch after updater exit");
             require(waitFor([&] { return QFileInfo::exists(fixture.root.filePath("bin/starts")); },
-                            2000),
+                            10000),
                     "new agent acknowledges execution");
             require(fixture.read("bin/starts") == "started\n", "queued agent starts once");
             require(!QFileInfo::exists(fixture.root.filePath("bin/overlap")),
@@ -1053,7 +1054,7 @@ void updaterLifecycle() {
                         return ::kill(static_cast<pid_t>(leader), 0) != 0 &&
                                ::kill(static_cast<pid_t>(child), 0) != 0;
                     },
-                    2000),
+                    10000),
                 "timeout and destruction stop both owned updater processes");
 #endif
     }
@@ -1071,7 +1072,7 @@ void updaterOutputIsDrainedWithABoundedTail() {
     Workspace workspace(WorkspaceMode::live, fixture.options);
     fixture.create(workspace);
     auto* agent = workspace.focusedSession();
-    require(waitFor([agent] { return agent->inputReady(); }, 10000),
+    require(waitFor([agent] { return agent->inputReady(); }, 20000),
             "high-volume updater completes before agent launch");
     const auto logged = fixture.read("harness-updates.log");
     require(logged.contains("tail-marker") && logged.size() < 2048,
@@ -1086,9 +1087,9 @@ void failedUpdaterStartClearsTheQueue() {
     Workspace workspace(WorkspaceMode::live, fixture.options);
     fixture.create(workspace);
     auto* agent = workspace.focusedSession();
-    require(
-        waitFor([agent] { return agent->statusLabel() != QStringLiteral("Updating Grok…"); }, 2000),
-        "FailedToStart releases the queue");
+    require(waitFor([agent] { return agent->statusLabel() != QStringLiteral("Updating Grok…"); },
+                    10000),
+            "FailedToStart releases the queue");
     require(fixture.read("harness-updates.log").contains("grok update: could not start"),
             "failed start is logged without waiting for finished");
 }
