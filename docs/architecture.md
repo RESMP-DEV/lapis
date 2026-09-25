@@ -1822,6 +1822,7 @@ A prototype, deliberately simpler than the SSH design first proposed:
   rows without seams), at most one per 50 ms; input comes back as POSTed text, paste, named keys (encoded by the
   service for the terminal's modes) and resize. The phone's grid is applied to
   the PTY; the software keyboard covering the screen does not resize it.
+  Width changes, including rotation while composing, also update the row count.
 - Admission replaces keys or pairing: the gateway binds only the Mac's
   Tailscale address and serves a request only when `tailscale whois` gives the
   Mac owner's login on an iOS device, or the Mac itself. The Mac's tailnet is
@@ -1830,6 +1831,9 @@ A prototype, deliberately simpler than the SSH design first proposed:
   without `X-Lapis-Client`, or with an unknown Host are refused, so a web page
   on the phone cannot drive an agent. Plain HTTP relies on WireGuard; the app's
   transport exception is limited to `ts.net` names and local addresses.
+  This assumes active Tailscale on both devices and a trusted configured gateway;
+  ATS exceptions do not authenticate an arbitrary LAN endpoint. Explicit HTTPS
+  URLs retain TLS, and schemes other than HTTP/HTTPS are rejected.
 - `apps/ios` is a SwiftUI app (iOS 17+) with categories and agents, an agent
   screen drawing the cell grid, a key bar and a message field that pastes and
   presses Enter. Block elements and box drawing are drawn as cell shapes, as
@@ -1840,7 +1844,8 @@ A prototype, deliberately simpler than the SSH design first proposed:
   with a Mac-side client attached the way the desktop is, which must see the
   phone's typing, answer it and never be replaced;
   The agent menu's Send screen to Mac posts a screenshot and the frame it drew
-  to `runtime/phone-captures/` (owner-only files). `scripts/install_ios_app.py`
+  to `runtime/phone-captures/` (owner-only files); missing-window and encoding
+  failures use the existing notice alert. `scripts/install_ios_app.py`
   signs a device build with the development
   profile and installs it with `devicectl`. Both bypass Xcode's build service,
   which deadlocked on this Mac: the kernel's pipe memory was exhausted by

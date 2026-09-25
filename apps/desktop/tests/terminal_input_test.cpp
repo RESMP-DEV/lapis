@@ -361,7 +361,6 @@ void input_contract(bool background) {
     require(!surface.inputMethodQuery(Qt::ImEnabled).toBool(),
             "Disconnected terminal retained IME ownership");
 }
-// Links are found across the rows they wrap onto, without sentence punctuation.
 // A joined phone may resize the agent. Coming back to this window takes the
 // stage's size back: moving the pointer over the terminal, activating the
 // window, or showing the agent on the stage. A hover repeated at a resting
@@ -419,6 +418,7 @@ void size_returns_to_this_window() {
     require(resize_frames(peer) == claim, "Showing the agent on the stage did not claim the size");
 }
 
+// Links are found across the rows they wrap onto, without sentence punctuation.
 void links_follow_wrapped_rows() {
     lapis::session::Terminal terminal({20, 3});
     terminal.feed("see https://example.com/a_very_long/path. ok");

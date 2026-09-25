@@ -111,6 +111,23 @@ class SnapshotTests(unittest.TestCase):
         )
         self.assertEqual(frame["cursor"], {"x": 1, "y": 1, "visible": True})
 
+    def test_cursor_on_a_wide_tail_keeps_the_two_cell_glyph(self):
+        payload = snapshot(
+            3,
+            1,
+            [cell("漢", kind=1), cell("", kind=2), cell("x")],
+            cursor=(1, 0),
+        )
+        frame = remote.render_snapshot(payload)
+        self.assertEqual(
+            frame["lines"][0],
+            [
+                ["漢", None, None, 0, 0, 2],
+                ["", None, None, remote.CURSOR, 1, 1],
+                ["x", None, None, 0, 2, 1],
+            ],
+        )
+
     def test_history_pages_hide_the_cursor(self):
         payload = snapshot(2, 1, [cell("a"), cell("b")], cursor=(0, 0))
         self.assertEqual(
@@ -124,6 +141,32 @@ class SnapshotTests(unittest.TestCase):
         for broken in (payload[:-1], payload[:100], payload + b"\0"):
             with self.assertRaises(remote.GatewayError):
                 remote.render_snapshot(broken)
+
+    def test_invalid_grapheme_points_are_refused(self):
+        grapheme_offset = remote.POOL_OFFSET + 4
+        surrogate = bytearray(snapshot(1, 1, [cell("\ud800")]))
+        distant = bytearray(snapshot(1, 1, [cell("a")]))
+        struct.pack_into(">I", distant, grapheme_offset, 0x110000)
+        for payload in (surrogate, distant):
+            with self.subTest(
+                point=struct.unpack_from(">I", payload, grapheme_offset)[0]
+            ):
+                with self.assertRaises(remote.GatewayError):
+                    remote.render_snapshot(payload)
+
+
+class ResizeTests(unittest.TestCase):
+    def test_resize_refuses_the_service_cell_limit(self):
+        sent = []
+
+        class Session:
+            def send(self, kind, payload):
+                sent.append((kind, payload))
+
+        with self.assertRaises(remote.GatewayError):
+            remote.WireSession.resize(Session(), 182, 181)
+        remote.WireSession.resize(Session(), 500, 65)
+        self.assertEqual(len(sent), 1)
 
 
 class IdentityTests(unittest.TestCase):
@@ -268,7 +311,11 @@ class Server:
     def __init__(self, test, registry_text, runtime=None, **gateway):
         self.test = test
         self.gateway = gateway
-        self.directory = runtime or Path(tempfile.mkdtemp(prefix="lr-", dir="/tmp"))
+        if runtime is None:
+            self.directory = Path(tempfile.mkdtemp(prefix="lr-", dir="/tmp"))
+            self.test.addCleanup(shutil.rmtree, self.directory, True)
+        else:
+            self.directory = runtime
         self.registry = self.directory / "workspace.json"
         self.registry.write_text(registry_text)
 

@@ -67,6 +67,7 @@ PALETTE_OFFSET = 61
 POOL_OFFSET = 1085
 CELL = struct.Struct(">IIBBIBIBIBH")  # 27 bytes, local_protocol.cpp
 WIDE_TAIL, WRAP_SPACER = 2, 3
+MAX_CELLS = 32768  # wire::max_cells
 
 # TerminalKey (services/session/include/lapis/session/terminal.hpp).
 KEYS = {
@@ -916,6 +917,10 @@ def render_snapshot(payload, show_cursor=True):
     offset = POOL_OFFSET + 4
     require(len(payload) >= offset + 4 * count + 4, "Truncated grapheme pool")
     points = struct.unpack_from(f">{count}I", payload, offset)
+    require(
+        all(point <= 0x10FFFF and not 0xD800 <= point <= 0xDFFF for point in points),
+        "Invalid grapheme codepoint",
+    )
     offset += 4 * count
     cells = struct.unpack_from(">I", payload, offset)[0]
     offset += 4
@@ -930,6 +935,11 @@ def render_snapshot(payload, show_cursor=True):
         column, row = index % columns, index // columns
         if kind == WIDE_TAIL and current is not None:
             current[3] += 1
+            if cursor == (column, row):
+                foreground, background, flags = current[1]
+                line.append(run(*current))
+                line.append(["", foreground, background, flags | CURSOR, column, 1])
+                current = None
         elif kind != WIDE_TAIL:
             text = (
                 "".join(chr(point) for point in points[start : start + length])
@@ -1135,7 +1145,10 @@ class WireSession:
             waiter[0].set()
 
     def resize(self, columns, rows):
-        require(10 <= columns <= 500 and 3 <= rows <= 300, "Terminal size out of range")
+        require(
+            10 <= columns <= 500 and 3 <= rows <= 300 and columns * rows <= MAX_CELLS,
+            "Terminal size out of range",
+        )
         self.send(RESIZE, struct.pack(">HH", columns, rows))
 
     def close(self):
@@ -1712,6 +1725,11 @@ class Handler(BaseHTTPRequestHandler):
                 reply = session.request_history(
                     max(0, int(query.get("before", ["0"])[0]))
                 )
+            page = (
+                render_snapshot(reply["snapshot"], show_cursor=False)
+                if reply["snapshot"]
+                else None
+            )
         except (ValueError, GatewayError, OSError) as error:
             self.fail(HTTPStatus.BAD_GATEWAY, f"History unavailable: {error}")
             return
@@ -1721,8 +1739,7 @@ class Handler(BaseHTTPRequestHandler):
             "end": reply["page"] == 0 and "No more" in reply["message"],
             "busy": reply["page"] == 0 and "busy" in reply["message"],
         }
-        if reply["snapshot"]:
-            page = render_snapshot(reply["snapshot"], show_cursor=False)
+        if page is not None:
             body.update({"columns": page["columns"], "lines": page["lines"]})
         self.log_message(
             "history page %s, %s rows", body["page"], len(body.get("lines", []))

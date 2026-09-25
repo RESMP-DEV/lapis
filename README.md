@@ -318,6 +318,10 @@ The iPhone app (`apps/ios`) talks to a small gateway on the Mac
 the gateway listens only on the Mac's Tailscale address and serves a request
 only when `tailscale whois` names the Mac owner's login on an iOS device. The
 phone must be signed in to Tailscale with the same account as the Mac.
+Keep Tailscale active on both devices when using HTTP; its WireGuard connection
+provides transport encryption. The configured gateway address is trusted input,
+and arbitrary LAN hosts are outside this transport contract. An explicit HTTPS
+URL keeps HTTPS, and unsupported URL schemes are rejected.
 
 Keep the gateway running at login with
 `uv run --no-project python apps/remote/launch_agent.py install` (`status`,
@@ -336,6 +340,9 @@ that pastes and presses Enter; dictation works there. Scrolling up loads the
 agent's earlier output from the service's archived history. **Send screen to
 Mac** in the agent's menu saves a screenshot and the exact screen data under
 `runtime/phone-captures/` for debugging what the phone drew. The phone
+reports capture failures in the same alert used for delivery results. Rotation
+updates the terminal grid while composing; keyboard appearance alone keeps its
+row count. The phone
 joins the agent beside the desktop: both show the same screen, either can type,
 and the terminal takes the size of the device in use. Opening the agent on the
 phone gives it the phone's size; closing it or locking the phone, activating the

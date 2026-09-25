@@ -28,6 +28,7 @@ class LiveConnection final : public QObject {
     static constexpr int max_attempts = 30;
     void resetSocket();
     void connectSocket();
+    void sendResize(session::TerminalSize size);
     void receive();
     void handle(const session::wire::Frame& frame);
     void acceptHello(const session::wire::Hello& hello);

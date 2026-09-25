@@ -5,6 +5,7 @@ struct AgentView: View {
     @State private var session: AgentSession
     @State private var draft = ""
     @State private var keyboardShown = false
+    @State private var backgrounded = false
     @FocusState private var composing: Bool
     @AppStorage("terminalFontSize") private var fontSize = 12.0
     @Environment(\.scenePhase) private var scenePhase
@@ -60,8 +61,11 @@ struct AgentView: View {
         .onChange(of: scenePhase) { _, phase in
             // Leave the agent while in the background; pick it up again on return.
             if phase == .background {
+                backgrounded = true
                 session.close()
-            } else if phase == .active, let size = session.size {
+            } else if phase == .active, backgrounded {
+                backgrounded = false
+                guard let size = session.size else { return }
                 if case .closed(_, reopen: false) = session.state { return }
                 session.open(columns: size.columns, rows: size.rows)
             }
@@ -85,14 +89,23 @@ struct AgentView: View {
     // rendering problem can be inspected (runtime/phone-captures).
     private func sendScreen() async {
         try? await Task.sleep(for: .milliseconds(450))  // let the menu close
-        guard let gateway = session.gateway,
-              let window = UIApplication.shared.connectedScenes
-                  .compactMap({ $0 as? UIWindowScene }).flatMap(\.windows).first(where: \.isKeyWindow)
-        else { return }
+        guard let gateway = session.gateway else {
+            session.notice = GatewayError.invalidHost.localizedDescription
+            return
+        }
+        guard let window = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).flatMap(\.windows).first(where: \.isKeyWindow)
+        else {
+            session.notice = "No active window is available to capture."
+            return
+        }
         let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
         }
-        guard let png = image.pngData() else { return }
+        guard let png = image.pngData() else {
+            session.notice = "The screen could not be captured."
+            return
+        }
         var body: [String: Any] = [
             "png": png.base64EncodedString(),
             "agent": session.agent.id,
@@ -124,11 +137,13 @@ struct AgentView: View {
             session.open(columns: grid.columns, rows: grid.rows)
             return
         }
-        // Focus comes before the keyboard's notification, so either one means
-        // the keyboard is (about to be) up and the height change is not real.
-        let keyboard = keyboardShown || composing
-        if force || grid.columns != current.columns || (!keyboard && grid.rows != current.rows) {
-            session.resize(columns: grid.columns, rows: keyboard ? current.rows : grid.rows)
+        // Focus can precede the keyboard notification, so an unchanged width
+        // with the composer active is a keyboard-only height change. Rotation
+        // and split-layout changes move the width: fit rows even while the
+        // keyboard remains shown.
+        let keyboardOnly = (keyboardShown || composing) && grid.columns == current.columns
+        if force || grid.columns != current.columns || (!keyboardOnly && grid.rows != current.rows) {
+            session.resize(columns: grid.columns, rows: keyboardOnly ? current.rows : grid.rows)
         }
     }
 

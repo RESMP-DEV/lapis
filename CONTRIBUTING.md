@@ -685,6 +685,12 @@ union of the relevant checks; a check satisfying two rows runs once:
 | Mac app packaging (`scripts/package_macos.py`, `apps/desktop/macos`, `LAPIS_PACKAGE`) | `just quality`, then `package_macos.py app` and `verify` on the Mac; `verify --notarized` for a release |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; run `just quality` for shared check/config/instruction changes; no unrelated C++ rebuild |
 
+For focused iPhone UI checks, repeat `--only` to select affected methods in one
+build/run, for example `scripts/check_ios_remote.py --only testRotationWhileComposing
+--only testSendScreenToMac`. Apply the result-reuse rules below to unchanged
+adapter coverage. Simulator cleanup shuts down only the device that this run
+booted.
+
 ### Claude Code hook qualification
 
 Build with `just desktop`, then run the focused adapter cases and the disposable
