@@ -1150,6 +1150,9 @@ These commands qualify macOS only. On a Linux qualification host, select its LLV
 compiler and omit the macOS SDK option, then record actual results and dependencies.
 Vendor Qt/MoltenVK/Ghostty remain uninstrumented. Do not reuse sanitizer timings
 as release performance measurements.
+The workspace restart suite allows 120 seconds under TSan because its many
+process restarts took 46 seconds with instrumentation; the normal and ASan
+timeout remains 30 seconds. The allowance bounds stalled checks.
 
 ### What the checks cover
 

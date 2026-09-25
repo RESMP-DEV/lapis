@@ -39,7 +39,13 @@ if(BUILD_TESTING)
     # Closing an agent is exercised against the real session service.
     add_dependencies(lapis_workspace_tests lapis_session_service)
     add_test(NAME workspace COMMAND lapis_workspace_tests)
-    set_tests_properties(workspace PROPERTIES TIMEOUT 30)
+    # The real-service restart cycles exceed 30 seconds under ThreadSanitizer.
+    # Keep the normal gate short while allowing instrumentation overhead.
+    if(LAPIS_SANITIZER STREQUAL "thread")
+        set_tests_properties(workspace PROPERTIES TIMEOUT 120)
+    else()
+        set_tests_properties(workspace PROPERTIES TIMEOUT 30)
+    endif()
     add_executable(lapis_live_connection_tests tests/live_connection_test.cpp)
     target_link_libraries(lapis_live_connection_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME live-connection COMMAND lapis_live_connection_tests)

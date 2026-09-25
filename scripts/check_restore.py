@@ -12,10 +12,10 @@ It starts every agent with the helper (a first boot) and holds a conversation
 with each; Codex and Claude then start a second one with /new and /clear.
 Twice it simulates a power loss (SIGKILL on every process at once, leaving
 stale sockets) and boots again with the helper, the second time as a launchd
-job like the login LaunchAgent. After each boot every agent must be back in
-the conversation it was in: Codex and Claude show the exchange after /new and
-/clear, and the model receives it with the next prompt; the stand-ins report
-resuming the recorded conversation. Finally the helper runs
+job like the login LaunchAgent. After each boot Codex and Claude must retain their native context: they show
+the exchange after /new and /clear, and the model receives it with the next
+prompt. OSC-only stand-ins instead report
+starting fresh without an unverified resume argument. Finally the helper runs
 with everything alive and must leave it untouched. macOS; nothing is left
 running.
 
@@ -27,7 +27,9 @@ import os
 import plistlib
 import shutil
 import signal
+import socket
 import subprocess
+import struct
 import sys
 import tempfile
 import time
@@ -52,8 +54,10 @@ LAUNCHD_KEPT = (
     "LAPIS_HISTORY_ROOT",
 )
 
-sys.path.insert(0, str(ROOT / "apps" / "remote"))
-import lapis_remote  # noqa: E402
+if __package__:
+    from . import check_cli_launch as wire
+else:
+    import check_cli_launch as wire
 
 CODEX_CONFIG = """model = "lapis-fake"
 model_provider = "lapis_fake"
@@ -61,7 +65,7 @@ approval_policy = "on-request"
 
 [model_providers.lapis_fake]
 name = "lapis fake"
-base_url = "http://127.0.0.1:43110/v1"
+base_url = "http://127.0.0.1:{port}/v1"
 wire_api = "responses"
 requires_openai_auth = false
 supports_websockets = false
@@ -91,23 +95,40 @@ def require(condition, message):
 
 
 def screen(session, timeout=2.0):
-    """The newest screen text an attachment receives within the timeout."""
-    text = None
+    """Consume the existing test wire client's terminal frames without OS input."""
+    text = (session.cached_snapshot or {}).get("text", "")
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        received = session.receive(0.2)
-        if received is None:
+        try:
+            kind, data = session.receive(
+                min(0.2, max(0.001, deadline - time.monotonic()))
+            )
+        except socket.timeout:
             continue
-        kind, data = received
-        require(kind != lapis_remote.STATUS, lapis_remote.status_message(data))
-        snapshot = session.accept_snapshot(kind, data)
-        if snapshot is not None:
-            lines = lapis_remote.render_snapshot(snapshot)["lines"]
-            text = "\n".join("".join(run[0] for run in line) for line in lines)
-    if text is None and session.first is not None:
-        lines = lapis_remote.render_snapshot(session.first)["lines"]
-        text = "\n".join("".join(run[0] for run in line) for line in lines)
-    return text or ""
+        except wire.CheckError as error:
+            if str(error) != "Frame deadline expired":
+                raise
+            continue
+        require(
+            kind != wire.STATUS,
+            "Service status: " + data[1:].decode("utf-8", errors="replace"),
+        )
+        if kind == wire.SNAPSHOT:
+            require(
+                len(data) >= 72 and data[:40] == session.attachment,
+                "Snapshot attachment mismatch",
+            )
+            sequence = struct.unpack_from(">Q", data, 40)[0]
+            require(sequence > session.sequence, "Snapshot sequence did not advance")
+            session.sequence = sequence
+            session.cached_snapshot = wire.decode_snapshot(data[72:])
+            text = session.cached_snapshot["text"]
+        else:
+            require(
+                kind in (wire.ATTENTION_SNAPSHOT, wire.ATTENTION_RETRY),
+                "Unexpected frame while reading a restore fixture",
+            )
+    return text
 
 
 def wait_screen(session, needle, timeout=40):
@@ -127,11 +148,16 @@ def record(endpoint):
         return None
 
 
-def wait_record(endpoint, agent, timeout=40, replacing=None):
+def wait_record(endpoint, agent, timeout=40, replacing=None, source=None):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         value = record(endpoint)
-        if value and value.get("agent") == agent and value["session_id"] != replacing:
+        if (
+            value
+            and value.get("agent") == agent
+            and value["session_id"] != replacing
+            and (source is None or value.get("source") == source)
+        ):
             return value["session_id"]
         time.sleep(0.2)
     raise Failure(f"{agent} never recorded its conversation at {endpoint}")
@@ -308,9 +334,6 @@ def main():
         for name in ("codex", "claude", *STAND_INS):
             work[name] = runtime / f"work-{name}"
             work[name].mkdir()
-        (codex_home / "config.toml").write_text(
-            CODEX_CONFIG.format(directory=json.dumps(str(work["codex"].resolve())))
-        )
         version = subprocess.run(
             ["claude", "--version"], capture_output=True, text=True
         ).stdout.split()[0]
@@ -329,10 +352,16 @@ def main():
         # Outside the workspace folder, so a power loss spares the fake model.
         fake_models_log = logs / "fake-models.jsonl"
         fake_models_log.unlink(missing_ok=True)
+        ready = logs / "fake-models-ready.json"
+        ready.unlink(missing_ok=True)
         models = subprocess.Popen(
             [
                 sys.executable,
                 str(ROOT / "scripts/fake_models.py"),
+                "--port",
+                "0",
+                "--ready-file",
+                str(ready),
                 "--log",
                 str(fake_models_log),
             ],
@@ -341,12 +370,24 @@ def main():
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
+        deadline = time.monotonic() + 10
+        while (
+            not ready.exists() and models.poll() is None and time.monotonic() < deadline
+        ):
+            time.sleep(0.05)
+        require(ready.exists() and models.poll() is None, "fake model did not listen")
+        port = json.loads(ready.read_text())["port"]
+        (codex_home / "config.toml").write_text(
+            CODEX_CONFIG.format(
+                port=port, directory=json.dumps(str(work["codex"].resolve()))
+            )
+        )
         environment = {
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
             "CODEX_HOME": str(codex_home),
             "CLAUDE_CONFIG_DIR": str(claude_config),
-            "ANTHROPIC_BASE_URL": "http://127.0.0.1:43110",
+            "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{port}",
             "ANTHROPIC_AUTH_TOKEN": "lapis-fake",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
             "LAPIS_HISTORY_ROOT": str(runtime / "history"),
@@ -394,9 +435,24 @@ def main():
         endpoint = {name: str(runtime / (ids[name] + ".sock")) for name in ids}
 
         def attach(name):
-            workspace = lapis_remote.load_workspace(registry)
-            agent = next(a for a in workspace["agents"] if a["id"] == ids[name])
-            return lapis_remote.WireSession(agent, 100, 30, timeout=20.0)
+            agent = next(
+                a
+                for a in json.loads(registry.read_text())["agents"]
+                if a["id"] == ids[name]
+            )
+            client = wire.WireClient(agent["endpoint"])
+            try:
+                client.attach(
+                    agent["program"],
+                    agent["arguments"],
+                    agent["directory"],
+                    codex=agent["harness"] == "codex",
+                    claude=agent.get("mode") == "claude",
+                )
+                return client
+            except BaseException:
+                client.close()
+                raise
 
         print("first boot: the helper starts every agent")
         lines = boot(registry, environment, log)
@@ -414,9 +470,9 @@ def main():
         fresh = {"codex": "/new", "claude": "/clear"}
 
         def say(session, text):
-            session.paste(text.encode())
+            session.send(wire.PASTE, text.encode())
             time.sleep(0.3)
-            session.key("enter")
+            session.send(wire.KEY, bytes([10, 0]))
             wait_screen(session, f"Fake model reply to: {text}")
 
         for name in ("codex", "claude"):
@@ -424,16 +480,16 @@ def main():
             wait_screen(session, "codex" if name == "codex" else "Claude Code")
             time.sleep(2)
             say(session, f"{name} before {fresh[name]}")
-            earlier = wait_record(endpoint[name], name)
-            session.paste(fresh[name].encode())
+            earlier = wait_record(endpoint[name], name, source="observer")
+            session.send(wire.PASTE, fresh[name].encode())
             time.sleep(0.5)
-            session.key("enter")
+            session.send(wire.KEY, bytes([10, 0]))
             time.sleep(3)
             say(session, prompt[name])
             # Codex builds the observer has not qualified are followed by the
             # service's rollout scan, once a minute after the first find.
             conversations[name] = wait_record(
-                endpoint[name], name, timeout=90, replacing=earlier
+                endpoint[name], name, timeout=90, replacing=earlier, source="observer"
             )
             session.close()
             print(
@@ -441,9 +497,9 @@ def main():
                 f"{conversations[name]}"
             )
         for name in STAND_INS:
-            conversations[name] = wait_record(endpoint[name], name)
+            conversations[name] = wait_record(endpoint[name], name, source="terminal")
             session = attach(name)
-            session.text(f"note from {name}\r".encode())
+            session.send(wire.TEXT, f"note from {name}\r".encode())
             wait_screen(session, f"echo: note from {name}")
             session.close()
             print(f"  {name}: conversation {conversations[name]}")
@@ -492,9 +548,9 @@ def main():
                     f"{name} lost the earlier reply",
                 )
                 follow_up = f"{name} after power loss {round_number}"
-                session.paste(follow_up.encode())
+                session.send(wire.PASTE, follow_up.encode())
                 time.sleep(0.3)
-                session.key("enter")
+                session.send(wire.KEY, bytes([10, 0]))
                 wait_screen(session, f"Fake model reply to: {follow_up}")
                 session.close()
                 require(
@@ -508,8 +564,17 @@ def main():
                 )
             for name in STAND_INS:
                 session = attach(name)
-                wait_screen(session, f"resumed conversation {conversations[name]}")
+                previous = conversations[name]
+                current = wait_record(
+                    endpoint[name], name, replacing=previous, source="terminal"
+                )
+                wait_screen(session, f"new conversation {current}")
                 session.close()
+                require(
+                    previous not in saved[ids[name]]["arguments"],
+                    f"{name} injected an advisory identity into argv",
+                )
+                conversations[name] = current
             entries = fake_log(fake_models_log)
             codex_context = max(
                 (
@@ -530,7 +595,7 @@ def main():
             )
             print(
                 f"boot {round_number}{' (launchd)' if round_number == 2 else ''}: "
-                f"helper {took:.1f} s, all 6 resumed their conversations; "
+                f"helper {took:.1f} s, native context resumed and 4 advisory agents restarted fresh; "
                 f"Codex context {first_context['codex']} -> {codex_context} items, "
                 f"Claude {first_context['claude']} -> {claude_context} messages"
             )
@@ -544,7 +609,13 @@ def main():
         print("helper with everything running: nothing restarted, same processes")
         print("PASS")
         return 0
-    except Failure as error:
+    except (
+        Failure,
+        wire.CheckError,
+        OSError,
+        EOFError,
+        subprocess.SubprocessError,
+    ) as error:
         print(f"FAIL: {error}")
         for service_log in runtime.glob("*.sock.log"):
             shutil.copy2(service_log, logs / service_log.name)
@@ -562,6 +633,7 @@ def main():
                 os.killpg(models.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
                 pass
+            models.wait(timeout=5)
         shutil.rmtree(runtime, ignore_errors=True)
 
 

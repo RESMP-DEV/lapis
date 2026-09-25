@@ -553,11 +553,20 @@ async def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, default=43110)
     parser.add_argument("--log", type=Path, required=True)
+    parser.add_argument(
+        "--ready-file", type=Path, help="Write the bound loopback port after startup"
+    )
     args = parser.parse_args()
     server = await asyncio.start_server(
         Server(args.log).handle, "127.0.0.1", args.port, limit=16 * 1024 * 1024
     )
     async with server:
+        if args.ready_file:
+            ready = args.ready_file.with_suffix(args.ready_file.suffix + ".tmp")
+            ready.write_text(
+                json.dumps({"port": server.sockets[0].getsockname()[1]}) + "\n"
+            )
+            ready.replace(args.ready_file)
         await server.serve_forever()
 
 

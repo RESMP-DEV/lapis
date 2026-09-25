@@ -1735,8 +1735,11 @@ inherit the helper's environment. The helper and a window share the registry
 lock. The helper writes its process ID to `<registry>.restoring` (owner-only)
 while it holds the lock, because QLockFile records the process name rather
 than the application name; a window finding that marker waits up to two
-minutes for the lock (longer than the helper's own limit), while a second
-window, or a helper finding a window, fails at once.
+minutes for the lock (longer than the helper's own limit). A window allows a
+bounded two-second grace period for a helper that has taken the lock but not
+yet published its marker, and acquires the lock if that helper exits meanwhile.
+A competing window fails after that grace period; a helper finding any holder
+fails immediately.
 
 Gaps found by simulated power loss are closed in the service. A Codex build
 the observer has not qualified reports no thread, so the service also reads
@@ -1746,7 +1749,7 @@ the conversation in use. Codex keeps every loaded thread's rollout open,
 including the previous conversation after `/new` or `/resume` (observed with
 Codex 0.156.1), so the rule is the main thread written last: subagent threads,
 whose rollout's first line has a `{"subagent": ...}` source and a parent
-thread, are left out, and unreadable files are skipped. The desktop's minute
+thread, are left out. Unreadable, malformed and oversized headers are skipped. The desktop's minute
 check applies the same rule to services that predate the scan, replacing a
 saved thread only when it is still open and another main thread was written
 after it. Codex 0.156 listens through a symlink it removes only on a clean
@@ -1760,10 +1763,13 @@ then start another with `/new` and `/clear`. Two rounds of SIGKILL on every
 process, with stale sockets left behind, are each followed by the helper; the
 second runs as a launchd job with the LaunchAgent's minimal environment
 (launchd kills a job's process group when it exits; services leave it through
-`startDetached`'s new session). Every agent must come back in the conversation
-it was in, show that exchange, accept a follow-up, and keep its conversation
-identity with exactly one resume argument; the model must receive the growing
-conversation. A final helper run with everything alive must restart nothing.
+`startDetached`'s new session). Codex and Claude must show their earlier exchange,
+accept a follow-up, and keep the verified identity with exactly one resume
+argument; the fake model must receive the growing conversation. The four
+OSC-only stand-ins must restart fresh without injecting their advisory IDs into
+argv. The probe uses the existing CLI test wire client and an ephemeral local
+model port, so it runs independently of the phone PR and other local listeners.
+A final helper run with everything alive must restart nothing.
 
 CLI updates (September 24, requested so agents never open on an update
 prompt). Before a new agent starts, the desktop runs that CLI's own
