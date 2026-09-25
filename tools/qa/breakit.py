@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Drive the real lapis GUI with synthetic X11 input and try to break it.
 
-Run inside the isolated display, for example on anvil:
+Run inside the isolated display, for example on the Linux test host:
 
   uv run --no-project python scripts/lapis.py linux-gui \
     uv run --no-project --with python-xlib python tools/qa/breakit.py

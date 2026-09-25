@@ -23,11 +23,11 @@
   "service_binary_sha256": "cf22d2c04a24f6ddef7e30b4a994262acb0210731dbe819025d13d7a25c71e3d",
   "limits": [
     "Existing service-owned agents were not restarted; only newly started services use the rebuilt binary",
-    "Prior failure was the jump-host SSH route; direct ssh anvil is verified and documented"
+    "Prior failure was the jump-host SSH route; direct ssh to the Linux test host is verified and documented"
   ],
   "linux_verified_at": "2026-09-22T22:52:24.389541+00:00",
   "linux": {
-    "ssh_route": "ssh anvil",
+    "ssh_route": "ssh <linux-host>",
     "build_seconds": 2.96,
     "normal_tests_seconds": 1.62,
     "normal_suites": [
@@ -44,7 +44,7 @@
     "asan_passed": true,
     "asan_seconds": 2.16,
     "suppressions": false,
-    "logs": "/home/infatoshi/lapis-agent-workspace/build/composer-background/",
+    "logs": "~/lapis-agent-workspace/build/composer-background/",
     "capture": "build/composer-background/composer.png",
     "capture_visually_inspected": true,
     "scope": "Synthetic composer escape-sequence regression through actual Ghostty and Qt Vulkan surface, software rendering; not a live Codex screenshot"
