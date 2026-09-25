@@ -1,6 +1,8 @@
 #include "agent_checkpoint.hpp"
 #include "workspace.hpp"
 
+#include "session_descriptor.hpp"
+
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -886,11 +888,14 @@ struct UpdaterFixture {
     QByteArray original_home{qgetenv("HOME")};
     WorkspaceOptions options;
 
-    explicit UpdaterFixture(const QByteArray& script) {
+    QString harness{"grok"};
+
+    UpdaterFixture(const QByteArray& script, const QString& harness_name = QStringLiteral("grok"))
+        : harness(harness_name) {
         require(directory.isValid() && root.mkpath(QStringLiteral("bin")) &&
                     root.mkpath(QStringLiteral("project")),
                 "create updater fixture folders");
-        writeExecutable(root.filePath(QStringLiteral("bin/grok")), script);
+        writeExecutable(root.filePath(QStringLiteral("bin/") + harness), script);
         options.storagePath = root.filePath(QStringLiteral("workspace.json"));
         options.updateHarnesses = true;
         qputenv("PATH", QFile::encodeName(root.filePath(QStringLiteral("bin"))) + ":/usr/bin:/bin");
@@ -907,7 +912,7 @@ struct UpdaterFixture {
     }
     void create(Workspace& workspace) const {
         require(workspace.createAgent(root.filePath(QStringLiteral("project")),
-                                      QStringLiteral("updater fixture"), QStringLiteral("grok")),
+                                      QStringLiteral("updater fixture"), harness),
                 "create updater fixture agent");
     }
 };
@@ -1012,6 +1017,92 @@ void failedUpdaterStartClearsTheQueue() {
             "FailedToStart releases the queue");
     require(fixture.read("harness-updates.log").contains("grok update: could not start"),
             "failed start is logged without waiting for finished");
+}
+
+// Explicit Claude creation joins the managed update queue. Existing sessions
+// and pinned-binary qualification must take the launch path untouched.
+void explicitLaunchesUseUpdaterPolicy() {
+    UpdaterFixture fixture("#!/bin/sh\n"
+                           "if [ \"$1\" = update ]; then\n"
+                           "  echo update >> \"$HOME/updates\"\n"
+                           "  while [ ! -f \"$HOME/release-update\" ]; do /bin/sleep .02; done\n"
+                           "  exit 0\n"
+                           "fi\n"
+                           "echo $$ >> \"$HOME/starts\"\n"
+                           "exec /bin/sleep 60\n",
+                           QStringLiteral("claude"));
+    const auto endpoint = fixture.root.filePath(QStringLiteral("agent.sock"));
+    const auto launch =
+        lapis::session::LaunchSpec{fixture.root.filePath(QStringLiteral("bin/claude")),
+                                   {},
+                                   fixture.root.filePath(QStringLiteral("project")),
+                                   {80, 24},
+                                   lapis::session::AgentMode::claude};
+    auto options = fixture.options;
+    options.endpoint = endpoint;
+    options.launch = launch;
+    options.mode = lapis::session::wire::AttachMode::create;
+    QByteArray original_pid;
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        auto* agent = workspace.focusedSession();
+        require(agent && agent->statusLabel() == QStringLiteral("Updating Claude…") &&
+                    !agent->live(),
+                "explicit creation waits before starting");
+        require(waitFor([&] { return QFileInfo::exists(fixture.root.filePath("updates")); }, 10000),
+                "the explicit updater starts first");
+        require(!agent->live() && !QFileInfo::exists(fixture.root.filePath("starts")),
+                "the agent cannot start before the update finishes");
+        QFile release(fixture.root.filePath(QStringLiteral("release-update")));
+        require(release.open(QIODevice::WriteOnly), "release the acknowledged updater");
+        release.close();
+        require(waitFor(
+                    [&] {
+                        return agent->inputReady() &&
+                               QFileInfo::exists(fixture.root.filePath(QStringLiteral("starts")));
+                    },
+                    20000),
+                "the deferred explicit agent starts");
+        original_pid = fixture.read(QStringLiteral("starts"));
+        require(
+            lapis::session::read_descriptor(endpoint, lapis::session::launch_fingerprint(launch))
+                .has_value(),
+            "the deferred start records its normalized endpoint and launch identity");
+        require(fixture.read("harness-updates.log").contains("claude update: exit 0"),
+                "the explicit update is logged beside the endpoint");
+    } // Detach, retaining the existing service and backend for both attach modes.
+    require(QFile::remove(fixture.root.filePath("updates")) &&
+                QFile::remove(fixture.root.filePath("harness-updates.log")),
+            "clear update observations before reattachment");
+    for (const auto mode : {lapis::session::wire::AttachMode::reconnect,
+                            lapis::session::wire::AttachMode::discover}) {
+        options.mode = mode;
+        Workspace workspace(WorkspaceMode::live, options);
+        auto* agent = workspace.focusedSession();
+        require(agent && waitFor([agent] { return agent->inputReady(); }, 20000),
+                "explicit reattachment retains its mode");
+        require(fixture.read("starts") == original_pid &&
+                    !QFileInfo::exists(fixture.root.filePath("updates")) &&
+                    !QFileInfo::exists(fixture.root.filePath("harness-updates.log")),
+                "reattachment keeps the same process without updating");
+        if (mode == lapis::session::wire::AttachMode::discover)
+            require(workspace.closeSession(agent->sessionId()) &&
+                        waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                    "explicit fixture closes after both reattachments");
+    }
+    options.mode = lapis::session::wire::AttachMode::create;
+    options.updateHarnesses = false;
+    options.endpoint = fixture.root.filePath(QStringLiteral("disabled.sock"));
+    Workspace workspace(WorkspaceMode::live, options);
+    auto* agent = workspace.focusedSession();
+    require(agent && waitFor([agent] { return agent->inputReady(); }, 20000),
+            "update-disabled explicit creation starts");
+    require(!QFileInfo::exists(fixture.root.filePath("updates")) &&
+                !QFileInfo::exists(fixture.root.filePath("harness-updates.log")),
+            "the explicit update opt-out is honored");
+    require(workspace.closeSession(agent->sessionId()) &&
+                waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "update-disabled fixture closes");
 }
 
 // A new agent's CLI updates itself first, so the agent never opens on an
@@ -1815,6 +1906,7 @@ int main(int argc, char** argv) {
         updaterLifecycle();
         updaterOutputIsDrainedWithABoundedTail();
         failedUpdaterStartClearsTheQueue();
+        explicitLaunchesUseUpdaterPolicy();
         harnessesUpdateBeforeNewAgents();
         std::cout << "workspace categories, identity, persistence, status and closing passed\n";
         return 0;

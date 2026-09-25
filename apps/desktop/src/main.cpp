@@ -31,6 +31,8 @@ void add_options(QCommandLineParser& parser) {
                       QStringLiteral("Explicitly start a new session on an unused endpoint")});
     parser.addOption({QStringLiteral("discover"),
                       QStringLiteral("Explicitly discover and remember an existing session")});
+    parser.addOption({QStringLiteral("no-harness-updates"),
+                      QStringLiteral("Do not run a supported CLI update before a new session")});
     parser.addOption({QStringLiteral("socket"),
                       QStringLiteral("Session service socket path (required for explicit launch)"),
                       QStringLiteral("path")});
@@ -206,7 +208,12 @@ lapis::desktop::WorkspaceOptions workspace_options(const QCommandLineParser& par
         }
         // The normal workspace restarts agents whose services are gone.
         options.restoreAgents = !options.launch && options.endpoint.isEmpty();
-        options.updateHarnesses = options.restoreAgents;
+        // Updates are for creating an agent. Existing-session discovery and
+        // reconnection never change the CLI that owns the attached session.
+        // The explicit opt-out is absolute for reproducible qualification.
+        options.updateHarnesses =
+            !parser.isSet(QStringLiteral("no-harness-updates")) &&
+            (options.restoreAgents || parser.isSet(QStringLiteral("new-session")));
     }
     return options;
 }

@@ -1750,6 +1750,15 @@ Automating Codex requalification (the probes against the fake model rather
 than a live one) is the step that would let Codex update too. Restored and
 reattached agents are not updated.
 
+Explicit Claude creation through `--new-session` uses the same update queue as
+managed new agents. Reconnect and discovery retain their attachment semantics
+and never run an updater. Deferred explicit starts retain the normalized socket
+endpoint, and their update log lives beside that endpoint. The
+`--no-harness-updates` flag disables updates for pinned-binary qualification and
+operator-selected launches; fixture `WorkspaceOptions` keep updates off by
+default. Codex remains pinned, and arbitrary explicit programs do not gain an
+inferred updater command.
+
 Observed but not changed: Linux TSan reports frees and mutexes on Qt's uninstrumented
 threads in five GUI suites, identically on the pre-merge base, so TSan remains a
 macOS qualification. Native Mac selection, wheel and window-manager behavior are
