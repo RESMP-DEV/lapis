@@ -13,6 +13,7 @@ add_library(lapis_desktop_view STATIC
     src/keymap.cpp src/keymap.hpp
     src/live_connection.cpp src/live_connection.hpp
     src/terminal_surface.cpp src/terminal_surface.hpp
+    src/cell_shapes.cpp src/cell_shapes.hpp
     src/ui_preview.cpp src/ui_preview.hpp)
 target_include_directories(lapis_desktop_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 # The token counter another machine runs over ssh, compiled in as text.
@@ -49,6 +50,10 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_agent_search_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME agent-search COMMAND lapis_agent_search_tests)
     set_tests_properties(agent-search PROPERTIES TIMEOUT 60)
+    add_executable(lapis_cell_shapes_tests tests/cell_shapes_test.cpp)
+    target_link_libraries(lapis_cell_shapes_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME cell-shapes COMMAND lapis_cell_shapes_tests)
+    set_tests_properties(cell-shapes PROPERTIES TIMEOUT 20)
     add_executable(lapis_harness_models_tests tests/harness_models_test.cpp)
     target_link_libraries(lapis_harness_models_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME harness-models COMMAND lapis_harness_models_tests)

@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "apps" / "desktop" / "src" / "count_tokens.py"
 sys.path.insert(0, str(SCRIPT.parent))
+sys.dont_write_bytecode = True  # no __pycache__ beside the app's sources
 import count_tokens  # noqa: E402
 
 NOW = "2026-09-24T18:00:00.000Z"

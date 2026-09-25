@@ -215,6 +215,11 @@ rows move to the bounded disk archive described in the completion contract below
 The GUI decodes owned snapshots and routes text, navigation, Control-letter input,
 paste and resize. The focused pane chooses the PTY dimensions; scaled previews do
 not resize it. Cell-grid/font fallback has native Vulkan regression coverage.
+Block elements (U+2580-259F) and box drawing, rounded corners included, are
+drawn as shapes filling their cells (`cell_shapes`, the iPhone's geometry),
+not from the font: rows add 3 px of line spacing, and font glyphs for them left
+lines through logos such as Claude Code's, which paints its eyes on a black cell
+background (fixed September 24).
 Qt and automated macOS keyboard/paste/Japanese IME ownership are tested;
 selection/copy and a terminal accessibility tree remain open. The renderer retains
 static scene nodes and lets Qt schedule updates and brief hover transitions.
