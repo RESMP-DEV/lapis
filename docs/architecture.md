@@ -1730,10 +1730,22 @@ non-interactive update command (Claude `update`, OMP `update`, Grok `update`,
 Kimi `upgrade`, OpenCode `upgrade`, Antigravity `update`) with no input and a
 two-minute limit, at most every 30 minutes per CLI; the card shows Updating
 <CLI> and starts the agent when the update ends, whatever its outcome, and
-the output is logged beside the registry. Running agents keep their binary.
+the output is logged beside the registry. On POSIX, the updater owns a new
+process group. A guard retains group membership after the leader exits, so
+cleanup never signals a recycled leader PID. Normal exit, timeout and desktop
+teardown stop the group, including installer children that remain in it. Queued
+agents wait for both leader exit and the guard's cleanup acknowledgment.
+Repeated restarts cannot bypass the queue or create duplicate services.
+Output is drained during execution into an 8 KiB tail, with the existing
+600-character log limit. Running agents keep their binary.
 Codex is not updated: the observer accepts only qualified binary digests, and
 an unqualified build loses turn status and requests, so lapis keeps the
-qualified build and launches Codex with `check_for_update_on_startup=false`.
+qualified build and defaults Codex to `check_for_update_on_startup=false`.
+Newly spawned restored Codex agents receive this default too, while existing
+explicit config overrides and live reattachment arguments remain unchanged.
+Literal prompt words after `--` do not count as config options. The saved-argument
+cap remains 64: if there is no room for the default pair, the original arguments
+are preserved and the omission is diagnosed instead of breaking registry reload.
 Automating Codex requalification (the probes against the fake model rather
 than a live one) is the step that would let Codex update too. Restored and
 reattached agents are not updated.

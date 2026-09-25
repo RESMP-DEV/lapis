@@ -2,6 +2,7 @@
 #include "agent_checkpoint.hpp"
 #include "live_connection.hpp"
 #include "platform/posix/local_endpoint.hpp"
+#include "platform/updater_process.hpp"
 
 #include <QDateTime>
 #include <QFile>
@@ -51,6 +52,25 @@ QStringList defaultArguments(const QString& harness) {
         return {QStringLiteral("-c"), QStringLiteral("check_for_update_on_startup=false")};
     return {};
 }
+bool hasCodexUpdateSetting(const QStringList& arguments) {
+    for (qsizetype index = 0; index < arguments.size(); ++index) {
+        const auto& argument = arguments.at(index);
+        if (argument == QLatin1String("--"))
+            break; // Following words are literal prompt data.
+        QString setting;
+        if ((argument == QLatin1String("-c") || argument == QLatin1String("--config")) &&
+            index + 1 < arguments.size())
+            setting = arguments.at(++index);
+        else if (argument.startsWith(QLatin1String("--config=")))
+            setting = argument.sliced(9);
+        else if (argument.startsWith(QLatin1String("-c")) && argument.size() > 2)
+            setting = argument.sliced(2);
+        if (setting.section(QLatin1Char('='), 0, 0).trimmed() ==
+            QLatin1String("check_for_update_on_startup"))
+            return true;
+    }
+    return false;
+}
 QString resumeOption(const QString& harness);
 
 bool managedResumeMatches(const QStringList& arguments, qsizetype index, const QString& option,
@@ -90,7 +110,27 @@ constexpr std::string_view kPreviewPalette =
     "\x1b]4;3;rgb:df/bb/7b\x1b\\\x1b]4;5;rgb:ba/a4/e8\x1b\\"
     "\x1b]4;8;rgb:75/83/98\x1b\\";
 constexpr qsizetype max_saved_arguments = 64;
+constexpr qint64 updater_output_tail_bytes = 8192;
+
 } // namespace
+
+Workspace::~Workspace() {
+    // Destroying the desktop must not leave a half-finished installer or a
+    // queued callback touching the dead Workspace. QProcess would kill only
+    // its direct child; force-kill the updater's whole process group here.
+    const auto processes = harness_updates_.values();
+    harness_updates_.clear();
+    starts_after_update_.clear();
+    updater_output_.clear();
+    updater_stopping_.clear();
+    for (const auto& process : processes) {
+        if (process.isNull())
+            continue;
+        QObject::disconnect(process, nullptr, this, nullptr);
+        static_cast<UpdaterProcess*>(process.data())->stopGroup();
+        process->deleteLater();
+    }
+}
 
 SessionPreview::SessionPreview(QString title, QString directory, QString activity, QColor accent,
                                std::string_view content)
@@ -126,6 +166,7 @@ QString Workspace::defaultEndpoint() {
 
 Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
     : restore_agents_(options.restoreAgents), update_harnesses_(options.updateHarnesses),
+      update_timeout_ms_(std::max(qint64{1}, options.updateTimeoutMs)),
       preview_mode_(mode == WorkspaceMode::preview) {
     // Selecting an agent is looking at it.
     connect(this, &Workspace::focusChanged, this, [this] {
@@ -998,6 +1039,8 @@ bool Workspace::restartAgent(const QString& id) {
         return fail(QStringLiteral("This agent is still closing."));
     if (serviceRunning(entry->endpoint))
         return fail(QStringLiteral("This agent is still running."));
+    if (starts_after_update_.value(entry->harness).contains(id))
+        return fail(QStringLiteral("This agent is already waiting for its CLI update."));
     QString diagnostic;
     const auto launch = restoredLaunch(*entry, &diagnostic);
     if (!launch)
@@ -1029,6 +1072,20 @@ bool Workspace::serviceRunning(const QString& endpoint) {
     return probe.error() != QLocalSocket::ConnectionRefusedError &&
            probe.error() != QLocalSocket::ServerNotFoundError;
 }
+void Workspace::applyStartupDefaults(const Agent& agent, ResumeLaunch& plan) {
+    // This function is used only after `serviceRunning()` proved the old
+    // service is gone. Reattach keeps the recorded launch untouched.
+    if (agent.harness == QLatin1String("codex") && !hasCodexUpdateSetting(plan.launch.arguments)) {
+        if (plan.launch.arguments.size() + 2 <= max_saved_arguments) {
+            plan.launch.arguments = defaultArguments(agent.harness) + plan.launch.arguments;
+            if (plan.managed_resume_index >= 0)
+                plan.managed_resume_index += 2;
+        } else {
+            qWarning() << "Codex startup setting not added: saved argument limit reached";
+        }
+    }
+}
+
 auto Workspace::restoredLaunch(const Agent& agent, QString* diagnostic)
     -> std::optional<ResumeLaunch> {
     auto launch = agent.launch;
@@ -1082,6 +1139,7 @@ auto Workspace::restoredLaunch(const Agent& agent, QString* diagnostic)
             }
         }
     }
+    applyStartupDefaults(agent, plan);
     try {
         plan.launch = session::validate_launch(plan.launch);
         return plan;
@@ -1280,37 +1338,59 @@ bool Workspace::deferForUpdate(const QString& id) {
     if (!running &&
         QDateTime::currentMSecsSinceEpoch() - harness_checked_ms_.value(harness, 0) < fresh_ms)
         return false;
-    starts_after_update_[harness].append(id);
+    auto& queued = starts_after_update_[harness];
+    if (!queued.contains(id))
+        queued.append(id);
     if (auto* item = session(id))
         item->setUpdating(QStringLiteral("Updating %1…").arg(QLatin1String(selected->label)));
     if (running)
         return true;
-    auto* process = new QProcess(this);
+    auto* process = new UpdaterProcess(this);
     harness_updates_.insert(harness, process);
     process->setProgram(program);
     process->setArguments({QString::fromLatin1(selected->update)});
     process->setStandardInputFile(QProcess::nullDevice());
     process->setProcessChannelMode(QProcess::MergedChannels);
+    updater_output_.insert(process, {});
+    connect(process, &QProcess::readyRead, this, [this, process] { drainUpdater(process); });
     connect(process, &QProcess::finished, this,
             [this, harness, process](int code, QProcess::ExitStatus status) {
-                finishUpdate(harness, process,
-                             status == QProcess::NormalExit ? QStringLiteral("exit %1").arg(code)
-                                                            : QStringLiteral("crashed"));
+                const auto stopping = updater_stopping_.take(process);
+                const auto outcome = stopping ? QStringLiteral("stopped after timeout")
+                                     : status == QProcess::NormalExit
+                                         ? QStringLiteral("exit %1").arg(code)
+                                         : QStringLiteral("crashed");
+                process->whenStopped(
+                    [this, harness, process, outcome] { finishUpdate(harness, process, outcome); });
             });
     connect(process, &QProcess::errorOccurred, this,
             [this, harness, process](QProcess::ProcessError error) {
                 if (error == QProcess::FailedToStart)
-                    finishUpdate(harness, process, QStringLiteral("could not start"));
+                    process->whenStopped([this, harness, process] {
+                        finishUpdate(harness, process, QStringLiteral("could not start"));
+                    });
             });
     // A stuck update must not keep the agent from starting.
-    QTimer::singleShot(120000, process, [this, harness, process] {
+    QTimer::singleShot(update_timeout_ms_, process, [this, process] {
         if (process->state() == QProcess::NotRunning)
             return;
-        process->kill();
-        finishUpdate(harness, process, QStringLiteral("stopped after 2 minutes"));
+        updater_stopping_.insert(process, true);
+        process->stopGroup();
+        // Only finished() releases queued agents. Posting a signal is not a
+        // process-exit acknowledgment; no fixed grace sleep substitutes for it.
     });
     process->start();
     return true;
+}
+
+void Workspace::drainUpdater(QProcess* process) {
+    auto& tail = updater_output_[process];
+    while (process->bytesAvailable() > 0) {
+        const auto chunk = process->read(updater_output_tail_bytes);
+        if (chunk.isEmpty())
+            break;
+        tail = (tail + chunk).right(updater_output_tail_bytes);
+    }
 }
 
 void Workspace::finishUpdate(const QString& harness, QProcess* process, const QString& outcome) {
@@ -1318,7 +1398,10 @@ void Workspace::finishUpdate(const QString& harness, QProcess* process, const QS
         return;
     harness_updates_.remove(harness);
     harness_checked_ms_.insert(harness, QDateTime::currentMSecsSinceEpoch());
-    const auto output = QString::fromUtf8(process->readAll()).simplified().right(600);
+    drainUpdater(process);
+    const auto retained = updater_output_.take(process);
+    updater_stopping_.remove(process);
+    const auto output = QString::fromUtf8(retained).simplified().right(600);
     logUpdate(
         QStringLiteral("%1 %2 update: %3. %4")
             .arg(QDateTime::currentDateTime().toString(Qt::ISODate), harness, outcome, output));
@@ -1329,6 +1412,8 @@ void Workspace::finishUpdate(const QString& harness, QProcess* process, const QS
         if (!item || entry == agents_.constEnd())
             continue; // closed while waiting
         item->setUpdating({});
+        if (item->live())
+            continue;
         item->startLive(entry->endpoint, entry->launch, session::wire::AttachMode::create);
     }
 }
