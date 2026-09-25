@@ -59,7 +59,7 @@
   ],
   "independent_review": "Scoped GLM source and review assessment; parent inspected changes and ran integration checks.",
   "review_service_state": {
-    "github_content": "Unavailable until 2026-09-25T07:00:00Z after secondary rate limit; replies and triggers prepared locally, not posted",
+    "github_content": "Original publication was deferred by local reviewer cooldowns. The claimed GitHub midnight reset was incorrect; see pr14-review-followup.json.",
     "new_head_reviews": "Pending after push; earlier reviews are not approval of these fixes"
   },
   "limitations": [
