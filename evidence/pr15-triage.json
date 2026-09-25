@@ -1,0 +1,127 @@
+{
+  "schema": "lapis.pr-triage/1",
+  "recorded_at": "2026-09-25",
+  "pr": 15,
+  "reviewed_base": "b5ed0deefdde555c89502e92cc3a060be50afcc0",
+  "tested_code_revision": "7d38cf16b31993f1c5707930a713e5cd88b50c30",
+  "platform": "macOS arm64",
+  "source_sha256": {
+    ".coderabbit.yaml": "265b90971e6b351748325f5b0e5fe998ba39982809a755a57e01f258907c55bc",
+    "CONTRIBUTING.md": "3b61bbb53eef33d2a37c7df2bc509e6c4b2ad42b178de3b05bc4f8b874e9cee4",
+    "README.md": "e35bc0f80d5aab941163d5dfffb1b2e6931436b00cab923eb1c9842ce0f79c00",
+    "apps/desktop/CMakeLists.txt": "eb623426ddf37e82aa2529befb49da06ae1a3aa2a97964565a804f07378014a9",
+    "apps/desktop/src/keymap.cpp": "7478e234ec1dead37308d230366e1b9e12759f684a15dac56a5ae8ea0076f009",
+    "apps/desktop/src/main.cpp": "34c4aef921440355c83d5ba106d97b2f8de3d021cce9ec0869d2bb042686b4ba",
+    "apps/desktop/src/workspace.cpp": "1571181dfbec3d453c7efab236e34544f505d4b5ae6c087ef7310db0151bf180",
+    "apps/desktop/tests/keymap_test.cpp": "bc495a8a9581826eb34f136bcf6fda27c69853f7b3a2e7cddff23e2baf9ea1dd",
+    "apps/desktop/tests/live_connection_test.cpp": "8bd9fcad11d14d297445d6b94ae8aea59db9889636ac21e9ddefab93bcc0b553",
+    "apps/desktop/tests/native_input_probe.cpp": "817cbd448453eeac42e9c427cc231a81aaac575ad3b72ece3daf45eab04823ef",
+    "apps/desktop/tests/window_state_test.cpp": "f0a4f58ffd2e93bf742678b616bdb9b03922477d7acbeb97d0885bdc875676b3",
+    "apps/desktop/tests/workspace_live_probe.cpp": "1f36b7840c965d6b3c1fd37335f89e2e3b13f5c58f5c91b00568912ebbcf649e",
+    "apps/desktop/tests/workspace_test.cpp": "3ee97dcd56d45e4b344b8176f13d7a3d18643e0d52d1ac6e4a71261df8a08b2d",
+    "docs/architecture.md": "07acc357f426fd72cfef656d50d9dad9daf411fc09f8eedd49cac89ccd4109d8",
+    "scripts/check_cli_launch.py": "04d72acc18c5ec3283c020eda67abf8d23949c2b4b58e5037a709a8eff4c535b",
+    "scripts/check_restore.py": "e507940371c4daa99871fa8f45a54e1d706d892812ec8a9c2927be571e7979f8",
+    "scripts/check_service_attention.py": "bda1aac0860c82f4a5733556493bccaa2fdb0c47442f19271ddba74a21147b54",
+    "scripts/fake_models.py": "07a8013225cfb0a4e3546bebcd8574446ed3419a98d59ff8fc031c41952cc483",
+    "scripts/tests/test_breakit.py": "73ceb770d88fd4da73011defcc5fd34b87a7d6930793a0d02085bb180dced7c7",
+    "scripts/tests/test_check_restore.py": "50efd528dbb730ee34fbf95022bef28479859b81429e6c9ce269cf6dac820a96",
+    "scripts/tests/test_check_service_attention.py": "9264189459ae4cff2121d02b99ad127dbe99b3789f05fa8eaa3dd6f71038d8ea",
+    "scripts/tests/test_fake_models.py": "c18d0ed5f5b38f5ebf20effa9431a8a56974d48f36a8d9bb79628b84754ed739",
+    "scripts/tests/test_lapis.py": "758cfd9558fb1b67e5f8708edbe08bcefa199c44375b39d11844f0010f19b1b0",
+    "services/session/src/agent_checkpoint.cpp": "dac6c96e0e62dd13dc530812fc694874eff9c7f0c980fbb765f4629212581acd",
+    "services/session/src/agent_checkpoint.hpp": "9ef6f76bb47481e90192fb6b6dec7bf2a699082abfdf1f802741e252ae92a75f",
+    "services/session/src/session_service.cpp": "a5ca45843269adefc3b8f395cfe0091d989e247fb5f99838710a208b1a9bb3f2",
+    "services/session/tests/agent_checkpoint_test.cpp": "4aed95e6adf018dcd4fe9c2ac89e2ea15902f22770480142a8ffb4cf7640bbaf",
+    "tools/qa/breakit.py": "7835c1751d62062f0187dd10490dd9f9fc886f2386a9169edab2350a9f525782",
+    "tools/qa/fake_agent.py": "16921edaa9843e54dd7aedc37e5536897a93272b8e3d57331dc9b01f3832bfc0"
+  },
+  "scope": "Login restore review, complete stack reconciliation, and independently runnable native restore qualification",
+  "changes": [
+    "Fix lock-before-marker publication and helper-exit races; competing helpers fail promptly",
+    "Parse restore mode with the shared command-line definitions before QGuiApplication, preserving literal child argv",
+    "Keep verified provenance while following newer Codex main rollouts; reject malformed or oversized rollout metadata",
+    "Use existing in-branch test wire client and an ephemeral local model port in restore acceptance",
+    "Verify native resume separately from advisory-only fresh restarts",
+    "Allow measured TSan overhead for the workspace restart suite without slowing ordinary checks"
+  ],
+  "checks": [
+    {
+      "command": "just quality",
+      "passed": true,
+      "python_tests": 127
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R '^(workspace|agent-checkpoint)$' --no-tests=error --output-on-failure",
+      "passed": true,
+      "note": "Merged source; checkpoint rerun after malformed-header regression"
+    },
+    {
+      "command": "clang-format --dry-run --Werror; clang-tidy -p build/desktop; cppcheck --library=qt",
+      "passed": true,
+      "scope": "Six PR15 feature translation units against merged PR14"
+    },
+    {
+      "command": "ctest --test-dir build/desktop-asan -R '^(workspace|agent-checkpoint|keymap|live-connection)$' --no-tests=error --output-on-failure",
+      "passed": true,
+      "suites": 4,
+      "seconds": 17.61,
+      "note": "AddressSanitizer and UndefinedBehaviorSanitizer; offscreen Qt"
+    },
+    {
+      "command": "ctest --test-dir build/desktop-tsan -R '^(workspace|live-connection)$' --no-tests=error --output-on-failure",
+      "passed": true,
+      "note": "Live-connection passed in 3.44s. Initial workspace hit the 30s harness timeout; after a TSan-specific 120s allowance it passed in 46.38s."
+    },
+    {
+      "command": "six shared-option parser cases before QCoreApplication; two empty-registry headless launches",
+      "passed": true
+    },
+    {
+      "command": "python3 -u scripts/check_restore.py",
+      "passed": true,
+      "gui_interaction": false,
+      "model_endpoint": "ephemeral loopback fake model",
+      "native_binaries": {
+        "codex": {
+          "version": "codex-cli 0.0.0",
+          "sha256": "e1e083ab281668d370b5aa4d21a2803158723380ef1a04be80ffa459e700d407"
+        },
+        "claude": {
+          "version": "2.1.280 (Claude Code)",
+          "sha256": "387a5c5dcdbb815085edf0baf79591f9d8894efe922bceaf3d75b1b08055229d"
+        }
+      },
+      "observed": {
+        "power_loss_rounds": 2,
+        "fixture_processes_killed_each": 21,
+        "round_one_helper_seconds": 2.5,
+        "launchd_helper_seconds": 5.1,
+        "codex_context_items": [
+          3,
+          5,
+          8
+        ],
+        "claude_context_messages": [
+          2,
+          5,
+          8
+        ],
+        "advisory_stand_ins": 4,
+        "final_live_helper_restarts": 0,
+        "cleanup_verified": true
+      }
+    }
+  ],
+  "limitations": [
+    "No foreground or native-input qualification in this pass. Offscreen render suites require Vulkan and were not qualified.",
+    "No merge performed.",
+    "The native Objective-C activation fixture did not link in the optional terminal-input ASan target: Apple/Homebrew sanitizer ABI mismatch, then an unsupported Objective-C message stub with a coherent LLVM toolchain. Core ASan/UBSan suites above passed; the normal background terminal suite passed.",
+    "Power loss is simulated through fixture-only SIGKILL. No physical reboot was performed."
+  ],
+  "independent_review": "GLM worker reviewed login source; parent corrected helper-exit/fail-fast edge cases and parser handling, and verified the full native fixture after the follow-up worker remained rate-limited.",
+  "review_service_state": {
+    "github_content": "Unavailable until 2026-09-25T07:00:00Z after secondary rate limit; replies and triggers prepared locally, not posted",
+    "new_head_reviews": "Pending after push; earlier reviews are not approval of these fixes"
+  }
+}
