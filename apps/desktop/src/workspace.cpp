@@ -971,6 +971,8 @@ void Workspace::recordConversations() {
 bool Workspace::restartAgent(const QString& id) {
     if (!mutableRegistry())
         return false;
+    if (preview_mode_ || storage_path_.isEmpty())
+        return fail(QStringLiteral("Restart requires a persisted workspace."));
     const auto entry = agents_.find(id);
     auto* item = session(id);
     if (entry == agents_.end() || item == nullptr)
