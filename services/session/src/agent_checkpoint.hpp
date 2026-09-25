@@ -10,9 +10,12 @@
 #include "launch_spec.hpp"
 
 namespace lapis::session {
-enum class ResumeSource : std::uint8_t { terminal, observer };
+// How a conversation's identity was learned: printed by the agent's session
+// hook (terminal), by lapis's own Codex or Claude observer, or before lapis
+// recorded which (legacy, a version 1 record). Printed output never replaces
+// an identity the observer learned.
+enum class ResumeSource : std::uint8_t { terminal, observer, legacy };
 
-// A terminal checkpoint is advisory; only an observer can authorize automatic resume.
 struct ResumeRecord {
     QString agent;      // CLI name, for example "claude"
     QString session_id; // the conversation its native resume option takes

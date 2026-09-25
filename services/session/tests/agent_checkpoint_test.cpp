@@ -143,8 +143,9 @@ void records_are_private() {
     const auto normalized = lapis::session::read_resume_record(endpoint);
     require(normalized && normalized->agent == QStringLiteral("claude") &&
                 normalized->session_id == QStringLiteral("s-1") &&
-                normalized->source == lapis::session::ResumeSource::terminal,
-            "record agents use the same lowercase spelling as checkpoints");
+                normalized->source == lapis::session::ResumeSource::legacy,
+            "record agents use the same lowercase spelling as checkpoints, and a version 1 "
+            "record reads as legacy");
     QFile wrong_version(record_path);
     require(wrong_version.open(QIODevice::WriteOnly | QIODevice::Truncate),
             "open the record for a version test");

@@ -238,8 +238,10 @@ std::optional<ResumeRecord> read_resume_record(const QString& endpoint) {
             return std::nullopt;
         record.source =
             source == QStringLiteral("observer") ? ResumeSource::observer : ResumeSource::terminal;
+    } else {
+        // Written before lapis recorded how the identity was learned.
+        record.source = ResumeSource::legacy;
     }
-    // Legacy records cannot attest how their identity was learned.
     return record;
 }
 

@@ -1695,17 +1695,20 @@ conversation and provenance. Version 2 distinguishes an independent observer
 from advisory OSC 1337 `SetUserVar=agent_checkpoint=<base64 JSON>` printed in
 terminal output. Printed fields cannot claim observer provenance, replace a
 managed Codex/Claude observer, or downgrade an already observed record. Version 1
-records remain readable as advisory until a current observer or the Codex rollout
-probe confirms the conversation. Unknown versions and malformed sources fail
-closed.
+records read as legacy (their source was not recorded). Unknown versions and
+malformed sources fail closed.
 
-Automatic resume uses only observer records. Codex and Claude currently provide
-that independent channel; other CLIs' printed checkpoints remain advisory and
-restart fresh unless the user explicitly supplied a resume argument. Remote
+Every agent resumes its conversation (the user's requirement, September 25:
+starting fresh is not acceptable). Codex and Claude resume only from their
+observer (or a legacy record); a checkpoint printed in their terminal never
+resumes them. The other CLIs have no lapis observer, so the checkpoint their
+session hook prints is how they name the conversation and it resumes them; the
+service still never lets printed output replace an observed identity. Remote
 hosts, unknown agents and identities that could be options are refused. When
 lapis adds a resume pair, the registry records its index and identity as
-`managedResume`; later verified observations update only that pair. An advisory
-record retires a still-matching lapis-owned pair. Stale provenance loses automatic
+`managedResume`; later observations (for CLIs without an observer, their
+printed checkpoints) update only that pair. A record that may not resume (a printed one for Codex or Claude) retires a
+still-matching lapis-owned pair. Stale provenance loses automatic
 updating instead of making the whole workspace unloadable. Explicit user
 arguments, including `--option=value`, remain authoritative. A managed append
 cannot exceed the same 64-argument limit enforced by the registry loader.
@@ -1723,7 +1726,7 @@ known SHA-256 values in the `launch-spec` suite for terminal, Codex and Claude
 modes), service IPC version 6 with only additive frames, registry versions 1
 and 2 on read, the `LAPIS-S1` descriptor, and the
 Claude hook relay's command line. Resume records now write version 2 and read
-version 1 without assuming observer provenance. Changing these contracts needs a migration that
+version 1 as legacy, which still resumes. Changing these contracts needs a migration that
 still reattaches services started by the previous build. For Codex services
 started before resume records existed, the desktop recovers the thread every
 60 seconds: it finds the app-server by its exact `app-server --listen

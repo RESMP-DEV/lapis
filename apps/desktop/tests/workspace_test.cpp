@@ -1841,17 +1841,19 @@ void managedResumeFollowsRecovery() {
     check_cycle(managed, true, QStringLiteral("m-1"));
     check_cycle(explicit_agent, false, {});
 
-    for (const auto& [identity, managed_identity] :
-         {std::pair{1, QStringLiteral("m-2")}, {2, QStringLiteral("m-3")}, {3, QString{}}}) {
+    for (const auto& [identity, managed_identity] : {std::pair{1, QStringLiteral("m-2")},
+                                                     {2, QStringLiteral("m-3")},
+                                                     {3, QStringLiteral("m-4")}}) {
         for (const auto& name :
              QDir(canonical).entryList({QStringLiteral("args.*.txt")}, QDir::Files))
             require(QFile::remove(QDir(canonical).filePath(name)), "remove prior argv receipts");
-        if (managed_identity.isEmpty()) {
-            // Legacy/printed records retire only lapis-owned arguments.
+        if (identity == 3) {
+            // Kimi has no lapis observer: its session hook's printed checkpoint
+            // is how it names the conversation, and the managed pair follows it.
+            lapis::session::write_resume_record(endpoint(managed),
+                                                {QStringLiteral("kimi"), managed_identity});
             lapis::session::write_resume_record(
-                endpoint(managed), {QStringLiteral("kimi"), QStringLiteral("advisory-id")});
-            lapis::session::write_resume_record(
-                endpoint(explicit_agent), {QStringLiteral("kimi"), QStringLiteral("advisory-id")});
+                endpoint(explicit_agent), {QStringLiteral("kimi"), QStringLiteral("printed-id")});
         } else {
             writeObservedResume(endpoint(managed), {QStringLiteral("kimi"), managed_identity});
             writeObservedResume(
@@ -1900,14 +1902,20 @@ void codexResumeArguments() {
     require(QDir().mkpath(date) && QDir().mkpath(outside), "create rollout directories");
     require(QFile::link(outside, QDir(sessions).filePath(QStringLiteral("2026/09/24"))),
             "link an outside date directory");
+    using lapis::session::ResumeSource;
     struct Case {
         bool saved;
         bool explicit_resume;
         bool symlink;
+        // Codex names its conversation to lapis's observer; a checkpoint it
+        // printed never resumes it, and one saved before sources were recorded does.
+        ResumeSource source{ResumeSource::observer};
     };
     for (const auto variant :
          {Case{true, false, false}, Case{true, true, false}, Case{false, true, false},
-          Case{false, false, false}, Case{true, false, true}}) {
+          Case{false, false, false}, Case{true, false, true},
+          Case{true, false, false, ResumeSource::terminal},
+          Case{true, false, false, ResumeSource::legacy}}) {
         const auto id = uuid();
         const auto filename =
             QStringLiteral("rollout-2026-09-23T10-30-00-") + id + QStringLiteral(".jsonl");
@@ -1934,7 +1942,18 @@ void codexResumeArguments() {
                                    QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
                                   {"agents", QJsonArray{record}}});
         const auto endpoint = QDir(root).filePath(id + QStringLiteral(".sock"));
-        writeObservedResume(endpoint, {QStringLiteral("codex"), id});
+        if (variant.source == ResumeSource::legacy) {
+            QFile legacy(endpoint + QStringLiteral(".resume"));
+            const auto bytes =
+                QJsonDocument(QJsonObject{{"version", 1}, {"agent", "codex"}, {"session_id", id}})
+                    .toJson(QJsonDocument::Compact);
+            require(legacy.open(QIODevice::WriteOnly) && legacy.write(bytes) == bytes.size() &&
+                        legacy.setPermissions(QFile::ReadOwner | QFile::WriteOwner),
+                    "write a version 1 record");
+        } else {
+            lapis::session::write_resume_record(endpoint,
+                                                {QStringLiteral("codex"), id, variant.source});
+        }
         Workspace workspace(WorkspaceMode::live, options);
         require(workspace.workspaceError().isEmpty(), "plan restored Codex launch");
         const auto actual = QJsonDocument::fromJson(readRegistry(options.storagePath))
@@ -1945,7 +1964,8 @@ void codexResumeArguments() {
                                 .toObject()
                                 .value(QStringLiteral("arguments"))
                                 .toArray();
-        const auto expected = variant.saved && !variant.explicit_resume && !variant.symlink
+        const auto expected = variant.saved && !variant.explicit_resume && !variant.symlink &&
+                                      variant.source != ResumeSource::terminal
                                   ? QJsonArray{"--user", "resume", id}
                                   : user_arguments;
         require(actual == expected, "saved transcript lookup preserves explicit resume arguments");
@@ -1953,9 +1973,11 @@ void codexResumeArguments() {
     }
 }
 
-// Printed output is advisory even when it claims the same harness and an
-// observer source. Exercise the real service, persistence, and restart argv.
-void printedCheckpointsCannotRedirectResume() {
+// A CLI without a lapis observer names its conversation only in the
+// checkpoint its session hook prints, so that checkpoint resumes it; printed
+// output still cannot claim observer provenance or replace an identity the
+// observer learned. Exercise the real service, persistence, and restart argv.
+void printedCheckpointsResumeButNeverOverrideTheObserver() {
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-cp-XXXXXX"));
     require(directory.isValid(), "checkpoint fixture directory");
     const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
@@ -2013,8 +2035,9 @@ void printedCheckpointsCannotRedirectResume() {
             "restart checkpoint fixture");
     require(waitFor([&] { return item->inputReady(); }, 10000), "checkpoint fixture restarts");
     QFile argv_file(argv_path);
-    require(argv_file.open(QIODevice::ReadOnly) && argv_file.readAll() == QByteArray("--yolo\n"),
-            "printed checkpoint never becomes a resume argument");
+    require(argv_file.open(QIODevice::ReadOnly) &&
+                argv_file.readAll() == QByteArray("--yolo\n--session\nforged-conversation\n"),
+            "a printed checkpoint resumes a CLI lapis has no observer for");
     argv_file.close();
     item->sendText("done\r");
     require(waitFor([&] { return item->connectionState() == QStringLiteral("ended"); }, 10000),
@@ -2140,7 +2163,7 @@ int main(int argc, char** argv) {
         agentsRestoreAfterServiceLoss();
         savedArgumentCapKeepsRegistryLoadable();
         managedResumeFollowsRecovery();
-        printedCheckpointsCannotRedirectResume();
+        printedCheckpointsResumeButNeverOverrideTheObserver();
         restartReportsValidationFailures();
         const bool had_codex_home = qEnvironmentVariableIsSet("CODEX_HOME");
         const auto original_codex_home = qgetenv("CODEX_HOME");
