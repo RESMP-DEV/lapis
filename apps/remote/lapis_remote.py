@@ -31,6 +31,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -843,6 +844,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             body = json.loads(self.rfile.read(length))
+            require(isinstance(body, dict), "Capture must be an object")
             image = base64.b64decode(body.pop("png"), validate=True)
             require(image.startswith(b"\x89PNG\r\n\x1a\n"), "Not a PNG")
         except (ValueError, KeyError, TypeError, GatewayError) as error:
@@ -850,12 +852,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         directory = self.gateway.registry.parent / "phone-captures"
         directory.mkdir(mode=0o700, exist_ok=True)
-        name = time.strftime("%Y%m%d-%H%M%S")
+        # One-second names silently replaced rapid debug captures.
+        name = time.strftime("%Y%m%d-%H%M%S") + f"-{uuid.uuid4().hex}"
         for suffix, data in (
             (".png", image),
             (".json", json.dumps(body, indent=1).encode()),
         ):
-            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
             with os.fdopen(
                 os.open(directory / (name + suffix), flags, 0o600), "wb"
             ) as out:
