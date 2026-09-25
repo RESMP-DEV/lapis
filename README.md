@@ -63,11 +63,11 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect; stale sockets left by a simulated power loss are replaced | Qualification across an actual reboot |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging and link opening (Qt tests on the Linux test host) | Cross-cell contextual shaping, rectangular/multi-click selection, link hover feedback and accessibility; native Mac selection not yet exercised; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
-| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; live request badges, explicit approval/answer dialog, stale-state gating and draft preservation; live config reload, alert chimes and their repeat rules, Command-K agent search, the usage meter and per-machine dashboard (Qt tests on the Linux test host); usage answers from the installed Codex 0.156.1, Claude Code 2.1.282, Grok 1.0.41, Kimi Code 0.39.1 and OMP 18.2.9, here and on a Linux host over ssh | Automatic carousel and larger session-count qualification; the chimes and usage view have not been seen and heard on a Mac by a test |
+| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; tiles on the stage (drag from the strip, dividers, keys, zoom), dragging cards to reorder and between categories with multi-select, find in the terminal and text size (Qt tests on the Linux test host); live request badges, explicit approval/answer dialog, stale-state gating and draft preservation; live config reload, alert chimes and their repeat rules, Command-K agent search, the usage meter and per-machine dashboard (Qt tests on the Linux test host); usage answers from the installed Codex 0.156.1, Claude Code 2.1.282, Grok 1.0.41, Kimi Code 0.39.1 and OMP 18.2.9, here and on a Linux host over ssh | Automatic carousel and larger session-count qualification; the chimes and usage view have not been seen and heard on a Mac by a test |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
 | Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect, `/clear` continuation and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
 | iPhone app (prototype) | Gateway on the Mac over Tailscale, admitting only the owner's iOS devices; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; the phone joins beside the desktop so both stay in sync (services started by this build); starting an agent in a category from the phone through the Mac's lapis; UI tests in the iOS 26.5 Simulator against real services and the real windowless lapis host with a Mac-side client attached, fake agents, and real Codex and Claude Code on a fake model; installed and used on an iPhone 17 Pro | Agents started before sync are taken over instead; no structured requests or push notifications; starting agents needs a lapis window or the login helper running |
-| Mac app package | Qt 6.11.2 built with Vulkan (arm64, macOS 14 or later) with MoltenVK loaded directly; signed with the hardened runtime; release checks for architecture, minimum macOS, links outside the bundle, identifying strings, the bundled MoltenVK on an M4 Max, the windowless host and a launchd start taking the login shell's PATH | Notarization; the packaged app's window has not been opened on a Mac by a check; macOS 14 and 15 untested |
+| Mac app package | Qt 6.11.2 built with Vulkan (arm64, macOS 14 or later) with MoltenVK loaded directly; signed with the hardened runtime and notarized; Sparkle 2.10.0 updates signed with an EdDSA key and fed from the latest release; a login item for keeping agents running; release checks for architecture, minimum macOS, links outside the bundle, identifying strings, the update key, the bundled MoltenVK on an M4 Max, the windowless host and a launchd start taking the login shell's PATH; 0.1.0 opened and used with a live agent by a person | An update installed through Sparkle (the first comes with the release after 0.2.0); notifications, the login item and the Finder and editor actions not yet exercised by a check on a Mac; macOS 14 and 15 untested |
 | Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals; [installed binary qualification](evidence/codex-binary-update.json) | Broader binary and request-kind qualification |
 
 [Desktop evidence](evidence/desktop-preview.json),
@@ -123,8 +123,9 @@ and checked on macOS 26.5. The app keeps `lapis.json` and its runtime state in
 `~/.lapis` (or `$LAPIS_HOME`), and uses the agent CLIs you already have
 installed. Opened from Finder or the Dock, it starts agents with your login
 shell's environment, so they find the same tools and keys as in your terminal.
-The phone gateway and the login helper that restarts agents at login are set up
-from this repository; the app does not include them yet.
+It checks the latest release for updates once a day and installs them after
+asking (Sparkle). Settings can keep agents running at login. The phone gateway
+is set up from this repository; the app does not include it yet.
 [Contributing](CONTRIBUTING.md#build-the-mac-app) describes how the app is built,
 signed and notarized.
 
@@ -166,6 +167,27 @@ separate service, identity and endpoint. No approval settings or global hooks ar
 changed; a Claude agent's hooks are passed to that one process by its service. Unsupported Codex binaries keep explicit status/response limitations;
 there is no qualification bypass.
 
+Drag a card from the strip onto an edge of the stage to tile that agent beside
+the one shown, as iTerm2 splits a tab (onto a tile's middle to swap it in).
+Dividers drag to share the space, and agents are resized once, when the drag
+ends. Command-D starts an agent like the selected one (folder, CLI, model and
+mode) tiled to the right, Command-Shift-D below it; Command-Control-arrows move
+between tiles, Command-Shift-Return fills the stage with one, and a tile's ×
+or a drag back to the strip takes it off the stage while it keeps running. A
+strip agent that is not tiled takes the selected tile when you click it. Each
+category keeps its tiles. Cards also drag along the strip to reorder, onto a
+category in the rail to move there, and onto the rail's **+** to start a new
+category; Command-click and Shift-click pick several to drag together, and
+categories drag up and down the rail.
+
+Command-F finds text in the selected terminal: the page shown first, then older
+history pages (Return goes older, Shift-Return newer). Command-plus, minus and
+zero change the text size. Files dropped on a terminal paste their quoted paths.
+The card menu and Commands show an agent's folder in Finder, open it in your
+editor (`editor` in `lapis.json`, else the first of Cursor, VS Code, Zed,
+Windsurf and Sublime Text installed) or copy its path. Command-Shift-T reopens
+the last agent you closed, resuming its conversation where its CLI can.
+
 Open **Commands** to search or scroll through actions and their configured
 shortcuts. Create categories with **New category** there. The category rail and that category's
 agent strip are separate navigation levels. Every category remembers its selected
@@ -201,7 +223,8 @@ per machine where they differ:
     "machines": {"devbox": {"folder": "~/work"}},
     "models": {"codex": ["gpt-6-astra", "gpt-6-sol"]}
   },
-  "alerts": {"sound": true, "finished": true, "repeat": 3},
+  "alerts": {"sound": true, "finished": true, "repeat": 3, "notify": true},
+  "editor": "Cursor",
   "keepAwake": true,
   "usage": {"show": true, "meter": ["codex", "claude", "grok"], "machines": ["devbox"]}
 }
@@ -209,8 +232,11 @@ per machine where they differ:
 
 An agent that needs you chimes (two taps, rising), and again every few seconds
 while the request waits and you are looking elsewhere, up to `repeat` times; a
-Codex or Claude turn that ends out of view chimes once, quietly. Appearance has
-the switches and a Play button for each. `keepAwake` keeps the Mac from
+Codex or Claude turn that ends out of view chimes once, quietly. While lapis is
+in the background the same moments post a notification (`notify`); clicking it
+shows the agent. Appearance has the switches and a Play button for each. In the
+downloaded app it also keeps agents running at login and checks for updates,
+which install from the latest release. `keepAwake` keeps the Mac from
 sleeping while it is plugged in, so the phone can reach it.
 
 `usage.show` puts plan usage under the categories: every plan a CLI here is

@@ -2050,6 +2050,57 @@ through the direct MoltenVK path is unproven), macOS 14 and 15, Intel Macs (not
 built), notarization, and a launch from a DMG on a second Mac. The phone gateway
 and login helper are not in the app. There is no automatic update.
 
+### Tiles, dragging and desktop integration (September 25)
+
+The user asked for tiles again, having split terminals everywhere else ("a
+native feature that I would want coming in"), this time by dragging strip
+cards onto the stage; this supersedes the September 22 removal above. Tiles
+are per category and the strip stays the navigation.
+
+- **Layout.** `TileLayout` is a plain binary tree (a leaf per agent, a split
+  side by side or stacked with a ratio), so it rolls back with the rest of the
+  registry and is saved per category as `tiles`. Unknown or repeated agents and
+  malformed splits are dropped on load; at most eight tiles. Workspace exposes
+  the active category's tiles and dividers in unit coordinates.
+- **Selection.** The selected agent is always one of the tiles. Clicking a strip
+  agent that is not tiled puts it in the selected tile, as selecting a card
+  always showed it on the stage; its previous agent stays in the strip.
+- **Rendering.** The selected tile's terminal is the existing stage surface,
+  moved to that tile, so focus, IME and every earlier stage behavior are
+  unchanged. Other tiles are interactive surfaces with input disabled: they
+  size their agents and draw live, and a click selects them. Tile and divider
+  delegates are keyed by agent and split path and only move when a divider
+  does, so a drag never rebuilds a terminal. `holdResize` keeps every agent's
+  size during a divider drag and sends one resize when it ends; a resize per
+  cell would make each agent redraw many times a second.
+- **Dragging.** One mouse area per card or tile name bar turns a press into a
+  click or, after eight pixels, a drag; a TapHandler and DragHandler pair inside
+  the strip's list lost clicks. A ghost with `Drag` keys carries agents or a
+  category to drop areas on the stage (edge to split, middle to swap), the strip
+  (an insertion marker), the rail's categories and its **+**. A drop is applied
+  after the drag ends, because it can replace the very card being dragged.
+  `Drag.Internal` was not used: it starts a platform drag that takes the mouse.
+  Qt drops synthetic pointer moves that repeat a timestamp, which the UI tests
+  must set.
+- **Find** searches the page shown, row by row and case-insensitively, using the
+  terminal's selection for the match, and pages into older history when the
+  page has no more.
+- **Notifications** use UNUserNotificationCenter for the chime's moments while
+  lapis is not the active app, one per agent (a newer one replaces it); the
+  first asks permission. **Reopen** keeps the last ten closed agents' resume
+  launches for the session. The downloaded app's **login item** is an
+  SMAppService agent in `Contents/Library/LaunchAgents` running
+  `--restore-agents --serve`.
+- **Updates.** Sparkle 2.10.0 reads `appcast.xml` from the latest release's
+  assets. The EdDSA private key exists only in the release Mac's login keychain;
+  the release step exports it through `generate_keys` (which created it and so
+  needs no prompt) for one `sign_update` call. Losing that key means installed
+  copies can no longer verify updates, so it must be backed up.
+
+Multiple windows (a category in its own window) were deferred: tiles cover a
+split on one display, and a second stage with its own focus and layout would
+touch every part of the workspace.
+
 ### Following milestones
 
 With the two-session workspace assembled, the next qualification stages are

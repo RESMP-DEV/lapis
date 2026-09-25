@@ -635,11 +635,19 @@ machine's user name, host name or Homebrew path (add more with
 asks the windowless host for its harnesses, and starts the app through launchd,
 as the Dock does, to confirm it takes the login shell's PATH. None of these opens
 a window; a window launch of the packaged app is a separate, scheduled check.
+The app build also bundles Sparkle (pinned by SHA-256) for updates; its
+feed is the `appcast.xml` a release attaches. The update key is created once
+with `build/release/sparkle/bin/generate_keys`, which keeps the private half in
+the login keychain and prints the public half, saved in
+`apps/desktop/macos/update-public-key.txt`. Back the private key up
+(`generate_keys -x FILE`, then store the file somewhere safe and delete it):
+without it, installed copies cannot verify later updates.
 `notices` regenerates `third_party/qt/NOTICES.txt` from the Qt build's SBOM and
 `third_party/moltenvk/NOTICES.txt` from MoltenVK's pinned revisions; rerun it
 when either version changes. `release --tag vX.Y.Z` (add `--draft` to review
 first) refuses a DMG without a stapled ticket or a commit not yet pushed, then
-creates the GitHub release with the DMG and the three Qt source archives. The
+creates the GitHub release with the DMG, `appcast.xml` and the three Qt source
+archives. The
 download page in `site/` is published to GitHub Pages by
 `.github/workflows/site.yml` when it changes on `main`.
 
