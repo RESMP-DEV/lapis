@@ -3,19 +3,29 @@
 #include <QByteArray>
 #include <QByteArrayView>
 #include <QString>
+#include <cstdint>
 #include <optional>
 #include <vector>
 
+#include "launch_spec.hpp"
+
 namespace lapis::session {
-// The conversation a service-owned agent can resume after its service stops.
+enum class ResumeSource : std::uint8_t { terminal, observer };
+
+// A terminal checkpoint is advisory; only an observer can authorize automatic resume.
 struct ResumeRecord {
     QString agent;      // CLI name, for example "claude"
     QString session_id; // the conversation its native resume option takes
+    ResumeSource source{ResumeSource::terminal};
 };
 
 // A conversation identifier safe to pass as one literal argument: printable,
 // no whitespace, and never an option.
 [[nodiscard]] bool valid_resume_identity(const QString& value);
+
+// Checkpoints are untrusted terminal output. Tie their claimed agent to the
+// managed Codex/Claude integration or the terminal executable's harness name.
+[[nodiscard]] QString checkpoint_agent_for_launch(const LaunchSpec& launch);
 
 // Agent session hooks for terminal restore tools write
 // OSC 1337 SetUserVar=agent_checkpoint=<base64 JSON> to their terminal. This

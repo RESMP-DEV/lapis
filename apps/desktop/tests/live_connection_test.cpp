@@ -8,6 +8,7 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QTemporaryDir>
@@ -74,7 +75,9 @@ struct Fixture {
         QStringLiteral("test"), QStringLiteral("/tmp"), {}, QColor(Qt::white), ""};
     Fixture() {
         require(directory.isValid(), "Temporary directory failed");
-        endpoint = QDir(directory.path()).absoluteFilePath(QStringLiteral("session.sock"));
+        const QString canonicalDirectory = QFileInfo(directory.path()).canonicalFilePath();
+        require(!canonicalDirectory.isEmpty(), "Temporary directory canonical path failed");
+        endpoint = QDir(canonicalDirectory).absoluteFilePath(QStringLiteral("session.sock"));
         launch = lapis::session::validate_launch({.program = QStringLiteral("/bin/cat"),
                                                   .arguments = {},
                                                   .directory = directory.path()});

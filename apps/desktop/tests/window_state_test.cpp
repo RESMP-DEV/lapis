@@ -11,10 +11,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QPoint>
-#include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>

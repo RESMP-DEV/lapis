@@ -94,6 +94,7 @@ class SessionService final : public QObject {
                    QString::fromLatin1(requested_session_id.toHex()), history_limits()) {
         configure_history();
         resume_endpoint_ = endpoint;
+        checkpoint_agent_ = checkpoint_agent_for_launch(launch);
         if (auto saved = read_resume_record(endpoint))
             resume_ = *saved;
         current_size_ = launch.size;
@@ -210,18 +211,26 @@ class SessionService final : public QObject {
             return;
         }
         pending_output_ += bytes;
-        if (const auto found = checkpoint_scanner_.scan(bytes))
-            note_conversation(found->agent, found->session_id);
+        if (const auto found = checkpoint_scanner_.scan(bytes);
+            found && found->agent == checkpoint_agent_)
+            note_conversation(found->agent, found->session_id, ResumeSource::terminal);
         pty_.pauseOutput(true);
         process_output();
     }
     // The conversation to resume if this service stops without the agent being
     // closed (see agent_checkpoint.hpp). Failure to save is not fatal.
-    void note_conversation(const QString& agent, const QString& session_id) {
-        if (!valid_resume_identity(session_id) ||
-            (resume_.agent == agent && resume_.session_id == session_id))
+    void note_conversation(const QString& agent, const QString& session_id,
+                           ResumeSource source = ResumeSource::observer) {
+        // Printed bytes cannot impersonate the managed observer or downgrade
+        // an identity already learned through its independent protocol.
+        if (source == ResumeSource::terminal &&
+            (codex_observer_ || claude_observer_ || resume_.source == ResumeSource::observer))
             return;
-        const ResumeRecord candidate{agent, session_id};
+        if (!valid_resume_identity(session_id) ||
+            (resume_.agent == agent && resume_.session_id == session_id &&
+             resume_.source == source))
+            return;
+        const ResumeRecord candidate{agent, session_id, source};
         try {
             write_resume_record(resume_endpoint_, candidate);
             resume_ = candidate;
@@ -1093,6 +1102,7 @@ class SessionService final : public QObject {
     std::unique_ptr<lapis::claude::Observer> claude_observer_;
     QString resume_endpoint_;
     CheckpointScanner checkpoint_scanner_;
+    QString checkpoint_agent_;
     ResumeRecord resume_;
     std::unique_ptr<attention::State> codex_state_;
     std::unique_ptr<lapis::codex::Observer> codex_observer_;

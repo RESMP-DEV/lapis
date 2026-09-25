@@ -770,7 +770,7 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `codex-observer` | Desktop-enabled | Discovery, temporary-thread isolation, exact decisions, simultaneous requests, resume/read recovery and source loss |
 | `claude-observer` | Desktop-enabled | Hook launch settings, relay identity/turn boundaries, exact retirement, privacy bounds and malformed/oversized-event loss |
 | `session-descriptor` | Desktop-enabled | Private identity hint, atomic replacement, corruption and unsafe-file rejection |
-| `agent-checkpoint` | Desktop-enabled | Restore-hook sequences across reads, identity and host checks, and private resume records |
+| `agent-checkpoint` | Desktop-enabled | Restore-hook sequences, identity/host checks, private records and observer provenance |
 | `live-connection` | Desktop-enabled | Screen-before-input, exact attention decisions/rejections, duplicate gating, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
 | `keymap` | Desktop-enabled | Configuration defaults, appearance choices, persistence and invalid input |
@@ -870,6 +870,12 @@ duplicate submissions; the desktop variant covers provisional-send gating throug
 CTest and the actual controls.
 The runtime model/provider and binary hash are recorded. Use `--build-dir` to
 select a sanitizer build and `--output` to isolate receipts from concurrent runs.
+
+For an explicitly selected OpenAI run, `check_service_attention.py --live-openai`
+copies the existing login into a private disposable home with mode `0600`. Codex
+refreshes only that copy; the fixture never writes credentials back to the source.
+This isolates local file writes, but the run still uses the selected account and
+can refresh its login with the provider. No login flow is started by the fixture.
 
 The service fixture uses `on-request` and explicitly asks approval for its one
 whitelisted command. The installed binary rejects `approval_policy="untrusted"`
@@ -1049,10 +1055,14 @@ received bytes for printable/Control/Option keys and Command-V multiline Unicode
 bracketed paste; observes native preedit and commit; checks cancellation and fresh
 composition after history, document detach, window focus and actual attachment
 replacement/reconnect; and verifies commit plus the candidate anchor after resize.
-The workspace case additionally defers focus during an active Japanese IME
-composition, commits to the originating session, and verifies that later US
-input follows the selected workspace session. A native bracketed paste stays
-whole in its originating PTY while an eligible automatic switch is attempted.
+The current probe covers terminal input and attachment ownership. Its
+`lapis.native-input/2` receipt lists the cases actually exercised; `passed` does
+not attest to category navigation or a workspace carousel. The earlier `/1`
+workspace-supervisor case belongs to the superseded flat workspace described in
+[Milestone 3](docs/architecture.md#milestone-3-supervising-two-live-sessions-on-macos).
+Category navigation during composition and paste is covered separately by
+`ui-preview`'s `check_composition_navigation` Qt fixture. That synthetic coverage
+does not replace native cross-session qualification.
 Each native key edge waits for AppKit delivery before the next edge is posted;
 keys are never resent after a deadline. `LAPIS_NATIVE_TRACE=1` logs the probe's
 AppKit key and Qt key/composition events for diagnosis. A delivery deadline is

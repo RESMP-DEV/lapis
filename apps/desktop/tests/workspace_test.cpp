@@ -28,6 +28,12 @@ namespace {
 using lapis::desktop::Workspace;
 using lapis::desktop::WorkspaceMode;
 using lapis::desktop::WorkspaceOptions;
+// These fixtures simulate an independently observed adapter record.
+void writeObservedResume(const QString& endpoint, lapis::session::ResumeRecord record) {
+    record.source = lapis::session::ResumeSource::observer;
+    lapis::session::write_resume_record(endpoint, record);
+}
+
 void require(bool condition, const char* message) {
     if (!condition)
         throw std::runtime_error(message);
@@ -54,6 +60,9 @@ void explicitAgentIdentity() {
                                              ? SessionPreview::StatusSource::output
                                              : SessionPreview::StatusSource::observer),
                 "explicit attach selects the correct status source");
+        require(!workspace.createAgent(directory.path(), QStringLiteral("Blocked")),
+                "an explicit attach cannot create an unpersisted managed agent");
+        require(workspace.sessions().size() == 1, "rejected creation leaves the attach intact");
     }
 }
 void projectPaths() {
@@ -674,12 +683,58 @@ void agentArgumentsPersist() {
                            .toArray();
     require(saved == QJsonArray{QStringLiteral("--dangerously-skip-permissions")},
             "saving keeps the agent's arguments");
+    {
+        auto unsafe_resume = agentRecord(canonical, uuid(), "general");
+        unsafe_resume.insert(QStringLiteral("harness"), QStringLiteral("codex"));
+        unsafe_resume.insert(QStringLiteral("arguments"),
+                             QJsonArray{QStringLiteral("resume"), QStringLiteral("not-a-uuid")});
+        auto configured = root;
+        configured.insert(QStringLiteral("agents"), QJsonArray{unsafe_resume});
+        writeRegistry(options.storagePath, configured);
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.workspaceError().isEmpty(),
+                "a configured codex resume value is an ordinary argument");
+        require(workspace.addCategory(QStringLiteral("Research")), "save configured arguments");
+    }
+    const auto resumed = QJsonDocument::fromJson(readRegistry(options.storagePath))
+                             .object()
+                             .value(QStringLiteral("agents"))
+                             .toArray()
+                             .first()
+                             .toObject();
+    require(resumed.value(QStringLiteral("arguments")) ==
+                    QJsonArray{QStringLiteral("resume"), QStringLiteral("not-a-uuid")} &&
+                resumed.value(QStringLiteral("resumeThread")).toString().isEmpty(),
+            "a non-native resume argument cannot poison the native identity field");
     record.insert(QStringLiteral("arguments"), QJsonArray{3});
     auto broken = root;
     broken.insert(QStringLiteral("agents"), QJsonArray{record});
     writeRegistry(options.storagePath, broken);
     Workspace rejected(WorkspaceMode::live, options);
     require(!rejected.workspaceError().isEmpty(), "non-string arguments are rejected");
+    require(rejected.sessions().isEmpty() && !rejected.focusedSession(),
+            "one malformed agent cannot be partially restored");
+}
+
+void unknownRegistryVersionsAreRejected() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "version directory");
+    WorkspaceOptions options;
+    options.storagePath = QDir(directory.path()).filePath(QStringLiteral("workspace.json"));
+    const auto bytes =
+        QJsonDocument(QJsonObject{{"version", 3},
+                                  {"activeCategory", "general"},
+                                  {"categories",
+                                   QJsonArray{QJsonObject{
+                                       {"id", "general"}, {"name", "General"}, {"selected", ""}}}},
+                                  {"agents", QJsonArray{}}})
+            .toJson();
+    writeRegistry(options.storagePath, QJsonDocument::fromJson(bytes).object());
+    Workspace workspace(WorkspaceMode::live, options);
+    require(!workspace.workspaceError().isEmpty(), "unknown registry versions are rejected");
+    require(workspace.sessions().isEmpty() && !workspace.focusedSession(),
+            "unknown registry versions create no sessions");
+    require(readRegistry(options.storagePath) == bytes, "unknown versions remain for migration");
 }
 
 // Harnesses without an observer get an output-timing estimate that
@@ -725,16 +780,19 @@ void outputEstimate() {
 void agentsStartWithoutParentSessionMarkers() {
     QTemporaryDir directory;
     require(directory.isValid(), "marker directory");
+    struct RestoreEnvironment {
+        ~RestoreEnvironment() {
+            for (const char* name : {"CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "GROK_AGENT",
+                                     "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_EFFORT_LEVEL"})
+                qunsetenv(name);
+        }
+    };
+    const RestoreEnvironment restore;
     qputenv("CLAUDECODE", "1");
     qputenv("CLAUDE_CODE_CHILD_SESSION", "1");
     qputenv("CLAUDE_CODE_SESSION_ID", "parent-session");
     qputenv("GROK_AGENT", "1");
     qputenv("CLAUDE_CODE_EFFORT_LEVEL", "max");
-    const auto restore = [] {
-        for (const char* name : {"CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "GROK_AGENT",
-                                 "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_EFFORT_LEVEL"})
-            qunsetenv(name);
-    };
     const auto record = QDir(directory.path()).filePath(QStringLiteral("environment"));
     WorkspaceOptions options;
     options.endpoint = QDir(QFileInfo(directory.path()).canonicalFilePath())
@@ -751,7 +809,6 @@ void agentsStartWithoutParentSessionMarkers() {
         Workspace workspace(WorkspaceMode::live, options);
         // The service starts from the event loop, so keep the markers until then.
         const bool recorded = waitFor([&] { return QFileInfo::exists(record); }, 10000);
-        restore();
         require(recorded, "agent recorded its environment");
         QFile file(record);
         require(file.open(QIODevice::ReadOnly), "read agent environment");
@@ -1057,10 +1114,8 @@ void agentsRestoreAfterServiceLoss() {
     const auto endpoint = [&](const QString& id) {
         return QDir(canonical).filePath(id + QStringLiteral(".sock"));
     };
-    lapis::session::write_resume_record(endpoint(resumed),
-                                        {QStringLiteral("kimi"), QStringLiteral("k-123")});
-    lapis::session::write_resume_record(endpoint(foreign),
-                                        {QStringLiteral("claude"), QStringLiteral("c-9")});
+    writeObservedResume(endpoint(resumed), {QStringLiteral("kimi"), QStringLiteral("k-123")});
+    writeObservedResume(endpoint(foreign), {QStringLiteral("claude"), QStringLiteral("c-9")});
     {
         Workspace untouched(WorkspaceMode::live, options);
         require(untouched.workspaceError().isEmpty(), "load without restoring");
@@ -1128,6 +1183,82 @@ void requireProcessArguments(const QJsonArray& arguments, const QString& directo
             "the restarted process received the saved resume arguments");
 }
 
+// A launch already at the registry's durable argument cap must not receive an
+// uncounted resume pair that makes the next startup reject the whole workspace.
+void savedArgumentCapKeepsRegistryLoadable() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-resume-cap-XXXXXX"));
+    require(directory.isValid(), "saved-argument-cap directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const auto script = QDir(canonical).filePath(QStringLiteral("agent.sh"));
+    {
+        QFile file(script);
+        require(file.open(QIODevice::WriteOnly), "write saved-argument-cap script");
+        file.write(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$(dirname \"$0\")/args.$$.txt\"\nread line\n");
+    }
+    require(QFile::setPermissions(script, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "make the saved-argument-cap script executable");
+    const auto id = uuid();
+    QJsonArray arguments;
+    for (int index = 0; index < 64; ++index)
+        arguments.append(QStringLiteral("argument-%1").arg(index));
+    auto record = agentRecord(canonical, id, "general");
+    record.insert(QStringLiteral("program"), script);
+    record.insert(QStringLiteral("harness"), QStringLiteral("kimi"));
+    record.insert(QStringLiteral("arguments"), arguments);
+    WorkspaceOptions options;
+    options.restoreAgents = true;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                    {"agents", QJsonArray{record}}});
+    const auto endpoint = QDir(canonical).filePath(id + QStringLiteral(".sock"));
+    writeObservedResume(endpoint, {QStringLiteral("kimi"), QStringLiteral("capped")});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "load an argument-capped registry");
+    auto* item = workspace.session(id);
+    require(item != nullptr && waitFor([item] { return item->inputReady(); }, 10000),
+            "the capped restored agent starts");
+    auto savedAgent = [&] {
+        for (const auto& value : QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                     .object()
+                                     .value(QStringLiteral("agents"))
+                                     .toArray())
+            if (value.toObject().value(QStringLiteral("id")).toString() == id)
+                return value.toObject();
+        throw std::runtime_error("capped agent is missing");
+    }();
+    require(savedAgent.value(QStringLiteral("arguments")).toArray() == arguments,
+            "the durable argument cap prevents an uncounted managed append");
+    require(savedAgent.value(QStringLiteral("managedResume")).toObject().isEmpty(),
+            "an omitted resume append records no managed provenance");
+    requireProcessArguments(arguments, canonical);
+    item->sendText("done\r");
+    require(waitFor([item] { return item->connectionState() == QStringLiteral("ended"); }, 10000),
+            "the capped agent ends");
+    require(waitFor([&] { return !QFileInfo::exists(endpoint); }, 1000),
+            "the capped agent's old endpoint exits");
+    require(workspace.restartAgent(id), "a capped launch can restart without the append");
+    require(waitFor([item] { return item->inputReady(); }, 10000), "the capped agent restarts");
+    savedAgent = [&] {
+        for (const auto& value : QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                     .object()
+                                     .value(QStringLiteral("agents"))
+                                     .toArray())
+            if (value.toObject().value(QStringLiteral("id")).toString() == id)
+                return value.toObject();
+        throw std::runtime_error("restarted capped agent is missing");
+    }();
+    require(savedAgent.value(QStringLiteral("arguments")).toArray() == arguments,
+            "restart preserves the capped launch");
+    require(workspace.closeSession(id) &&
+                waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "the capped agent closes");
+}
+
 // Provenance, not an argument that merely looks like a resume option, says
 // which pair lapis owns. A later checkpoint therefore follows each restart,
 // while a user's explicit selection keeps its original identity.
@@ -1160,7 +1291,8 @@ void managedResumeFollowsRecovery() {
         return value;
     };
 
-    // A stale index or identity cannot silently become launch provenance.
+    // A stale index or identity loses only managed replacement; it cannot make
+    // the workspace unloadable or silently replace user-owned arguments.
     auto malformed = record(managed, QJsonArray{QStringLiteral("--flag")});
     malformed.insert(QStringLiteral("managedResume"),
                      QJsonObject{{"index", 9}, {"identity", "m-1"}});
@@ -1175,7 +1307,22 @@ void managedResumeFollowsRecovery() {
         WorkspaceOptions bad_options;
         bad_options.storagePath = malformed_path;
         Workspace bad(WorkspaceMode::live, bad_options);
-        require(!bad.workspaceError().isEmpty(), "invalid managed-resume provenance is rejected");
+        require(bad.workspaceError().isEmpty(), "invalid provenance leaves the workspace usable");
+        require(bad.renameSession(managed, QStringLiteral("recovered")),
+                "save a workspace with stale provenance");
+    }
+    {
+        const auto recovered = QJsonDocument::fromJson(readRegistry(malformed_path))
+                                   .object()
+                                   .value(QStringLiteral("agents"))
+                                   .toArray()
+                                   .first()
+                                   .toObject();
+        require(recovered.value(QStringLiteral("arguments")).toArray() ==
+                    QJsonArray{QStringLiteral("--flag")},
+                "stale provenance preserves user arguments");
+        require(recovered.value(QStringLiteral("managedResume")).toObject().isEmpty(),
+                "stale provenance is not republished");
     }
 
     writeRegistry(
@@ -1188,10 +1335,9 @@ void managedResumeFollowsRecovery() {
                                   record(explicit_agent,
                                          QJsonArray{QStringLiteral("--flag"),
                                                     QStringLiteral("--session=user-original")})}}});
-    lapis::session::write_resume_record(endpoint(managed),
-                                        {QStringLiteral("kimi"), QStringLiteral("m-1")});
-    lapis::session::write_resume_record(endpoint(explicit_agent),
-                                        {QStringLiteral("kimi"), QStringLiteral("user-1")});
+    writeObservedResume(endpoint(managed), {QStringLiteral("kimi"), QStringLiteral("m-1")});
+    writeObservedResume(endpoint(explicit_agent),
+                        {QStringLiteral("kimi"), QStringLiteral("user-1")});
     Workspace workspace(WorkspaceMode::live, options);
     require(workspace.workspaceError().isEmpty(), "load managed-resume registry");
     auto* managed_item = workspace.session(managed);
@@ -1217,9 +1363,10 @@ void managedResumeFollowsRecovery() {
         const auto agent = saved_agent(id);
         const auto actual = agent.value(QStringLiteral("arguments")).toArray();
         const auto expected =
-            managed_provenance
-                ? QJsonArray{QStringLiteral("--flag"), QStringLiteral("--session"),
-                             expected_identity}
+            managed_provenance ? QJsonArray{QStringLiteral("--flag"), QStringLiteral("--session"),
+                                            expected_identity}
+            : id == managed
+                ? QJsonArray{QStringLiteral("--flag")}
                 : QJsonArray{QStringLiteral("--flag"), QStringLiteral("--session=user-original")};
         require(actual == expected, "the recovery cycle preserves unrelated arguments");
         requireProcessArguments(expected, canonical);
@@ -1236,15 +1383,22 @@ void managedResumeFollowsRecovery() {
     check_cycle(explicit_agent, false, {});
 
     for (const auto& [identity, managed_identity] :
-         {std::pair{1, QStringLiteral("m-2")}, {2, QStringLiteral("m-3")}}) {
+         {std::pair{1, QStringLiteral("m-2")}, {2, QStringLiteral("m-3")}, {3, QString{}}}) {
         for (const auto& name :
              QDir(canonical).entryList({QStringLiteral("args.*.txt")}, QDir::Files))
             require(QFile::remove(QDir(canonical).filePath(name)), "remove prior argv receipts");
-        lapis::session::write_resume_record(endpoint(managed),
-                                            {QStringLiteral("kimi"), managed_identity});
-        lapis::session::write_resume_record(
-            endpoint(explicit_agent),
-            {QStringLiteral("kimi"), QStringLiteral("user-") + QString::number(identity + 1)});
+        if (managed_identity.isEmpty()) {
+            // Legacy/printed records retire only lapis-owned arguments.
+            lapis::session::write_resume_record(
+                endpoint(managed), {QStringLiteral("kimi"), QStringLiteral("advisory-id")});
+            lapis::session::write_resume_record(
+                endpoint(explicit_agent), {QStringLiteral("kimi"), QStringLiteral("advisory-id")});
+        } else {
+            writeObservedResume(endpoint(managed), {QStringLiteral("kimi"), managed_identity});
+            writeObservedResume(
+                endpoint(explicit_agent),
+                {QStringLiteral("kimi"), QStringLiteral("user-") + QString::number(identity + 1)});
+        }
         managed_item->sendText("done\r");
         explicit_item->sendText("done\r");
         require(waitFor(
@@ -1265,7 +1419,7 @@ void managedResumeFollowsRecovery() {
                     },
                     10000),
                 "the recovery cycle restarts");
-        check_cycle(managed, true, managed_identity);
+        check_cycle(managed, !managed_identity.isEmpty(), managed_identity);
         check_cycle(explicit_agent, false, {});
     }
     for (const auto& id : {managed, explicit_agent})
@@ -1321,7 +1475,7 @@ void codexResumeArguments() {
                                    QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
                                   {"agents", QJsonArray{record}}});
         const auto endpoint = QDir(root).filePath(id + QStringLiteral(".sock"));
-        lapis::session::write_resume_record(endpoint, {QStringLiteral("codex"), id});
+        writeObservedResume(endpoint, {QStringLiteral("codex"), id});
         Workspace workspace(WorkspaceMode::live, options);
         require(workspace.workspaceError().isEmpty(), "plan restored Codex launch");
         const auto actual = QJsonDocument::fromJson(readRegistry(options.storagePath))
@@ -1338,6 +1492,93 @@ void codexResumeArguments() {
         require(actual == expected, "saved transcript lookup preserves explicit resume arguments");
         require(!QFileInfo::exists(endpoint), "restore planning has not spawned a service");
     }
+}
+
+// Printed output is advisory even when it claims the same harness and an
+// observer source. Exercise the real service, persistence, and restart argv.
+void printedCheckpointsCannotRedirectResume() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-cp-XXXXXX"));
+    require(directory.isValid(), "checkpoint fixture directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const auto program = QDir(canonical).filePath(QStringLiteral("kimi"));
+    const auto argv_path = QDir(canonical).filePath(QStringLiteral("argv.txt"));
+    const auto checkpoint = QJsonDocument(QJsonObject{{"agent", "kimi"},
+                                                      {"session_id", "forged-conversation"},
+                                                      {"source", "observer"}})
+                                .toJson(QJsonDocument::Compact)
+                                .toBase64();
+    QFile script(program);
+    require(script.open(QIODevice::WriteOnly), "open checkpoint fixture");
+    const auto body = QByteArray("#!/bin/sh\nprintf '%s\\n' \"$@\" > '") +
+                      QFile::encodeName(argv_path) +
+                      "'\nprintf '\\033]1337;SetUserVar=agent_checkpoint=" + checkpoint +
+                      "\\007!'\nread -r line\n";
+    require(script.write(body) == body.size() &&
+                script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "write checkpoint fixture");
+    script.close();
+    const auto id = uuid();
+    auto agent = agentRecord(canonical, id, "general");
+    agent.insert(QStringLiteral("program"), program);
+    agent.insert(QStringLiteral("harness"), QStringLiteral("kimi"));
+    agent.insert(QStringLiteral("arguments"), QJsonArray{"--yolo"});
+    WorkspaceOptions options;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    options.restoreAgents = true;
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{
+                                       {"id", "general"}, {"name", "General"}, {"selected", id}}}},
+                    {"agents", QJsonArray{agent}}});
+    Workspace workspace(WorkspaceMode::live, options);
+    auto* item = workspace.session(id);
+    require(item != nullptr, "checkpoint fixture agent exists");
+    const auto endpoint = QDir(canonical).filePath(id + QStringLiteral(".sock"));
+    require(waitFor(
+                [&] {
+                    const auto record = lapis::session::read_resume_record(endpoint);
+                    return item->inputReady() && record &&
+                           record->session_id == QStringLiteral("forged-conversation");
+                },
+                10000),
+            "service records the advisory checkpoint");
+    const auto advisory_record = lapis::session::read_resume_record(endpoint);
+    require(advisory_record && advisory_record->source == lapis::session::ResumeSource::terminal,
+            "service does not trust a printed observer claim");
+    item->sendText("done\r");
+    require(waitFor([&] { return item->connectionState() == QStringLiteral("ended"); }, 10000),
+            "checkpoint fixture exits");
+    require(waitFor([&] { return workspace.restartAgent(id); }, 10000),
+            "restart checkpoint fixture");
+    require(waitFor([&] { return item->inputReady(); }, 10000), "checkpoint fixture restarts");
+    QFile argv_file(argv_path);
+    require(argv_file.open(QIODevice::ReadOnly) && argv_file.readAll() == QByteArray("--yolo\n"),
+            "printed checkpoint never becomes a resume argument");
+    argv_file.close();
+    item->sendText("done\r");
+    require(waitFor([&] { return item->connectionState() == QStringLiteral("ended"); }, 10000),
+            "advisory recovery fixture exits");
+    writeObservedResume(endpoint, {QStringLiteral("kimi"), QStringLiteral("verified-id")});
+    require(waitFor([&] { return workspace.restartAgent(id); }, 10000),
+            "restart with an independently verified identity");
+    require(waitFor([&] { return item->inputReady(); }, 10000), "verified fixture restarts");
+    // Wait for the fixture's output to reach the service before checking that
+    // the same printed OSC did not downgrade the pre-existing observer record.
+    require(waitFor([&] { return item->snapshot().graphemes.find(U'!') != std::u32string::npos; },
+                    10000),
+            "service consumed the checkpoint output");
+    const auto verified_record = lapis::session::read_resume_record(endpoint);
+    require(verified_record && verified_record->source == lapis::session::ResumeSource::observer &&
+                verified_record->session_id == QStringLiteral("verified-id"),
+            "printed output cannot overwrite an observer checkpoint");
+    require(argv_file.open(QIODevice::ReadOnly) &&
+                argv_file.readAll() == QByteArray("--yolo\n--session\nverified-id\n"),
+            "only the verified identity becomes a resume argument");
+    require(workspace.closeSession(id) &&
+                waitFor([&] { return workspace.sessions().isEmpty(); }, 10000),
+            "checkpoint fixture closes");
 }
 
 // Opt-in, with LAPIS_TEST_CODEX_HOME naming a Codex home that uses a local
@@ -1434,11 +1675,14 @@ int main(int argc, char** argv) {
         unseenFollowsTurnsAndSelection();
         claudeAgentsUseServiceAdapter();
         agentArgumentsPersist();
+        unknownRegistryVersionsAreRejected();
         outputEstimate();
         agentsStartWithoutParentSessionMarkers();
         restartRefusesClosingAgent();
         agentsRestoreAfterServiceLoss();
+        savedArgumentCapKeepsRegistryLoadable();
         managedResumeFollowsRecovery();
+        printedCheckpointsCannotRedirectResume();
         restartReportsValidationFailures();
         const bool had_codex_home = qEnvironmentVariableIsSet("CODEX_HOME");
         const auto original_codex_home = qgetenv("CODEX_HOME");

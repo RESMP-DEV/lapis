@@ -126,7 +126,7 @@ bool valid_agent_launch(const QCommandLineParser& parser, bool preview) {
 bool valid_preview_agent(const QCommandLineParser& parser, bool preview) {
     if (!preview)
         return true;
-    for (const auto* option : {"codex", "claude"})
+    for (const auto* option : {"codex", "claude", "development-shell"})
         if (parser.isSet(QString::fromLatin1(option))) {
             qCritical("--%s cannot be combined with --ui-preview", option);
             return false;

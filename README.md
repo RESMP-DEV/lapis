@@ -130,10 +130,12 @@ starts at your platform home directory; arrows select folder suggestions and
 Tab or Return completes the selected folder. The browse button opens the native
 folder picker. There is no name or model field. Each harness uses its existing
 login, default model and execution policy; model changes stay inside its own TUI.
-To add your own flags to every new agent of a harness (lapis adds none itself),
+To add your own flags to every new agent of a harness,
 set `harnessArguments` in `lapis.json`, for example
 `{"harnessArguments": {"claude": ["--dangerously-skip-permissions"]}}`; shell
-aliases do not apply, because lapis starts the executable directly.
+aliases do not apply, because lapis starts the executable directly. Lapis adds
+Codex's `-c check_for_update_on_startup=false` because it handles the update
+check before starting a new agent.
 New tabs show the harness mark and a home-relative project path such as `~/dev/lapis`.
 Codex and Claude Code have verified activity integration. Other harnesses run
 their native CLI and show an output estimate instead of guessing turns.

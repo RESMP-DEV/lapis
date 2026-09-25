@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import socket
+import stat
 import tempfile
 import sys
 import unittest
@@ -107,10 +108,11 @@ class ProviderOptionsTests(unittest.TestCase):
                 self.subTest(arguments=arguments),
                 contextlib.redirect_stderr(io.StringIO()),
             ):
-                with self.assertRaises(SystemExit):
+                with self.assertRaises(SystemExit) as raised:
                     parse_args(arguments)
+                self.assertEqual(raised.exception.code, 2)
 
-    def test_openai_uses_private_auth_link_without_reading_credentials(self):
+    def test_openai_copies_private_auth_without_write_through(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             user = root / "user"
@@ -120,23 +122,13 @@ class ProviderOptionsTests(unittest.TestCase):
             runtime = root / "private"
             (runtime / "home").mkdir(parents=True)
             args = parse_args(["--live-openai"])
-            with (
-                patch("check_service_attention.Path.home", return_value=user),
-                patch.object(
-                    Path,
-                    "read_bytes",
-                    side_effect=AssertionError("credentials must not be read"),
-                ),
-                patch.object(
-                    Path,
-                    "read_text",
-                    side_effect=AssertionError("credentials must not be read"),
-                ),
-            ):
+            with patch("check_service_attention.Path.home", return_value=user):
                 options = fixture_options(args, runtime)
-            link = runtime / "home" / "auth.json"
-            self.assertTrue(link.is_symlink())
-            self.assertEqual(link.readlink(), auth)
+            copied = runtime / "home" / "auth.json"
+            self.assertFalse(copied.is_symlink())
+            self.assertEqual(copied.read_bytes(), auth.read_bytes())
+            self.assertEqual(stat.S_IMODE(copied.stat().st_mode), 0o600)
+            copied.write_text("refreshed fixture credential")
             self.assertEqual(auth.read_text(), "not a real credential")
             config = dict(option.split("=", 1) for option in options[1::2])
             self.assertEqual(json.loads(config["model_provider"]), "openai")
