@@ -815,7 +815,7 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `codex-observer` | Desktop-enabled | Discovery, temporary-thread isolation, exact decisions, simultaneous requests, resume/read recovery and source loss |
 | `claude-observer` | Desktop-enabled | Hook launch settings, relay identity/turn boundaries, exact retirement, privacy bounds and malformed/oversized-event loss |
 | `session-descriptor` | Desktop-enabled | Private identity hint, atomic replacement, corruption and unsafe-file rejection |
-| `agent-checkpoint` | Desktop-enabled | Restore-hook sequences across reads, identity and host checks, and private resume records |
+| `agent-checkpoint` | Desktop-enabled | Restore-hook sequences, identity/host checks, private records and observer provenance |
 | `live-connection` | Desktop-enabled | Screen-before-input, exact attention decisions/rejections, duplicate gating, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
 | `keymap` | Desktop-enabled | Configuration defaults, appearance choices, persistence and invalid input |
