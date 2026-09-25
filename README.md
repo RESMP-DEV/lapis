@@ -131,10 +131,12 @@ starts at your platform home directory; arrows select folder suggestions and
 Tab or Return completes the selected folder. The browse button opens the native
 folder picker. There is no name or model field. Each harness uses its existing
 login, default model and execution policy; model changes stay inside its own TUI.
-To add your own flags to every new agent of a harness (lapis adds none itself),
+To add your own flags to every new agent of a harness,
 set `harnessArguments` in `lapis.json`, for example
 `{"harnessArguments": {"claude": ["--dangerously-skip-permissions"]}}`; shell
-aliases do not apply, because lapis starts the executable directly.
+aliases do not apply, because lapis starts the executable directly. Lapis adds
+Codex's `-c check_for_update_on_startup=false` because it handles the update
+check before starting a new agent.
 New tabs show the harness mark and a home-relative project path such as `~/dev/lapis`.
 Codex and Claude Code have verified activity integration. Other harnesses run
 their native CLI and show an output estimate instead of guessing turns.
@@ -182,6 +184,21 @@ An agent that has ended or cannot be reached keeps its last screen, with a bar
 on the stage giving the reason and the key that closes it. **Restart agent**
 in Commands starts it again in the same card, resuming its conversation the
 same way.
+
+A new agent's CLI updates itself first (`claude update`, `omp update`, `grok
+update`, `kimi upgrade`, `opencode upgrade`, `agy update`), at most every 30
+minutes per CLI; the card reads **Updating Claude…** until the agent starts on
+the new version, and results go to `runtime/harness-updates.log`. Codex is the
+exception: lapis observes only Codex builds it has qualified, so it keeps the
+qualified build and defaults Codex's update prompt to off
+(`check_for_update_on_startup=false`), including newly spawned restored agents.
+Explicit user settings are preserved. Reattaching to a running agent keeps its
+recorded launch arguments.
+
+Explicit Claude creation (`--claude --new-session --socket PATH -- PROGRAM`)
+also updates before starting. Reconnect and `--discover` only attach to the
+existing session and do not update it. Use `--no-harness-updates` when qualifying
+a pinned executable or deliberately keeping the installed version.
 
 Upgrading lapis does not disturb running agents: quit the old build and open
 the new one, and it reattaches to the same processes. Launch fingerprints,

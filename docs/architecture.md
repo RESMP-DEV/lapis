@@ -1725,6 +1725,41 @@ the restore path to one ended or unreachable card and refuses while its service
 answers. Explicit Antigravity resumes use `agy --conversation`; its printed
 checkpoint does not authorize automatic resume.
 
+CLI updates (September 24, requested so agents never open on an update
+prompt). Before a new agent starts, the desktop runs that CLI's own
+non-interactive update command (Claude `update`, OMP `update`, Grok `update`,
+Kimi `upgrade`, OpenCode `upgrade`, Antigravity `update`) with no input and a
+two-minute limit, at most every 30 minutes per CLI; the card shows Updating
+<CLI> and starts the agent when the update ends, whatever its outcome, and
+the output is logged beside the registry. On POSIX, the updater owns a new
+process group. A guard retains group membership after the leader exits, so
+cleanup never signals a recycled leader PID. Normal exit, timeout and desktop
+teardown stop the group, including installer children that remain in it. Queued
+agents wait for both leader exit and the guard's cleanup acknowledgment.
+Repeated restarts cannot bypass the queue or create duplicate services.
+Output is drained during execution into an 8 KiB tail, with the existing
+600-character log limit. Running agents keep their binary.
+Codex is not updated: the observer accepts only qualified binary digests, and
+an unqualified build loses turn status and requests, so lapis keeps the
+qualified build and defaults Codex to `check_for_update_on_startup=false`.
+Newly spawned restored Codex agents receive this default too, while existing
+explicit config overrides and live reattachment arguments remain unchanged.
+Literal prompt words after `--` do not count as config options. The saved-argument
+cap remains 64: if there is no room for the default pair, the original arguments
+are preserved and the omission is diagnosed instead of breaking registry reload.
+Automating Codex requalification (the probes against the fake model rather
+than a live one) is the step that would let Codex update too. Restored and
+reattached agents are not updated.
+
+Explicit Claude creation through `--new-session` uses the same update queue as
+managed new agents. Reconnect and discovery retain their attachment semantics
+and never run an updater. Deferred explicit starts retain the normalized socket
+endpoint, and their update log lives beside that endpoint. The
+`--no-harness-updates` flag disables updates for pinned-binary qualification and
+operator-selected launches; fixture `WorkspaceOptions` keep updates off by
+default. Codex remains pinned, and arbitrary explicit programs do not gain an
+inferred updater command.
+
 Phone access (September 23, requested for use on the go without signing in).
 A prototype, deliberately simpler than the SSH design first proposed:
 

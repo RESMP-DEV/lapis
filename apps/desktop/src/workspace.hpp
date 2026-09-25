@@ -14,6 +14,7 @@
 #include <QLockFile>
 #include <QMap>
 #include <QObject>
+#include <QPointer>
 #include <QSet>
 #include <QString>
 #include <QTimer>
@@ -23,6 +24,8 @@
 #include <memory>
 #include <optional>
 #include <vector>
+
+class QProcess;
 
 namespace lapis::desktop {
 
@@ -80,6 +83,8 @@ class SessionPreview final : public QObject {
     bool terminate();
     [[nodiscard]] bool closing() const { return closing_; }
     void setClosing(bool closing);
+    // Shown instead of the status while the agent's CLI updates before start.
+    void setUpdating(const QString& label);
     [[nodiscard]] bool unseen() const { return unseen_; }
     void setUnseen(bool unseen);
     // Where activity comes from: a service-side observer (the Codex app-server,
@@ -178,6 +183,7 @@ class SessionPreview final : public QObject {
     bool live_snapshot_ready_{};
     bool live_snapshot_received_{};
     bool closing_{};
+    QString updating_;
     bool unseen_{};
     StatusSource status_source_{StatusSource::observer};
     // Output estimate: several frames close together read as activity, and a
@@ -222,6 +228,13 @@ struct WorkspaceOptions {
     // Restart agents whose session service is gone (after a reboot or crash),
     // resuming each recorded conversation. Off unless the app asks for it.
     bool restoreAgents{};
+    // Run a supported CLI's own update command before a new agent of it
+    // starts, at most every 30 minutes per CLI, so agents never open on an
+    // update prompt. Existing-session reconnect and discovery do not update.
+    bool updateHarnesses{};
+    // Production bounds. Tests inject short values so stuck-updater cleanup is
+    // observable without waiting two minutes or leaving installer children.
+    qint64 updateTimeoutMs{qint64{2} * 60 * 1000};
 };
 
 class Workspace final : public QObject {
@@ -240,6 +253,7 @@ class Workspace final : public QObject {
         lapis::desktop::SessionPreview* focusedSession READ focusedSession NOTIFY focusChanged)
   public:
     explicit Workspace(WorkspaceMode mode = WorkspaceMode::live, WorkspaceOptions options = {});
+    ~Workspace() override;
     [[nodiscard]] bool previewMode() const { return preview_mode_; }
     [[nodiscard]] QString homeDirectory() const;
     Q_INVOKABLE [[nodiscard]] QVariantList availableHarnesses() const;
@@ -299,6 +313,19 @@ class Workspace final : public QObject {
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
     QHash<QString, QStringList> harness_arguments_;
     bool restore_agents_{};
+    bool update_harnesses_{};
+    QHash<QString, qint64> harness_checked_ms_;
+    QHash<QString, QPointer<QProcess>> harness_updates_;
+    QHash<QString, QStringList> starts_after_update_;
+    QHash<QProcess*, QByteArray> updater_output_;
+    QHash<QProcess*, bool> updater_stopping_;
+    qint64 update_timeout_ms_{qint64{2} * 60 * 1000};
+    // True when the agent waits for its CLI's update and starts after it.
+    bool deferForUpdate(const QString& id);
+    void drainUpdater(QProcess* process);
+    void finishUpdate(const QString& harness, QProcess* process, const QString& outcome);
+    void logUpdate(const QString& line) const;
+    QString update_log_directory_;
     // Records conversations for agents whose services do not.
     QTimer conversation_timer_;
     std::shared_ptr<std::atomic_bool> probing_{std::make_shared<std::atomic_bool>(false)};
@@ -349,6 +376,7 @@ class Workspace final : public QObject {
         int managed_resume_index{-1};
         QString managed_resume_identity{};
     };
+    static void applyStartupDefaults(const Agent& agent, ResumeLaunch& plan);
     [[nodiscard]] static std::optional<ResumeLaunch> restoredLaunch(const Agent& agent,
                                                                     QString* diagnostic = nullptr);
     [[nodiscard]] static bool serviceRunning(const QString& endpoint);
