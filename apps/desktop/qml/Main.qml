@@ -145,7 +145,11 @@ ApplicationWindow {
         if (action === "quit")
             return [mod + "Q"]
         if (action === "closeAgent")
-            return [mod + "W"]
+            return [mac ? "Meta+Shift+W" : mod + "W"]
+        if (action === "closeWindow")
+            return mac ? ["Meta+W"] : []
+        if (action === "minimizeWindow")
+            return mac ? ["Meta+M"] : []
         if (action === "nextCategory")
             return [mod + "Alt+Right", mod + (mac ? "Shift+Down" : "Down")]
         if (action === "previousCategory")
@@ -332,6 +336,9 @@ ApplicationWindow {
         add("restart", qsTr("Start replacement agent session"), "", window.recoveryAvailable(), qsTr("Available for a disconnected agent"), () => agent.startNewSession())
         add("appearance", qsTr("Appearance"), "openSettings", true, "", () => window.openSettingsDialog())
         add("reloadConfig", qsTr("Reload configuration"), "reloadConfig", typeof keymap !== "undefined" && keymap !== null, qsTr("No configuration in this fixture"), () => keymap.reload())
+        const mac = Qt.platform.os === "osx"
+        add("closeWindow", qsTr("Close window (lapis keeps running)"), "closeWindow", mac, qsTr("Only on the Mac"), () => window.close())
+        add("minimizeWindow", qsTr("Minimize window"), "minimizeWindow", true, "", () => window.showMinimized())
         add("quit", qsTr("Quit lapis"), "quit", true, "", () => Qt.quit())
         return entries
     }
@@ -969,7 +976,8 @@ ApplicationWindow {
 
     // Command-Left/Right stay with the terminal. These chords are the workspace
     // bindings from the keymap; they are off while a dialog, menu, or composition
-    // owns the keyboard. Closing the window does not hide it.
+    // owns the keyboard. On the Mac a closed window only hides: lapis keeps
+    // running and the Dock icon brings it back.
     Shortcut {
         sequences: window.bindings("quit")
         context: Qt.WindowShortcut
@@ -977,6 +985,8 @@ ApplicationWindow {
         autoRepeat: false
         onActivated: Qt.quit()
     }
+    ActionShortcut { action: "closeWindow"; onActivated: window.close() }
+    ActionShortcut { action: "minimizeWindow"; onActivated: window.showMinimized() }
     Shortcut {
         // Unbound by default; kept for configurations that name it.
         sequences: window.bindings("detachWindow")

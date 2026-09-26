@@ -35,6 +35,9 @@ struct UiPreviewOptions {
     // Only the normal workspace restores user geometry; tests opt in with an isolated path.
     bool persistGeometry{};
     QString geometryPath{};
+    // Closing the window hides it and the app keeps running (the Mac's
+    // convention); quitting still closes it.
+    bool hideOnClose{};
 };
 
 // View host shared by normal launch and the isolated development fixture.
@@ -97,6 +100,7 @@ class UiPreview final : public QObject {
     QList<QKeySequence> parsed_settings_shortcuts_;
     bool publishing_diagnostics_{};
     bool shutting_down_{};
+    bool quitting_{};
     bool reduced_motion_{};
     bool system_reduced_motion_{};
 };

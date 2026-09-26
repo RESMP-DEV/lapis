@@ -1448,7 +1448,11 @@ reduced motion keeps both steady. Activity comes from three declared sources:
   ignoring the first 3 s after attaching (screen replay). It is advisory and
   never reads as a finished turn.
 
-Command-W closes the focused agent. An ended or fixture agent closes at once. A
+Command-Shift-W closes the focused agent (Command-W until September 25, when
+the user asked for Command-W to close the window with lapis still running: on
+the Mac a close hides the window, Quit is told apart by the application's Quit
+event that precedes it, and reactivation from the Dock shows the window again).
+An ended or fixture agent closes at once. A
 reachable running agent is confirmed and then ended through a client frame,
 `terminate` (kind 15, an additive v6 client kind): the service sends SIGHUP to
 the agent's verified process group, SIGTERM after 1.5 s and SIGKILL after 3 s,

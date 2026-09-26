@@ -413,9 +413,8 @@ void navigation_defaults_preserve_terminal_editing() {
                               QStringLiteral("nextWindow"),   QStringLiteral("previousWindow"),
                               QStringLiteral("newAgent"),     QStringLiteral("newCategory"),
                               QStringLiteral("closeAgent"),   QStringLiteral("quit")};
-    // Command-W closes an agent; closing the window has no default key.
     require(keymap.sequences(QStringLiteral("detachWindow")).isEmpty(),
-            "the window closes only from its own control or Quit");
+            "the retired detach action stays unbound");
     for (const auto* removed : {"nextPane", "zoomPane", "paneLeft", "dividerLeft"})
         require(keymap.sequences(QString::fromLatin1(removed)).isEmpty(),
                 "the old pane actions stay retired");
@@ -431,7 +430,18 @@ void navigation_defaults_preserve_terminal_editing() {
                 keymap.sequences(QStringLiteral("newCategory")) ==
                     QStringList{QStringLiteral("Meta+N")},
             "as in a browser, Command-T opens an agent and Command-N a category");
+    // Command-W closes the window and lapis keeps running; Command-Shift-W
+    // closes the agent and Command-M minimizes, as elsewhere on the Mac.
+    require(keymap.sequences(QStringLiteral("closeWindow")) ==
+                    QStringList{QStringLiteral("Meta+W")} &&
+                keymap.sequences(QStringLiteral("closeAgent")) ==
+                    QStringList{QStringLiteral("Meta+Shift+W")} &&
+                keymap.sequences(QStringLiteral("minimizeWindow")) ==
+                    QStringList{QStringLiteral("Meta+M")},
+            "Command-W closes the window, Command-Shift-W the agent, Command-M minimizes");
 #else
+    require(keymap.sequences(QStringLiteral("closeWindow")).isEmpty(),
+            "without a dock to reopen it, closing the window has no key");
     require(keymap.sequences(QStringLiteral("newAgent")) ==
                     QStringList{QStringLiteral("Ctrl+Shift+T")} &&
                 keymap.sequences(QStringLiteral("newCategory")) ==

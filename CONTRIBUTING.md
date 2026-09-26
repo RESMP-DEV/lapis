@@ -379,9 +379,11 @@ The committed `lapis.json` holds defaults only (see
   the category form.
   Command-Shift-P opens the searchable, scrollable Commands palette. Command-B
   toggles the sidebar; `sidebarVisible` persists in `lapis.json`. Command-V remains paste.
-  Command-comma opens Appearance. Command-W (`closeAgent`) closes the focused
-  agent, confirming first while it may be running. Command-Q quits the GUI and
-  the window's close button detaches it; neither stops service-owned agents.
+  Command-comma opens Appearance. Command-Shift-W (`closeAgent`) closes the
+  focused agent, confirming first while it may be running. Command-W
+  (`closeWindow`) and the close button hide the window while lapis keeps
+  running, and the Dock icon brings it back; Command-M (`minimizeWindow`)
+  minimizes. Command-Q quits the GUI; none of these stops service-owned agents.
   `detachWindow` still works when configured but has no default key.
 - Linux uses Control-Shift-based counterparts, with Alt added for the category
   arrows and new-category creation. Bare terminal Control chords remain

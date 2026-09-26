@@ -504,6 +504,15 @@ int main(int argc, char** argv) {
         if (!isolated)
             alert_for_agents(alerts, notifier, workspace, keymap, shown);
         DesktopActions desktop(keymap);
+        // On the Mac the window closes to the Dock and lapis keeps serving
+        // agents, alerts and the phone until it quits.
+#ifdef Q_OS_MACOS
+        const bool hide_on_close = !isolated && !parser.isSet(QStringLiteral("capture"));
+#else
+        const bool hide_on_close = false;
+#endif
+        if (hide_on_close)
+            QGuiApplication::setQuitOnLastWindowClosed(false);
         AgentSearch agentSearch(&workspace);
         // Plan limits and token totals, only while the setting is on and only
         // in the real workspace. Each CLI keeps its transcripts where its own
@@ -523,13 +532,21 @@ int main(int argc, char** argv) {
                                    .desktop = &desktop,
                                    .persistGeometry = !isolated && !options.launch &&
                                                       options.endpoint.isEmpty() &&
-                                                      !parser.isSet(QStringLiteral("capture"))});
+                                                      !parser.isSet(QStringLiteral("capture")),
+                                   .hideOnClose = hide_on_close});
         view.setSystemReducedMotion(system_reduced_motion());
         view.setReducedMotion(parser.isSet(QStringLiteral("reduced-motion")));
+        // Clicking the Dock icon (or switching to lapis) brings a closed window back.
         QObject::connect(&app, &QGuiApplication::applicationStateChanged, &view,
-                         [&view](Qt::ApplicationState state) {
-                             if (state == Qt::ApplicationActive)
-                                 view.setSystemReducedMotion(system_reduced_motion());
+                         [&view, &shown, hide_on_close](Qt::ApplicationState state) {
+                             if (state != Qt::ApplicationActive)
+                                 return;
+                             view.setSystemReducedMotion(system_reduced_motion());
+                             if (hide_on_close && shown && !shown->isVisible()) {
+                                 shown->show();
+                                 shown->raise();
+                                 shown->requestActivate();
+                             }
                          });
         QObject::connect(&view, &UiPreview::windowChanged, &view, [&](QQuickWindow* window) {
             shown = window;

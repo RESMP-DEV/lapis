@@ -182,6 +182,10 @@ UiPreview::UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* pa
             deferTerminalFocus();
         });
     connect(&workspace_, &Workspace::focusChanged, this, &UiPreview::deferTerminalFocus);
+    // Every way of quitting (Quit, the Dock's menu, logging out) sends Quit to
+    // the application before it closes the window.
+    if (options_.hideOnClose && QCoreApplication::instance() != nullptr)
+        QCoreApplication::instance()->installEventFilter(this);
 }
 
 QStringList UiPreview::monospaceFamilies() const {
@@ -326,8 +330,19 @@ void UiPreview::deferTerminalFocus() {
 }
 
 bool UiPreview::eventFilter(QObject* watched, QEvent* event) {
-    if (watched == window_.data() && event->type() == QEvent::Close)
+    if (watched == QCoreApplication::instance()) {
+        if (event->type() == QEvent::Quit)
+            quitting_ = true;
+        return QObject::eventFilter(watched, event);
+    }
+    if (watched == window_.data() && event->type() == QEvent::Close) {
         saveGeometry();
+        if (options_.hideOnClose && !quitting_) {
+            event->ignore();
+            window_->hide();
+            return true;
+        }
+    }
     if (event->type() != QEvent::KeyPress)
         return QObject::eventFilter(watched, event);
 
