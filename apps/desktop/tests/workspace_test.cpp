@@ -1636,6 +1636,8 @@ struct PhoneArrangement {
 // and moves an agent to a category or a place in one, while the window keeps
 // what it shows.
 void phoneArrangesTheWorkspace(Workspace& workspace, const PhoneArrangement& place) {
+    // A copy: the requests below change the workspace through its socket.
+    // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
     const auto shown = workspace.activeCategoryId();
     const auto* focused = workspace.focusedSession();
     const auto& ideas = place.ideas;
