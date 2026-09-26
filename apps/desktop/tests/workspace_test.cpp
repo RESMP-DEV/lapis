@@ -1708,7 +1708,29 @@ void phoneStartsAnAgentInItsCategory() {
                 10000) &&
                 waitFor([far] { return far->inputReady(); }, 10000),
             "ssh runs the CLI in that machine's folder and login shell");
-        for (const auto& closing : {desk->sessionId(), id, far->sessionId()})
+        // The Mac's own form names the machine the same way.
+        QFile config(root.filePath(QStringLiteral("ssh_config")));
+        require(config.open(QIODevice::WriteOnly), "write an ssh config");
+        config.write("Host devbox\nHost *\n");
+        config.close();
+        workspace.setSshConfigForTesting(config.fileName());
+        require(workspace.sshMachines() == QStringList{QStringLiteral("devbox")},
+                "the form offers the ssh config's hosts");
+        require(workspace.createAgent(QStringLiteral("~/dev/other"), QStringLiteral("other"),
+                                      QStringLiteral("grok"), {}, {}, QStringLiteral("devbox")),
+                "the Mac starts an agent on another machine");
+        auto* mac_far = workspace.focusedSession();
+        require(mac_far != nullptr &&
+                    waitFor(
+                        [mac_far] {
+                            const auto text = screenText(mac_far->snapshot());
+                            return text.contains(QStringLiteral("[devbox]")) &&
+                                   text.contains(QStringLiteral("cd ~/dev/other"));
+                        },
+                        10000) &&
+                    waitFor([mac_far] { return mac_far->inputReady(); }, 10000),
+                "over ssh, in that machine's folder");
+        for (const auto& closing : {desk->sessionId(), id, far->sessionId(), mac_far->sessionId()})
             require(workspace.closeSession(closing), "close the stand-in agents");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "the stand-in agents close");

@@ -1709,6 +1709,40 @@ void check_home_and_resume(QQuickWindow& window, lapis::desktop::Workspace& work
     pump(60);
 }
 
+// The new-agent form offers this Mac and the ssh config's hosts: right and
+// left change the machine while up and down choose the CLI, and another
+// machine's folder starts at its home with no local suggestions.
+void check_new_agent_machine(QQuickWindow& window, const lapis::desktop::KeyMap& keymap) {
+    press_action(window, keymap, "newAgent");
+    auto* form = window.findChild<QObject*>(QStringLiteral("agentDialog"));
+    CHECK(form != nullptr);
+    wait_popup(*form, true);
+    pump(60);
+    CHECK(required_visual(window, QStringLiteral("machine_mac"))->isVisible() &&
+          required_visual(window, QStringLiteral("machine_devbox"))->isVisible());
+    CHECK(form->property("selectedMachine").toString().isEmpty());
+    send_binding(window, QStringLiteral("Right"));
+    pump(30);
+    CHECK(form->property("selectedMachine").toString() == QStringLiteral("devbox"));
+    capture_step(window, "new-agent-machine");
+    send_binding(window, QStringLiteral("Return"));
+    pump(60);
+    CHECK(form->property("phase").toInt() == 1);
+    CHECK(required_visual(window, QStringLiteral("agentDirectoryField"))
+              ->property("text")
+              .toString() == QStringLiteral("~"));
+    CHECK(!required_visual(window, QStringLiteral("folderResults"))->isVisible() &&
+          required_visual(window, QStringLiteral("agentMachine"))->isVisible());
+    // Back to the CLI step and to this Mac, which the next form remembers.
+    send_binding(window, QStringLiteral("Escape"));
+    pump(30);
+    send_binding(window, QStringLiteral("Left"));
+    pump(30);
+    CHECK(form->property("selectedMachine").toString().isEmpty());
+    CHECK(QMetaObject::invokeMethod(form, "close"));
+    wait_popup(*form, false);
+}
+
 QString screen_text(const lapis::session::TerminalSnapshot& snapshot) {
     QString text;
     for (std::size_t index = 0; index < snapshot.cells.size(); ++index) {
@@ -1925,6 +1959,7 @@ void write_history_and_shell(const QTemporaryDir& config) {
                                   "  [ \"$line\" = exit ] && exit 0\n  echo \"ran $line\"\ndone\n");
     CHECK(QFile::setPermissions(config.filePath(QStringLiteral("shell")),
                                 QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    save(QStringLiteral("ssh_config"), "Host devbox\nHost *\n");
     CHECK(QDir().mkpath(config.filePath(QStringLiteral("runtime"))));
     CHECK(QFile::setPermissions(config.filePath(QStringLiteral("runtime")),
                                 QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
@@ -2173,6 +2208,8 @@ int run_strip_ui_tests() {
     check_agent_search(*window, workspace, keymap, *terminal);
     check_home_and_resume(*window, workspace, keymap);
     check_side_terminal(*window, terminals, keymap, *terminal);
+    workspace.setSshConfigForTesting(config.filePath(QStringLiteral("ssh_config")));
+    check_new_agent_machine(*window, keymap);
     check_usage(*window, *usage, keymap, *terminal);
     CHECK(preview.diagnostics().isEmpty());
     return EXIT_SUCCESS;

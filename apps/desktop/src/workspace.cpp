@@ -4,6 +4,7 @@
 #include "live_connection.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "platform/updater_process.hpp"
+#include "terminals.hpp"
 #include "workspace_control.hpp"
 
 #include <QCoreApplication>
@@ -1079,13 +1080,14 @@ bool Workspace::resumeAgent(const QString& directory, const QString& title, cons
                         .resume = conversation})
                 .isEmpty();
 }
+QStringList Workspace::sshMachines() const { return ssh_config_hosts(ssh_config_); }
 bool Workspace::createAgent(const QString& directory, const QString& title, const QString& harness,
-                            const QString& model, const QString& mode) {
+                            const QString& model, const QString& mode, const QString& machine) {
     return !startAgent({.category = active_category_,
                         .directory = directory,
                         .title = title,
                         .harness = harness,
-                        .machine = {},
+                        .machine = machine,
                         .program = {},
                         .model = model,
                         .mode = mode,

@@ -11,6 +11,7 @@
 #include "transport/local_protocol.hpp"
 
 #include <QColor>
+#include <QDir>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonValue>
@@ -314,9 +315,15 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool selectCategory(const QString& id);
     Q_INVOKABLE void nextCategory(int delta = 1);
     Q_INVOKABLE bool selectSession(const QString& id);
+    // `machine` is an ssh host; empty starts it on this Mac.
     Q_INVOKABLE bool createAgent(const QString& directory, const QString& title,
                                  const QString& harness = QStringLiteral("codex"),
-                                 const QString& model = {}, const QString& mode = {});
+                                 const QString& model = {}, const QString& mode = {},
+                                 const QString& machine = {});
+    // The machines a new agent can start on besides this Mac: the ssh
+    // config's hosts, as the side terminal offers them.
+    Q_INVOKABLE [[nodiscard]] QStringList sshMachines() const;
+    void setSshConfigForTesting(const QString& path) { ssh_config_ = path; }
     // Starts an agent in the active category that resumes `conversation`.
     Q_INVOKABLE bool resumeAgent(const QString& directory, const QString& title,
                                  const QString& harness, const QString& conversation,
@@ -402,6 +409,7 @@ class Workspace final : public QObject {
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
     QHash<QString, QStringList> harness_arguments_;
     AgentDefaults agent_defaults_;
+    QString ssh_config_{QDir::home().filePath(QStringLiteral(".ssh/config"))};
     const HarnessModels* harness_models_{};
     bool restore_agents_{};
     bool update_harnesses_{};

@@ -655,6 +655,8 @@ ApplicationWindow {
     // What the last new agent was started with, kept for the next one: the
     // CLI, the approval mode across CLIs, and each CLI's model.
     property string lastHarness: ""
+    // The machine the last new agent started on: "" for this Mac, else an ssh host.
+    property string lastMachine: ""
     property string lastMode: ""
     property var lastModels: ({})
     function openNewAgentDialog() {
@@ -664,6 +666,9 @@ ApplicationWindow {
             return
         agentDialog.localError = ""
         agentDialog.harnesses = workspace.availableHarnesses()
+        agentDialog.machines = [""].concat(workspace.sshMachines())
+        agentDialog.selectedMachine = agentDialog.machines.indexOf(window.lastMachine) >= 0 ? window.lastMachine : ""
+        agentDialog.folderMachine = ""
         agentDialog.phase = 0
         // The config's newAgent defaults: the CLI, then the folder to start in.
         const defaults = workspace.agentDefaults()
@@ -731,7 +736,7 @@ ApplicationWindow {
         }
         const model = agentDialog.chosenModel && !agentDialog.chosenModel.default ? agentDialog.chosenModel.id : ""
         if (!workspace.createAgent(agentDirectoryField.text.trim(), title, agentDialog.selectedHarness,
-                                   model, agentDialog.selectedMode)) {
+                                   model, agentDialog.selectedMode, agentDialog.selectedMachine)) {
             agentDialog.localError = workspace.workspaceError.length > 0 ? workspace.workspaceError :
                                                                           qsTr("Could not start %1.").arg(agentDialog.harnessName)
             return
@@ -1661,6 +1666,32 @@ ApplicationWindow {
         property var harnesses: []
         readonly property var choices: harnesses
         property string selectedHarness: "claude"
+        // "" for this Mac, else an ssh host from the ssh config. Left and right
+        // change it while up and down choose the CLI.
+        property var machines: [""]
+        property string selectedMachine: ""
+        readonly property bool remote: selectedMachine.length > 0
+        // The machine whose folder the field holds.
+        property string folderMachine: ""
+        function chooseMachine(machine) {
+            selectedMachine = machine
+            window.lastMachine = machine
+        }
+        function stepMachine(delta) {
+            if (machines.length < 2) return
+            const at = Math.max(0, machines.indexOf(selectedMachine))
+            chooseMachine(machines[(at + delta + machines.length) % machines.length])
+        }
+        // The config's newAgent folder for that machine, else its home.
+        function machineFolder() {
+            const defaults = workspace.agentDefaults()
+            if (remote)
+                return (defaults.machines && defaults.machines[selectedMachine]) || "~"
+            const folder = defaults.folder === "~" ? workspace.homeDirectory :
+                           defaults.folder && defaults.folder.startsWith("~/") ? workspace.homeDirectory + defaults.folder.slice(1) :
+                           defaults.folder || ""
+            return (folder.length > 0 ? folder.replace(/\/+$/, "") : workspace.homeDirectory) + "/"
+        }
         // This agent's model (one the CLI lists) and approval mode. The mode
         // stays across CLIs; a CLI without it uses its nearest, less access
         // first, and the preference returns on a CLI that has it.
@@ -1697,15 +1728,22 @@ ApplicationWindow {
         }
         function chooseHarness(index) {
             const item = choices[index]
-            if (!item || !item.installed) return
+            // Another machine's CLIs are its own; this Mac cannot see them.
+            if (!item || (!item.installed && !remote)) return
             selectedHarness = item.id
             selectedModel = window.lastModels[item.id] || ""
             window.lastHarness = item.id
+            if (folderMachine !== selectedMachine) {
+                agentDirectoryField.text = machineFolder()
+                folderMachine = selectedMachine
+            }
             phase = 1
             Qt.callLater(function() {
                 agentDirectoryField.forceActiveFocus()
                 agentDirectoryField.cursorPosition = agentDirectoryField.text.length
-                folderSearch.restart()
+                folderResults.model = []
+                if (!agentDialog.remote)
+                    folderSearch.restart()
             })
         }
         onOpened: Qt.callLater(function() { harnessChoices.forceActiveFocus() })
@@ -1759,7 +1797,7 @@ ApplicationWindow {
             id: folderSearch
             interval: 100
             onTriggered: {
-                if (!agentDialog.visible || agentDialog.phase !== 1) return
+                if (!agentDialog.visible || agentDialog.phase !== 1 || agentDialog.remote) return
                 let path = agentDirectoryField.text
                 if (path === "~" || path.startsWith("~/"))
                     path = workspace.homeDirectory + path.slice(1)
@@ -1781,6 +1819,36 @@ ApplicationWindow {
                 width: agentScroll.availableWidth
                 spacing: 8
 
+                RowLayout {
+                    objectName: "machineChoices"
+                    visible: agentDialog.phase === 0 && agentDialog.machines.length > 1
+                    Layout.fillWidth: true
+                    spacing: 6
+                    PlainLabel {
+                        text: qsTr("Machine")
+                        color: window.mutedTextColor
+                        Layout.preferredWidth: 60
+                    }
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 6
+                        Repeater {
+                            model: agentDialog.machines
+                            delegate: CommandButton {
+                                required property var modelData
+                                objectName: "machine_" + (modelData.length > 0 ? modelData : "mac")
+                                text: modelData.length > 0 ? modelData : qsTr("This Mac")
+                                selected: modelData === agentDialog.selectedMachine
+                                onClicked: agentDialog.chooseMachine(modelData)
+                            }
+                        }
+                    }
+                    PlainLabel {
+                        text: "\u2190 \u2192"
+                        color: window.mutedTextColor
+                        font.family: window.monoFamily
+                    }
+                }
                 PlainLabel {
                     visible: agentDialog.phase === 0
                     text: qsTr("Choose agent")
@@ -1798,6 +1866,8 @@ ApplicationWindow {
                     keyNavigationEnabled: true
                     Keys.onReturnPressed: agentDialog.chooseHarness(currentIndex)
                     Keys.onEnterPressed: agentDialog.chooseHarness(currentIndex)
+                    Keys.onLeftPressed: agentDialog.stepMachine(-1)
+                    Keys.onRightPressed: agentDialog.stepMachine(1)
                     onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
                     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
                     delegate: ItemDelegate {
@@ -1818,17 +1888,17 @@ ApplicationWindow {
                             spacing: 10
                             AgentMark {
                                 harnessId: harnessChoice.modelData.id
-                                ink: harnessChoice.modelData.installed ? window.textColor : window.mutedTextColor
+                                ink: harnessChoice.modelData.installed || agentDialog.remote ? window.textColor : window.mutedTextColor
                                 Layout.preferredWidth: 24
                                 Layout.preferredHeight: 24
                             }
                             PlainLabel {
                                 text: harnessChoice.modelData.name
-                                color: harnessChoice.modelData.installed ? window.textColor : window.mutedTextColor
+                                color: harnessChoice.modelData.installed || agentDialog.remote ? window.textColor : window.mutedTextColor
                                 Layout.fillWidth: true
                             }
                             PlainLabel {
-                                visible: !harnessChoice.modelData.installed
+                                visible: !harnessChoice.modelData.installed && !agentDialog.remote
                                 text: qsTr("Not installed")
                                 color: window.mutedTextColor
                             }
@@ -1844,6 +1914,13 @@ ApplicationWindow {
                     }
                     AgentMark { harnessId: agentDialog.selectedHarness; ink: window.textColor; Layout.preferredWidth: 24; Layout.preferredHeight: 24 }
                     PlainLabel { text: agentDialog.harnessName; color: window.textColor; font.pixelSize: window.chromeFont + 2 }
+                    PlainLabel {
+                        objectName: "agentMachine"
+                        visible: agentDialog.remote
+                        text: qsTr("on %1").arg(agentDialog.selectedMachine)
+                        color: window.mutedTextColor
+                        font.pixelSize: window.chromeFont + 2
+                    }
                 }
                 // Model and approval mode for this agent, as the CLI's own flags.
                 Flow {
@@ -1888,7 +1965,8 @@ ApplicationWindow {
                     FormField {
                         id: agentDirectoryField
                         objectName: "agentDirectoryField"
-                        placeholderText: workspace.homeDirectory + "/"
+                        placeholderText: agentDialog.remote ? qsTr("Folder on %1 (~ is its home)").arg(agentDialog.selectedMachine)
+                                                            : workspace.homeDirectory + "/"
                         font.family: window.monoFamily
                         Accessible.name: qsTr("Project folder")
                         maximumLength: 4096
@@ -1906,6 +1984,7 @@ ApplicationWindow {
                     }
                     CommandButton {
                         objectName: "browseProjectFolder"
+                        visible: !agentDialog.remote
                         text: "…"
                         Accessible.name: qsTr("Browse project folders")
                         onClicked: folderPicker.open()
@@ -1914,7 +1993,7 @@ ApplicationWindow {
                 ListView {
                     id: folderResults
                     objectName: "folderResults"
-                    visible: agentDialog.phase === 1
+                    visible: agentDialog.phase === 1 && !agentDialog.remote
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.min(5, count) * 34
                     clip: true

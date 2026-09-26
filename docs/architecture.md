@@ -2187,6 +2187,12 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   **Terminal**, lists open terminals above the agents and swipes them away.
 - **Shortcuts.** Appearance lists every action that has a key; `keybindings` in
   `lapis.json` changes them.
+- **Machine in the Mac's form.** Only the phone could start an agent on another
+  machine. The Mac's new-agent form now has a Machine row (this Mac and the ssh
+  config's hosts, left and right arrows) and starts through the same ssh launch;
+  another machine's folder is typed (its `newAgent` folder, else `~`), since
+  this Mac cannot list it, and every CLI is offered because only that machine
+  knows which it has.
 - **Phone tests on one fake agent.** Several phone UI tests take turns on one
   fake agent and each waited for its first line, "new conversation", to prove
   the screen was live. Whether that line is still on screen depends on whether
