@@ -2194,7 +2194,7 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
 - **Names.** Agents started in one folder all read as that folder. An agent
   that still has the name it started with takes its current conversation's
   title (the CLI's resume record, else lapis's resume pair, looked up in the
-  conversation index, which the app rescans each minute); a chosen name is
+  conversation index, which the app updates each minute); a chosen name is
   recorded as `named` in the registry and stays. The phone renames through
   `renameAgent`, so both devices share one name.
 - **Phone paging.** Swiping over an agent's screen moves between the agents of
@@ -2323,6 +2323,32 @@ stopped at 64 MiB a session and 4,096 pages in all: a few thousand rows.
   protocol tests, `historyJumpsToTheStart` in the workspace suite,
   `HistoryJumpTests` against a real service, and `testScrubbingJumpsToTheStart`
   in the simulator.
+
+### Lag, nine categories and a lighter conversation scan (September 26)
+
+Reported: lapis felt laggy, and only four categories had a key.
+
+- **Where the time went.** At 12:58 pm the Mac had 33 of 36 GB in use, 5.9 GB
+  compressed and 7.7 of 9.2 GB of swap, with 73 Claude Code processes holding
+  10.1 GB (16 lapis agents, 6.2 GB; 6 in iTerm2, 2.8 GB) and Chrome, WindowServer
+  and iTerm2 the busiest processes. lapis used 5.8% of a core and 291 MB; over a
+  10-second sample its main and render threads waited throughout, and its
+  session services stayed near 0 to 2%. A new Claude Code session in
+  full-screen mode, under an installed service, echoed a keystroke in 23 ms
+  median, as `cat` did. The lag was not lapis's work.
+- **The conversation index** was lapis's one steady cost: each minute it
+  checked all 29,397 Claude and 7,448 Codex conversation files (330 had changed
+  in a day) and rewrote a 5.6 MB cache, some 8 GB of writes a day. A pass now
+  remembers the previous one, lists only folders whose time changed, looks
+  again only at conversations written in the last two days, and sweeps
+  everything every half hour, when an old conversation resumed in place is
+  seen. The cache file is written at most every quarter hour.
+- **Categories.** Command-1 through Command-9 (Control-Shift on Linux) select
+  the first nine categories; Command-Option-arrows and Command-Shift-up/down
+  still move through all of them.
+- Qualified by the conversation index test (an old conversation kept from
+  memory, a new one in a known folder, one rewritten), the keymap test, and
+  `check_nine_categories` in the window tests.
 
 ### Following milestones
 

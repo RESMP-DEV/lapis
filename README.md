@@ -196,8 +196,8 @@ agent. Commands and the card's context menu rename, reorder or move the selected
 restarting it. Attention counts do not reorder categories or steal input.
 
 On macOS, Command-Option-left/right or Command-Shift-up/down changes category;
-Command-Shift-[ and ] moves through the category's agents. Command-1 through 4
-selects a category. Command-J jumps to the next agent, in any category, with a
+Command-Shift-[ and ] moves through the category's agents. Command-1 through 9
+selects one of the first nine categories. Command-J jumps to the next agent, in any category, with a
 pending request, or else one that finished while you were elsewhere.
 Command-W closes what is in front, as in a browser: the side terminal's panel
 (its shell keeps running), else the focused agent (a running agent is confirmed,
