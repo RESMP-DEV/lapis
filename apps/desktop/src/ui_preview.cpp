@@ -22,6 +22,7 @@
 #include <QScopedValueRollback>
 #include <QScreen>
 #include <QStringList>
+#include <array>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -482,28 +483,28 @@ void UiPreview::publishWarnings(const QList<QQmlError>& warnings) {
     emit diagnosticsChanged();
 }
 
+// What QML reads by name. An absent object is left undefined; QML falls back.
+void UiPreview::exposeObjects(QQmlContext& context) {
+    context.setContextProperty(QStringLiteral("workspace"), &workspace_);
+    context.setContextProperty(QStringLiteral("preview"), this);
+    // QML reads `keymap.actionSequences(...)`. Absent keymap keeps the literals.
+    const std::array<std::pair<const char*, QObject*>, 7> optional{{
+        {"keymap", options_.keymap},
+        {"alerts", options_.alerts},
+        {"agentSearch", options_.agentSearch},
+        {"usage", options_.usage},
+        {"desktop", options_.desktop},
+        {"conversations", options_.conversations},
+        {"terminals", options_.terminals},
+    }};
+    for (const auto& [name, object] : optional)
+        if (object != nullptr)
+            context.setContextProperty(QString::fromLatin1(name), object);
+}
+
 bool UiPreview::loadCandidate() {
     std::unique_ptr<QQmlApplicationEngine> candidate = std::make_unique<QQmlApplicationEngine>();
-    candidate->rootContext()->setContextProperty(QStringLiteral("workspace"), &workspace_);
-    candidate->rootContext()->setContextProperty(QStringLiteral("preview"), this);
-    // QML reads `keymap.actionSequences(...)`. Absent keymap keeps the literals.
-    if (options_.keymap != nullptr)
-        candidate->rootContext()->setContextProperty(QStringLiteral("keymap"), options_.keymap);
-    if (options_.alerts)
-        candidate->rootContext()->setContextProperty(QStringLiteral("alerts"), options_.alerts);
-    if (options_.agentSearch)
-        candidate->rootContext()->setContextProperty(QStringLiteral("agentSearch"),
-                                                     options_.agentSearch);
-    if (options_.usage)
-        candidate->rootContext()->setContextProperty(QStringLiteral("usage"), options_.usage);
-    if (options_.desktop)
-        candidate->rootContext()->setContextProperty(QStringLiteral("desktop"), options_.desktop);
-    if (options_.conversations)
-        candidate->rootContext()->setContextProperty(QStringLiteral("conversations"),
-                                                     options_.conversations);
-    if (options_.terminals)
-        candidate->rootContext()->setContextProperty(QStringLiteral("terminals"),
-                                                     options_.terminals);
+    exposeObjects(*candidate->rootContext());
     candidate->setInitialProperties({{QStringLiteral("visible"), false}});
 
     QString candidateDiagnostics;

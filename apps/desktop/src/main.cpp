@@ -1,14 +1,14 @@
 #include "agent_search.hpp"
 #include "alerts.hpp"
-#include "conversation_index.hpp"
 #include "app_paths.hpp"
+#include "conversation_index.hpp"
 #include "desktop_actions.hpp"
 #include "keymap.hpp"
 #include "platform_desktop.hpp"
 #include "platform_preferences.hpp"
 #include "shell_environment.hpp"
-#include "terminals.hpp"
 #include "terminal_surface.hpp"
+#include "terminals.hpp"
 #include "ui_capture.hpp"
 #include "ui_preview.hpp"
 #include "usage.hpp"
@@ -306,13 +306,96 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
 // keep running either way; a window reattaches to them when it opens.
 // Where Codex and Claude Code keep transcripts: their own home variables, or
 // their default folders.
-QString cli_home(const char* variable, const char* fallback) {
+QString cli_home(const char* variable, const QString& fallback) {
     const auto set = qEnvironmentVariable(variable);
-    return set.isEmpty() ? QDir::home().filePath(QLatin1String(fallback)) : set;
+    return set.isEmpty() ? QDir::home().filePath(fallback) : set;
 }
 lapis::desktop::TokenLedger::Roots transcript_roots() {
-    return {cli_home("CODEX_HOME", ".codex") + QStringLiteral("/sessions"),
-            cli_home("CLAUDE_CONFIG_DIR", ".claude") + QStringLiteral("/projects")};
+    return {cli_home("CODEX_HOME", QStringLiteral(".codex")) + QStringLiteral("/sessions"),
+            cli_home("CLAUDE_CONFIG_DIR", QStringLiteral(".claude")) + QStringLiteral("/projects")};
+}
+// Past Claude and Codex conversations, to resume one and to put the folders
+// with the most recent work first in folder pickers; the running agents'
+// folders count too.
+std::unique_ptr<lapis::desktop::ConversationIndex>
+conversation_index(const lapis::desktop::Workspace& workspace, bool isolated) {
+    using lapis::desktop::SessionPreview;
+    auto index = std::make_unique<lapis::desktop::ConversationIndex>(
+        cli_home("CLAUDE_CONFIG_DIR", QStringLiteral(".claude")),
+        cli_home("CODEX_HOME", QStringLiteral(".codex")),
+        QDir(lapis::desktop::data_directory())
+            .filePath(QStringLiteral("runtime/conversations.json")));
+    index->setOpenFolders([&workspace] {
+        QStringList folders;
+        for (const auto& value : workspace.sessions())
+            if (const auto* item = value.value<SessionPreview*>(); item && item->live())
+                folders.append(item->directory());
+        return folders;
+    });
+    if (!isolated)
+        index->refresh();
+    return index;
+}
+// On the Mac the window closes to the Dock and lapis keeps serving agents,
+// alerts and the phone until it quits.
+bool closes_to_dock(bool isolated, const QCommandLineParser& parser) {
+#ifdef Q_OS_MACOS
+    const bool hide = !isolated && !parser.isSet(QStringLiteral("capture"));
+    if (hide)
+        QGuiApplication::setQuitOnLastWindowClosed(false);
+    return hide;
+#else
+    static_cast<void>(isolated);
+    static_cast<void>(parser);
+    return false;
+#endif
+}
+// Switching to lapis rereads reduced motion; a click on its Dock icon (or any
+// activation) brings a closed window back.
+void follow_activation(QGuiApplication& app, lapis::desktop::UiPreview& view,
+                       QPointer<QQuickWindow>& shown, bool hide_on_close) {
+    QObject::connect(&app, &QGuiApplication::applicationStateChanged, &view,
+                     [&view, &shown, hide_on_close](Qt::ApplicationState state) {
+                         if (state != Qt::ApplicationActive)
+                             return;
+                         view.setSystemReducedMotion(lapis::desktop::system_reduced_motion());
+                         if (!hide_on_close || !shown || shown->isVisible())
+                             return;
+                         shown->show();
+                         shown->raise();
+                         shown->requestActivate();
+                     });
+}
+// Command-` before AppKit's window cycling takes it, while that key is bound.
+void route_terminal_keys(lapis::desktop::UiPreview& view, const lapis::desktop::KeyMap& keymap) {
+    lapis::desktop::platform::on_terminal_keys([&view, &keymap](bool shifted) {
+        auto* window = view.window();
+        const auto action =
+            shifted ? QStringLiteral("chooseTerminal") : QStringLiteral("toggleTerminal");
+        const auto key = shifted ? QStringLiteral("Meta+Shift+`") : QStringLiteral("Meta+`");
+        if (window == nullptr || !window->isActive() || !keymap.sequences(action).contains(key))
+            return false;
+        QMetaObject::invokeMethod(window, shifted ? "chooseTerminal" : "toggleTerminal");
+        return true;
+    });
+}
+void register_qml_types() {
+    using namespace lapis::desktop;
+    qmlRegisterUncreatableType<SessionPreview>("Lapis", 1, 0, "SessionPreview",
+                                               "Sessions are owned by the workspace");
+    qmlRegisterType<TerminalSurface>("Lapis", 1, 0, "TerminalSurface");
+    qmlRegisterUncreatableType<KeyMap>("Lapis", 1, 0, "KeyMap",
+                                       "The keymap is owned by the application");
+}
+QUrl qml_source(const QCommandLineParser& parser) {
+    return parser.isSet(QStringLiteral("qml"))
+               ? QUrl::fromLocalFile(
+                     QFileInfo(parser.value(QStringLiteral("qml"))).absoluteFilePath())
+               : QUrl(QStringLiteral("qrc:/qml/Main.qml"));
+}
+QString target_screen(const QCommandLineParser& parser) {
+    return parser.isSet(QStringLiteral("screen")) ? parser.value(QStringLiteral("screen"))
+                                                  : qEnvironmentVariable("LAPIS_SCREEN");
 }
 // A CLI usage asks, or ssh, as found on this Mac.
 QString usage_program(const QString& id) {
@@ -333,7 +416,8 @@ void follow_usage_setting(lapis::desktop::Usage& usage, const lapis::desktop::Ke
 
 // The quick-command terminals beside this workspace, with ssh hosts from the
 // user's ssh config; those still running come back.
-std::unique_ptr<lapis::desktop::Terminals> terminals_for(const lapis::desktop::Workspace& workspace) {
+std::unique_ptr<lapis::desktop::Terminals>
+terminals_for(const lapis::desktop::Workspace& workspace) {
     if (workspace.storagePath().isEmpty())
         return nullptr;
     auto terminals = std::make_unique<lapis::desktop::Terminals>(
@@ -355,8 +439,6 @@ int run_headless(lapis::desktop::Workspace& workspace, bool serve) {
     bool handed_over = false;
     if (serve) {
         control.emplace(workspace, true);
-        terminals = terminals_for(workspace);
-        control->setTerminals(terminals.get());
         QObject::connect(&*control, &WorkspaceControl::handoverRequested,
                          [&handed_over] { handed_over = true; });
     }
@@ -393,6 +475,9 @@ int run_headless(lapis::desktop::Workspace& workspace, bool serve) {
                                                  : item->connectionState());
     qInfo().noquote() << "lapis restore:" << started.size() << "agents restarted";
     if (serve && !handed_over) {
+        // Terminals for the phone, once the agents have settled.
+        terminals = terminals_for(workspace);
+        control->setTerminals(terminals.get());
         qInfo().noquote() << "lapis restore: serving the workspace until a window opens";
         QEventLoop loop;
         QObject::connect(&*control, &WorkspaceControl::handoverRequested, &loop, &QEventLoop::quit);
@@ -508,30 +593,14 @@ int main(int argc, char** argv) {
 
         qInfo().noquote() << "lapis keymap:" << keymap.sourcePath()
                           << (keymap.loaded() ? "loaded" : "defaults");
-        qmlRegisterUncreatableType<SessionPreview>("Lapis", 1, 0, "SessionPreview",
-                                                   "Sessions are owned by the workspace");
-        qmlRegisterType<TerminalSurface>("Lapis", 1, 0, "TerminalSurface");
-        qmlRegisterUncreatableType<KeyMap>("Lapis", 1, 0, "KeyMap",
-                                           "The keymap is owned by the application");
-        const auto source =
-            parser.isSet(QStringLiteral("qml"))
-                ? QUrl::fromLocalFile(
-                      QFileInfo(parser.value(QStringLiteral("qml"))).absoluteFilePath())
-                : QUrl(QStringLiteral("qrc:/qml/Main.qml"));
+        register_qml_types();
         QPointer<QQuickWindow> shown;
         std::optional<Alerts> alerts;
         std::optional<Notifier> notifier;
         if (!isolated)
             alert_for_agents(alerts, notifier, workspace, keymap, shown);
         DesktopActions desktop(keymap);
-        // On the Mac the window closes to the Dock and lapis keeps serving
-        // agents, alerts and the phone until it quits.
-        bool hide_on_close = false;
-#ifdef Q_OS_MACOS
-        hide_on_close = !isolated && !parser.isSet(QStringLiteral("capture"));
-#endif
-        if (hide_on_close)
-            QGuiApplication::setQuitOnLastWindowClosed(false);
+        const bool hide_on_close = closes_to_dock(isolated, parser);
         AgentSearch agentSearch(&workspace);
         // Plan limits and token totals, only while the setting is on and only
         // in the real workspace. Each CLI keeps its transcripts where its own
@@ -539,31 +608,16 @@ int main(int argc, char** argv) {
         std::optional<Usage> usage;
         if (!isolated)
             follow_usage_setting(usage.emplace(&usage_program, transcript_roots()), keymap);
-        // Past Claude and Codex conversations, to resume one and to put the
-        // folders with the most recent work first in folder pickers.
-        ConversationIndex conversations(
-            cli_home("CLAUDE_CONFIG_DIR", ".claude"), cli_home("CODEX_HOME", ".codex"),
-            QDir(data_directory()).filePath(QStringLiteral("runtime/conversations.json")));
-        conversations.setOpenFolders([&workspace] {
-            QStringList folders;
-            for (const auto& value : workspace.sessions())
-                if (const auto* item = value.value<SessionPreview*>(); item && item->live())
-                    folders.append(item->directory());
-            return folders;
-        });
-        if (!isolated)
-            conversations.refresh();
-        UiPreview view(workspace, {.source = source,
+        const auto conversations = conversation_index(workspace, isolated);
+        UiPreview view(workspace, {.source = qml_source(parser),
                                    .compact = parser.isSet(QStringLiteral("compact")),
-                                   .screen = parser.isSet(QStringLiteral("screen"))
-                                                 ? parser.value(QStringLiteral("screen"))
-                                                 : qEnvironmentVariable("LAPIS_SCREEN"),
+                                   .screen = target_screen(parser),
                                    .keymap = &keymap,
                                    .alerts = alerts ? &*alerts : nullptr,
                                    .agentSearch = &agentSearch,
                                    .usage = usage ? &*usage : nullptr,
                                    .desktop = &desktop,
-                                   .conversations = &conversations,
+                                   .conversations = conversations.get(),
                                    .terminals = terminals.get(),
                                    .persistGeometry = !isolated && !options.launch &&
                                                       options.endpoint.isEmpty() &&
@@ -571,18 +625,7 @@ int main(int argc, char** argv) {
                                    .hideOnClose = hide_on_close});
         view.setSystemReducedMotion(system_reduced_motion());
         view.setReducedMotion(parser.isSet(QStringLiteral("reduced-motion")));
-        // Clicking the Dock icon (or switching to lapis) brings a closed window back.
-        QObject::connect(&app, &QGuiApplication::applicationStateChanged, &view,
-                         [&view, &shown, hide_on_close](Qt::ApplicationState state) {
-                             if (state != Qt::ApplicationActive)
-                                 return;
-                             view.setSystemReducedMotion(system_reduced_motion());
-                             if (hide_on_close && shown && !shown->isVisible()) {
-                                 shown->show();
-                                 shown->raise();
-                                 shown->requestActivate();
-                             }
-                         });
+        follow_activation(app, view, shown, hide_on_close);
         QObject::connect(&view, &UiPreview::windowChanged, &view, [&](QQuickWindow* window) {
             shown = window;
             wire_window(*window, view, workspace, parser);
@@ -594,17 +637,7 @@ int main(int argc, char** argv) {
         if (!view.load())
             return 1;
         shown = view.window();
-        // Command-` before AppKit's window cycling takes it, while that key is bound.
-        platform::on_terminal_keys([&view, &keymap](bool shifted) {
-            auto* window = view.window();
-            const auto action = shifted ? QStringLiteral("chooseTerminal")
-                                        : QStringLiteral("toggleTerminal");
-            const auto key = shifted ? QStringLiteral("Meta+Shift+`") : QStringLiteral("Meta+`");
-            if (window == nullptr || !window->isActive() || !keymap.sequences(action).contains(key))
-                return false;
-            QMetaObject::invokeMethod(window, shifted ? "chooseTerminal" : "toggleTerminal");
-            return true;
-        });
+        route_terminal_keys(view, keymap);
         view.window()->requestActivate();
         qInfo() << "UI preview:" << isolated
                 << "system reduced motion:" << view.systemReducedMotion();

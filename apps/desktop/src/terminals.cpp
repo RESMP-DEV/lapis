@@ -20,38 +20,48 @@ namespace lapis::desktop {
 namespace {
 constexpr int kIncludeDepth = 8;
 
+void read_ssh_config(const QString& path, QStringList& hosts, int depth);
+
+// A Host line's names, without patterns.
+void add_hosts(const QStringList& names, QStringList& hosts) {
+    static const QRegularExpression pattern(QStringLiteral(R"([*?!])"));
+    for (const auto& name : names)
+        if (!name.contains(pattern) && !hosts.contains(name))
+            hosts.append(name);
+}
+
+// An Include line's files: relative to ~/.ssh, globs allowed.
+void include(const QStringList& patterns, QStringList& hosts, int depth) {
+    const QDir ssh(QDir::home().filePath(QStringLiteral(".ssh")));
+    for (auto pattern : patterns) {
+        if (pattern.startsWith(QStringLiteral("~/")))
+            pattern = QDir::homePath() + pattern.mid(1);
+        else if (!QDir::isAbsolutePath(pattern))
+            pattern = ssh.filePath(pattern);
+        const QFileInfo where(pattern);
+        for (const auto& match :
+             QDir(where.absolutePath()).entryInfoList({where.fileName()}, QDir::Files, QDir::Name))
+            read_ssh_config(match.absoluteFilePath(), hosts, depth + 1);
+    }
+}
+
 void read_ssh_config(const QString& path, QStringList& hosts, int depth) {
     QFile file(path);
     if (depth > kIncludeDepth || !file.open(QIODevice::ReadOnly | QIODevice::Text))
         return;
-    const QDir ssh(QDir::home().filePath(QStringLiteral(".ssh")));
+    static const QRegularExpression separator(QStringLiteral(R"([\s=]+)"));
     while (!file.atEnd()) {
         const auto line = QString::fromUtf8(file.readLine()).trimmed();
-        if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+        if (line.startsWith(QLatin1Char('#')))
             continue;
-        const auto words = line.split(QRegularExpression(QStringLiteral(R"([\s=]+)")),
-                                      Qt::SkipEmptyParts);
+        const auto words = line.split(separator, Qt::SkipEmptyParts);
         if (words.size() < 2)
             continue;
         const auto keyword = words.front().toLower();
-        if (keyword == QLatin1String("host")) {
-            for (const auto& name : words.mid(1))
-                if (!name.contains(QRegularExpression(QStringLiteral(R"([*?!])"))) &&
-                    !hosts.contains(name))
-                    hosts.append(name);
-        } else if (keyword == QLatin1String("include")) {
-            for (auto pattern : words.mid(1)) {
-                if (pattern.startsWith(QStringLiteral("~/")))
-                    pattern = QDir::homePath() + pattern.mid(1);
-                else if (!QDir::isAbsolutePath(pattern))
-                    pattern = ssh.filePath(pattern);
-                const QFileInfo where(pattern);
-                const auto matches = QDir(where.absolutePath())
-                                         .entryInfoList({where.fileName()}, QDir::Files, QDir::Name);
-                for (const auto& match : matches)
-                    read_ssh_config(match.absoluteFilePath(), hosts, depth + 1);
-            }
-        }
+        if (keyword == QLatin1String("host"))
+            add_hosts(words.mid(1), hosts);
+        else if (keyword == QLatin1String("include"))
+            include(words.mid(1), hosts, depth);
     }
 }
 
@@ -101,10 +111,9 @@ QString Terminals::registryPath() const {
 QVariantList Terminals::machines() const {
     QVariantList list;
     const auto add = [&](const QString& id, const QString& name) {
-        const bool open =
-            std::any_of(entries_.cbegin(), entries_.cend(), [&](const Entry& entry) {
-                return entry.machine == id && entry.session && !ended(*entry.session);
-            });
+        const bool open = std::any_of(entries_.cbegin(), entries_.cend(), [&](const Entry& entry) {
+            return entry.machine == id && entry.session && !ended(*entry.session);
+        });
         list.append(QVariantMap{{QStringLiteral("id"), id},
                                 {QStringLiteral("name"), name},
                                 {QStringLiteral("open"), open}});
@@ -141,9 +150,10 @@ session::LaunchSpec Terminals::launchFor(const QString& machine) const {
         return session::validate_launch({.program = shell_,
                                          .arguments = {QStringLiteral("-l"), QStringLiteral("-i")},
                                          .directory = QDir::homePath()});
-    return session::validate_launch({.program = QStandardPaths::findExecutable(QStringLiteral("ssh")),
-                                     .arguments = {QStringLiteral("-t"), QStringLiteral("--"), machine},
-                                     .directory = QDir::homePath()});
+    return session::validate_launch(
+        {.program = QStandardPaths::findExecutable(QStringLiteral("ssh")),
+         .arguments = {QStringLiteral("-t"), QStringLiteral("--"), machine},
+         .directory = QDir::homePath()});
 }
 
 Terminals::Entry* Terminals::find(const QString& machine) {
@@ -195,7 +205,8 @@ Terminals::Entry* Terminals::start(const QString& machine) {
         emit machinesChanged();
         return &entries_.back();
     } catch (const std::exception& problem) {
-        fail(QStringLiteral("Could not start a terminal: %1").arg(QString::fromUtf8(problem.what())));
+        fail(QStringLiteral("Could not start a terminal: %1")
+                 .arg(QString::fromUtf8(problem.what())));
         return nullptr;
     }
 }
@@ -301,8 +312,8 @@ void Terminals::save() const {
     if (!out.open(QIODevice::WriteOnly))
         return;
     out.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
-    out.write(QJsonDocument(QJsonObject{{QStringLiteral("version"), 1},
-                                        {QStringLiteral("terminals"), list}})
+    out.write(QJsonDocument(
+                  QJsonObject{{QStringLiteral("version"), 1}, {QStringLiteral("terminals"), list}})
                   .toJson(QJsonDocument::Compact));
     if (!out.commit())
         qWarning().noquote() << "Terminals not saved:" << registryPath();

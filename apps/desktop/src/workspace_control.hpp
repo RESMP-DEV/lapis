@@ -42,6 +42,7 @@ class WorkspaceControl final : public QObject {
     void accept();
     QByteArray answer(const QByteArray& line);
     QByteArray create(const QJsonObject& request);
+    QByteArray terminal(const QString& kind, const QJsonObject& request);
     Workspace& workspace_;
     Terminals* terminals_{};
     bool host_;

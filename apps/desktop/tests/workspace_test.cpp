@@ -1446,12 +1446,12 @@ void terminalsRunPlainShells() {
         require(terminals.show(QString()) && terminals.current()->sessionId() == id,
                 "the machine's terminal is reused");
         const auto machines = terminals.machines();
-        require(machines.front().toMap().value(QStringLiteral("name")) == QStringLiteral("This Mac") &&
+        require(machines.front().toMap().value(QStringLiteral("name")) ==
+                        QStringLiteral("This Mac") &&
                     machines.front().toMap().value(QStringLiteral("open")).toBool(),
                 "this Mac is first and has a terminal");
         QFile saved(terminals.registryPath());
-        require(saved.open(QIODevice::ReadOnly) &&
-                    saved.readAll().contains(id.toUtf8()),
+        require(saved.open(QIODevice::ReadOnly) && saved.readAll().contains(id.toUtf8()),
                 "terminals.json records it for the next lapis and the phone");
     }
     {
@@ -1486,12 +1486,13 @@ void terminalsRunPlainShells() {
         require(terminals.show(QString()) && terminals.current()->sessionId() != id,
                 "the next one is a fresh shell");
         auto* fresh = terminals.current();
+        require(fresh != nullptr, "a fresh terminal");
         const auto fresh_id = fresh->sessionId();
         require(waitFor([fresh] { return fresh->inputReady(); }, 10000), "the fresh shell runs");
         fresh->sendText(QByteArrayLiteral("exit\r"));
         require(waitFor([&terminals, &fresh_id] { return terminals.terminal(fresh_id) == nullptr; },
                         10000) &&
-                    terminals.current() == nullptr,
+                    !terminals.machines().front().toMap().value(QStringLiteral("open")).toBool(),
                 "a shell that exits takes its terminal with it");
     }
 }
@@ -1519,26 +1520,24 @@ void resumingAConversationStartsItsCli() {
                                       QStringLiteral("conv-123")),
                 "a past conversation resumes");
         auto* agent = workspace.focusedSession();
-        require(agent != nullptr &&
-                    waitFor(
-                        [agent] {
-                            return screenText(agent->snapshot())
-                                .contains(QStringLiteral("grok args: -r conv-123"));
-                        },
-                        10000),
+        require(agent != nullptr && waitFor(
+                                        [agent] {
+                                            return screenText(agent->snapshot())
+                                                .contains(QStringLiteral("grok args: -r conv-123"));
+                                        },
+                                        10000),
                 "the CLI starts with its resume option");
         lapis::desktop::WorkspaceControl control(workspace, false);
         auto request = createRequest(workspace.activeCategoryId(), QStringLiteral("grok"), project);
         request.insert(QStringLiteral("resume"), QStringLiteral("conv-456"));
         const auto started = askWorkspace(workspace.storagePath(), request);
         auto* phone = workspace.session(started.value(QStringLiteral("id")).toString());
-        require(phone != nullptr &&
-                    waitFor(
-                        [phone] {
-                            return screenText(phone->snapshot())
-                                .contains(QStringLiteral("grok args: -r conv-456"));
-                        },
-                        10000),
+        require(phone != nullptr && waitFor(
+                                        [phone] {
+                                            return screenText(phone->snapshot())
+                                                .contains(QStringLiteral("grok args: -r conv-456"));
+                                        },
+                                        10000),
                 "the phone resumes a conversation too");
         QFile saved(workspace.storagePath());
         require(saved.open(QIODevice::ReadOnly), "read the registry");
@@ -1555,9 +1554,9 @@ void resumingAConversationStartsItsCli() {
                                            QStringLiteral("conv-123");
                             }),
                 "the resume pair is recorded as lapis's");
-        require(waitFor([agent, phone] { return agent->inputReady() && phone->inputReady(); },
-                        10000),
-                "both agents take input");
+        require(
+            waitFor([agent, phone] { return agent->inputReady() && phone->inputReady(); }, 10000),
+            "both agents take input");
         for (const auto& closing : {agent->sessionId(), phone->sessionId()})
             require(workspace.closeSession(closing), "close the stand-in agents");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),

@@ -154,10 +154,11 @@ void on_terminal_keys(const std::function<bool(bool shifted)>& handler) {
     monitor = [NSEvent
         addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
                                      handler:^NSEvent*(NSEvent* event) {
-                                       const auto flags = event.modifierFlags &
-                                                          NSEventModifierFlagDeviceIndependentFlagsMask;
-                                       const auto others = NSEventModifierFlagControl |
-                                                           NSEventModifierFlagOption;
+                                       const auto flags =
+                                           event.modifierFlags &
+                                           NSEventModifierFlagDeviceIndependentFlagsMask;
+                                       const auto others =
+                                           NSEventModifierFlagControl | NSEventModifierFlagOption;
                                        if (event.keyCode != kVK_ANSI_Grave ||
                                            !(flags & NSEventModifierFlagCommand) ||
                                            (flags & others) || !current)

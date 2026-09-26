@@ -14,6 +14,7 @@
 #include <memory>
 
 class QQmlApplicationEngine;
+class QQmlContext;
 class QQmlError;
 class QQuickWindow;
 
@@ -28,10 +29,10 @@ struct UiPreviewOptions {
     // User keybindings and layout, exposed to QML as `keymap`. Optional; a
     // null value uses the shared C++ settings defaults and QML navigation defaults.
     KeyMap* keymap{};
-    QObject* alerts{};      // exposed to QML as `alerts`
-    QObject* agentSearch{}; // exposed to QML as `agentSearch`
-    QObject* usage{};       // exposed to QML as `usage`
-    QObject* desktop{};     // exposed to QML as `desktop`
+    QObject* alerts{};        // exposed to QML as `alerts`
+    QObject* agentSearch{};   // exposed to QML as `agentSearch`
+    QObject* usage{};         // exposed to QML as `usage`
+    QObject* desktop{};       // exposed to QML as `desktop`
     QObject* conversations{}; // exposed to QML as `conversations`
     QObject* terminals{};     // exposed to QML as `terminals`
     // Only the normal workspace restores user geometry; tests opt in with an isolated path.
@@ -85,6 +86,7 @@ class UiPreview final : public QObject {
   private:
     bool eventFilter(QObject* watched, QEvent* event) override;
     bool loadCandidate();
+    void exposeObjects(QQmlContext& context);
     void publishWarnings(const QList<QQmlError>& warnings);
     void configureGeometry(QQuickWindow& target, bool reloading);
     void rememberGeometry();

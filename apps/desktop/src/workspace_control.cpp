@@ -106,23 +106,8 @@ QByteArray WorkspaceControl::answer(const QByteArray& line) {
         return workspace_.closeSession(id, false) ? reply({{QStringLiteral("ok"), true}})
                                                   : refusal(workspace_.workspaceError());
     }
-    // A plain shell on a machine, apart from agents; one per machine.
-    if (kind == QStringLiteral("openTerminal")) {
-        const auto machine = request.value(QStringLiteral("machine"));
-        if (terminals_ == nullptr)
-            return refusal(QStringLiteral("Terminals are not available"));
-        if (!machine.isString() && !machine.isUndefined())
-            return refusal(QStringLiteral("Invalid machine"));
-        const auto id = terminals_->open(machine.toString());
-        return id.isEmpty() ? refusal(terminals_->error())
-                            : reply({{QStringLiteral("ok"), true}, {QStringLiteral("id"), id}});
-    }
-    if (kind == QStringLiteral("closeTerminal")) {
-        const auto id = request.value(QStringLiteral("id")).toString();
-        if (terminals_ == nullptr || !terminals_->close(id))
-            return refusal(QStringLiteral("No such terminal"));
-        return reply({{QStringLiteral("ok"), true}});
-    }
+    if (kind == QStringLiteral("openTerminal") || kind == QStringLiteral("closeTerminal"))
+        return terminal(kind, request);
     if (kind == QStringLiteral("handover")) {
         if (!host_)
             return refusal(QStringLiteral("A lapis window keeps this workspace"));
@@ -165,6 +150,22 @@ QByteArray WorkspaceControl::create(const QJsonObject& request) {
     return reply({{QStringLiteral("ok"), true},
                   {QStringLiteral("id"), id},
                   {QStringLiteral("updating"), item != nullptr && item->updating()}});
+}
+
+// A plain shell on a machine, apart from agents; one per machine.
+QByteArray WorkspaceControl::terminal(const QString& kind, const QJsonObject& request) {
+    if (terminals_ == nullptr)
+        return refusal(QStringLiteral("Terminals are not available"));
+    if (kind == QStringLiteral("closeTerminal"))
+        return terminals_->close(request.value(QStringLiteral("id")).toString())
+                   ? reply({{QStringLiteral("ok"), true}})
+                   : refusal(QStringLiteral("No such terminal"));
+    const auto machine = request.value(QStringLiteral("machine"));
+    if (!machine.isString() && !machine.isUndefined())
+        return refusal(QStringLiteral("Invalid machine"));
+    const auto id = terminals_->open(machine.toString());
+    return id.isEmpty() ? refusal(terminals_->error())
+                        : reply({{QStringLiteral("ok"), true}, {QStringLiteral("id"), id}});
 }
 
 bool WorkspaceControl::requestHandover(const QString& registry) {

@@ -4,9 +4,10 @@ Repository: [RESMP-DEV/lapis](https://github.com/RESMP-DEV/lapis).
 
 lapis is a desktop workspace for live CLI agents. Categories contain ordered
 agents; one terminal stage shows the selected agent above a strip of live
-previews that is the category's navigation. Normal launch has no shell sessions
-or sample cards. Managed Codex is the first adapter; Claude Code reports through
-a service-side hook adapter.
+previews that is the category's navigation. Normal launch has no sample cards;
+the only plain shells are the side terminal's, for a quick command. Managed
+Codex is the first adapter; Claude Code reports through a service-side hook
+adapter.
 macOS is the active live-agent qualification target. Linux desktop work remains
 deferred; an explicitly selected Linux host can run isolated software-rendered checks.
 
@@ -63,10 +64,10 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect; stale sockets left by a simulated power loss are replaced | Qualification across an actual reboot |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging and link opening (Qt tests on the Linux test host) | Cross-cell contextual shaping, rectangular/multi-click selection, link hover feedback and accessibility; native Mac selection not yet exercised; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
-| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; tiles on the stage (drag from the strip, dividers, keys, zoom), dragging cards to reorder and between categories with multi-select, find in the terminal and text size (Qt tests on the Linux test host); live request badges, explicit approval/answer dialog, stale-state gating and draft preservation; live config reload, alert chimes and their repeat rules, Command-K agent search, the usage meter and per-machine dashboard (Qt tests on the Linux test host); usage answers from the installed Codex 0.156.1, Claude Code 2.1.282, Grok 1.0.41, Kimi Code 0.39.1 and OMP 18.2.9, here and on a Linux host over ssh | Automatic carousel and larger session-count qualification; the chimes and usage view have not been seen and heard on a Mac by a test |
+| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; tiles on the stage (drag from the strip, dividers, keys, zoom), dragging cards to reorder and between categories with multi-select, find in the terminal and text size (Qt tests on the Linux test host); live request badges, explicit approval/answer dialog, stale-state gating and draft preservation; live config reload, alert chimes and their repeat rules, Command-K agent search, the usage meter and per-machine dashboard, the keyboard home list, Command-O resume and the side terminal with its machine picker (Qt tests on the Linux test host); usage answers from the installed Codex 0.156.1, Claude Code 2.1.282, Grok 1.0.41, Kimi Code 0.39.1 and OMP 18.2.9, here and on a Linux host over ssh | Automatic carousel and larger session-count qualification; the chimes and usage view have not been seen and heard on a Mac by a test |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
 | Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect, `/clear` continuation and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
-| iPhone app (prototype) | Gateway on the Mac over Tailscale, admitting only the owner's iOS devices; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; the phone joins beside the desktop so both stay in sync (services started by this build); starting an agent in a category from the phone through the Mac's lapis; UI tests in the iOS 26.5 Simulator against real services and the real windowless lapis host with a Mac-side client attached, fake agents, and real Codex and Claude Code on a fake model; installed and used on an iPhone 17 Pro | Agents started before sync are taken over instead; no structured requests or push notifications; starting agents needs a lapis window or the login helper running |
+| iPhone app (prototype) | Gateway on the Mac over Tailscale, admitting only the owner's iOS devices; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; the phone joins beside the desktop so both stay in sync (services started by this build); starting an agent in a category from the phone through the Mac's lapis; a terminal on the Mac from the phone, and the resume list; UI tests in the iOS 26.5 Simulator against real services and the real windowless lapis host with a Mac-side client attached, fake agents, and real Codex and Claude Code on a fake model; installed and used on an iPhone 17 Pro | Agents started before sync are taken over instead; no structured requests or push notifications; starting agents needs a lapis window or the login helper running |
 | Mac app package | Qt 6.11.2 built with Vulkan (arm64, macOS 14 or later) with MoltenVK loaded directly; signed with the hardened runtime and notarized; Sparkle 2.10.0 updates signed with an EdDSA key and fed from the latest release; a login item for keeping agents running; release checks for architecture, minimum macOS, links outside the bundle, identifying strings, the update key, the bundled MoltenVK on an M4 Max, the windowless host and a launchd start taking the login shell's PATH; 0.1.0 opened and used with a live agent by a person | An update installed through Sparkle (the first comes with the release after 0.2.0); notifications, the login item and the Finder and editor actions not yet exercised by a check on a Mac; macOS 14 and 15 untested |
 | Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals; [installed binary qualification](evidence/codex-binary-update.json) | Broader binary and request-kind qualification |
 
@@ -208,9 +209,23 @@ creates an agent (its tab defaults to the project path) and Command-N creates a
 category; the **+** under the last category does the same. Command-comma
 opens Appearance, and Command-R reloads configuration. Command-K finds an agent
 as you type: by the letters of its name, folder, category, CLI or machine, or by
-text on its screen, and Return shows it. Linux uses Control-Shift
-bindings. Terminal Control chords and Command-left/right editing stay with the
-agent. Bindings remain configurable in `lapis.json`.
+text on its screen, and Return shows it. Command-O resumes a past conversation:
+the Claude Code and Codex conversations you opened on this Mac, newest first
+under their CLI's own title, narrowed as you type by title, folder or CLI;
+Return resumes one as a new agent in its folder. Command-` (or Control-`, as in
+VS Code) shows a plain shell over the stage's right half for a quick command,
+and hides it again; Command-~ picks its machine, this Mac or an ssh host from
+your ssh config, by up, down and Return. It is never an agent: one shell per
+machine, in no category and with no alerts, which keeps running when lapis
+closes and closes itself when you type `exit`. With nothing open, the stage
+lists what to do next (new agent, resume, terminal, reopen, the latest
+conversations and the other categories that have agents), moved with up and
+down and run with Return, so no step needs the mouse. Folder lists put the ten
+folders with the most recent and frequent agent work first (work in a folder
+below counts for it), then the rest by name with `_folders` last. Linux uses
+Control-Shift bindings. Terminal Control chords and Command-left/right editing
+stay with the agent. Bindings remain configurable in `lapis.json`, and
+Appearance lists every action's keys.
 
 `lapis.json` applies as soon as it changes, whether Appearance, you or an agent
 edits it. Besides bindings and appearance it holds the defaults for new agents,
@@ -390,8 +405,12 @@ takes it from the desktop (its card offers **Reconnect agent**), and the phone
 says so. Restarting such an agent gives it a service that can. The Mac must be
 awake.
 
-The **+** at the top offers a new agent or a new category (added on the Mac
-without moving its window). Swiping an agent left offers **Close**, and a full
+The **+** at the top offers a new agent, **Resume conversation** (the Mac's
+latest Claude Code and Codex conversations, searchable, each resumed as a new
+agent in its folder), **Terminal** (pick the Mac or one of its ssh machines and
+a plain shell opens there, for a quick command) or a new category (added on the
+Mac without moving its window). Open terminals are listed above the agents and
+swipe away the same way. Swiping an agent left offers **Close**, and a full
 swipe closes it, as Command-Shift-W does on the Mac. A new agent from the phone: pick the
 machine (this Mac, or an ssh host from your ssh config and shell history,
 reachable and most used first), the CLI, the category, a folder (starting at
@@ -402,8 +421,9 @@ each CLI's model are remembered. The folder starts at `newAgent.folder` (the
 machine's own in `machines`, else the one for every machine) when that machine
 has it, and opens its own screen: that preset, pinned and marked, then the ten
 folders where you have started the most Codex, Claude Code and lapis agents,
-most first, then the machine's folders to browse (visible ones
-alphabetically, hidden ones last), or a search by a few of their letters;
+most first, then the machine's folders to browse (the ten most active first,
+then by name with `_folders` and hidden ones last), or a search by a few of
+their letters;
 both run on the phone. The list, the CLIs, the
 machines, the folder indexes and each running agent's screen are fetched in
 the background, so opening the sheet or an agent does not wait. A shown agent on the Mac keeps the stage. This needs lapis running on

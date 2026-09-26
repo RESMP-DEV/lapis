@@ -1618,6 +1618,8 @@ ApplicationWindow {
         loginAvailable: window.desktopAvailable && desktop.launchAtLoginAvailable
         launchAtLogin: window.desktopAvailable && desktop.launchAtLogin
         updatesAvailable: window.desktopAvailable && desktop.updatesAvailable
+        shortcutRows: window.commandEntries.filter(entry => entry.shortcut.length > 0)
+                                           .map(entry => ({label: entry.label, keys: entry.shortcut}))
         onNotifyChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setNotify(on) }
         onLaunchAtLoginChosen: function(on) { if (window.desktopAvailable) desktop.setLaunchAtLogin(on) }
         onCheckUpdates: if (window.desktopAvailable) desktop.checkForUpdates()

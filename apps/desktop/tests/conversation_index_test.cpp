@@ -25,9 +25,9 @@ void require(bool condition, const char* message) {
         throw std::runtime_error(message);
 }
 
-const QString kFirst = QStringLiteral("0a1b2c3d-0000-4000-8000-000000000001");
-const QString kSecond = QStringLiteral("0a1b2c3d-0000-4000-8000-000000000002");
-const QString kThird = QStringLiteral("0a1b2c3d-0000-4000-8000-000000000003");
+constexpr const char* kFirst = "0a1b2c3d-0000-4000-8000-000000000001";
+constexpr const char* kSecond = "0a1b2c3d-0000-4000-8000-000000000002";
+constexpr const char* kThird = "0a1b2c3d-0000-4000-8000-000000000003";
 
 QByteArray line(const QJsonObject& object) {
     return QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n';
@@ -57,9 +57,11 @@ void claude_sessions_are_read_only_when_someone_opened_them() {
     const auto path = [&](const QString& id) { return root.filePath(id + ".jsonl"); };
     // The first typed message names it; wrappers and meta records do not.
     write(path(kFirst),
-          claude_session("cli", "/work/lapis/") + line(user("<command-name>/clear</command-name>")) +
+          claude_session("cli", "/work/lapis/") +
+              line(user("<command-name>/clear</command-name>")) +
               line(user("Caveat: local command output")) + line(user("hidden", true)) +
-              line(user(QJsonArray{QJsonObject{{"type", "text"}, {"text", "  fix the\n resize  "}}})));
+              line(user(
+                  QJsonArray{QJsonObject{{"type", "text"}, {"text", "  fix the\n resize  "}}})));
     const auto first = conversations::read_claude(path(kFirst));
     require(first && first->harness == "claude" && first->id == kFirst &&
                 first->directory == "/work/lapis" && first->title == "fix the resize",
@@ -80,15 +82,15 @@ void claude_sessions_are_read_only_when_someone_opened_them() {
 }
 
 QByteArray rollout(const QJsonObject& meta, const QString& typed) {
-    const QJsonObject item{{"type", "message"},
-                           {"role", "user"},
-                           {"content", QJsonArray{QJsonObject{{"type", "input_text"},
-                                                              {"text", typed}}}}};
-    const QJsonObject context{{"type", "message"},
-                              {"role", "user"},
-                              {"content", QJsonArray{QJsonObject{
-                                              {"type", "input_text"},
-                                              {"text", "<environment_context>x"}}}}};
+    const QJsonObject item{
+        {"type", "message"},
+        {"role", "user"},
+        {"content", QJsonArray{QJsonObject{{"type", "input_text"}, {"text", typed}}}}};
+    const QJsonObject context{
+        {"type", "message"},
+        {"role", "user"},
+        {"content",
+         QJsonArray{QJsonObject{{"type", "input_text"}, {"text", "<environment_context>x"}}}}};
     return line({{"type", "session_meta"}, {"payload", meta}}) +
            line({{"type", "response_item"}, {"payload", context}}) +
            line({{"type", "response_item"}, {"payload", item}});
@@ -97,8 +99,11 @@ QByteArray rollout(const QJsonObject& meta, const QString& typed) {
 void codex_rollouts_are_interactive_main_threads() {
     QTemporaryDir root;
     const auto path = root.filePath("rollout-a.jsonl");
-    write(path, rollout({{"id", kFirst}, {"cwd", "/work/api"}, {"source", "cli"},
-                         {"thread_source", "user"}, {"parent_thread_id", QJsonValue()}},
+    write(path, rollout({{"id", kFirst},
+                         {"cwd", "/work/api"},
+                         {"source", "cli"},
+                         {"thread_source", "user"},
+                         {"parent_thread_id", QJsonValue()}},
                         "add retries"));
     const auto found = conversations::read_codex(path, {});
     require(found && found->harness == "codex" && found->id == kFirst &&
@@ -108,9 +113,10 @@ void codex_rollouts_are_interactive_main_threads() {
     require(named && named->title == "Retry work", "Codex's thread name wins");
     write(path, rollout({{"id", kFirst}, {"cwd", "/w"}, {"source", "exec"}}, "x"));
     require(!conversations::read_codex(path, {}), "codex exec is automation");
-    write(path, rollout({{"id", kFirst}, {"cwd", "/w"},
-                         {"source", QJsonObject{{"subagent", QJsonObject{}}}}},
-                        "x"));
+    write(path,
+          rollout(
+              {{"id", kFirst}, {"cwd", "/w"}, {"source", QJsonObject{{"subagent", QJsonObject{}}}}},
+              "x"));
     require(!conversations::read_codex(path, {}), "subagents are not conversations");
     const auto index = root.filePath("session_index.jsonl");
     write(index, line({{"id", kFirst}, {"thread_name", "old"}}) +
@@ -121,7 +127,9 @@ void codex_rollouts_are_interactive_main_threads() {
 
 void activity_orders_folders() {
     const qint64 now = qint64{1'800'000'000'000};
-    const qint64 day = qint64{86'400'000};
+    const qint64 minute = qint64{60'000};
+    const qint64 hour = 60 * minute;
+    const qint64 day = 24 * hour;
     const std::vector<Conversation> all{
         {"claude", kFirst, "/home/dev/lapis/apps", "", now},
         {"codex", kSecond, "/home/dev/lapis", "", now - 14 * day},
@@ -143,9 +151,9 @@ void activity_orders_folders() {
                 QStringList({"A", "b", "_a"}),
             "without activity the order is by name");
     require(conversations::age_text(now - 30'000, now) == "now" &&
-                conversations::age_text(now - 5 * 60'000, now) == "5 min" &&
-                conversations::age_text(now - 3 * 3'600'000, now) == "3 h" &&
-                conversations::age_text(now - 30 * 3'600'000, now) == "yesterday" &&
+                conversations::age_text(now - 5 * minute, now) == "5 min" &&
+                conversations::age_text(now - 3 * hour, now) == "3 h" &&
+                conversations::age_text(now - 30 * hour, now) == "yesterday" &&
                 conversations::age_text(now - 4 * day, now) == "4 d",
             "ages read as short words");
 }

@@ -1,12 +1,12 @@
 #include "agent_search.hpp"
 #include "conversation_index.hpp"
-#include "terminals.hpp"
-#include "workspace.hpp"
 #include "keymap.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
+#include "terminals.hpp"
 #include "ui_preview.hpp"
 #include "usage.hpp"
+#include "workspace.hpp"
 #include <QAccessible>
 #include <QElapsedTimer>
 #include <QHash>
@@ -18,9 +18,9 @@
 #include <QThread>
 
 #include <QClipboard>
-#include <QDateTime>
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
@@ -1693,7 +1693,8 @@ void check_home_and_resume(QQuickWindow& window, lapis::desktop::Workspace& work
     field->setProperty("text", QStringLiteral("codex"));
     pump(30);
     CHECK(results->property("count").toInt() == 1);
-    CHECK(required_visual(window, QStringLiteral("resumeResult_0a1b2c3d-0000-4000-8000-000000000002")) !=
+    CHECK(required_visual(window,
+                          QStringLiteral("resumeResult_0a1b2c3d-0000-4000-8000-000000000002")) !=
           nullptr);
     send_binding(window, QStringLiteral("Return"));
     wait_popup(*resume, false);
@@ -1746,9 +1747,11 @@ void check_side_terminal(QQuickWindow& window, lapis::desktop::Terminals& termin
     press_action(window, keymap, "toggleTerminal");
     auto* panel = required_visual(window, QStringLiteral("sideTerminal"));
     CHECK(panel->isVisible());
-    const bool ready = pump_until([&terminals] {
-        return terminals.current() != nullptr && terminals.current()->inputReady();
-    }, 10000);
+    const bool ready = pump_until(
+        [&terminals] {
+            return terminals.current() != nullptr && terminals.current()->inputReady();
+        },
+        10000);
     if (!ready)
         qWarning().noquote() << "side terminal:" << terminals.error()
                              << (terminals.current() ? terminals.current()->connectionState()
@@ -1759,9 +1762,12 @@ void check_side_terminal(QQuickWindow& window, lapis::desktop::Terminals& termin
     CHECK(surface->hasActiveFocus());
     type_text(window, QStringLiteral("hello"));
     send_binding(window, QStringLiteral("Return"));
-    CHECK(pump_until([&terminals] {
-        return screen_text(terminals.current()->snapshot()).contains(QStringLiteral("ran hello"));
-    }, 10000));
+    CHECK(pump_until(
+        [&terminals] {
+            return screen_text(terminals.current()->snapshot())
+                .contains(QStringLiteral("ran hello"));
+        },
+        10000));
     capture_step(window, "side-terminal");
     press_action(window, keymap, "toggleTerminal");
     CHECK(!panel->isVisible() && stage.hasActiveFocus());
@@ -1893,6 +1899,46 @@ HOME=')" + dir + R"(' SHELL=')" + shell.toUtf8() + R"(' exec /bin/sh -c "$1"
     return usage;
 }
 
+// One saved conversation of each CLI, as they write them, and a stand-in
+// shell that answers each line it reads.
+void write_history_and_shell(const QTemporaryDir& config) {
+    const auto save = [&config](const QString& relative, const QByteArray& text) {
+        const auto path = config.filePath(relative);
+        CHECK(QDir().mkpath(QFileInfo(path).absolutePath()));
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly) && file.write(text) == text.size());
+    };
+    save(QStringLiteral(
+             "history/claude/projects/-dev-lapis/0a1b2c3d-0000-4000-8000-000000000001.jsonl"),
+         R"({"type":"system","entrypoint":"cli","cwd":"/dev/lapis"})"
+         "\n"
+         R"({"type":"user","message":{"role":"user","content":"Fix resize"}})"
+         "\n");
+    save(QStringLiteral("history/codex/sessions/2026/09/25/rollout-a.jsonl"),
+         R"({"type":"session_meta","payload":{"id":"0a1b2c3d-0000-4000-8000-000000000002",)"
+         R"("cwd":"/dev/api","source":"cli","thread_source":"user"}})"
+         "\n");
+    save(QStringLiteral("history/codex/session_index.jsonl"),
+         R"({"id":"0a1b2c3d-0000-4000-8000-000000000002","thread_name":"Add retries"})"
+         "\n");
+    save(QStringLiteral("shell"), "#!/bin/sh\necho \"shell ready\"\nwhile read line; do\n"
+                                  "  [ \"$line\" = exit ] && exit 0\n  echo \"ran $line\"\ndone\n");
+    CHECK(QFile::setPermissions(config.filePath(QStringLiteral("shell")),
+                                QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    CHECK(QDir().mkpath(config.filePath(QStringLiteral("runtime"))));
+    CHECK(QFile::setPermissions(config.filePath(QStringLiteral("runtime")),
+                                QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+}
+
+void wait_ready(lapis::desktop::ConversationIndex& conversations) {
+    conversations.refresh();
+    QElapsedTimer scanned;
+    scanned.start();
+    while (!conversations.ready() && scanned.elapsed() < 10000)
+        pump(20);
+    CHECK(conversations.all().size() == 2);
+}
+
 // The agent strip is the category's navigation: live previews in tab order
 // that never take input or resize a terminal, keep part of the neighboring
 // card in view as selection moves, and pulse an agent that finished or needs a
@@ -1909,39 +1955,8 @@ int run_strip_ui_tests() {
     ConversationIndex conversations(config.filePath(QStringLiteral("history/claude")),
                                     config.filePath(QStringLiteral("history/codex")),
                                     config.filePath(QStringLiteral("conversations.json")));
-    // One saved conversation of each CLI, as they write them.
-    const auto save = [&config](const QString& relative, const QByteArray& text) {
-        const auto path = config.filePath(relative);
-        CHECK(QDir().mkpath(QFileInfo(path).absolutePath()));
-        QFile file(path);
-        CHECK(file.open(QIODevice::WriteOnly) && file.write(text) == text.size());
-    };
-    save(QStringLiteral("history/claude/projects/-dev-lapis/0a1b2c3d-0000-4000-8000-000000000001.jsonl"),
-         R"({"type":"system","entrypoint":"cli","cwd":"/dev/lapis"})"
-         "\n"
-         R"({"type":"user","message":{"role":"user","content":"Fix resize"}})"
-         "\n");
-    save(QStringLiteral("history/codex/sessions/2026/09/25/rollout-a.jsonl"),
-         R"({"type":"session_meta","payload":{"id":"0a1b2c3d-0000-4000-8000-000000000002",)"
-         R"("cwd":"/dev/api","source":"cli","thread_source":"user"}})"
-         "\n");
-    save(QStringLiteral("history/codex/session_index.jsonl"),
-         R"({"id":"0a1b2c3d-0000-4000-8000-000000000002","thread_name":"Add retries"})"
-         "\n");
-    conversations.refresh();
-    QElapsedTimer scanned;
-    scanned.start();
-    while (!conversations.ready() && scanned.elapsed() < 10000)
-        pump(20);
-    CHECK(conversations.all().size() == 2);
-    // A stand-in shell that answers each line it reads.
-    save(QStringLiteral("shell"), "#!/bin/sh\necho \"shell ready\"\nwhile read line; do\n"
-                                  "  [ \"$line\" = exit ] && exit 0\n  echo \"ran $line\"\ndone\n");
-    CHECK(QFile::setPermissions(config.filePath(QStringLiteral("shell")),
-                                QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
-    CHECK(QDir().mkpath(config.filePath(QStringLiteral("runtime"))));
-    CHECK(QFile::setPermissions(config.filePath(QStringLiteral("runtime")),
-                                QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    write_history_and_shell(config);
+    wait_ready(conversations);
     Terminals terminals(config.filePath(QStringLiteral("runtime")),
                         config.filePath(QStringLiteral("ssh_config")));
     terminals.setShellForTesting(config.filePath(QStringLiteral("shell")));

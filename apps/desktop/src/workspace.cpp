@@ -1065,9 +1065,8 @@ QString Workspace::displayPath(const QString& directory) const {
 
 // QML positional API v1 requires QString arguments; role names and boundary validation are
 // explicit. NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-bool Workspace::resumeAgent(const QString& directory, const QString& title,
-                            const QString& harness, const QString& conversation,
-                            const QString& mode) {
+bool Workspace::resumeAgent(const QString& directory, const QString& title, const QString& harness,
+                            const QString& conversation, const QString& mode) {
     return !startAgent({.category = active_category_,
                         .directory = directory,
                         .title = title,
