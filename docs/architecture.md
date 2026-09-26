@@ -2215,6 +2215,41 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   flipped that on every run, so the tests now prove the screen is live with a
   marker typed through the gateway and echoed back.
 
+### The workspace and the Mac's settings from the phone (September 26)
+
+Asked after 0.3.0: the phone should arrange categories and agents, and change
+settings, as the Mac does. Everything the Mac's commands do to the workspace
+and that makes sense without its stage now goes through the control socket
+under the same `Workspace` rules; the stage itself (tiles, splits, the sidebar)
+stays the Mac's.
+
+- **Categories.** `renameCategory`, `removeCategory` (only an empty one, and
+  one always stays) and `placeCategory`. Each category heading on the phone
+  ends in a menu (new agent here, rename, arrange, remove, which says why it
+  is unavailable); Settings → Categories and "Arrange categories" open a list
+  to drag, tap to rename, swipe an empty one away and add one.
+- **Agents.** `placeAgent` puts one at a position in a category (the Mac's
+  `placeSessions`), so an agent's long-press menu offers Move to, Move earlier
+  and Move later beside Rename and Close; paging follows that order.
+  `restartAgent` restarts a stopped agent from the same menu, or from its
+  screen, which offers Restart agent beside Open here again.
+- **Refusals.** A refused request answers with the workspace's reason and then
+  clears it, so a phone's mistake is shown on the phone and never left on the
+  Mac's window. The phone keeps it in an alert until dismissed, since the list
+  refresh would otherwise replace it within seconds.
+- **Settings.** `settings` and `changeSettings` read and change, through
+  `KeyMap`'s own setters and save, the settings that matter away from the Mac:
+  keep awake, the two chimes and how often the first repeats, background
+  notifications and plan usage. A change naming anything else, or a wrong
+  type, changes nothing. The Mac window's look (theme, density, layout,
+  fonts, shortcuts) is not offered: from the phone it would only restyle a
+  window no one is looking at. The phone's own text size moved into its
+  Settings too.
+- Qualified by `phoneArrangesTheWorkspace` and `phoneChangesTheMacsSettings`
+  in the workspace suite, the gateway's arrangement and settings tests, and
+  four simulator tests; after them the phone check reads the check's own
+  `lapis.json` for the changed settings.
+
 ### Following milestones
 
 With the two-session workspace assembled, the next qualification stages are
