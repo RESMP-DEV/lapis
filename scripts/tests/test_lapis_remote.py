@@ -1230,51 +1230,57 @@ def screen_text(frame):
 
 
 @unittest.skipUnless(SERVICE.exists(), "needs the built session service")
+def live_agent(test, program, arguments):
+    """A real session service running `program`, and a registry naming it."""
+    test.runtime = Path(tempfile.mkdtemp(prefix="lr-", dir="/tmp"))
+    test.addCleanup(shutil.rmtree, test.runtime, True)
+    test.identifier = "11111111-2222-4333-8444-555555555555"
+    test.endpoint = test.runtime / (test.identifier + ".sock")
+    service = subprocess.Popen(
+        [str(SERVICE), str(test.endpoint), "/", program, *arguments],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        env={**os.environ, "LAPIS_HISTORY_ROOT": str(test.runtime / "history")},
+    )
+
+    def stop():
+        if service.poll() is None:
+            os.killpg(service.pid, 15)
+            service.wait(10)
+
+    test.addCleanup(stop)
+    deadline = time.monotonic() + 10
+    while not remote.service_answers(str(test.endpoint)):
+        test.assertLess(time.monotonic(), deadline, "service did not start")
+        time.sleep(0.05)
+    test.registry = json.dumps(
+        {
+            "categories": [{"id": "general", "name": "General"}],
+            "activeCategory": "general",
+            "agents": [
+                {
+                    "id": test.identifier,
+                    "title": "echo",
+                    "category": "general",
+                    "harness": "grok",
+                    "endpoint": str(test.endpoint),
+                    "program": program,
+                    "arguments": arguments,
+                    "directory": "/",
+                }
+            ],
+        }
+    )
+
+
 class LiveServiceTests(unittest.TestCase):
     def setUp(self):
-        self.runtime = Path(tempfile.mkdtemp(prefix="lr-", dir="/tmp"))
-        self.addCleanup(shutil.rmtree, self.runtime, True)
-        self.identifier = "11111111-2222-4333-8444-555555555555"
-        self.endpoint = self.runtime / (self.identifier + ".sock")
         script = (
             'printf "ready\\n"; while read line; do printf "got:%s\\n" "$line"; done'
         )
-        self.service = subprocess.Popen(
-            [str(SERVICE), str(self.endpoint), "/", "/bin/sh", "-c", script],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-            env={**os.environ, "LAPIS_HISTORY_ROOT": str(self.runtime / "history")},
-        )
-        self.addCleanup(self.stop)
-        deadline = time.monotonic() + 10
-        while not remote.service_answers(str(self.endpoint)):
-            self.assertLess(time.monotonic(), deadline, "service did not start")
-            time.sleep(0.05)
-        self.registry = json.dumps(
-            {
-                "categories": [{"id": "general", "name": "General"}],
-                "activeCategory": "general",
-                "agents": [
-                    {
-                        "id": self.identifier,
-                        "title": "echo",
-                        "category": "general",
-                        "harness": "grok",
-                        "endpoint": str(self.endpoint),
-                        "program": "/bin/sh",
-                        "arguments": ["-c", script],
-                        "directory": "/",
-                    }
-                ],
-            }
-        )
-
-    def stop(self):
-        if self.service.poll() is None:
-            os.killpg(self.service.pid, 15)
-            self.service.wait(10)
+        live_agent(self, "/bin/sh", ["-c", script])
 
     def test_a_screen_is_read_without_resizing_or_taking_the_agent(self):
         with Server(self, self.registry, self.runtime) as server:
@@ -1427,6 +1433,47 @@ class LiveServiceTests(unittest.TestCase):
             )
             self.desktop_sees(again, "got:still here")
             phone.close()
+
+
+@unittest.skipUnless(SERVICE.exists(), "needs the built session service")
+class WheelTests(unittest.TestCase):
+    """A full-screen program that reports the mouse, as Claude Code's
+    full-screen mode does, gets the phone's wheel as mouse wheel events."""
+
+    def setUp(self):
+        live_agent(self, sys.executable, [str(ROOT / "tools" / "qa" / "fake_agent.py")])
+
+    def test_the_wheel_reaches_a_full_screen_program(self):
+        with Server(self, self.registry, self.runtime) as server:
+            path = f"/api/agents/{self.identifier}"
+            events = Events(server, path + "/stream?columns=40&rows=12")
+            _, first = events.until(
+                lambda name, data: (
+                    name == "frame" and "lapis fake agent" in screen_text(data)
+                )
+            )
+            self.assertFalse(first["wheel"])
+            # The primary screen pages history instead; the wheel is refused.
+            status, _ = server.request("POST", path + "/input", {"wheel": [1, 0, 0]})
+            self.assertEqual(status, 400)
+            server.request("POST", path + "/input", {"text": "mouse\r"})
+            _, shown = events.until(
+                lambda name, data: name == "frame"
+                and "mouse ready" in screen_text(data)
+            )
+            self.assertTrue(shown["alternateScreen"] and shown["wheel"])
+            for bad in ([0, 1, 1], [1, -1, 0], [True, 1, 1], [1, 1]):
+                status, _ = server.request("POST", path + "/input", {"wheel": bad})
+                self.assertEqual(status, 400, bad)
+            status, _ = server.request("POST", path + "/input", {"wheel": [2, 4, 2]})
+            self.assertEqual(status, 200)
+            events.until(
+                lambda name, data: (
+                    name == "frame"
+                    and "mouse got 2 events, first ESC[<64;5;3M" in screen_text(data)
+                )
+            )
+            events.close()
 
 
 class OldServiceTests(unittest.TestCase):

@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -193,6 +194,8 @@ struct Terminal::Impl {
     OwnedHandle<GhosttyRenderStateRowCells, ghostty_render_state_row_cells_free> row_cells;
     OwnedHandle<GhosttyKeyEncoder, ghostty_key_encoder_free> encoder;
     OwnedHandle<GhosttyKeyEvent, ghostty_key_event_free> key;
+    OwnedHandle<GhosttyMouseEncoder, ghostty_mouse_encoder_free> mouse_encoder;
+    OwnedHandle<GhosttyMouseEvent, ghostty_mouse_event_free> mouse;
     std::vector<std::uint32_t> scratch;
 
     Impl(TerminalSize size, const TerminalLimits& input_limits)
@@ -214,6 +217,9 @@ struct Terminal::Impl {
         encoder =
             create_handle<GhosttyKeyEncoder, ghostty_key_encoder_free>(ghostty_key_encoder_new);
         key = create_handle<GhosttyKeyEvent, ghostty_key_event_free>(ghostty_key_event_new);
+        mouse_encoder = create_handle<GhosttyMouseEncoder, ghostty_mouse_encoder_free>(
+            ghostty_mouse_encoder_new);
+        mouse = create_handle<GhosttyMouseEvent, ghostty_mouse_event_free>(ghostty_mouse_event_new);
         require_success(ghostty_terminal_set(terminal.get(), GHOSTTY_TERMINAL_OPT_USERDATA, this));
         constexpr GhosttyTerminalWritePtyFn write = &Impl::write_pty;
         require_success(ghostty_terminal_set(terminal.get(), GHOSTTY_TERMINAL_OPT_WRITE_PTY,
@@ -367,6 +373,7 @@ struct Terminal::Impl {
     [[nodiscard]] TerminalCell extract_cell(TerminalSnapshot& snapshot);
     [[nodiscard]] std::string encode_key(TerminalKey key_value, KeyModifiers modifiers);
     [[nodiscard]] std::string encode_paste(std::string_view text);
+    [[nodiscard]] std::string encode_wheel(WheelTurn turn);
 };
 
 Terminal::Terminal(TerminalSize size, TerminalLimits limits)
@@ -412,6 +419,8 @@ std::string Terminal::encode_key(TerminalKey key, KeyModifiers modifiers) {
 }
 
 std::string Terminal::encode_paste(std::string_view text) { return impl_->encode_paste(text); }
+
+std::string Terminal::encode_wheel(WheelTurn turn) { return impl_->encode_wheel(turn); }
 
 std::string Terminal::take_replies() {
     impl_->require_healthy();
@@ -492,6 +501,54 @@ std::string Terminal::Impl::encode_paste(std::string_view text) {
     if (written > output.size())
         throw std::runtime_error("Ghostty paste exceeded buffer");
     output.resize(written);
+    return output;
+}
+
+std::string Terminal::Impl::encode_wheel(WheelTurn turn) {
+    require_healthy();
+    const auto [steps, column, row] = turn;
+    // A fling is a few dozen notches at most; more is a runaway sender.
+    constexpr int max_notches = 64;
+    const int notches = std::min(std::abs(steps), max_notches);
+    std::string output;
+    bool reporting = false;
+    terminal_get(GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING, reporting);
+    if (reporting && notches > 0) {
+        std::uint16_t columns = 0U;
+        std::uint16_t rows = 0U;
+        terminal_get(GHOSTTY_TERMINAL_DATA_COLS, columns);
+        terminal_get(GHOSTTY_TERMINAL_DATA_ROWS, rows);
+        // Positions are given in cells, so one cell is one pixel.
+        const GhosttyMouseEncoderSize size{
+            sizeof(GhosttyMouseEncoderSize), columns, rows, 1U, 1U, 0U, 0U, 0U, 0U};
+        ghostty_mouse_encoder_setopt_from_terminal(mouse_encoder.get(), terminal.get());
+        ghostty_mouse_encoder_setopt(mouse_encoder.get(), GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size);
+        ghostty_mouse_event_set_action(mouse.get(), GHOSTTY_MOUSE_ACTION_PRESS);
+        ghostty_mouse_event_set_button(mouse.get(), steps > 0 ? GHOSTTY_MOUSE_BUTTON_FOUR
+                                                              : GHOSTTY_MOUSE_BUTTON_FIVE);
+        ghostty_mouse_event_set_mods(mouse.get(), 0U);
+        ghostty_mouse_event_set_position(
+            mouse.get(),
+            {static_cast<float>(std::min<int>(column, std::max(columns - 1, 0))) + 0.5F,
+             static_cast<float>(std::min<int>(row, std::max(rows - 1, 0))) + 0.5F});
+        std::array<char, 64> event{};
+        for (int notch = 0; notch < notches; ++notch) {
+            std::size_t written = 0U;
+            require_success(ghostty_mouse_encoder_encode(mouse_encoder.get(), mouse.get(),
+                                                         event.data(), event.size(), &written));
+            if (written > event.size())
+                throw std::runtime_error("Ghostty mouse encoding exceeded buffer");
+            output.append(event.data(), written);
+        }
+        return output;
+    }
+    GhosttyTerminalScreen screen{};
+    terminal_get(GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, screen);
+    if (screen != GHOSTTY_TERMINAL_SCREEN_ALTERNATE)
+        return output;
+    const auto arrow = encode_key(steps > 0 ? TerminalKey::up : TerminalKey::down, {});
+    for (int line = 0; line < notches * 3; ++line)
+        output += arrow;
     return output;
 }
 

@@ -10,6 +10,7 @@
 #include <QProcess>
 #include <QPromise>
 #include <QThreadPool>
+#include <algorithm>
 #include <exception>
 #include <limits>
 #include <stdexcept>
@@ -121,6 +122,16 @@ void SessionPreview::sendKey(session::TerminalKey key, session::KeyModifiers mod
     bytes.append(static_cast<char>(mods));
     if (live_)
         live_->send(wire::Kind::key, bytes);
+}
+void SessionPreview::sendWheel(int steps, int column, int row) {
+    if (history_active_ || history_request_pending_ || !live_snapshot_.accepts_wheel ||
+        steps == 0 || !live_)
+        return;
+    constexpr int limit = 64;
+    live_->send(wire::Kind::wheel,
+                wire::encode_wheel({static_cast<qint16>(std::clamp(steps, -limit, limit)),
+                                    static_cast<quint16>(std::clamp(column, 0, 0xFFFF)),
+                                    static_cast<quint16>(std::clamp(row, 0, 0xFFFF))}));
 }
 void SessionPreview::claimTerminalSize() {
     if (live_ && !history_active_ && !history_request_pending_)

@@ -27,8 +27,21 @@ enum class Kind : quint8 {
     attention_retry,
     // Client request to end the agent's process; the service answers with the
     // ordinary `ended` status once the process has exited.
-    terminate
+    terminate,
+    // A turn of the wheel for a full-screen program (added within v6): BE i16
+    // notches (positive scrolls back), BE u16 column, BE u16 row. Services
+    // before it reject the frame, so clients send it only when a snapshot
+    // says the service accepts it (TerminalSnapshot::accepts_wheel).
+    wheel
 };
+// A wheel payload's fields; encode_wheel/decode_wheel.
+struct Wheel {
+    qint16 steps{};
+    quint16 column{};
+    quint16 row{};
+};
+[[nodiscard]] QByteArray encode_wheel(const Wheel& wheel);
+[[nodiscard]] Wheel decode_wheel(const QByteArray& payload);
 // Identities introduced in v3 and retained in v4/v6: two nonzero 16-byte UUIDs and a BE u64
 // generation.
 struct SessionIdentity {

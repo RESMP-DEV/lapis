@@ -153,7 +153,7 @@ class TerminalSurface : public QQuickItem {
     bool copySelection(const QKeyEvent& event);
     void resumeLiveForTyping(const QKeyEvent& event);
     void commandKey(QKeyEvent& event);
-    void scrollHistory(int steps);
+    void scrollHistory(int steps, QPoint cell);
     struct RenderState;
     std::mutex render_mutex_;
     std::shared_ptr<const RenderState> render_state_;

@@ -134,6 +134,9 @@ class SessionPreview final : public QObject {
     void setActivity(const QString& activity);
     void sendText(const QByteArray& bytes, bool paste = false);
     void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
+    // A turn of the wheel for the program on the alternate screen, over a
+    // viewport cell; only when its snapshot says the service accepts wheels.
+    void sendWheel(int steps, int column, int row);
     void resizeTerminal(session::TerminalSize size);
     // Someone is at this window: take the size back from another device.
     void claimTerminalSize();

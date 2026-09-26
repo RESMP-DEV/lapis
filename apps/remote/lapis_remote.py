@@ -57,6 +57,11 @@ GATEWAY_VERSION = 1
 WIRE_VERSION = 6
 HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
 HISTORY_REQUEST, HISTORY_PAGE = 10, 11
+# A turn of the wheel for a full-screen program (added within v6). Only a
+# service whose snapshots set ACCEPTS_WHEEL in the alternate-screen byte takes
+# it; one from before drops the connection on it.
+WHEEL = 16
+ALTERNATE_OFFSET, ACCEPTS_WHEEL = 21, 2
 STATUS_NAMES = {1: "rejected", 2: "ended", 3: "replaced", 4: "overloaded"}
 # Attach modes: discover takes the agent from its current client; join (added
 # within v6) shows it beside the desktop. Services started before join reject it.
@@ -1144,7 +1149,7 @@ def render_snapshot(payload, show_cursor=True):
     require(len(payload) >= POOL_OFFSET + 4, "Truncated snapshot")
     revision, columns, rows, cursor_x, cursor_y = struct.unpack_from(">QHHHH", payload)
     in_viewport, visible = payload[16], payload[17]
-    alternate, application_cursor = payload[21], payload[23]
+    alternate, application_cursor = payload[ALTERNATE_OFFSET], payload[23]
     default_fg, default_bg = struct.unpack_from(">II", payload, 24)
     palette = struct.unpack_from(">256I", payload, PALETTE_OFFSET)
     count = struct.unpack_from(">I", payload, POOL_OFFSET)[0]
@@ -1212,6 +1217,8 @@ def render_snapshot(payload, show_cursor=True):
         "rows": rows,
         "cursor": {"x": cursor_x, "y": cursor_y, "visible": cursor is not None},
         "alternateScreen": bool(alternate),
+        # The phone sends the wheel to the program instead of paging history.
+        "wheel": bool(alternate & ACCEPTS_WHEEL),
         "applicationCursor": bool(application_cursor),
         "foreground": hex_color(default_fg),
         "background": hex_color(default_bg),
@@ -1248,6 +1255,9 @@ class WireSession:
         self.sequence = 0
         self.first = None
         self.closed = False
+        # Whether the latest screen is a full-screen program whose service
+        # takes wheel input.
+        self.wheel_accepted = False
         # Set when another phone view is taking this agent, so its "replaced"
         # status is not reported as the Mac taking it back.
         self.superseded = False
@@ -1299,7 +1309,11 @@ class WireSession:
         if sequence <= self.sequence:
             return None
         self.sequence = sequence
-        return data[SNAPSHOT_HEADER:]
+        body = data[SNAPSHOT_HEADER:]
+        self.wheel_accepted = (
+            len(body) > ALTERNATE_OFFSET and body[ALTERNATE_OFFSET] & ACCEPTS_WHEEL != 0
+        )
+        return body
 
     def receive(self, timeout):
         """One frame, or None when nothing arrives within the timeout."""
@@ -1338,6 +1352,13 @@ class WireSession:
     def key(self, name, modifiers=0):
         require(name in KEYS, "Unknown key")
         self.send(KEY, bytes([KEYS[name], modifiers & 0x0F]))
+
+    def wheel(self, steps, column, row):
+        """A turn of the wheel over a cell: positive steps scroll back."""
+        require(self.wheel_accepted, "This screen does not take the wheel")
+        require(steps != 0 and -64 <= steps <= 64, "Invalid wheel steps")
+        require(0 <= column <= 0xFFFF and 0 <= row <= 0xFFFF, "Invalid wheel cell")
+        self.send(WHEEL, struct.pack(">hHH", steps, column, row))
 
     def request_history(self, reference=0, timeout=10.0, newer=False):
         """The archived page before `reference` (0: the newest page), or after it.
@@ -2247,6 +2268,15 @@ class Handler(BaseHTTPRequestHandler):
                 if body.get("submit") or "paste" in body:
                     time.sleep(0.12)  # let a paste settle before Enter
                 session.key(str(body["key"]), int(body.get("modifiers", 0)))
+            if "wheel" in body:
+                steps, column, row = body["wheel"]
+                require(
+                    all(position(value) for value in (column, row))
+                    and isinstance(steps, int)
+                    and not isinstance(steps, bool),
+                    "Invalid wheel",
+                )
+                session.wheel(steps, column, row)
         except (ValueError, TypeError, KeyError, GatewayError, OSError) as error:
             self.fail(HTTPStatus.BAD_REQUEST, str(error))
             return

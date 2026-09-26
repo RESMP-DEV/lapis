@@ -1396,6 +1396,59 @@ QByteArray installStandInGrok(const QDir& root) {
     return path;
 }
 
+// A full-screen program that reports the mouse, as Claude Code's full-screen
+// mode does, gets the wheel as mouse wheel events at the cell under it. The
+// stand-in takes the alternate screen, reads what the wheel sends, and prints
+// it once it leaves.
+void wheelReachesAFullScreenProgram() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-wheel-XXXXXX"));
+    require(directory.isValid(), "wheel directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    {
+        QFile script(root.filePath(QStringLiteral("bin/grok")));
+        require(script.open(QIODevice::WriteOnly | QIODevice::Truncate), "write the stand-in");
+        script.write("#!/bin/sh\n"
+                     "printf '\\033[?1049h\\033[?1000h\\033[?1006hwheel ready'\n"
+                     "stty raw -echo\n"
+                     "got=$(dd bs=1 count=20 2>/dev/null | od -An -c | tr -d ' \\n')\n"
+                     "stty sane\n"
+                     "printf '\\033[?1006l\\033[?1000l\\033[?1049l'\n"
+                     "echo \"got $got\"\n"
+                     "exec sleep 600\n");
+    }
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.createAgent(root.filePath(QStringLiteral("project")),
+                                      QStringLiteral("wheel"), QStringLiteral("grok")),
+                "a full-screen stand-in");
+        auto* agent = workspace.focusedSession();
+        require(agent != nullptr && waitFor(
+                                        [agent] {
+                                            return agent->inputReady() &&
+                                                   agent->snapshot().accepts_wheel &&
+                                                   screenText(agent->snapshot())
+                                                       .contains(QStringLiteral("wheel ready"));
+                                        },
+                                        10000),
+                "the program takes the alternate screen, and the service the wheel");
+        agent->sendWheel(2, 4, 2);
+        require(waitFor(
+                    [agent] {
+                        return screenText(agent->snapshot())
+                            .contains(QStringLiteral("got 033[<64;5;3M033[<64;5;3M"));
+                    },
+                    10000),
+                "two wheel-up events at the cell reached the program");
+        require(workspace.closeSession(agent->sessionId()), "close the stand-in");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in closes");
+    }
+    qputenv("PATH", path);
+}
+
 // Quick-command terminals: one shell per machine under its own service, apart
 // from agents. It is reused, reattached by the next lapis, started from the
 // phone through the control socket, and leaves when its shell exits.
@@ -2976,6 +3029,7 @@ int main(int argc, char** argv) {
         phoneStartsAnAgentInItsCategory();
         resumingAConversationStartsItsCli();
         terminalsRunPlainShells();
+        wheelReachesAFullScreenProgram();
         windowTakesTheWorkspaceFromTheHost();
         alertsChimeWhileAnAgentWaits();
         phoneSizeYieldsToTheDesktop();

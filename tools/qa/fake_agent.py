@@ -10,6 +10,8 @@ Commands typed at its prompt exercise terminal and lifecycle behavior:
   size ID report the actual PTY grid with a caller-provided observation ID
   wide    print wide, combining and right-to-left text
   alt     draw on the alternate screen for 5 seconds
+  mouse   a full-screen program that reports the mouse (SGR), as Claude Code's
+          full-screen mode does, until the wheel turns; then says what came
   title   set an unusual window title
   bell    ring the terminal bell
   hang    ignore SIGHUP and SIGTERM and sleep (tests forced termination)
@@ -29,10 +31,13 @@ it resumed.
 import base64
 import json
 import os
+import select
 import signal
 import sys
+import termios
 import threading
 import time
+import tty
 import uuid
 
 NAME = os.path.basename(sys.argv[0])
@@ -58,6 +63,26 @@ def bursts(period, stop):
             say(f"\x1b[36mburst {count}.{step}\x1b[0m " + "·" * (step % 40))
             if stop.wait(0.1):
                 return
+
+
+def wheel_events(seconds):
+    """Raw input until mouse events arrive (and a moment after, for the rest
+    of a gesture), or `seconds` pass."""
+    descriptor = sys.stdin.fileno()
+    saved = termios.tcgetattr(descriptor)
+    received = b""
+    try:
+        tty.setraw(descriptor)
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([descriptor], [], [], 0.1)
+            if ready:
+                received += os.read(descriptor, 4096)
+                if received.count(b"M") and deadline - time.monotonic() > 0.6:
+                    deadline = time.monotonic() + 0.6
+    finally:
+        termios.tcsetattr(descriptor, termios.TCSADRAIN, saved)
+    return received
 
 
 def run(command, line):
@@ -86,6 +111,13 @@ def run(command, line):
         time.sleep(5)
         write("\x1b[?1049l")
         say("left the alternate screen")
+    elif command == "mouse":
+        write("\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[2J\x1b[Hmouse ready", flush=True)
+        received = wheel_events(30)
+        write("\x1b[?1006l\x1b[?1000l\x1b[?1049l")
+        events = received.split(b"\x1b")[1:]
+        first = events[0].decode("ascii", "replace") if events else "nothing"
+        say(f"mouse got {len(events)} events, first ESC{first}")
     elif command == "title":
         write("\x1b]0;‮eltit desrever \x07")
         say("title set")
