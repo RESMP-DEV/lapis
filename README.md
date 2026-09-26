@@ -423,6 +423,11 @@ swipe away the same way. Swiping an agent right (or a long press) offers
 previous agent in its category (the title shows "2 of 4"), so the list is only
 needed to change category.
 
+Scrolling over a full-screen program, such as Claude Code with
+`"tui": "fullscreen"`, scrolls the program itself on both devices, as the
+wheel does in other terminals; on the phone a vertical drag turns the wheel.
+An agent started before this version scrolls that way once it restarts.
+
 Holding an agent also offers **Move to** another category, **Move earlier** and
 **Move later**, **Restart** once it has stopped, and **Close**. Each category's
 heading ends in a menu: a new agent there, **Rename**, **Arrange categories**

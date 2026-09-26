@@ -2250,6 +2250,39 @@ stays the Mac's.
   four simulator tests; after them the phone check reads the check's own
   `lapis.json` for the changed settings.
 
+### The wheel in full-screen programs (September 26)
+
+Scrolling stopped working on both the Mac and the phone. Claude Code's
+full-screen mode (`"tui": "fullscreen"` in its settings) draws on the
+alternate screen and turns on mouse reporting (modes 1000, 1002, 1003 and SGR
+1006), then scrolls its own transcript on mouse wheel events. Nothing scrolls
+off into the archive, so the phone's history pages were empty, and the Mac's
+wheel became arrow keys, which Claude reads as prompt history.
+
+- **Encoding.** `Terminal::encode_wheel` sends a notch as the program asked:
+  wheel events in its mouse format through Ghostty's mouse encoder when it
+  reports the mouse, three arrow keys on the alternate screen when it does
+  not, and nothing on the primary screen, whose history the view pages.
+- **Wire.** A `wheel` frame (BE i16 notches, u16 column, u16 row) joins v6.
+  Services before it drop the connection on an unknown frame, so a client
+  sends it only when the service says it takes it: new services write the
+  snapshot's alternate-screen byte as 3 instead of 1. Readers before it take
+  any nonzero byte as true, and the flag is only needed on the alternate
+  screen. Joined views may send it, and it does not claim the terminal size.
+- **Mac.** Over a full-screen program the wheel goes to the service with the
+  cell under the pointer; a service from before keeps the arrow keys.
+- **Phone.** The gateway reports `wheel` in each frame and forwards
+  `{"wheel": [notches, column, row]}` only while the latest screen takes it.
+  Over such a program the phone shows only its screen and turns a vertical
+  drag into notches, one per two rows, down scrolling back.
+- Agents keep the service they started with, so a running agent scrolls this
+  way once it restarts (its conversation resumes).
+- Qualified by `wheel_input` in the terminal tests, `wheel_messages` in the
+  protocol tests, `wheelReachesAFullScreenProgram` in the workspace suite, the
+  gateway's `WheelTests` against a real service, and
+  `testDraggingScrollsAFullScreenProgram` in the simulator, each with a
+  stand-in that asks for SGR mouse reporting.
+
 ### Following milestones
 
 With the two-session workspace assembled, the next qualification stages are
