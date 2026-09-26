@@ -305,6 +305,11 @@ SessionPreview::SessionPreview(QString title, QString directory, QString activit
       accent_(accent) {
     connect(this, &SessionPreview::connectionChanged, this, &SessionPreview::statusChanged);
     connect(this, &SessionPreview::attentionChanged, this, &SessionPreview::statusChanged);
+    decode_timer_.setSingleShot(true);
+    connect(&decode_timer_, &QTimer::timeout, this, [this] {
+        if (decodeWaiting() && !history_active_)
+            emit snapshotChanged();
+    });
     quiet_timer_.setSingleShot(true);
     connect(&quiet_timer_, &QTimer::timeout, this, [this] {
         if (!output_active_)

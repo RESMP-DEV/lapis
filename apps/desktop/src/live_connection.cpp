@@ -31,6 +31,7 @@ void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpe
 }
 void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
     noteOutput();
+    waiting_.reset();
     live_snapshot_ = std::move(snapshot);
     live_snapshot_received_ = true;
     live_snapshot_ready_ = live();
@@ -39,7 +40,55 @@ void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
         emit snapshotChanged();
     }
 }
+void SessionPreview::offerSnapshot(QByteArray encoded) {
+    noteOutput();
+    waiting_ = std::move(encoded);
+    live_snapshot_received_ = true;
+    live_snapshot_ready_ = live();
+    if (viewers_.empty())
+        return;
+    if (*viewers_.begin() == 0) {
+        decodeWaiting();
+        if (!history_active_)
+            emit snapshotChanged();
+    } else if (!decode_timer_.isActive()) {
+        // The first screen opens the window; later ones share its decode.
+        decode_timer_.start(*viewers_.begin());
+    }
+}
+bool SessionPreview::decodeWaiting() const {
+    if (!waiting_)
+        return false;
+    auto encoded = std::move(*waiting_);
+    waiting_.reset();
+    try {
+        live_snapshot_ = wire::decode_snapshot(encoded);
+    } catch (const std::exception& error) {
+        // Keep the last good screen; the service sent one lapis cannot read.
+        qWarning().noquote() << "Screen not decoded:" << error.what();
+        return false;
+    }
+    ++decoded_screens_;
+    if (!history_active_)
+        snapshot_ = live_snapshot_;
+    return true;
+}
+void SessionPreview::addViewer(int interval_ms) {
+    const bool first = viewers_.empty();
+    viewers_.insert(std::max(0, interval_ms));
+    if (first && decodeWaiting() && !history_active_)
+        emit snapshotChanged();
+}
+void SessionPreview::removeViewer(int interval_ms) {
+    const auto found = viewers_.find(std::max(0, interval_ms));
+    if (found != viewers_.end())
+        viewers_.erase(found);
+    if (viewers_.empty())
+        decode_timer_.stop();
+}
 void SessionPreview::beginHistoryRequest() {
+    // History shows the live screen until a page comes, so take the newest.
+    decodeWaiting();
     history_active_ = true;
     history_request_pending_ = true;
     emit historyChanged();
@@ -123,6 +172,7 @@ void SessionPreview::newerHistory() {
     live_->requestHistory(wire::HistoryDirection::newer, history_page_id_);
 }
 void SessionPreview::returnToLive() {
+    decodeWaiting();
     pending_jump_.reset();
     if (live_)
         live_->cancelHistoryRequest();
@@ -164,6 +214,7 @@ void SessionPreview::sendKey(session::TerminalKey key, session::KeyModifiers mod
         live_->send(wire::Kind::key, bytes);
 }
 void SessionPreview::sendWheel(int steps, int column, int row) {
+    decodeWaiting();
     if (history_active_ || history_request_pending_ || !live_snapshot_.accepts_wheel ||
         steps == 0 || !live_)
         return;
@@ -484,7 +535,7 @@ void LiveConnection::acceptHello(const wire::Hello& hello) {
     report(QStringLiteral("Restoring terminal screen"));
     qInfo() << "Connected terminal PID" << hello.pid;
 }
-void LiveConnection::acceptSnapshot(wire::SnapshotMessage message) {
+void LiveConnection::acceptSnapshot(wire::SnapshotEnvelope message) {
     if (!attachment_ || message.attachment != *attachment_ || message.sequence <= last_sequence_)
         throw std::runtime_error("Stale or mismatched terminal snapshot");
     const bool initial = last_sequence_ == 0;
@@ -492,9 +543,9 @@ void LiveConnection::acceptSnapshot(wire::SnapshotMessage message) {
     // Until a view asks for a size, keep the service's current one rather than
     // resizing a reattached agent to the launch default.
     if (initial && !wanted_size_requested_)
-        wanted_size_ = message.snapshot.size;
-    if (message.snapshot.size != shown_size_) {
-        shown_size_ = message.snapshot.size;
+        wanted_size_ = message.size;
+    if (message.size != shown_size_) {
+        shown_size_ = message.size;
         claimed_over_.reset();
     }
     document_.setSnapshotTiming(
@@ -502,7 +553,8 @@ void LiveConnection::acceptSnapshot(wire::SnapshotMessage message) {
          {QStringLiteral("pty_read_ns"), QVariant::fromValue(message.timing.pty_read_ns)},
          {QStringLiteral("parse_end_ns"), QVariant::fromValue(message.timing.parse_end_ns)},
          {QStringLiteral("publish_ns"), QVariant::fromValue(message.timing.publish_ns)}});
-    document_.applySnapshot(std::move(message.snapshot));
+    // Decoded when a view shows it (most of a millisecond for a whole screen).
+    document_.offerSnapshot(std::move(message.encoded));
     if (initial)
         persistIdentity();
 }
@@ -590,7 +642,7 @@ void LiveConnection::handle(const wire::Frame& frame) {
         acceptHello(wire::decode_hello(frame.payload));
         return;
     case wire::Kind::snapshot:
-        acceptSnapshot(wire::decode_snapshot_message(frame.payload));
+        acceptSnapshot(wire::decode_snapshot_envelope(frame.payload));
         return;
     case wire::Kind::attention_snapshot: {
         auto snapshot = wire::decode_attention_snapshot(frame.payload);

@@ -78,6 +78,16 @@ struct SnapshotMessage {
     TerminalSnapshot snapshot;
     SnapshotTiming timing{};
 };
+// A snapshot message with its screen left encoded (encode_snapshot's bytes)
+// and only the screen's size read, for a client that decodes a screen only
+// when it is shown.
+struct SnapshotEnvelope {
+    Attachment attachment;
+    quint64 sequence{};
+    SnapshotTiming timing{};
+    TerminalSize size;
+    QByteArray encoded;
+};
 // `at` (added within v6) asks for the page holding a row, counted from the
 // oldest kept row. Services before it reject it; a client sends it only to a
 // service whose pages say where they sit (their history fields: total_rows
@@ -130,6 +140,7 @@ struct Status {
 // existing snapshot encoding. Zero timing means no observed PTY output yet.
 [[nodiscard]] QByteArray encode_snapshot_message(const SnapshotMessage& message);
 [[nodiscard]] SnapshotMessage decode_snapshot_message(const QByteArray& payload);
+[[nodiscard]] SnapshotEnvelope decode_snapshot_envelope(const QByteArray& payload);
 // Text/paste/key/resize: attachment[40], existing payload (at most 64 KiB).
 [[nodiscard]] QByteArray encode_control(const ControlMessage& message);
 [[nodiscard]] ControlMessage decode_control(const QByteArray& payload);

@@ -27,6 +27,7 @@
 #include <atomic>
 #include <memory>
 #include <optional>
+#include <set>
 #include <vector>
 
 class QProcess;
@@ -132,6 +133,17 @@ class SessionPreview final : public QObject {
     [[nodiscard]] const QString& connectionState() const { return connection_state_; }
     [[nodiscard]] const QString& serviceSessionId() const { return service_session_id_; }
     void applySnapshot(session::TerminalSnapshot snapshot);
+    // A screen from the service, still encoded. Decoding a whole screen takes
+    // most of a millisecond, so it is decoded only for the views showing this
+    // agent, at the pace they draw (the stage at once, a preview card every
+    // 250 ms); otherwise only the newest is kept until a view or a reader asks.
+    void offerSnapshot(QByteArray encoded);
+    // A view showing this agent's screen, redrawn every `interval_ms` (0 at
+    // once). A hidden or closed window's views are not showing anything.
+    void addViewer(int interval_ms);
+    void removeViewer(int interval_ms);
+    // Screens decoded so far, for tests.
+    [[nodiscard]] quint64 decodedScreens() const { return decoded_screens_; }
     void setSnapshotTiming(const QVariantMap& timing) { snapshot_timing_ = timing; }
     [[nodiscard]] QVariantMap snapshotTiming() const { return snapshot_timing_; }
     void beginHistoryRequest();
@@ -179,7 +191,12 @@ class SessionPreview final : public QObject {
     [[nodiscard]] const QString& directory() const { return directory_; }
     [[nodiscard]] const QString& activity() const { return activity_; }
     [[nodiscard]] QColor accent() const { return accent_; }
-    [[nodiscard]] const session::TerminalSnapshot& snapshot() const { return snapshot_; }
+    // The screen shown: a history page, else the newest live screen, decoded
+    // now if it waited.
+    [[nodiscard]] const session::TerminalSnapshot& snapshot() const {
+        decodeWaiting();
+        return snapshot_;
+    }
 
   signals:
     void identityChanged();
@@ -211,6 +228,8 @@ class SessionPreview final : public QObject {
     void noteOutput();
     [[nodiscard]] QString unobservedStatusKind() const;
     void jumpIfAsked();
+    // Decodes the screen that waited, if any; true when there was one.
+    bool decodeWaiting() const;
     std::vector<qint64> output_times_;
     bool output_active_{};
     bool output_quiet_{};
@@ -232,8 +251,14 @@ class SessionPreview final : public QObject {
     QString directory_;
     QString activity_;
     QColor accent_;
-    session::TerminalSnapshot live_snapshot_;
-    session::TerminalSnapshot snapshot_;
+    // Caches of what the service sent: decoding a waiting screen fills them,
+    // so reading the screen is const.
+    mutable session::TerminalSnapshot live_snapshot_;
+    mutable session::TerminalSnapshot snapshot_;
+    mutable std::optional<QByteArray> waiting_;
+    mutable quint64 decoded_screens_{};
+    std::multiset<int> viewers_;
+    QTimer decode_timer_;
 };
 
 enum class WorkspaceMode : std::uint8_t { live, preview };

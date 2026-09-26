@@ -1506,6 +1506,69 @@ void historyJumpsToTheStart() {
     qputenv("PATH", path);
 }
 
+// Screens are decoded for the views showing them: an agent nobody is looking
+// at keeps only its newest screen, encoded, until someone reads it; the stage
+// decodes each one, a preview at most every 250 ms.
+void unseenAgentsDecodeNothing() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-unseen-XXXXXX"));
+    require(directory.isValid(), "unseen directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    {
+        QFile script(root.filePath(QStringLiteral("bin/grok")));
+        require(script.open(QIODevice::WriteOnly | QIODevice::Truncate), "write the stand-in");
+        script.write(
+            "#!/bin/sh\n"
+            "echo ready\n"
+            "while read round; do\n"
+            "  i=0; while [ $i -lt 30 ]; do echo \"$round $i\"; i=$((i + 1)); sleep 0.03; done\n"
+            "  echo \"done $round\"\n"
+            "done\n");
+    }
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.createAgent(root.filePath(QStringLiteral("project")),
+                                      QStringLiteral("unseen"), QStringLiteral("grok")),
+                "a stand-in that prints on request");
+        auto* agent = workspace.focusedSession();
+        const auto shows = [agent](const QString& text) {
+            return screenText(agent->snapshot()).contains(text);
+        };
+        require(agent != nullptr &&
+                    waitFor([&] { return agent->inputReady() && shows(QStringLiteral("ready")); },
+                            10000),
+                "it starts");
+        const auto idle = [](int milliseconds) {
+            static_cast<void>(waitFor([] { return false; }, milliseconds));
+        };
+        const auto before = agent->decodedScreens();
+        agent->sendText("one\n");
+        idle(2500);
+        require(agent->decodedScreens() == before, "nobody is looking: nothing is decoded");
+        require(shows(QStringLiteral("done one")) && agent->decodedScreens() == before + 1,
+                "reading the screen decodes the newest once");
+        agent->addViewer(0);
+        const auto staged = agent->decodedScreens();
+        agent->sendText("two\n");
+        idle(2500);
+        require(agent->decodedScreens() > staged + 5, "the stage decodes each screen");
+        agent->removeViewer(0);
+        agent->addViewer(250);
+        const auto previewed = agent->decodedScreens();
+        agent->sendText("three\n");
+        idle(2500);
+        const auto decoded = agent->decodedScreens() - previewed;
+        require(decoded >= 1 && decoded <= 12, "a preview decodes at most every 250 ms");
+        agent->removeViewer(250);
+        require(workspace.closeSession(agent->sessionId()), "close the stand-in");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in closes");
+    }
+    qputenv("PATH", path);
+}
+
 // Quick-command terminals: one shell per machine under its own service, apart
 // from agents. It is reused, reattached by the next lapis, started from the
 // phone through the control socket, and leaves when its shell exits.
@@ -3088,6 +3151,7 @@ int main(int argc, char** argv) {
         terminalsRunPlainShells();
         wheelReachesAFullScreenProgram();
         historyJumpsToTheStart();
+        unseenAgentsDecodeNothing();
         windowTakesTheWorkspaceFromTheHost();
         alertsChimeWhileAnAgentWaits();
         phoneSizeYieldsToTheDesktop();

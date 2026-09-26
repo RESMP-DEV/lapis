@@ -137,6 +137,25 @@ SnapshotMessage decode_snapshot_message(const QByteArray& payload) {
     result.snapshot = decode_snapshot(payload.sliced(snapshot_header_bytes));
     return result;
 }
+SnapshotEnvelope decode_snapshot_envelope(const QByteArray& payload) {
+    // The screen's revision (8 bytes), then its columns and rows.
+    check(payload.size() > snapshot_header_bytes + 12);
+    const unsigned char* cursor = reinterpret_cast<const unsigned char*>(payload.constData());
+    SnapshotEnvelope result;
+    result.attachment = decode_attachment(cursor);
+    result.sequence = read_quint64(cursor);
+    check(result.sequence != 0);
+    result.timing.pty_read_ns = read_quint64(cursor);
+    result.timing.parse_end_ns = read_quint64(cursor);
+    result.timing.publish_ns = read_quint64(cursor);
+    const auto* size = cursor + 8;
+    result.size = {static_cast<std::uint16_t>((unsigned{size[0]} << 8U) | size[1]),
+                   static_cast<std::uint16_t>((unsigned{size[2]} << 8U) | size[3])};
+    check(result.size.columns > 0 && result.size.rows > 0 &&
+          quint32(result.size.columns) * result.size.rows <= max_cells);
+    result.encoded = payload.sliced(snapshot_header_bytes);
+    return result;
+}
 QByteArray encode_history_request(const HistoryRequest& request) {
     check(request.request_id != 0 && request.direction <= HistoryDirection::at);
     check(request.direction != HistoryDirection::newer || request.reference != 0);

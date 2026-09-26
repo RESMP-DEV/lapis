@@ -4,6 +4,7 @@
 #include "keymap.hpp"
 #include "workspace.hpp"
 
+#include <QElapsedTimer>
 #include <QFont>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
@@ -115,6 +116,7 @@ class TerminalSurface : public QQuickItem {
   protected:
     QSGNode* updatePaintNode(QSGNode* old_node, UpdatePaintNodeData* data) override;
     void geometryChange(const QRectF& new_geometry, const QRectF& old_geometry) override;
+    void itemChange(ItemChange change, const ItemChangeData& value) override;
     void focusInEvent(QFocusEvent* event) override;
     void focusOutEvent(QFocusEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
@@ -159,6 +161,13 @@ class TerminalSurface : public QQuickItem {
     std::shared_ptr<const RenderState> render_state_;
     QPointer<SessionPreview> document_;
     QMetaObject::Connection window_active_connection_;
+    QMetaObject::Connection window_visible_connection_;
+    // The agent this view is showing, registered as its viewer while this
+    // view and its window are visible, so unseen agents' screens stay encoded.
+    QPointer<SessionPreview> viewed_;
+    int viewed_interval_{};
+    void updateViewing();
+    void screenChanged();
     QMetaObject::Connection window_changed_connection_;
     QPointF last_hover_;
 
@@ -172,6 +181,7 @@ class TerminalSurface : public QQuickItem {
     int frame_interval_{};
     qreal minimum_scale_{};
     QTimer throttle_;
+    QElapsedTimer since_frame_; // since the last throttled frame
     bool pasting_{};
     QString preedit_;
     quint64 ime_epoch_{};

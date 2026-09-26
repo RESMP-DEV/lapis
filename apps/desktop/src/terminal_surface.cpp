@@ -634,7 +634,10 @@ TerminalSurface::TerminalSurface(QQuickItem* parent)
     window_changed_connection_ =
         connect(this, &QQuickItem::windowChanged, this, &TerminalSurface::bindWindow);
     throttle_.setSingleShot(true);
-    connect(&throttle_, &QTimer::timeout, this, [this] { publishFrame(true); });
+    connect(&throttle_, &QTimer::timeout, this, [this] {
+        since_frame_.start();
+        publishFrame(true);
+    });
     bindWindow(window());
     publishFrame(true);
 }
@@ -642,6 +645,12 @@ TerminalSurface::TerminalSurface(QQuickItem* parent)
 void TerminalSurface::bindWindow(QQuickWindow* current) {
     if (window_active_connection_)
         disconnect(window_active_connection_);
+    if (window_visible_connection_)
+        disconnect(window_visible_connection_);
+    if (current)
+        window_visible_connection_ =
+            connect(current, &QWindow::visibleChanged, this, &TerminalSurface::updateViewing);
+    updateViewing();
     if (current)
         window_active_connection_ = connect(current, &QWindow::activeChanged, this, [this] {
             if (!window() || !window()->isActive()) {
@@ -657,8 +666,37 @@ void TerminalSurface::bindWindow(QQuickWindow* current) {
 TerminalSurface::~TerminalSurface() {
     disconnect(window_changed_connection_);
     disconnect(window_active_connection_);
+    disconnect(window_visible_connection_);
+    if (viewed_)
+        viewed_->removeViewer(viewed_interval_);
     const std::lock_guard lock(render_mutex_);
     render_state_.reset();
+}
+
+// A new screen: redraw now, or within the view's frame interval.
+void TerminalSurface::screenChanged() {
+    // A selection names what was on screen; once that text moves or
+    // changes, the highlight would point at something else.
+    if (selection_anchor_ && selection_head_ &&
+        textBetween(*selection_anchor_, *selection_head_) != selection_text_)
+        clearSelection();
+    if (frame_interval_ > 0) {
+        // A change after a quiet interval draws at once; changes
+        // within one share the frame at its end.
+        if (!throttle_.isActive()) {
+            const auto waited = since_frame_.isValid() ? since_frame_.elapsed() : frame_interval_;
+            if (waited >= frame_interval_) {
+                since_frame_.start();
+                publishFrame(true);
+            } else {
+                throttle_.start(static_cast<int>(frame_interval_ - waited));
+            }
+        }
+        updateInputContext(Qt::ImCursorRectangle);
+        return;
+    }
+    publishFrame(true);
+    updateInputContext(Qt::ImCursorRectangle);
 }
 
 void TerminalSurface::setDocument(SessionPreview* document) {
@@ -670,22 +708,7 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     selecting_ = false;
     clearSelection();
     if (document_) {
-        connect(document_, &SessionPreview::snapshotChanged, this, [this] {
-            // A selection names what was on screen; once that text moves or
-            // changes, the highlight would point at something else.
-            if (selection_anchor_ && selection_head_ &&
-                textBetween(*selection_anchor_, *selection_head_) != selection_text_)
-                clearSelection();
-            if (frame_interval_ > 0) {
-                // The first change opens the window; later ones share its frame.
-                if (!throttle_.isActive())
-                    throttle_.start(frame_interval_);
-                updateInputContext(Qt::ImCursorRectangle);
-                return;
-            }
-            publishFrame(true);
-            updateInputContext(Qt::ImCursorRectangle);
-        });
+        connect(document_, &SessionPreview::snapshotChanged, this, &TerminalSurface::screenChanged);
         connect(document_, &SessionPreview::connectionChanged, this, [this] {
             if (!document_ || !document_->inputReady()) {
                 ++ime_epoch_;
@@ -704,12 +727,35 @@ void TerminalSurface::setDocument(SessionPreview* document) {
             emit documentChanged();
         });
     }
+    updateViewing();
     ++ime_epoch_;
     resetInputContext();
     requestResize();
     claimSize();
     publishFrame(true);
     emit documentChanged();
+}
+
+// Shown while this view and its window are visible: a hidden window, a
+// hidden strip or a closed tile decodes nothing for its agent.
+void TerminalSurface::updateViewing() {
+    SessionPreview* showing =
+        document_ && isVisible() && window() != nullptr && window()->isVisible() ? document_.data()
+                                                                                 : nullptr;
+    if (showing == viewed_ && (showing == nullptr || viewed_interval_ == frame_interval_))
+        return;
+    if (viewed_)
+        viewed_->removeViewer(viewed_interval_);
+    viewed_ = showing;
+    viewed_interval_ = frame_interval_;
+    if (viewed_)
+        viewed_->addViewer(viewed_interval_);
+}
+
+void TerminalSurface::itemChange(ItemChange change, const ItemChangeData& value) {
+    QQuickItem::itemChange(change, value);
+    if (change == ItemVisibleHasChanged)
+        updateViewing();
 }
 
 void TerminalSurface::geometryChange(const QRectF& new_geometry, const QRectF& old_geometry) {
@@ -818,6 +864,7 @@ void TerminalSurface::setFrameInterval(int milliseconds) {
     if (frame_interval_ == bounded)
         return;
     frame_interval_ = bounded;
+    updateViewing();
     if (frame_interval_ == 0 && throttle_.isActive()) {
         throttle_.stop();
         publishFrame(true);
