@@ -501,6 +501,9 @@ bool UiPreview::loadCandidate() {
     if (options_.conversations)
         candidate->rootContext()->setContextProperty(QStringLiteral("conversations"),
                                                      options_.conversations);
+    if (options_.terminals)
+        candidate->rootContext()->setContextProperty(QStringLiteral("terminals"),
+                                                     options_.terminals);
     candidate->setInitialProperties({{QStringLiteral("visible"), false}});
 
     QString candidateDiagnostics;

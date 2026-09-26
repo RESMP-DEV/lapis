@@ -81,6 +81,7 @@ ApplicationWindow {
             || commandsDialog.visible
             || searchDialog.visible
             || resumeDialog.visible
+            || terminalPicker.visible
             || usageDialog.visible
             || settingsDialog.visible
             || attentionDialog.visible
@@ -207,6 +208,10 @@ ApplicationWindow {
             return [mac ? "Meta+Shift+T" : "Ctrl+Alt+Shift+T"]
         if (action === "resumeConversation")
             return [mod + "O"]
+        if (action === "toggleTerminal")
+            return mac ? ["Meta+`", "Ctrl+`"] : ["Ctrl+`"]
+        if (action === "chooseTerminal")
+            return mac ? ["Meta+Shift+`", "Meta+~"] : ["Ctrl+Shift+~", "Ctrl+~"]
         return []
     }
 
@@ -282,6 +287,8 @@ ApplicationWindow {
         add("", "action", qsTr("New agent"), "", shortcutText("newAgent"), "", () => window.openNewAgentDialog())
         if (conversationsAvailable)
             add("", "action", qsTr("Resume a conversation"), "", shortcutText("resumeConversation"), "", () => window.openResumeDialog())
+        if (terminalsAvailable)
+            add("", "action", qsTr("Terminal"), "", shortcutText("toggleTerminal").split(" / ")[0], "", () => window.toggleTerminal())
         if (workspace.canReopenAgent)
             add("", "action", qsTr("Reopen closed agent"), "", shortcutText("reopenAgent"), "", () => window.reopenAgent())
         if (conversationsAvailable) {
@@ -319,9 +326,54 @@ ApplicationWindow {
         target: window.conversationsAvailable ? conversations : null
         function onChanged() { homeRebuild.restart() }
     }
-    // What gets the keyboard when no dialog does: the selected agent's
-    // terminal, or the home list when nothing is open.
-    readonly property string focusTarget: workspace.focusedSession === null ? "homeList" : "liveTerminal"
+    // What gets the keyboard when no dialog does: the side terminal while it
+    // shows, else the selected agent's terminal, or the home list when
+    // nothing is open.
+    readonly property string focusTarget: sideTerminalOpen && terminalsAvailable && terminals.current !== null ?
+                                              "sideTerminalSurface" :
+                                          workspace.focusedSession === null ? "homeList" : "liveTerminal"
+    // Command-` (or Control-`): a plain shell on this Mac or an ssh host,
+    // beside the agents, for a quick command; never an agent. Command-~
+    // picks the machine.
+    readonly property bool terminalsAvailable: typeof terminals !== "undefined" && terminals !== null
+    property bool sideTerminalOpen: false
+    property string lastTerminalMachine: ""
+    function toggleTerminal() {
+        if (!terminalsAvailable || terminalBusy)
+            return
+        if (sideTerminalOpen) {
+            closeSideTerminal()
+            return
+        }
+        if (!inputBlocked)
+            openTerminalOn(lastTerminalMachine)
+    }
+    function openTerminalOn(machine) {
+        if (!terminalsAvailable)
+            return
+        const started = terminals.show(machine)
+        if (started)
+            lastTerminalMachine = machine
+        sideTerminalOpen = true
+        preview.deferTerminalFocus()
+    }
+    function closeSideTerminal() {
+        sideTerminalOpen = false
+        preview.deferTerminalFocus()
+    }
+    function chooseTerminal() {
+        if (!terminalsAvailable || terminalBusy || dialogsVisible())
+            return
+        terminalPicker.open()
+    }
+    // Typing exit closes the panel along with the shell.
+    Connections {
+        target: window.terminalsAvailable ? terminals : null
+        function onCurrentChanged() {
+            if (window.sideTerminalOpen && terminals.current === null && terminals.error.length === 0)
+                window.closeSideTerminal()
+        }
+    }
     // A past conversation comes back as a new agent in this category, in its
     // folder, with the approval mode last chosen for a new agent.
     function resumeConversation(conversation) {
@@ -372,6 +424,8 @@ ApplicationWindow {
         add("splitDown", qsTr("New agent here, tiled below"), "splitDown", liveAgent, needAgent, () => window.splitAgent("bottom"))
         add("reopenAgent", qsTr("Reopen closed agent"), "reopenAgent", workspace.canReopenAgent, qsTr("No agent was closed since lapis opened"), () => window.reopenAgent())
         add("resumeConversation", qsTr("Resume a conversation"), "resumeConversation", conversationsAvailable, qsTr("Not available here"), () => window.openResumeDialog())
+        add("toggleTerminal", sideTerminalOpen ? qsTr("Hide terminal") : qsTr("Terminal"), "toggleTerminal", terminalsAvailable, qsTr("Not available here"), () => window.toggleTerminal())
+        add("chooseTerminal", qsTr("Terminal on another machine"), "chooseTerminal", terminalsAvailable, qsTr("Not available here"), () => window.chooseTerminal())
         add("find", qsTr("Find in terminal"), "find", hasAgent, needAgent, () => findBar.open())
         add("textBigger", qsTr("Bigger text"), "textBigger", true, "", () => window.changeTextSize(1))
         add("textSmaller", qsTr("Smaller text"), "textSmaller", true, "", () => window.changeTextSize(-1))
@@ -512,7 +566,7 @@ ApplicationWindow {
     }
 
     function dialogsVisible() {
-        return commandsDialog.visible || searchDialog.visible || resumeDialog.visible || usageDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
+        return commandsDialog.visible || searchDialog.visible || resumeDialog.visible || terminalPicker.visible || usageDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
                 || closeAgentDialog.visible || categoryDialog.visible || renameAgentDialog.visible
     }
 
@@ -1153,6 +1207,8 @@ ApplicationWindow {
     ActionShortcut { action: "find"; onActivated: if (workspace.focusedSession !== null) findBar.open() }
     ActionShortcut { action: "reopenAgent"; onActivated: window.reopenAgent() }
     ActionShortcut { action: "resumeConversation"; onActivated: window.openResumeDialog() }
+    ActionShortcut { action: "toggleTerminal"; onActivated: window.toggleTerminal() }
+    ActionShortcut { action: "chooseTerminal"; onActivated: window.chooseTerminal() }
     ActionShortcut { action: "splitRight"; onActivated: window.splitAgent("right") }
     ActionShortcut { action: "splitDown"; onActivated: window.splitAgent("bottom") }
     ActionShortcut { action: "tileLeft"; onActivated: window.focusTile("left") }
@@ -3147,7 +3203,7 @@ ApplicationWindow {
                     // typing back to live; input reaches the agent only when live.
                     interactive: visible && window.visible && !window.inputBlocked && document !== null
                                  && (preview.active || document.inputReady || document.historyActive)
-                    focus: visible && window.visible && !window.inputBlocked
+                    focus: visible && window.visible && !window.inputBlocked && !window.sideTerminalOpen
                     Component.onCompleted: if (focus)
                                                forceActiveFocus()
                 }
@@ -3865,6 +3921,173 @@ ApplicationWindow {
                         Accessible.name: qsTr("New agent")
                         enabled: window.interactionArmed
                         onClicked: window.openNewAgentDialog()
+                    }
+                }
+            }
+        }
+    }
+    // The side terminal: over the stage's right half, above the agents.
+    Rectangle {
+        id: sidePanel
+        objectName: "sideTerminal"
+        parent: stage
+        z: 60
+        visible: window.sideTerminalOpen
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        width: Math.round(Math.max(Math.min(360, parent.width), Math.min(parent.width * 0.5, 960)))
+        color: window.surfaceColor
+        border.width: 1
+        border.color: sideSurface.activeFocus ? window.focusedBorderColor : window.borderColor
+        radius: window.chromeRadius
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 6
+            spacing: 4
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                PlainText {
+                    text: qsTr("Terminal")
+                    color: window.textColor
+                    font.pixelSize: window.chromeFont
+                    font.weight: Font.DemiBold
+                }
+                PlainText {
+                    objectName: "sideTerminalMachine"
+                    text: window.terminalsAvailable && terminals.currentMachine.length > 0 ? terminals.currentMachine : qsTr("This Mac")
+                    color: window.mutedTextColor
+                    font.family: window.monoFamily
+                    font.pixelSize: window.readoutFont
+                }
+                Item { Layout.fillWidth: true }
+                PlainText {
+                    text: qsTr("%1 machine   %2 hide").arg(window.shortcutText("chooseTerminal").split(" / ")[0])
+                                                    .arg(window.shortcutText("toggleTerminal").split(" / ")[0])
+                    color: window.mutedTextColor
+                    font.family: window.monoFamily
+                    font.pixelSize: window.readoutFont
+                }
+            }
+            TerminalSurface {
+                id: sideSurface
+                objectName: "sideTerminalSurface"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                document: window.terminalsAvailable ? terminals.current : null
+                fontFamily: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontFamily : ""
+                fontPixelSize: window.terminalFontSize
+                visible: sidePanel.visible && document !== null
+                enabled: visible
+                interactive: visible && window.visible && !window.inputBlocked && document !== null && document.inputReady
+                focus: visible && window.visible && !window.inputBlocked
+            }
+            PlainLabel {
+                visible: !sideSurface.visible
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                wrapMode: Text.WordWrap
+                color: window.mutedTextColor
+                text: window.terminalsAvailable && terminals.error.length > 0 ? terminals.error : qsTr("Starting a shell…")
+            }
+        }
+    }
+
+    // Command-~: which machine the side terminal runs on. Up and down move,
+    // Return opens that machine's terminal (starting a shell there when it
+    // has none); a dot marks the machines with one running.
+    Dialog {
+        id: terminalPicker
+        objectName: "terminalPicker"
+        title: qsTr("Terminal on")
+        modal: true
+        focus: true
+        anchors.centerIn: parent
+        width: Math.min(420, window.width - 32)
+        padding: 12
+        font.pixelSize: window.chromeFont
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        property var machines: []
+        property string pending: ""
+        property bool chosen: false
+        background: Rectangle {
+            color: window.surfaceColor
+            border.color: window.focusedBorderColor
+            radius: window.chromeRadius
+        }
+        function choose(index) {
+            const machine = machines[index]
+            if (!machine)
+                return
+            pending = machine.id
+            chosen = true
+            close()
+        }
+        onOpened: {
+            chosen = false
+            machines = window.terminalsAvailable ? terminals.machines : []
+            machineList.currentIndex = Math.max(0, machines.findIndex(m => m.id === window.lastTerminalMachine))
+            machineList.forceActiveFocus()
+        }
+        onClosed: {
+            if (chosen)
+                Qt.callLater(function() { window.openTerminalOn(terminalPicker.pending) })
+            else
+                preview.deferTerminalFocus()
+        }
+        contentItem: ListView {
+            id: machineList
+            objectName: "terminalMachines"
+            implicitHeight: Math.min(8, count) * 36
+            clip: true
+            model: terminalPicker.machines
+            keyNavigationEnabled: true
+            highlightMoveDuration: 0
+            boundsBehavior: Flickable.StopAtBounds
+            Keys.onReturnPressed: terminalPicker.choose(currentIndex)
+            Keys.onEnterPressed: terminalPicker.choose(currentIndex)
+            onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            delegate: ItemDelegate {
+                id: machineRow
+                required property var modelData
+                required property int index
+                objectName: "terminalMachine_" + (modelData.id.length > 0 ? modelData.id : "mac")
+                width: machineList.width
+                height: 36
+                focusPolicy: Qt.NoFocus
+                hoverEnabled: true
+                Accessible.name: modelData.name + (modelData.open ? qsTr(", running") : "")
+                onClicked: terminalPicker.choose(index)
+                background: Rectangle {
+                    radius: window.chromeRadius
+                    color: machineRow.index === machineList.currentIndex ? window.focusedColor :
+                           machineRow.hovered ? window.hoveredCardColor : "transparent"
+                    Rectangle {
+                        visible: machineRow.index === machineList.currentIndex
+                        width: 2
+                        height: parent.height
+                        color: window.focusedBorderColor
+                    }
+                }
+                contentItem: RowLayout {
+                    spacing: 10
+                    PlainText {
+                        text: machineRow.modelData.name
+                        color: window.textColor
+                        font.pixelSize: window.chromeFont
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                    }
+                    Rectangle {
+                        visible: machineRow.modelData.open
+                        width: 6
+                        height: 6
+                        radius: 3
+                        color: window.plentyColor
                     }
                 }
             }

@@ -22,6 +22,7 @@ add_library(lapis_desktop_view STATIC
     src/alerts.cpp src/alerts.hpp
     src/agent_search.cpp src/agent_search.hpp
     src/conversation_index.cpp src/conversation_index.hpp
+    src/terminals.cpp src/terminals.hpp
     src/usage.cpp src/usage.hpp
     src/usage_limits.cpp src/usage_limits.hpp
     src/harness_models.cpp src/harness_models.hpp
@@ -38,9 +39,9 @@ add_library(lapis_desktop_view STATIC
     src/ui_preview.cpp src/ui_preview.hpp)
 target_include_directories(lapis_desktop_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 if(APPLE)
-    # Notifications, the login item and (in the downloaded app) Sparkle.
+    # Notifications, the login item, Command-` and (in the downloaded app) Sparkle.
     target_sources(lapis_desktop_view PRIVATE src/desktop_actions_mac.mm)
-    target_link_libraries(lapis_desktop_view PUBLIC "-framework Foundation"
+    target_link_libraries(lapis_desktop_view PUBLIC "-framework AppKit" "-framework Foundation"
         "-framework ServiceManagement" "-framework UserNotifications")
     if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
         get_filename_component(sparkle_directory "${LAPIS_SPARKLE_FRAMEWORK}" DIRECTORY)

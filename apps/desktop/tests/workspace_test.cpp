@@ -3,6 +3,7 @@
 #include "keymap.hpp"
 #include "launch_spec.hpp"
 #include "session_descriptor.hpp"
+#include "terminals.hpp"
 #include "workspace.hpp"
 #include "workspace_control.hpp"
 
@@ -1395,6 +1396,106 @@ QByteArray installStandInGrok(const QDir& root) {
     return path;
 }
 
+// Quick-command terminals: one shell per machine under its own service, apart
+// from agents. It is reused, reattached by the next lapis, started from the
+// phone through the control socket, and leaves when its shell exits.
+void terminalsRunPlainShells() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-terminals-XXXXXX"));
+    require(directory.isValid(), "terminals directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto config = root.filePath(QStringLiteral("ssh_config"));
+    {
+        QFile ssh(config);
+        require(ssh.open(QIODevice::WriteOnly), "write the ssh config");
+        ssh.write("Host devbox build-*\n  HostName 10.0.0.2\nHost *\n  ServerAliveInterval 30\n"
+                  "Include extra.conf\n");
+        QFile extra(root.filePath(QStringLiteral("extra.conf")));
+        require(extra.open(QIODevice::WriteOnly), "write the included config");
+        extra.write("Host = gpu devbox\n");
+    }
+    const auto hosts = lapis::desktop::ssh_config_hosts(config);
+    // Include is relative to ~/.ssh; this fixture names its folder in full.
+    require(hosts.contains(QStringLiteral("devbox")) && !hosts.contains(QStringLiteral("*")) &&
+                !hosts.contains(QStringLiteral("build-*")),
+            "hosts come from the ssh config, without patterns");
+    QFile shell(root.filePath(QStringLiteral("shell")));
+    require(shell.open(QIODevice::WriteOnly), "write the stand-in shell");
+    shell.write("#!/bin/sh\necho \"shell ready $*\"\nwhile read line; do\n"
+                "  [ \"$line\" = exit ] && exit 0\n  echo \"ran $line\"\ndone\n");
+    shell.close();
+    require(shell.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "make it executable");
+    QString id;
+    {
+        lapis::desktop::Terminals terminals(root.path(), config);
+        terminals.setShellForTesting(shell.fileName());
+        require(!terminals.show(QStringLiteral("nowhere")) && !terminals.error().isEmpty(),
+                "only this Mac and ssh config hosts");
+        require(terminals.show(QString()) && terminals.current() != nullptr,
+                "a terminal on this Mac");
+        auto* current = terminals.current();
+        id = current->sessionId();
+        require(waitFor([current] { return current->inputReady(); }, 10000) &&
+                    waitFor(
+                        [current] {
+                            return screenText(current->snapshot())
+                                .contains(QStringLiteral("shell ready -l -i"));
+                        },
+                        5000),
+                "a login shell starts at home");
+        require(terminals.show(QString()) && terminals.current()->sessionId() == id,
+                "the machine's terminal is reused");
+        const auto machines = terminals.machines();
+        require(machines.front().toMap().value(QStringLiteral("name")) == QStringLiteral("This Mac") &&
+                    machines.front().toMap().value(QStringLiteral("open")).toBool(),
+                "this Mac is first and has a terminal");
+        QFile saved(terminals.registryPath());
+        require(saved.open(QIODevice::ReadOnly) &&
+                    saved.readAll().contains(id.toUtf8()),
+                "terminals.json records it for the next lapis and the phone");
+    }
+    {
+        // The service outlived that lapis; this one reattaches.
+        lapis::desktop::Terminals terminals(root.path(), config);
+        terminals.setShellForTesting(shell.fileName());
+        terminals.restore();
+        auto* again = terminals.terminal(id);
+        require(again != nullptr && waitFor([again] { return again->inputReady(); }, 10000),
+                "the next lapis reattaches the running shell");
+        Workspace workspace(WorkspaceMode::live, [&root] {
+            WorkspaceOptions options;
+            options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+            return options;
+        }());
+        lapis::desktop::WorkspaceControl control(workspace, false);
+        control.setTerminals(&terminals);
+        const auto opened = askWorkspace(
+            workspace.storagePath(), {{QStringLiteral("version"), 1},
+                                      {QStringLiteral("request"), QStringLiteral("openTerminal")},
+                                      {QStringLiteral("machine"), QString()}});
+        require(opened.value(QStringLiteral("ok")).toBool() &&
+                    opened.value(QStringLiteral("id")).toString() == id,
+                "the phone gets this Mac's terminal");
+        const auto closed = askWorkspace(
+            workspace.storagePath(), {{QStringLiteral("version"), 1},
+                                      {QStringLiteral("request"), QStringLiteral("closeTerminal")},
+                                      {QStringLiteral("id"), id}});
+        require(closed.value(QStringLiteral("ok")).toBool() &&
+                    waitFor([&terminals, &id] { return terminals.terminal(id) == nullptr; }, 10000),
+                "closing ends the shell and the terminal leaves");
+        require(terminals.show(QString()) && terminals.current()->sessionId() != id,
+                "the next one is a fresh shell");
+        auto* fresh = terminals.current();
+        const auto fresh_id = fresh->sessionId();
+        require(waitFor([fresh] { return fresh->inputReady(); }, 10000), "the fresh shell runs");
+        fresh->sendText(QByteArrayLiteral("exit\r"));
+        require(waitFor([&terminals, &fresh_id] { return terminals.terminal(fresh_id) == nullptr; },
+                        10000) &&
+                    terminals.current() == nullptr,
+                "a shell that exits takes its terminal with it");
+    }
+}
+
 // Resuming a past conversation starts its CLI with the resume option, from the
 // window or the phone, and the pair is lapis's to follow on a later restart.
 void resumingAConversationStartsItsCli() {
@@ -2668,6 +2769,7 @@ int main(int argc, char** argv) {
         windowWaitsForTheRestoreHelper();
         phoneStartsAnAgentInItsCategory();
         resumingAConversationStartsItsCli();
+        terminalsRunPlainShells();
         windowTakesTheWorkspaceFromTheHost();
         alertsChimeWhileAnAgentWaits();
         phoneSizeYieldsToTheDesktop();

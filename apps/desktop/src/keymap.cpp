@@ -482,6 +482,12 @@ void KeyMap::apply_defaults() {
     bindings_.insert(QStringLiteral("closeAgent"), {QStringLiteral("Meta+Shift+W")});
     bindings_.insert(QStringLiteral("closeWindow"), {QStringLiteral("Meta+W")});
     bindings_.insert(QStringLiteral("minimizeWindow"), {QStringLiteral("Meta+M")});
+    // The side terminal: Command-` (and Control-`, as in VS Code) shows or hides
+    // it, Command-~ picks its machine.
+    bindings_.insert(QStringLiteral("toggleTerminal"),
+                     {QStringLiteral("Meta+`"), QStringLiteral("Ctrl+`")});
+    bindings_.insert(QStringLiteral("chooseTerminal"),
+                     {QStringLiteral("Meta+Shift+`"), QStringLiteral("Meta+~")});
 #else
     bindings_.insert(QStringLiteral("splitDown"), {QStringLiteral("Ctrl+Alt+Shift+D")});
     bindings_.insert(QStringLiteral("tileLeft"), {QStringLiteral("Ctrl+Alt+Left")});
@@ -492,6 +498,9 @@ void KeyMap::apply_defaults() {
     bindings_.insert(QStringLiteral("reopenAgent"), {QStringLiteral("Ctrl+Alt+Shift+T")});
     // Without a dock to bring a closed window back, closing it stays unbound.
     bindings_.insert(QStringLiteral("closeAgent"), {modifier + QStringLiteral("W")});
+    bindings_.insert(QStringLiteral("toggleTerminal"), {QStringLiteral("Ctrl+`")});
+    bindings_.insert(QStringLiteral("chooseTerminal"),
+                     {QStringLiteral("Ctrl+Shift+~"), QStringLiteral("Ctrl+~")});
 #endif
 #ifdef Q_OS_MACOS
     bindings_.insert(QStringLiteral("nextCategory"),

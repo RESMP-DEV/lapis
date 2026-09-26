@@ -7,6 +7,7 @@
 #include "platform_desktop.hpp"
 #include "platform_preferences.hpp"
 #include "shell_environment.hpp"
+#include "terminals.hpp"
 #include "terminal_surface.hpp"
 #include "ui_capture.hpp"
 #include "ui_preview.hpp"
@@ -330,6 +331,17 @@ void follow_usage_setting(lapis::desktop::Usage& usage, const lapis::desktop::Ke
     QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &usage, show);
 }
 
+// The quick-command terminals beside this workspace, with ssh hosts from the
+// user's ssh config; those still running come back.
+std::unique_ptr<lapis::desktop::Terminals> terminals_for(const lapis::desktop::Workspace& workspace) {
+    if (workspace.storagePath().isEmpty())
+        return nullptr;
+    auto terminals = std::make_unique<lapis::desktop::Terminals>(
+        QFileInfo(workspace.storagePath()).absolutePath(),
+        QDir::home().filePath(QStringLiteral(".ssh/config")));
+    terminals->restore();
+    return terminals;
+}
 int run_headless(lapis::desktop::Workspace& workspace, bool serve) {
     using lapis::desktop::SessionPreview;
     using lapis::desktop::WorkspaceControl;
@@ -339,9 +351,12 @@ int run_headless(lapis::desktop::Workspace& workspace, bool serve) {
         return 0;
     }
     std::optional<WorkspaceControl> control;
+    std::unique_ptr<lapis::desktop::Terminals> terminals;
     bool handed_over = false;
     if (serve) {
         control.emplace(workspace, true);
+        terminals = terminals_for(workspace);
+        control->setTerminals(terminals.get());
         QObject::connect(&*control, &WorkspaceControl::handoverRequested,
                          [&handed_over] { handed_over = true; });
     }
@@ -486,6 +501,10 @@ int main(int argc, char** argv) {
         std::optional<WorkspaceControl> control;
         if (options.restoreAgents && workspace.workspaceError().isEmpty())
             control.emplace(workspace, false);
+        // Plain shells beside the agents (Command-`), for this Mac and the phone.
+        const auto terminals = isolated ? nullptr : terminals_for(workspace);
+        if (control)
+            control->setTerminals(terminals.get());
 
         qInfo().noquote() << "lapis keymap:" << keymap.sourcePath()
                           << (keymap.loaded() ? "loaded" : "defaults");
@@ -545,6 +564,7 @@ int main(int argc, char** argv) {
                                    .usage = usage ? &*usage : nullptr,
                                    .desktop = &desktop,
                                    .conversations = &conversations,
+                                   .terminals = terminals.get(),
                                    .persistGeometry = !isolated && !options.launch &&
                                                       options.endpoint.isEmpty() &&
                                                       !parser.isSet(QStringLiteral("capture")),
@@ -574,11 +594,23 @@ int main(int argc, char** argv) {
         if (!view.load())
             return 1;
         shown = view.window();
+        // Command-` before AppKit's window cycling takes it, while that key is bound.
+        platform::on_terminal_keys([&view, &keymap](bool shifted) {
+            auto* window = view.window();
+            const auto action = shifted ? QStringLiteral("chooseTerminal")
+                                        : QStringLiteral("toggleTerminal");
+            const auto key = shifted ? QStringLiteral("Meta+Shift+`") : QStringLiteral("Meta+`");
+            if (window == nullptr || !window->isActive() || !keymap.sequences(action).contains(key))
+                return false;
+            QMetaObject::invokeMethod(window, shifted ? "chooseTerminal" : "toggleTerminal");
+            return true;
+        });
         view.window()->requestActivate();
         qInfo() << "UI preview:" << isolated
                 << "system reduced motion:" << view.systemReducedMotion();
         const int result = QGuiApplication::exec();
         platform::on_notification_opened({});
+        platform::on_terminal_keys({});
         return result;
     } catch (const std::exception& error) {
         qCritical().noquote() << error.what();
