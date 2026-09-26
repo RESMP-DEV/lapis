@@ -526,6 +526,19 @@ final class LapisUITests: XCTestCase {
         eventually("it runs again", timeout: 30) { parked.label.contains("running") }
     }
 
+    // A full-screen program that reports the mouse (as Claude Code's
+    // full-screen mode does) scrolls itself: dragging down turns the wheel
+    // back on the Mac, instead of paging an archive it never wrote.
+    func testDraggingScrollsAFullScreenProgram() throws {
+        let terminal = try openEchoAgent()
+        try typeToEcho("mouse\n")
+        waitFor(terminal, valueContaining: "mouse ready")
+        snap("20-full-screen")
+        terminal.swipeDown()
+        waitFor(terminal, valueContaining: "mouse got")
+        waitFor(terminal, valueContaining: "first ESC[<64;")
+    }
+
     // Symbols that also have an emoji form (Claude Code's ⏺ before each
     // message) are drawn as text in their one cell, as on the Mac.
     func testSymbolsDrawAsText() throws {

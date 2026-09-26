@@ -166,6 +166,10 @@ struct ScreenFrame: Decodable {
     let cursor: Cursor
     let alternateScreen: Bool
     let applicationCursor: Bool
+    // A full-screen program whose Mac service takes the wheel: dragging
+    // scrolls the program (Claude Code's full-screen mode scrolls its own
+    // transcript), not the archived history. Older gateways send none.
+    let wheel: Bool?
     let foreground: String
     let background: String
     let lines: [[Run]]
@@ -241,9 +245,15 @@ struct Input: Encodable {
     var key: String?
     var modifiers: Int?
     var resize: [Int]?
+    // Notches (positive scrolls back), column, row.
+    var wheel: [Int]?
 
     static func key(_ key: Key, shift: Bool = false) -> Input {
         Input(key: key.rawValue, modifiers: shift ? 1 : 0)
+    }
+
+    static func wheel(_ notches: Int, column: Int, row: Int) -> Input {
+        Input(wheel: [notches, column, row])
     }
 }
 

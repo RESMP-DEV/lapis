@@ -222,14 +222,19 @@ struct TerminalScreen: View {
         } ?? []
         let background = frame.flatMap { Color(hex: $0.background) } ?? Theme.background
         let foreground = frame.flatMap { Color(hex: $0.foreground) } ?? .white
+        // A full-screen program that takes the wheel shows only its screen:
+        // a drag scrolls the program (AgentView), not the archive above it.
+        let fullScreen = frame?.wheel == true
         ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: 0) {
-                if frame != nil {
+                if frame != nil && !fullScreen {
                     historyEdge
                 }
-                ForEach(cache.rows) { row in
-                    TerminalRow(runs: row.runs, columns: row.columns, metrics: metrics,
-                                foreground: foreground, background: background)
+                if !fullScreen {
+                    ForEach(cache.rows) { row in
+                        TerminalRow(runs: row.runs, columns: row.columns, metrics: metrics,
+                                    foreground: foreground, background: background)
+                    }
                 }
                 ForEach(liveRows) { row in
                     TerminalRow(runs: row.runs, columns: row.columns, metrics: metrics,
@@ -246,6 +251,7 @@ struct TerminalScreen: View {
             if nearTop && history.isEmpty { Task { await loadOlder() } }
         }
         .scrollIndicators(.hidden)
+        .scrollDisabled(fullScreen)
         .background(background)
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("terminal")

@@ -11,6 +11,8 @@ struct AgentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(WorkspaceModel.self) private var model
     @State private var restarting = false
+    // Wheel notches this drag has sent a full-screen program.
+    @State private var wheelSent = 0
     // A swipe left (+1) or right (-1) over the screen moves to a neighbor.
     private let onSwipe: ((Int) -> Void)?
 
@@ -28,7 +30,8 @@ struct AgentView: View {
                                historyEnd: session.historyEnd,
                                loadingHistory: session.loadingHistory,
                                fitColumns: metrics.grid(for: proxy.size).columns, metrics: metrics) {
-                    await session.loadOlder()
+                    // A full-screen program scrolls itself; the archive waits.
+                    if session.frame?.wheel != true { await session.loadOlder() }
                 }
                     .onAppear { fit(proxy.size) }
                     .onChange(of: proxy.size) { _, size in fit(size) }
@@ -42,6 +45,10 @@ struct AgentView: View {
                     guard let onSwipe, abs(dx) > 70, abs(dx) > abs(dy) * 2 else { return }
                     onSwipe(dx < 0 ? 1 : -1)
                 })
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 6)
+                    .onChanged { value in turnWheel(value) }
+                    .onEnded { _ in wheelSent = 0 })
             banner
             // The Mac's terminal encodes named keys for the agent's current modes.
             KeyBar { input in session.send(input) }
@@ -157,6 +164,22 @@ struct AgentView: View {
         if force || grid.columns != current.columns || (!keyboardOnly && grid.rows != current.rows) {
             session.resize(columns: grid.columns, rows: keyboardOnly ? current.rows : grid.rows)
         }
+    }
+
+    // A full-screen program scrolls itself (Claude Code's full-screen mode
+    // scrolls its transcript): a vertical drag turns the wheel on the Mac, a
+    // notch for every two rows dragged, down scrolling back as a finger does.
+    private func turnWheel(_ value: DragGesture.Value) {
+        guard let frame = session.frame, frame.wheel == true else { return }
+        let (dx, dy) = (value.translation.width, value.translation.height)
+        guard abs(dy) > abs(dx) else { return }
+        let notches = Int(dy / (metrics.lineHeight * 2))
+        guard notches != wheelSent else { return }
+        let column = Int((value.startLocation.x - 4) / metrics.cellWidth)
+        let row = Int(value.startLocation.y / metrics.lineHeight)
+        session.send(.wheel(notches - wheelSent, column: min(max(column, 0), frame.columns - 1),
+                            row: min(max(row, 0), frame.rows - 1)))
+        wheelSent = notches
     }
 
     // The Mac lists this agent as not running; a terminal only closes.
