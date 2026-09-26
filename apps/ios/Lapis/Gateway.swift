@@ -342,6 +342,16 @@ struct Gateway {
         return try JSONDecoder().decode(Made.self, from: data).id
     }
 
+    // Names the agent on the Mac; the name stays over its conversation's title.
+    func rename(agent: String, title: String) async throws {
+        var request = request("api/agents/\(agent)/rename")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["title": title])
+        let (data, response) = try await Gateway.requests.data(for: request)
+        try Gateway.check(response, data)
+    }
+
     // Ends the agent on the Mac, as Command-W does there.
     func close(agent: String) async throws {
         var request = request("api/agents/\(agent)/close")

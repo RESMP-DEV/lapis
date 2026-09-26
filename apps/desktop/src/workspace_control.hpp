@@ -15,7 +15,8 @@ class Workspace;
 // gateway: one JSON line per connection on <registry folder>/
 // workspace-control.sock, answered with one JSON line. Version 1 requests:
 // "harnesses", "createAgent" (category, harness, directory, optional title and
-// resume), "createCategory", "closeAgent", "openTerminal" (machine, "" for this
+// resume), "createCategory", "closeAgent", "renameAgent" (id, title),
+// "openTerminal" (machine, "" for this
 // Mac), "closeTerminal" (id) and "handover", which only the windowless host
 // honours.
 class WorkspaceControl final : public QObject {
@@ -43,6 +44,7 @@ class WorkspaceControl final : public QObject {
     QByteArray answer(const QByteArray& line);
     QByteArray create(const QJsonObject& request);
     QByteArray terminal(const QString& kind, const QJsonObject& request);
+    QByteArray agent(const QString& kind, const QJsonObject& request);
     Workspace& workspace_;
     Terminals* terminals_{};
     bool host_;

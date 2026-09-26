@@ -1554,6 +1554,43 @@ void resumingAConversationStartsItsCli() {
                                            QStringLiteral("conv-123");
                             }),
                 "the resume pair is recorded as lapis's");
+        // An agent named after its folder takes its conversation's title; a
+        // name chosen on the Mac or the phone stays.
+        const auto conversations = workspace.agentConversations();
+        require(conversations.value(agent->sessionId()) == QStringLiteral("conv-123") &&
+                    conversations.value(phone->sessionId()) == QStringLiteral("conv-456"),
+                "each agent's conversation is known");
+        require(workspace.followConversationTitle(agent->sessionId(),
+                                                  QStringLiteral("  Fix   the resize bug ")) &&
+                    agent->title() == QStringLiteral("Fix the resize bug"),
+                "the conversation's title names the agent");
+        const auto renamed = askWorkspace(
+            workspace.storagePath(), {{QStringLiteral("version"), 1},
+                                      {QStringLiteral("request"), QStringLiteral("renameAgent")},
+                                      {QStringLiteral("id"), phone->sessionId()},
+                                      {QStringLiteral("title"), QStringLiteral("Named here")}});
+        require(renamed.value(QStringLiteral("ok")).toBool() &&
+                    phone->title() == QStringLiteral("Named here") &&
+                    !workspace.followConversationTitle(phone->sessionId(),
+                                                       QStringLiteral("Their title")) &&
+                    phone->title() == QStringLiteral("Named here"),
+                "a name chosen on the phone stays over the conversation's title");
+        {
+            QFile named(workspace.storagePath());
+            require(named.open(QIODevice::ReadOnly), "read the registry again");
+            const auto saved_agents = QJsonDocument::fromJson(named.readAll())
+                                          .object()
+                                          .value(QStringLiteral("agents"))
+                                          .toArray();
+            require(std::any_of(saved_agents.begin(), saved_agents.end(),
+                                [&](const QJsonValue& entry) {
+                                    return entry[QStringLiteral("id")] == phone->sessionId() &&
+                                           entry[QStringLiteral("named")].toBool() &&
+                                           entry[QStringLiteral("title")] ==
+                                               QStringLiteral("Named here");
+                                }),
+                    "the chosen name is saved as chosen");
+        }
         require(
             waitFor([agent, phone] { return agent->inputReady() && phone->inputReady(); }, 10000),
             "both agents take input");

@@ -28,6 +28,7 @@
 #include <QQmlEngine>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QTimer>
 #include <QSGRendererInterface>
 #include <QStandardPaths>
 #include <QThread>
@@ -318,7 +319,7 @@ lapis::desktop::TokenLedger::Roots transcript_roots() {
 // with the most recent work first in folder pickers; the running agents'
 // folders count too.
 std::unique_ptr<lapis::desktop::ConversationIndex>
-conversation_index(const lapis::desktop::Workspace& workspace, bool isolated) {
+conversation_index(const lapis::desktop::Workspace& workspace) {
     using lapis::desktop::SessionPreview;
     auto index = std::make_unique<lapis::desktop::ConversationIndex>(
         cli_home("CLAUDE_CONFIG_DIR", QStringLiteral(".claude")),
@@ -332,9 +333,27 @@ conversation_index(const lapis::desktop::Workspace& workspace, bool isolated) {
                 folders.append(item->directory());
         return folders;
     });
-    if (!isolated)
-        index->refresh();
     return index;
+}
+// An agent that still has the name it started with takes its conversation's
+// title (Claude Code's own, Codex's thread name, else the first message), so
+// agents started in one folder read apart on the Mac and the phone. The index
+// rescans each minute; after the first pass only changed files are read.
+void follow_conversation_titles(lapis::desktop::Workspace& workspace,
+                                lapis::desktop::ConversationIndex& conversations) {
+    const auto apply = [&workspace, &conversations] {
+        const auto current = workspace.agentConversations();
+        for (auto entry = current.cbegin(); entry != current.cend(); ++entry)
+            if (const auto title = conversations.titleOf(entry.value()); !title.isEmpty())
+                workspace.followConversationTitle(entry.key(), title);
+    };
+    QObject::connect(&conversations, &lapis::desktop::ConversationIndex::changed, &workspace,
+                     apply);
+    auto* timer = new QTimer(&conversations);
+    timer->setInterval(60'000);
+    QObject::connect(timer, &QTimer::timeout, &conversations,
+                     &lapis::desktop::ConversationIndex::refresh);
+    timer->start();
 }
 // On the Mac the window closes to the Dock and lapis keeps serving agents,
 // alerts and the phone until it quits.
@@ -608,7 +627,11 @@ int main(int argc, char** argv) {
         std::optional<Usage> usage;
         if (!isolated)
             follow_usage_setting(usage.emplace(&usage_program, transcript_roots()), keymap);
-        const auto conversations = conversation_index(workspace, isolated);
+        const auto conversations = conversation_index(workspace);
+        if (!isolated) {
+            follow_conversation_titles(workspace, *conversations);
+            conversations->refresh();
+        }
         UiPreview view(workspace, {.source = qml_source(parser),
                                    .compact = parser.isSet(QStringLiteral("compact")),
                                    .screen = target_screen(parser),

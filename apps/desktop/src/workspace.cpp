@@ -110,6 +110,7 @@ bool waitForHelperMarker(QLockFile& lock, QFile& marker) {
 }
 
 QString resumeOption(const QString& harness);
+bool resumable(const session::ResumeRecord& record, const QString& harness);
 
 bool managedResumeMatches(const QStringList& arguments, qsizetype index, const QString& option,
                           const QString& identity) {
@@ -216,7 +217,6 @@ bool validConversation(const QString& id) {
     static const QRegularExpression name(QStringLiteral(R"(^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$)"));
     return name.match(id).hasMatch();
 }
-QString resumeOption(const QString& harness);
 
 // One POSIX shell word, whatever it holds.
 QString shellWord(const QString& text) {
@@ -787,14 +787,49 @@ bool Workspace::renameSession(const QString& id, const QString& title) {
     if (!mutableRegistry())
         return false;
     auto* item = session(id);
-    if (!item || !validName(title))
+    const auto entry = agents_.find(id);
+    if (!item || entry == agents_.end() || !validName(title))
         return fail(QStringLiteral("Use an agent name of 1–80 characters."));
+    const bool was_named = entry->named;
+    entry->named = true;
     if (!save(id, title.trimmed())) {
+        entry->named = was_named;
         emit errorChanged();
         return false;
     }
     item->rename(title.trimmed());
     return true;
+}
+bool Workspace::followConversationTitle(const QString& id, const QString& title) {
+    constexpr qsizetype limit = 80;
+    auto* item = session(id);
+    const auto entry = agents_.constFind(id);
+    if (item == nullptr || entry == agents_.cend() || entry->named || preview_mode_)
+        return false;
+    auto name = title.simplified();
+    if (name.size() > limit)
+        name = name.left(limit - 1) + QChar(0x2026);
+    if (!validName(name) || name == item->title() || !mutableRegistry())
+        return false;
+    if (!save(id, name)) {
+        qWarning().noquote() << "Agent title not saved:" << error_;
+        return false;
+    }
+    item->rename(name);
+    return true;
+}
+QHash<QString, QString> Workspace::agentConversations() const {
+    QHash<QString, QString> conversations;
+    for (auto entry = agents_.cbegin(); entry != agents_.cend(); ++entry) {
+        // The observer's (or, for other CLIs, the hook's) record follows /new
+        // and /resume; a resumed agent without one yet has lapis's pair.
+        const auto record = session::read_resume_record(entry->endpoint);
+        if (record && record->agent == entry->harness && resumable(*record, entry->harness))
+            conversations.insert(entry.key(), record->session_id);
+        else if (!entry->managed_resume_identity.isEmpty())
+            conversations.insert(entry.key(), entry->managed_resume_identity);
+    }
+    return conversations;
 }
 bool Workspace::moveSession(const QString& id, const QString& categoryId) {
     if (!mutableRegistry())
@@ -1292,6 +1327,8 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
             {"resumeThread", resume},
             {"arguments", QJsonArray::fromStringList(agent.launch.arguments)},
             {"directory", agent.launch.directory}};
+        if (agent.named)
+            serialized.insert(QStringLiteral("named"), true);
         const auto resume_option = resumeOption(agent.harness);
         if (agent.managed_resume_index >= 0 &&
             agent.managed_resume_index + 1 < agent.launch.arguments.size() &&
@@ -1669,6 +1706,7 @@ void Workspace::loadAgents(const QJsonArray& agents) {
             agent.launch.arguments = savedArguments(object.value(QStringLiteral("arguments")));
         if (object.contains(QStringLiteral("managedResume")))
             loadManagedResume(object.value(QStringLiteral("managedResume")), agent);
+        agent.named = object.value(QStringLiteral("named")).toBool();
         // Claude agents saved before the service adapter ran as terminals; the
         // launch must match the one their running service was created with.
         if (harness == QStringLiteral("claude") &&

@@ -567,6 +567,25 @@ class StartAgentTests(unittest.TestCase):
             )
             status, refused = server.request("POST", "/api/agents/gone/close", {})
             self.assertEqual((status, refused), (422, {"error": "No such agent"}))
+            # A name chosen on the phone, which the Mac keeps.
+            status, named = server.request(
+                "POST", "/api/agents/a1/rename", {"title": " Resize work "}
+            )
+            self.assertEqual((status, named), (200, {"ok": True}))
+            self.assertEqual(
+                desktop.requests[-1],
+                {
+                    "version": 1,
+                    "request": "renameAgent",
+                    "id": "a1",
+                    "title": "Resize work",
+                },
+            )
+            asked = len(desktop.requests)
+            for body in ({"title": ""}, {"title": "x" * 81}, {"title": 3}, ["x"]):
+                status, _ = server.request("POST", "/api/agents/a1/rename", body)
+                self.assertEqual(status, 400, body)
+            self.assertEqual(len(desktop.requests), asked, "bad names reach nothing")
 
     def test_terminals_open_list_and_close_through_the_mac(self):
         def answer(request):

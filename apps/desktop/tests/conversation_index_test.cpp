@@ -192,6 +192,9 @@ void the_index_scans_in_the_background_and_caches() {
     write(codex + "/session_index.jsonl", line({{"id", kSecond}, {"thread_name", "Renamed"}}));
     require(wait_for(index) && index.recent("renamed", 10).size() == 1,
             "names apply over the cache");
+    require(index.titleOf(kSecond) == "Renamed" && index.titleOf(kFirst) == "first task" &&
+                index.titleOf("unknown").isEmpty(),
+            "a conversation's title is found by its id");
     require(index.orderFolders("/work", {"api", "lapis", "_x", "b"}).mid(2) ==
                 QStringList({"b", "_x"}),
             "the index orders a folder's children by its activity");

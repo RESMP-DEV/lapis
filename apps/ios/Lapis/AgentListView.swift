@@ -10,6 +10,8 @@ struct AgentListView: View {
     @State private var naming = false
     @State private var categoryName = ""
     @State private var choosingTerminal = false
+    @State private var renaming: Agent?
+    @State private var newName = ""
     @State private var resuming: NewAgentTarget?
 
     var body: some View {
@@ -76,6 +78,22 @@ struct AgentListView: View {
                 }
                 .alert("New category", isPresented: $naming) {
                     NewCategoryFields(name: $categoryName) { _ in }
+                }
+                .alert("Rename agent", isPresented: Binding(get: { renaming != nil },
+                                                            set: { if !$0 { renaming = nil } })) {
+                    TextField("Name", text: $newName)
+                        .accessibilityIdentifier("agentName")
+                    Button("Save") {
+                        let chosen = newName.trimmingCharacters(in: .whitespaces)
+                        if let agent = renaming, !chosen.isEmpty {
+                            Task { await model.rename(agent, to: String(chosen.prefix(80))) }
+                        }
+                        renaming = nil
+                    }
+                    .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Cancel", role: .cancel) { renaming = nil }
+                } message: {
+                    Text("It keeps this name instead of its conversation's title.")
                 }
                 // The agent opens once the sheet has gone.
                 .sheet(item: $newAgent, onDismiss: {
@@ -200,6 +218,23 @@ struct AgentListView: View {
                                 Task { await model.close(agent) }
                             } label: {
                                 Label("Close", systemImage: "xmark")
+                            }
+                        }
+                        .swipeActions(edge: .leading) {
+                            Button {
+                                newName = agent.title
+                                renaming = agent
+                            } label: {
+                                Label("Rename", systemImage: "pencil")
+                            }
+                            .tint(Theme.accent)
+                        }
+                        .contextMenu {
+                            Button {
+                                newName = agent.title
+                                renaming = agent
+                            } label: {
+                                Label("Rename", systemImage: "pencil")
                             }
                         }
                     }

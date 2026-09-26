@@ -344,6 +344,30 @@ final class LapisUITests: XCTestCase {
         XCTAssertTrue(waitForGone(row, timeout: 20), "the closed terminal leaves the list")
     }
 
+    // An agent is renamed from the phone by swiping it right; the Mac keeps
+    // that name over its conversation's title.
+    func testRenameFromThePhone() throws {
+        let row = app.buttons["agent-parked"]
+        XCTAssertTrue(row.waitForExistence(timeout: 30))
+        for (from, to) in [("parked", "renamed here"), ("renamed here", "parked")] {
+            let card = app.buttons["agent-\(from)"]
+            XCTAssertTrue(card.waitForExistence(timeout: 20))
+            card.swipeRight()
+            let rename = app.buttons["Rename"]
+            XCTAssertTrue(rename.waitForExistence(timeout: 5), "swiping right offers Rename")
+            rename.tap()
+            let field = app.alerts.textFields.firstMatch
+            XCTAssertTrue(field.waitForExistence(timeout: 5))
+            field.tap()
+            let current = (field.value as? String) ?? ""
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count + 2))
+            field.typeText(to)
+            app.alerts.buttons["Save"].tap()
+            XCTAssertTrue(app.buttons["agent-\(to)"].waitForExistence(timeout: 20), "the new name is listed")
+            if to != "parked" { snap("14-renamed") }
+        }
+    }
+
     // Past conversations on the Mac are offered to resume from the plus.
     func testResumeIsOffered() throws {
         let add = app.buttons["add"]

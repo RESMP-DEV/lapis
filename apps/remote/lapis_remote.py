@@ -1632,6 +1632,8 @@ class Handler(BaseHTTPRequestHandler):
             self.start_agent()
         elif agent_route(parts, "close"):
             self.close_agent(parts[2])
+        elif agent_route(parts, "rename"):
+            self.rename_agent(parts[2])
         elif parts == ["api", "categories"]:
             self.create_category()
         elif parts == ["api", "terminals"]:
@@ -1840,6 +1842,21 @@ class Handler(BaseHTTPRequestHandler):
         answer = self.ask_desktop({"request": "createCategory", "name": name.strip()})
         if answer is not None:
             self.reply(HTTPStatus.OK, {"id": str(answer.get("id", ""))})
+
+    def rename_agent(self, identifier):
+        """Names the agent on the Mac; the name stays over its conversation's title."""
+        body = self.read_object()
+        if body is None:
+            return
+        title = body.get("title")
+        if not isinstance(title, str) or not 0 < len(title.strip()) <= 80:
+            self.fail(HTTPStatus.BAD_REQUEST, "Use an agent name of 1-80 characters")
+            return
+        answer = self.ask_desktop(
+            {"request": "renameAgent", "id": identifier, "title": title.strip()}
+        )
+        if answer is not None:
+            self.reply(HTTPStatus.OK, {"ok": True})
 
     def list_terminals(self):
         """The quick-command terminals: plain shells, one per machine."""

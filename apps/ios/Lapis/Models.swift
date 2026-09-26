@@ -252,6 +252,17 @@ extension WorkspaceModel {
             progress: progress)
     }
 
+    // Names the agent on the Mac and here.
+    func rename(_ agent: Agent, to title: String) async {
+        guard let gateway else { return }
+        do {
+            try await gateway.rename(agent: agent.id, title: title)
+        } catch {
+            self.error = describe(error)
+        }
+        await refresh()
+    }
+
     // Ends the agent on the Mac; it leaves the list at once.
     func close(_ agent: Agent) async {
         guard let gateway else { return }

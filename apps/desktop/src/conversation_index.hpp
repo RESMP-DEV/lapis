@@ -66,6 +66,8 @@ class ConversationIndex final : public QObject {
                                                        const QStringList& names) const;
     // The folders of the agents running now, which also count as activity.
     void setOpenFolders(std::function<QStringList()> open) { open_folders_ = std::move(open); }
+    // A conversation's title by its id, or empty.
+    [[nodiscard]] QString titleOf(const QString& id) const { return titles_.value(id); }
     // Tests and the scan's result.
     void setConversations(std::vector<Conversation> all);
     [[nodiscard]] const std::vector<Conversation>& all() const { return all_; }
@@ -77,6 +79,7 @@ class ConversationIndex final : public QObject {
     QString codex_home_;
     QString cache_path_;
     std::vector<Conversation> all_; // newest first
+    QHash<QString, QString> titles_;
     std::function<QStringList()> open_folders_;
     std::shared_ptr<std::atomic_bool> scanning_{std::make_shared<std::atomic_bool>(false)};
     std::shared_ptr<std::atomic_bool> alive_{std::make_shared<std::atomic_bool>(true)};

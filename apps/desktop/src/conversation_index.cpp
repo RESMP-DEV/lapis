@@ -424,6 +424,10 @@ void ConversationIndex::refresh() {
 
 void ConversationIndex::setConversations(std::vector<Conversation> all) {
     all_ = std::move(all);
+    titles_.clear();
+    for (const auto& conversation : all_)
+        if (!conversation.title.isEmpty())
+            titles_.insert(conversation.id, conversation.title);
     ready_ = true;
     emit changed();
 }

@@ -349,7 +349,14 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool closeSession(const QString& id, bool abandon = false);
     Q_INVOKABLE bool restartAgent(const QString& id);
     Q_INVOKABLE bool moveSession(const QString& id, const QString& categoryId);
+    // A name someone chose; it stays until they choose another.
     Q_INVOKABLE bool renameSession(const QString& id, const QString& title);
+    // The agent's conversation title, from its CLI. It names an agent that
+    // still has the name it started with; one someone renamed keeps theirs.
+    bool followConversationTitle(const QString& id, const QString& title);
+    // Each agent's current conversation, as its CLI resumes it: agent id to
+    // conversation id, for the agents that have one.
+    [[nodiscard]] QHash<QString, QString> agentConversations() const;
     Q_INVOKABLE bool moveSessionBy(const QString& id, int delta);
     // Puts agents, in their strip order, at `index` of a category's strip (at
     // its end when `index` is past it), moving them there from any category.
@@ -442,6 +449,9 @@ class Workspace final : public QObject {
         QString endpoint;
         session::LaunchSpec launch;
         QString harness{QStringLiteral("codex")};
+        // Its name was chosen (on the Mac or the phone), not taken from its
+        // folder or its conversation.
+        bool named{};
         // The exact resume pair lapis appended, or no provenance for a
         // user-authored launch. Existing unmarked records stay user-owned.
         int managed_resume_index{-1};
