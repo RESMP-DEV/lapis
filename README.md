@@ -382,7 +382,10 @@ URL keeps HTTPS, and unsupported URL schemes are rejected.
 
 Keep the gateway running at login with
 `uv run --no-project python apps/remote/launch_agent.py install` (`status`,
-`uninstall`; log in `~/Library/Logs/lapis-remote.log`). With the phone unlocked
+`uninstall`; log in `~/Library/Logs/lapis-remote.log`). It serves the workspace
+lapis uses, as the desktop decides: `LAPIS_HOME` if set, else the downloaded
+app's `~/.lapis` once that has a workspace, else the checkout's `runtime/`
+(`--registry` and `--config` pin another). With the phone unlocked
 on the same Wi-Fi or a cable,
 `uv run --no-project python scripts/install_ios_app.py` builds, signs and
 installs the app with your development profile, set to reach this Mac by its

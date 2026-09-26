@@ -2120,6 +2120,19 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(HTTPStatus.OK, {"ok": True})
 
 
+def lapis_home(environ=None, home=None):
+    """Where lapis keeps its workspace, as the desktop decides: LAPIS_HOME,
+    else the downloaded app's ~/.lapis once it has a workspace, else this
+    checkout (a developer build)."""
+    environ = os.environ if environ is None else environ
+    if environ.get("LAPIS_HOME"):
+        return Path(environ["LAPIS_HOME"])
+    app = Path(home or Path.home()) / ".lapis"
+    if (app / "runtime" / "workspace.json").is_file():
+        return app
+    return ROOT
+
+
 def tailscale_address(tailscale):
     result = subprocess.run(
         [tailscale, "ip", "-4"], capture_output=True, text=True, timeout=5, check=True
@@ -2159,9 +2172,11 @@ def serve(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--registry", default=str(ROOT / "runtime" / "workspace.json"))
     parser.add_argument(
-        "--config", default=str(ROOT / "lapis.json"), help="lapis settings"
+        "--registry", default=str(lapis_home() / "runtime" / "workspace.json")
+    )
+    parser.add_argument(
+        "--config", default=str(lapis_home() / "lapis.json"), help="lapis settings"
     )
     parser.add_argument("--bind", help="address; defaults to this Mac's Tailscale IPv4")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)

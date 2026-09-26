@@ -961,6 +961,23 @@ class FolderTests(unittest.TestCase):
             connection.close()
 
 
+class HomeTests(unittest.TestCase):
+    def test_the_gateway_serves_the_workspace_lapis_uses(self):
+        root = Path(tempfile.mkdtemp(prefix="lh-", dir="/tmp")).resolve()
+        self.addCleanup(shutil.rmtree, root, True)
+        # A developer build keeps its workspace in the checkout.
+        self.assertEqual(remote.lapis_home({}, root), remote.ROOT)
+        # The downloaded app's ~/.lapis wins once it has a workspace.
+        (root / ".lapis" / "runtime").mkdir(parents=True)
+        self.assertEqual(remote.lapis_home({}, root), remote.ROOT)
+        (root / ".lapis" / "runtime" / "workspace.json").write_text("{}")
+        self.assertEqual(remote.lapis_home({}, root), root / ".lapis")
+        # LAPIS_HOME, as the desktop reads it, wins over both.
+        self.assertEqual(
+            remote.lapis_home({"LAPIS_HOME": str(root / "x")}, root), root / "x"
+        )
+
+
 class MachineTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="lm-", dir="/tmp")).resolve()
