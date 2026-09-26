@@ -1380,7 +1380,7 @@ bool codexConversationSaved(const QDir& directory, const QString& conversation, 
 bool resumable(const session::ResumeRecord& record, const QString& harness) {
     if (record.source != session::ResumeSource::terminal)
         return true;
-    return harness != QLatin1String("codex") && harness != QLatin1String("claude");
+    return !session::observer_backed_agent(harness);
 }
 
 bool conversationSaved(const session::ResumeRecord& record) {
@@ -1520,7 +1520,8 @@ auto Workspace::restoredLaunch(const Agent& agent, QString* diagnostic)
             plan.managed_resume_identity.clear();
         }
         qWarning().noquote()
-            << "Automatic resume skipped: a printed checkpoint for a CLI lapis observes";
+            << "Automatic resume skipped: printed checkpoint cannot authorize resume for"
+            << agent.harness;
     }
     if (!option.isEmpty() && record && resumable(*record, agent.harness) &&
         record->agent == agent.harness && conversationSaved(*record)) {

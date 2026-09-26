@@ -111,6 +111,10 @@ bool safe_open_record(const QString& path, posix::UniqueFd& descriptor) {
 }
 } // namespace
 
+bool observer_backed_agent(const QString& agent) {
+    return agent == QLatin1String("codex") || agent == QLatin1String("claude");
+}
+
 bool valid_resume_identity(const QString& value) {
     return !value.isEmpty() && value.size() <= 512 && !value.startsWith(QLatin1Char('-')) &&
            std::none_of(value.begin(), value.end(), [](QChar character) {
@@ -250,7 +254,8 @@ std::optional<ResumeRecord> read_resume_record(const QString& endpoint) {
 
 void write_resume_record(const QString& endpoint, const ResumeRecord& record) {
     const auto path = record_path(endpoint);
-    if (!known_agent(record.agent) || !valid_resume_identity(record.session_id))
+    if (!known_agent(record.agent) || !valid_resume_identity(record.session_id) ||
+        record.source == ResumeSource::legacy)
         throw std::invalid_argument("Invalid resume record");
     if (!safe_existing(path))
         throw std::runtime_error("Unsafe resume record");
