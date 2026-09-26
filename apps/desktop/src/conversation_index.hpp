@@ -46,6 +46,9 @@ namespace conversations {
 [[nodiscard]] QString age_text(qint64 then_ms, qint64 now_ms);
 } // namespace conversations
 
+// What scans remember between passes; used by one scan at a time.
+struct ScanMemory;
+
 // The conversations of this Mac's agent CLIs, read in the background and
 // cached by file size and time, so a later scan reads only what changed.
 class ConversationIndex final : public QObject {
@@ -81,6 +84,7 @@ class ConversationIndex final : public QObject {
     std::vector<Conversation> all_; // newest first
     QHash<QString, QString> titles_;
     std::function<QStringList()> open_folders_;
+    std::shared_ptr<ScanMemory> memory_;
     std::shared_ptr<std::atomic_bool> scanning_{std::make_shared<std::atomic_bool>(false)};
     std::shared_ptr<std::atomic_bool> alive_{std::make_shared<std::atomic_bool>(true)};
     bool ready_{};

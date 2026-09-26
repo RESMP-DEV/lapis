@@ -198,6 +198,29 @@ void the_index_scans_in_the_background_and_caches() {
     require(index.orderFolders("/work", {"api", "lapis", "_x", "b"}).mid(2) ==
                 QStringList({"b", "_x"}),
             "the index orders a folder's children by its activity");
+    // Later passes look only at folders that changed and conversations written
+    // lately: an old one stays listed from memory, a new one in a known folder
+    // is found, and one written again is read again.
+    const auto old_path = claude + "/projects/-work-old/" + kThird + ".jsonl";
+    write(old_path, claude_session("cli", "/work/old") + line(user("old work")));
+    {
+        QFile old_file(old_path);
+        require(old_file.open(QIODevice::ReadWrite) &&
+                    old_file.setFileTime(QDateTime::currentDateTime().addDays(-10),
+                                         QFileDevice::FileModificationTime),
+                "an old conversation");
+    }
+    require(wait_for(index) && index.titleOf(kThird) == "old work", "a new folder is read");
+    constexpr const char* kFourth = "0a1b2c3d-0000-4000-8000-000000000004";
+    write(claude + "/projects/-work-lapis/" + kFourth + ".jsonl",
+          claude_session("cli", "/work/lapis") + line(user("second task")));
+    write(claude + "/projects/-work-lapis/" + kFirst + ".jsonl",
+          claude_session("cli", "/work/lapis") + line(user("first task")) +
+              line({{"type", "ai-title"}, {"aiTitle", "Named by Claude"}}));
+    require(wait_for(index) && index.all().size() == 4, "a new conversation is found");
+    require(index.titleOf(kThird) == "old work" && index.titleOf(kFourth) == "second task" &&
+                index.titleOf(kFirst) == "Named by Claude",
+            "old ones stay, new and rewritten ones are read");
 }
 } // namespace
 
