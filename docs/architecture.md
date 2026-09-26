@@ -2283,6 +2283,47 @@ wheel became arrow keys, which Claude reads as prompt history.
   `testDraggingScrollsAFullScreenProgram` in the simulator, each with a
   stand-in that asks for SGR mouse reporting.
 
+### All of history, and a bar to move through it (September 26)
+
+Asked the same day: scroll back to the very start, with something on the side
+to drag, kept on disk as text. The archive already took every row that scrolled
+off, but kept each page as its own uncompressed file of styled cells (about 27
+bytes a cell), rescanned every file of every session on each write, and so
+stopped at 64 MiB a session and 4,096 pages in all: a few thousand rows.
+
+- **Store.** A session appends compressed pages (the wire snapshot, zlib) to
+  segment files of at most 16 MiB, with an in-memory index of each page's ID,
+  offset and rows. A 24-row page of agent output is about 4.5 KB, some 190 bytes
+  a row, so the 1 GiB session default holds millions of rows. Writes stat the
+  root's files for the quotas instead of reading them; eviction removes whole
+  segments, oldest first, and never another session's open one. An interrupted
+  write is cut off when the session's store next opens.
+- **Place and jumps.** A page read back carries where it sits in its history
+  fields (every kept row, its first row among them, its rows), which older
+  clients never read. `at`, a third history direction, asks for the page
+  holding a row. Services before it leave a page's fields as the page alone and
+  reject `at`, so a client jumps only after a page has said where it sits.
+- **Mac.** While history shows, a bar on the terminal's right edge: its thumb
+  covers the shown page's share, a drag asks for the page under it (a jump
+  asked for while one loads follows it, the latest winning), and releasing at
+  the bottom returns to live.
+- **Phone.** The same bar down the screen's right edge, placed at the oldest
+  loaded page. Dropping it loads that page alone and scrolls to it; older pages
+  load above as before, and "Newer output skipped · Load" fetches the pages
+  between it and the live screen, eight at a time, rather than all at once.
+- **Where.** The service kept history under a folder fixed at build time,
+  inside the build checkout, so the downloaded app could not write it on any
+  other Mac, and its binary carried the build machine's user name as UTF-16,
+  which the release sweep (UTF-8 only) missed. History now goes beside the
+  endpoint, and the sweep checks UTF-16 spellings too.
+- A full-screen program keeps no rows in this history (it redraws one screen);
+  Claude Code's full-screen mode scrolls its own transcript with the wheel.
+- Qualified by `check_long_history` (1,000 pages, jumps by row, reopening) and
+  the reworked `check_store` in the store tests, the `at` request in the
+  protocol tests, `historyJumpsToTheStart` in the workspace suite,
+  `HistoryJumpTests` against a real service, and `testScrubbingJumpsToTheStart`
+  in the simulator.
+
 ### Following milestones
 
 With the two-session workspace assembled, the next qualification stages are

@@ -1157,23 +1157,32 @@ coverage. Physical keyboard hardware and key-to-photon measurements are outside
 Milestone 1 software acceptance. Selection/copy from terminal cells and a
 screen-reader terminal tree remain unsupported.
 
-History is under `runtime/history` by default. Before starting a service, set
-`LAPIS_HISTORY_ROOT` to an absolute private directory and optionally set
+History is kept in a `history` folder beside the service's endpoint (lapis's
+`runtime` folder: `~/.lapis/runtime/history` for the downloaded app), never at a
+path fixed when it was built. Before starting a service, set `LAPIS_HISTORY_ROOT`
+to an absolute private directory to put it elsewhere, and optionally set
 `LAPIS_HISTORY_SESSION_BYTES` / `LAPIS_HISTORY_GLOBAL_BYTES` (positive bytes,
-session <= global <= 4 GiB). Defaults are 64 MiB / 256 MiB, with a 4,096-page global
-cap. The global quota is shared by services using that root, not every arbitrary
-root on the machine. Pages preserve their recorded geometry; only in-memory
-engine history reflows on resize. History controls never resize or send input to
-the child. Return to Live restores its newest retained screen and requested size.
+session <= global <= 64 GiB). Defaults are 1 GiB / 8 GiB of compressed pages,
+which keeps a session back to its first row in practice: a screenful of agent
+output compresses to a few kilobytes. Each session appends pages to segment files
+of at most 16 MiB (`<first page>.seg`), indexed in memory so any row is one read
+away; over budget, a session's oldest segments go first, and over the global
+budget the least recently written closed segments of any session (never another
+session's open one). Pages written before segments (`*.page`) are counted and
+evicted but not read. The global quota is shared by services using that root,
+not every arbitrary root on the machine. Pages preserve their recorded geometry;
+only in-memory engine history reflows on resize. History controls never resize
+or send input to the child. Return to Live restores its newest retained screen
+and requested size.
 
 A storage failure pauses recording and reports a gap when history is requested;
 live I/O continues within its memory bound. Free space or repair the configured
 storage, then use Older to retry. A damaged page is rejected, never rendered as
 valid history. Retire a damaged archive directory only after its owning service
 has ended; archiving is terminal content, so retain it only as long as needed.
-The store removes only its known abandoned `.pending` write under its root lock;
-it leaves unknown files alone. Page-byte quotas exclude fixed metadata and bounded
-atomic-write overhead. Normal exit and direct service error shutdown allow up to three seconds to drain
+The store removes only its known abandoned `.pending` write under its root lock,
+and cuts off a record an interrupted write left at a segment's end; it leaves
+unknown files alone. Byte quotas count segment files, not the sequence counter. Normal exit and direct service error shutdown allow up to three seconds to drain
 queued pages; a forced
 service kill can lose its queued tail. Stored pages are not process recovery.
 

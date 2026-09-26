@@ -218,7 +218,7 @@ the Claude Code and Codex conversations you opened on this Mac, newest first
 under their CLI's own title, narrowed as you type by title, folder or CLI;
 Return resumes one as a new agent in its folder. Command-` (or Control-`, as in
 VS Code) shows a plain shell over the stage's right half for a quick command,
-and hides it again; Command-~ picks its machine, this Mac or an ssh host from
+with nothing around it but its border, and hides it again; Command-~ picks its machine, this Mac or an ssh host from
 your ssh config, by up, down and Return. It is never an agent: one shell per
 machine, in no category and with no alerts, which keeps running when lapis
 closes and closes itself when you type `exit`. With nothing open, the stage
@@ -422,6 +422,10 @@ swipe away the same way. Swiping an agent right (or a long press) offers
 **Rename**. On an agent's screen, swiping left or right moves to the next or
 previous agent in its category (the title shows "2 of 4"), so the list is only
 needed to change category.
+
+Everything an agent prints is kept, compressed, back to its first line. Scroll
+back and a bar appears down the terminal's right edge, on the Mac and the phone:
+drag it to jump anywhere in the agent's history, the top being its first line.
 
 Scrolling over a full-screen program, such as Claude Code with
 `"tui": "fullscreen"`, scrolls the program itself on both devices, as the
