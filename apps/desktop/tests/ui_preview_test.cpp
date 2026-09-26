@@ -1709,6 +1709,31 @@ void check_home_and_resume(QQuickWindow& window, lapis::desktop::Workspace& work
     pump(60);
 }
 
+// Command-1 to Command-9 (Control-Shift on Linux) pick the first nine
+// categories.
+void check_nine_categories(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                           const lapis::desktop::KeyMap& keymap) {
+    const auto before = workspace.activeCategoryId();
+    QStringList added;
+    for (int number = 1; workspace.categories().size() < 9; ++number) {
+        CHECK(workspace.addCategory(QStringLiteral("Numbered %1").arg(number)));
+        added.append(workspace.activeCategoryId());
+    }
+    CHECK(workspace.selectCategory(before));
+    pump(60);
+    const auto id_at = [&workspace](int index) {
+        return workspace.categories().at(index).toMap().value(QStringLiteral("id")).toString();
+    };
+    press_action(window, keymap, "category9");
+    CHECK(workspace.activeCategoryId() == id_at(8));
+    press_action(window, keymap, "category5");
+    CHECK(workspace.activeCategoryId() == id_at(4));
+    for (const auto& id : added)
+        CHECK(workspace.removeCategory(id));
+    CHECK(workspace.selectCategory(before));
+    pump(60);
+}
+
 // The new-agent form offers this Mac and the ssh config's hosts: right and
 // left change the machine while up and down choose the CLI, and another
 // machine's folder starts at its home with no local suggestions.
@@ -2216,6 +2241,7 @@ int run_strip_ui_tests() {
     check_find_and_text_size(*window, workspace, keymap);
     check_agent_search(*window, workspace, keymap, *terminal);
     check_home_and_resume(*window, workspace, keymap);
+    check_nine_categories(*window, workspace, keymap);
     check_side_terminal(*window, terminals, keymap, *terminal);
     workspace.setSshConfigForTesting(config.filePath(QStringLiteral("ssh_config")));
     check_new_agent_machine(*window, keymap);

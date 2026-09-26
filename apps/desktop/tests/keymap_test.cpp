@@ -430,6 +430,10 @@ void navigation_defaults_preserve_terminal_editing() {
                 keymap.sequences(QStringLiteral("newCategory")) ==
                     QStringList{QStringLiteral("Meta+N")},
             "as in a browser, Command-T opens an agent and Command-N a category");
+    require(
+        keymap.sequences(QStringLiteral("category1")) == QStringList{QStringLiteral("Meta+1")} &&
+            keymap.sequences(QStringLiteral("category9")) == QStringList{QStringLiteral("Meta+9")},
+        "Command-1 to Command-9 pick the first nine categories");
     // As in a browser, Command-W closes what is in front (and the window once
     // nothing is left) and Command-Shift-W the window; Command-M minimizes.
     require(keymap.sequences(QStringLiteral("closeAgent")) ==
@@ -447,6 +451,9 @@ void navigation_defaults_preserve_terminal_editing() {
                 keymap.sequences(QStringLiteral("newCategory")) ==
                     QStringList{QStringLiteral("Ctrl+Shift+N")},
             "Control-Shift-T opens an agent and Control-Shift-N a category");
+    require(keymap.sequences(QStringLiteral("category9")) ==
+                QStringList{QStringLiteral("Ctrl+Shift+9")},
+            "Control-Shift-1 to 9 pick the first nine categories");
 #endif
     QStringList seen;
     for (const auto& action : actions) {

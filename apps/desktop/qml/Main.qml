@@ -156,14 +156,9 @@ ApplicationWindow {
             return [mod + "Alt+Right", mod + (mac ? "Shift+Down" : "Down")]
         if (action === "previousCategory")
             return [mod + "Alt+Left", mod + (mac ? "Shift+Up" : "Up")]
-        if (action === "category1")
-            return [mod + "1"]
-        if (action === "category2")
-            return [mod + "2"]
-        if (action === "category3")
-            return [mod + "3"]
-        if (action === "category4")
-            return [mod + "4"]
+        const numbered = /^category([1-9])$/.exec(action)
+        if (numbered)
+            return [mod + numbered[1]]
         if (action === "openSettings")
             return preview.settingsShortcuts
         if (action === "toggleSidebar")
@@ -443,7 +438,7 @@ ApplicationWindow {
         add("restartAgent", qsTr("Restart agent"), "", stopped, qsTr("Only an ended or unreachable agent restarts"), () => workspace.restartAgent(agent.sessionId))
         add("nextCategory", qsTr("Next category"), "nextCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory())
         add("previousCategory", qsTr("Previous category"), "previousCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory(-1))
-        for (let i = 0; i < Math.min(4, workspace.categories.length); ++i) {
+        for (let i = 0; i < Math.min(9, workspace.categories.length); ++i) {
             const category = workspace.categories[i]
             add("category" + (i + 1), qsTr("Switch category: %1").arg(category.name), "category" + (i + 1), true, "", () => workspace.selectCategory(category.id))
         }
@@ -504,9 +499,9 @@ ApplicationWindow {
             return textColor
         return mutedTextColor
     }
-    // Mono recall number for categories reachable by a category1-4 shortcut.
+    // Mono recall number for categories reachable by a category1-9 shortcut.
     function categoryRecall(index) {
-        return index < 4 && bindings("category" + (index + 1)).length > 0 ? String(index + 1) : ""
+        return index < 9 && bindings("category" + (index + 1)).length > 0 ? String(index + 1) : ""
     }
     function categoryAttentionElsewhere() {
         let total = 0
@@ -1323,6 +1318,31 @@ ApplicationWindow {
         objectName: "categoryShortcut4"
         targetIndex: 3
         action: "category4"
+    }
+    IndexShortcut {
+        objectName: "categoryShortcut5"
+        targetIndex: 4
+        action: "category5"
+    }
+    IndexShortcut {
+        objectName: "categoryShortcut6"
+        targetIndex: 5
+        action: "category6"
+    }
+    IndexShortcut {
+        objectName: "categoryShortcut7"
+        targetIndex: 6
+        action: "category7"
+    }
+    IndexShortcut {
+        objectName: "categoryShortcut8"
+        targetIndex: 7
+        action: "category8"
+    }
+    IndexShortcut {
+        objectName: "categoryShortcut9"
+        targetIndex: 8
+        action: "category9"
     }
     Shortcut {
         objectName: "nextSessionShortcut"
