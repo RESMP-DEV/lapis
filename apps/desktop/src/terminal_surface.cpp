@@ -998,15 +998,21 @@ void TerminalSurface::wheelEvent(QWheelEvent* event) {
     const int steps = wheel_remainder_ / 120;
     wheel_remainder_ -= steps * 120;
     if (steps != 0)
-        scrollHistory(steps);
+        scrollHistory(steps, cellAt(event->position()));
     event->accept();
 }
-// Positive steps scroll back. Full-screen programs scroll themselves, so on
-// the alternate screen the wheel becomes arrow keys, as in other terminals.
-void TerminalSurface::scrollHistory(int steps) {
+// Positive steps scroll back. Full-screen programs scroll themselves: the
+// service sends the wheel as the program asked (mouse wheel events when it
+// reports the mouse, as Claude Code's full-screen mode does, else arrow keys).
+// A service from before wheel input gets arrow keys from here.
+void TerminalSurface::scrollHistory(int steps, QPoint cell) {
     if (document_->snapshot().alternate_screen && !document_->historyActive()) {
         if (!acceptsTerminalInput())
             return;
+        if (document_->snapshot().accepts_wheel) {
+            document_->sendWheel(steps, cell.x(), cell.y());
+            return;
+        }
         const auto key = steps > 0 ? session::TerminalKey::up : session::TerminalKey::down;
         for (int line = 0; line < std::abs(steps) * 3; ++line)
             document_->sendKey(key, {});

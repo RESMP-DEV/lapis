@@ -2215,6 +2215,74 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   flipped that on every run, so the tests now prove the screen is live with a
   marker typed through the gateway and echoed back.
 
+### The workspace and the Mac's settings from the phone (September 26)
+
+Asked after 0.3.0: the phone should arrange categories and agents, and change
+settings, as the Mac does. Everything the Mac's commands do to the workspace
+and that makes sense without its stage now goes through the control socket
+under the same `Workspace` rules; the stage itself (tiles, splits, the sidebar)
+stays the Mac's.
+
+- **Categories.** `renameCategory`, `removeCategory` (only an empty one, and
+  one always stays) and `placeCategory`. Each category heading on the phone
+  ends in a menu (new agent here, rename, arrange, remove, which says why it
+  is unavailable); Settings → Categories and "Arrange categories" open a list
+  to drag, tap to rename, swipe an empty one away and add one.
+- **Agents.** `placeAgent` puts one at a position in a category (the Mac's
+  `placeSessions`), so an agent's long-press menu offers Move to, Move earlier
+  and Move later beside Rename and Close; paging follows that order.
+  `restartAgent` restarts a stopped agent from the same menu, or from its
+  screen, which offers Restart agent beside Open here again.
+- **Refusals.** A refused request answers with the workspace's reason and then
+  clears it, so a phone's mistake is shown on the phone and never left on the
+  Mac's window. The phone keeps it in an alert until dismissed, since the list
+  refresh would otherwise replace it within seconds.
+- **Settings.** `settings` and `changeSettings` read and change, through
+  `KeyMap`'s own setters and save, the settings that matter away from the Mac:
+  keep awake, the two chimes and how often the first repeats, background
+  notifications and plan usage. A change naming anything else, or a wrong
+  type, changes nothing. The Mac window's look (theme, density, layout,
+  fonts, shortcuts) is not offered: from the phone it would only restyle a
+  window no one is looking at. The phone's own text size moved into its
+  Settings too.
+- Qualified by `phoneArrangesTheWorkspace` and `phoneChangesTheMacsSettings`
+  in the workspace suite, the gateway's arrangement and settings tests, and
+  four simulator tests; after them the phone check reads the check's own
+  `lapis.json` for the changed settings.
+
+### The wheel in full-screen programs (September 26)
+
+Scrolling stopped working on both the Mac and the phone. Claude Code's
+full-screen mode (`"tui": "fullscreen"` in its settings) draws on the
+alternate screen and turns on mouse reporting (modes 1000, 1002, 1003 and SGR
+1006), then scrolls its own transcript on mouse wheel events. Nothing scrolls
+off into the archive, so the phone's history pages were empty, and the Mac's
+wheel became arrow keys, which Claude reads as prompt history.
+
+- **Encoding.** `Terminal::encode_wheel` sends a notch as the program asked:
+  wheel events in its mouse format through Ghostty's mouse encoder when it
+  reports the mouse, three arrow keys on the alternate screen when it does
+  not, and nothing on the primary screen, whose history the view pages.
+- **Wire.** A `wheel` frame (BE i16 notches, u16 column, u16 row) joins v6.
+  Services before it drop the connection on an unknown frame, so a client
+  sends it only when the service says it takes it: new services write the
+  snapshot's alternate-screen byte as 3 instead of 1. Readers before it take
+  any nonzero byte as true, and the flag is only needed on the alternate
+  screen. Joined views may send it, and it does not claim the terminal size.
+- **Mac.** Over a full-screen program the wheel goes to the service with the
+  cell under the pointer; a service from before keeps the arrow keys.
+- **Phone.** The gateway reports `wheel` in each frame and forwards
+  `{"wheel": [notches, column, row]}` only while the latest screen takes it.
+  Over such a program the phone shows only its screen and turns a vertical
+  drag into notches, one per two rows, down scrolling back.
+- Agents keep the service they started with, so a running agent scrolls this
+  way once it restarts (its conversation resumes).
+- Qualified by `wheel_input` in the terminal tests, `wheel_messages` in the
+  protocol tests, `wheelReachesAFullScreenProgram` in the workspace suite, the
+  gateway's `WheelTests` against a real service, and
+  `testDraggingScrollsAFullScreenProgram` in the simulator, each with a
+  stand-in that asks for SGR mouse reporting.
+
 ### Following milestones
 
 With the two-session workspace assembled, the next qualification stages are

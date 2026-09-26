@@ -587,6 +587,126 @@ class StartAgentTests(unittest.TestCase):
                 self.assertEqual(status, 400, body)
             self.assertEqual(len(desktop.requests), asked, "bad names reach nothing")
 
+    def test_the_phone_arranges_categories_and_agents_through_the_mac(self):
+        def answer(request):
+            if request["request"] == "removeCategory" and request["id"] == "full":
+                return {"ok": False, "error": "Move the agents out first."}
+            return {"ok": True}
+
+        with (
+            Server(self, "{}") as server,
+            FakeDesktop(server.directory, answer) as desktop,
+        ):
+            for path, body, asked in (
+                (
+                    "/api/categories/c1/rename",
+                    {"name": " Someday "},
+                    {"request": "renameCategory", "id": "c1", "name": "Someday"},
+                ),
+                (
+                    "/api/categories/c1/place",
+                    {"index": 0},
+                    {"request": "placeCategory", "id": "c1", "index": 0},
+                ),
+                (
+                    "/api/categories/c1/remove",
+                    None,
+                    {"request": "removeCategory", "id": "c1"},
+                ),
+                (
+                    "/api/agents/a1/place",
+                    {"category": "c2", "index": 1},
+                    {"request": "placeAgent", "id": "a1", "category": "c2", "index": 1},
+                ),
+                (
+                    "/api/agents/a1/place",
+                    {"category": "c2"},
+                    {
+                        "request": "placeAgent",
+                        "id": "a1",
+                        "category": "c2",
+                        "index": 1 << 20,
+                    },
+                ),
+                (
+                    "/api/agents/a1/restart",
+                    None,
+                    {"request": "restartAgent", "id": "a1"},
+                ),
+            ):
+                status, reply = server.request("POST", path, body)
+                self.assertEqual((status, reply), (200, {"ok": True}), path)
+                self.assertEqual(desktop.requests[-1], {"version": 1, **asked})
+            status, refused = server.request("POST", "/api/categories/full/remove")
+            self.assertEqual(
+                (status, refused), (422, {"error": "Move the agents out first."})
+            )
+            asked = len(desktop.requests)
+            for path, body in (
+                ("/api/categories/c1/rename", {"name": ""}),
+                ("/api/categories/c1/place", {"index": -1}),
+                ("/api/categories/c1/place", {"index": True}),
+                ("/api/categories/c1/place", {"index": "0"}),
+                ("/api/agents/a1/place", {"index": 0}),
+                ("/api/agents/a1/place", {"category": "c2", "index": 1.5}),
+                ("/api/agents/a1/place", ["c2"]),
+            ):
+                status, _ = server.request("POST", path, body)
+                self.assertEqual(status, 400, (path, body))
+            self.assertEqual(len(desktop.requests), asked, "bad requests reach nothing")
+
+    def test_the_phone_reads_and_changes_the_macs_settings(self):
+        settings = {
+            "keepAwake": True,
+            "alertSound": True,
+            "alertRepeat": 3,
+            "finishSound": True,
+            "notify": True,
+            "showUsage": True,
+        }
+
+        def answer(request):
+            settings.update(request.get("settings", {}))
+            return {"ok": True, "settings": settings}
+
+        with (
+            Server(self, "{}") as server,
+            FakeDesktop(server.directory, answer) as desktop,
+        ):
+            status, shown = server.request("GET", "/api/settings")
+            self.assertEqual((status, shown), (200, {"settings": settings}))
+            self.assertEqual(
+                desktop.requests[-1], {"version": 1, "request": "settings"}
+            )
+            status, changed = server.request(
+                "POST", "/api/settings", {"keepAwake": False, "alertRepeat": 5}
+            )
+            self.assertEqual(status, 200)
+            self.assertFalse(changed["settings"]["keepAwake"])
+            self.assertEqual(changed["settings"]["alertRepeat"], 5)
+            self.assertEqual(
+                desktop.requests[-1],
+                {
+                    "version": 1,
+                    "request": "changeSettings",
+                    "settings": {"keepAwake": False, "alertRepeat": 5},
+                },
+            )
+            asked = len(desktop.requests)
+            # The Mac's window appearance is not the phone's to change.
+            for body in (
+                {"theme": "amber"},
+                {"keepAwake": "no"},
+                {"keepAwake": 0},
+                {"alertRepeat": 0},
+                {"alertRepeat": 11},
+                {"alertRepeat": True},
+                ["keepAwake"],
+            ):
+                status, _ = server.request("POST", "/api/settings", body)
+                self.assertEqual(status, 400, body)
+            self.assertEqual(len(desktop.requests), asked, "bad settings reach nothing")
+
     def test_terminals_open_list_and_close_through_the_mac(self):
         def answer(request):
             if request["request"] == "openTerminal":
@@ -1110,51 +1230,57 @@ def screen_text(frame):
 
 
 @unittest.skipUnless(SERVICE.exists(), "needs the built session service")
+def live_agent(test, program, arguments):
+    """A real session service running `program`, and a registry naming it."""
+    test.runtime = Path(tempfile.mkdtemp(prefix="lr-", dir="/tmp"))
+    test.addCleanup(shutil.rmtree, test.runtime, True)
+    test.identifier = "11111111-2222-4333-8444-555555555555"
+    test.endpoint = test.runtime / (test.identifier + ".sock")
+    service = subprocess.Popen(
+        [str(SERVICE), str(test.endpoint), "/", program, *arguments],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        env={**os.environ, "LAPIS_HISTORY_ROOT": str(test.runtime / "history")},
+    )
+
+    def stop():
+        if service.poll() is None:
+            os.killpg(service.pid, 15)
+            service.wait(10)
+
+    test.addCleanup(stop)
+    deadline = time.monotonic() + 10
+    while not remote.service_answers(str(test.endpoint)):
+        test.assertLess(time.monotonic(), deadline, "service did not start")
+        time.sleep(0.05)
+    test.registry = json.dumps(
+        {
+            "categories": [{"id": "general", "name": "General"}],
+            "activeCategory": "general",
+            "agents": [
+                {
+                    "id": test.identifier,
+                    "title": "echo",
+                    "category": "general",
+                    "harness": "grok",
+                    "endpoint": str(test.endpoint),
+                    "program": program,
+                    "arguments": arguments,
+                    "directory": "/",
+                }
+            ],
+        }
+    )
+
+
 class LiveServiceTests(unittest.TestCase):
     def setUp(self):
-        self.runtime = Path(tempfile.mkdtemp(prefix="lr-", dir="/tmp"))
-        self.addCleanup(shutil.rmtree, self.runtime, True)
-        self.identifier = "11111111-2222-4333-8444-555555555555"
-        self.endpoint = self.runtime / (self.identifier + ".sock")
         script = (
             'printf "ready\\n"; while read line; do printf "got:%s\\n" "$line"; done'
         )
-        self.service = subprocess.Popen(
-            [str(SERVICE), str(self.endpoint), "/", "/bin/sh", "-c", script],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-            env={**os.environ, "LAPIS_HISTORY_ROOT": str(self.runtime / "history")},
-        )
-        self.addCleanup(self.stop)
-        deadline = time.monotonic() + 10
-        while not remote.service_answers(str(self.endpoint)):
-            self.assertLess(time.monotonic(), deadline, "service did not start")
-            time.sleep(0.05)
-        self.registry = json.dumps(
-            {
-                "categories": [{"id": "general", "name": "General"}],
-                "activeCategory": "general",
-                "agents": [
-                    {
-                        "id": self.identifier,
-                        "title": "echo",
-                        "category": "general",
-                        "harness": "grok",
-                        "endpoint": str(self.endpoint),
-                        "program": "/bin/sh",
-                        "arguments": ["-c", script],
-                        "directory": "/",
-                    }
-                ],
-            }
-        )
-
-    def stop(self):
-        if self.service.poll() is None:
-            os.killpg(self.service.pid, 15)
-            self.service.wait(10)
+        live_agent(self, "/bin/sh", ["-c", script])
 
     def test_a_screen_is_read_without_resizing_or_taking_the_agent(self):
         with Server(self, self.registry, self.runtime) as server:
@@ -1307,6 +1433,47 @@ class LiveServiceTests(unittest.TestCase):
             )
             self.desktop_sees(again, "got:still here")
             phone.close()
+
+
+@unittest.skipUnless(SERVICE.exists(), "needs the built session service")
+class WheelTests(unittest.TestCase):
+    """A full-screen program that reports the mouse, as Claude Code's
+    full-screen mode does, gets the phone's wheel as mouse wheel events."""
+
+    def setUp(self):
+        live_agent(self, sys.executable, [str(ROOT / "tools" / "qa" / "fake_agent.py")])
+
+    def test_the_wheel_reaches_a_full_screen_program(self):
+        with Server(self, self.registry, self.runtime) as server:
+            path = f"/api/agents/{self.identifier}"
+            events = Events(server, path + "/stream?columns=40&rows=12")
+            _, first = events.until(
+                lambda name, data: (
+                    name == "frame" and "lapis fake agent" in screen_text(data)
+                )
+            )
+            self.assertFalse(first["wheel"])
+            # The primary screen pages history instead; the wheel is refused.
+            status, _ = server.request("POST", path + "/input", {"wheel": [1, 0, 0]})
+            self.assertEqual(status, 400)
+            server.request("POST", path + "/input", {"text": "mouse\r"})
+            _, shown = events.until(
+                lambda name, data: name == "frame"
+                and "mouse ready" in screen_text(data)
+            )
+            self.assertTrue(shown["alternateScreen"] and shown["wheel"])
+            for bad in ([0, 1, 1], [1, -1, 0], [True, 1, 1], [1, 1]):
+                status, _ = server.request("POST", path + "/input", {"wheel": bad})
+                self.assertEqual(status, 400, bad)
+            status, _ = server.request("POST", path + "/input", {"wheel": [2, 4, 2]})
+            self.assertEqual(status, 200)
+            events.until(
+                lambda name, data: (
+                    name == "frame"
+                    and "mouse got 2 events, first ESC[<64;5;3M" in screen_text(data)
+                )
+            )
+            events.close()
 
 
 class OldServiceTests(unittest.TestCase):

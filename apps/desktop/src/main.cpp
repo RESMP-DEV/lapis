@@ -445,7 +445,7 @@ terminals_for(const lapis::desktop::Workspace& workspace) {
     terminals->restore();
     return terminals;
 }
-int run_headless(lapis::desktop::Workspace& workspace, bool serve) {
+int run_headless(lapis::desktop::Workspace& workspace, lapis::desktop::KeyMap& keymap, bool serve) {
     using lapis::desktop::SessionPreview;
     using lapis::desktop::WorkspaceControl;
     if (!workspace.workspaceError().isEmpty()) {
@@ -458,6 +458,7 @@ int run_headless(lapis::desktop::Workspace& workspace, bool serve) {
     bool handed_over = false;
     if (serve) {
         control.emplace(workspace, true);
+        control->setKeyMap(&keymap);
         QObject::connect(&*control, &WorkspaceControl::handoverRequested,
                          [&handed_over] { handed_over = true; });
     }
@@ -600,11 +601,13 @@ int main(int argc, char** argv) {
             models.start();
         }
         if (headless)
-            return run_headless(workspace, serve);
+            return run_headless(workspace, keymap, serve);
         // The window owns the workspace: the phone's requests come here.
         std::optional<WorkspaceControl> control;
-        if (options.restoreAgents && workspace.workspaceError().isEmpty())
+        if (options.restoreAgents && workspace.workspaceError().isEmpty()) {
             control.emplace(workspace, false);
+            control->setKeyMap(&keymap);
+        }
         // Plain shells beside the agents (Command-`), for this Mac and the phone.
         const auto terminals = isolated ? nullptr : terminals_for(workspace);
         if (control)

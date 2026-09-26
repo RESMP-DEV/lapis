@@ -57,6 +57,11 @@ GATEWAY_VERSION = 1
 WIRE_VERSION = 6
 HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
 HISTORY_REQUEST, HISTORY_PAGE = 10, 11
+# A turn of the wheel for a full-screen program (added within v6). Only a
+# service whose snapshots set ACCEPTS_WHEEL in the alternate-screen byte takes
+# it; one from before drops the connection on it.
+WHEEL = 16
+ALTERNATE_OFFSET, ACCEPTS_WHEEL = 21, 2
 STATUS_NAMES = {1: "rejected", 2: "ended", 3: "replaced", 4: "overloaded"}
 # Attach modes: discover takes the agent from its current client; join (added
 # within v6) shows it beside the desktop. Services started before join reject it.
@@ -216,6 +221,11 @@ def load_terminals(registry):
             }
         )
     return terminals
+
+
+def position(value):
+    """A JSON index: a whole number of at least zero, and not true or false."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def desktop_request(registry, request, timeout=15.0):
@@ -1139,7 +1149,7 @@ def render_snapshot(payload, show_cursor=True):
     require(len(payload) >= POOL_OFFSET + 4, "Truncated snapshot")
     revision, columns, rows, cursor_x, cursor_y = struct.unpack_from(">QHHHH", payload)
     in_viewport, visible = payload[16], payload[17]
-    alternate, application_cursor = payload[21], payload[23]
+    alternate, application_cursor = payload[ALTERNATE_OFFSET], payload[23]
     default_fg, default_bg = struct.unpack_from(">II", payload, 24)
     palette = struct.unpack_from(">256I", payload, PALETTE_OFFSET)
     count = struct.unpack_from(">I", payload, POOL_OFFSET)[0]
@@ -1207,6 +1217,8 @@ def render_snapshot(payload, show_cursor=True):
         "rows": rows,
         "cursor": {"x": cursor_x, "y": cursor_y, "visible": cursor is not None},
         "alternateScreen": bool(alternate),
+        # The phone sends the wheel to the program instead of paging history.
+        "wheel": bool(alternate & ACCEPTS_WHEEL),
         "applicationCursor": bool(application_cursor),
         "foreground": hex_color(default_fg),
         "background": hex_color(default_bg),
@@ -1243,6 +1255,9 @@ class WireSession:
         self.sequence = 0
         self.first = None
         self.closed = False
+        # Whether the latest screen is a full-screen program whose service
+        # takes wheel input.
+        self.wheel_accepted = False
         # Set when another phone view is taking this agent, so its "replaced"
         # status is not reported as the Mac taking it back.
         self.superseded = False
@@ -1294,7 +1309,11 @@ class WireSession:
         if sequence <= self.sequence:
             return None
         self.sequence = sequence
-        return data[SNAPSHOT_HEADER:]
+        body = data[SNAPSHOT_HEADER:]
+        self.wheel_accepted = (
+            len(body) > ALTERNATE_OFFSET and body[ALTERNATE_OFFSET] & ACCEPTS_WHEEL != 0
+        )
+        return body
 
     def receive(self, timeout):
         """One frame, or None when nothing arrives within the timeout."""
@@ -1333,6 +1352,13 @@ class WireSession:
     def key(self, name, modifiers=0):
         require(name in KEYS, "Unknown key")
         self.send(KEY, bytes([KEYS[name], modifiers & 0x0F]))
+
+    def wheel(self, steps, column, row):
+        """A turn of the wheel over a cell: positive steps scroll back."""
+        require(self.wheel_accepted, "This screen does not take the wheel")
+        require(steps != 0 and -64 <= steps <= 64, "Invalid wheel steps")
+        require(0 <= column <= 0xFFFF and 0 <= row <= 0xFFFF, "Invalid wheel cell")
+        self.send(WHEEL, struct.pack(">hHH", steps, column, row))
 
     def request_history(self, reference=0, timeout=10.0, newer=False):
         """The archived page before `reference` (0: the newest page), or after it.
@@ -1525,6 +1551,23 @@ def agent_route(parts, action):
     return len(parts) == 4 and parts[:2] == ["api", "agents"] and parts[3] == action
 
 
+def category_route(parts, action):
+    return len(parts) == 4 and parts[:2] == ["api", "categories"] and parts[3] == action
+
+
+# The Mac settings the phone can change, which the Mac's Settings window also
+# sets: staying awake for the phone, the Mac's alerts, and plan usage. How the
+# Mac's window looks stays the Mac's to choose.
+PHONE_SETTINGS = {
+    "keepAwake": bool,
+    "alertSound": bool,
+    "alertRepeat": int,
+    "finishSound": bool,
+    "notify": bool,
+    "showUsage": bool,
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "lapis-remote"
     # Keep-alive saves the phone a connection set-up per request over
@@ -1613,6 +1656,8 @@ class Handler(BaseHTTPRequestHandler):
             self.list_terminals()
         elif parts == ["api", "conversations"]:
             self.list_conversations()
+        elif parts == ["api", "settings"]:
+            self.forward({"request": "settings"}, "settings")
         elif agent_route(parts, "screen"):
             self.screen(parts[2])
         elif agent_route(parts, "stream"):
@@ -1634,8 +1679,22 @@ class Handler(BaseHTTPRequestHandler):
             self.close_agent(parts[2])
         elif agent_route(parts, "rename"):
             self.rename_agent(parts[2])
+        elif agent_route(parts, "place"):
+            self.place_agent(parts[2])
+        elif agent_route(parts, "restart"):
+            if self.drained():
+                self.forward({"request": "restartAgent", "id": parts[2]})
         elif parts == ["api", "categories"]:
             self.create_category()
+        elif category_route(parts, "rename"):
+            self.rename_category(parts[2])
+        elif category_route(parts, "remove"):
+            if self.drained():
+                self.forward({"request": "removeCategory", "id": parts[2]})
+        elif category_route(parts, "place"):
+            self.place_category(parts[2])
+        elif parts == ["api", "settings"]:
+            self.change_settings()
         elif parts == ["api", "terminals"]:
             self.open_terminal()
         elif parts == ["api", "captures"]:
@@ -1830,6 +1889,28 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return body
 
+    def drained(self):
+        """Reads any body, so the kept-alive connection stays in step; False
+        after replying when it is too large."""
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+        except ValueError:
+            length = -1
+        if not 0 <= length <= MAX_REQUEST:
+            self.fail(HTTPStatus.BAD_REQUEST, "Invalid request size")
+            return False
+        self.rfile.read(length)
+        return True
+
+    def forward(self, request, field=None):
+        """Asks the Mac's lapis; replies {"ok": true}, or its `field` when named."""
+        answer = self.ask_desktop(request)
+        if answer is not None:
+            self.reply(
+                HTTPStatus.OK,
+                {field: answer.get(field, {})} if field else {"ok": True},
+            )
+
     def create_category(self):
         """A new category on the Mac; the Mac's window stays where it is."""
         body = self.read_object()
@@ -1857,6 +1938,69 @@ class Handler(BaseHTTPRequestHandler):
         )
         if answer is not None:
             self.reply(HTTPStatus.OK, {"ok": True})
+
+    def rename_category(self, identifier):
+        """Names a category on the Mac, as Rename category does there."""
+        body = self.read_object()
+        if body is None:
+            return
+        name = body.get("name")
+        if not isinstance(name, str) or not 0 < len(name.strip()) <= 80:
+            self.fail(HTTPStatus.BAD_REQUEST, "Use a category name of 1-80 characters")
+            return
+        self.forward(
+            {"request": "renameCategory", "id": identifier, "name": name.strip()}
+        )
+
+    def place_category(self, identifier):
+        """Moves a category to a position in the Mac's list of categories."""
+        body = self.read_object()
+        if body is None:
+            return
+        index = body.get("index")
+        if not position(index):
+            self.fail(HTTPStatus.BAD_REQUEST, "Invalid index")
+            return
+        self.forward({"request": "placeCategory", "id": identifier, "index": index})
+
+    def place_agent(self, identifier):
+        """Moves an agent to a position in a category (its end without one)."""
+        body = self.read_object()
+        if body is None:
+            return
+        category = body.get("category")
+        index = body.get("index", 1 << 20)
+        if not isinstance(category, str) or not 0 < len(category) <= 64:
+            self.fail(HTTPStatus.BAD_REQUEST, "Missing or invalid category")
+            return
+        if not position(index):
+            self.fail(HTTPStatus.BAD_REQUEST, "Invalid index")
+            return
+        self.forward(
+            {
+                "request": "placeAgent",
+                "id": identifier,
+                "category": category,
+                "index": index,
+            }
+        )
+
+    def change_settings(self):
+        """Changes some of PHONE_SETTINGS in the Mac's lapis.json; the answer
+        is all of them."""
+        body = self.read_object()
+        if body is None:
+            return
+        for name, value in body.items():
+            kind = PHONE_SETTINGS.get(name)
+            if kind is bool:
+                valid = isinstance(value, bool)
+            else:
+                valid = kind is int and position(value) and 1 <= value <= 10
+            if not valid:
+                self.fail(HTTPStatus.BAD_REQUEST, f"Invalid setting {name}")
+                return
+        self.forward({"request": "changeSettings", "settings": body}, "settings")
 
     def list_terminals(self):
         """The quick-command terminals: plain shells, one per machine."""
@@ -1920,15 +2064,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def close_agent(self, identifier):
         """Ends the agent, as Command-Shift-W does on the Mac, or a terminal's shell."""
-        # Any body is read, so the kept-alive connection stays in step.
-        try:
-            length = int(self.headers.get("Content-Length", "0") or 0)
-        except ValueError:
-            length = -1
-        if not 0 <= length <= MAX_REQUEST:
-            self.fail(HTTPStatus.BAD_REQUEST, "Invalid request size")
+        if not self.drained():
             return
-        self.rfile.read(length)
         kind = "closeTerminal" if identifier.startswith("terminal-") else "closeAgent"
         answer = self.ask_desktop({"request": kind, "id": identifier})
         if answer is not None:
@@ -2131,6 +2268,15 @@ class Handler(BaseHTTPRequestHandler):
                 if body.get("submit") or "paste" in body:
                     time.sleep(0.12)  # let a paste settle before Enter
                 session.key(str(body["key"]), int(body.get("modifiers", 0)))
+            if "wheel" in body:
+                steps, column, row = body["wheel"]
+                require(
+                    all(position(value) for value in (column, row))
+                    and isinstance(steps, int)
+                    and not isinstance(steps, bool),
+                    "Invalid wheel",
+                )
+                session.wheel(steps, column, row)
         except (ValueError, TypeError, KeyError, GatewayError, OSError) as error:
             self.fail(HTTPStatus.BAD_REQUEST, str(error))
             return

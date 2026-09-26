@@ -177,12 +177,45 @@ void envelope_messages() {
     require(wire::frame(wire::Kind::ready, wire::encode_ready({attachment, 1})).size() == 53);
 }
 } // namespace
+// Wheel input and the alternate-screen byte that says a service takes it;
+// readers from before wheel input still read that byte as true.
+void wheel_messages() {
+    using namespace lapis::session;
+    const auto encoded = wire::encode_wheel({-3, 7, 9});
+    const auto decoded = wire::decode_wheel(encoded);
+    require(encoded.size() == 6 && decoded.steps == -3 && decoded.column == 7 && decoded.row == 9);
+    rejects([&] { static_cast<void>(wire::decode_wheel(encoded.first(5))); });
+    rejects([&] { static_cast<void>(wire::decode_wheel(wire::encode_wheel({0, 1, 1}))); });
+    const wire::Attachment attachment{{wire::new_id(), wire::new_id()}, 1};
+    const auto packet = wire::frame(wire::Kind::wheel, wire::encode_control({attachment, encoded}));
+    QByteArray buffer = packet;
+    wire::Frame frame;
+    require(wire::take_frame(buffer, frame) && frame.kind == wire::Kind::wheel);
+    QByteArray unknown = packet;
+    unknown[4] = static_cast<char>(static_cast<quint8>(wire::Kind::wheel) + 1);
+    rejects([&] { static_cast<void>(wire::take_frame(unknown, frame)); });
+
+    Terminal terminal({20, 4});
+    const auto primary = wire::encode_snapshot(terminal.snapshot());
+    require(primary[21] == 0 && !wire::decode_snapshot(primary).accepts_wheel);
+    terminal.feed("\x1b[?1049h");
+    auto alternate = wire::encode_snapshot(terminal.snapshot());
+    const auto taken = wire::decode_snapshot(alternate);
+    require(alternate[21] == 3 && taken.alternate_screen && taken.accepts_wheel);
+    alternate[21] = 1; // a service from before wheel input
+    const auto older = wire::decode_snapshot(alternate);
+    require(older.alternate_screen && !older.accepts_wheel);
+    alternate[21] = 4;
+    rejects([&] { static_cast<void>(wire::decode_snapshot(alternate)); });
+}
+
 int main() {
     using namespace lapis::session;
     try {
         identity_messages();
         envelope_messages();
         history_messages();
+        wheel_messages();
         Terminal terminal({20, 4});
         terminal.feed("A界é\x1b[1;31mZ\x1b[0m\x1b[?2004h");
         const auto expected = terminal.snapshot();
@@ -246,7 +279,7 @@ int main() {
         auto terminate = QByteArray::fromHex("000000010f");
         require(wire::take_frame(terminate, frame) && frame.kind == wire::Kind::terminate &&
                 frame.payload.isEmpty());
-        for (const auto* hex : {"00000000", "00800001", "0000000100", "0000000110"}) {
+        for (const auto* hex : {"00000000", "00800001", "0000000100", "0000000111"}) {
             auto malformed = QByteArray::fromHex(hex);
             rejects([&] { static_cast<void>(wire::take_frame(malformed, frame)); });
         }

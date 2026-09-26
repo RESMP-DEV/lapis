@@ -83,7 +83,7 @@ struct TerminalRow: View {
     private func drawText(_ string: String, run: Run, at column: Int, ink: Color, height: CGFloat,
                           in context: GraphicsContext) {
         guard !string.isEmpty, !string.allSatisfy({ $0 == " " }) else { return }
-        var text = Text(string)
+        var text = Text(TerminalRow.textPresentation(string))
             .font(.system(size: metrics.fontSize, weight: run.flags & Run.bold != 0 ? .bold : .regular,
                           design: .monospaced))
             .foregroundStyle(ink)
@@ -92,6 +92,27 @@ struct TerminalRow: View {
         if run.flags & Run.strike != 0 { text = text.strikethrough() }
         context.draw(text, at: CGPoint(x: CGFloat(column) * metrics.cellWidth, y: height / 2),
                      anchor: .leading)
+    }
+
+    // Symbols that are text by default but also have an emoji form, such as
+    // Claude Code's ⏺ before each message or ⏸, keep the text form the Mac's
+    // terminal draws, one cell wide: iOS would otherwise draw them as emoji
+    // tiles two cells wide. A program asking for the emoji (U+FE0F) keeps it.
+    static func textPresentation(_ string: String) -> String {
+        guard string.unicodeScalars.contains(where: emojiCapableText) else { return string }
+        var shown = ""
+        for character in string {
+            shown.append(character)
+            if character.unicodeScalars.count == 1, let scalar = character.unicodeScalars.first,
+               emojiCapableText(scalar) {
+                shown.unicodeScalars.append("\u{FE0E}")
+            }
+        }
+        return shown
+    }
+
+    private static func emojiCapableText(_ scalar: Unicode.Scalar) -> Bool {
+        scalar.value > 0x7F && scalar.properties.isEmoji && !scalar.properties.isEmojiPresentation
     }
 }
 
@@ -201,14 +222,19 @@ struct TerminalScreen: View {
         } ?? []
         let background = frame.flatMap { Color(hex: $0.background) } ?? Theme.background
         let foreground = frame.flatMap { Color(hex: $0.foreground) } ?? .white
+        // A full-screen program that takes the wheel shows only its screen:
+        // a drag scrolls the program (AgentView), not the archive above it.
+        let fullScreen = frame?.wheel == true
         ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: 0) {
-                if frame != nil {
+                if frame != nil && !fullScreen {
                     historyEdge
                 }
-                ForEach(cache.rows) { row in
-                    TerminalRow(runs: row.runs, columns: row.columns, metrics: metrics,
-                                foreground: foreground, background: background)
+                if !fullScreen {
+                    ForEach(cache.rows) { row in
+                        TerminalRow(runs: row.runs, columns: row.columns, metrics: metrics,
+                                    foreground: foreground, background: background)
+                    }
                 }
                 ForEach(liveRows) { row in
                     TerminalRow(runs: row.runs, columns: row.columns, metrics: metrics,
@@ -225,6 +251,7 @@ struct TerminalScreen: View {
             if nearTop && history.isEmpty { Task { await loadOlder() } }
         }
         .scrollIndicators(.hidden)
+        .scrollDisabled(fullScreen)
         .background(background)
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("terminal")

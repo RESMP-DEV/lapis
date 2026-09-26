@@ -995,6 +995,10 @@ class SessionService final : public QObject {
         case wire::Kind::terminate:
             end_agent(control.payload);
             return;
+        case wire::Kind::wheel:
+            // Scrolling reads; it does not take the size as typing does.
+            write_input(frame.kind, control.payload);
+            return;
         case wire::Kind::text:
         case wire::Kind::paste:
         case wire::Kind::key:
@@ -1017,6 +1021,11 @@ class SessionService final : public QObject {
                 std::string_view(payload.constData(), static_cast<std::size_t>(payload.size())));
             return {encoded.data(), static_cast<qsizetype>(encoded.size())};
         }
+        if (kind == wire::Kind::wheel) {
+            const auto wheel = wire::decode_wheel(payload);
+            const auto encoded = terminal_.encode_wheel({wheel.steps, wheel.column, wheel.row});
+            return {encoded.data(), static_cast<qsizetype>(encoded.size())};
+        }
         if (payload.size() != 2)
             throw std::runtime_error("Invalid key message");
         const auto key_value = static_cast<unsigned char>(payload[0]);
@@ -1029,7 +1038,9 @@ class SessionService final : public QObject {
         return {encoded.data(), static_cast<qsizetype>(encoded.size())};
     }
     void write_input(wire::Kind kind, const QByteArray& payload) {
-        if (!pty_.writeBytes(input_bytes(kind, payload)))
+        // A wheel over the primary screen sends the program nothing.
+        const auto bytes = input_bytes(kind, payload);
+        if (!bytes.isEmpty() && !pty_.writeBytes(bytes))
             throw std::runtime_error("PTY input queue full");
     }
     static TerminalSize decode_size(const QByteArray& payload) {
@@ -1297,9 +1308,14 @@ class SessionService final : public QObject {
             request_history(view.attachment, control.payload);
             return;
         }
+        if (frame.kind == wire::Kind::wheel) {
+            write_input(frame.kind, control.payload);
+            return;
+        }
         if (frame.kind != wire::Kind::text && frame.kind != wire::Kind::paste &&
             frame.kind != wire::Kind::key)
-            throw std::runtime_error("A joined view may only type, resize and page history");
+            throw std::runtime_error(
+                "A joined view may only type, scroll, resize and page history");
         claim_size(view.wanted, view.id);
         write_input(frame.kind, control.payload);
     }
