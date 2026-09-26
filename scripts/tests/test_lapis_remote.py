@@ -587,6 +587,126 @@ class StartAgentTests(unittest.TestCase):
                 self.assertEqual(status, 400, body)
             self.assertEqual(len(desktop.requests), asked, "bad names reach nothing")
 
+    def test_the_phone_arranges_categories_and_agents_through_the_mac(self):
+        def answer(request):
+            if request["request"] == "removeCategory" and request["id"] == "full":
+                return {"ok": False, "error": "Move the agents out first."}
+            return {"ok": True}
+
+        with (
+            Server(self, "{}") as server,
+            FakeDesktop(server.directory, answer) as desktop,
+        ):
+            for path, body, asked in (
+                (
+                    "/api/categories/c1/rename",
+                    {"name": " Someday "},
+                    {"request": "renameCategory", "id": "c1", "name": "Someday"},
+                ),
+                (
+                    "/api/categories/c1/place",
+                    {"index": 0},
+                    {"request": "placeCategory", "id": "c1", "index": 0},
+                ),
+                (
+                    "/api/categories/c1/remove",
+                    None,
+                    {"request": "removeCategory", "id": "c1"},
+                ),
+                (
+                    "/api/agents/a1/place",
+                    {"category": "c2", "index": 1},
+                    {"request": "placeAgent", "id": "a1", "category": "c2", "index": 1},
+                ),
+                (
+                    "/api/agents/a1/place",
+                    {"category": "c2"},
+                    {
+                        "request": "placeAgent",
+                        "id": "a1",
+                        "category": "c2",
+                        "index": 1 << 20,
+                    },
+                ),
+                (
+                    "/api/agents/a1/restart",
+                    None,
+                    {"request": "restartAgent", "id": "a1"},
+                ),
+            ):
+                status, reply = server.request("POST", path, body)
+                self.assertEqual((status, reply), (200, {"ok": True}), path)
+                self.assertEqual(desktop.requests[-1], {"version": 1, **asked})
+            status, refused = server.request("POST", "/api/categories/full/remove")
+            self.assertEqual(
+                (status, refused), (422, {"error": "Move the agents out first."})
+            )
+            asked = len(desktop.requests)
+            for path, body in (
+                ("/api/categories/c1/rename", {"name": ""}),
+                ("/api/categories/c1/place", {"index": -1}),
+                ("/api/categories/c1/place", {"index": True}),
+                ("/api/categories/c1/place", {"index": "0"}),
+                ("/api/agents/a1/place", {"index": 0}),
+                ("/api/agents/a1/place", {"category": "c2", "index": 1.5}),
+                ("/api/agents/a1/place", ["c2"]),
+            ):
+                status, _ = server.request("POST", path, body)
+                self.assertEqual(status, 400, (path, body))
+            self.assertEqual(len(desktop.requests), asked, "bad requests reach nothing")
+
+    def test_the_phone_reads_and_changes_the_macs_settings(self):
+        settings = {
+            "keepAwake": True,
+            "alertSound": True,
+            "alertRepeat": 3,
+            "finishSound": True,
+            "notify": True,
+            "showUsage": True,
+        }
+
+        def answer(request):
+            settings.update(request.get("settings", {}))
+            return {"ok": True, "settings": settings}
+
+        with (
+            Server(self, "{}") as server,
+            FakeDesktop(server.directory, answer) as desktop,
+        ):
+            status, shown = server.request("GET", "/api/settings")
+            self.assertEqual((status, shown), (200, {"settings": settings}))
+            self.assertEqual(
+                desktop.requests[-1], {"version": 1, "request": "settings"}
+            )
+            status, changed = server.request(
+                "POST", "/api/settings", {"keepAwake": False, "alertRepeat": 5}
+            )
+            self.assertEqual(status, 200)
+            self.assertFalse(changed["settings"]["keepAwake"])
+            self.assertEqual(changed["settings"]["alertRepeat"], 5)
+            self.assertEqual(
+                desktop.requests[-1],
+                {
+                    "version": 1,
+                    "request": "changeSettings",
+                    "settings": {"keepAwake": False, "alertRepeat": 5},
+                },
+            )
+            asked = len(desktop.requests)
+            # The Mac's window appearance is not the phone's to change.
+            for body in (
+                {"theme": "amber"},
+                {"keepAwake": "no"},
+                {"keepAwake": 0},
+                {"alertRepeat": 0},
+                {"alertRepeat": 11},
+                {"alertRepeat": True},
+                ["keepAwake"],
+            ):
+                status, _ = server.request("POST", "/api/settings", body)
+                self.assertEqual(status, 400, body)
+            self.assertEqual(len(desktop.requests), asked, "bad settings reach nothing")
+
     def test_terminals_open_list_and_close_through_the_mac(self):
         def answer(request):
             if request["request"] == "openTerminal":
