@@ -9,6 +9,8 @@ struct AgentView: View {
     @FocusState private var composing: Bool
     @AppStorage("terminalFontSize") private var fontSize = 12.0
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(WorkspaceModel.self) private var model
+    @State private var restarting = false
     // A swipe left (+1) or right (-1) over the screen moves to a neighbor.
     private let onSwipe: ((Int) -> Void)?
 
@@ -157,6 +159,13 @@ struct AgentView: View {
         }
     }
 
+    // The Mac lists this agent as not running; a terminal only closes.
+    private var stopped: Bool {
+        guard !session.agent.id.hasPrefix("terminal-") else { return false }
+        let listed = model.listing?.categories.flatMap(\.agents).first { $0.id == session.agent.id }
+        return listed.map { !$0.running } ?? false
+    }
+
     @ViewBuilder private var banner: some View {
         switch session.state {
         case .connecting:
@@ -176,9 +185,30 @@ struct AgentView: View {
                     .multilineTextAlignment(.center)
                     .accessibilityIdentifier("closedReason")
                 if let size = session.size {
-                    Button("Open here again") { session.open(columns: size.columns, rows: size.rows) }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("reopen")
+                    HStack(spacing: 10) {
+                        Button("Open here again") { session.open(columns: size.columns, rows: size.rows) }
+                            .buttonStyle(.bordered)
+                            .accessibilityIdentifier("reopen")
+                        // A stopped agent starts again on the Mac, as Restart agent does there.
+                        if stopped {
+                            Button(restarting ? "Restarting…" : "Restart agent") {
+                                Task {
+                                    restarting = true
+                                    if await model.restart(session.agent) {
+                                        session.open(columns: size.columns, rows: size.rows)
+                                    } else {
+                                        // Shown here, over the agent.
+                                        session.notice = model.notice
+                                        model.notice = nil
+                                    }
+                                    restarting = false
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(restarting)
+                            .accessibilityIdentifier("restart")
+                        }
+                    }
                 }
             }
             .frame(maxWidth: .infinity)

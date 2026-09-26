@@ -388,6 +388,144 @@ final class LapisUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter().wait(for: [at("1 of 2")], timeout: 10), .completed, "and back")
     }
 
+    private func eventually(_ what: String, timeout: TimeInterval = 20, _ condition: () -> Bool) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        XCTFail(what)
+    }
+
+    private func replaceAlertText(with text: String) {
+        let field = app.alerts.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        let current = (field.value as? String) ?? ""
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count + 2))
+        field.typeText(text)
+    }
+
+    private func menuItem(_ label: String) -> XCUIElement {
+        let item = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", label)).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "the menu offers \(label)")
+        return item
+    }
+
+    private func drag(_ name: String, onto target: String) {
+        let handle = { (row: String) in
+            self.app.cells.containing(.button, identifier: "edit-category-\(row)")
+                .buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "reorder")).firstMatch
+        }
+        XCTAssertTrue(handle(name).waitForExistence(timeout: 5), "\(name) has a drag handle")
+        handle(name).press(forDuration: 0.8, thenDragTo: handle(target))
+    }
+
+    // Categories are arranged from the phone as on the Mac: renamed from a
+    // category's menu, added and ordered under Arrange categories, and removed
+    // once empty; one with agents stays.
+    func testArrangeCategoriesFromThePhone() throws {
+        let menu = app.buttons["category-menu-Later"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 30), "each category has a menu")
+        menu.tap()
+        menuItem("Rename").tap()
+        replaceAlertText(with: "Someday")
+        app.alerts.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["category-Someday"].waitForExistence(timeout: 20), "renamed on the Mac")
+        app.buttons["category-menu-Build"].tap()
+        XCTAssertFalse(menuItem("Remove").isEnabled, "a category with agents stays")
+        menuItem("Arrange categories").tap()
+        let add = app.buttons["addCategory"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10), "the categories open")
+        add.tap()
+        let name = app.alerts.textFields.firstMatch
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.typeText("Scratch")
+        app.alerts.buttons["Create"].tap()
+        XCTAssertTrue(app.buttons["edit-category-Scratch"].waitForExistence(timeout: 20), "a category is added")
+        drag("Someday", onto: "Build")
+        let row = { (category: String) in self.app.buttons["edit-category-\(category)"] }
+        eventually("Someday moves to the top") { row("Someday").frame.minY < row("Build").frame.minY }
+        snap("16-categories")
+        app.buttons["Done"].tap()
+        let header = { (category: String) in self.app.staticTexts["category-\(category)"] }
+        eventually("the list follows the Mac's order") { header("Someday").frame.minY < header("Build").frame.minY }
+        app.buttons["category-menu-Scratch"].tap()
+        menuItem("Remove").tap()
+        XCTAssertTrue(waitForGone(header("Scratch"), timeout: 20), "the empty category is removed")
+        // As it was, for the other tests: renamed by tapping it, and second.
+        app.buttons["category-menu-Someday"].tap()
+        menuItem("Arrange categories").tap()
+        XCTAssertTrue(row("Someday").waitForExistence(timeout: 10))
+        row("Someday").tap()
+        replaceAlertText(with: "Later")
+        app.alerts.buttons["Save"].tap()
+        XCTAssertTrue(row("Later").waitForExistence(timeout: 20), "renamed from the list")
+        drag("Later", onto: "Build")
+        eventually("Later moves back below Build") { row("Build").frame.minY < row("Later").frame.minY }
+        app.buttons["Done"].tap()
+        eventually("the list has it back") { header("Build").frame.minY < header("Later").frame.minY }
+    }
+
+    // An agent moves to another category, and along its own, from its menu.
+    func testMoveAgentsFromThePhone() throws {
+        let parked = app.buttons["agent-parked"]
+        XCTAssertTrue(parked.waitForExistence(timeout: 30))
+        let later = app.staticTexts["category-Later"]
+        parked.press(forDuration: 1.2)
+        menuItem("Move to").tap()
+        menuItem("Build").tap()
+        eventually("it is listed under Build") { parked.frame.maxY < later.frame.minY }
+        parked.press(forDuration: 1.2)
+        XCTAssertFalse(menuItem("Move later").isEnabled, "the last agent cannot move later")
+        menuItem("Move earlier").tap()
+        let second = app.buttons["agent-second agent"]
+        eventually("it moves before the agent above it") { parked.frame.minY < second.frame.minY }
+        snap("17-moved")
+        parked.press(forDuration: 1.2)
+        menuItem("Move to").tap()
+        menuItem("Later").tap()
+        eventually("and back to Later") { parked.frame.minY > later.frame.minY }
+    }
+
+    // The Mac's own settings that matter away from it change from the phone
+    // and are saved there (the check reads the Mac's lapis.json afterwards).
+    func testMacSettingsFromThePhone() throws {
+        let settings = app.buttons["settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 20))
+        settings.tap()
+        let usage = app.switches["showUsage"]
+        for _ in 0..<3 where !usage.exists {
+            app.swipeUp()
+            _ = usage.waitForExistence(timeout: 5)
+        }
+        XCTAssertTrue(usage.exists, "the Mac's settings load")
+        XCTAssertEqual(usage.value as? String, "1")
+        usage.switches.firstMatch.tap()
+        eventually("usage turns off") { usage.value as? String == "0" }
+        app.buttons["alertRepeat-Increment"].tap()
+        XCTAssertTrue(app.staticTexts["Chime up to 4 times"].waitForExistence(timeout: 10))
+        snap("18-mac-settings")
+        app.buttons["Done"].tap()
+        settings.tap()
+        for _ in 0..<3 where !usage.exists {
+            app.swipeUp()
+            _ = usage.waitForExistence(timeout: 5)
+        }
+        XCTAssertEqual(usage.value as? String, "0", "the Mac kept it")
+        app.buttons["Done"].tap()
+    }
+
+    // A stopped agent restarts from its menu, as Restart agent does on the Mac.
+    func testRestartAStoppedAgent() throws {
+        let parked = app.buttons["agent-parked"]
+        XCTAssertTrue(parked.waitForExistence(timeout: 30))
+        XCTAssertFalse(parked.label.contains("running"), "it starts stopped")
+        parked.press(forDuration: 1.2)
+        menuItem("Restart").tap()
+        eventually("it runs again", timeout: 30) { parked.label.contains("running") }
+    }
+
     // Past conversations on the Mac are offered to resume from the plus.
     func testResumeIsOffered() throws {
         let add = app.buttons["add"]

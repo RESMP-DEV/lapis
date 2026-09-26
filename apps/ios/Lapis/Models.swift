@@ -11,6 +11,11 @@ final class WorkspaceModel {
     }
     var listing: WorkspaceListing?
     var error: String?
+    // Why the Mac refused a change made here, until it is dismissed.
+    var notice: String?
+    // The Mac's settings, read when Settings opens; `settingsError` says why not.
+    var macSettings: MacSettings?
+    var settingsError: String?
     // Fetched ahead in the background so the new-agent sheet never waits.
     var harnesses: [Harness]?
     var defaults: AgentDefaults?
@@ -254,31 +259,125 @@ extension WorkspaceModel {
 
     // Names the agent on the Mac and here.
     func rename(_ agent: Agent, to title: String) async {
-        guard let gateway else { return }
-        do {
-            try await gateway.rename(agent: agent.id, title: title)
-        } catch {
-            self.error = describe(error)
-        }
-        await refresh()
+        await change { try await $0.rename(agent: agent.id, title: title) }
     }
 
     // Ends the agent on the Mac; it leaves the list at once.
     func close(_ agent: Agent) async {
-        guard let gateway else { return }
-        if let current = listing {
-            listing = WorkspaceListing(
-                categories: current.categories.map {
-                    AgentCategory(id: $0.id, name: $0.name, agents: $0.agents.filter { $0.id != agent.id })
-                },
-                activeCategory: current.activeCategory)
+        arrange { categories in
+            for index in categories.indices {
+                categories[index] = categories[index].with(categories[index].agents.filter { $0.id != agent.id })
+            }
         }
+        await change { try await $0.close(agent: agent.id) }
+    }
+}
+
+// Categories and agents are arranged on the Mac, under its rules: the list
+// shows a change at once, then the Mac's own list, and a refusal stays in
+// `notice`.
+extension WorkspaceModel {
+    private func arrange(_ change: (inout [AgentCategory]) -> Void) {
+        guard let current = listing else { return }
+        var categories = current.categories
+        change(&categories)
+        listing = WorkspaceListing(categories: categories, activeCategory: current.activeCategory)
+    }
+
+    private func change(_ action: (Gateway) async throws -> Void) async {
+        guard let gateway else { return }
         do {
-            try await gateway.close(agent: agent.id)
+            try await action(gateway)
         } catch {
-            self.error = describe(error)
+            notice = describe(error)
         }
         await refresh()
+    }
+
+    func renameCategory(_ id: String, to name: String) async {
+        arrange { categories in
+            if let index = categories.firstIndex(where: { $0.id == id }) {
+                categories[index] = AgentCategory(id: id, name: name, agents: categories[index].agents)
+            }
+        }
+        await change { try await $0.renameCategory(id, to: name) }
+    }
+
+    // Only an empty category goes, and one always stays.
+    func removeCategory(_ id: String) async {
+        arrange { categories in
+            if categories.count > 1 { categories.removeAll { $0.id == id && $0.agents.isEmpty } }
+        }
+        await change { try await $0.removeCategory(id) }
+    }
+
+    // Moves a category to `index` in the list.
+    func placeCategory(_ id: String, at index: Int) async {
+        arrange { categories in
+            guard let from = categories.firstIndex(where: { $0.id == id }) else { return }
+            let moved = categories.remove(at: from)
+            categories.insert(moved, at: min(max(index, 0), categories.count))
+        }
+        await change { try await $0.placeCategory(id, at: index) }
+    }
+
+    // Moves an agent into `category` at `index` among its other agents, or last.
+    func place(_ agent: Agent, in category: String, at index: Int? = nil) async {
+        arrange { categories in
+            for position in categories.indices {
+                categories[position] = categories[position].with(
+                    categories[position].agents.filter { $0.id != agent.id })
+            }
+            if let target = categories.firstIndex(where: { $0.id == category }) {
+                var agents = categories[target].agents
+                agents.insert(agent, at: min(index ?? agents.count, agents.count))
+                categories[target] = categories[target].with(agents)
+            }
+        }
+        await change { try await $0.place(agent: agent.id, category: category, at: index) }
+    }
+
+    // Starts a stopped agent again on the Mac, resuming its conversation where
+    // its CLI can; true once it runs.
+    func restart(_ agent: Agent) async -> Bool {
+        guard let gateway else { return false }
+        do {
+            try await gateway.restart(agent: agent.id)
+            let deadline = Date().addingTimeInterval(20)
+            while Date() < deadline {
+                let current = try await gateway.agents()
+                listing = current
+                if current.categories.flatMap(\.agents).contains(where: { $0.id == agent.id && $0.running }) {
+                    return true
+                }
+                try await Task.sleep(for: .milliseconds(400))
+            }
+            notice = "The agent has not started yet. It is in the list on the Mac."
+        } catch {
+            notice = describe(error)
+        }
+        return false
+    }
+
+    func loadMacSettings() async {
+        guard let gateway else { return }
+        do {
+            macSettings = try await gateway.settings()
+            settingsError = nil
+        } catch {
+            settingsError = describe(error)
+        }
+    }
+
+    // Changes Mac settings; they show changed at once, then as the Mac saved them.
+    func changeMacSettings(_ changes: [String: Any]) async {
+        guard let gateway else { return }
+        do {
+            macSettings = try await gateway.change(settings: changes)
+        } catch {
+            notice = describe(error)
+            await loadMacSettings()
+        }
     }
 }
 

@@ -13,6 +13,10 @@ struct AgentCategory: Codable, Identifiable {
     let id: String
     let name: String
     let agents: [Agent]
+
+    func with(_ agents: [Agent]) -> AgentCategory {
+        AgentCategory(id: id, name: name, agents: agents)
+    }
 }
 
 struct Agent: Codable, Identifiable, Hashable {
@@ -129,6 +133,18 @@ struct FolderPayload: Codable {
     let harnesses: [String: String]?
     // How active each folder has been (recent and frequent agent work).
     let activity: [String: Double]?
+}
+
+// The Mac's settings the phone can change, kept in lapis.json there: staying
+// awake so the phone can reach it, its alerts, and its plan usage meter. How
+// the Mac's window looks is set on the Mac.
+struct MacSettings: Codable, Equatable {
+    var keepAwake: Bool
+    var alertSound: Bool
+    var alertRepeat: Int
+    var finishSound: Bool
+    var notify: Bool
+    var showUsage: Bool
 }
 
 struct StartedAgent: Decodable {
@@ -431,6 +447,56 @@ struct Gateway {
         let (data, response) = try await Gateway.requests.data(for: request)
         try Gateway.check(response, data)
         return try JSONDecoder().decode(HistoryPage.self, from: data)
+    }
+
+    // A change to the Mac's workspace or settings, as JSON; the Mac's answer.
+    @discardableResult
+    private func post(_ path: String, _ body: [String: Any] = [:]) async throws -> Data {
+        var request = request(path)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await Gateway.requests.data(for: request)
+        try Gateway.check(response, data)
+        return data
+    }
+
+    func renameCategory(_ id: String, to name: String) async throws {
+        try await post("api/categories/\(id)/rename", ["name": name])
+    }
+
+    // Only an empty category goes, and one always stays; the Mac says why not.
+    func removeCategory(_ id: String) async throws {
+        try await post("api/categories/\(id)/remove")
+    }
+
+    func placeCategory(_ id: String, at index: Int) async throws {
+        try await post("api/categories/\(id)/place", ["index": index])
+    }
+
+    // Puts the agent at `index` among the category's other agents, or last.
+    func place(agent: String, category: String, at index: Int?) async throws {
+        var body: [String: Any] = ["category": category]
+        if let index { body["index"] = index }
+        try await post("api/agents/\(agent)/place", body)
+    }
+
+    // Starts a stopped agent again, resuming its conversation where its CLI can.
+    func restart(agent: String) async throws {
+        try await post("api/agents/\(agent)/restart")
+    }
+
+    func settings() async throws -> MacSettings {
+        struct Reply: Decodable { let settings: MacSettings }
+        let (data, response) = try await Gateway.requests.data(for: request("api/settings"))
+        try Gateway.check(response, data)
+        return try JSONDecoder().decode(Reply.self, from: data).settings
+    }
+
+    // Changes some settings; the answer is all of them.
+    func change(settings changes: [String: Any]) async throws -> MacSettings {
+        struct Reply: Decodable { let settings: MacSettings }
+        return try JSONDecoder().decode(Reply.self, from: try await post("api/settings", changes)).settings
     }
 
     // A screenshot and what the phone drew, saved on the Mac for debugging.

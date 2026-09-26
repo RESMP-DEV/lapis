@@ -13,6 +13,8 @@ struct AgentListView: View {
     @State private var renaming: Agent?
     @State private var newName = ""
     @State private var resuming: NewAgentTarget?
+    @State private var renamingCategory: AgentCategory?
+    @State private var arranging = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -95,6 +97,32 @@ struct AgentListView: View {
                 } message: {
                     Text("It keeps this name instead of its conversation's title.")
                 }
+                .alert("Rename category", isPresented: Binding(get: { renamingCategory != nil },
+                                                               set: { if !$0 { renamingCategory = nil } })) {
+                    TextField("Name", text: $categoryName)
+                        .accessibilityIdentifier("categoryNewName")
+                    Button("Save") {
+                        let chosen = categoryName.trimmingCharacters(in: .whitespaces)
+                        if let category = renamingCategory, !chosen.isEmpty, chosen != category.name {
+                            Task { await model.renameCategory(category.id, to: String(chosen.prefix(80))) }
+                        }
+                        renamingCategory = nil
+                    }
+                    .disabled(categoryName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Cancel", role: .cancel) { renamingCategory = nil }
+                }
+                .sheet(isPresented: $arranging) {
+                    NavigationStack {
+                        CategoriesView()
+                            .toolbar {
+                                ToolbarItem(placement: .confirmationAction) {
+                                    Button("Done") { arranging = false }
+                                }
+                            }
+                    }
+                    .presentationBackground(Theme.background)
+                }
+                .modifier(MacNotice())
                 // The agent opens once the sheet has gone.
                 .sheet(item: $newAgent, onDismiss: {
                     if let agent = started {
@@ -129,6 +157,41 @@ struct AgentListView: View {
         if let agent = started {
             started = nil
             path.append(agent)
+        }
+    }
+
+    private func agentRow(_ agent: Agent, in category: AgentCategory, of categories: [AgentCategory]) -> some View {
+        Button {
+            path.append(agent)
+        } label: {
+            AgentCard(agent: agent)
+        }
+        .buttonStyle(CardPress())
+        .accessibilityIdentifier("agent-\(agent.title)")
+        .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(role: .destructive) {
+                Task { await model.close(agent) }
+            } label: {
+                Label("Close", systemImage: "xmark")
+            }
+        }
+        .swipeActions(edge: .leading) {
+            Button {
+                newName = agent.title
+                renaming = agent
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            .tint(Theme.accent)
+        }
+        .contextMenu {
+            AgentActions(agent: agent, category: category, categories: categories) {
+                newName = agent.title
+                renaming = agent
+            }
         }
     }
 
@@ -184,16 +247,20 @@ struct AgentListView: View {
                     }
                 }
                 ForEach(listing.categories) { category in
-                    Text(category.name)
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        .textCase(.uppercase)
-                        .tracking(1.6)
-                        .foregroundStyle(Theme.quiet)
+                    CategoryHeader(
+                        category: category,
+                        last: listing.categories.count == 1,
+                        newAgent: { newAgent = NewAgentTarget(category: category.id) },
+                        rename: {
+                            categoryName = category.name
+                            renamingCategory = category
+                        },
+                        remove: { Task { await model.removeCategory(category.id) } },
+                        arrange: { arranging = true })
                         .padding(.top, 14)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 2, trailing: 16))
+                        .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 2, trailing: 8))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
-                        .accessibilityIdentifier("category-\(category.name)")
                     if category.agents.isEmpty {
                         Text("No agents")
                             .font(.footnote)
@@ -203,40 +270,7 @@ struct AgentListView: View {
                             .listRowSeparator(.hidden)
                     }
                     ForEach(category.agents) { agent in
-                        Button {
-                            path.append(agent)
-                        } label: {
-                            AgentCard(agent: agent)
-                        }
-                        .buttonStyle(CardPress())
-                        .accessibilityIdentifier("agent-\(agent.title)")
-                        .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button(role: .destructive) {
-                                Task { await model.close(agent) }
-                            } label: {
-                                Label("Close", systemImage: "xmark")
-                            }
-                        }
-                        .swipeActions(edge: .leading) {
-                            Button {
-                                newName = agent.title
-                                renaming = agent
-                            } label: {
-                                Label("Rename", systemImage: "pencil")
-                            }
-                            .tint(Theme.accent)
-                        }
-                        .contextMenu {
-                            Button {
-                                newName = agent.title
-                                renaming = agent
-                            } label: {
-                                Label("Rename", systemImage: "pencil")
-                            }
-                        }
+                        agentRow(agent, in: category, of: listing.categories)
                     }
                 }
             }
@@ -255,6 +289,117 @@ struct AgentListView: View {
         } else {
             ProgressView("Connecting to \(model.host)")
                 .foregroundStyle(Theme.quiet)
+        }
+    }
+}
+
+// A category's name over its agents, with what can be done to it: from the
+// menu at its end, or by holding it.
+struct CategoryHeader: View {
+    let category: AgentCategory
+    let last: Bool
+    let newAgent: () -> Void
+    let rename: () -> Void
+    let remove: () -> Void
+    let arrange: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(category.name)
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .textCase(.uppercase)
+                .tracking(1.6)
+                .foregroundStyle(Theme.quiet)
+                .accessibilityIdentifier("category-\(category.name)")
+            Spacer(minLength: 8)
+            Menu {
+                actions
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.quiet)
+                    .frame(width: 36, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("\(category.name) actions")
+            .accessibilityIdentifier("category-menu-\(category.name)")
+        }
+        .contentShape(Rectangle())
+        .contextMenu { actions }
+    }
+
+    @ViewBuilder private var actions: some View {
+        Button(action: newAgent) {
+            Label("New agent here", systemImage: "terminal")
+        }
+        Button(action: rename) {
+            Label("Rename", systemImage: "pencil")
+        }
+        Button(action: arrange) {
+            Label("Arrange categories", systemImage: "arrow.up.arrow.down")
+        }
+        Button(role: .destructive, action: remove) {
+            Label("Remove", systemImage: "trash")
+            if last {
+                Text("One category always stays")
+            } else if !category.agents.isEmpty {
+                Text("Move its agents out first")
+            }
+        }
+        .disabled(last || !category.agents.isEmpty)
+    }
+}
+
+// What can be done to an agent from the list, as from the Mac's commands:
+// rename it, move it to another category or along its own, restart it once
+// stopped, or close it.
+struct AgentActions: View {
+    @Environment(WorkspaceModel.self) private var model
+    let agent: Agent
+    let category: AgentCategory
+    let categories: [AgentCategory]
+    let rename: () -> Void
+
+    var body: some View {
+        let position = category.agents.firstIndex { $0.id == agent.id } ?? 0
+        Button(action: rename) {
+            Label("Rename", systemImage: "pencil")
+        }
+        if categories.count > 1 {
+            Menu {
+                ForEach(categories.filter { $0.id != category.id }) { other in
+                    Button(other.name) {
+                        Task { await model.place(agent, in: other.id) }
+                    }
+                }
+            } label: {
+                Label("Move to", systemImage: "folder")
+            }
+        }
+        Button {
+            Task { await model.place(agent, in: category.id, at: position - 1) }
+        } label: {
+            Label("Move earlier", systemImage: "arrow.up")
+        }
+        .disabled(position == 0)
+        Button {
+            Task { await model.place(agent, in: category.id, at: position + 1) }
+        } label: {
+            Label("Move later", systemImage: "arrow.down")
+        }
+        .disabled(position >= category.agents.count - 1)
+        if !agent.running {
+            Button {
+                Task { _ = await model.restart(agent) }
+            } label: {
+                Label("Restart", systemImage: "arrow.clockwise")
+            }
+        }
+        Divider()
+        Button(role: .destructive) {
+            Task { await model.close(agent) }
+        } label: {
+            Label("Close", systemImage: "xmark")
         }
     }
 }
