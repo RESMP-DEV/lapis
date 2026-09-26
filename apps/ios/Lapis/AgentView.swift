@@ -9,9 +9,12 @@ struct AgentView: View {
     @FocusState private var composing: Bool
     @AppStorage("terminalFontSize") private var fontSize = 12.0
     @Environment(\.scenePhase) private var scenePhase
+    // A swipe left (+1) or right (-1) over the screen moves to a neighbor.
+    private let onSwipe: ((Int) -> Void)?
 
-    init(agent: Agent, gateway: Gateway?) {
+    init(agent: Agent, gateway: Gateway?, onSwipe: ((Int) -> Void)? = nil) {
         _session = State(initialValue: AgentSession(agent: agent, gateway: gateway))
+        self.onSwipe = onSwipe
     }
 
     private var metrics: TerminalMetrics { TerminalMetrics(fontSize: fontSize) }
@@ -30,6 +33,13 @@ struct AgentView: View {
                     .onChange(of: fontSize) { _, _ in fit(proxy.size, force: true) }
                     .onTapGesture { composing = true }
             }
+            // Only the screen: the key bar scrolls sideways itself.
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 24).onEnded { value in
+                    let (dx, dy) = (value.translation.width, value.translation.height)
+                    guard let onSwipe, abs(dx) > 70, abs(dx) > abs(dy) * 2 else { return }
+                    onSwipe(dx < 0 ? 1 : -1)
+                })
             banner
             // The Mac's terminal encodes named keys for the agent's current modes.
             KeyBar { input in session.send(input) }

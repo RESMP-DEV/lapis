@@ -21,7 +21,7 @@ struct AgentListView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(Theme.background, for: .navigationBar)
                 .navigationDestination(for: Agent.self) { agent in
-                    AgentView(agent: agent, gateway: model.gateway)
+                    AgentPager(agent: agent)
                 }
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
@@ -432,5 +432,62 @@ extension EnvironmentValues {
     var isPressedCard: Bool {
         get { self[PressedCardKey.self] }
         set { self[PressedCardKey.self] = newValue }
+    }
+}
+
+// An agent's screen; swiping left or right over it moves to the next or
+// previous agent in its category (or among the terminals), like pages, so the
+// list is only needed to change category.
+struct AgentPager: View {
+    @Environment(WorkspaceModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var current: Agent
+    @State private var forward = true
+
+    init(agent: Agent) {
+        _current = State(initialValue: agent)
+    }
+
+    private var siblings: [Agent] {
+        if current.id.hasPrefix("terminal-") { return model.terminals.map(\.asAgent) }
+        let category = model.listing?.categories.first { $0.agents.contains { $0.id == current.id } }
+        return category?.agents ?? [current]
+    }
+
+    var body: some View {
+        let list = siblings
+        let index = list.firstIndex { $0.id == current.id }
+        let shown = index.map { list[$0] } ?? current
+        ZStack {
+            AgentView(agent: current, gateway: model.gateway) { step in
+                guard let index, list.indices.contains(index + step) else { return }
+                forward = step > 0
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                if reduceMotion {
+                    current = list[index + step]
+                } else {
+                    withAnimation(.easeOut(duration: 0.2)) { current = list[index + step] }
+                }
+            }
+            .id(current.id)
+            .transition(.asymmetric(insertion: .move(edge: forward ? .trailing : .leading),
+                                    removal: .move(edge: forward ? .leading : .trailing)))
+        }
+        .clipped()
+        .toolbar {
+            if let index, list.count > 1 {
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 1) {
+                        Text(shown.title)
+                            .font(.headline)
+                            .lineLimit(1)
+                        Text("\(index + 1) of \(list.count)")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(Theme.quiet)
+                            .accessibilityIdentifier("agentPosition")
+                    }
+                }
+            }
+        }
     }
 }

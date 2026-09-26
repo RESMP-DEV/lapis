@@ -368,6 +368,26 @@ final class LapisUITests: XCTestCase {
         }
     }
 
+    // Swiping over an agent's screen moves to the next agent in its category,
+    // and back, without the list.
+    func testSwipeBetweenAgents() throws {
+        let terminal = try openEchoAgent()
+        let position = app.staticTexts["agentPosition"]
+        XCTAssertTrue(position.waitForExistence(timeout: 10), "the position in the category shows")
+        XCTAssertEqual(position.label, "1 of 2")
+        let at = { (label: String) in
+            XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", label),
+                                      object: self.app.staticTexts["agentPosition"])
+        }
+        terminal.swipeLeft()
+        XCTAssertEqual(XCTWaiter().wait(for: [at("2 of 2")], timeout: 10), .completed, "the next agent")
+        let second = app.descendants(matching: .any)["terminal"]
+        waitFor(second, valueContaining: "new conversation")
+        snap("15-swiped")
+        second.swipeRight()
+        XCTAssertEqual(XCTWaiter().wait(for: [at("1 of 2")], timeout: 10), .completed, "and back")
+    }
+
     // Past conversations on the Mac are offered to resume from the plus.
     func testResumeIsOffered() throws {
         let add = app.buttons["add"]

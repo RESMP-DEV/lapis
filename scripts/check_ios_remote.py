@@ -1,7 +1,8 @@
 """Run the lapis iPhone app's UI tests in the iOS Simulator against real services.
 
 Starts, all disposable and on this Mac:
-- a session service running tools/qa/fake_agent.py ("echo agent"),
+- session services running tools/qa/fake_agent.py ("echo agent" and, to
+  swipe to, "second agent"),
 - optionally real Codex (managed mode) and Claude Code agents against
   scripts/fake_models.py, so no model usage is spent ("codex fake",
   "claude fake"),
@@ -444,6 +445,20 @@ def main():
                 ROOT,
             )
         ]
+        # A second live agent in the same category, to swipe to.
+        second = str(uuid.uuid4())
+        agents.append(
+            agent(
+                second,
+                "second agent",
+                "build",
+                "grok",
+                run.service(second, python, [fake], ROOT),
+                python,
+                [fake],
+                ROOT,
+            )
+        )
         parked = str(uuid.uuid4())
         agents.append(
             agent(
