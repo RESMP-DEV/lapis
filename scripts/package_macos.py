@@ -778,7 +778,13 @@ def check_identifying_strings(problems):
     host = socket.gethostname()
     terms = {f"/Users/{getpass.getuser()}", "/opt/homebrew", host, host.split(".")[0]}
     terms.update(filter(None, os.environ.get("LAPIS_SWEEP_TERMS", "").split(",")))
-    needles = {term.encode() for term in terms if len(term) >= 4}
+    # Qt keeps string literals as UTF-16, so look for those spellings too.
+    needles = {
+        term.encode(encoding)
+        for term in terms
+        if len(term) >= 4
+        for encoding in ("utf-8", "utf-16-le", "utf-16-be")
+    }
     for path in sorted(APP.rglob("*")):
         if path.is_symlink() or not path.is_file():
             continue

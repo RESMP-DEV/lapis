@@ -34,10 +34,8 @@ for line in sys.stdin:
 
 
 def history(client, request_id, reference=0, newer=False):
-    client.send(
-        HISTORY_REQUEST,
-        client.attachment + struct.pack(">QQB", request_id, reference, newer),
-    )
+    # The client adds the attachment to every control message.
+    client.send(HISTORY_REQUEST, struct.pack(">QQB", request_id, reference, newer))
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         kind, payload = client.receive(max(0.01, deadline - time.monotonic()))
@@ -45,7 +43,10 @@ def history(client, request_id, reference=0, newer=False):
             client.sequence = struct.unpack_from(">Q", payload, 40)[0]
             client.cached_snapshot = decode_snapshot(payload[72:])
             continue
-        require(kind == HISTORY_PAGE, "Expected history reply")
+        require(
+            kind == HISTORY_PAGE,
+            f"Expected history reply, got {kind}: {payload[:200]!r}",
+        )
         require(payload[:40] == client.attachment, "History attachment mismatch")
         reply_id, page_id, length = struct.unpack_from(">QQI", payload, 40)
         require(
@@ -100,13 +101,13 @@ def exercise(binary, runtime, artifacts, history_root):
             client.snapshot(lambda s: "ECHO:LIVE_OK" in s["text"])
             newest, _, _ = history(client, 31)
             require(newest >= ids[0], "Reattachment lost archive")
-            pages = list(history_root.glob("*/*.page"))
-            require(pages, "No history pages were written")
+            pages = list(history_root.glob("*/*.seg"))
+            require(pages, "No history segments were written")
             require(
                 sum(p.stat().st_size for p in pages) <= 1024 * 1024,
                 "Session quota exceeded",
             )
-            # Corrupt an owned fixture page and verify both detection and a live PTY.
+            # Corrupt the newest segment and verify both detection and a live PTY.
             latest = max(pages, key=lambda p: int(p.stem))
             original = latest.read_bytes()
             latest.write_bytes(b"broken")

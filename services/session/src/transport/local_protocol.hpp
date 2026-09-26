@@ -78,10 +78,16 @@ struct SnapshotMessage {
     TerminalSnapshot snapshot;
     SnapshotTiming timing{};
 };
-enum class HistoryDirection : quint8 { older = 0, newer = 1 };
+// `at` (added within v6) asks for the page holding a row, counted from the
+// oldest kept row. Services before it reject it; a client sends it only to a
+// service whose pages say where they sit (their history fields: total_rows
+// kept, viewport_offset the page's first row), which older services leave as
+// the page alone ({rows, 0, rows}).
+enum class HistoryDirection : quint8 { older = 0, newer = 1, at = 2 };
 struct HistoryRequest {
     quint64 request_id{};
-    quint64 reference{}; // Zero means newest for older; newer requires a page ID.
+    // Zero means newest for older; newer requires a page ID; at takes a row.
+    quint64 reference{};
     HistoryDirection direction{HistoryDirection::older};
 };
 struct HistoryReply {

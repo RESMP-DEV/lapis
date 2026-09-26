@@ -101,8 +101,12 @@ void history_messages() {
             decoded.direction == wire::HistoryDirection::newer);
     rejects([&] { static_cast<void>(wire::decode_history_request(bytes.chopped(1))); });
     rejects([&] { static_cast<void>(wire::decode_history_request(bytes + 'x')); });
+    // A row from the oldest kept row, zero included.
+    const auto at = wire::decode_history_request(
+        wire::encode_history_request({18, 0, wire::HistoryDirection::at}));
+    require(at.request_id == 18 && at.reference == 0 && at.direction == wire::HistoryDirection::at);
     auto malformed = bytes;
-    malformed[16] = 2;
+    malformed[16] = 3;
     rejects([&] { static_cast<void>(wire::decode_history_request(malformed)); });
     rejects([&] { static_cast<void>(wire::encode_history_request({0, 0})); });
     rejects([&] {

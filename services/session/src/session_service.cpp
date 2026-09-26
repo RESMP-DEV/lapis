@@ -91,9 +91,8 @@ class SessionService final : public QObject {
                    const LaunchSpec& launch)
         : lock_(endpoint + QStringLiteral(".lock")), terminal_(launch.size, limits()),
           fingerprint_(launch_fingerprint(launch)), identity_{requested_session_id, wire::new_id()},
-          history_(qEnvironmentVariable("LAPIS_HISTORY_ROOT",
-                                        QStringLiteral(LAPIS_DEFAULT_HISTORY_ROOT)),
-                   QString::fromLatin1(requested_session_id.toHex()), history_limits()) {
+          history_(history_root(endpoint), QString::fromLatin1(requested_session_id.toHex()),
+                   history_limits()) {
         configure_history();
         resume_endpoint_ = endpoint;
         checkpoint_agent_ = checkpoint_agent_for_launch(launch);
@@ -501,6 +500,14 @@ class SessionService final : public QObject {
         result.max_input_bytes = std::size_t{64} * 1024U;
         return result;
     }
+    // Beside the service's endpoint, in lapis's runtime folder, unless
+    // LAPIS_HISTORY_ROOT names another; never a path fixed when it was built.
+    static QString history_root(const QString& endpoint) {
+        const auto chosen = qEnvironmentVariable("LAPIS_HISTORY_ROOT");
+        return chosen.isEmpty()
+                   ? QFileInfo(endpoint).absoluteDir().filePath(QStringLiteral("history"))
+                   : chosen;
+    }
     static HistoryLimits history_limits() {
         HistoryLimits result;
         const auto read_limit = [](const char* name, quint64 fallback) {
@@ -509,7 +516,7 @@ class SessionService final : public QObject {
                 return fallback;
             bool valid{};
             const auto bytes = value.toULongLong(&valid);
-            if (!valid || bytes == 0 || bytes > quint64{4} * 1024 * 1024 * 1024)
+            if (!valid || bytes == 0 || bytes > quint64{64} * 1024 * 1024 * 1024)
                 throw std::invalid_argument("Invalid history byte budget");
             return bytes;
         };

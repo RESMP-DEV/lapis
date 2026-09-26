@@ -138,7 +138,7 @@ SnapshotMessage decode_snapshot_message(const QByteArray& payload) {
     return result;
 }
 QByteArray encode_history_request(const HistoryRequest& request) {
-    check(request.request_id != 0 && request.direction <= HistoryDirection::newer);
+    check(request.request_id != 0 && request.direction <= HistoryDirection::at);
     check(request.direction != HistoryDirection::newer || request.reference != 0);
     QByteArray bytes;
     append_quint64(bytes, request.request_id);

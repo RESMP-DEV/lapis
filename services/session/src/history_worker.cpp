@@ -112,6 +112,8 @@ void HistoryWorker::startNext() {
                 static_cast<void>(state->store->append(*operation.page));
             else if (operation.request.direction == wire::HistoryDirection::older)
                 result.page = state->store->older(operation.request.reference);
+            else if (operation.request.direction == wire::HistoryDirection::at)
+                result.page = state->store->at(operation.request.reference);
             else
                 result.page = state->store->newer(operation.request.reference);
         } catch (const std::exception& error) {
