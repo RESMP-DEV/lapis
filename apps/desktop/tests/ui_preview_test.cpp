@@ -1803,6 +1803,15 @@ void check_side_terminal(QQuickWindow& window, lapis::desktop::Terminals& termin
         },
         10000));
     capture_step(window, "side-terminal");
+    // Command-W closes what is in front: the panel, not the agent behind it.
+    const auto* agent = stage.document();
+    const auto* shown = terminals.current();
+    press_action(window, keymap, "closeAgent");
+    CHECK(!panel->isVisible() && stage.hasActiveFocus() && agent != nullptr &&
+          stage.document() == agent);
+    CHECK(terminals.current() == shown && shown->inputReady());
+    press_action(window, keymap, "toggleTerminal");
+    CHECK(panel->isVisible() && surface->hasActiveFocus());
     press_action(window, keymap, "toggleTerminal");
     CHECK(!panel->isVisible() && stage.hasActiveFocus());
     press_action(window, keymap, "chooseTerminal");

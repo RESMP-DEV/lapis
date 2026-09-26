@@ -430,15 +430,15 @@ void navigation_defaults_preserve_terminal_editing() {
                 keymap.sequences(QStringLiteral("newCategory")) ==
                     QStringList{QStringLiteral("Meta+N")},
             "as in a browser, Command-T opens an agent and Command-N a category");
-    // Command-W closes the window and lapis keeps running; Command-Shift-W
-    // closes the agent and Command-M minimizes, as elsewhere on the Mac.
-    require(keymap.sequences(QStringLiteral("closeWindow")) ==
+    // As in a browser, Command-W closes what is in front (and the window once
+    // nothing is left) and Command-Shift-W the window; Command-M minimizes.
+    require(keymap.sequences(QStringLiteral("closeAgent")) ==
                     QStringList{QStringLiteral("Meta+W")} &&
-                keymap.sequences(QStringLiteral("closeAgent")) ==
+                keymap.sequences(QStringLiteral("closeWindow")) ==
                     QStringList{QStringLiteral("Meta+Shift+W")} &&
                 keymap.sequences(QStringLiteral("minimizeWindow")) ==
                     QStringList{QStringLiteral("Meta+M")},
-            "Command-W closes the window, Command-Shift-W the agent, Command-M minimizes");
+            "Command-W closes the agent, Command-Shift-W the window, Command-M minimizes");
 #else
     require(keymap.sequences(QStringLiteral("closeWindow")).isEmpty(),
             "without a dock to reopen it, closing the window has no key");

@@ -40,8 +40,8 @@ once while lapis is in the background. Codex reports working/finished through it
 observer; Claude agents run under the session service's Claude Code hook
 adapter (`--claude`), which reports turns, permission prompts and input
 requests; other harnesses show an output estimate labelled
-**Output active** / **Quiet**. Command-Shift-W closes the focused agent;
-Command-W closes the window and lapis keeps running. Agents always start as top-level sessions: when lapis itself was opened
+**Output active** / **Quiet**. Command-W closes the focused agent, and the
+window (lapis keeps running) once the category has no agent left. Agents always start as top-level sessions: when lapis itself was opened
 from inside another agent's terminal, that agent's session markers (Claude
 Code's child-session and transcript flags, Grok, OpenCode, OMP and Codex
 sandbox markers) are removed before any agent starts.
@@ -199,10 +199,11 @@ On macOS, Command-Option-left/right or Command-Shift-up/down changes category;
 Command-Shift-[ and ] moves through the category's agents. Command-1 through 4
 selects a category. Command-J jumps to the next agent, in any category, with a
 pending request, or else one that finished while you were elsewhere.
-Command-Shift-W closes the focused agent: a running agent is
-confirmed, then ended by its session service. Command-W closes the window while
-lapis keeps running (click its Dock icon to bring it back), and Command-M
-minimizes it.
+Command-W closes what is in front, as in a browser: the side terminal's panel
+(its shell keeps running), else the focused agent (a running agent is confirmed,
+then ended by its session service), and only when the category has no agent
+left, the window. Command-Shift-W closes the window. lapis keeps running with
+its window closed; click its Dock icon to bring it back. Command-M minimizes.
 Command-Shift-P opens Commands; Command-B hides or shows the category sidebar
 and remembers that choice. Command-V remains paste. As in a browser, Command-T
 creates an agent (its tab defaults to the project path) and Command-N creates a
@@ -273,11 +274,12 @@ minutes, without a prompt, a hook or a saved session; another machine's CLIs
 are asked over ssh, and its transcripts are counted there by its own python3.
 There are no prices.
 
-On the Mac, closing the window (its close button or Command-W) only hides it:
+On the Mac, closing the window (its close button, Command-Shift-W, or Command-W
+with no agent left) only hides it:
 lapis keeps running, with alerts and the phone, and its Dock icon brings the
 window back. Quit (Command-Q) to detach. Reopen lapis to reconnect the same
 agents and restore category selections and window placement. Neither stops
-agents; Command-Shift-W on an agent does.
+agents; Command-W on an agent does.
 If an agent's session service is gone when lapis opens (after a reboot or a
 crash), lapis restarts it in its card, like a restored terminal tab: Codex,
 Claude, Grok, OpenCode, OMP, Kimi and Antigravity resume their saved
@@ -291,7 +293,7 @@ observer, the Claude hook adapter, or the `agent_checkpoint` sequence that
 iTerm2 restore hooks print. For Codex builds lapis has not qualified, and
 Codex agents whose service predates these records, lapis reads the thread from
 the rollouts its app-server holds open, following `/new` and `/resume`.
-Command-Shift-W is what removes an agent for good. Restore runs when lapis opens.
+Command-W on an agent is what removes it for good. Restore runs when lapis opens.
 To have agents come back at login without opening a window, install the login
 helper once with `uv run --no-project python scripts/restore_at_login.py
 install`. It runs `lapis_desktop --restore-agents --serve`, restarts the agents
@@ -414,7 +416,7 @@ agent in its folder), **Terminal** (pick the Mac or one of its ssh machines and
 a plain shell opens there, for a quick command) or a new category (added on the
 Mac without moving its window). Open terminals are listed above the agents and
 swipe away the same way. Swiping an agent left offers **Close**, and a full
-swipe closes it, as Command-Shift-W does on the Mac. A new agent from the phone: pick the
+swipe closes it, as Command-W does on the Mac. A new agent from the phone: pick the
 machine (this Mac, or an ssh host from your ssh config and shell history,
 reachable and most used first), the CLI, the category, a folder (starting at
 that machine's `newAgent` folder), a model and an approval mode, and it opens

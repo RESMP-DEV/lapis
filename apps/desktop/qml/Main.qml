@@ -147,9 +147,9 @@ ApplicationWindow {
         if (action === "quit")
             return [mod + "Q"]
         if (action === "closeAgent")
-            return [mac ? "Meta+Shift+W" : mod + "W"]
+            return [mod + "W"]
         if (action === "closeWindow")
-            return mac ? ["Meta+W"] : []
+            return mac ? ["Meta+Shift+W"] : []
         if (action === "minimizeWindow")
             return mac ? ["Meta+M"] : []
         if (action === "nextCategory")
@@ -683,8 +683,25 @@ ApplicationWindow {
                                     defaults.mode && defaults.mode.length > 0 ? defaults.mode : "full"
         openFresh(agentDialog)
     }
-    // Command-W: close the focused agent. A running agent is confirmed first,
-    // the way iTerm2 asks before closing a session with a running job.
+    // Command-W, as in a browser: the side terminal's panel if it shows (its
+    // shell keeps running), else the focused agent, and only when the category
+    // has no agent left the window (on the Mac, where lapis keeps running).
+    function closeInFront() {
+        if (terminalBusy || inputBlocked)
+            return
+        if (sideTerminalOpen) {
+            closeSideTerminal()
+            return
+        }
+        if (workspace.focusedSession !== null) {
+            closeFocusedAgent()
+            return
+        }
+        if (Qt.platform.os === "osx")
+            window.close()
+    }
+    // Close the focused agent. A running agent is confirmed first, the way
+    // iTerm2 asks before closing a session with a running job.
     function closeFocusedAgent() {
         if (terminalBusy)
             return
@@ -1154,7 +1171,7 @@ ApplicationWindow {
         context: Qt.WindowShortcut
         enabled: window.shortcutsArmed
         autoRepeat: false
-        onActivated: window.closeFocusedAgent()
+        onActivated: window.closeInFront()
     }
     // Tiles, as in iTerm2: Command-D splits right with a new agent like this
     // one, Command-Shift-D below it; Command-Control-arrows move between tiles

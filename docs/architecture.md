@@ -1448,10 +1448,13 @@ reduced motion keeps both steady. Activity comes from three declared sources:
   ignoring the first 3 s after attaching (screen replay). It is advisory and
   never reads as a finished turn.
 
-Command-Shift-W closes the focused agent (Command-W until September 25, when
-the user asked for Command-W to close the window with lapis still running: on
-the Mac a close hides the window, Quit is told apart by the application's Quit
-event that precedes it, and reactivation from the Dock shows the window again).
+Command-W closes the focused agent. On September 25 it briefly closed the
+window instead (on the Mac a close hides the window, Quit is told apart by the
+application's Quit event that precedes it, and reactivation from the Dock shows
+the window again); the next day the user asked for it to close the window only
+when no agent is left, as a browser closes its last tab. It now closes the side
+terminal's panel, else the focused agent, else (on the Mac) the window, and
+Command-Shift-W always closes the window.
 An ended or fixture agent closes at once. A
 reachable running agent is confirmed and then ended through a client frame,
 `terminate` (kind 15, an additive v6 client kind): the service sends SIGHUP to
@@ -2148,7 +2151,8 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   the application sees Quit, which every way of quitting sends before the
   window closes, so only a close without it is refused and turned into a hide.
   Qt reports a Dock click as the application becoming active, which shows a
-  hidden window. Command-Shift-W now closes an agent and Command-M minimizes.
+  hidden window. Command-W closes the window only when the category has no
+  agent left; Command-Shift-W always does. Command-M minimizes.
   The Mac icon enlarges the phone's gem 1.3 times inside Apple's 824-point body.
 - **Conversation index.** Claude Code and Codex keep every conversation in
   files; only those someone opened count (Claude's `entrypoint` "cli"; Codex
