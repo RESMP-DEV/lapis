@@ -1720,14 +1720,14 @@ void phoneStartsAnAgentInItsCategory() {
                                       QStringLiteral("grok"), {}, {}, QStringLiteral("devbox")),
                 "the Mac starts an agent on another machine");
         auto* mac_far = workspace.focusedSession();
-        require(mac_far != nullptr &&
-                    waitFor(
-                        [mac_far] {
-                            const auto text = screenText(mac_far->snapshot());
-                            return text.contains(QStringLiteral("[devbox]")) &&
-                                   text.contains(QStringLiteral("cd ~/dev/other"));
-                        },
-                        10000) &&
+        require(mac_far != nullptr, "the new agent is shown");
+        require(waitFor(
+                    [mac_far] {
+                        const auto text = screenText(mac_far->snapshot());
+                        return text.contains(QStringLiteral("[devbox]")) &&
+                               text.contains(QStringLiteral("cd ~/dev/other"));
+                    },
+                    10000) &&
                     waitFor([mac_far] { return mac_far->inputReady(); }, 10000),
                 "over ssh, in that machine's folder");
         for (const auto& closing : {desk->sessionId(), id, far->sessionId(), mac_far->sessionId()})
