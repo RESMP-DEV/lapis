@@ -121,8 +121,7 @@ final class LapisUITests: XCTestCase {
         guard let identifier = environment["LAPIS_ECHO_ID"], let host = environment["LAPIS_HOST"] else {
             throw XCTSkip("needs the harness")
         }
-        let terminal = openAgent("echo agent")
-        waitFor(terminal, valueContaining: "new conversation")
+        let terminal = try openEchoAgent()
         clearLine()
 
         var request = URLRequest(url: URL(string: "http://\(host)/api/agents/\(identifier)/stream")!)
@@ -145,8 +144,7 @@ final class LapisUITests: XCTestCase {
     }
 
     func testWideOutputAndReturningToTheList() throws {
-        let terminal = openAgent("echo agent")
-        waitFor(terminal, valueContaining: "new conversation")
+        let terminal = try openEchoAgent()
         clearLine()
         submit("wide")
         waitFor(terminal, valueContaining: "box:")
@@ -157,8 +155,7 @@ final class LapisUITests: XCTestCase {
 
     // Output that scrolled off the top loads as the phone scrolls up.
     func testScrollingBackLoadsHistory() throws {
-        let terminal = openAgent("echo agent")
-        waitFor(terminal, valueContaining: "new conversation")
+        let terminal = try openEchoAgent()
         clearLine()
         submit("marker before count")
         waitFor(terminal, valueContaining: "echo: marker before count")
@@ -175,8 +172,7 @@ final class LapisUITests: XCTestCase {
 
     // "Send screen to Mac" saves a screenshot and the screen data on the Mac.
     func testSendScreenToMac() throws {
-        let terminal = openAgent("echo agent")
-        waitFor(terminal, valueContaining: "new conversation")
+        _ = try openEchoAgent()
         let menu = app.buttons["viewMenu"]
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
         menu.tap()
@@ -191,25 +187,43 @@ final class LapisUITests: XCTestCase {
         app.buttons["OK"].tap()
     }
 
-    // Read the PTY itself through a fixture command, without focusing the
-    // composer merely to measure it. Each observation has a unique marker.
-    private func terminalSize(_ terminal: XCUIElement) throws -> (columns: Int, rows: Int) {
+    // Types into the shared fake agent through the gateway, as the phone does,
+    // without focusing the composer (which would raise the keyboard).
+    private func typeToEcho(_ text: String) throws {
         let environment = ProcessInfo.processInfo.environment
         let host = try XCTUnwrap(environment["LAPIS_HOST"])
         let identifier = try XCTUnwrap(environment["LAPIS_ECHO_ID"])
-        let marker = String(UUID().uuidString.prefix(6)).lowercased()
         var request = URLRequest(url: try XCTUnwrap(URL(string: "http://\(host)/api/agents/\(identifier)/input")))
         request.httpMethod = "POST"
         request.setValue("ios", forHTTPHeaderField: "X-Lapis-Client")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["text": "size \(marker)\n"])
-        let sent = expectation(description: "query the fixture PTY grid")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["text": text])
+        let sent = expectation(description: "type into the fixture agent")
         URLSession.shared.dataTask(with: request) { _, response, error in
             XCTAssertNil(error)
             XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
             sent.fulfill()
         }.resume()
         wait(for: [sent], timeout: 10)
+    }
+
+    // The shared fake agent, open and live. Tests take turns on one agent, and
+    // the phone taking it at a different size than the Mac's moves its screen
+    // into history; this agent, unlike real CLIs, never redraws, so its first
+    // line is no proof the screen is live. An echoed marker is.
+    private func openEchoAgent() throws -> XCUIElement {
+        let terminal = openAgent("echo agent")
+        let marker = "live " + String(UUID().uuidString.prefix(6)).lowercased()
+        try typeToEcho(marker + "\n")
+        waitFor(terminal, valueContaining: "echo: " + marker)
+        return terminal
+    }
+
+    // Read the PTY itself through a fixture command, without focusing the
+    // composer merely to measure it. Each observation has a unique marker.
+    private func terminalSize(_ terminal: XCUIElement) throws -> (columns: Int, rows: Int) {
+        let marker = String(UUID().uuidString.prefix(6)).lowercased()
+        try typeToEcho("size \(marker)\n")
         waitFor(terminal, valueContaining: "grid-\(marker)")
         let text = String(describing: terminal.value ?? "")
         let line = try XCTUnwrap(text.components(separatedBy: "\n").last { $0.contains("grid-\(marker)") })
@@ -221,8 +235,7 @@ final class LapisUITests: XCTestCase {
     func testRotationWhileComposing() throws {
         XCUIDevice.shared.orientation = .portrait
         defer { XCUIDevice.shared.orientation = .portrait }
-        let terminal = openAgent("echo agent")
-        waitFor(terminal, valueContaining: "new conversation")
+        let terminal = try openEchoAgent()
         let portrait = try terminalSize(terminal)
         let composer = app.descendants(matching: .any)["composer"]
         composer.tap()
@@ -303,10 +316,49 @@ final class LapisUITests: XCTestCase {
                       "the new category is listed")
     }
 
+    // A plain shell for a quick command: the plus offers Terminal, the Mac is
+    // picked, the shell answers, and it swipes away like an agent.
+    func testTerminalFromThePhone() throws {
+        let folder = ProcessInfo.processInfo.environment["LAPIS_NEW_AGENT_FOLDER"] ?? ""
+        try XCTSkipIf(folder.isEmpty, "the check provides the Mac's lapis")
+        let add = app.buttons["add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 30))
+        add.tap()
+        app.buttons["Terminal"].tap()
+        let mac = app.buttons["terminal-mac"]
+        XCTAssertTrue(mac.waitForExistence(timeout: 15), "the Mac is offered first")
+        snap("11-terminal-machines")
+        mac.tap()
+        let terminal = app.descendants(matching: .any)["terminal"]
+        XCTAssertTrue(terminal.waitForExistence(timeout: 60), "the terminal opens on the phone")
+        submit("echo lapis-$((6*7))")
+        waitFor(terminal, valueContaining: "lapis-42", timeout: 30)
+        snap("12-terminal-open")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let row = app.buttons["terminal-row-mac"]
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "open terminals are listed above the agents")
+        row.swipeLeft()
+        let close = app.buttons["Close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "swiping offers Close")
+        close.tap()
+        XCTAssertTrue(waitForGone(row, timeout: 20), "the closed terminal leaves the list")
+    }
+
+    // Past conversations on the Mac are offered to resume from the plus.
+    func testResumeIsOffered() throws {
+        let add = app.buttons["add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 30))
+        add.tap()
+        app.buttons["Resume conversation"].tap()
+        XCTAssertTrue(app.navigationBars.staticTexts["Resume"].waitForExistence(timeout: 15),
+                      "the resume list opens")
+        app.buttons["Cancel"].tap()
+    }
+
     // Folders come from the Mac's index: the most used ones first and marked,
-    // then the current folder's folders with hidden ones last; typing finds
-    // folders by their letters. Machines are ordered by how often ssh reached
-    // them.
+    // then the current folder's folders, the most active first, with hidden
+    // ones last; typing finds folders by their letters. Machines are ordered
+    // by how often ssh reached them.
     func testFoldersAndMachines() throws {
         try XCTSkipIf(ProcessInfo.processInfo.environment["LAPIS_FOLDER_FIXTURE"] == nil,
                       "the check provides a folder fixture")
@@ -345,8 +397,10 @@ final class LapisUITests: XCTestCase {
         let visible = app.buttons["folder-dev"]
         let hidden = app.buttons["folder-.hidden"]
         XCTAssertTrue(visible.waitForExistence(timeout: 5) && hidden.exists)
-        XCTAssertLessThan(app.buttons["folder-a"].frame.minY, visible.frame.minY, "alphabetical")
-        XCTAssertLessThan(visible.frame.minY, hidden.frame.minY, "hidden folders come last")
+        // The folders with the most recent agent work first, then by name.
+        XCTAssertLessThan(app.buttons["folder-b"].frame.minY, visible.frame.minY, "the busiest folder first")
+        XCTAssertLessThan(visible.frame.minY, app.buttons["folder-a"].frame.minY, "then the rest by name")
+        XCTAssertLessThan(app.buttons["folder-a"].frame.minY, hidden.frame.minY, "hidden folders come last")
         snap("11-folders")
         let search = app.textFields["folderSearch"]
         search.tap()
@@ -364,8 +418,7 @@ final class LapisUITests: XCTestCase {
         guard ProcessInfo.processInfo.environment["LAPIS_MAC_CLIENT"] == "1" else {
             throw XCTSkip("needs the harness's Mac-side client")
         }
-        let terminal = openAgent("echo agent")
-        waitFor(terminal, valueContaining: "new conversation")
+        let terminal = try openEchoAgent()
         clearLine()
         XCTAssertFalse(app.staticTexts["syncNotice"].exists, "the agent is shared, not taken over")
         submit("ping from phone")

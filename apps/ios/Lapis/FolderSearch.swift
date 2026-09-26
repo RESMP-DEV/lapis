@@ -36,15 +36,46 @@ final class FolderCatalog: Sendable {
             let parent = path.lastIndex(of: "/").map { String(path[..<$0]) } ?? ""
             children[parent, default: []].append(path)
         }
-        // Visible folders alphabetically, then hidden ones, also alphabetically.
-        self.children = children.mapValues { list in
-            list.sorted { left, right in
-                let (a, b) = (FolderCatalog.name(left), FolderCatalog.name(right))
-                let (hiddenA, hiddenB) = (a.hasPrefix("."), b.hasPrefix("."))
-                if hiddenA != hiddenB { return !hiddenA }
-                return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+        let heat = FolderCatalog.subtreeActivity(payload.activity ?? [:])
+        self.children = children.mapValues { FolderCatalog.ordered($0, heat: heat) }
+    }
+
+    // Each folder's activity with that of the folders under it, so a parent
+    // of busy projects counts as busy.
+    static func subtreeActivity(_ activity: [String: Double]) -> [String: Double] {
+        var total: [String: Double] = [:]
+        for (path, score) in activity where score > 0 {
+            var current = path
+            while !current.isEmpty && current != "/" {
+                total[current, default: 0] += score
+                guard let slash = current.lastIndex(of: "/") else { break }
+                current = String(current[..<slash])
             }
         }
+        return total
+    }
+
+    // As on the Mac: the ten most active folders first, then the rest by
+    // name, with _folders and then hidden ones last.
+    static func ordered(_ list: [String], heat: [String: Double], hot: Int = 10) -> [String] {
+        let warm = list.filter { (heat[$0] ?? 0) > 0 }.sorted { left, right in
+            let (a, b) = (heat[left] ?? 0, heat[right] ?? 0)
+            if a != b { return a > b }
+            return name(left).localizedCaseInsensitiveCompare(name(right)) == .orderedAscending
+        }
+        let first = Array(warm.prefix(hot))
+        let chosen = Set(first)
+        let rest = list.filter { !chosen.contains($0) }.sorted { left, right in
+            let (a, b) = (name(left), name(right))
+            let (rankA, rankB) = (rank(a), rank(b))
+            if rankA != rankB { return rankA < rankB }
+            return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+        }
+        return first + rest
+    }
+
+    private static func rank(_ name: String) -> Int {
+        name.hasPrefix(".") ? 2 : name.hasPrefix("_") ? 1 : 0
     }
 
     static func name(_ path: String) -> String {

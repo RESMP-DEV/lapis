@@ -179,6 +179,45 @@ def load_workspace(path):
     }
 
 
+def load_terminals(registry):
+    """The desktop's quick-command terminals (terminals.json beside the
+    workspace): plain shells, one per machine, reached like agents. Only this
+    folder's own endpoints are reachable."""
+    folder = Path(registry).absolute().parent
+    try:
+        data = json.loads((folder / "terminals.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    terminals = []
+    for entry in data.get("terminals", []) if isinstance(data, dict) else []:
+        if not isinstance(entry, dict):
+            continue
+        identifier = str(entry.get("id", ""))
+        endpoint = Path(str(entry.get("endpoint", "")))
+        if (
+            not identifier.startswith("terminal-")
+            or endpoint.name != identifier + ".sock"
+            or endpoint.parent.resolve() != folder.resolve()
+        ):
+            continue
+        machine = str(entry.get("machine", ""))
+        terminals.append(
+            {
+                "id": identifier,
+                "title": machine or "This Mac",
+                "category": "",
+                "harness": "shell",
+                "machine": machine,
+                "directory": str(entry.get("directory", "")),
+                "program": str(entry.get("program", "")),
+                "arguments": [str(item) for item in entry.get("arguments", [])],
+                "mode": "",
+                "endpoint": str(endpoint),
+            }
+        )
+    return terminals
+
+
 def desktop_request(registry, request, timeout=15.0):
     """One request to the lapis process that owns the workspace (a window, or
     the windowless host): a JSON line out, a JSON line back."""
@@ -331,27 +370,189 @@ def claude_cwd(session):
     return cwd if entry == "cli" and isinstance(cwd, str) else None
 
 
+def typed_title(text):
+    """One line of what someone typed; the CLIs' own wrappers are not."""
+    text = str(text or "").strip()
+    if not text or text[0] in "<#" or text.startswith("Caveat:"):
+        return ""
+    text = " ".join(text.split())
+    return text if len(text) <= 140 else text[:139] + "\u2026"
+
+
+def claude_title(session):
+    """Claude Code's newest title for a session, else its first typed message."""
+    first = title = ""
+    try:
+        with open(session, "rb") as stream:
+            for line in itertools.islice(stream, 300):
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                if record.get("type") == "ai-title":
+                    title = typed_title(record.get("aiTitle"))
+                elif (
+                    record.get("type") == "user"
+                    and not first
+                    and not record.get("isMeta")
+                ):
+                    content = (record.get("message") or {}).get("content")
+                    if isinstance(content, list):
+                        content = next(
+                            (
+                                part.get("text")
+                                for part in content
+                                if isinstance(part, dict) and part.get("type") == "text"
+                            ),
+                            "",
+                        )
+                    first = typed_title(content)
+            size = os.fstat(stream.fileno()).st_size
+            stream.seek(max(0, size - (128 << 10)))
+            for line in stream.read().split(b"\n"):
+                if b'"ai-title"' in line:
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(record, dict) and record.get("type") == "ai-title":
+                        title = typed_title(record.get("aiTitle")) or title
+    except OSError:
+        return ""
+    return title or first
+
+
+def codex_title(path):
+    """A Codex rollout's first typed message (its thread name is applied later)."""
+    try:
+        with open(path, "rb") as stream:
+            for line in itertools.islice(stream, 200):
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                payload = record.get("payload") if isinstance(record, dict) else None
+                if (
+                    record.get("type") != "response_item"
+                    or not isinstance(payload, dict)
+                    or payload.get("type") != "message"
+                    or payload.get("role") != "user"
+                ):
+                    continue
+                for part in payload.get("content") or []:
+                    if isinstance(part, dict):
+                        text = typed_title(part.get("text"))
+                        if text:
+                            return text
+    except OSError:
+        pass
+    return ""
+
+
+def codex_thread_names(codex_home):
+    names = {}
+    try:
+        with open(Path(codex_home) / "session_index.jsonl", "rb") as stream:
+            for line in stream:
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if (
+                    isinstance(record, dict)
+                    and record.get("id")
+                    and record.get("thread_name")
+                ):
+                    names[str(record["id"])] = " ".join(
+                        str(record["thread_name"]).split()
+                    )[:140]
+    except OSError:
+        pass
+    return names
+
+
 class AgentHistory:
-    """How many agents were started in each folder: Codex rollouts (interactive
-    main threads), interactive Claude Code sessions and the workspace's
-    current agents. What a file says is remembered, so later passes read only
-    new files. The root folder is never a project."""
+    """How many agents were started in each folder and how recently: Codex
+    rollouts (interactive main threads), interactive Claude Code sessions and
+    the workspace's current agents. Each conversation also adds to its
+    folder's heat, halving every two weeks, so recent and frequent work both
+    count. What a file says is remembered by its size and time, so later
+    passes read only new or changed files. The root folder is never a
+    project."""
+
+    HALF_LIFE_DAYS = 14
 
     def __init__(self, codex_home, claude_home):
         self.codex_home = Path(codex_home)
         self.claude_home = Path(claude_home)
         self.codex = {}
         self.claude = {}
+        self.heat = collections.Counter()
+        self.conversations = []
 
     def counts(self, registry):
         counts = collections.Counter()
+        heat = collections.Counter()
+        conversations = []
+        now = time.time()
+
+        def note(cwd, when, conversation):
+            counts[cwd] += 1
+            heat[cwd] += 0.5 ** (max(0.0, now - when) / 86400 / self.HALF_LIFE_DAYS)
+            conversations.append(dict(conversation, directory=cwd, modified=when))
+
+        def remembered(cache, path, read):
+            try:
+                stat = path.stat()
+            except OSError:
+                return None, 0
+            mark = (stat.st_size, stat.st_mtime)
+            cached = cache.get(str(path))
+            entry = (
+                cached
+                if cached is not None and cached[0] == mark
+                else (mark, read(path))
+            )
+            return entry, stat.st_mtime
+
+        def read_rollout(path):
+            cwd = codex_cwd(path)
+            if not cwd:
+                return None
+            # A rollout without an id still counts for its folder; it only
+            # cannot be resumed, so the list leaves it out.
+            try:
+                identifier = str(first_json_line(path)["payload"].get("id") or "")
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                identifier = ""
+            return {
+                "harness": "codex",
+                "id": identifier,
+                "cwd": cwd,
+                "title": codex_title(path),
+            }
+
+        def read_session(path):
+            cwd = claude_cwd(path)
+            if not cwd:
+                return None
+            return {
+                "harness": "claude",
+                "id": path.stem,
+                "cwd": cwd,
+                "title": claude_title(path),
+            }
+
         seen = {}
         for rollout in (self.codex_home / "sessions").glob("*/*/*/rollout-*.jsonl"):
-            key = str(rollout)
-            cwd = self.codex[key] if key in self.codex else codex_cwd(rollout)
-            seen[key] = cwd
-            if cwd:
-                counts[cwd] += 1
+            entry, when = remembered(self.codex, rollout, read_rollout)
+            if entry is None:
+                continue
+            seen[str(rollout)] = entry
+            if entry[1]:
+                note(entry[1]["cwd"], when, entry[1])
         self.codex = seen
         projects = self.claude_home / "projects"
         seen = {}
@@ -361,20 +562,32 @@ class AgentHistory:
             except OSError:
                 continue
             for session in sessions:
-                key = str(session)
-                cwd = self.claude[key] if key in self.claude else claude_cwd(session)
-                seen[key] = cwd
-                if cwd:
-                    counts[cwd] += 1
+                entry, when = remembered(self.claude, session, read_session)
+                if entry is None:
+                    continue
+                seen[str(session)] = entry
+                if entry[1]:
+                    note(entry[1]["cwd"], when, entry[1])
         self.claude = seen
         if registry is not None:
             try:
                 for agent in load_workspace(registry)["agents"]:
                     if agent["directory"] and not remote_machine(agent):
                         counts[agent["directory"]] += 1
+                        heat[agent["directory"]] += 1
             except (OSError, ValueError, GatewayError):
                 pass
         counts.pop("/", None)
+        heat.pop("/", None)
+        names = codex_thread_names(self.codex_home)
+        conversations = [item for item in conversations if item["id"]]
+        for conversation in conversations:
+            if conversation["harness"] == "codex" and names.get(conversation["id"]):
+                conversation["title"] = names[conversation["id"]]
+            conversation.pop("cwd", None)
+        conversations.sort(key=lambda item: item["modified"], reverse=True)
+        self.heat = heat
+        self.conversations = conversations
         return counts
 
 
@@ -499,7 +712,18 @@ def folder_report(home, history, registry=None, harnesses=False):
             break
         if os.path.isdir(path):
             frequent.append({"path": phone_path(path, home), "count": count})
-    report = {"home": home, "folders": scan_folders(home), "frequent": frequent}
+    # Folder heat, for the phone to put the most active folders first.
+    activity = {
+        phone_path(path, home): round(score, 4)
+        for path, score in history.heat.items()
+        if score >= 0.001 and os.path.isdir(path)
+    }
+    report = {
+        "home": home,
+        "folders": scan_folders(home),
+        "frequent": frequent,
+        "activity": activity,
+    }
     if harnesses:
         report["harnesses"] = harness_paths()
     return report
@@ -510,7 +734,7 @@ def folder_report(home, history, registry=None, harnesses=False):
 REMOTE_MARKER = "LAPIS-FOLDERS "
 REMOTE_SCRIPT = "\n".join(
     [
-        "import collections, itertools, json, os, re, shutil",
+        "import collections, itertools, json, os, re, shutil, time",
         "from pathlib import Path",
         f"NO_DESCENT = {sorted(NO_DESCENT)!r}",
         f"PACKAGES = {PACKAGES!r}",
@@ -527,6 +751,10 @@ REMOTE_SCRIPT = "\n".join(
             first_json_line,
             codex_cwd,
             claude_cwd,
+            typed_title,
+            claude_title,
+            codex_title,
+            codex_thread_names,
             AgentHistory,
             harness_paths,
             phone_path,
@@ -1253,6 +1481,16 @@ class Gateway:
         return load_workspace(self.registry)
 
     def agent(self, identifier):
+        """An agent, or a quick-command terminal, by id."""
+        if identifier.startswith("terminal-"):
+            return next(
+                (
+                    item
+                    for item in load_terminals(self.registry)
+                    if item["id"] == identifier
+                ),
+                None,
+            )
         for agent in self.workspace()["agents"]:
             if agent["id"] == identifier:
                 return agent
@@ -1371,6 +1609,10 @@ class Handler(BaseHTTPRequestHandler):
             self.list_folders()
         elif parts == ["api", "machines"]:
             self.list_machines()
+        elif parts == ["api", "terminals"]:
+            self.list_terminals()
+        elif parts == ["api", "conversations"]:
+            self.list_conversations()
         elif agent_route(parts, "screen"):
             self.screen(parts[2])
         elif agent_route(parts, "stream"):
@@ -1392,6 +1634,8 @@ class Handler(BaseHTTPRequestHandler):
             self.close_agent(parts[2])
         elif parts == ["api", "categories"]:
             self.create_category()
+        elif parts == ["api", "terminals"]:
+            self.open_terminal()
         elif parts == ["api", "captures"]:
             self.capture()
         else:
@@ -1533,7 +1777,7 @@ class Handler(BaseHTTPRequestHandler):
             require(isinstance(title, str) and len(title) <= 80, "Invalid title")
             if title:
                 request["title"] = title
-            for field in ("model", "mode"):
+            for field in ("model", "mode", "resume"):
                 value = body.get(field, "")
                 require(
                     isinstance(value, str) and len(value) <= 128, f"Invalid {field}"
@@ -1597,8 +1841,68 @@ class Handler(BaseHTTPRequestHandler):
         if answer is not None:
             self.reply(HTTPStatus.OK, {"id": str(answer.get("id", ""))})
 
+    def list_terminals(self):
+        """The quick-command terminals: plain shells, one per machine."""
+        self.reply(
+            HTTPStatus.OK,
+            {
+                "terminals": [
+                    {
+                        "id": item["id"],
+                        "machine": item["machine"],
+                        "name": item["title"],
+                        "running": service_answers(item["endpoint"]),
+                        "onPhone": self.gateway.session(item["id"]) is not None,
+                    }
+                    for item in load_terminals(self.gateway.registry)
+                ]
+            },
+        )
+
+    def open_terminal(self):
+        """A machine's terminal, started by the Mac's lapis when it has none."""
+        body = self.read_object()
+        if body is None:
+            return
+        machine = body.get("machine", "")
+        if not isinstance(machine, str) or (
+            machine and not MACHINE_NAME.match(machine)
+        ):
+            self.fail(HTTPStatus.BAD_REQUEST, "Invalid machine")
+            return
+        answer = self.ask_desktop({"request": "openTerminal", "machine": machine})
+        if answer is not None:
+            self.reply(HTTPStatus.OK, {"id": str(answer.get("id", ""))})
+
+    def list_conversations(self):
+        """This Mac's recent Claude and Codex conversations, newest first, to
+        resume one as a new agent."""
+        payload, _ = self.gateway.folders.current()
+        if payload is None:
+            self.fail(
+                HTTPStatus.SERVICE_UNAVAILABLE, "Still reading this Mac's conversations"
+            )
+            return
+        home = self.gateway.folders.home
+        now = time.time()
+        self.reply(
+            HTTPStatus.OK,
+            {
+                "conversations": [
+                    {
+                        "harness": item["harness"],
+                        "id": item["id"],
+                        "directory": phone_path(item["directory"], home),
+                        "title": item["title"],
+                        "age": int(max(0, now - item["modified"])),
+                    }
+                    for item in self.gateway.folders.history.conversations[:60]
+                ]
+            },
+        )
+
     def close_agent(self, identifier):
-        """Ends the agent, as Command-W does on the Mac."""
+        """Ends the agent, as Command-Shift-W does on the Mac, or a terminal's shell."""
         # Any body is read, so the kept-alive connection stays in step.
         try:
             length = int(self.headers.get("Content-Length", "0") or 0)
@@ -1608,7 +1912,8 @@ class Handler(BaseHTTPRequestHandler):
             self.fail(HTTPStatus.BAD_REQUEST, "Invalid request size")
             return
         self.rfile.read(length)
-        answer = self.ask_desktop({"request": "closeAgent", "id": identifier})
+        kind = "closeTerminal" if identifier.startswith("terminal-") else "closeAgent"
+        answer = self.ask_desktop({"request": kind, "id": identifier})
         if answer is not None:
             self.gateway.supersede(identifier)
             self.reply(HTTPStatus.OK, {"ok": True})

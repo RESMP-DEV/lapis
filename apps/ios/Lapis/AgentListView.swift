@@ -9,6 +9,8 @@ struct AgentListView: View {
     @State private var started: Agent?
     @State private var naming = false
     @State private var categoryName = ""
+    @State private var choosingTerminal = false
+    @State private var resuming: NewAgentTarget?
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -36,6 +38,18 @@ struct AgentListView: View {
                                 }
                             } label: {
                                 Label("New agent", systemImage: "terminal")
+                            }
+                            Button {
+                                if let listing = model.listing {
+                                    resuming = NewAgentTarget(category: listing.activeCategory)
+                                }
+                            } label: {
+                                Label("Resume conversation", systemImage: "clock.arrow.circlepath")
+                            }
+                            Button {
+                                choosingTerminal = true
+                            } label: {
+                                Label("Terminal", systemImage: "apple.terminal")
                             }
                             Button {
                                 categoryName = ""
@@ -75,6 +89,12 @@ struct AgentListView: View {
                         started = agent
                     }
                 }
+                .sheet(item: $resuming, onDismiss: openStarted) { target in
+                    ResumeView(category: target.category) { agent in started = agent }
+                }
+                .sheet(isPresented: $choosingTerminal, onDismiss: openStarted) {
+                    TerminalPickerView { terminal in started = terminal }
+                }
         }
         .task(id: scenePhase) {
             // Keep the list current while it is on screen and the app is active.
@@ -83,6 +103,14 @@ struct AgentListView: View {
                 await model.refresh()
                 try? await Task.sleep(for: .seconds(8))
             }
+        }
+    }
+
+    // What a sheet started opens once the sheet has gone.
+    private func openStarted() {
+        if let agent = started {
+            started = nil
+            path.append(agent)
         }
     }
 
@@ -105,6 +133,37 @@ struct AgentListView: View {
                         .foregroundStyle(.orange)
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
+                }
+                // Plain shells for a quick command, above the agents.
+                if !model.terminals.isEmpty {
+                    Text("Terminals")
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .textCase(.uppercase)
+                        .tracking(1.6)
+                        .foregroundStyle(Theme.quiet)
+                        .padding(.top, 14)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 2, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                    ForEach(model.terminals) { terminal in
+                        Button {
+                            path.append(terminal.asAgent)
+                        } label: {
+                            AgentCard(agent: terminal.asAgent)
+                        }
+                        .buttonStyle(CardPress())
+                        .accessibilityIdentifier("terminal-row-\(terminal.machine.isEmpty ? "mac" : terminal.machine)")
+                        .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                Task { await model.closeTerminal(terminal) }
+                            } label: {
+                                Label("Close", systemImage: "xmark")
+                            }
+                        }
+                    }
                 }
                 ForEach(listing.categories) { category in
                     Text(category.name)
