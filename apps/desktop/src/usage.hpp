@@ -4,6 +4,7 @@
 #include <QByteArray>
 #include <QDate>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QJsonObject>
 #include <QObject>
@@ -80,6 +81,13 @@ class TokenLedger {
     QHash<quint64, TokenCount> seen_; // counted so far, by Claude message and request
     QHash<qint64, QDate> hours_;      // UTC hour -> local day
     qint64 bytes_read_{};
+    // Folder times at the last walk. A folder whose time is unchanged has the
+    // files it had, so only those already counted are looked at again; the
+    // whole tree is walked every half hour (an old transcript written again)
+    // and whenever the first day counted moves.
+    QHash<QString, qint64> folders_;
+    QElapsedTimer since_full_;
+    bool full_{};
 };
 
 // Tokens counted on another machine by its own python3 (usage/count_tokens.py),
