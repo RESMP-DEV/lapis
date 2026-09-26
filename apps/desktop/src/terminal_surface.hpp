@@ -168,6 +168,13 @@ class TerminalSurface : public QQuickItem {
     int viewed_interval_{};
     void updateViewing();
     void screenChanged();
+    // After a key is typed here, frames keep coming at the display's rate
+    // for a moment. macOS shows the first frame after a quiet spell late
+    // (about 30 ms more, measured on a ProMotion display), and a typed key's
+    // echo is always such a frame; frames that follow frames show in about 6.
+    void keepFramesComing();
+    QElapsedTimer since_typed_;
+    QMetaObject::Connection warm_connection_;
     QMetaObject::Connection window_changed_connection_;
     QPointF last_hover_;
 

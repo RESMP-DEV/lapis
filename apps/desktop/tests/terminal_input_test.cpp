@@ -24,6 +24,7 @@
 #include <QThread>
 #include <QWheelEvent>
 #include <array>
+#include <atomic>
 #include <functional>
 #include <iostream>
 #include <source_location>
@@ -236,6 +237,28 @@ void input_contract(bool background) {
     QKeyEvent printable(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
     QCoreApplication::sendEvent(&surface, &printable);
     require(text_frames(peer, 1) == QByteArray("x"), "Printable key fixture did not reach PTY");
+    // After a key, frames keep coming for a moment, so a display that slows
+    // down when nothing changes is still at its full rate for the echo; once
+    // typing pauses they stop.
+    std::atomic<int> frames{0};
+    const auto counting = QObject::connect(
+        &window, &QQuickWindow::frameSwapped, &window, [&frames] { ++frames; },
+        Qt::DirectConnection);
+    const auto frames_within = [&frames](int milliseconds) {
+        frames = 0;
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < milliseconds)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        return frames.load();
+    };
+    QKeyEvent warm(QEvent::KeyPress, Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+    QCoreApplication::sendEvent(&surface, &warm);
+    require(text_frames(peer, 1) == QByteArray("y"), "Second printable key did not reach PTY");
+    require(frames_within(300) >= 4, "Typing did not keep frames coming");
+    static_cast<void>(frames_within(700));
+    require(frames_within(300) <= 1, "Frames kept coming after typing paused");
+    QObject::disconnect(counting);
     for (const auto& [key, expected] :
          std::array{std::pair{Qt::Key_Left, '\x01'}, std::pair{Qt::Key_Right, '\x05'},
                     std::pair{Qt::Key_Backspace, '\x15'}, std::pair{Qt::Key_Delete, '\x0b'}}) {

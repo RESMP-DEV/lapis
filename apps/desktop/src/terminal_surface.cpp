@@ -643,6 +643,10 @@ TerminalSurface::TerminalSurface(QQuickItem* parent)
 }
 
 void TerminalSurface::bindWindow(QQuickWindow* current) {
+    if (warm_connection_) {
+        disconnect(warm_connection_);
+        warm_connection_ = {};
+    }
     if (window_active_connection_)
         disconnect(window_active_connection_);
     if (window_visible_connection_)
@@ -667,6 +671,7 @@ TerminalSurface::~TerminalSurface() {
     disconnect(window_changed_connection_);
     disconnect(window_active_connection_);
     disconnect(window_visible_connection_);
+    disconnect(warm_connection_);
     if (viewed_)
         viewed_->removeViewer(viewed_interval_);
     const std::lock_guard lock(render_mutex_);
@@ -734,6 +739,29 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     claimSize();
     publishFrame(true);
     emit documentChanged();
+}
+
+void TerminalSurface::keepFramesComing() {
+    constexpr qint64 warm_ms = 600;
+    auto* shown = window();
+    if (shown == nullptr)
+        return;
+    since_typed_.start();
+    if (!warm_connection_)
+        // Each frame asks for the next until typing has paused for warm_ms.
+        warm_connection_ = connect(
+            shown, &QQuickWindow::frameSwapped, this,
+            [this] {
+                if (window() != nullptr && since_typed_.isValid() &&
+                    since_typed_.elapsed() < warm_ms) {
+                    window()->update();
+                    return;
+                }
+                disconnect(warm_connection_);
+                warm_connection_ = {};
+            },
+            Qt::QueuedConnection);
+    shown->update();
 }
 
 // Shown while this view and its window are visible: a hidden window, a
@@ -1367,6 +1395,7 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
         event->ignore();
         return;
     }
+    keepFramesComing();
     // New input replaces what was selected; a modifier alone does not.
     if (!modifier_key(event->key()))
         clearSelection();
@@ -1497,6 +1526,7 @@ void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
         event->ignore();
         return;
     }
+    keepFramesComing();
     const bool valid_replacement =
         event->replacementStart() == 0 && event->replacementLength() == 0;
     if (!valid_replacement) {
