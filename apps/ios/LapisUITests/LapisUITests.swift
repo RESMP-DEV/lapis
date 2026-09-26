@@ -526,6 +526,18 @@ final class LapisUITests: XCTestCase {
         eventually("it runs again", timeout: 30) { parked.label.contains("running") }
     }
 
+    // Symbols that also have an emoji form (Claude Code's ⏺ before each
+    // message) are drawn as text in their one cell, as on the Mac.
+    func testSymbolsDrawAsText() throws {
+        let terminal = try openEchoAgent()
+        try typeToEcho("symbols ⏺ ⏸ ⏵ ✻ ▶ ✔ ⚠ ↩ ☑ ● x\n")
+        waitFor(terminal, valueContaining: "symbols ⏺")
+        // Asked for as emoji, it stays one.
+        try typeToEcho("asked ⏺\u{FE0F} x\n")
+        waitFor(terminal, valueContaining: "asked")
+        snap("19-symbols")
+    }
+
     // Past conversations on the Mac are offered to resume from the plus.
     func testResumeIsOffered() throws {
         let add = app.buttons["add"]
