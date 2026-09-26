@@ -778,13 +778,16 @@ def check_identifying_strings(problems):
     host = socket.gethostname()
     terms = {f"/Users/{getpass.getuser()}", "/opt/homebrew", host, host.split(".")[0]}
     terms.update(filter(None, os.environ.get("LAPIS_SWEEP_TERMS", "").split(",")))
-    # Qt keeps string literals as UTF-16, so look for those spellings too.
-    needles = {
+    # Qt keeps string literals as UTF-16, so look for those spellings of what
+    # names this Mac and its user too. Homebrew's prefix is only a build leak
+    # in UTF-8; the app searches /opt/homebrew/bin for CLIs on purpose.
+    needles = {term.encode() for term in terms if len(term) >= 4}
+    needles.update(
         term.encode(encoding)
-        for term in terms
+        for term in terms - {"/opt/homebrew"}
         if len(term) >= 4
-        for encoding in ("utf-8", "utf-16-le", "utf-16-be")
-    }
+        for encoding in ("utf-16-le", "utf-16-be")
+    )
     for path in sorted(APP.rglob("*")):
         if path.is_symlink() or not path.is_file():
             continue
