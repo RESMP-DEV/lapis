@@ -28,10 +28,10 @@
 #include <QQmlEngine>
 #include <QQuickStyle>
 #include <QQuickWindow>
-#include <QTimer>
 #include <QSGRendererInterface>
 #include <QStandardPaths>
 #include <QThread>
+#include <QTimer>
 #include <algorithm>
 #include <exception>
 #include <optional>
