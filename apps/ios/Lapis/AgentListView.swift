@@ -9,6 +9,10 @@ struct AgentListView: View {
     @State private var started: Agent?
     @State private var naming = false
     @State private var categoryName = ""
+    @State private var choosingTerminal = false
+    @State private var renaming: Agent?
+    @State private var newName = ""
+    @State private var resuming: NewAgentTarget?
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -17,7 +21,7 @@ struct AgentListView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(Theme.background, for: .navigationBar)
                 .navigationDestination(for: Agent.self) { agent in
-                    AgentView(agent: agent, gateway: model.gateway)
+                    AgentPager(agent: agent)
                 }
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
@@ -36,6 +40,18 @@ struct AgentListView: View {
                                 }
                             } label: {
                                 Label("New agent", systemImage: "terminal")
+                            }
+                            Button {
+                                if let listing = model.listing {
+                                    resuming = NewAgentTarget(category: listing.activeCategory)
+                                }
+                            } label: {
+                                Label("Resume conversation", systemImage: "clock.arrow.circlepath")
+                            }
+                            Button {
+                                choosingTerminal = true
+                            } label: {
+                                Label("Terminal", systemImage: "apple.terminal")
                             }
                             Button {
                                 categoryName = ""
@@ -63,6 +79,22 @@ struct AgentListView: View {
                 .alert("New category", isPresented: $naming) {
                     NewCategoryFields(name: $categoryName) { _ in }
                 }
+                .alert("Rename agent", isPresented: Binding(get: { renaming != nil },
+                                                            set: { if !$0 { renaming = nil } })) {
+                    TextField("Name", text: $newName)
+                        .accessibilityIdentifier("agentName")
+                    Button("Save") {
+                        let chosen = newName.trimmingCharacters(in: .whitespaces)
+                        if let agent = renaming, !chosen.isEmpty {
+                            Task { await model.rename(agent, to: String(chosen.prefix(80))) }
+                        }
+                        renaming = nil
+                    }
+                    .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Cancel", role: .cancel) { renaming = nil }
+                } message: {
+                    Text("It keeps this name instead of its conversation's title.")
+                }
                 // The agent opens once the sheet has gone.
                 .sheet(item: $newAgent, onDismiss: {
                     if let agent = started {
@@ -75,6 +107,12 @@ struct AgentListView: View {
                         started = agent
                     }
                 }
+                .sheet(item: $resuming, onDismiss: openStarted) { target in
+                    ResumeView(category: target.category) { agent in started = agent }
+                }
+                .sheet(isPresented: $choosingTerminal, onDismiss: openStarted) {
+                    TerminalPickerView { terminal in started = terminal }
+                }
         }
         .task(id: scenePhase) {
             // Keep the list current while it is on screen and the app is active.
@@ -83,6 +121,14 @@ struct AgentListView: View {
                 await model.refresh()
                 try? await Task.sleep(for: .seconds(8))
             }
+        }
+    }
+
+    // What a sheet started opens once the sheet has gone.
+    private func openStarted() {
+        if let agent = started {
+            started = nil
+            path.append(agent)
         }
     }
 
@@ -105,6 +151,37 @@ struct AgentListView: View {
                         .foregroundStyle(.orange)
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
+                }
+                // Plain shells for a quick command, above the agents.
+                if !model.terminals.isEmpty {
+                    Text("Terminals")
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .textCase(.uppercase)
+                        .tracking(1.6)
+                        .foregroundStyle(Theme.quiet)
+                        .padding(.top, 14)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 2, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                    ForEach(model.terminals) { terminal in
+                        Button {
+                            path.append(terminal.asAgent)
+                        } label: {
+                            AgentCard(agent: terminal.asAgent)
+                        }
+                        .buttonStyle(CardPress())
+                        .accessibilityIdentifier("terminal-row-\(terminal.machine.isEmpty ? "mac" : terminal.machine)")
+                        .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                Task { await model.closeTerminal(terminal) }
+                            } label: {
+                                Label("Close", systemImage: "xmark")
+                            }
+                        }
+                    }
                 }
                 ForEach(listing.categories) { category in
                     Text(category.name)
@@ -141,6 +218,23 @@ struct AgentListView: View {
                                 Task { await model.close(agent) }
                             } label: {
                                 Label("Close", systemImage: "xmark")
+                            }
+                        }
+                        .swipeActions(edge: .leading) {
+                            Button {
+                                newName = agent.title
+                                renaming = agent
+                            } label: {
+                                Label("Rename", systemImage: "pencil")
+                            }
+                            .tint(Theme.accent)
+                        }
+                        .contextMenu {
+                            Button {
+                                newName = agent.title
+                                renaming = agent
+                            } label: {
+                                Label("Rename", systemImage: "pencil")
                             }
                         }
                     }
@@ -338,5 +432,62 @@ extension EnvironmentValues {
     var isPressedCard: Bool {
         get { self[PressedCardKey.self] }
         set { self[PressedCardKey.self] = newValue }
+    }
+}
+
+// An agent's screen; swiping left or right over it moves to the next or
+// previous agent in its category (or among the terminals), like pages, so the
+// list is only needed to change category.
+struct AgentPager: View {
+    @Environment(WorkspaceModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var current: Agent
+    @State private var forward = true
+
+    init(agent: Agent) {
+        _current = State(initialValue: agent)
+    }
+
+    private var siblings: [Agent] {
+        if current.id.hasPrefix("terminal-") { return model.terminals.map(\.asAgent) }
+        let category = model.listing?.categories.first { $0.agents.contains { $0.id == current.id } }
+        return category?.agents ?? [current]
+    }
+
+    var body: some View {
+        let list = siblings
+        let index = list.firstIndex { $0.id == current.id }
+        let shown = index.map { list[$0] } ?? current
+        ZStack {
+            AgentView(agent: current, gateway: model.gateway) { step in
+                guard let index, list.indices.contains(index + step) else { return }
+                forward = step > 0
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                if reduceMotion {
+                    current = list[index + step]
+                } else {
+                    withAnimation(.easeOut(duration: 0.2)) { current = list[index + step] }
+                }
+            }
+            .id(current.id)
+            .transition(.asymmetric(insertion: .move(edge: forward ? .trailing : .leading),
+                                    removal: .move(edge: forward ? .leading : .trailing)))
+        }
+        .clipped()
+        .toolbar {
+            if let index, list.count > 1 {
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 1) {
+                        Text(shown.title)
+                            .font(.headline)
+                            .lineLimit(1)
+                        Text("\(index + 1) of \(list.count)")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(Theme.quiet)
+                            .accessibilityIdentifier("agentPosition")
+                    }
+                }
+            }
+        }
     }
 }

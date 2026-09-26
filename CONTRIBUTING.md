@@ -379,10 +379,19 @@ The committed `lapis.json` holds defaults only (see
   the category form.
   Command-Shift-P opens the searchable, scrollable Commands palette. Command-B
   toggles the sidebar; `sidebarVisible` persists in `lapis.json`. Command-V remains paste.
-  Command-comma opens Appearance. Command-W (`closeAgent`) closes the focused
-  agent, confirming first while it may be running. Command-Q quits the GUI and
-  the window's close button detaches it; neither stops service-owned agents.
+  Command-comma opens Appearance. Command-W (`closeAgent`) closes what is in
+  front: the side terminal's panel, else the focused agent (confirming first
+  while it may be running), else, with no agent in the category, the window.
+  Command-Shift-W (`closeWindow`) and the close button hide the window while
+  lapis keeps running, and the Dock icon brings it back; Command-M
+  (`minimizeWindow`) minimizes. Command-Q quits the GUI; none of these stops service-owned agents.
   `detachWindow` still works when configured but has no default key.
+- Command-O (`resumeConversation`) lists past Claude Code and Codex
+  conversations and resumes one as a new agent. Command-` and Control-`
+  (`toggleTerminal`) show and hide the side terminal; Command-~
+  (`chooseTerminal`) picks its machine. On the Mac a local key monitor takes
+  Command-` before AppKit's window cycling. With no agent open, the home list
+  holds the keyboard. Appearance lists every action's keys.
 - Linux uses Control-Shift-based counterparts, with Alt added for the category
   arrows and new-category creation. Bare terminal Control chords remain
   terminal input.

@@ -22,6 +22,7 @@
 #include <QScopedValueRollback>
 #include <QScreen>
 #include <QStringList>
+#include <array>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -182,6 +183,10 @@ UiPreview::UiPreview(Workspace& workspace, UiPreviewOptions options, QObject* pa
             deferTerminalFocus();
         });
     connect(&workspace_, &Workspace::focusChanged, this, &UiPreview::deferTerminalFocus);
+    // Every way of quitting (Quit, the Dock's menu, logging out) sends Quit to
+    // the application before it closes the window.
+    if (options_.hideOnClose && QCoreApplication::instance() != nullptr)
+        QCoreApplication::instance()->installEventFilter(this);
 }
 
 QStringList UiPreview::monospaceFamilies() const {
@@ -293,7 +298,10 @@ bool UiPreview::assignTerminalFocus() {
         return false;
     if (target_window->property("inputBlocked").toBool())
         return false;
-    const QString name = QStringLiteral("liveTerminal");
+    // The page names what should hold the keyboard: the selected agent's
+    // terminal, or the home list when nothing is open.
+    const auto wanted = target_window->property("focusTarget").toString();
+    const QString name = wanted.isEmpty() ? QStringLiteral("liveTerminal") : wanted;
     QQuickItem* terminal = nullptr;
     const std::function<void(QQuickItem&)> visit = [&](QQuickItem& item) {
         if (terminal != nullptr)
@@ -326,8 +334,19 @@ void UiPreview::deferTerminalFocus() {
 }
 
 bool UiPreview::eventFilter(QObject* watched, QEvent* event) {
-    if (watched == window_.data() && event->type() == QEvent::Close)
+    if (watched == QCoreApplication::instance()) {
+        if (event->type() == QEvent::Quit)
+            quitting_ = true;
+        return QObject::eventFilter(watched, event);
+    }
+    if (watched == window_.data() && event->type() == QEvent::Close) {
         saveGeometry();
+        if (options_.hideOnClose && !quitting_) {
+            event->ignore();
+            window_->hide();
+            return true;
+        }
+    }
     if (event->type() != QEvent::KeyPress)
         return QObject::eventFilter(watched, event);
 
@@ -464,22 +483,28 @@ void UiPreview::publishWarnings(const QList<QQmlError>& warnings) {
     emit diagnosticsChanged();
 }
 
+// What QML reads by name. An absent object is left undefined; QML falls back.
+void UiPreview::exposeObjects(QQmlContext& context) {
+    context.setContextProperty(QStringLiteral("workspace"), &workspace_);
+    context.setContextProperty(QStringLiteral("preview"), this);
+    // QML reads `keymap.actionSequences(...)`. Absent keymap keeps the literals.
+    const std::array<std::pair<const char*, QObject*>, 7> optional{{
+        {"keymap", options_.keymap},
+        {"alerts", options_.alerts},
+        {"agentSearch", options_.agentSearch},
+        {"usage", options_.usage},
+        {"desktop", options_.desktop},
+        {"conversations", options_.conversations},
+        {"terminals", options_.terminals},
+    }};
+    for (const auto& [name, object] : optional)
+        if (object != nullptr)
+            context.setContextProperty(QString::fromLatin1(name), object);
+}
+
 bool UiPreview::loadCandidate() {
     std::unique_ptr<QQmlApplicationEngine> candidate = std::make_unique<QQmlApplicationEngine>();
-    candidate->rootContext()->setContextProperty(QStringLiteral("workspace"), &workspace_);
-    candidate->rootContext()->setContextProperty(QStringLiteral("preview"), this);
-    // QML reads `keymap.actionSequences(...)`. Absent keymap keeps the literals.
-    if (options_.keymap != nullptr)
-        candidate->rootContext()->setContextProperty(QStringLiteral("keymap"), options_.keymap);
-    if (options_.alerts)
-        candidate->rootContext()->setContextProperty(QStringLiteral("alerts"), options_.alerts);
-    if (options_.agentSearch)
-        candidate->rootContext()->setContextProperty(QStringLiteral("agentSearch"),
-                                                     options_.agentSearch);
-    if (options_.usage)
-        candidate->rootContext()->setContextProperty(QStringLiteral("usage"), options_.usage);
-    if (options_.desktop)
-        candidate->rootContext()->setContextProperty(QStringLiteral("desktop"), options_.desktop);
+    exposeObjects(*candidate->rootContext());
     candidate->setInitialProperties({{QStringLiteral("visible"), false}});
 
     QString candidateDiagnostics;

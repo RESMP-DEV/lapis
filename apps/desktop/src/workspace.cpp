@@ -4,6 +4,7 @@
 #include "live_connection.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "platform/updater_process.hpp"
+#include "terminals.hpp"
 #include "workspace_control.hpp"
 
 #include <QCoreApplication>
@@ -109,6 +110,7 @@ bool waitForHelperMarker(QLockFile& lock, QFile& marker) {
 }
 
 QString resumeOption(const QString& harness);
+bool resumable(const session::ResumeRecord& record, const QString& harness);
 
 bool managedResumeMatches(const QStringList& arguments, qsizetype index, const QString& option,
                           const QString& identity) {
@@ -209,6 +211,11 @@ bool validModel(const QString& model) {
     static const QRegularExpression name(
         QStringLiteral(R"(^[A-Za-z0-9][A-Za-z0-9._:/\[\]@+-]{0,127}$)"));
     return model.isEmpty() || name.match(model).hasMatch();
+}
+// A conversation id a CLI's resume option takes; never an option itself.
+bool validConversation(const QString& id) {
+    static const QRegularExpression name(QStringLiteral(R"(^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$)"));
+    return name.match(id).hasMatch();
 }
 
 // One POSIX shell word, whatever it holds.
@@ -584,15 +591,18 @@ QVariantList Workspace::categories() const {
     for (const auto& category : categories_) {
         int count = 0;
         int unseen = 0;
+        int agents = 0;
         for (const auto& item : sessions_)
             if (agents_.value(item->sessionId()).category == category.id) {
                 count += item->attentionCount();
                 unseen += item->unseen() ? 1 : 0;
+                ++agents;
             }
         result.append(QVariantMap{{"id", category.id},
                                   {"name", category.name},
                                   {"attentionCount", count},
-                                  {"unseenCount", unseen}});
+                                  {"unseenCount", unseen},
+                                  {"agentCount", agents}});
     }
     return result;
 }
@@ -777,14 +787,59 @@ bool Workspace::renameSession(const QString& id, const QString& title) {
     if (!mutableRegistry())
         return false;
     auto* item = session(id);
-    if (!item || !validName(title))
+    const auto entry = agents_.find(id);
+    if (!item || entry == agents_.end() || !validName(title))
         return fail(QStringLiteral("Use an agent name of 1–80 characters."));
+    const bool was_named = entry->named;
+    const bool was_auto = entry->auto_title;
+    entry->named = true;
+    entry->auto_title = false;
     if (!save(id, title.trimmed())) {
+        entry->named = was_named;
+        entry->auto_title = was_auto;
         emit errorChanged();
         return false;
     }
     item->rename(title.trimmed());
     return true;
+}
+bool Workspace::followConversationTitle(const QString& id, QStringView title) {
+    constexpr qsizetype limit = 80;
+    auto* item = session(id);
+    const auto entry = agents_.find(id);
+    if (item == nullptr || entry == agents_.end() || entry->named || preview_mode_)
+        return false;
+    auto name = title.toString().simplified();
+    if (name.size() > limit)
+        name = name.left(limit - 1) + QChar(0x2026);
+    // A name from before chosen names were recorded is someone's choice
+    // unless it is still the folder's name, or already this title.
+    const auto folder = QFileInfo(entry->launch.directory).fileName();
+    const bool following = entry->auto_title || item->title() == folder || item->title() == name;
+    if (!following || !validName(name) || !mutableRegistry())
+        return false;
+    if (item->title() == name && entry->auto_title)
+        return false;
+    entry->auto_title = true;
+    if (!save(id, name)) {
+        qWarning().noquote() << "Agent title not saved:" << error_;
+        return false;
+    }
+    item->rename(name);
+    return true;
+}
+QHash<QString, QString> Workspace::agentConversations() const {
+    QHash<QString, QString> conversations;
+    for (auto entry = agents_.cbegin(); entry != agents_.cend(); ++entry) {
+        // The observer's (or, for other CLIs, the hook's) record follows /new
+        // and /resume; a resumed agent without one yet has lapis's pair.
+        const auto record = session::read_resume_record(entry->endpoint);
+        if (record && record->agent == entry->harness && resumable(*record, entry->harness))
+            conversations.insert(entry.key(), record->session_id);
+        else if (!entry->managed_resume_identity.isEmpty())
+            conversations.insert(entry.key(), entry->managed_resume_identity);
+    }
+    return conversations;
 }
 bool Workspace::moveSession(const QString& id, const QString& categoryId) {
     if (!mutableRegistry())
@@ -1056,17 +1111,33 @@ QString Workspace::displayPath(const QString& directory) const {
 
 // QML positional API v1 requires QString arguments; role names and boundary validation are
 // explicit. NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-bool Workspace::createAgent(const QString& directory, const QString& title, const QString& harness,
-                            const QString& model, const QString& mode) {
+bool Workspace::resumeAgent(const QString& directory, const QString& title, const QString& harness,
+                            const QString& conversation, const QString& mode) {
     return !startAgent({.category = active_category_,
                         .directory = directory,
                         .title = title,
                         .harness = harness,
                         .machine = {},
                         .program = {},
+                        .model = {},
+                        .mode = mode,
+                        .select = true,
+                        .resume = conversation})
+                .isEmpty();
+}
+QStringList Workspace::sshMachines() const { return ssh_config_hosts(ssh_config_); }
+bool Workspace::createAgent(const QString& directory, const QString& title, const QString& harness,
+                            const QString& model, const QString& mode, const QString& machine) {
+    return !startAgent({.category = active_category_,
+                        .directory = directory,
+                        .title = title,
+                        .harness = harness,
+                        .machine = machine,
+                        .program = {},
                         .model = model,
                         .mode = mode,
-                        .select = true})
+                        .select = true,
+                        .resume = {}})
                 .isEmpty();
 }
 QVariantMap Workspace::agentPlace(const QString& id) const {
@@ -1121,11 +1192,16 @@ std::optional<session::LaunchSpec> Workspace::agentLaunch(const AgentRequest& re
         return refuse(QStringLiteral("This agent cannot take that model."));
     if (!request.mode.isEmpty() && modeArguments(request.harness, request.mode).isEmpty())
         return refuse(QStringLiteral("This agent has no such mode."));
-    // The user's configured arguments, then this agent's model and mode.
-    const auto arguments = defaultArguments(request.harness) +
-                           harness_arguments_.value(request.harness) +
-                           modelArguments(request.harness, request.model) +
-                           modeArguments(request.harness, request.mode);
+    if (!request.resume.isEmpty() &&
+        (!validConversation(request.resume) || resumeOption(request.harness).isEmpty()))
+        return refuse(QStringLiteral("This agent cannot resume that conversation."));
+    // The user's configured arguments, this agent's model and mode, then the
+    // conversation to resume.
+    auto arguments = defaultArguments(request.harness) + harness_arguments_.value(request.harness) +
+                     modelArguments(request.harness, request.model) +
+                     modeArguments(request.harness, request.mode);
+    if (!request.resume.isEmpty())
+        arguments += QStringList{resumeOption(request.harness), request.resume};
     if (!request.machine.isEmpty()) {
         std::optional<session::LaunchSpec> launch;
         const auto refusal =
@@ -1183,7 +1259,17 @@ QString Workspace::launchAgent(const AgentRequest& request, const session::Launc
                                              QColor(QStringLiteral("#87cbac")), "");
         item->setSessionId(id);
         item->setHarnessId(request.harness);
-        const Agent agent{request.category, endpoint, launch, request.harness};
+        Agent agent{request.category, endpoint, launch, request.harness};
+        // A resumed conversation is lapis's pair: a later restart follows the
+        // conversation wherever it goes, as a restored agent's does.
+        if (!request.resume.isEmpty() && request.machine.isEmpty()) {
+            const auto at = launch.arguments.lastIndexOf(resumeOption(request.harness));
+            if (at >= 0 && at + 1 < launch.arguments.size() &&
+                launch.arguments.at(at + 1) == request.resume) {
+                agent.managed_resume_index = static_cast<int>(at);
+                agent.managed_resume_identity = request.resume;
+            }
+        }
         item->setStatusSource(statusSource(agent));
         const auto previous = checkpoint();
         agents_.insert(id, agent);
@@ -1210,6 +1296,38 @@ QString Workspace::launchAgent(const AgentRequest& request, const session::Launc
         return failed(QString::fromUtf8(error.what()));
     }
 }
+QJsonObject Workspace::agentRecord(const Agent& agent, const QString& id, const QString& title) {
+    const auto resume = agent.launch.arguments.size() == 2 &&
+                                agent.launch.arguments.front() == QStringLiteral("resume")
+                            ? agent.launch.arguments.at(1)
+                            : QString{};
+    auto serialized = QJsonObject{{"id", id},
+                                  {"title", title},
+                                  {"category", agent.category},
+                                  {"endpoint", agent.endpoint},
+                                  {"program", agent.launch.program},
+                                  {"harness", agent.harness},
+                                  {"mode", agent.launch.agent == session::AgentMode::claude
+                                               ? QStringLiteral("claude")
+                                               : QString()},
+                                  {"resumeThread", resume},
+                                  {"arguments", QJsonArray::fromStringList(agent.launch.arguments)},
+                                  {"directory", agent.launch.directory}};
+    if (agent.named)
+        serialized.insert(QStringLiteral("named"), true);
+    if (agent.auto_title)
+        serialized.insert(QStringLiteral("autoTitle"), true);
+    const auto resume_option = resumeOption(agent.harness);
+    if (agent.managed_resume_index >= 0 &&
+        agent.managed_resume_index + 1 < agent.launch.arguments.size() &&
+        !resume_option.isEmpty() &&
+        agent.launch.arguments.at(agent.managed_resume_index) == resume_option &&
+        agent.launch.arguments.at(agent.managed_resume_index + 1) == agent.managed_resume_identity)
+        serialized.insert(QStringLiteral("managedResume"),
+                          QJsonObject{{"index", agent.managed_resume_index},
+                                      {"identity", agent.managed_resume_identity}});
+    return serialized;
+}
 bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
     // Mutation callers publish failures only after restoring their previous state.
     const auto saveError = [this](const QString& message) {
@@ -1234,34 +1352,8 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
         const auto entry = agents_.constFind(item->sessionId());
         if (entry == agents_.cend())
             return saveError(QStringLiteral("Missing agent metadata."));
-        const auto& agent = entry.value();
-        const auto resume = agent.launch.arguments.size() == 2 &&
-                                    agent.launch.arguments.front() == QStringLiteral("resume")
-                                ? agent.launch.arguments.at(1)
-                                : QString{};
-        auto serialized = QJsonObject{
-            {"id", item->sessionId()},
-            {"title", item->sessionId() == renamedId ? renamedTitle : item->title()},
-            {"category", agent.category},
-            {"endpoint", agent.endpoint},
-            {"program", agent.launch.program},
-            {"harness", agent.harness},
-            {"mode", agent.launch.agent == session::AgentMode::claude ? QStringLiteral("claude")
-                                                                      : QString()},
-            {"resumeThread", resume},
-            {"arguments", QJsonArray::fromStringList(agent.launch.arguments)},
-            {"directory", agent.launch.directory}};
-        const auto resume_option = resumeOption(agent.harness);
-        if (agent.managed_resume_index >= 0 &&
-            agent.managed_resume_index + 1 < agent.launch.arguments.size() &&
-            !resume_option.isEmpty() &&
-            agent.launch.arguments.at(agent.managed_resume_index) == resume_option &&
-            agent.launch.arguments.at(agent.managed_resume_index + 1) ==
-                agent.managed_resume_identity)
-            serialized.insert(QStringLiteral("managedResume"),
-                              QJsonObject{{"index", agent.managed_resume_index},
-                                          {"identity", agent.managed_resume_identity}});
-        agents.append(serialized);
+        agents.append(agentRecord(entry.value(), item->sessionId(),
+                                  item->sessionId() == renamedId ? renamedTitle : item->title()));
     }
     QSaveFile file(storage_path_);
     if (!file.open(QIODevice::WriteOnly))
@@ -1629,6 +1721,8 @@ void Workspace::loadAgents(const QJsonArray& agents) {
             agent.launch.arguments = savedArguments(object.value(QStringLiteral("arguments")));
         if (object.contains(QStringLiteral("managedResume")))
             loadManagedResume(object.value(QStringLiteral("managedResume")), agent);
+        agent.named = object.value(QStringLiteral("named")).toBool();
+        agent.auto_title = object.value(QStringLiteral("autoTitle")).toBool();
         // Claude agents saved before the service adapter ran as terminals; the
         // launch must match the one their running service was created with.
         if (harness == QStringLiteral("claude") &&
@@ -2003,7 +2097,8 @@ bool Workspace::reopenAgent() {
                                .program = closed.plan.launch.program,
                                .model = {},
                                .mode = {},
-                               .select = true};
+                               .select = true,
+                               .resume = {}};
     const auto id = launchAgent(request, closed.plan.launch);
     if (id.isEmpty())
         return false;
@@ -2174,7 +2269,8 @@ QString Workspace::splitAgent(const QString& edge) {
                          .program = launch.program,
                          .model = {},
                          .mode = {},
-                         .select = false};
+                         .select = false,
+                         .resume = {}};
     if (preview_mode_)
         return failed(QStringLiteral("Agent launch is disabled in the preview fixture."));
     const auto beside = item->sessionId();

@@ -19,6 +19,9 @@ bool set_login_item(bool on);
 void start_updater();
 void check_for_updates();
 [[nodiscard]] bool updater_available();
+// Command-` and Command-Shift-` reach the handler before AppKit can use them
+// to cycle windows; it returns true when it took the key.
+void on_terminal_keys(const std::function<bool(bool shifted)>& handler);
 #else
 inline void post_notification(const QString&, const QString&, const QString&) {}
 inline void on_notification_opened(const std::function<void(const QString&)>&) {}
@@ -27,6 +30,7 @@ inline bool set_login_item(bool) { return false; }
 inline void start_updater() {}
 inline void check_for_updates() {}
 inline bool updater_available() { return false; }
+inline void on_terminal_keys(const std::function<bool(bool)>&) {}
 #endif
 } // namespace lapis::desktop::platform
 #endif

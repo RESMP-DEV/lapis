@@ -1,9 +1,12 @@
 #include "agent_search.hpp"
+#include "conversation_index.hpp"
 #include "keymap.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
+#include "terminals.hpp"
 #include "ui_preview.hpp"
 #include "usage.hpp"
+#include "workspace.hpp"
 #include <QAccessible>
 #include <QElapsedTimer>
 #include <QHash>
@@ -17,6 +20,7 @@
 #include <QClipboard>
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
@@ -805,9 +809,11 @@ int run_surface_tests() {
     return EXIT_SUCCESS;
 }
 
-// Stage surfaces only: preview cards are scaled copies, not terminals.
+// Stage surfaces only: preview cards are scaled copies, not terminals, and
+// the side terminal is a shell beside the stage.
 bool preview_surface(const QQuickItem* item) {
-    return item->objectName().startsWith(QStringLiteral("previewTerminal_"));
+    return item->objectName().startsWith(QStringLiteral("previewTerminal_")) ||
+           item->objectName() == QStringLiteral("sideTerminalSurface");
 }
 int surface_count(QQuickItem* item) {
     int count =
@@ -1651,6 +1657,183 @@ void check_agent_search(QQuickWindow& window, lapis::desktop::Workspace& workspa
     CHECK(focused_id(workspace) == QStringLiteral("notes"));
 }
 
+// With nothing open, the stage lists what to do next and takes the keyboard:
+// up and down move, Return runs the entry. Command-O finds a past conversation
+// by typing and resumes it with Return.
+void check_home_and_resume(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                           const lapis::desktop::KeyMap& keymap) {
+    const auto before = workspace.activeCategoryId();
+    CHECK(workspace.addCategory(QStringLiteral("Empty")));
+    pump(60);
+    auto* home = required_visual(window, QStringLiteral("homeList"));
+    CHECK(home->isVisible() && home->hasActiveFocus());
+    const auto rows = home->property("count").toInt();
+    int recent = 0;
+    for (int row = 0; row < rows; ++row)
+        recent += find_visual(home, QStringLiteral("home_conversation_%1").arg(row)) != nullptr;
+    CHECK(rows >= 5 && recent == 2);
+    capture_step(window, "home");
+    for (int step = 1; step < rows; ++step)
+        send_binding(window, QStringLiteral("Down"));
+    pump(30);
+    CHECK(home->property("currentIndex").toInt() == rows - 1);
+    // The last entry is the category the test came from; Return goes back.
+    send_binding(window, QStringLiteral("Return"));
+    pump(60);
+    CHECK(workspace.activeCategoryId() == before);
+    press_action(window, keymap, "resumeConversation");
+    auto* resume = window.findChild<QObject*>(QStringLiteral("resumeDialog"));
+    CHECK(resume != nullptr);
+    wait_popup(*resume, true);
+    auto* field = required_visual(window, QStringLiteral("resumeSearchField"));
+    CHECK(field->hasActiveFocus());
+    auto* results = required_visual(window, QStringLiteral("resumeResults"));
+    CHECK(results->property("count").toInt() == 2);
+    capture_step(window, "resume");
+    field->setProperty("text", QStringLiteral("codex"));
+    pump(30);
+    CHECK(results->property("count").toInt() == 1);
+    CHECK(required_visual(window,
+                          QStringLiteral("resumeResult_0a1b2c3d-0000-4000-8000-000000000002")) !=
+          nullptr);
+    send_binding(window, QStringLiteral("Return"));
+    wait_popup(*resume, false);
+    pump(30);
+    // The fixture starts no processes; the attempt reaches the workspace.
+    CHECK(workspace.workspaceError().contains(QStringLiteral("preview")));
+    workspace.clearError();
+    for (const auto& value : workspace.categories())
+        if (value.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("Empty"))
+            CHECK(workspace.removeCategory(value.toMap().value(QStringLiteral("id")).toString()));
+    CHECK(workspace.selectCategory(before));
+    pump(60);
+}
+
+// The new-agent form offers this Mac and the ssh config's hosts: right and
+// left change the machine while up and down choose the CLI, and another
+// machine's folder starts at its home with no local suggestions.
+void check_new_agent_machine(QQuickWindow& window, const lapis::desktop::KeyMap& keymap) {
+    press_action(window, keymap, "newAgent");
+    auto* form = window.findChild<QObject*>(QStringLiteral("agentDialog"));
+    CHECK(form != nullptr);
+    wait_popup(*form, true);
+    pump(60);
+    CHECK(required_visual(window, QStringLiteral("machine_mac"))->isVisible() &&
+          required_visual(window, QStringLiteral("machine_devbox"))->isVisible());
+    CHECK(form->property("selectedMachine").toString().isEmpty());
+    send_binding(window, QStringLiteral("Right"));
+    pump(30);
+    CHECK(form->property("selectedMachine").toString() == QStringLiteral("devbox"));
+    capture_step(window, "new-agent-machine");
+    send_binding(window, QStringLiteral("Return"));
+    pump(60);
+    CHECK(form->property("phase").toInt() == 1);
+    CHECK(required_visual(window, QStringLiteral("agentDirectoryField"))
+              ->property("text")
+              .toString() == QStringLiteral("~"));
+    CHECK(!required_visual(window, QStringLiteral("folderResults"))->isVisible() &&
+          required_visual(window, QStringLiteral("agentMachine"))->isVisible());
+    // Back to the CLI step and to this Mac, which the next form remembers.
+    send_binding(window, QStringLiteral("Escape"));
+    pump(30);
+    send_binding(window, QStringLiteral("Left"));
+    pump(30);
+    CHECK(form->property("selectedMachine").toString().isEmpty());
+    CHECK(QMetaObject::invokeMethod(form, "close"));
+    wait_popup(*form, false);
+}
+
+QString screen_text(const lapis::session::TerminalSnapshot& snapshot) {
+    QString text;
+    for (std::size_t index = 0; index < snapshot.cells.size(); ++index) {
+        const auto cell = snapshot.text(index);
+        text += cell.empty() ? QStringLiteral(" ")
+                             : QString::fromUcs4(cell.data(), static_cast<qsizetype>(cell.size()));
+        if ((index + 1) % snapshot.size.columns == 0)
+            text += QLatin1Char('\n');
+    }
+    return text;
+}
+
+void type_text(QQuickWindow& window, const QString& text) {
+    for (const auto letter : text) {
+        QKeyEvent press(QEvent::KeyPress, 0, Qt::NoModifier, QString(letter));
+        QKeyEvent release(QEvent::KeyRelease, 0, Qt::NoModifier, QString(letter));
+        QCoreApplication::sendEvent(&window, &press);
+        QCoreApplication::sendEvent(&window, &release);
+    }
+}
+
+bool pump_until(const std::function<bool()>& condition, int milliseconds) {
+    QElapsedTimer clock;
+    clock.start();
+    while (!condition() && clock.elapsed() < milliseconds)
+        pump(20);
+    return condition();
+}
+
+// Command-` shows a plain shell beside the agents, with the keyboard; typing
+// runs in it, and the same key hides it and gives the agent the keys back.
+// Command-~ lists the machines by keyboard and Return opens that terminal.
+void check_side_terminal(QQuickWindow& window, lapis::desktop::Terminals& terminals,
+                         const lapis::desktop::KeyMap& keymap,
+                         lapis::desktop::TerminalSurface& stage) {
+    press_action(window, keymap, "toggleTerminal");
+    auto* panel = required_visual(window, QStringLiteral("sideTerminal"));
+    CHECK(panel->isVisible());
+    const bool ready = pump_until(
+        [&terminals] {
+            return terminals.current() != nullptr && terminals.current()->inputReady();
+        },
+        10000);
+    if (!ready)
+        qWarning().noquote() << "side terminal:" << terminals.error()
+                             << (terminals.current() ? terminals.current()->connectionState()
+                                                     : QStringLiteral("none"));
+    CHECK(ready);
+    pump(60);
+    auto* surface = required_visual(window, QStringLiteral("sideTerminalSurface"));
+    CHECK(surface->hasActiveFocus());
+    type_text(window, QStringLiteral("hello"));
+    send_binding(window, QStringLiteral("Return"));
+    CHECK(pump_until(
+        [&terminals] {
+            return screen_text(terminals.current()->snapshot())
+                .contains(QStringLiteral("ran hello"));
+        },
+        10000));
+    capture_step(window, "side-terminal");
+    // Command-W closes what is in front: the panel, not the agent behind it.
+    const auto* agent = stage.document();
+    const auto* shown = terminals.current();
+    press_action(window, keymap, "closeAgent");
+    CHECK(!panel->isVisible() && stage.hasActiveFocus() && agent != nullptr &&
+          stage.document() == agent);
+    CHECK(terminals.current() == shown && shown->inputReady());
+    press_action(window, keymap, "toggleTerminal");
+    CHECK(panel->isVisible() && surface->hasActiveFocus());
+    press_action(window, keymap, "toggleTerminal");
+    CHECK(!panel->isVisible() && stage.hasActiveFocus());
+    press_action(window, keymap, "chooseTerminal");
+    auto* picker = window.findChild<QObject*>(QStringLiteral("terminalPicker"));
+    CHECK(picker != nullptr);
+    wait_popup(*picker, true);
+    auto* machines = required_visual(window, QStringLiteral("terminalMachines"));
+    CHECK(machines->hasActiveFocus() && machines->property("count").toInt() >= 1);
+    CHECK(required_visual(window, QStringLiteral("terminalMachine_mac")) != nullptr);
+    capture_step(window, "terminal-picker");
+    send_binding(window, QStringLiteral("Return"));
+    wait_popup(*picker, false);
+    pump(60);
+    CHECK(panel->isVisible() && surface->hasActiveFocus());
+    press_action(window, keymap, "toggleTerminal");
+    CHECK(!panel->isVisible());
+    // The shell's service outlives lapis by design; end it here.
+    const auto id = terminals.current()->sessionId();
+    CHECK(terminals.close(id));
+    CHECK(pump_until([&terminals, &id] { return terminals.terminal(id) == nullptr; }, 10000));
+}
+
 void check_usage(QQuickWindow& window, lapis::desktop::Usage& usage, lapis::desktop::KeyMap& keymap,
                  lapis::desktop::TerminalSurface& terminal) {
     // Plan usage sits under the categories, each CLI at its tightest window,
@@ -1759,6 +1942,47 @@ HOME=')" + dir + R"(' SHELL=')" + shell.toUtf8() + R"(' exec /bin/sh -c "$1"
     return usage;
 }
 
+// One saved conversation of each CLI, as they write them, and a stand-in
+// shell that answers each line it reads.
+void write_history_and_shell(const QTemporaryDir& config) {
+    const auto save = [&config](const QString& relative, const QByteArray& text) {
+        const auto path = config.filePath(relative);
+        CHECK(QDir().mkpath(QFileInfo(path).absolutePath()));
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly) && file.write(text) == text.size());
+    };
+    save(QStringLiteral(
+             "history/claude/projects/-dev-lapis/0a1b2c3d-0000-4000-8000-000000000001.jsonl"),
+         R"({"type":"system","entrypoint":"cli","cwd":"/dev/lapis"})"
+         "\n"
+         R"({"type":"user","message":{"role":"user","content":"Fix resize"}})"
+         "\n");
+    save(QStringLiteral("history/codex/sessions/2026/09/25/rollout-a.jsonl"),
+         R"({"type":"session_meta","payload":{"id":"0a1b2c3d-0000-4000-8000-000000000002",)"
+         R"("cwd":"/dev/api","source":"cli","thread_source":"user"}})"
+         "\n");
+    save(QStringLiteral("history/codex/session_index.jsonl"),
+         R"({"id":"0a1b2c3d-0000-4000-8000-000000000002","thread_name":"Add retries"})"
+         "\n");
+    save(QStringLiteral("shell"), "#!/bin/sh\necho \"shell ready\"\nwhile read line; do\n"
+                                  "  [ \"$line\" = exit ] && exit 0\n  echo \"ran $line\"\ndone\n");
+    CHECK(QFile::setPermissions(config.filePath(QStringLiteral("shell")),
+                                QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    save(QStringLiteral("ssh_config"), "Host devbox\nHost *\n");
+    CHECK(QDir().mkpath(config.filePath(QStringLiteral("runtime"))));
+    CHECK(QFile::setPermissions(config.filePath(QStringLiteral("runtime")),
+                                QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+}
+
+void wait_ready(lapis::desktop::ConversationIndex& conversations) {
+    conversations.refresh();
+    QElapsedTimer scanned;
+    scanned.start();
+    while (!conversations.ready() && scanned.elapsed() < 10000)
+        pump(20);
+    CHECK(conversations.all().size() == 2);
+}
+
 // The agent strip is the category's navigation: live previews in tab order
 // that never take input or resize a terminal, keep part of the neighboring
 // card in view as selection moves, and pulse an agent that finished or needs a
@@ -1772,12 +1996,22 @@ int run_strip_ui_tests() {
     keymap.setSourcePathForTesting(config.filePath(QStringLiteral("strip.json")));
     AgentSearch search(&workspace);
     const auto usage = fake_usage(config);
+    ConversationIndex conversations(config.filePath(QStringLiteral("history/claude")),
+                                    config.filePath(QStringLiteral("history/codex")),
+                                    config.filePath(QStringLiteral("conversations.json")));
+    write_history_and_shell(config);
+    wait_ready(conversations);
+    Terminals terminals(config.filePath(QStringLiteral("runtime")),
+                        config.filePath(QStringLiteral("ssh_config")));
+    terminals.setShellForTesting(config.filePath(QStringLiteral("shell")));
     UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),
                                   .keymap = &keymap,
                                   .agentSearch = &search,
-                                  .usage = usage.get()});
+                                  .usage = usage.get(),
+                                  .conversations = &conversations,
+                                  .terminals = &terminals});
     CHECK(preview.load());
     auto* window = preview.window();
     window->resize(1400, 960);
@@ -1981,6 +2215,10 @@ int run_strip_ui_tests() {
     check_tiles_and_drags(*window, workspace, keymap);
     check_find_and_text_size(*window, workspace, keymap);
     check_agent_search(*window, workspace, keymap, *terminal);
+    check_home_and_resume(*window, workspace, keymap);
+    check_side_terminal(*window, terminals, keymap, *terminal);
+    workspace.setSshConfigForTesting(config.filePath(QStringLiteral("ssh_config")));
+    check_new_agent_machine(*window, keymap);
     check_usage(*window, *usage, keymap, *terminal);
     CHECK(preview.diagnostics().isEmpty());
     return EXIT_SUCCESS;

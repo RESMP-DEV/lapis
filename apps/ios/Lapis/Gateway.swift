@@ -76,6 +76,34 @@ struct NewAgent: Encodable {
     let machine: String?
     let model: String?
     let mode: String?
+    // A past conversation to resume, by the CLI's own id.
+    var resume: String? = nil
+}
+
+// A plain shell on the Mac or one of its ssh machines, for a quick command;
+// never an agent. One per machine.
+struct TerminalInfo: Codable, Identifiable, Hashable {
+    let id: String
+    let machine: String // "" for the Mac
+    let name: String
+    let running: Bool
+    let onPhone: Bool
+
+    // Opened in the same live screen as an agent.
+    var asAgent: Agent {
+        Agent(id: id, title: machine.isEmpty ? "Terminal" : "Terminal on \(machine)", harness: "shell",
+              directory: "~", running: running, onPhone: onPhone,
+              machine: machine, place: machine.isEmpty ? "this Mac" : machine)
+    }
+}
+
+// A past Claude or Codex conversation on the Mac, to resume as a new agent.
+struct Conversation: Codable, Identifiable, Hashable {
+    let harness: String
+    let id: String
+    let directory: String // "dev/lapis" under home, or absolute
+    let title: String
+    let age: Int // seconds since it was last written
 }
 
 // An ssh host the Mac can start agents on, most used first.
@@ -99,6 +127,8 @@ struct FolderPayload: Codable {
     let folders: [String]?
     let frequent: [FrequentFolder]?
     let harnesses: [String: String]?
+    // How active each folder has been (recent and frequent agent work).
+    let activity: [String: Double]?
 }
 
 struct StartedAgent: Decodable {
@@ -312,12 +342,50 @@ struct Gateway {
         return try JSONDecoder().decode(Made.self, from: data).id
     }
 
+    // Names the agent on the Mac; the name stays over its conversation's title.
+    func rename(agent: String, title: String) async throws {
+        var request = request("api/agents/\(agent)/rename")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["title": title])
+        let (data, response) = try await Gateway.requests.data(for: request)
+        try Gateway.check(response, data)
+    }
+
     // Ends the agent on the Mac, as Command-W does there.
     func close(agent: String) async throws {
         var request = request("api/agents/\(agent)/close")
         request.httpMethod = "POST"
         let (data, response) = try await Gateway.requests.data(for: request)
         try Gateway.check(response, data)
+    }
+
+    // The Mac's quick-command terminals.
+    func terminals() async throws -> [TerminalInfo] {
+        struct Listing: Decodable { let terminals: [TerminalInfo] }
+        let (data, response) = try await Gateway.requests.data(for: request("api/terminals"))
+        try Gateway.check(response, data)
+        return try JSONDecoder().decode(Listing.self, from: data).terminals
+    }
+
+    // The machine's terminal ("" is the Mac), started there when it has none; its id.
+    func openTerminal(machine: String) async throws -> String {
+        struct Opened: Decodable { let id: String }
+        var request = request("api/terminals")
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["machine": machine])
+        let (data, response) = try await Gateway.requests.data(for: request)
+        try Gateway.check(response, data)
+        return try JSONDecoder().decode(Opened.self, from: data).id
+    }
+
+    // The Mac's recent Claude and Codex conversations, newest first.
+    func conversations() async throws -> [Conversation] {
+        struct Listing: Decodable { let conversations: [Conversation] }
+        let (data, response) = try await Gateway.requests.data(for: request("api/conversations"))
+        try Gateway.check(response, data)
+        return try JSONDecoder().decode(Listing.self, from: data).conversations
     }
 
     func machines() async throws -> [Machine] {

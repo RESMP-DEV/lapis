@@ -567,6 +567,106 @@ class StartAgentTests(unittest.TestCase):
             )
             status, refused = server.request("POST", "/api/agents/gone/close", {})
             self.assertEqual((status, refused), (422, {"error": "No such agent"}))
+            # A name chosen on the phone, which the Mac keeps.
+            status, named = server.request(
+                "POST", "/api/agents/a1/rename", {"title": " Resize work "}
+            )
+            self.assertEqual((status, named), (200, {"ok": True}))
+            self.assertEqual(
+                desktop.requests[-1],
+                {
+                    "version": 1,
+                    "request": "renameAgent",
+                    "id": "a1",
+                    "title": "Resize work",
+                },
+            )
+            asked = len(desktop.requests)
+            for body in ({"title": ""}, {"title": "x" * 81}, {"title": 3}, ["x"]):
+                status, _ = server.request("POST", "/api/agents/a1/rename", body)
+                self.assertEqual(status, 400, body)
+            self.assertEqual(len(desktop.requests), asked, "bad names reach nothing")
+
+    def test_terminals_open_list_and_close_through_the_mac(self):
+        def answer(request):
+            if request["request"] == "openTerminal":
+                if request["machine"] == "nowhere":
+                    return {
+                        "ok": False,
+                        "error": "nowhere is not a host in your ssh config.",
+                    }
+                return {"ok": True, "id": "terminal-1"}
+            return {"ok": True}
+
+        with (
+            Server(self, "{}") as server,
+            FakeDesktop(server.directory, answer) as desktop,
+        ):
+            status, opened = server.request("POST", "/api/terminals", {"machine": ""})
+            self.assertEqual((status, opened), (200, {"id": "terminal-1"}))
+            self.assertEqual(
+                desktop.requests[-1],
+                {"version": 1, "request": "openTerminal", "machine": ""},
+            )
+            status, refused = server.request(
+                "POST", "/api/terminals", {"machine": "nowhere"}
+            )
+            self.assertEqual(status, 422)
+            asked = len(desktop.requests)
+            for body in ({"machine": "-oProxyCommand=x"}, {"machine": 3}, ["x"]):
+                status, _ = server.request("POST", "/api/terminals", body)
+                self.assertEqual(status, 400, body)
+            self.assertEqual(len(desktop.requests), asked, "bad machines reach nothing")
+            # The desktop's terminals.json lists them; only its own endpoints count.
+            folder = server.directory.resolve()
+            (server.directory / "terminals.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "terminals": [
+                            {
+                                "id": "terminal-1",
+                                "machine": "",
+                                "endpoint": str(folder / "terminal-1.sock"),
+                                "program": "/bin/zsh",
+                                "arguments": ["-l", "-i"],
+                                "directory": "/tmp",
+                            },
+                            {
+                                "id": "terminal-2",
+                                "machine": "devbox",
+                                "endpoint": "/elsewhere/terminal-2.sock",
+                                "program": "/usr/bin/ssh",
+                                "arguments": ["-t", "--", "devbox"],
+                                "directory": "/tmp",
+                            },
+                        ],
+                    }
+                )
+            )
+            status, listed = server.request("GET", "/api/terminals")
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                listed["terminals"],
+                [
+                    {
+                        "id": "terminal-1",
+                        "machine": "",
+                        "name": "This Mac",
+                        "running": False,
+                        "onPhone": False,
+                    }
+                ],
+            )
+            found = remote.Handler.gateway.agent("terminal-1")
+            self.assertEqual((found["program"], found["mode"]), ("/bin/zsh", ""))
+            self.assertIsNone(remote.Handler.gateway.agent("terminal-2"))
+            status, closed = server.request("POST", "/api/agents/terminal-1/close", {})
+            self.assertEqual((status, closed), (200, {"ok": True}))
+            self.assertEqual(
+                desktop.requests[-1],
+                {"version": 1, "request": "closeTerminal", "id": "terminal-1"},
+            )
 
     def test_without_lapis_on_the_mac(self):
         with Server(self, "{}") as server:
@@ -780,6 +880,72 @@ class FolderTests(unittest.TestCase):
         self.assertNotIn("/elsewhere", counts)
         self.assertNotIn(str(self.home / "a"), counts)
 
+    def test_activity_and_conversations(self):
+        # A named Codex thread and a Claude session with a typed first message.
+        lapis = str(self.home / "dev" / "lapis")
+        rollout(
+            self.codex,
+            "01a0d4b2-0000-7000-8000-0000000000aa",
+            {
+                "id": "01a0d4b2-0000-7000-8000-0000000000aa",
+                "cwd": lapis,
+                "source": "cli",
+            },
+        )
+        (self.codex / "session_index.jsonl").write_text(
+            json.dumps(
+                {
+                    "id": "01a0d4b2-0000-7000-8000-0000000000aa",
+                    "thread_name": "Retry work",
+                }
+            )
+            + "\n"
+        )
+        session = (
+            self.claude
+            / "projects"
+            / "-home-b"
+            / "20000000-0000-4000-8000-000000000000.jsonl"
+        )
+        session.write_text(
+            json.dumps({"cwd": str(self.home / "b"), "entrypoint": "cli"})
+            + "\n"
+            + json.dumps({"type": "user", "message": {"content": "<command-name>/x"}})
+            + "\n"
+            + json.dumps({"type": "user", "message": {"content": "fix  the\nresize"}})
+            + "\n"
+        )
+        index = remote.FolderIndex(
+            self.root / "workspace.json",
+            home=self.home,
+            codex_home=self.codex,
+            claude_home=self.claude,
+        )
+        with Server(self, "{}", folders=index) as server:
+            status, body = server.request("GET", "/api/folders")
+            self.assertEqual(status, 200)
+            # Every conversation now counts about 1; b has four, dev/lapis three.
+            self.assertGreater(body["activity"]["b"], body["activity"]["dev/lapis"])
+            self.assertAlmostEqual(body["activity"]["dev/lapis"], 3, places=2)
+            status, listed = server.request("GET", "/api/conversations")
+            self.assertEqual(status, 200)
+            titles = {item["id"]: item for item in listed["conversations"]}
+            self.assertEqual(
+                titles["01a0d4b2-0000-7000-8000-0000000000aa"]["title"], "Retry work"
+            )
+            self.assertEqual(
+                titles["20000000-0000-4000-8000-000000000000"],
+                {
+                    "harness": "claude",
+                    "id": "20000000-0000-4000-8000-000000000000",
+                    "directory": "b",
+                    "title": "fix the resize",
+                    "age": titles["20000000-0000-4000-8000-000000000000"]["age"],
+                },
+            )
+            # Rollouts without an id count for their folder but cannot resume.
+            self.assertEqual(len(listed["conversations"]), 5)
+
     def test_the_phone_downloads_the_index_once(self):
         index = remote.FolderIndex(
             self.root / "workspace.json",
@@ -812,6 +978,23 @@ class FolderTests(unittest.TestCase):
             connection.request("GET", "/api/health", headers={"X-Lapis-Client": "ios"})
             self.assertEqual(connection.getresponse().status, 200)
             connection.close()
+
+
+class HomeTests(unittest.TestCase):
+    def test_the_gateway_serves_the_workspace_lapis_uses(self):
+        root = Path(tempfile.mkdtemp(prefix="lh-", dir="/tmp")).resolve()
+        self.addCleanup(shutil.rmtree, root, True)
+        # A developer build keeps its workspace in the checkout.
+        self.assertEqual(remote.lapis_home({}, root), remote.ROOT)
+        # The downloaded app's ~/.lapis wins once it has a workspace.
+        (root / ".lapis" / "runtime").mkdir(parents=True)
+        self.assertEqual(remote.lapis_home({}, root), remote.ROOT)
+        (root / ".lapis" / "runtime" / "workspace.json").write_text("{}")
+        self.assertEqual(remote.lapis_home({}, root), root / ".lapis")
+        # LAPIS_HOME, as the desktop reads it, wins over both.
+        self.assertEqual(
+            remote.lapis_home({"LAPIS_HOME": str(root / "x")}, root), root / "x"
+        )
 
 
 class MachineTests(unittest.TestCase):

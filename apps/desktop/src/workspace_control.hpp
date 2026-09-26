@@ -7,14 +7,18 @@
 #include <QString>
 
 namespace lapis::desktop {
+class Terminals;
 class Workspace;
 
 // Requests to the lapis process that owns the workspace (a window, or the
 // windowless host) from other lapis processes on this Mac, such as the phone
 // gateway: one JSON line per connection on <registry folder>/
 // workspace-control.sock, answered with one JSON line. Version 1 requests:
-// "harnesses", "createAgent" (category, harness, directory, optional title)
-// and "handover", which only the windowless host honours.
+// "harnesses", "createAgent" (category, harness, directory, optional title and
+// resume), "createCategory", "closeAgent", "renameAgent" (id, title),
+// "openTerminal" (machine, "" for this
+// Mac), "closeTerminal" (id) and "handover", which only the windowless host
+// honours.
 class WorkspaceControl final : public QObject {
     Q_OBJECT
   public:
@@ -26,6 +30,8 @@ class WorkspaceControl final : public QObject {
     WorkspaceControl& operator=(WorkspaceControl&&) = delete;
 
     [[nodiscard]] bool listening() const { return server_.isListening(); }
+    // Quick-command terminals, for the phone; without them those requests fail.
+    void setTerminals(Terminals* terminals) { terminals_ = terminals; }
     [[nodiscard]] static QString path(const QString& registry);
     // Asks the windowless host holding this registry to let a window have it.
     static bool requestHandover(const QString& registry);
@@ -37,7 +43,10 @@ class WorkspaceControl final : public QObject {
     void accept();
     QByteArray answer(const QByteArray& line);
     QByteArray create(const QJsonObject& request);
+    QByteArray terminal(const QString& kind, const QJsonObject& request);
+    QByteArray agent(const QString& kind, const QJsonObject& request);
     Workspace& workspace_;
+    Terminals* terminals_{};
     bool host_;
     QLocalServer server_;
 };

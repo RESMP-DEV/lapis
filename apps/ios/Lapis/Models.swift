@@ -15,6 +15,8 @@ final class WorkspaceModel {
     var harnesses: [Harness]?
     var defaults: AgentDefaults?
     var machines: [Machine] = []
+    // The Mac's quick-command terminals, refreshed with the agents.
+    var terminals: [TerminalInfo] = []
     var catalogs: [String: FolderCatalog] = [:] // by machine; "" is this Mac
     var catalogErrors: [String: String] = [:]
     private var fetched: [String: Date] = [:]
@@ -61,6 +63,8 @@ final class WorkspaceModel {
             let current = try await gateway.agents()
             listing = current
             error = nil
+            // A Mac too old for terminals simply has none.
+            terminals = (try? await gateway.terminals()) ?? []
             DiskCache.save(current, cacheName("listing"))
             Task { await prefetch() }
         } catch is CancellationError {
@@ -206,6 +210,57 @@ extension WorkspaceModel {
         let id = try await gateway.createCategory(named: name)
         await refresh()
         return id
+    }
+
+    // The machine's terminal, started on the Mac when it has none, once its
+    // shell runs.
+    func openTerminal(machine: String) async throws -> Agent {
+        guard let gateway else { throw GatewayError.invalidHost }
+        let id = try await gateway.openTerminal(machine: machine)
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            try Task.checkCancellation()
+            terminals = try await gateway.terminals()
+            if let terminal = terminals.first(where: { $0.id == id }), terminal.running {
+                return terminal.asAgent
+            }
+            try await Task.sleep(for: .milliseconds(300))
+        }
+        throw GatewayError.refused(504, "The terminal did not start.")
+    }
+
+    // Ends a terminal's shell on the Mac.
+    func closeTerminal(_ terminal: TerminalInfo) async {
+        guard let gateway else { return }
+        terminals.removeAll { $0.id == terminal.id }
+        do {
+            try await gateway.close(agent: terminal.id)
+        } catch {
+            self.error = describe(error)
+        }
+        await refresh()
+    }
+
+    // A past conversation, resumed as a new agent in `category`.
+    func resume(_ conversation: Conversation, category: String,
+                progress: @MainActor (String) -> Void) async throws -> Agent {
+        let folder = conversation.directory
+        let directory = folder.isEmpty ? "~" : folder.hasPrefix("/") ? folder : "~/" + folder
+        return try await start(
+            NewAgent(harness: conversation.harness, directory: directory, category: category,
+                     machine: nil, model: nil, mode: defaults?.mode, resume: conversation.id),
+            progress: progress)
+    }
+
+    // Names the agent on the Mac and here.
+    func rename(_ agent: Agent, to title: String) async {
+        guard let gateway else { return }
+        do {
+            try await gateway.rename(agent: agent.id, title: title)
+        } catch {
+            self.error = describe(error)
+        }
+        await refresh()
     }
 
     // Ends the agent on the Mac; it leaves the list at once.

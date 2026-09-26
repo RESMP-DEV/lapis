@@ -1,6 +1,7 @@
 #include "workspace_control.hpp"
 
 #include "platform/posix/local_endpoint.hpp"
+#include "terminals.hpp"
 #include "workspace.hpp"
 #include <QDebug>
 #include <QDir>
@@ -97,14 +98,10 @@ QByteArray WorkspaceControl::answer(const QByteArray& line) {
         return id.isEmpty() ? refusal(workspace_.workspaceError())
                             : reply({{QStringLiteral("ok"), true}, {QStringLiteral("id"), id}});
     }
-    // Ends the agent, as Command-W on the Mac does after it asks.
-    if (kind == QStringLiteral("closeAgent")) {
-        const auto id = request.value(QStringLiteral("id")).toString();
-        if (workspace_.session(id) == nullptr)
-            return refusal(QStringLiteral("No such agent"));
-        return workspace_.closeSession(id, false) ? reply({{QStringLiteral("ok"), true}})
-                                                  : refusal(workspace_.workspaceError());
-    }
+    if (kind == QStringLiteral("closeAgent") || kind == QStringLiteral("renameAgent"))
+        return agent(kind, request);
+    if (kind == QStringLiteral("openTerminal") || kind == QStringLiteral("closeTerminal"))
+        return terminal(kind, request);
     if (kind == QStringLiteral("handover")) {
         if (!host_)
             return refusal(QStringLiteral("A lapis window keeps this workspace"));
@@ -126,7 +123,7 @@ QByteArray WorkspaceControl::create(const QJsonObject& request) {
         const auto parts = QDir::cleanPath(directory).split(QLatin1Char('/'));
         title = parts.constLast().isEmpty() ? QStringLiteral("/") : parts.constLast();
     }
-    for (const auto* field : {"machine", "program", "title", "model", "mode"})
+    for (const auto* field : {"machine", "program", "title", "model", "mode", "resume"})
         if (request.contains(QLatin1String(field)) &&
             !request.value(QLatin1String(field)).isString())
             return refusal(QStringLiteral("Invalid %1").arg(QLatin1String(field)));
@@ -139,13 +136,48 @@ QByteArray WorkspaceControl::create(const QJsonObject& request) {
                                .program = request.value(QStringLiteral("program")).toString(),
                                .model = request.value(QStringLiteral("model")).toString(),
                                .mode = request.value(QStringLiteral("mode")).toString(),
-                               .select = false});
+                               .select = false,
+                               .resume = request.value(QStringLiteral("resume")).toString()});
     if (id.isEmpty())
         return refusal(workspace_.workspaceError());
     const auto* item = workspace_.session(id);
     return reply({{QStringLiteral("ok"), true},
                   {QStringLiteral("id"), id},
                   {QStringLiteral("updating"), item != nullptr && item->updating()}});
+}
+
+// Ends the agent, as Command-W on the Mac does after it asks, or names it as
+// Rename agent does there; that name stays over its conversation's title.
+QByteArray WorkspaceControl::agent(const QString& kind, const QJsonObject& request) {
+    const auto id = request.value(QStringLiteral("id")).toString();
+    if (workspace_.session(id) == nullptr)
+        return refusal(QStringLiteral("No such agent"));
+    bool done = false;
+    if (kind == QStringLiteral("renameAgent")) {
+        const auto title = request.value(QStringLiteral("title"));
+        if (!title.isString())
+            return refusal(QStringLiteral("Missing title"));
+        done = workspace_.renameSession(id, title.toString());
+    } else {
+        done = workspace_.closeSession(id, false);
+    }
+    return done ? reply({{QStringLiteral("ok"), true}}) : refusal(workspace_.workspaceError());
+}
+
+// A plain shell on a machine, apart from agents; one per machine.
+QByteArray WorkspaceControl::terminal(const QString& kind, const QJsonObject& request) {
+    if (terminals_ == nullptr)
+        return refusal(QStringLiteral("Terminals are not available"));
+    if (kind == QStringLiteral("closeTerminal"))
+        return terminals_->close(request.value(QStringLiteral("id")).toString())
+                   ? reply({{QStringLiteral("ok"), true}})
+                   : refusal(QStringLiteral("No such terminal"));
+    const auto machine = request.value(QStringLiteral("machine"));
+    if (!machine.isString() && !machine.isUndefined())
+        return refusal(QStringLiteral("Invalid machine"));
+    const auto id = terminals_->open(machine.toString());
+    return id.isEmpty() ? refusal(terminals_->error())
+                        : reply({{QStringLiteral("ok"), true}, {QStringLiteral("id"), id}});
 }
 
 bool WorkspaceControl::requestHandover(const QString& registry) {
