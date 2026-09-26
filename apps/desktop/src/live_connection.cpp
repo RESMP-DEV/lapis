@@ -11,6 +11,7 @@
 #include <QPromise>
 #include <QThreadPool>
 #include <algorithm>
+#include <cmath>
 #include <exception>
 #include <limits>
 #include <stdexcept>
@@ -50,10 +51,47 @@ void SessionPreview::completeHistoryRequest(quint64 page_id, session::TerminalSn
     history_request_pending_ = false;
     history_page_id_ = page_id;
     history_message_ = message;
+    // A service that places its pages says so with more than the page.
+    const auto& place = snapshot.history;
+    history_scrubbable_ =
+        history_scrubbable_ || place.viewport_offset > 0 || place.total_rows > place.viewport_rows;
+    history_place_ = place;
     snapshot_ = std::move(snapshot);
     emit historyChanged();
     emit connectionChanged();
     emit snapshotChanged();
+    jumpIfAsked();
+}
+void SessionPreview::jumpIfAsked() {
+    if (!pending_jump_)
+        return;
+    const auto fraction = *pending_jump_;
+    pending_jump_.reset();
+    historyAt(fraction);
+}
+qreal SessionPreview::historyPosition() const {
+    const auto total = history_place_.total_rows;
+    if (!history_active_ || total == 0)
+        return 1;
+    return static_cast<qreal>(history_place_.viewport_offset) / static_cast<qreal>(total);
+}
+qreal SessionPreview::historySpan() const {
+    const auto total = history_place_.total_rows;
+    return total == 0 ? 1
+                      : std::min<qreal>(1, static_cast<qreal>(history_place_.viewport_rows) /
+                                               static_cast<qreal>(total));
+}
+void SessionPreview::historyAt(qreal fraction) {
+    if (!live_ || !history_scrubbable_ || history_place_.total_rows == 0)
+        return;
+    if (history_request_pending_) {
+        pending_jump_ = fraction;
+        return;
+    }
+    const auto last = history_place_.total_rows - 1;
+    const auto row = static_cast<quint64>(
+        std::llround(std::clamp<qreal>(fraction, 0, 1) * static_cast<qreal>(last)));
+    live_->requestHistory(wire::HistoryDirection::at, row);
 }
 void SessionPreview::failHistoryRequest(const QString& message) {
     if (history_request_pending_) {
@@ -62,6 +100,7 @@ void SessionPreview::failHistoryRequest(const QString& message) {
         history_message_ = message;
         emit historyChanged();
         emit connectionChanged();
+        jumpIfAsked();
     }
 }
 void SessionPreview::cancelHistoryRequests() {
@@ -84,6 +123,7 @@ void SessionPreview::newerHistory() {
     live_->requestHistory(wire::HistoryDirection::newer, history_page_id_);
 }
 void SessionPreview::returnToLive() {
+    pending_jump_.reset();
     if (live_)
         live_->cancelHistoryRequest();
     history_active_ = false;

@@ -62,6 +62,12 @@ class SessionPreview final : public QObject {
     Q_PROPERTY(bool historyActive READ historyActive NOTIFY historyChanged)
     Q_PROPERTY(bool historyRequestPending READ historyRequestPending NOTIFY historyChanged)
     Q_PROPERTY(QString historyMessage READ historyMessage NOTIFY historyChanged)
+    // Where the shown history page sits in everything kept, from 0 (the
+    // oldest row) to 1, and the share it covers; the scrubber's thumb. Only
+    // services that place their pages can jump (historyScrubbable).
+    Q_PROPERTY(bool historyScrubbable READ historyScrubbable NOTIFY historyChanged)
+    Q_PROPERTY(qreal historyPosition READ historyPosition NOTIFY historyChanged)
+    Q_PROPERTY(qreal historySpan READ historySpan NOTIFY historyChanged)
     Q_PROPERTY(QColor accent READ accent CONSTANT)
     // True while a close request waits for the process to end; cleared if the
     // service rejects the close and the agent remains attached.
@@ -81,6 +87,9 @@ class SessionPreview final : public QObject {
     Q_INVOKABLE void olderHistory();
     Q_INVOKABLE void newerHistory();
     Q_INVOKABLE void returnToLive();
+    // Shows the page at `fraction` of everything kept (0 the oldest row). A
+    // jump asked for while a page loads follows it; the latest one wins.
+    Q_INVOKABLE void historyAt(qreal fraction);
     Q_INVOKABLE bool respondAttention(const QString& token, const QVariantMap& response);
     // Ask the session service to end this agent's process. Returns false when
     // the request could not be queued on a synchronized connection.
@@ -162,6 +171,9 @@ class SessionPreview final : public QObject {
     [[nodiscard]] bool historyActive() const { return history_active_; }
     [[nodiscard]] bool historyRequestPending() const { return history_request_pending_; }
     [[nodiscard]] const QString& historyMessage() const { return history_message_; }
+    [[nodiscard]] bool historyScrubbable() const { return history_scrubbable_; }
+    [[nodiscard]] qreal historyPosition() const;
+    [[nodiscard]] qreal historySpan() const;
     [[nodiscard]] bool live() const { return live_ != nullptr; }
     [[nodiscard]] const QString& title() const { return title_; }
     [[nodiscard]] const QString& directory() const { return directory_; }
@@ -198,6 +210,7 @@ class SessionPreview final : public QObject {
     // few quiet seconds after that as a pause. Neither implies a finished task.
     void noteOutput();
     [[nodiscard]] QString unobservedStatusKind() const;
+    void jumpIfAsked();
     std::vector<qint64> output_times_;
     bool output_active_{};
     bool output_quiet_{};
@@ -207,6 +220,9 @@ class SessionPreview final : public QObject {
     bool history_active_{};
     bool history_request_pending_{};
     quint64 history_page_id_{};
+    bool history_scrubbable_{};
+    session::TerminalHistory history_place_; // the shown page among the kept rows
+    std::optional<qreal> pending_jump_;
     bool input_ready_{};
     QString connection_state_{QStringLiteral("disconnected")};
     QString service_session_id_;

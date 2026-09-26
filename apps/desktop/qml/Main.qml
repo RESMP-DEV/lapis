@@ -3306,6 +3306,62 @@ ApplicationWindow {
                                                forceActiveFocus()
                 }
 
+                // While history shows, a bar on the terminal's right edge: drag
+                // it anywhere back to the first row, or to the bottom for live.
+                Item {
+                    id: historyScrubber
+                    objectName: "historyScrubber"
+                    readonly property var session: workspace.focusedSession
+                    readonly property real thumbHeight: Math.max(28, height * (session ? session.historySpan : 1))
+                    x: liveTerminal.x + liveTerminal.width - width
+                    y: liveTerminal.y
+                    z: 5
+                    width: 14
+                    height: liveTerminal.height
+                    visible: liveTerminal.visible && session !== null && session.live && session.historyScrubbable
+                             && (session.historyActive || session.historyRequestPending)
+                    Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: 2
+                        height: parent.height
+                        color: window.borderColor
+                    }
+                    Rectangle {
+                        objectName: "historyThumb"
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: scrubArea.pressed ? 8 : 6
+                        radius: width / 2
+                        height: historyScrubber.thumbHeight
+                        y: scrubArea.pressed ? Math.max(0, Math.min(scrubArea.mouseY - height / 2, parent.height - height))
+                                             : (historyScrubber.session ? historyScrubber.session.historyPosition : 1)
+                                               * (parent.height - height)
+                        color: scrubArea.pressed || scrubArea.containsMouse ? window.focusedBorderColor
+                                                                            : window.mutedTextColor
+                    }
+                    MouseArea {
+                        id: scrubArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        preventStealing: true
+                        function jump(mouseY) {
+                            const session = historyScrubber.session
+                            if (!session)
+                                return
+                            const travel = Math.max(1, height - historyScrubber.thumbHeight)
+                            session.historyAt(Math.max(0, Math.min(1, (mouseY - historyScrubber.thumbHeight / 2) / travel)))
+                        }
+                        onPressed: function(mouse) { jump(mouse.y) }
+                        onPositionChanged: function(mouse) { if (pressed) jump(mouse.y) }
+                        onReleased: function(mouse) {
+                            // The bottom edge is the live screen.
+                            if (mouse.y >= height - 4 && historyScrubber.session) {
+                                historyScrubber.session.returnToLive()
+                                preview.deferTerminalFocus()
+                            }
+                        }
+                    }
+                }
+
                 // Dividers between tiles: drag to share the space differently.
                 Repeater {
                     model: stage.tiled && !stage.zoomed ? stage.dividerPaths : []
@@ -4039,35 +4095,12 @@ ApplicationWindow {
         border.width: 1
         border.color: sideSurface.activeFocus ? window.focusedBorderColor : window.borderColor
         radius: window.chromeRadius
+        // Only the shell: its own prompt says where it is, and the keys that
+        // opened it close it.
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 6
-            spacing: 4
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
-                PlainText {
-                    text: qsTr("Terminal")
-                    color: window.textColor
-                    font.pixelSize: window.chromeFont
-                    font.weight: Font.DemiBold
-                }
-                PlainText {
-                    objectName: "sideTerminalMachine"
-                    text: window.terminalsAvailable && terminals.currentMachine.length > 0 ? terminals.currentMachine : qsTr("This Mac")
-                    color: window.mutedTextColor
-                    font.family: window.monoFamily
-                    font.pixelSize: window.readoutFont
-                }
-                Item { Layout.fillWidth: true }
-                PlainText {
-                    text: qsTr("%1 machine   %2 hide").arg(window.shortcutText("chooseTerminal").split(" / ")[0])
-                                                    .arg(window.shortcutText("toggleTerminal").split(" / ")[0])
-                    color: window.mutedTextColor
-                    font.family: window.monoFamily
-                    font.pixelSize: window.readoutFont
-                }
-            }
+            spacing: 0
             TerminalSurface {
                 id: sideSurface
                 objectName: "sideTerminalSurface"

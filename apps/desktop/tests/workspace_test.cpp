@@ -1449,6 +1449,63 @@ void wheelReachesAFullScreenProgram() {
     qputenv("PATH", path);
 }
 
+// History reaches back to the first row, and the scrubber jumps anywhere in
+// it: the page at the start, the middle, then live again.
+void historyJumpsToTheStart() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-scrub-XXXXXX"));
+    require(directory.isValid(), "scrub directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    {
+        QFile script(root.filePath(QStringLiteral("bin/grok")));
+        require(script.open(QIODevice::WriteOnly | QIODevice::Truncate), "write the stand-in");
+        script.write("#!/bin/sh\n"
+                     "i=0\n"
+                     "while [ $i -lt 2000 ]; do printf 'line %04d\\n' $i; i=$((i + 1)); done\n"
+                     "echo all printed\n"
+                     "exec sleep 600\n");
+    }
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.createAgent(root.filePath(QStringLiteral("project")),
+                                      QStringLiteral("scrub"), QStringLiteral("grok")),
+                "a talkative stand-in");
+        auto* agent = workspace.focusedSession();
+        const auto shows = [agent](const QString& text) {
+            return screenText(agent->snapshot()).contains(text);
+        };
+        require(
+            agent != nullptr &&
+                waitFor([&] { return agent->inputReady() && shows(QStringLiteral("all printed")); },
+                        15000),
+            "it prints its lines");
+        const auto settled = [agent] {
+            return agent->historyActive() && !agent->historyRequestPending();
+        };
+        agent->olderHistory();
+        require(waitFor(settled, 10000) && agent->historyScrubbable(),
+                "the newest page says where it sits");
+        agent->historyAt(0);
+        require(waitFor([&] { return settled() && shows(QStringLiteral("line 0000")); }, 10000) &&
+                    agent->historyPosition() < 0.001,
+                "the scrubber reaches the first line");
+        agent->historyAt(0.5);
+        require(waitFor([&] { return settled() && agent->historyPosition() > 0.4; }, 10000) &&
+                    agent->historyPosition() < 0.6 &&
+                    (shows(QStringLiteral("line 09")) || shows(QStringLiteral("line 10"))),
+                "and the middle");
+        agent->returnToLive();
+        require(waitFor([&] { return shows(QStringLiteral("all printed")); }, 5000),
+                "and live again");
+        require(workspace.closeSession(agent->sessionId()), "close the stand-in");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in closes");
+    }
+    qputenv("PATH", path);
+}
+
 // Quick-command terminals: one shell per machine under its own service, apart
 // from agents. It is reused, reattached by the next lapis, started from the
 // phone through the control socket, and leaves when its shell exits.
@@ -3030,6 +3087,7 @@ int main(int argc, char** argv) {
         resumingAConversationStartsItsCli();
         terminalsRunPlainShells();
         wheelReachesAFullScreenProgram();
+        historyJumpsToTheStart();
         windowTakesTheWorkspaceFromTheHost();
         alertsChimeWhileAnAgentWaits();
         phoneSizeYieldsToTheDesktop();
