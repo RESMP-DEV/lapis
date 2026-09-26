@@ -1516,9 +1516,9 @@ void resumingAConversationStartsItsCli() {
         require(!workspace.resumeAgent(project, QStringLiteral("x"), QStringLiteral("grok"),
                                        QStringLiteral("-rf")),
                 "an option is never taken for a conversation");
-        require(workspace.resumeAgent(project, QStringLiteral("resumed"), QStringLiteral("grok"),
+        require(workspace.resumeAgent(project, QStringLiteral("project"), QStringLiteral("grok"),
                                       QStringLiteral("conv-123")),
-                "a past conversation resumes");
+                "a past conversation resumes, named after its folder");
         auto* agent = workspace.focusedSession();
         require(agent != nullptr && waitFor(
                                         [agent] {
@@ -1564,6 +1564,19 @@ void resumingAConversationStartsItsCli() {
                                                   QStringLiteral("  Fix   the resize bug ")) &&
                     agent->title() == QStringLiteral("Fix the resize bug"),
                 "the conversation's title names the agent");
+        require(
+            workspace.followConversationTitle(agent->sessionId(), QStringLiteral("After /clear")) &&
+                agent->title() == QStringLiteral("After /clear"),
+            "it keeps following its conversation");
+        // A name from before chosen names were recorded stays.
+        require(
+            workspace.createAgent(project, QStringLiteral("My own name"), QStringLiteral("grok")),
+            "an agent with its own name");
+        auto* own = workspace.focusedSession();
+        require(own != nullptr, "the named agent is shown");
+        require(!workspace.followConversationTitle(own->sessionId(), QStringLiteral("Theirs")) &&
+                    own->title() == QStringLiteral("My own name"),
+                "a name that is not the folder's stays");
         const auto renamed = askWorkspace(
             workspace.storagePath(), {{QStringLiteral("version"), 1},
                                       {QStringLiteral("request"), QStringLiteral("renameAgent")},
@@ -1591,10 +1604,13 @@ void resumingAConversationStartsItsCli() {
                                 }),
                     "the chosen name is saved as chosen");
         }
-        require(
-            waitFor([agent, phone] { return agent->inputReady() && phone->inputReady(); }, 10000),
-            "both agents take input");
-        for (const auto& closing : {agent->sessionId(), phone->sessionId()})
+        require(waitFor(
+                    [agent, phone, own] {
+                        return agent->inputReady() && phone->inputReady() && own->inputReady();
+                    },
+                    10000),
+                "the agents take input");
+        for (const auto& closing : {agent->sessionId(), phone->sessionId(), own->sessionId()})
             require(workspace.closeSession(closing), "close the stand-in agents");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "the stand-in agents close");

@@ -791,26 +791,36 @@ bool Workspace::renameSession(const QString& id, const QString& title) {
     if (!item || entry == agents_.end() || !validName(title))
         return fail(QStringLiteral("Use an agent name of 1–80 characters."));
     const bool was_named = entry->named;
+    const bool was_auto = entry->auto_title;
     entry->named = true;
+    entry->auto_title = false;
     if (!save(id, title.trimmed())) {
         entry->named = was_named;
+        entry->auto_title = was_auto;
         emit errorChanged();
         return false;
     }
     item->rename(title.trimmed());
     return true;
 }
-bool Workspace::followConversationTitle(const QString& id, const QString& title) {
+bool Workspace::followConversationTitle(const QString& id, QStringView title) {
     constexpr qsizetype limit = 80;
     auto* item = session(id);
-    const auto entry = agents_.constFind(id);
-    if (item == nullptr || entry == agents_.cend() || entry->named || preview_mode_)
+    const auto entry = agents_.find(id);
+    if (item == nullptr || entry == agents_.end() || entry->named || preview_mode_)
         return false;
-    auto name = title.simplified();
+    auto name = title.toString().simplified();
     if (name.size() > limit)
         name = name.left(limit - 1) + QChar(0x2026);
-    if (!validName(name) || name == item->title() || !mutableRegistry())
+    // A name from before chosen names were recorded is someone's choice
+    // unless it is still the folder's name, or already this title.
+    const auto folder = QFileInfo(entry->launch.directory).fileName();
+    const bool following = entry->auto_title || item->title() == folder || item->title() == name;
+    if (!following || !validName(name) || !mutableRegistry())
         return false;
+    if (item->title() == name && entry->auto_title)
+        return false;
+    entry->auto_title = true;
     if (!save(id, name)) {
         qWarning().noquote() << "Agent title not saved:" << error_;
         return false;
@@ -1286,6 +1296,38 @@ QString Workspace::launchAgent(const AgentRequest& request, const session::Launc
         return failed(QString::fromUtf8(error.what()));
     }
 }
+QJsonObject Workspace::agentRecord(const Agent& agent, const QString& id, const QString& title) {
+    const auto resume = agent.launch.arguments.size() == 2 &&
+                                agent.launch.arguments.front() == QStringLiteral("resume")
+                            ? agent.launch.arguments.at(1)
+                            : QString{};
+    auto serialized = QJsonObject{{"id", id},
+                                  {"title", title},
+                                  {"category", agent.category},
+                                  {"endpoint", agent.endpoint},
+                                  {"program", agent.launch.program},
+                                  {"harness", agent.harness},
+                                  {"mode", agent.launch.agent == session::AgentMode::claude
+                                               ? QStringLiteral("claude")
+                                               : QString()},
+                                  {"resumeThread", resume},
+                                  {"arguments", QJsonArray::fromStringList(agent.launch.arguments)},
+                                  {"directory", agent.launch.directory}};
+    if (agent.named)
+        serialized.insert(QStringLiteral("named"), true);
+    if (agent.auto_title)
+        serialized.insert(QStringLiteral("autoTitle"), true);
+    const auto resume_option = resumeOption(agent.harness);
+    if (agent.managed_resume_index >= 0 &&
+        agent.managed_resume_index + 1 < agent.launch.arguments.size() &&
+        !resume_option.isEmpty() &&
+        agent.launch.arguments.at(agent.managed_resume_index) == resume_option &&
+        agent.launch.arguments.at(agent.managed_resume_index + 1) == agent.managed_resume_identity)
+        serialized.insert(QStringLiteral("managedResume"),
+                          QJsonObject{{"index", agent.managed_resume_index},
+                                      {"identity", agent.managed_resume_identity}});
+    return serialized;
+}
 bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
     // Mutation callers publish failures only after restoring their previous state.
     const auto saveError = [this](const QString& message) {
@@ -1310,36 +1352,8 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
         const auto entry = agents_.constFind(item->sessionId());
         if (entry == agents_.cend())
             return saveError(QStringLiteral("Missing agent metadata."));
-        const auto& agent = entry.value();
-        const auto resume = agent.launch.arguments.size() == 2 &&
-                                    agent.launch.arguments.front() == QStringLiteral("resume")
-                                ? agent.launch.arguments.at(1)
-                                : QString{};
-        auto serialized = QJsonObject{
-            {"id", item->sessionId()},
-            {"title", item->sessionId() == renamedId ? renamedTitle : item->title()},
-            {"category", agent.category},
-            {"endpoint", agent.endpoint},
-            {"program", agent.launch.program},
-            {"harness", agent.harness},
-            {"mode", agent.launch.agent == session::AgentMode::claude ? QStringLiteral("claude")
-                                                                      : QString()},
-            {"resumeThread", resume},
-            {"arguments", QJsonArray::fromStringList(agent.launch.arguments)},
-            {"directory", agent.launch.directory}};
-        if (agent.named)
-            serialized.insert(QStringLiteral("named"), true);
-        const auto resume_option = resumeOption(agent.harness);
-        if (agent.managed_resume_index >= 0 &&
-            agent.managed_resume_index + 1 < agent.launch.arguments.size() &&
-            !resume_option.isEmpty() &&
-            agent.launch.arguments.at(agent.managed_resume_index) == resume_option &&
-            agent.launch.arguments.at(agent.managed_resume_index + 1) ==
-                agent.managed_resume_identity)
-            serialized.insert(QStringLiteral("managedResume"),
-                              QJsonObject{{"index", agent.managed_resume_index},
-                                          {"identity", agent.managed_resume_identity}});
-        agents.append(serialized);
+        agents.append(agentRecord(entry.value(), item->sessionId(),
+                                  item->sessionId() == renamedId ? renamedTitle : item->title()));
     }
     QSaveFile file(storage_path_);
     if (!file.open(QIODevice::WriteOnly))
@@ -1707,6 +1721,7 @@ void Workspace::loadAgents(const QJsonArray& agents) {
         if (object.contains(QStringLiteral("managedResume")))
             loadManagedResume(object.value(QStringLiteral("managedResume")), agent);
         agent.named = object.value(QStringLiteral("named")).toBool();
+        agent.auto_title = object.value(QStringLiteral("autoTitle")).toBool();
         // Claude agents saved before the service adapter ran as terminals; the
         // launch must match the one their running service was created with.
         if (harness == QStringLiteral("claude") &&

@@ -353,7 +353,7 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool renameSession(const QString& id, const QString& title);
     // The agent's conversation title, from its CLI. It names an agent that
     // still has the name it started with; one someone renamed keeps theirs.
-    bool followConversationTitle(const QString& id, const QString& title);
+    bool followConversationTitle(const QString& id, QStringView title);
     // Each agent's current conversation, as its CLI resumes it: agent id to
     // conversation id, for the agents that have one.
     [[nodiscard]] QHash<QString, QString> agentConversations() const;
@@ -452,6 +452,8 @@ class Workspace final : public QObject {
         // Its name was chosen (on the Mac or the phone), not taken from its
         // folder or its conversation.
         bool named{};
+        // Its name is its conversation's title, which it keeps following.
+        bool auto_title{};
         // The exact resume pair lapis appended, or no provenance for a
         // user-authored launch. Existing unmarked records stay user-owned.
         int managed_resume_index{-1};
@@ -497,6 +499,8 @@ class Workspace final : public QObject {
     bool mutableRegistry();
     bool commit(const RegistryState& previous);
     bool save(const QString& renamedId = {}, const QString& renamedTitle = {});
+    [[nodiscard]] static QJsonObject agentRecord(const Agent& agent, const QString& id,
+                                                 const QString& title);
     void lockRegistry();
     void restore();
     void loadCategories(const QJsonArray& groups);
