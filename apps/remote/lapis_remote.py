@@ -1285,6 +1285,12 @@ class WireSession:
         self.history_waiters = {}
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.socket.settimeout(timeout)
+        # A whole screen in one read: macOS local sockets default to 8 KB.
+        for option in (socket.SO_RCVBUF, socket.SO_SNDBUF):
+            try:
+                self.socket.setsockopt(socket.SOL_SOCKET, option, 1 << 20)
+            except OSError:
+                pass
         try:
             self.socket.connect(agent["endpoint"])
             launch = fingerprint(

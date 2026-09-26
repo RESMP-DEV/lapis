@@ -384,6 +384,7 @@ void LiveConnection::resetSocket() {
     socket_->setReadBufferSize(wire::max_frame_bytes + 4);
     connect(socket_.get(), &QLocalSocket::readyRead, this, [this] { receive(); });
     connect(socket_.get(), &QLocalSocket::connected, this, [this] {
+        session::posix::widen_socket_buffers(socket_->socketDescriptor());
         connected_ = true;
         retry_.stop();
         handshake_.start();

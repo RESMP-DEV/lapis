@@ -2350,6 +2350,27 @@ Reported: lapis felt laggy, and only four categories had a key.
   memory, a new one in a known folder, one rewritten), the keymap test, and
   `check_nine_categories` in the window tests.
 
+### Typing latency (September 26)
+
+Typing in the side terminal felt slow. The native latency probe
+(`lapis_terminal_latency_probe --native --samples 100`, 120 Hz display) put a
+key's echo on screen 56.4 ms after the key (p50; p95 61.8 ms, every sample
+over one refresh), as milestone one had recorded (60.4 ms). The shell, Claude
+Code and decoding were not it: through an installed service, a login zsh
+echoed in 28 ms and Claude Code in 32 to 37 ms, a 51 MB conversation included.
+
+- **Publication wait, 17.0 ms.** The service published a changed screen only
+  when a 16 ms timer ran out, even for the first change after a quiet spell.
+  It now publishes as soon as its event loop is free when the last screen went
+  out at least a frame ago, and batches changes within a frame into the next.
+- **Transport, 25.1 ms.** macOS gives local sockets 8 KB buffers, so a screen
+  (about 130 KB) crossed in some sixteen write and read turns of both event
+  loops. The service, lapis and the gateway now ask for 1 MiB buffers.
+- **After:** 15.3 ms p50 and 21.6 ms p95 from key to frame; publication wait
+  0.0 ms, transport 1.9 ms, screen to frame 10.7 ms (unchanged, about a
+  refresh). Sessions keep the service they started with, so a running agent or
+  side terminal has the service half of this once it restarts.
+
 ### Following milestones
 
 With the two-session workspace assembled, the next qualification stages are

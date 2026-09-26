@@ -14,6 +14,7 @@
 #include <QDataStream>
 #include <QDebug>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QLocalServer>
@@ -126,7 +127,6 @@ class SessionService final : public QObject {
             (static_cast<unsigned int>(bound_socket.st_mode) & 0077U) != 0U)
             throw std::runtime_error("Bound socket is not private to the current user");
         timer_.setSingleShot(true);
-        timer_.setInterval(16);
         connect(&timer_, &QTimer::timeout, this, [this] { publish(); });
         ack_timer_.setSingleShot(true);
         ack_timer_.setInterval(launch.agent == AgentMode::codex ? codex_sync_timeout_ms
@@ -731,6 +731,7 @@ class SessionService final : public QObject {
             return;
         }
         pending_.insert(incoming);
+        posix::widen_socket_buffers(incoming->socketDescriptor());
         incoming->setReadBufferSize(75); // v3 attach is exactly 74 framed bytes.
         const auto bytes = std::make_shared<QByteArray>();
         connect(incoming, &QLocalSocket::readyRead, this,
@@ -839,13 +840,19 @@ class SessionService final : public QObject {
         dirty_ = true;
         schedule();
     }
+    // A change after a quiet frame goes out as soon as the event loop is free,
+    // so a typed key echoes without waiting; changes within a frame of the
+    // last screen share the next one.
     void schedule() {
         if (!process_started_ || stopping_ || timer_.isActive())
             return;
-        if ((client_ && (!snapshot_in_flight_ || ready_) && dirty_) || views_due())
-            timer_.start();
+        if ((client_ && (!snapshot_in_flight_ || ready_) && dirty_) || views_due()) {
+            const auto since = last_publish_.isValid() ? last_publish_.elapsed() : frame_ms;
+            timer_.start(since >= frame_ms ? 0 : static_cast<int>(frame_ms - since));
+        }
     }
     void publish() {
+        last_publish_.start();
         publish_views();
         publish_client();
     }
@@ -1354,6 +1361,8 @@ class SessionService final : public QObject {
     wire::Attachment attachment_;
     QByteArray buffer_;
     QTimer timer_;
+    QElapsedTimer last_publish_;
+    static constexpr qint64 frame_ms = 16;
     QTimer ack_timer_;
     quint64 generation_{};
     quint64 snapshot_sequence_{};
