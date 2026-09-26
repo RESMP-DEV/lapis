@@ -418,7 +418,15 @@ latest Claude Code and Codex conversations, searchable, each resumed as a new
 agent in its folder), **Terminal** (pick the Mac or one of its ssh machines and
 a plain shell opens there, for a quick command) or a new category (added on the
 Mac without moving its window). Open terminals are listed above the agents and
-swipe away the same way. Swiping an agent left offers **Close**, and a full
+swipe away the same way. Swiping an agent right (or a long press) offers
+**Rename**. On an agent's screen, swiping left or right moves to the next or
+previous agent in its category (the title shows "2 of 4"), so the list is only
+needed to change category.
+
+An agent that still has the name it started with (its folder's) takes its
+conversation's title, on the Mac and the phone alike: Claude Code's own title,
+Codex's thread name, else the first message typed. A name you choose, on either
+device, stays. Swiping an agent left offers **Close**, and a full
 swipe closes it, as Command-W does on the Mac. A new agent from the phone: pick the
 machine (this Mac, or an ssh host from your ssh config and shell history,
 reachable and most used first), the CLI, the category, a folder (starting at

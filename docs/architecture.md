@@ -2191,6 +2191,15 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   **Terminal**, lists open terminals above the agents and swipes them away.
 - **Shortcuts.** Appearance lists every action that has a key; `keybindings` in
   `lapis.json` changes them.
+- **Names.** Agents started in one folder all read as that folder. An agent
+  that still has the name it started with takes its current conversation's
+  title (the CLI's resume record, else lapis's resume pair, looked up in the
+  conversation index, which the app rescans each minute); a chosen name is
+  recorded as `named` in the registry and stays. The phone renames through
+  `renameAgent`, so both devices share one name.
+- **Phone paging.** Swiping over an agent's screen moves between the agents of
+  its category (or the terminals); only the screen reads the swipe, since the
+  key bar scrolls sideways.
 - **Machine in the Mac's form.** Only the phone could start an agent on another
   machine. The Mac's new-agent form now has a Machine row (this Mac and the ssh
   config's hosts, left and right arrows) and starts through the same ssh launch;
