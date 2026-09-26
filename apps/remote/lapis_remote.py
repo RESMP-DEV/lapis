@@ -62,6 +62,11 @@ HISTORY_REQUEST, HISTORY_PAGE = 10, 11
 # it; one from before drops the connection on it.
 WHEEL = 16
 ALTERNATE_OFFSET, ACCEPTS_WHEEL = 21, 2
+# History direction `at` (added within v6): the page holding a row. A page's
+# history fields (total, first row, rows) say where it sits; services before
+# it send only the page itself, and reject `at`.
+HISTORY_AT = 2
+HISTORY_FIELDS_OFFSET = 37
 STATUS_NAMES = {1: "rejected", 2: "ended", 3: "replaced", 4: "overloaded"}
 # Attach modes: discover takes the agent from its current client; join (added
 # within v6) shows it beside the desktop. Services started before join reject it.
@@ -1226,6 +1231,18 @@ def render_snapshot(payload, show_cursor=True):
     }
 
 
+def page_place(payload):
+    """Where an archived page sits: every kept row, its first row among them
+    (0 the oldest), its own rows, and whether its service can jump."""
+    total, offset, rows = struct.unpack_from(">QQQ", payload, HISTORY_FIELDS_OFFSET)
+    return {
+        "total": total,
+        "offset": offset,
+        "rows": rows,
+        "scrubbable": offset > 0 or total > rows,
+    }
+
+
 def run(texts, style, column, width):
     foreground, background, flags = style
     return [
@@ -1258,6 +1275,9 @@ class WireSession:
         # Whether the latest screen is a full-screen program whose service
         # takes wheel input.
         self.wheel_accepted = False
+        # Whether its service placed a page among the kept rows (history
+        # requests `at` a row).
+        self.scrubbable = False
         # Set when another phone view is taking this agent, so its "replaced"
         # status is not reported as the Mac taking it back.
         self.superseded = False
@@ -1360,17 +1380,19 @@ class WireSession:
         require(0 <= column <= 0xFFFF and 0 <= row <= 0xFFFF, "Invalid wheel cell")
         self.send(WHEEL, struct.pack(">hHH", steps, column, row))
 
-    def request_history(self, reference=0, timeout=10.0, newer=False):
-        """The archived page before `reference` (0: the newest page), or after it.
+    def request_history(self, reference=0, timeout=10.0, newer=False, at=False):
+        """The archived page before `reference` (0: the newest page), after it,
+        or with `at`, the page holding row `reference` (0: the oldest kept row).
 
         The stream's reader thread delivers the reply (deliver_history).
         """
+        require(not at or self.scrubbable, "This agent's service cannot jump")
         request_id = next(self.history_ids)
         waiter = [threading.Event(), None]
         with self.lock:
             self.history_waiters[request_id] = waiter
         try:
-            direction = 1 if newer else 0
+            direction = HISTORY_AT if at else 1 if newer else 0
             self.send(
                 HISTORY_REQUEST, struct.pack(">QQB", request_id, reference, direction)
             )
@@ -1389,6 +1411,9 @@ class WireSession:
         length = struct.unpack_from(">I", data, 56)[0]
         message = data[60 : 60 + length].decode("utf-8", "replace")
         snapshot = data[60 + length :]
+        # A service that places its pages can jump to any row of them.
+        if snapshot and page_place(snapshot)["scrubbable"]:
+            self.scrubbable = True
         with self.lock:
             waiter = self.history_waiters.get(request_id)
         if waiter is not None:
@@ -2181,6 +2206,10 @@ class Handler(BaseHTTPRequestHandler):
                 after = int(query["after"][0])
                 require(after > 0, "after needs a page")
                 reply = session.request_history(after, newer=True)
+            elif "at" in query:
+                row = int(query["at"][0])
+                require(row >= 0, "at needs a row")
+                reply = session.request_history(row, at=True)
             else:
                 reply = session.request_history(
                     max(0, int(query.get("before", ["0"])[0]))
@@ -2201,6 +2230,7 @@ class Handler(BaseHTTPRequestHandler):
         }
         if page is not None:
             body.update({"columns": page["columns"], "lines": page["lines"]})
+            body["place"] = page_place(reply["snapshot"])
         self.log_message(
             "history page %s, %s rows", body["page"], len(body.get("lines", []))
         )

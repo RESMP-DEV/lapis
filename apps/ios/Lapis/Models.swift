@@ -418,6 +418,13 @@ final class AgentSession {
     // The oldest page is loaded. Nothing archived yet is not the start: more
     // output can still scroll off, so an empty history is retried.
     var historyEnd = false
+    // Every kept row, and whether the service can jump to any of them.
+    var historyTotal = 0
+    var scrubbable = false
+    // After a jump: pages are skipped between the shown ones and the live
+    // screen, and the page jumped to, for the screen to scroll to.
+    var gapAfter = false
+    var jumpedTo: UUID?
     private(set) var loadingHistory = false
     private var lastEmptyCheck = Date.distantPast
     private var newerTask: Task<Void, Never>?
@@ -449,6 +456,8 @@ final class AgentSession {
         state = .connecting
         history = []
         historyEnd = false
+        gapAfter = false
+        jumpedTo = nil
         let events = gateway.stream(agent: agent.id, columns: columns, rows: rows)
         task = Task { [weak self] in
             do {
@@ -578,7 +587,9 @@ final class AgentSession {
                 continue
             }
             if let lines = reply.lines, let columns = reply.columns, reply.page != 0 {
-                history.insert(HistoryChunk(page: reply.page, columns: columns, lines: lines), at: 0)
+                history.insert(HistoryChunk(page: reply.page, columns: columns, lines: lines,
+                                             offset: reply.place?.offset), at: 0)
+                note(reply.place)
                 gathered += lines.count
                 before = reply.page
                 continue
@@ -593,9 +604,9 @@ final class AgentSession {
     }
 
     // While history is shown, pages archived since it loaded are appended so
-    // it stays contiguous with the live screen.
+    // it stays contiguous with the live screen (after a jump, only on asking).
     private func followNewHistory() {
-        guard !history.isEmpty, newerTask == nil else { return }
+        guard !history.isEmpty, !gapAfter, newerTask == nil else { return }
         newerTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))
             await self?.loadNewer()
@@ -612,7 +623,57 @@ final class AgentSession {
             guard let reply = try? await gateway.history(agent: agent.id, after: after),
                   !reply.busy, reply.page != 0, let lines = reply.lines, let columns = reply.columns
             else { return }
-            history.append(HistoryChunk(page: reply.page, columns: columns, lines: lines))
+            history.append(HistoryChunk(page: reply.page, columns: columns, lines: lines,
+                                        offset: reply.place?.offset))
+            note(reply.place)
+            after = reply.page
+        }
+    }
+
+    // Every kept row, as the last page said; the scrubber's scale.
+    private func note(_ place: HistoryPage.Place?) {
+        guard let place else { return }
+        historyTotal = place.total
+        scrubbable = scrubbable || place.scrubbable
+    }
+
+    // Shows the page at `fraction` of everything kept (0 the oldest row),
+    // alone: older pages load above it as before, and the newer ones between
+    // it and the live screen when asked (closeGap).
+    func jump(to fraction: Double) async {
+        guard let gateway, isLive, scrubbable, historyTotal > 0, !loadingHistory else { return }
+        loadingHistory = true
+        defer { loadingHistory = false }
+        let row = Int((min(max(fraction, 0), 1) * Double(historyTotal - 1)).rounded())
+        guard let reply = try? await gateway.history(agent: agent.id, at: row),
+              reply.page != 0, let lines = reply.lines, let columns = reply.columns else { return }
+        note(reply.place)
+        let chunk = HistoryChunk(page: reply.page, columns: columns, lines: lines,
+                                 offset: reply.place?.offset)
+        history = [chunk]
+        let place = reply.place
+        historyEnd = place?.offset == 0
+        gapAfter = place.map { $0.offset + $0.rows < $0.total } ?? false
+        jumpedTo = chunk.cacheID
+    }
+
+    // Loads the pages skipped between a jumped-to page and the live screen,
+    // a screenful of them at a time.
+    func closeGap() async {
+        guard let gateway, isLive, gapAfter, let newest = history.last?.page, !loadingHistory else { return }
+        loadingHistory = true
+        defer { loadingHistory = false }
+        var after = newest
+        for _ in 0..<8 {
+            guard let reply = try? await gateway.history(agent: agent.id, after: after),
+                  !reply.busy else { return }
+            guard reply.page != 0, let lines = reply.lines, let columns = reply.columns else {
+                gapAfter = false
+                return
+            }
+            history.append(HistoryChunk(page: reply.page, columns: columns, lines: lines,
+                                        offset: reply.place?.offset))
+            note(reply.place)
             after = reply.page
         }
     }
@@ -633,5 +694,7 @@ struct HistoryChunk: Identifiable {
     let page: UInt64
     let columns: Int
     let lines: [[Run]]
+    // Its first row among every kept row, when the service says.
+    var offset: Int? = nil
     var id: UInt64 { page }
 }

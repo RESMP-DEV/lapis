@@ -539,6 +539,27 @@ final class LapisUITests: XCTestCase {
         waitFor(terminal, valueContaining: "first ESC[<64;")
     }
 
+    // All of an agent's history is kept, and the bar down the right edge
+    // jumps anywhere in it: dragged to the top, the session's first line.
+    func testScrubbingJumpsToTheStart() throws {
+        let terminal = try openEchoAgent()
+        for round in 1...4 {
+            try typeToEcho("count\n")
+            waitFor(terminal, valueContaining: "count 120")
+            try typeToEcho("round \(round)\n")
+            waitFor(terminal, valueContaining: "echo: round \(round)")
+        }
+        terminal.swipeDown()
+        let scrubber = app.descendants(matching: .any)["historyScrubber"]
+        XCTAssertTrue(scrubber.waitForExistence(timeout: 20), "the history bar shows once pages load")
+        scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95))
+            .press(forDuration: 0.2, thenDragTo: scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)))
+        waitFor(terminal, valueContaining: "lapis fake agent", timeout: 20)
+        XCTAssertTrue(app.buttons["historyGap"].waitForExistence(timeout: 10),
+                      "the output skipped by the jump can load")
+        snap("21-history-start")
+    }
+
     // Symbols that also have an emoji form (Claude Code's ⏺ before each
     // message) are drawn as text in their one cell, as on the Mac.
     func testSymbolsDrawAsText() throws {

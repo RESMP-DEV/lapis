@@ -209,12 +209,22 @@ struct Run: Decodable {
 
 // An archived page of output above the live screen, oldest first on screen.
 struct HistoryPage: Decodable {
+    // Where a page sits among every kept row (0 the oldest); a service that
+    // says so can jump to any row. Older gateways send none.
+    struct Place: Decodable {
+        let total: Int
+        let offset: Int
+        let rows: Int
+        let scrubbable: Bool
+    }
+
     let page: UInt64
     let message: String
     let end: Bool
     let busy: Bool
     let columns: Int?
     let lines: [[Run]]?
+    let place: Place?
 }
 
 struct StreamStatus: Decodable {
@@ -450,8 +460,11 @@ struct Gateway {
     }
 
     // The page before `before` (0: the newest), or with `after`, the page after it.
-    func history(agent: String, before: UInt64 = 0, after: UInt64? = nil) async throws -> HistoryPage {
-        let item = after.map { URLQueryItem(name: "after", value: String($0)) }
+    // With `at`, the page holding that row (0 the oldest kept row).
+    func history(agent: String, before: UInt64 = 0, after: UInt64? = nil,
+                 at row: Int? = nil) async throws -> HistoryPage {
+        let item = row.map { URLQueryItem(name: "at", value: String($0)) }
+            ?? after.map { URLQueryItem(name: "after", value: String($0)) }
             ?? URLQueryItem(name: "before", value: String(before))
         let request = request("api/agents/\(agent)/history", query: [item])
         let (data, response) = try await Gateway.requests.data(for: request)

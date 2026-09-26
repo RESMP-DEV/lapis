@@ -1476,6 +1476,51 @@ class WheelTests(unittest.TestCase):
             events.close()
 
 
+@unittest.skipUnless(SERVICE.exists(), "needs the built session service")
+class HistoryJumpTests(unittest.TestCase):
+    """History keeps everything, and the phone jumps to any row of it."""
+
+    def setUp(self):
+        script = (
+            "i=0; while [ $i -lt 2000 ]; do printf 'line %04d\\n' $i; i=$((i + 1));"
+            " done; echo all printed; exec sleep 600"
+        )
+        live_agent(self, "/bin/sh", ["-c", script])
+
+    def test_the_phone_jumps_to_the_first_row(self):
+        with Server(self, self.registry, self.runtime) as server:
+            path = f"/api/agents/{self.identifier}"
+            events = Events(server, path + "/stream?columns=40&rows=12")
+            events.until(
+                lambda name, data: name == "frame"
+                and "all printed" in screen_text(data)
+            )
+            # A jump needs to know the service can; the newest page says so.
+            status, _ = server.request("GET", path + "/history?at=0")
+            self.assertEqual(status, 502)
+            status, newest = server.request("GET", path + "/history?before=0")
+            self.assertEqual(status, 200)
+            place = newest["place"]
+            self.assertTrue(place["scrubbable"])
+            self.assertGreaterEqual(place["total"], 1980)
+            self.assertEqual(place["offset"] + place["rows"], place["total"])
+            status, start = server.request("GET", path + "/history?at=0")
+            self.assertEqual(status, 200)
+            self.assertEqual(start["place"]["offset"], 0)
+            self.assertIn(
+                "line 0000",
+                "\n".join(run[0] for line in start["lines"] for run in line),
+            )
+            status, middle = server.request(
+                "GET", path + f"/history?at={place['total'] // 2}"
+            )
+            self.assertEqual(status, 200)
+            offset = middle["place"]["offset"]
+            self.assertLessEqual(offset, place["total"] // 2)
+            self.assertGreater(offset + middle["place"]["rows"], place["total"] // 2)
+            events.close()
+
+
 class OldServiceTests(unittest.TestCase):
     """A service started before joining existed rejects it; the phone takes over."""
 

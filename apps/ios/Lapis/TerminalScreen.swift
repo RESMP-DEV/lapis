@@ -116,6 +116,18 @@ struct TerminalRow: View {
     }
 }
 
+// Moving through all of an agent's history: its scale in rows, the page
+// jumped to, whether output is skipped between the shown pages and the live
+// screen, and what jumping and loading the skipped output do.
+struct HistoryNavigation {
+    var scrubbable = false
+    var total = 0
+    var jumpedTo: UUID?
+    var gapAfter = false
+    var jump: (Double) -> Void = { _ in }
+    var closeGap: () -> Void = {}
+}
+
 struct TerminalScreen: View {
     let frame: ScreenFrame?
     let history: [HistoryChunk]
@@ -124,6 +136,7 @@ struct TerminalScreen: View {
     // Columns that fit the phone; wider rows wrap instead of scrolling sideways.
     let fitColumns: Int
     let metrics: TerminalMetrics
+    var navigation = HistoryNavigation()
     let loadOlder: () async -> Void
     @State private var nearTop = false
 
@@ -225,38 +238,63 @@ struct TerminalScreen: View {
         // A full-screen program that takes the wheel shows only its screen:
         // a drag scrolls the program (AgentView), not the archive above it.
         let fullScreen = frame?.wheel == true
-        ScrollView(.vertical) {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                if frame != nil && !fullScreen {
-                    historyEdge
-                }
-                if !fullScreen {
-                    ForEach(cache.rows) { row in
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if frame != nil && !fullScreen {
+                        historyEdge
+                    }
+                    if !fullScreen {
+                        ForEach(cache.rows) { row in
+                            TerminalRow(runs: row.runs, columns: row.columns, metrics: metrics,
+                                        foreground: foreground, background: background)
+                        }
+                    }
+                    ForEach(liveRows) { row in
                         TerminalRow(runs: row.runs, columns: row.columns, metrics: metrics,
                                     foreground: foreground, background: background)
                     }
                 }
-                ForEach(liveRows) { row in
-                    TerminalRow(runs: row.runs, columns: row.columns, metrics: metrics,
-                                foreground: foreground, background: background)
-                }
+                .padding(.horizontal, 4)
+                .frame(width: contentWidth, alignment: .leading)
             }
-            .padding(.horizontal, 4)
-            .frame(width: contentWidth, alignment: .leading)
+            .modifier(FollowsBottom())
+            .modifier(LoadsNearTop(nearTop: $nearTop, loadOlder: loadOlder))
+            .onChange(of: frame?.revision) {
+                // Output may have archived rows while the top is in view.
+                if nearTop && history.isEmpty { Task { await loadOlder() } }
+            }
+            .scrollIndicators(.hidden)
+            .scrollDisabled(fullScreen)
+            .background(background)
+            .accessibilityElement(children: .ignore)
+            .accessibilityIdentifier("terminal")
+            .accessibilityLabel("Agent screen")
+            .accessibilityValue(cache.accessibleText)
+            .onChange(of: navigation.jumpedTo) { _, target in
+                guard let target, let chunk = history.first(where: { $0.cacheID == target }) else { return }
+                // Once the page jumped to has laid out.
+                DispatchQueue.main.async { proxy.scrollTo("h\(chunk.page)-0.0", anchor: .top) }
+            }
         }
-        .modifier(FollowsBottom())
-        .modifier(LoadsNearTop(nearTop: $nearTop, loadOlder: loadOlder))
-        .onChange(of: frame?.revision) {
-            // Output may have archived rows while the top is in view.
-            if nearTop && history.isEmpty { Task { await loadOlder() } }
+        .overlay(alignment: .trailing) {
+            if navigation.scrubbable && !fullScreen && navigation.total > 0 {
+                HistoryScrubber(position: history.first?.offset.map { Double($0) / Double(navigation.total) } ?? 1,
+                                jump: navigation.jump)
+            }
         }
-        .scrollIndicators(.hidden)
-        .scrollDisabled(fullScreen)
-        .background(background)
-        .accessibilityElement(children: .ignore)
-        .accessibilityIdentifier("terminal")
-        .accessibilityLabel("Agent screen")
-        .accessibilityValue(cache.accessibleText)
+        .overlay(alignment: .bottom) {
+            if navigation.gapAfter && !fullScreen {
+                Button(loadingHistory ? "Loading newer output…" : "Newer output skipped · Load") {
+                    navigation.closeGap()
+                }
+                .font(.caption.monospaced())
+                .buttonStyle(.bordered)
+                .disabled(loadingHistory)
+                .padding(.bottom, 8)
+                .accessibilityIdentifier("historyGap")
+            }
+        }
     }
 
     // Shown above the oldest loaded row: "Earlier output" while more can load.
@@ -278,6 +316,53 @@ struct TerminalScreen: View {
             }
             .frame(height: 24, alignment: .leading)
             .modifier(LoadsOnAppear(key: history.count, loadOlder: loadOlder))
+        }
+    }
+}
+
+// A bar down the screen's right edge for all of the agent's history: the
+// thumb sits where the oldest loaded page does, and dropping it anywhere jumps
+// there, the top being the first row kept.
+private struct HistoryScrubber: View {
+    let position: Double
+    let jump: (Double) -> Void
+    @State private var dragging: Double?
+
+    var body: some View {
+        GeometryReader { proxy in
+            let thumb: CGFloat = 40
+            let travel = max(1, proxy.size.height - thumb)
+            let shown = dragging ?? min(max(position, 0), 1)
+            ZStack(alignment: .top) {
+                Capsule()
+                    .fill(Theme.quiet.opacity(0.25))
+                    .frame(width: 2)
+                    .frame(maxHeight: .infinity)
+                Capsule()
+                    .fill(dragging == nil ? Theme.quiet.opacity(0.8) : Theme.accent)
+                    .frame(width: dragging == nil ? 5 : 8, height: thumb)
+                    .offset(y: shown * travel)
+            }
+            .frame(width: 22)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        dragging = min(max((value.location.y - thumb / 2) / travel, 0), 1)
+                    }
+                    .onEnded { _ in
+                        if let target = dragging { jump(target) }
+                        dragging = nil
+                    })
+        }
+        .frame(width: 22)
+        .accessibilityElement()
+        .accessibilityIdentifier("historyScrubber")
+        .accessibilityLabel("History")
+        .accessibilityValue("\(Int((position * 100).rounded())) percent")
+        .accessibilityAdjustableAction { direction in
+            jump(min(max(position + (direction == .increment ? 0.1 : -0.1), 0), 1))
         }
     }
 }

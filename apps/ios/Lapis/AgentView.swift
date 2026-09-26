@@ -29,7 +29,12 @@ struct AgentView: View {
                 TerminalScreen(frame: session.frame, history: session.history,
                                historyEnd: session.historyEnd,
                                loadingHistory: session.loadingHistory,
-                               fitColumns: metrics.grid(for: proxy.size).columns, metrics: metrics) {
+                               fitColumns: metrics.grid(for: proxy.size).columns, metrics: metrics,
+                               navigation: HistoryNavigation(
+                                   scrubbable: session.scrubbable, total: session.historyTotal,
+                                   jumpedTo: session.jumpedTo, gapAfter: session.gapAfter,
+                                   jump: { fraction in Task { await session.jump(to: fraction) } },
+                                   closeGap: { Task { await session.closeGap() } })) {
                     // A full-screen program scrolls itself; the archive waits.
                     if session.frame?.wheel != true { await session.loadOlder() }
                 }
