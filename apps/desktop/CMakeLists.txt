@@ -21,6 +21,7 @@ add_library(lapis_desktop_view STATIC
     src/workspace_control.cpp src/workspace_control.hpp
     src/alerts.cpp src/alerts.hpp
     src/agent_search.cpp src/agent_search.hpp
+    src/conversation_index.cpp src/conversation_index.hpp
     src/usage.cpp src/usage.hpp
     src/usage_limits.cpp src/usage_limits.hpp
     src/harness_models.cpp src/harness_models.hpp
@@ -71,7 +72,7 @@ if(APPLE)
     target_link_libraries(lapis_desktop PRIVATE "-framework AppKit")
 endif()
 target_link_libraries(lapis_desktop PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
-qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Usage.qml)
+qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml)
 set_target_properties(lapis_desktop PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/macos/Info.plist.in"
     MACOSX_BUNDLE_BUNDLE_NAME "lapis"
@@ -103,6 +104,10 @@ if(BUILD_TESTING)
     target_compile_definitions(lapis_window_state_tests PRIVATE LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
     add_test(NAME window-state COMMAND lapis_window_state_tests)
     set_tests_properties(window-state PROPERTIES TIMEOUT 30 RESOURCE_LOCK "qt_gui" ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
+    add_executable(lapis_conversation_index_tests tests/conversation_index_test.cpp)
+    target_link_libraries(lapis_conversation_index_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME conversation-index COMMAND lapis_conversation_index_tests)
+    set_tests_properties(conversation-index PROPERTIES TIMEOUT 60)
     add_executable(lapis_agent_search_tests tests/agent_search_test.cpp)
     target_link_libraries(lapis_agent_search_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME agent-search COMMAND lapis_agent_search_tests)
@@ -211,4 +216,4 @@ target_link_libraries(lapis_attention_ui_probe PRIVATE lapis_project_options lap
     Qt6::QuickControls2)
 target_compile_definitions(lapis_attention_ui_probe PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
 qt_add_resources(lapis_attention_ui_probe attention_qml PREFIX "/" FILES
-    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Usage.qml)
+    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml)

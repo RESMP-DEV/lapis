@@ -1,5 +1,6 @@
 #include "agent_search.hpp"
 #include "alerts.hpp"
+#include "conversation_index.hpp"
 #include "app_paths.hpp"
 #include "desktop_actions.hpp"
 #include "keymap.hpp"
@@ -304,13 +305,13 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
 // keep running either way; a window reattaches to them when it opens.
 // Where Codex and Claude Code keep transcripts: their own home variables, or
 // their default folders.
+QString cli_home(const char* variable, const char* fallback) {
+    const auto set = qEnvironmentVariable(variable);
+    return set.isEmpty() ? QDir::home().filePath(QLatin1String(fallback)) : set;
+}
 lapis::desktop::TokenLedger::Roots transcript_roots() {
-    const auto home = [](const char* variable, const char* fallback) {
-        const auto set = qEnvironmentVariable(variable);
-        return set.isEmpty() ? QDir::home().filePath(QLatin1String(fallback)) : set;
-    };
-    return {home("CODEX_HOME", ".codex") + QStringLiteral("/sessions"),
-            home("CLAUDE_CONFIG_DIR", ".claude") + QStringLiteral("/projects")};
+    return {cli_home("CODEX_HOME", ".codex") + QStringLiteral("/sessions"),
+            cli_home("CLAUDE_CONFIG_DIR", ".claude") + QStringLiteral("/projects")};
 }
 // A CLI usage asks, or ssh, as found on this Mac.
 QString usage_program(const QString& id) {
@@ -506,10 +507,9 @@ int main(int argc, char** argv) {
         DesktopActions desktop(keymap);
         // On the Mac the window closes to the Dock and lapis keeps serving
         // agents, alerts and the phone until it quits.
+        bool hide_on_close = false;
 #ifdef Q_OS_MACOS
-        const bool hide_on_close = !isolated && !parser.isSet(QStringLiteral("capture"));
-#else
-        const bool hide_on_close = false;
+        hide_on_close = !isolated && !parser.isSet(QStringLiteral("capture"));
 #endif
         if (hide_on_close)
             QGuiApplication::setQuitOnLastWindowClosed(false);
@@ -520,6 +520,20 @@ int main(int argc, char** argv) {
         std::optional<Usage> usage;
         if (!isolated)
             follow_usage_setting(usage.emplace(&usage_program, transcript_roots()), keymap);
+        // Past Claude and Codex conversations, to resume one and to put the
+        // folders with the most recent work first in folder pickers.
+        ConversationIndex conversations(
+            cli_home("CLAUDE_CONFIG_DIR", ".claude"), cli_home("CODEX_HOME", ".codex"),
+            QDir(data_directory()).filePath(QStringLiteral("runtime/conversations.json")));
+        conversations.setOpenFolders([&workspace] {
+            QStringList folders;
+            for (const auto& value : workspace.sessions())
+                if (const auto* item = value.value<SessionPreview*>(); item && item->live())
+                    folders.append(item->directory());
+            return folders;
+        });
+        if (!isolated)
+            conversations.refresh();
         UiPreview view(workspace, {.source = source,
                                    .compact = parser.isSet(QStringLiteral("compact")),
                                    .screen = parser.isSet(QStringLiteral("screen"))
@@ -530,6 +544,7 @@ int main(int argc, char** argv) {
                                    .agentSearch = &agentSearch,
                                    .usage = usage ? &*usage : nullptr,
                                    .desktop = &desktop,
+                                   .conversations = &conversations,
                                    .persistGeometry = !isolated && !options.launch &&
                                                       options.endpoint.isEmpty() &&
                                                       !parser.isSet(QStringLiteral("capture")),

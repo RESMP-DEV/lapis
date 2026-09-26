@@ -297,7 +297,10 @@ bool UiPreview::assignTerminalFocus() {
         return false;
     if (target_window->property("inputBlocked").toBool())
         return false;
-    const QString name = QStringLiteral("liveTerminal");
+    // The page names what should hold the keyboard: the selected agent's
+    // terminal, or the home list when nothing is open.
+    const auto wanted = target_window->property("focusTarget").toString();
+    const QString name = wanted.isEmpty() ? QStringLiteral("liveTerminal") : wanted;
     QQuickItem* terminal = nullptr;
     const std::function<void(QQuickItem&)> visit = [&](QQuickItem& item) {
         if (terminal != nullptr)
@@ -495,6 +498,9 @@ bool UiPreview::loadCandidate() {
         candidate->rootContext()->setContextProperty(QStringLiteral("usage"), options_.usage);
     if (options_.desktop)
         candidate->rootContext()->setContextProperty(QStringLiteral("desktop"), options_.desktop);
+    if (options_.conversations)
+        candidate->rootContext()->setContextProperty(QStringLiteral("conversations"),
+                                                     options_.conversations);
     candidate->setInitialProperties({{QStringLiteral("visible"), false}});
 
     QString candidateDiagnostics;

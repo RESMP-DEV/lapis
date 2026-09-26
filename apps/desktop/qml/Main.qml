@@ -80,6 +80,7 @@ ApplicationWindow {
     readonly property bool inputBlocked: transitionLock
             || commandsDialog.visible
             || searchDialog.visible
+            || resumeDialog.visible
             || usageDialog.visible
             || settingsDialog.visible
             || attentionDialog.visible
@@ -204,6 +205,8 @@ ApplicationWindow {
             return [mod + "F"]
         if (action === "reopenAgent")
             return [mac ? "Meta+Shift+T" : "Ctrl+Alt+Shift+T"]
+        if (action === "resumeConversation")
+            return [mod + "O"]
         return []
     }
 
@@ -257,6 +260,77 @@ ApplicationWindow {
         if (!interactionArmed || dialogsVisible()) return
         searchDialog.open()
     }
+    readonly property bool conversationsAvailable: typeof conversations !== "undefined" && conversations !== null
+    function openResumeDialog() {
+        if (!interactionArmed || dialogsVisible() || !conversationsAvailable) return
+        resumeDialog.open()
+    }
+    // The home list shown when nothing is open: actions, then recent
+    // conversations, then the other categories that have agents.
+    ListModel { id: homeModel }
+    Component.onCompleted: homeRebuild.restart()
+    property var homeRuns: []
+    function rebuildHome() {
+        if (workspace.focusedSession !== null && homeModel.count > 0)
+            return
+        const runs = []
+        homeModel.clear()
+        function add(group, kind, label, detail, hint, harness, run) {
+            homeModel.append({group: group, kind: kind, label: label, detail: detail, hint: hint, harness: harness})
+            runs.push(run)
+        }
+        add("", "action", qsTr("New agent"), "", shortcutText("newAgent"), "", () => window.openNewAgentDialog())
+        if (conversationsAvailable)
+            add("", "action", qsTr("Resume a conversation"), "", shortcutText("resumeConversation"), "", () => window.openResumeDialog())
+        if (workspace.canReopenAgent)
+            add("", "action", qsTr("Reopen closed agent"), "", shortcutText("reopenAgent"), "", () => window.reopenAgent())
+        if (conversationsAvailable) {
+            for (const conversation of conversations.recent("", 5))
+                add(qsTr("Recent conversations"), "conversation", conversation.title,
+                    conversation.place + "  " + conversation.when, "", conversation.harness,
+                    () => window.resumeConversation(conversation))
+        }
+        for (const category of workspace.categories) {
+            if (category.id !== workspace.activeCategoryId && category.agentCount > 0)
+                add(qsTr("Categories"), "category", category.name,
+                    category.agentCount === 1 ? qsTr("1 agent") : qsTr("%1 agents").arg(category.agentCount),
+                    "", "", () => workspace.selectCategory(category.id))
+        }
+        homeRuns = runs
+        homeList.currentIndex = Math.min(Math.max(0, homeList.currentIndex), homeModel.count - 1)
+    }
+    function runHomeEntry(index) {
+        if (!interactionArmed || index < 0 || index >= homeRuns.length) return
+        homeRuns[index]()
+    }
+    Timer {
+        id: homeRebuild
+        interval: 0
+        onTriggered: window.rebuildHome()
+    }
+    Connections {
+        target: workspace
+        function onCategoriesChanged() { homeRebuild.restart() }
+        function onFocusChanged() { homeRebuild.restart() }
+        function onClosedChanged() { homeRebuild.restart() }
+        function onSessionsChanged() { homeRebuild.restart() }
+    }
+    Connections {
+        target: window.conversationsAvailable ? conversations : null
+        function onChanged() { homeRebuild.restart() }
+    }
+    // What gets the keyboard when no dialog does: the selected agent's
+    // terminal, or the home list when nothing is open.
+    readonly property string focusTarget: workspace.focusedSession === null ? "homeList" : "liveTerminal"
+    // A past conversation comes back as a new agent in this category, in its
+    // folder, with the approval mode last chosen for a new agent.
+    function resumeConversation(conversation) {
+        const defaults = workspace.agentDefaults()
+        const mode = window.lastMode.length > 0 ? window.lastMode :
+                     defaults.mode && defaults.mode.length > 0 ? defaults.mode : "full"
+        workspace.resumeAgent(conversation.directory, projectName(conversation.directory).slice(0, 80),
+                              conversation.harness, conversation.id, mode)
+    }
     function openUsageDialog() {
         if (!interactionArmed || dialogsVisible() || !usageAvailable) return
         usageDialog.open()
@@ -297,6 +371,7 @@ ApplicationWindow {
         add("splitRight", qsTr("New agent here, tiled to the right"), "splitRight", liveAgent, needAgent, () => window.splitAgent("right"))
         add("splitDown", qsTr("New agent here, tiled below"), "splitDown", liveAgent, needAgent, () => window.splitAgent("bottom"))
         add("reopenAgent", qsTr("Reopen closed agent"), "reopenAgent", workspace.canReopenAgent, qsTr("No agent was closed since lapis opened"), () => window.reopenAgent())
+        add("resumeConversation", qsTr("Resume a conversation"), "resumeConversation", conversationsAvailable, qsTr("Not available here"), () => window.openResumeDialog())
         add("find", qsTr("Find in terminal"), "find", hasAgent, needAgent, () => findBar.open())
         add("textBigger", qsTr("Bigger text"), "textBigger", true, "", () => window.changeTextSize(1))
         add("textSmaller", qsTr("Smaller text"), "textSmaller", true, "", () => window.changeTextSize(-1))
@@ -437,7 +512,7 @@ ApplicationWindow {
     }
 
     function dialogsVisible() {
-        return commandsDialog.visible || searchDialog.visible || usageDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
+        return commandsDialog.visible || searchDialog.visible || resumeDialog.visible || usageDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
                 || closeAgentDialog.visible || categoryDialog.visible || renameAgentDialog.visible
     }
 
@@ -918,6 +993,25 @@ ApplicationWindow {
         onChosen: function(sessionId) { Qt.callLater(function() { workspace.selectSession(sessionId) }) }
         onClosed: preview.deferTerminalFocus()
     }
+    Resume {
+        id: resumeDialog
+        engine: window.conversationsAvailable ? conversations : null
+        surfaceColor: window.surfaceColor
+        textColor: window.textColor
+        mutedColor: window.mutedTextColor
+        accentColor: window.focusedBorderColor
+        selectionColor: window.focusedColor
+        hoverColor: window.hoveredCardColor
+        borderColor: window.borderColor
+        monoFamily: window.monoFamily
+        uiFont: window.chromeFont
+        readoutFont: window.readoutFont
+        chromeRadius: window.chromeRadius
+        motionDuration: window.motionDuration
+        motionEnabled: window.motionEnabled
+        onChosen: function(conversation) { Qt.callLater(function() { window.resumeConversation(conversation) }) }
+        onClosed: preview.deferTerminalFocus()
+    }
     Usage {
         id: usageDialog
         engine: window.usageAvailable ? usage : null
@@ -1058,6 +1152,7 @@ ApplicationWindow {
     ActionShortcut { action: "textReset"; onActivated: window.changeTextSize(0) }
     ActionShortcut { action: "find"; onActivated: if (workspace.focusedSession !== null) findBar.open() }
     ActionShortcut { action: "reopenAgent"; onActivated: window.reopenAgent() }
+    ActionShortcut { action: "resumeConversation"; onActivated: window.openResumeDialog() }
     ActionShortcut { action: "splitRight"; onActivated: window.splitAgent("right") }
     ActionShortcut { action: "splitDown"; onActivated: window.splitAgent("bottom") }
     ActionShortcut { action: "tileLeft"; onActivated: window.focusTile("left") }
@@ -1572,19 +1667,22 @@ ApplicationWindow {
         }
         property string folderParent: ""
         property string folderPrefix: ""
+        // The folders with the most recent and frequent agent work come
+        // first, then the rest by name with _folders last.
         function refreshFolders() {
             if (!folderResults) return
-            const entries = []
+            const names = []
             if (directoryModel.status === FolderListModel.Ready) {
-                for (let i = 0; i < Math.min(directoryModel.count, 4096) && entries.length < 100; ++i) {
+                for (let i = 0; i < Math.min(directoryModel.count, 4096); ++i) {
                     const name = directoryModel.get(i, "fileName")
                     const path = directoryModel.get(i, "filePath")
                     if (path.slice(0, path.lastIndexOf("/") + 1) === folderParent
                             && name.toLowerCase().startsWith(folderPrefix.toLowerCase()))
-                        entries.push({name: name, path: path + "/"})
+                        names.push(name)
                 }
             }
-            folderResults.model = entries
+            const ordered = window.conversationsAvailable ? conversations.orderFolders(folderParent, names) : names
+            folderResults.model = ordered.slice(0, 100).map(name => ({name: name, path: folderParent + name + "/"}))
             folderResults.currentIndex = -1
         }
         FolderListModel {
@@ -3146,27 +3244,117 @@ ApplicationWindow {
                     }
                 }
 
+                // Nothing on the stage: what to do next, recent conversations to
+                // resume and the categories that have agents, all by keyboard
+                // (up, down, Return) as well as by click.
                 ColumnLayout {
+                    id: homePanel
                     objectName: "emptyState"
                     visible: workspace.focusedSession === null
                     anchors.centerIn: parent
-                    width: Math.min(420, parent.width - 32)
-                    spacing: 14
+                    width: Math.min(560, parent.width - 32)
+                    spacing: 10
                     PlainLabel {
                         Layout.fillWidth: true
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
                         color: window.mutedTextColor
-                        text: qsTr("Start an agent in %1.").arg(window.activeCategoryName)
+                        text: qsTr("Nothing is open in %1.").arg(window.activeCategoryName)
                     }
-                    CommandButton {
-                        objectName: "emptyNewAgent"
-                        text: qsTr("New agent")
-                        hint: window.shortcutText("newAgent")
-                        selected: true
-                        Layout.alignment: Qt.AlignHCenter
-                        enabled: window.interactionArmed
-                        onClicked: window.openNewAgentDialog()
+                    ListView {
+                        id: homeList
+                        objectName: "homeList"
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.min(contentHeight, Math.max(120, stage.height - 120))
+                        model: homeModel
+                        clip: true
+                        interactive: contentHeight > height
+                        boundsBehavior: Flickable.StopAtBounds
+                        keyNavigationEnabled: true
+                        highlightMoveDuration: 0
+                        currentIndex: 0
+                        activeFocusOnTab: true
+                        section.property: "group"
+                        section.delegate: PlainLabel {
+                            required property string section
+                            visible: section.length > 0
+                            height: section.length > 0 ? 30 : 0
+                            width: homeList.width
+                            verticalAlignment: Text.AlignBottom
+                            bottomPadding: 4
+                            leftPadding: 10
+                            text: section
+                            color: window.mutedTextColor
+                            font.pixelSize: window.readoutFont
+                            font.letterSpacing: window.appearance && window.appearance.headingTracking !== undefined ? window.appearance.headingTracking : 1
+                            font.capitalization: Font.AllUppercase
+                        }
+                        Keys.onReturnPressed: window.runHomeEntry(currentIndex)
+                        Keys.onEnterPressed: window.runHomeEntry(currentIndex)
+                        onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
+                        delegate: ItemDelegate {
+                            id: homeRow
+                            required property int index
+                            required property string kind
+                            required property string label
+                            required property string detail
+                            required property string hint
+                            required property string harness
+                            readonly property bool current: index === homeList.currentIndex
+                            objectName: "home_" + kind + "_" + index
+                            width: homeList.width
+                            height: 38
+                            focusPolicy: Qt.NoFocus
+                            hoverEnabled: true
+                            enabled: window.interactionArmed
+                            Accessible.name: label + (detail.length > 0 ? ", " + detail : "")
+                            onClicked: { homeList.currentIndex = index; window.runHomeEntry(index) }
+                            background: Rectangle {
+                                radius: window.chromeRadius
+                                color: homeRow.current && homeList.activeFocus ? window.focusedColor :
+                                       homeRow.hovered ? window.hoveredCardColor : "transparent"
+                                Rectangle {
+                                    visible: homeRow.current && homeList.activeFocus
+                                    width: 2
+                                    height: parent.height
+                                    color: window.focusedBorderColor
+                                }
+                            }
+                            contentItem: RowLayout {
+                                spacing: 10
+                                AgentMark {
+                                    visible: homeRow.harness.length > 0
+                                    harnessId: homeRow.harness
+                                    ink: window.textColor
+                                    Layout.preferredWidth: 16
+                                    Layout.preferredHeight: 16
+                                }
+                                PlainText {
+                                    text: homeRow.label
+                                    color: window.textColor
+                                    font.pixelSize: window.chromeFont
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                }
+                                PlainText {
+                                    visible: text.length > 0
+                                    text: homeRow.detail
+                                    color: window.mutedTextColor
+                                    font.family: window.monoFamily
+                                    font.pixelSize: window.readoutFont
+                                    elide: Text.ElideMiddle
+                                    Layout.maximumWidth: homeList.width * 0.4
+                                }
+                                PlainText {
+                                    visible: text.length > 0
+                                    text: homeRow.hint
+                                    color: window.mutedTextColor
+                                    font.family: window.monoFamily
+                                    font.pixelSize: window.readoutFont
+                                }
+                            }
+                        }
                     }
                 }
 

@@ -126,7 +126,7 @@ QByteArray WorkspaceControl::create(const QJsonObject& request) {
         const auto parts = QDir::cleanPath(directory).split(QLatin1Char('/'));
         title = parts.constLast().isEmpty() ? QStringLiteral("/") : parts.constLast();
     }
-    for (const auto* field : {"machine", "program", "title", "model", "mode"})
+    for (const auto* field : {"machine", "program", "title", "model", "mode", "resume"})
         if (request.contains(QLatin1String(field)) &&
             !request.value(QLatin1String(field)).isString())
             return refusal(QStringLiteral("Invalid %1").arg(QLatin1String(field)));
@@ -139,7 +139,8 @@ QByteArray WorkspaceControl::create(const QJsonObject& request) {
                                .program = request.value(QStringLiteral("program")).toString(),
                                .model = request.value(QStringLiteral("model")).toString(),
                                .mode = request.value(QStringLiteral("mode")).toString(),
-                               .select = false});
+                               .select = false,
+                               .resume = request.value(QStringLiteral("resume")).toString()});
     if (id.isEmpty())
         return refusal(workspace_.workspaceError());
     const auto* item = workspace_.session(id);

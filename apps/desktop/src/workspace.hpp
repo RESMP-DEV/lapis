@@ -240,6 +240,8 @@ struct AgentRequest {
     QString mode;    // ask, edits, plan, auto or full; empty for the CLI's own setting
     // Show it on the stage; otherwise the category's selection stays.
     bool select{};
+    // A conversation to resume, as the CLI's resume option takes it.
+    QString resume;
 };
 
 struct WorkspaceOptions {
@@ -315,6 +317,10 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool createAgent(const QString& directory, const QString& title,
                                  const QString& harness = QStringLiteral("codex"),
                                  const QString& model = {}, const QString& mode = {});
+    // Starts an agent in the active category that resumes `conversation`.
+    Q_INVOKABLE bool resumeAgent(const QString& directory, const QString& title,
+                                 const QString& harness, const QString& conversation,
+                                 const QString& mode = {});
     // The config's new-agent defaults, for the forms: harness, folder, and
     // the folder on each ssh machine.
     Q_INVOKABLE [[nodiscard]] QVariantMap agentDefaults() const;

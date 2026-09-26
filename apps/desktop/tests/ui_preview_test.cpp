@@ -1,4 +1,5 @@
 #include "agent_search.hpp"
+#include "conversation_index.hpp"
 #include "keymap.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
@@ -15,6 +16,7 @@
 #include <QThread>
 
 #include <QClipboard>
+#include <QDateTime>
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDir>
@@ -1651,6 +1653,57 @@ void check_agent_search(QQuickWindow& window, lapis::desktop::Workspace& workspa
     CHECK(focused_id(workspace) == QStringLiteral("notes"));
 }
 
+// With nothing open, the stage lists what to do next and takes the keyboard:
+// up and down move, Return runs the entry. Command-O finds a past conversation
+// by typing and resumes it with Return.
+void check_home_and_resume(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                           const lapis::desktop::KeyMap& keymap) {
+    const auto before = workspace.activeCategoryId();
+    CHECK(workspace.addCategory(QStringLiteral("Empty")));
+    pump(60);
+    auto* home = required_visual(window, QStringLiteral("homeList"));
+    CHECK(home->isVisible() && home->hasActiveFocus());
+    const auto rows = home->property("count").toInt();
+    int recent = 0;
+    for (int row = 0; row < rows; ++row)
+        recent += find_visual(home, QStringLiteral("home_conversation_%1").arg(row)) != nullptr;
+    CHECK(rows >= 5 && recent == 2);
+    capture_step(window, "home");
+    for (int step = 1; step < rows; ++step)
+        send_binding(window, QStringLiteral("Down"));
+    pump(30);
+    CHECK(home->property("currentIndex").toInt() == rows - 1);
+    // The last entry is the category the test came from; Return goes back.
+    send_binding(window, QStringLiteral("Return"));
+    pump(60);
+    CHECK(workspace.activeCategoryId() == before);
+    press_action(window, keymap, "resumeConversation");
+    auto* resume = window.findChild<QObject*>(QStringLiteral("resumeDialog"));
+    CHECK(resume != nullptr);
+    wait_popup(*resume, true);
+    auto* field = required_visual(window, QStringLiteral("resumeSearchField"));
+    CHECK(field->hasActiveFocus());
+    auto* results = required_visual(window, QStringLiteral("resumeResults"));
+    CHECK(results->property("count").toInt() == 2);
+    capture_step(window, "resume");
+    field->setProperty("text", QStringLiteral("codex"));
+    pump(30);
+    CHECK(results->property("count").toInt() == 1);
+    CHECK(required_visual(window, QStringLiteral("resumeResult_0a1b2c3d-0000-4000-8000-000000000002")) !=
+          nullptr);
+    send_binding(window, QStringLiteral("Return"));
+    wait_popup(*resume, false);
+    pump(30);
+    // The fixture starts no processes; the attempt reaches the workspace.
+    CHECK(workspace.workspaceError().contains(QStringLiteral("preview")));
+    workspace.clearError();
+    for (const auto& value : workspace.categories())
+        if (value.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("Empty"))
+            CHECK(workspace.removeCategory(value.toMap().value(QStringLiteral("id")).toString()));
+    CHECK(workspace.selectCategory(before));
+    pump(60);
+}
+
 void check_usage(QQuickWindow& window, lapis::desktop::Usage& usage, lapis::desktop::KeyMap& keymap,
                  lapis::desktop::TerminalSurface& terminal) {
     // Plan usage sits under the categories, each CLI at its tightest window,
@@ -1772,12 +1825,41 @@ int run_strip_ui_tests() {
     keymap.setSourcePathForTesting(config.filePath(QStringLiteral("strip.json")));
     AgentSearch search(&workspace);
     const auto usage = fake_usage(config);
+    ConversationIndex conversations(config.filePath(QStringLiteral("history/claude")),
+                                    config.filePath(QStringLiteral("history/codex")),
+                                    config.filePath(QStringLiteral("conversations.json")));
+    // One saved conversation of each CLI, as they write them.
+    const auto save = [&config](const QString& relative, const QByteArray& text) {
+        const auto path = config.filePath(relative);
+        CHECK(QDir().mkpath(QFileInfo(path).absolutePath()));
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly) && file.write(text) == text.size());
+    };
+    save(QStringLiteral("history/claude/projects/-dev-lapis/0a1b2c3d-0000-4000-8000-000000000001.jsonl"),
+         R"({"type":"system","entrypoint":"cli","cwd":"/dev/lapis"})"
+         "\n"
+         R"({"type":"user","message":{"role":"user","content":"Fix resize"}})"
+         "\n");
+    save(QStringLiteral("history/codex/sessions/2026/09/25/rollout-a.jsonl"),
+         R"({"type":"session_meta","payload":{"id":"0a1b2c3d-0000-4000-8000-000000000002",)"
+         R"("cwd":"/dev/api","source":"cli","thread_source":"user"}})"
+         "\n");
+    save(QStringLiteral("history/codex/session_index.jsonl"),
+         R"({"id":"0a1b2c3d-0000-4000-8000-000000000002","thread_name":"Add retries"})"
+         "\n");
+    conversations.refresh();
+    QElapsedTimer scanned;
+    scanned.start();
+    while (!conversations.ready() && scanned.elapsed() < 10000)
+        pump(20);
+    CHECK(conversations.all().size() == 2);
     UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),
                                   .keymap = &keymap,
                                   .agentSearch = &search,
-                                  .usage = usage.get()});
+                                  .usage = usage.get(),
+                                  .conversations = &conversations});
     CHECK(preview.load());
     auto* window = preview.window();
     window->resize(1400, 960);
@@ -1981,6 +2063,7 @@ int run_strip_ui_tests() {
     check_tiles_and_drags(*window, workspace, keymap);
     check_find_and_text_size(*window, workspace, keymap);
     check_agent_search(*window, workspace, keymap, *terminal);
+    check_home_and_resume(*window, workspace, keymap);
     check_usage(*window, *usage, keymap, *terminal);
     CHECK(preview.diagnostics().isEmpty());
     return EXIT_SUCCESS;

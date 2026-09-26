@@ -1395,6 +1395,76 @@ QByteArray installStandInGrok(const QDir& root) {
     return path;
 }
 
+// Resuming a past conversation starts its CLI with the resume option, from the
+// window or the phone, and the pair is lapis's to follow on a later restart.
+void resumingAConversationStartsItsCli() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-resume-XXXXXX"));
+    require(directory.isValid(), "resume directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    QFile script(root.filePath(QStringLiteral("bin/grok")));
+    require(script.open(QIODevice::WriteOnly | QIODevice::Truncate), "rewrite the stand-in CLI");
+    script.write("#!/bin/sh\necho \"grok args: $*\"\nexec sleep 600\n");
+    script.close();
+    const auto project = root.filePath(QStringLiteral("project"));
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(!workspace.resumeAgent(project, QStringLiteral("x"), QStringLiteral("grok"),
+                                       QStringLiteral("-rf")),
+                "an option is never taken for a conversation");
+        require(workspace.resumeAgent(project, QStringLiteral("resumed"), QStringLiteral("grok"),
+                                      QStringLiteral("conv-123")),
+                "a past conversation resumes");
+        auto* agent = workspace.focusedSession();
+        require(agent != nullptr &&
+                    waitFor(
+                        [agent] {
+                            return screenText(agent->snapshot())
+                                .contains(QStringLiteral("grok args: -r conv-123"));
+                        },
+                        10000),
+                "the CLI starts with its resume option");
+        lapis::desktop::WorkspaceControl control(workspace, false);
+        auto request = createRequest(workspace.activeCategoryId(), QStringLiteral("grok"), project);
+        request.insert(QStringLiteral("resume"), QStringLiteral("conv-456"));
+        const auto started = askWorkspace(workspace.storagePath(), request);
+        auto* phone = workspace.session(started.value(QStringLiteral("id")).toString());
+        require(phone != nullptr &&
+                    waitFor(
+                        [phone] {
+                            return screenText(phone->snapshot())
+                                .contains(QStringLiteral("grok args: -r conv-456"));
+                        },
+                        10000),
+                "the phone resumes a conversation too");
+        QFile saved(workspace.storagePath());
+        require(saved.open(QIODevice::ReadOnly), "read the registry");
+        const auto agents = QJsonDocument::fromJson(saved.readAll())
+                                .object()
+                                .value(QStringLiteral("agents"))
+                                .toArray();
+        require(std::any_of(agents.begin(), agents.end(),
+                            [&](const QJsonValue& entry) {
+                                const auto managed =
+                                    entry[QStringLiteral("managedResume")].toObject();
+                                return entry[QStringLiteral("id")] == agent->sessionId() &&
+                                       managed.value(QStringLiteral("identity")) ==
+                                           QStringLiteral("conv-123");
+                            }),
+                "the resume pair is recorded as lapis's");
+        require(waitFor([agent, phone] { return agent->inputReady() && phone->inputReady(); },
+                        10000),
+                "both agents take input");
+        for (const auto& closing : {agent->sessionId(), phone->sessionId()})
+            require(workspace.closeSession(closing), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in agents close");
+    }
+    qputenv("PATH", path);
+}
+
 // The phone gateway starts an agent through the window: it opens as a new tab
 // in the chosen category, while the window keeps its category and agent.
 void phoneStartsAnAgentInItsCategory() {
@@ -2597,6 +2667,7 @@ int main(int argc, char** argv) {
         harnessesUpdateBeforeNewAgents();
         windowWaitsForTheRestoreHelper();
         phoneStartsAnAgentInItsCategory();
+        resumingAConversationStartsItsCli();
         windowTakesTheWorkspaceFromTheHost();
         alertsChimeWhileAnAgentWaits();
         phoneSizeYieldsToTheDesktop();

@@ -468,6 +468,8 @@ void KeyMap::apply_defaults() {
         {QStringLiteral("textSmaller"), {modifier + QStringLiteral("-")}},
         {QStringLiteral("textReset"), {modifier + QStringLiteral("0")}},
         {QStringLiteral("find"), {modifier + QStringLiteral("F")}},
+        // A past Claude or Codex conversation, as a new agent.
+        {QStringLiteral("resumeConversation"), {modifier + QStringLiteral("O")}},
     };
 #ifdef Q_OS_MACOS
     bindings_.insert(QStringLiteral("splitDown"), {QStringLiteral("Meta+Shift+D")});
