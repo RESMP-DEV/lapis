@@ -20,6 +20,7 @@
 #include <QLockFile>
 #include <QPointer>
 #include <QProcess>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUuid>
@@ -560,6 +561,27 @@ QJsonObject agentRecord(const QString& directory, const QString& id, const char*
                        {"program", "/usr/bin/true"},
                        {"directory", directory}};
 }
+
+class ScopedClaudeHome {
+  public:
+    explicit ScopedClaudeHome(const QByteArray& value)
+        : had_previous_(qEnvironmentVariableIsSet("CLAUDE_CONFIG_DIR")),
+          previous_(qgetenv("CLAUDE_CONFIG_DIR")) {
+        qputenv("CLAUDE_CONFIG_DIR", value);
+    }
+    ~ScopedClaudeHome() {
+        if (had_previous_)
+            qputenv("CLAUDE_CONFIG_DIR", previous_);
+        else
+            qunsetenv("CLAUDE_CONFIG_DIR");
+    }
+    ScopedClaudeHome(const ScopedClaudeHome&) = delete;
+    ScopedClaudeHome& operator=(const ScopedClaudeHome&) = delete;
+
+  private:
+    bool had_previous_;
+    QByteArray previous_;
+};
 
 void writeRegistry(const QString& path, const QJsonObject& root) {
     QFile file(path);
@@ -2212,10 +2234,9 @@ void managedResumeFollowsRecovery() {
         const auto agent = saved_agent(id);
         const auto actual = agent.value(QStringLiteral("arguments")).toArray();
         const auto expected =
-            managed_provenance ? QJsonArray{QStringLiteral("--flag"), QStringLiteral("--session"),
-                                            expected_identity}
-            : id == managed
-                ? QJsonArray{QStringLiteral("--flag")}
+            managed_provenance
+                ? QJsonArray{QStringLiteral("--flag"), QStringLiteral("--session"),
+                             expected_identity}
                 : QJsonArray{QStringLiteral("--flag"), QStringLiteral("--session=user-original")};
         require(actual == expected, "the recovery cycle preserves unrelated arguments");
         requireProcessArguments(expected, canonical);
@@ -2231,17 +2252,20 @@ void managedResumeFollowsRecovery() {
     check_cycle(managed, true, QStringLiteral("m-1"));
     check_cycle(explicit_agent, false, {});
 
-    for (const auto& [identity, managed_identity] :
-         {std::pair{1, QStringLiteral("m-2")}, {2, QStringLiteral("m-3")}, {3, QString{}}}) {
+    for (const auto& [identity, managed_identity] : {std::pair{1, QStringLiteral("m-2")},
+                                                     {2, QStringLiteral("m-3")},
+                                                     {3, QStringLiteral("m-4")}}) {
         for (const auto& name :
              QDir(canonical).entryList({QStringLiteral("args.*.txt")}, QDir::Files))
             require(QFile::remove(QDir(canonical).filePath(name)), "remove prior argv receipts");
-        if (managed_identity.isEmpty()) {
-            // Legacy/printed records retire only lapis-owned arguments.
+        if (identity == 3) {
+            // Kimi has no lapis observer: its session hook's printed checkpoint
+            // is how it names the conversation, and the managed pair follows it.
             lapis::session::write_resume_record(
-                endpoint(managed), {QStringLiteral("kimi"), QStringLiteral("advisory-id")});
+                endpoint(managed),
+                {QStringLiteral("kimi"), managed_identity, lapis::session::ResumeSource::terminal});
             lapis::session::write_resume_record(
-                endpoint(explicit_agent), {QStringLiteral("kimi"), QStringLiteral("advisory-id")});
+                endpoint(explicit_agent), {QStringLiteral("kimi"), QStringLiteral("printed-id")});
         } else {
             writeObservedResume(endpoint(managed), {QStringLiteral("kimi"), managed_identity});
             writeObservedResume(
@@ -2268,7 +2292,7 @@ void managedResumeFollowsRecovery() {
                     },
                     10000),
                 "the recovery cycle restarts");
-        check_cycle(managed, !managed_identity.isEmpty(), managed_identity);
+        check_cycle(managed, true, managed_identity);
         check_cycle(explicit_agent, false, {});
     }
     for (const auto& id : {managed, explicit_agent})
@@ -2277,135 +2301,283 @@ void managedResumeFollowsRecovery() {
             "managed-resume agents close");
 }
 
-// Exercise restore planning without substituting a shell for a real Codex
-// app-server. Destruction before the event loop cancels the queued launches.
-void codexResumeArguments() {
-    QTemporaryDir directory(QStringLiteral("/tmp/lapis-resume-XXXXXX"));
-    require(directory.isValid(), "private resume-planning directory");
-    const auto root = QFileInfo(directory.path()).canonicalFilePath();
-    const ScopedCodexHome home(root.toUtf8());
-    const auto sessions = QDir(root).filePath(QStringLiteral("sessions"));
-    const auto date = QDir(sessions).filePath(QStringLiteral("2026/09/23"));
-    const auto outside = QDir(root).filePath(QStringLiteral("outside"));
-    require(QDir().mkpath(date) && QDir().mkpath(outside), "create rollout directories");
-    require(QFile::link(outside, QDir(sessions).filePath(QStringLiteral("2026/09/24"))),
-            "link an outside date directory");
-    struct Case {
-        bool saved{};
-        bool explicit_resume{};
-        bool symlink{};
-        QJsonArray config_arguments{};
-        bool add_update_setting{true};
-    };
+// Exercise restore planning without substituting a shell for a real agent.
+// Destruction before the event loop cancels the queued launches.
+struct ResumeArgumentsCase {
+    bool saved{};
+    bool explicit_resume{};
+    bool symlink{};
+    QJsonArray config_arguments{};
+    bool add_update_setting{true};
+    // Observed harnesses name their conversation to lapis's observer; a
+    // checkpoint they printed never resumes it, and one saved before sources
+    // were recorded does.
+    lapis::session::ResumeSource source{lapis::session::ResumeSource::observer};
+    QString harness{QStringLiteral("codex")};
+    bool managed_pair{};
+};
+
+struct ResumeArgumentsFixture {
+    QTemporaryDir directory{QStringLiteral("/tmp/lapis-resume-XXXXXX")};
+    const QString root = QFileInfo(directory.path()).canonicalFilePath();
+    const ScopedCodexHome codex_home{root.toUtf8()};
+    const QString claude_home = QDir(root).filePath(QStringLiteral("claude-home"));
+    const ScopedClaudeHome claude_home_scope{claude_home.toUtf8()};
+
+    ResumeArgumentsFixture() {
+        require(directory.isValid(), "private resume-planning directory");
+        const auto sessions = QDir(root).filePath(QStringLiteral("sessions"));
+        const auto date = QDir(sessions).filePath(QStringLiteral("2026/09/23"));
+        const auto outside = QDir(root).filePath(QStringLiteral("outside"));
+        require(QDir().mkpath(date) && QDir().mkpath(outside), "create rollout directories");
+        require(QFile::link(outside, QDir(sessions).filePath(QStringLiteral("2026/09/24"))),
+                "link an outside date directory");
+    }
+};
+
+std::vector<ResumeArgumentsCase> resumeArgumentCases() {
+    using lapis::session::ResumeSource;
     QJsonArray full_arguments;
     for (int index = 0; index < 63; ++index)
         full_arguments.append("literal-argument");
-    for (const auto& variant :
-         {Case{true, false, false}, Case{true, true, false}, Case{false, true, false},
-          Case{false, false, false}, Case{true, false, true},
-          Case{false, false, false, {"--config=check_for_update_on_startup=true"}, false},
-          Case{false, false, false, {"-c", "check_for_update_on_startup=false"}, false},
-          Case{false, false, false, {"--", "check_for_update_on_startup=false"}},
-          Case{false, false, false, full_arguments, false}}) {
-        const auto id = uuid();
-        const auto filename =
-            QStringLiteral("rollout-2026-09-23T10-30-00-") + id + QStringLiteral(".jsonl");
-        // An unsaved case has a root-level file that is outside the supported layout.
-        QFile transcript(QDir(variant.symlink ? outside
-                              : variant.saved ? date
-                                              : sessions)
-                             .filePath(filename));
-        require(transcript.open(QIODevice::WriteOnly), "create transcript fixture");
+    return {
+        ResumeArgumentsCase{true, false, false},
+        ResumeArgumentsCase{true, true, false},
+        ResumeArgumentsCase{false, true, false},
+        ResumeArgumentsCase{false, false, false},
+        ResumeArgumentsCase{true, false, true},
+        ResumeArgumentsCase{
+            false, false, false, {"--config=check_for_update_on_startup=true"}, false},
+        ResumeArgumentsCase{
+            false, false, false, {"-c", "check_for_update_on_startup=false"}, false},
+        ResumeArgumentsCase{false, false, false, {"--", "check_for_update_on_startup=false"}},
+        ResumeArgumentsCase{false, false, false, full_arguments, false},
+        ResumeArgumentsCase{
+            true, false, false, {}, true, ResumeSource::terminal, QStringLiteral("codex"), true},
+        ResumeArgumentsCase{
+            true, false, false, {}, false, ResumeSource::terminal, QStringLiteral("claude"), true},
+        ResumeArgumentsCase{true, false, false, {}, true, ResumeSource::legacy},
+    };
+}
+
+void writeResumeTranscript(const ResumeArgumentsFixture& fixture,
+                           const ResumeArgumentsCase& variant, const QString& id) {
+    if (variant.harness == QLatin1String("claude")) {
+        const auto project =
+            QDir(QDir(fixture.claude_home).filePath(QStringLiteral("projects"))).filePath(id);
+        require(QDir().mkpath(project), "create a Claude transcript project");
+        QFile transcript(QDir(project).filePath(id + QStringLiteral(".jsonl")));
+        require(transcript.open(QIODevice::WriteOnly), "create a Claude transcript fixture");
         transcript.close();
-        auto record = agentRecord(root, id, "general");
-        record.insert(QStringLiteral("harness"), QStringLiteral("codex"));
-        QJsonArray user_arguments = variant.config_arguments;
-        user_arguments.append("--user");
-        if (variant.explicit_resume) {
-            user_arguments.append("resume");
-            user_arguments.append("old-conversation");
-        }
-        record.insert(QStringLiteral("arguments"), user_arguments);
-        WorkspaceOptions options;
-        options.storagePath = QDir(root).filePath(id + QStringLiteral(".json"));
-        options.restoreAgents = true;
-        writeRegistry(options.storagePath,
+        return;
+    }
+    const auto sessions = QDir(fixture.root).filePath(QStringLiteral("sessions"));
+    const auto date = QDir(sessions).filePath(QStringLiteral("2026/09/23"));
+    const auto directory = variant.symlink ? QDir(fixture.root).filePath(QStringLiteral("outside"))
+                           : variant.saved ? date
+                                           : sessions;
+    const auto filename =
+        QStringLiteral("rollout-2026-09-23T10-30-00-") + id + QStringLiteral(".jsonl");
+    // An unsaved case has a root-level file outside the supported layout.
+    QFile transcript(QDir(directory).filePath(filename));
+    require(transcript.open(QIODevice::WriteOnly), "create transcript fixture");
+    transcript.close();
+}
+
+QString resumePairOption(const QString& harness) {
+    return harness == QLatin1String("codex") ? QStringLiteral("resume")
+                                             : QStringLiteral("--resume");
+}
+
+QJsonArray retainedResumeArguments(const ResumeArgumentsCase& variant,
+                                   const QJsonArray& user_arguments) {
+    QJsonArray arguments = user_arguments;
+    if (variant.managed_pair) {
+        arguments.removeAt(arguments.size() - 1);
+        arguments.removeAt(arguments.size() - 1);
+    }
+    return arguments;
+}
+
+QJsonObject resumeArgumentsRecord(const ResumeArgumentsFixture& fixture,
+                                  const ResumeArgumentsCase& variant, const QString& id) {
+    using lapis::session::ResumeSource;
+    if (variant.managed_pair && variant.source != ResumeSource::terminal)
+        throw std::runtime_error("a managed retirement fixture must use a terminal checkpoint");
+    auto record = agentRecord(fixture.root, id, "general");
+    record.insert(QStringLiteral("harness"), variant.harness);
+    QJsonArray user_arguments = variant.config_arguments;
+    user_arguments.append("--user");
+    if (variant.explicit_resume) {
+        user_arguments.append("resume");
+        user_arguments.append("old-conversation");
+    }
+    if (variant.managed_pair) {
+        user_arguments.append(resumePairOption(variant.harness));
+        user_arguments.append("old-conversation");
+        record.insert(QStringLiteral("managedResume"),
+                      QJsonObject{{"index", user_arguments.size() - 2},
+                                  {"identity", QStringLiteral("old-conversation")}});
+    }
+    record.insert(QStringLiteral("arguments"), user_arguments);
+    return record;
+}
+
+void writeResumeRecord(const ResumeArgumentsCase& variant, const QString& id,
+                       const QString& endpoint) {
+    using lapis::session::ResumeSource;
+    if (variant.source != ResumeSource::legacy) {
+        lapis::session::write_resume_record(endpoint, {variant.harness, id, variant.source});
+        return;
+    }
+    QFile legacy(endpoint + QStringLiteral(".resume"));
+    const auto bytes =
+        QJsonDocument(QJsonObject{{"version", 1}, {"agent", variant.harness}, {"session_id", id}})
+            .toJson(QJsonDocument::Compact);
+    require(legacy.open(QIODevice::WriteOnly) && legacy.write(bytes) == bytes.size() &&
+                legacy.setPermissions(QFile::ReadOwner | QFile::WriteOwner),
+            "write a version 1 record");
+}
+
+bool followsObserverResume(const ResumeArgumentsCase& variant) {
+    using lapis::session::ResumeSource;
+    return variant.saved && !variant.explicit_resume && !variant.symlink &&
+           variant.source != ResumeSource::terminal;
+}
+
+QJsonArray expectedResumeArguments(const ResumeArgumentsCase& variant,
+                                   const QJsonArray& base_arguments,
+                                   const QJsonArray& user_arguments, const QString& id) {
+    QJsonArray expected;
+    if (variant.add_update_setting)
+        expected = {"-c", "check_for_update_on_startup=false"};
+    const auto retained = variant.managed_pair ? base_arguments : QJsonArray(user_arguments);
+    for (const auto& argument : retained)
+        expected.append(argument);
+    if (followsObserverResume(variant)) {
+        expected.append("resume");
+        expected.append(id);
+    }
+    return expected;
+}
+
+void requireRestoredResumeArguments(const ResumeArgumentsCase& variant,
+                                    const ResumeArgumentsFixture& fixture,
+                                    const QJsonObject& restored_agent, const QJsonArray& expected,
+                                    const QString& id) {
+    const auto endpoint = QDir(fixture.root).filePath(id + QStringLiteral(".sock"));
+    const auto actual = restored_agent.value(QStringLiteral("arguments")).toArray();
+    if (followsObserverResume(variant)) {
+        const auto managed = restored_agent.value(QStringLiteral("managedResume")).toObject();
+        require(managed.value(QStringLiteral("index")).toInt(-1) == 3 &&
+                    managed.value(QStringLiteral("identity")).toString() == id,
+                "Codex startup defaults shift managed provenance to the resume pair");
+    }
+    if (variant.managed_pair) {
+        const auto managed = restored_agent.value(QStringLiteral("managedResume")).toObject();
+        require(managed.isEmpty(),
+                "a printed checkpoint for an observed CLI retires managed provenance");
+    }
+    require(actual == expected, "saved transcript lookup preserves explicit resume arguments");
+    require(!QFileInfo::exists(endpoint), "restore planning has not spawned a service");
+}
+
+void codexResumeArguments() {
+    ResumeArgumentsFixture fixture;
+    for (const auto& variant : resumeArgumentCases()) {
+        const auto id = uuid();
+        writeResumeTranscript(fixture, variant, id);
+        auto record = resumeArgumentsRecord(fixture, variant, id);
+        const auto user_arguments = record.value(QStringLiteral("arguments")).toArray();
+        const auto base_arguments = retainedResumeArguments(variant, user_arguments);
+        const auto storage_path = QDir(fixture.root).filePath(id + QStringLiteral(".json"));
+        const auto endpoint = QDir(fixture.root).filePath(id + QStringLiteral(".sock"));
+        writeResumeRecord(variant, id, endpoint);
+        writeRegistry(storage_path,
                       QJsonObject{{"version", 2},
                                   {"activeCategory", "general"},
                                   {"categories",
                                    QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
                                   {"agents", QJsonArray{record}}});
-        const auto endpoint = QDir(root).filePath(id + QStringLiteral(".sock"));
-        writeObservedResume(endpoint, {QStringLiteral("codex"), id});
+        WorkspaceOptions options;
+        options.storagePath = storage_path;
+        options.restoreAgents = true;
         Workspace workspace(WorkspaceMode::live, options);
-        require(workspace.workspaceError().isEmpty(), "plan restored Codex launch");
-        const auto restored_agent = QJsonDocument::fromJson(readRegistry(options.storagePath))
+        require(workspace.workspaceError().isEmpty(), "plan restored launch");
+        const auto restored_agent = QJsonDocument::fromJson(readRegistry(storage_path))
                                         .object()
                                         .value(QStringLiteral("agents"))
                                         .toArray()
                                         .first()
                                         .toObject();
-        const auto actual = restored_agent.value(QStringLiteral("arguments")).toArray();
-        QJsonArray expected;
-        if (variant.add_update_setting)
-            expected = {"-c", "check_for_update_on_startup=false"};
-        for (const auto& argument : user_arguments)
-            expected.append(argument);
-        if (variant.saved && !variant.explicit_resume && !variant.symlink) {
-            expected.append("resume");
-            expected.append(id);
-            const auto managed = restored_agent.value(QStringLiteral("managedResume")).toObject();
-            require(managed.value(QStringLiteral("index")).toInt(-1) == 3 &&
-                        managed.value(QStringLiteral("identity")).toString() == id,
-                    "Codex startup defaults shift managed provenance to the resume pair");
-        }
-        require(actual == expected, "saved transcript lookup preserves explicit resume arguments");
-        require(!QFileInfo::exists(endpoint), "restore planning has not spawned a service");
+        requireRestoredResumeArguments(
+            variant, fixture, restored_agent,
+            expectedResumeArguments(variant, base_arguments, user_arguments, id), id);
     }
 }
 
-// Printed output is advisory even when it claims the same harness and an
-// observer source. Exercise the real service, persistence, and restart argv.
-void printedCheckpointsCannotRedirectResume() {
-    QTemporaryDir directory(QStringLiteral("/tmp/lapis-cp-XXXXXX"));
-    require(directory.isValid(), "checkpoint fixture directory");
-    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
-    const auto program = QDir(canonical).filePath(QStringLiteral("kimi"));
-    const auto argv_path = QDir(canonical).filePath(QStringLiteral("argv.txt"));
-    const auto checkpoint = QJsonDocument(QJsonObject{{"agent", "kimi"},
-                                                      {"session_id", "forged-conversation"},
-                                                      {"source", "observer"}})
-                                .toJson(QJsonDocument::Compact)
-                                .toBase64();
-    QFile script(program);
-    require(script.open(QIODevice::WriteOnly), "open checkpoint fixture");
-    const auto body = QByteArray("#!/bin/sh\nprintf '%s\\n' \"$@\" > '") +
-                      QFile::encodeName(argv_path) +
-                      "'\nprintf '\\033]1337;SetUserVar=agent_checkpoint=" + checkpoint +
-                      "\\007!'\nread -r line\n";
-    require(script.write(body) == body.size() &&
-                script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
-            "write checkpoint fixture");
-    script.close();
-    const auto id = uuid();
-    auto agent = agentRecord(canonical, id, "general");
-    agent.insert(QStringLiteral("program"), program);
-    agent.insert(QStringLiteral("harness"), QStringLiteral("kimi"));
-    agent.insert(QStringLiteral("arguments"), QJsonArray{"--yolo"});
+struct PrintedCheckpointFixture {
+    QTemporaryDir directory{QStringLiteral("/tmp/lapis-cp-XXXXXX")};
+    QString canonical = QFileInfo(directory.path()).canonicalFilePath();
+    QString program;
+    QString argv_path;
+    QString id = uuid();
     WorkspaceOptions options;
-    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
-    options.restoreAgents = true;
-    writeRegistry(
-        options.storagePath,
-        QJsonObject{{"version", 2},
-                    {"activeCategory", "general"},
-                    {"categories", QJsonArray{QJsonObject{
+    QString endpoint;
+
+    PrintedCheckpointFixture(const QString& harness, const QString& session_id,
+                             const QJsonArray& arguments, bool legacy_record = false) {
+        require(directory.isValid(), "checkpoint fixture directory");
+        program = QDir(canonical).filePath(harness);
+        argv_path = QDir(canonical).filePath(QStringLiteral("argv.txt"));
+        const auto checkpoint =
+            QJsonDocument(
+                QJsonObject{{"agent", harness}, {"session_id", session_id}, {"source", "observer"}})
+                .toJson(QJsonDocument::Compact)
+                .toBase64();
+        writeExecutable(program, QByteArray("#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > '") +
+                                     QFile::encodeName(argv_path) +
+                                     "'\nprintf '\\033]1337;SetUserVar=agent_checkpoint=" +
+                                     checkpoint + "\\007!'\nread -r line\n");
+        auto agent = agentRecord(canonical, id, "general");
+        agent.insert(QStringLiteral("program"), program);
+        agent.insert(QStringLiteral("harness"), harness);
+        agent.insert(QStringLiteral("arguments"), arguments);
+        options.storagePath = QDir(canonical).filePath(id + QStringLiteral(".json"));
+        options.restoreAgents = true;
+        writeRegistry(options.storagePath,
+                      QJsonObject{{"version", 2},
+                                  {"activeCategory", "general"},
+                                  {"categories",
+                                   QJsonArray{QJsonObject{
                                        {"id", "general"}, {"name", "General"}, {"selected", id}}}},
-                    {"agents", QJsonArray{agent}}});
-    Workspace workspace(WorkspaceMode::live, options);
+                                  {"agents", QJsonArray{agent}}});
+        endpoint = QDir(canonical).filePath(id + QStringLiteral(".sock"));
+        if (legacy_record) {
+            QFile legacy(endpoint + QStringLiteral(".resume"));
+            const auto bytes =
+                QJsonDocument(
+                    QJsonObject{{"version", 1}, {"agent", harness}, {"session_id", session_id}})
+                    .toJson(QJsonDocument::Compact);
+            require(legacy.open(QIODevice::WriteOnly) && legacy.write(bytes) == bytes.size() &&
+                        legacy.setPermissions(QFile::ReadOwner | QFile::WriteOwner),
+                    "write a version 1 record");
+        }
+    }
+};
+
+// A CLI without a lapis observer names its conversation only in the
+// checkpoint its session hook prints, so that checkpoint resumes it; printed
+// output still cannot claim observer provenance or replace an identity the
+// observer learned. Exercise the real service, persistence, and restart argv.
+void printedCheckpointsResumeButNeverOverrideTheObserver() {
+    PrintedCheckpointFixture fixture(QStringLiteral("kimi"), QStringLiteral("forged-conversation"),
+                                     QJsonArray{QStringLiteral("--yolo")});
+    Workspace workspace(WorkspaceMode::live, fixture.options);
+    const auto id = fixture.id;
     auto* item = workspace.session(id);
     require(item != nullptr, "checkpoint fixture agent exists");
-    const auto endpoint = QDir(canonical).filePath(id + QStringLiteral(".sock"));
+    const auto endpoint = fixture.endpoint;
     require(waitFor(
                 [&] {
                     const auto record = lapis::session::read_resume_record(endpoint);
@@ -2423,9 +2595,10 @@ void printedCheckpointsCannotRedirectResume() {
     require(waitFor([&] { return workspace.restartAgent(id); }, 10000),
             "restart checkpoint fixture");
     require(waitFor([&] { return item->inputReady(); }, 10000), "checkpoint fixture restarts");
-    QFile argv_file(argv_path);
-    require(argv_file.open(QIODevice::ReadOnly) && argv_file.readAll() == QByteArray("--yolo\n"),
-            "printed checkpoint never becomes a resume argument");
+    QFile argv_file(fixture.argv_path);
+    require(argv_file.open(QIODevice::ReadOnly) &&
+                argv_file.readAll() == QByteArray("--yolo\n--session\nforged-conversation\n"),
+            "a printed checkpoint resumes a CLI lapis has no observer for");
     argv_file.close();
     item->sendText("done\r");
     require(waitFor([&] { return item->connectionState() == QStringLiteral("ended"); }, 10000),
@@ -2449,6 +2622,71 @@ void printedCheckpointsCannotRedirectResume() {
     require(workspace.closeSession(id) &&
                 waitFor([&] { return workspace.sessions().isEmpty(); }, 10000),
             "checkpoint fixture closes");
+
+    // A legacy Claude identity predates source provenance, and its old launch
+    // is terminal mode. Preserve the v1 record when its hook prints: restarts
+    // continue to use the known conversation until an actual observer upgrades
+    // it, while other CLIs still follow their checkpoints.
+    PrintedCheckpointFixture legacy{
+        QStringLiteral("claude"), QStringLiteral("legacy-conversation"), {}, true};
+    const auto old_claude_config = qgetenv("CLAUDE_CONFIG_DIR");
+    const auto restore_claude_config = qScopeGuard([&] {
+        if (old_claude_config.isNull())
+            qunsetenv("CLAUDE_CONFIG_DIR");
+        else
+            qputenv("CLAUDE_CONFIG_DIR", old_claude_config);
+    });
+    qputenv("CLAUDE_CONFIG_DIR", legacy.canonical.toUtf8());
+    const auto project = QDir(legacy.canonical).filePath(QStringLiteral("projects/fixture"));
+    require(QDir().mkpath(project), "create the private legacy transcript directory");
+    QFile transcript(QDir(project).filePath(QStringLiteral("legacy-conversation.jsonl")));
+    require(transcript.open(QIODevice::WriteOnly), "create a saved legacy conversation");
+    transcript.close();
+    const auto loaded = lapis::session::read_resume_record(legacy.endpoint);
+    require(loaded && loaded->source == lapis::session::ResumeSource::legacy,
+            "the fixture loaded a version 1 Claude record");
+    Workspace legacy_workspace(WorkspaceMode::live, legacy.options);
+    auto* legacy_item = legacy_workspace.session(legacy.id);
+    require(legacy_item != nullptr, "legacy Claude fixture agent exists");
+    require(waitFor(
+                [legacy_item] {
+                    return legacy_item->inputReady() &&
+                           legacy_item->snapshot().graphemes.find(U'!') != std::u32string::npos;
+                },
+                10000),
+            "the old Claude service consumed its printed checkpoint");
+    const auto preserved = lapis::session::read_resume_record(legacy.endpoint);
+    require(preserved && preserved->source == lapis::session::ResumeSource::legacy &&
+                preserved->session_id == QStringLiteral("legacy-conversation"),
+            "printed output preserves a legacy Claude checkpoint");
+    const auto saved = QJsonDocument::fromJson(readRegistry(legacy.options.storagePath))
+                           .object()
+                           .value(QStringLiteral("agents"))
+                           .toArray()
+                           .first()
+                           .toObject();
+    require(saved.value(QStringLiteral("managedResume")).toObject() ==
+                QJsonObject{{"index", 0}, {"identity", "legacy-conversation"}},
+            "the legacy identity becomes a managed pair without explicit user resume arguments");
+    legacy_item->sendText("done\r");
+    require(
+        waitFor([&] { return legacy_item->connectionState() == QStringLiteral("ended"); }, 10000),
+        "the legacy Claude fixture exits");
+    require(QFile::remove(legacy.argv_path), "remove the first legacy launch receipt");
+    require(waitFor([&] { return legacy_workspace.restartAgent(legacy.id); }, 10000),
+            "restart the legacy Claude fixture");
+    require(waitFor(
+                [&] {
+                    QFile legacy_argv(legacy.argv_path);
+                    return legacy_item->inputReady() && legacy_argv.open(QIODevice::ReadOnly) &&
+                           legacy_argv.readAll() == QByteArray("--resume\nlegacy-conversation\n");
+                },
+                10000),
+            "the legacy Claude identity remains valid after the restart");
+    require(
+        legacy_workspace.closeSession(legacy.id) &&
+            waitFor([&legacy_workspace] { return legacy_workspace.sessions().isEmpty(); }, 10000),
+        "the legacy Claude fixture closes");
 }
 
 // Opt-in, with LAPIS_TEST_CODEX_HOME naming a Codex home that uses a local
@@ -2556,7 +2794,7 @@ int main(int argc, char** argv) {
         failedUpdaterStartClearsTheQueue();
         savedArgumentCapKeepsRegistryLoadable();
         managedResumeFollowsRecovery();
-        printedCheckpointsCannotRedirectResume();
+        printedCheckpointsResumeButNeverOverrideTheObserver();
         restartReportsValidationFailures();
         const bool had_codex_home = qEnvironmentVariableIsSet("CODEX_HOME");
         const auto original_codex_home = qgetenv("CODEX_HOME");

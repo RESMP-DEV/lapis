@@ -12,12 +12,13 @@ It starts every agent with the helper (a first boot) and holds a conversation
 with each; Codex and Claude then start a second one with /new and /clear.
 Twice it simulates a power loss (SIGKILL on every process at once, leaving
 stale sockets) and boots again with the helper, the second time as a launchd
-job like the login LaunchAgent. After each boot Codex and Claude must retain their native context: they show
-the exchange after /new and /clear, and the model receives it with the next
-prompt. OSC-only stand-ins instead report
-starting fresh without an unverified resume argument. Finally the helper runs
-with everything alive and must leave it untouched. macOS; nothing is left
-running.
+job like the login LaunchAgent. After each boot every agent must resume the
+conversation in use at the power loss. Codex and Claude retain their native
+context and the model receives it with the next prompt; OSC-only stand-ins echo
+that they resumed and accept a live follow-up. Each saved launch carries that
+agent's resume option and identity exactly once, with durable lapis-owned
+provenance. Finally the helper runs with everything alive and must leave it
+untouched. macOS; nothing is left running.
 
     uv run --no-project python scripts/check_restore.py
 """
@@ -42,6 +43,17 @@ DESKTOP = (
 )
 SERVICE_NAME = "lapis_session_service"
 STAND_INS = ("grok", "kimi", "opencode", "omp")
+RESUME_OPTIONS = {
+    "codex": "resume",
+    "claude": "--resume",
+    "grok": "-r",
+    "kimi": "--session",
+    "opencode": "--session",
+    "omp": "--resume",
+}
+STARTUP_ARGUMENTS = {
+    "codex": ["-c", "check_for_update_on_startup=false"],
+}
 LAUNCHD_KEPT = (
     "PATH",
     "LANG",
@@ -161,6 +173,20 @@ def wait_record(endpoint, agent, timeout=40, replacing=None, source=None):
             return value["session_id"]
         time.sleep(0.2)
     raise Failure(f"{agent} never recorded its conversation at {endpoint}")
+
+
+def require_managed_resume(name, arguments, provenance, conversation):
+    """The restored launch owns exactly one complete, durable resume pair."""
+    expected = [*STARTUP_ARGUMENTS.get(name, []), RESUME_OPTIONS[name], conversation]
+    require(
+        arguments == expected,
+        f"{name} resume arguments {arguments} != {expected}",
+    )
+    index = len(STARTUP_ARGUMENTS.get(name, []))
+    require(
+        provenance == {"index": index, "identity": conversation},
+        f"{name} managed resume provenance {provenance}",
+    )
 
 
 def tree(roots):
@@ -541,6 +567,12 @@ def main():
             )
             saved = {a["id"]: a for a in json.loads(registry.read_text())["agents"]}
             for name in ("codex", "claude"):
+                require_managed_resume(
+                    name,
+                    saved[ids[name]]["arguments"],
+                    saved[ids[name]].get("managedResume", {}),
+                    conversations[name],
+                )
                 session = attach(name)
                 shown = wait_screen(session, prompt[name])
                 require(
@@ -557,24 +589,34 @@ def main():
                     record(endpoint[name])["session_id"] == conversations[name],
                     f"{name} changed conversation",
                 )
-                arguments = saved[ids[name]]["arguments"]
                 require(
-                    arguments.count(conversations[name]) == 1,
-                    f"{name} resume arguments: {arguments}",
+                    record(endpoint[name])["source"] == "observer",
+                    f"{name} lost observer provenance",
                 )
             for name in STAND_INS:
+                require_managed_resume(
+                    name,
+                    saved[ids[name]]["arguments"],
+                    saved[ids[name]].get("managedResume", {}),
+                    conversations[name],
+                )
                 session = attach(name)
                 previous = conversations[name]
-                current = wait_record(
-                    endpoint[name], name, replacing=previous, source="terminal"
-                )
-                wait_screen(session, f"new conversation {current}")
+                wait_screen(session, f"resumed conversation {previous}")
+                follow_up = f"note after power loss {round_number} from {name}"
+                session.send(wire.TEXT, f"{follow_up}\r".encode())
+                wait_screen(session, f"echo: {follow_up}")
                 session.close()
                 require(
-                    previous not in saved[ids[name]]["arguments"],
-                    f"{name} injected an advisory identity into argv",
+                    record(endpoint[name])
+                    == {
+                        "version": 2,
+                        "agent": name,
+                        "session_id": previous,
+                        "source": "terminal",
+                    },
+                    f"{name} lost terminal provenance",
                 )
-                conversations[name] = current
             entries = fake_log(fake_models_log)
             codex_context = max(
                 (
@@ -595,7 +637,7 @@ def main():
             )
             print(
                 f"boot {round_number}{' (launchd)' if round_number == 2 else ''}: "
-                f"helper {took:.1f} s, native context resumed and 4 advisory agents restarted fresh; "
+                f"helper {took:.1f} s, all 6 saved conversations resumed with managed provenance; "
                 f"Codex context {first_context['codex']} -> {codex_context} items, "
                 f"Claude {first_context['claude']} -> {claude_context} messages"
             )

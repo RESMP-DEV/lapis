@@ -1373,6 +1373,16 @@ bool codexConversationSaved(const QDir& directory, const QString& conversation, 
     });
 }
 
+// Whether a saved conversation resumes automatically. Codex and Claude report
+// theirs to lapis's observer, which printed output cannot override; the other
+// CLIs report theirs only through their session hook's terminal checkpoint.
+// Records from before lapis recorded the source resume as they always did.
+bool resumable(const session::ResumeRecord& record, const QString& harness) {
+    if (record.source != session::ResumeSource::terminal)
+        return true;
+    return !session::observer_backed_agent(harness);
+}
+
 bool conversationSaved(const session::ResumeRecord& record) {
     const auto& conversation = record.session_id;
     if (record.agent == QLatin1String("claude")) {
@@ -1499,7 +1509,7 @@ auto Workspace::restoredLaunch(const Agent& agent, QString* diagnostic)
     const auto option = resumeOption(agent.harness);
     ResumeLaunch plan{std::move(launch), agent.managed_resume_index, agent.managed_resume_identity};
     const auto record = session::read_resume_record(agent.endpoint);
-    if (record && record->source != session::ResumeSource::observer) {
+    if (record && !resumable(*record, agent.harness)) {
         // Retire only a proven lapis-owned pair. Explicit user arguments stay
         // authoritative, including when old derived metadata no longer matches.
         const auto index = plan.managed_resume_index;
@@ -1509,9 +1519,11 @@ auto Workspace::restoredLaunch(const Agent& agent, QString* diagnostic)
             plan.managed_resume_index = -1;
             plan.managed_resume_identity.clear();
         }
-        qWarning().noquote() << "Automatic resume skipped: checkpoint has no observer provenance";
+        qWarning().noquote()
+            << "Automatic resume skipped: printed checkpoint cannot authorize resume for"
+            << agent.harness;
     }
-    if (!option.isEmpty() && record && record->source == session::ResumeSource::observer &&
+    if (!option.isEmpty() && record && resumable(*record, agent.harness) &&
         record->agent == agent.harness && conversationSaved(*record)) {
         if (plan.managed_resume_index >= 0) {
             // Replace only the pair whose provenance the registry recorded.

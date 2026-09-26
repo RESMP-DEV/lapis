@@ -29,6 +29,24 @@ class RestoreProbeTests(unittest.TestCase):
                 )
             self.assertEqual(read.call_count, 2)
 
+    def test_managed_resume_accepts_only_the_complete_owned_pair(self):
+        arguments = ["-c", "check_for_update_on_startup=false", "resume", "saved"]
+        provenance = {"index": 2, "identity": "saved"}
+        restore.require_managed_resume("codex", arguments, provenance, "saved")
+        for bad_arguments, bad_provenance in (
+            (arguments + ["resume", "saved"], provenance),
+            (arguments[:-1] + ["stale"], provenance),
+            ([*arguments[:2], "--resume", "saved"], provenance),
+            (arguments, {"index": 0, "identity": "saved"}),
+            (arguments, {"identity": "saved"}),
+            (arguments, {"index": 2, "identity": "stale"}),
+        ):
+            with self.subTest(arguments=bad_arguments, provenance=bad_provenance):
+                with self.assertRaises(restore.Failure):
+                    restore.require_managed_resume(
+                        "codex", bad_arguments, bad_provenance, "saved"
+                    )
+
     def test_fake_model_announces_its_bound_ephemeral_port(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

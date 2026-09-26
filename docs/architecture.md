@@ -1695,17 +1695,24 @@ conversation and provenance. Version 2 distinguishes an independent observer
 from advisory OSC 1337 `SetUserVar=agent_checkpoint=<base64 JSON>` printed in
 terminal output. Printed fields cannot claim observer provenance, replace a
 managed Codex/Claude observer, or downgrade an already observed record. Version 1
-records remain readable as advisory until a current observer or the Codex rollout
-probe confirms the conversation. Unknown versions and malformed sources fail
-closed.
+records read as legacy (their source was not recorded). Unknown versions and
+malformed sources fail closed. Legacy is read-only provenance: new version 2
+records must name terminal or observer as their source.
+For older Claude/Codex services without an observer, terminal output preserves
+the loaded legacy record until an independent observer can replace it. Otherwise
+one restart could downgrade the record and prevent the next automatic resume.
 
-Automatic resume uses only observer records. Codex and Claude currently provide
-that independent channel; other CLIs' printed checkpoints remain advisory and
-restart fresh unless the user explicitly supplied a resume argument. Remote
+Every agent resumes its conversation (the user's requirement, September 25:
+starting fresh is not acceptable). Codex and Claude resume only from their
+observer (or a legacy record); a checkpoint printed in their terminal never
+resumes them. The other CLIs have no lapis observer, so the checkpoint their
+session hook prints is how they name the conversation and it resumes them; the
+service still never lets printed output replace an observed identity. Remote
 hosts, unknown agents and identities that could be options are refused. When
 lapis adds a resume pair, the registry records its index and identity as
-`managedResume`; later verified observations update only that pair. An advisory
-record retires a still-matching lapis-owned pair. Stale provenance loses automatic
+`managedResume`; later observations (for CLIs without an observer, their
+printed checkpoints) update only that pair. A record that may not resume (a printed one for Codex or Claude) retires a
+still-matching lapis-owned pair. Stale provenance loses automatic
 updating instead of making the whole workspace unloadable. Explicit user
 arguments, including `--option=value`, remain authoritative. A managed append
 cannot exceed the same 64-argument limit enforced by the registry loader.
@@ -1723,7 +1730,7 @@ known SHA-256 values in the `launch-spec` suite for terminal, Codex and Claude
 modes), service IPC version 6 with only additive frames, registry versions 1
 and 2 on read, the `LAPIS-S1` descriptor, and the
 Claude hook relay's command line. Resume records now write version 2 and read
-version 1 without assuming observer provenance. Changing these contracts needs a migration that
+version 1 as legacy, which still resumes. Changing these contracts needs a migration that
 still reattaches services started by the previous build. For Codex services
 started before resume records existed, the desktop recovers the thread every
 60 seconds: it finds the app-server by its exact `app-server --listen
@@ -1731,8 +1738,13 @@ unix://<endpoint>.codex` command line and reads the rollouts it holds open
 (the rule is under Restore at login below); this was checked against real
 Codex 0.155.1 with the fake model after deleting the record. Restart agent (Commands) applies
 the restore path to one ended or unreachable card and refuses while its service
-answers. Explicit Antigravity resumes use `agy --conversation`; its printed
-checkpoint does not authorize automatic resume.
+answers. Antigravity resumes use `agy --conversation`; its terminal checkpoint
+supplies that identity under the same policy as other CLIs without an observer.
+This resume route does not qualify an independent attention/response adapter.
+For these observerless CLIs, the terminal checkpoint is the identity source, not
+independent authentication: any producer of that same PTY output can name a
+conversation. The record remains terminal provenance, is tied to the launched
+harness, and never changes the CLI account, execution policy or approval settings.
 
 Restore at login and after power loss (September 24, requested because losing
 agents to a reboot is the user's main pain point). `lapis_desktop
@@ -1782,11 +1794,17 @@ second runs as a launchd job with the LaunchAgent's minimal environment
 `startDetached`'s new session). Codex and Claude must return to their observed
 conversation, show that exchange, accept a follow-up, and keep the identity
 with exactly one resume argument; the model must receive the growing context.
-The four stand-ins provide terminal-only advisory checkpoints, so they must
-restart fresh without injecting that unverified identity into their arguments.
+The four stand-ins provide terminal-only checkpoints and must return to the
+same conversation, announce that resume and accept a follow-up. Every saved
+launch must contain exactly one native resume pair with matching managed
+provenance; terminal records keep their terminal source.
 The fixture waits for observer provenance where required and binds its fake
 model to an ephemeral loopback port. A final helper run with everything alive
 must restart nothing.
+The [PR 17 review check](../evidence/pr17-review.json) records both power-loss
+cycles and the normal, ASan/UBSan and TSan workspace/checkpoint suites on macOS.
+It also covers a legacy Claude identity surviving printed output and managed
+Codex/Claude resume pairs being retired when only a terminal record is available.
 
 CLI updates (September 24, requested so agents never open on an update
 prompt). Before a new agent starts, the desktop runs that CLI's own
