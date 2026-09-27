@@ -1937,9 +1937,11 @@ A prototype, deliberately simpler than the SSH design first proposed:
   at least three times in zsh or bash history, ordered reachable first, then
   by use; reachability is a TCP connection to the host or its first jump
   host, never a login, so a hardware key is never asked for a touch. The
-  desktop starts a remote agent as `ssh -t <host> 'cd <folder> && exec
-  "${SHELL:-/bin/sh}" -lic <cli>'` with each word quoted, in terminal mode,
-  and never updates a remote CLI first. The phone keeps the list, CLIs,
+  desktop starts a remote agent as `ssh -o ServerAliveInterval=15 -o
+  ServerAliveCountMax=4 -t <host> 'cd <folder> && exec "${SHELL:-/bin/sh}"
+  -lic <cli>'` with each word quoted, in terminal mode, and never updates a
+  remote CLI first. A remote Claude Code agent's command also carries its
+  conversation id (`s=<uuid>`); see Reconnect after a dropped connection. The phone keeps the list, CLIs,
   machines and indexes on disk per Mac, refreshes them in the background,
   and searches an index in memory, narrowing each keystroke from the last
   query's matches. `GET /api/agents/<id>/screen` joins briefly without
@@ -2238,6 +2240,28 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   another machine's folder is typed (its `newAgent` folder, else `~`), since
   this Mac cannot list it, and every CLI is offered because only that machine
   knows which it has.
+- **Reconnect after a dropped connection.** Unplugging the Mac's Ethernet
+  ended every remote agent whose ssh connection used it: the ssh config chose
+  the LAN route when the connection started, a TCP connection cannot move to
+  Wi-Fi, and ssh exited 255. lapis showed "Process exited (255)" and restarting
+  began a new conversation, while the old CLI kept running on the other
+  machine, its sshd unaware, until the connection timed out (about 15 minutes
+  with unsent output, two hours idle). Now a remote Claude Code agent keeps one
+  conversation id for its life: the first launch passes `--session-id`, and
+  every later launch stops any process there still holding that id (hangup,
+  then TERM after 5 s) and passes `--resume` once the transcript exists. The id
+  is written as `$s`, so no command line but the CLI's holds it beside the
+  option and the stop never matches its own shell. When ssh itself exits 255
+  after the connection held 20 s, lapis restarts the agent after 2, 5, 10, 20,
+  then every 30 s, for up to 15 minutes; a connection that never held (a
+  mistyped host, a refused login) stays ended, as does an agent that exits by
+  itself. Keepalives end a connection whose network went away within about a
+  minute instead of leaving a frozen tab. A split copies the launch with a new
+  id. Agents started before this, and other CLIs, whose conversation lapis
+  cannot name over ssh, are not reconnected: a fresh start would clear the
+  screen for nothing. Verified with a stand-in `claude` in zsh on a Linux
+  machine (first launch, resume after a drop with the old copy stopped, TERM
+  for one ignoring the hangup) and in the workspace test with a stand-in ssh.
 - **Phone tests on one fake agent.** Several phone UI tests take turns on one
   fake agent and each waited for its first line, "new conversation", to prove
   the screen was live. Whether that line is still on screen depends on whether

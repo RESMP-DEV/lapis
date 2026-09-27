@@ -13,6 +13,7 @@
 
 #include <QColor>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonValue>
@@ -26,6 +27,7 @@
 #include <QVariantList>
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <set>
@@ -394,6 +396,16 @@ class Workspace final : public QObject {
     // config's hosts, as the side terminal offers them.
     Q_INVOKABLE [[nodiscard]] QStringList sshMachines() const;
     void setSshConfigForTesting(const QString& path) { ssh_config_ = path; }
+    // Tests reconnect in milliseconds: a first connection counts once it held
+    // `first_hold`, and each wait before reconnecting is `wait`.
+    struct ReconnectTiming {
+        std::chrono::milliseconds first_hold;
+        std::chrono::milliseconds wait;
+    };
+    void setReconnectTimingForTesting(ReconnectTiming timing) {
+        reconnect_first_hold_ = timing.first_hold;
+        reconnect_wait_ = timing.wait;
+    }
     // Starts an agent in the active category that resumes `conversation`.
     Q_INVOKABLE bool resumeAgent(const QString& directory, const QString& title,
                                  const QString& harness, const QString& conversation,
@@ -605,6 +617,17 @@ class Workspace final : public QObject {
     void changed();
     void restoreSelection();
     void watch(SessionPreview* item);
+    // A remote agent's reconnection after its connection dropped.
+    struct Reconnect {
+        QElapsedTimer ready; // since its session last became ready
+        QElapsedTimer since; // since the drop these attempts follow
+        std::size_t count{};
+        int generation{};
+    };
+    QHash<QString, Reconnect> reconnects_;
+    std::chrono::milliseconds reconnect_first_hold_{std::chrono::seconds(20)};
+    std::optional<std::chrono::milliseconds> reconnect_wait_;
+    void reconnectIfDropped(const QString& id);
     int focused_index_{-1};
     bool preview_mode_{};
 };
