@@ -1069,41 +1069,45 @@ void TerminalSurface::wheelEvent(QWheelEvent* event) {
         event->ignore();
         return;
     }
-    wheel_remainder_ += event->angleDelta().y();
-    const int steps = wheel_remainder_ / 120;
-    wheel_remainder_ -= steps * 120;
-    if (steps != 0)
-        scrollHistory(steps, cellAt(event->position()));
     event->accept();
-}
-// Positive steps scroll back. Full-screen programs scroll themselves: the
-// service sends the wheel as the program asked (mouse wheel events when it
-// reports the mouse, as Claude Code's full-screen mode does, else arrow keys).
-// A service from before wheel input gets arrow keys from here.
-void TerminalSurface::scrollHistory(int steps, QPoint cell) {
     if (document_->snapshot().alternate_screen && !document_->historyActive()) {
-        if (!acceptsTerminalInput())
-            return;
-        if (document_->snapshot().accepts_wheel) {
-            document_->sendWheel(steps, cell.x(), cell.y());
-            return;
-        }
-        const auto key = steps > 0 ? session::TerminalKey::up : session::TerminalKey::down;
-        for (int line = 0; line < std::abs(steps) * 3; ++line)
-            document_->sendKey(key, {});
+        wheel_remainder_ += event->angleDelta().y();
+        const int steps = wheel_remainder_ / 120;
+        wheel_remainder_ -= steps * 120;
+        if (steps != 0)
+            scrollProgram(steps, cellAt(event->position()));
         return;
     }
-    if (steps > 0) {
-        document_->olderHistory();
+    // Kept history scrolls by rows, as in other terminals: a trackpad's
+    // pixels a row at a time, a wheel's notch three rows. Positive is back.
+    int rows = 0;
+    const auto grid = cellGrid();
+    if (!event->pixelDelta().isNull() && grid && grid->height > 0) {
+        pixel_remainder_ += event->pixelDelta().y();
+        rows = static_cast<int>(pixel_remainder_ / grid->height);
+        pixel_remainder_ -= rows * grid->height;
+    } else {
+        wheel_remainder_ += event->angleDelta().y();
+        rows = wheel_remainder_ / 40;
+        wheel_remainder_ -= rows * 40;
+    }
+    if (rows != 0)
+        document_->scrollHistory(rows);
+}
+// Full-screen programs scroll themselves: the service sends the wheel as the
+// program asked (mouse wheel events when it reports the mouse, as Claude
+// Code's full-screen mode does, else arrow keys). A service from before wheel
+// input gets arrow keys from here. Positive steps scroll back.
+void TerminalSurface::scrollProgram(int steps, QPoint cell) {
+    if (!acceptsTerminalInput())
+        return;
+    if (document_->snapshot().accepts_wheel) {
+        document_->sendWheel(steps, cell.x(), cell.y());
         return;
     }
-    if (!document_->historyActive())
-        return;
-    // The newest page answers with a message instead of a page.
-    if (!document_->historyRequestPending() && !document_->historyMessage().isEmpty())
-        document_->returnToLive();
-    else
-        document_->newerHistory();
+    const auto key = steps > 0 ? session::TerminalKey::up : session::TerminalKey::down;
+    for (int line = 0; line < std::abs(steps) * 3; ++line)
+        document_->sendKey(key, {});
 }
 std::optional<TerminalSurface::CellGrid> TerminalSurface::cellGrid() const {
     if (!document_)

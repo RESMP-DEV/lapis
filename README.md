@@ -63,7 +63,7 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS; after simulated power loss, the login helper resumes observer-verified Codex/Claude conversations and restarts advisory-only agents fresh ([check](scripts/check_restore.py)) | An actual reboot through the login helper, and later Linux qualification |
 | Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect; stale sockets left by a simulated power loss are replaced | Qualification across an actual reboot |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging and link opening (Qt tests on the Linux test host) | Cross-cell contextual shaping, rectangular/multi-click selection, link hover feedback and accessibility; native Mac selection not yet exercised; Linux GUI port is deferred |
-| History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
+| History and input lifecycle | Disk quotas, history scrolled by rows as one strip, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived rows keep their original width (cut or padded, not reflowed) |
 | UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; tiles on the stage (drag from the strip, dividers, keys, zoom), dragging cards to reorder and between categories with multi-select, find in the terminal and text size (Qt tests on the Linux test host); live request badges, explicit approval/answer dialog, stale-state gating and draft preservation; live config reload, alert chimes and their repeat rules, Command-K agent search, the usage meter and per-machine dashboard, the keyboard home list, Command-O resume and the side terminal with its machine picker (Qt tests on the Linux test host); usage answers from the installed Codex 0.156.1, Claude Code 2.1.282, Grok 1.0.41, Kimi Code 0.39.1 and OMP 18.2.9, here and on a Linux host over ssh | Automatic carousel and larger session-count qualification; the chimes and usage view have not been seen and heard on a Mac by a test |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
 | Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect, `/clear` continuation and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
@@ -181,8 +181,8 @@ category in the rail to move there, and onto the rail's **+** to start a new
 category; Command-click and Shift-click pick several to drag together, and
 categories drag up and down the rail.
 
-Command-F finds text in the selected terminal: the page shown first, then older
-history pages (Return goes older, Shift-Return newer). Command-plus, minus and
+Command-F finds text in the selected terminal: the screen shown first, then older
+history a screen at a time (Return goes older, Shift-Return newer). Command-plus, minus and
 zero change the text size. Files dropped on a terminal paste their quoted paths.
 The card menu and Commands show an agent's folder in Finder, open it in your
 editor (`editor` in `lapis.json`, else the first of Cursor, VS Code, Zed,
@@ -426,8 +426,10 @@ previous agent in its category (the title shows "2 of 4"), so the list is only
 needed to change category.
 
 Everything an agent prints is kept, compressed, back to its first line. Scroll
-back and a bar appears down the terminal's right edge, on the Mac and the phone:
+back and history scrolls by rows as in other terminals, a whole screen at a
+time, and a bar appears down the terminal's right edge, on the Mac and the phone:
 drag it to jump anywhere in the agent's history, the top being its first line.
+Scrolling forward to the newest row, typing, or **Live** returns to live.
 
 Scrolling over a full-screen program, such as Claude Code with
 `"tui": "fullscreen"`, scrolls the program itself on both devices, as the

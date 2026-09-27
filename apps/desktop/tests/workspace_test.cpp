@@ -1484,6 +1484,29 @@ void historyJumpsToTheStart() {
         const auto settled = [agent] {
             return agent->historyActive() && !agent->historyRequestPending();
         };
+        // History scrolls by rows as one strip: three rows back, the three
+        // kept lines above the screen, then the screen moved down, whole.
+        const auto live = agent->snapshot();
+        const auto live_rows = screenText(live).split(QLatin1Char('\n'));
+        agent->scrollHistory(3);
+        require(waitFor(settled, 10000), "three rows back");
+        const auto view = agent->snapshot();
+        const auto rows = screenText(view).split(QLatin1Char('\n'));
+        const auto number = [](const QString& row) {
+            return row.trimmed().startsWith(QStringLiteral("line "))
+                       ? row.trimmed().mid(5, 4).toInt()
+                       : -1;
+        };
+        require(view.size == live.size &&
+                    rows.mid(3, live.size.rows - 3) == live_rows.mid(0, live.size.rows - 3),
+                "the screen moves down three rows, and the view is a whole screen");
+        require(number(rows[0]) >= 0 && number(rows[1]) == number(rows[0]) + 1 &&
+                    number(rows[2]) == number(rows[1]) + 1 &&
+                    (number(live_rows[0]) < 0 || number(live_rows[0]) == number(rows[2]) + 1),
+                "above it, the three kept lines just before the screen");
+        agent->scrollHistory(-3);
+        require(!agent->historyActive() && shows(QStringLiteral("all printed")),
+                "three rows forward is live again");
         agent->olderHistory();
         require(waitFor(settled, 10000) && agent->historyScrubbable(),
                 "the newest page says where it sits");

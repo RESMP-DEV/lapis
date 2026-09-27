@@ -2,6 +2,7 @@
 #define LAPIS_DESKTOP_WORKSPACE_HPP
 
 #include "harness_models.hpp"
+#include "history_strip.hpp"
 #include "keymap.hpp"
 #include "tile_layout.hpp"
 #include <lapis/session/terminal.hpp>
@@ -85,11 +86,14 @@ class SessionPreview final : public QObject {
     Q_INVOKABLE void reconnect();
     Q_INVOKABLE void discoverSession();
     Q_INVOKABLE void startNewSession();
+    // A screen back or forward through kept history.
     Q_INVOKABLE void olderHistory();
     Q_INVOKABLE void newerHistory();
+    // Scrolls kept history by rows, positive back; scrolling forward past the
+    // newest row returns to live.
+    Q_INVOKABLE void scrollHistory(int rows);
     Q_INVOKABLE void returnToLive();
-    // Shows the page at `fraction` of everything kept (0 the oldest row). A
-    // jump asked for while a page loads follows it; the latest one wins.
+    // Moves the view to `fraction` of everything kept (0 the oldest row).
     Q_INVOKABLE void historyAt(qreal fraction);
     Q_INVOKABLE bool respondAttention(const QString& token, const QVariantMap& response);
     // Ask the session service to end this agent's process. Returns false when
@@ -227,7 +231,12 @@ class SessionPreview final : public QObject {
     // few quiet seconds after that as a pause. Neither implies a finished task.
     void noteOutput();
     [[nodiscard]] QString unobservedStatusKind() const;
-    void jumpIfAsked();
+    // Shows the strip's view once its pages are here, fetching the next one
+    // it lacks.
+    void showStrip();
+    // Moves past the strip's oldest row: a service that does not place its
+    // pages has older ones to put on top.
+    void extendStrip();
     // Decodes the screen that waited, if any; true when there was one.
     bool decodeWaiting() const;
     std::vector<qint64> output_times_;
@@ -238,10 +247,14 @@ class SessionPreview final : public QObject {
     QTimer quiet_timer_;
     bool history_active_{};
     bool history_request_pending_{};
-    quint64 history_page_id_{};
     bool history_scrubbable_{};
-    session::TerminalHistory history_place_; // the shown page among the kept rows
-    std::optional<qreal> pending_jump_;
+    // Kept history as one scrolling strip, from services that place their
+    // pages; the rows to scroll back once the first page arrives; the oldest
+    // page ID fetched, for a service that does not place its pages.
+    std::optional<HistoryStrip> strip_;
+    int strip_rows_asked_{};
+    quint64 strip_oldest_page_{};
+    bool strip_extending_{};
     bool input_ready_{};
     QString connection_state_{QStringLiteral("disconnected")};
     QString service_session_id_;

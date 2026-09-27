@@ -98,62 +98,97 @@ void SessionPreview::completeHistoryRequest(quint64 page_id, session::TerminalSn
                                             const QString& message) {
     history_active_ = true;
     history_request_pending_ = false;
-    history_page_id_ = page_id;
     history_message_ = message;
     // A service that places its pages says so with more than the page.
-    const auto& place = snapshot.history;
+    const auto place = snapshot.history;
     history_scrubbable_ =
         history_scrubbable_ || place.viewport_offset > 0 || place.total_rows > place.viewport_rows;
-    history_place_ = place;
-    snapshot_ = std::move(snapshot);
-    emit historyChanged();
+    if (!strip_) {
+        // The newest page: browsing begins at the screen as it is now, below
+        // every row kept so far. A service that does not place its pages
+        // says its page is all there is; older ones go on top as asked.
+        decodeWaiting();
+        strip_.emplace(live_snapshot_, place.total_rows);
+        strip_oldest_page_ = page_id;
+        strip_->addPage(std::move(snapshot));
+        strip_->moveTo(static_cast<qint64>(strip_->archived()) - std::max(1, strip_rows_asked_));
+    } else if (strip_extending_) {
+        strip_oldest_page_ = page_id;
+        strip_->prependPage(std::move(snapshot));
+        strip_->moveTo(static_cast<qint64>(strip_->top()) - std::max(1, strip_rows_asked_));
+    } else {
+        strip_->addPage(std::move(snapshot));
+    }
+    strip_rows_asked_ = 0;
+    strip_extending_ = false;
     emit connectionChanged();
-    emit snapshotChanged();
-    jumpIfAsked();
+    showStrip();
 }
-void SessionPreview::jumpIfAsked() {
-    if (!pending_jump_)
+void SessionPreview::showStrip() {
+    if (!strip_)
         return;
-    const auto fraction = *pending_jump_;
-    pending_jump_.reset();
-    historyAt(fraction);
+    // Rows no page holds wait for their page; a service that cannot fetch
+    // by row shows them blank.
+    if (const auto row = strip_->missing(); row && history_scrubbable_) {
+        if (!history_request_pending_ && live_)
+            live_->requestHistory(wire::HistoryDirection::at, *row);
+        if (history_request_pending_)
+            return;
+    }
+    snapshot_ = strip_->view();
+    emit historyChanged();
+    emit snapshotChanged();
+}
+void SessionPreview::extendStrip() {
+    if (history_request_pending_ || !live_)
+        return;
+    // Row 0 of a placed history is the oldest kept.
+    if (history_scrubbable_ || strip_oldest_page_ == 0) {
+        history_message_ = tr("The oldest kept row");
+        emit historyChanged();
+        return;
+    }
+    strip_extending_ = true;
+    live_->requestHistory(wire::HistoryDirection::older, strip_oldest_page_);
 }
 qreal SessionPreview::historyPosition() const {
-    const auto total = history_place_.total_rows;
-    if (!history_active_ || total == 0)
+    if (!strip_ || strip_->archived() == 0)
         return 1;
-    return static_cast<qreal>(history_place_.viewport_offset) / static_cast<qreal>(total);
+    return static_cast<qreal>(strip_->top()) / static_cast<qreal>(strip_->archived());
 }
 qreal SessionPreview::historySpan() const {
-    const auto total = history_place_.total_rows;
-    return total == 0 ? 1
-                      : std::min<qreal>(1, static_cast<qreal>(history_place_.viewport_rows) /
-                                               static_cast<qreal>(total));
+    if (!strip_)
+        return 1;
+    const auto rows = static_cast<qreal>(strip_->rows());
+    return rows / std::max<qreal>(1, static_cast<qreal>(strip_->archived()) + rows);
 }
 void SessionPreview::historyAt(qreal fraction) {
-    if (!live_ || !history_scrubbable_ || history_place_.total_rows == 0)
+    if (!strip_ || !history_scrubbable_)
         return;
-    if (history_request_pending_) {
-        pending_jump_ = fraction;
-        return;
-    }
-    const auto last = history_place_.total_rows - 1;
-    const auto row = static_cast<quint64>(
-        std::llround(std::clamp<qreal>(fraction, 0, 1) * static_cast<qreal>(last)));
-    live_->requestHistory(wire::HistoryDirection::at, row);
+    strip_->moveTo(
+        std::llround(std::clamp<qreal>(fraction, 0, 1) * static_cast<qreal>(strip_->archived())));
+    history_message_.clear();
+    showStrip();
 }
 void SessionPreview::failHistoryRequest(const QString& message) {
-    if (history_request_pending_) {
-        history_active_ = true;
-        history_request_pending_ = false;
-        history_message_ = message;
-        emit historyChanged();
-        emit connectionChanged();
-        jumpIfAsked();
+    if (!history_request_pending_)
+        return;
+    history_request_pending_ = false;
+    strip_extending_ = false;
+    strip_rows_asked_ = 0;
+    history_message_ = message;
+    // With nothing kept yet, the live screen stays.
+    history_active_ = strip_.has_value();
+    if (strip_) {
+        snapshot_ = strip_->view();
+        emit snapshotChanged();
     }
+    emit historyChanged();
+    emit connectionChanged();
 }
 void SessionPreview::cancelHistoryRequests() {
     history_request_pending_ = false;
+    strip_extending_ = false;
     emit historyChanged();
     emit connectionChanged();
 }
@@ -162,23 +197,48 @@ void SessionPreview::setHistoryRequestId(quint64 request_id) {
         beginHistoryRequest();
 }
 void SessionPreview::olderHistory() {
-    if (!live_ || history_request_pending_)
-        return;
-    live_->requestHistory(wire::HistoryDirection::older, history_active_ ? history_page_id_ : 0);
+    scrollHistory(static_cast<int>(strip_ ? strip_->rows() : live_snapshot_.size.rows));
 }
 void SessionPreview::newerHistory() {
-    if (!live_ || history_request_pending_ || history_page_id_ == 0)
+    if (strip_)
+        scrollHistory(-static_cast<int>(strip_->rows()));
+}
+void SessionPreview::scrollHistory(int rows) {
+    if (rows == 0 || !live_)
         return;
-    live_->requestHistory(wire::HistoryDirection::newer, history_page_id_);
+    if (!strip_) {
+        if (rows < 0)
+            return; // already live
+        // Rows asked for while the first page loads add up.
+        strip_rows_asked_ += rows;
+        if (!history_request_pending_)
+            live_->requestHistory(wire::HistoryDirection::older, 0);
+        return;
+    }
+    const auto top = static_cast<qint64>(strip_->top()) - rows;
+    if (rows < 0 && top >= static_cast<qint64>(strip_->archived())) {
+        returnToLive();
+        return;
+    }
+    if (top < 0 && strip_->top() == 0) {
+        strip_rows_asked_ = rows;
+        extendStrip();
+        return;
+    }
+    strip_->moveTo(top);
+    history_message_.clear();
+    showStrip();
 }
 void SessionPreview::returnToLive() {
     decodeWaiting();
-    pending_jump_.reset();
     if (live_)
         live_->cancelHistoryRequest();
+    strip_.reset();
+    strip_rows_asked_ = 0;
+    strip_oldest_page_ = 0;
+    strip_extending_ = false;
     history_active_ = false;
     history_request_pending_ = false;
-    history_page_id_ = 0;
     history_message_.clear();
     if (live_snapshot_received_) {
         snapshot_ = live_snapshot_;

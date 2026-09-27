@@ -2308,9 +2308,8 @@ stopped at 64 MiB a session and 4,096 pages in all: a few thousand rows.
   holding a row. Services before it leave a page's fields as the page alone and
   reject `at`, so a client jumps only after a page has said where it sits.
 - **Mac.** While history shows, a bar on the terminal's right edge: its thumb
-  covers the shown page's share, a drag asks for the page under it (a jump
-  asked for while one loads follows it, the latest winning), and releasing at
-  the bottom returns to live.
+  covers the view's share, a drag moves the view there, and releasing at the
+  bottom returns to live (see "History scrolls as one strip" below).
 - **Phone.** The same bar down the screen's right edge, placed at the oldest
   loaded page. Dropping it loads that page alone and scrolls to it; older pages
   load above as before, and "Newer output skipped · Load" fetches the pages
@@ -2390,6 +2389,33 @@ The display idles down when nothing draws, and every echo follows a quiet
 spell. After a key press, `TerminalSurface` now asks for another frame each
 time one is swapped, for 600 ms, so the display is still at its full rate
 when the echo arrives; it stops after the pause (`terminal_input_test`).
+
+### History scrolls as one strip (September 26)
+
+The first screenshot of history browsing showed 13 rows on a tinted band over
+an otherwise empty terminal. The Mac showed one archived page at a time, and
+pages are cut as rows leave the screen: up to a screen each, the newest often
+short. A wheel notch jumped a whole page, the bar above the terminal took its
+height, and a page kept its own colors.
+
+- **Strip.** Browsing begins at the screen as it is then, below every row kept
+  so far (`HistoryStrip`). The view is always a whole screen of that strip, in
+  the screen's size and colors, from any row: kept rows above, the rest of the
+  screen below. Pages come as the view needs them (`at` by row) and those
+  within four screens stay; a page of another width is cut or padded, and a
+  wide character cut at the edge is dropped. Rows archived while browsing
+  stay below the kept screen until live again.
+- **Scrolling.** A trackpad scrolls a row per row height of travel, a wheel
+  notch three rows; scrolling forward past the newest row, typing, the bar's
+  bottom or **Live** returns to live. Older and newer (the menu, Find) move a
+  screen. The bar's thumb is the view's share of the strip.
+- **Chrome.** **Live** floats over the terminal's corner, with a note while
+  history loads; the terminal keeps its size.
+- **Older services.** A service that does not place its pages says each is all
+  there is; scrolling past its top puts the next older page above.
+- Qualified by `history_strip_test` (views across a short page, widths,
+  colors, older pages on top, forgetting), the history cases in the connection
+  test, and `historyJumpsToTheStart` in the workspace suite.
 
 ### Predictive text in the terminal (September 26)
 

@@ -33,6 +33,7 @@ add_library(lapis_desktop_view STATIC
     src/terminal_surface.cpp src/terminal_surface.hpp
     src/cell_shapes.cpp src/cell_shapes.hpp
     src/tile_layout.cpp src/tile_layout.hpp
+    src/history_strip.cpp src/history_strip.hpp
     src/app_paths.cpp src/app_paths.hpp
     src/desktop_actions.cpp src/desktop_actions.hpp src/platform_desktop.hpp
     src/shell_environment.cpp src/shell_environment.hpp
@@ -121,6 +122,10 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_terminal_find_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME terminal-find COMMAND lapis_terminal_find_tests)
     set_tests_properties(terminal-find PROPERTIES TIMEOUT 20)
+    add_executable(lapis_history_strip_tests tests/history_strip_test.cpp)
+    target_link_libraries(lapis_history_strip_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME history-strip COMMAND lapis_history_strip_tests)
+    set_tests_properties(history-strip PROPERTIES TIMEOUT 20)
     add_executable(lapis_tile_layout_tests tests/tile_layout_test.cpp)
     target_link_libraries(lapis_tile_layout_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME tile-layout COMMAND lapis_tile_layout_tests)

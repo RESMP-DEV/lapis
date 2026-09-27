@@ -3041,76 +3041,6 @@ ApplicationWindow {
             }
 
             Rectangle {
-                id: historyBanner
-                objectName: "historyBar"
-                visible: workspace.focusedSession !== null && workspace.focusedSession.live
-                         && (workspace.focusedSession.historyActive || workspace.focusedSession.historyRequestPending)
-                Layout.fillWidth: true
-                Layout.preferredHeight: window.tabHeight + 8
-                color: window.surfaceColor
-                border.color: window.borderColor
-                border.width: 1
-                radius: window.chromeRadius
-
-                RowLayout {
-                    id: historyRow
-                    anchors.fill: parent
-                    anchors.margins: 6
-                    spacing: 6
-                    CommandButton {
-                        objectName: "historyOlder"
-                        text: qsTr("Older")
-                        enabled: {
-                            const session = workspace.focusedSession
-                            return !!session && session.live && !session.historyRequestPending
-                        }
-                        onClicked: {
-                            const session = workspace.focusedSession
-                            if (session)
-                                session.olderHistory()
-                        }
-                    }
-                    CommandButton {
-                        objectName: "historyNewer"
-                        text: qsTr("Newer")
-                        enabled: {
-                            const session = workspace.focusedSession
-                            return !!session && session.historyActive && !session.historyRequestPending
-                        }
-                        onClicked: {
-                            const session = workspace.focusedSession
-                            if (session)
-                                session.newerHistory()
-                        }
-                    }
-                    CommandButton {
-                        objectName: "historyLive"
-                        text: qsTr("Live")
-                        enabled: {
-                            const session = workspace.focusedSession
-                            return !!session && session.historyActive
-                        }
-                        onClicked: {
-                            const session = workspace.focusedSession
-                            if (session)
-                                session.returnToLive()
-                            preview.deferTerminalFocus()
-                        }
-                    }
-                    PlainLabel {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        color: window.mutedTextColor
-                        elide: Text.ElideRight
-                        text: !workspace.focusedSession ? "" :
-                              workspace.focusedSession.historyRequestPending ? qsTr("Loading history…") :
-                              qsTr("Read only") + (workspace.focusedSession.historyMessage.length > 0 ?
-                                  " · " + workspace.focusedSession.historyMessage : "")
-                    }
-                }
-            }
-
-            Rectangle {
                 id: stage
                 objectName: "focusedPane"
                 Layout.fillWidth: true
@@ -3324,6 +3254,51 @@ ApplicationWindow {
                     focus: visible && window.visible && !window.inputBlocked && !window.sideTerminalOpen
                     Component.onCompleted: if (focus)
                                                forceActiveFocus()
+                }
+
+                // While history shows, the way back to live floats over the
+                // terminal's corner rather than above it, so the terminal keeps
+                // its size; scrolling down to the newest row, or typing, also
+                // returns.
+                Rectangle {
+                    id: historyBanner
+                    objectName: "historyBar"
+                    readonly property var session: workspace.focusedSession
+                    readonly property string note: !session ? ""
+                                                   : session.historyRequestPending ? qsTr("Loading history…")
+                                                   : session.historyMessage
+                    visible: liveTerminal.visible && session !== null && session.live
+                             && (session.historyActive || session.historyRequestPending)
+                    z: 6
+                    x: liveTerminal.x + liveTerminal.width - width - 22
+                    y: liveTerminal.y + liveTerminal.height - height - 8
+                    width: historyRow.implicitWidth + 12
+                    height: historyRow.implicitHeight + 8
+                    color: window.surfaceColor
+                    border.color: window.borderColor
+                    border.width: 1
+                    radius: window.chromeRadius
+                    Row {
+                        id: historyRow
+                        anchors.centerIn: parent
+                        spacing: 8
+                        PlainLabel {
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: text.length > 0
+                            text: historyBanner.note
+                            color: window.mutedTextColor
+                        }
+                        CommandButton {
+                            objectName: "historyLive"
+                            text: qsTr("Live")
+                            enabled: !!historyBanner.session && historyBanner.session.historyActive
+                            onClicked: {
+                                if (historyBanner.session)
+                                    historyBanner.session.returnToLive()
+                                preview.deferTerminalFocus()
+                            }
+                        }
+                    }
                 }
 
                 // While history shows, a bar on the terminal's right edge: drag
@@ -3749,8 +3724,8 @@ ApplicationWindow {
                             }
                             if (session.historyMessage.length > 0 || !session.historyActive)
                                 findBar.status = qsTr("No more matches")
-                            else
-                                findBar.search(older)
+                            else // a kept screen shows at once; step on from the event loop
+                                Qt.callLater(findBar.search, older)
                         }
                     }
                     RowLayout {
