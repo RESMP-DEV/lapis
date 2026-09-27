@@ -252,6 +252,9 @@ class SessionPreview final : public QObject {
     // pages; the rows to scroll back once the first page arrives; the oldest
     // page ID fetched, for a service that does not place its pages.
     std::optional<HistoryStrip> strip_;
+    // The screen when browsing was asked for: the archive answering is at
+    // least as new, so it can repeat rows the screen shows but never miss one.
+    std::optional<session::TerminalSnapshot> strip_screen_;
     int strip_rows_asked_{};
     quint64 strip_oldest_page_{};
     bool strip_extending_{};

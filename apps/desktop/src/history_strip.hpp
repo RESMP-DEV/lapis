@@ -14,6 +14,10 @@ class HistoryStrip {
   public:
     HistoryStrip(session::TerminalSnapshot screen, std::uint64_t archived);
     // Keeps a page placed by its history fields (viewport_offset its first row).
+    // The page holding the newest kept rows also settles the seam: kept rows
+    // the screen still shows at its top (a terminal that grew brings kept rows
+    // back, and output can land between the screen and the archive) belong to
+    // the screen.
     void addPage(session::TerminalSnapshot page);
     // A page from before the oldest kept one, from a service that does not
     // place its pages: every row moves down by its rows.
@@ -32,9 +36,11 @@ class HistoryStrip {
     [[nodiscard]] const session::TerminalSnapshot* holding(std::uint64_t row,
                                                            std::uint64_t* first) const;
     void forget();
+    void settleSeam(const session::TerminalSnapshot& page, std::uint64_t first);
     session::TerminalSnapshot screen_;
     std::uint64_t archived_{};
     std::uint64_t top_{};
+    bool seam_settled_{};
     std::map<std::uint64_t, session::TerminalSnapshot> pages_; // by first row
 };
 } // namespace lapis::desktop

@@ -108,7 +108,9 @@ void SessionPreview::completeHistoryRequest(quint64 page_id, session::TerminalSn
         // every row kept so far. A service that does not place its pages
         // says its page is all there is; older ones go on top as asked.
         decodeWaiting();
-        strip_.emplace(live_snapshot_, place.total_rows);
+        strip_.emplace(strip_screen_ ? std::move(*strip_screen_) : live_snapshot_,
+                       place.total_rows);
+        strip_screen_.reset();
         strip_oldest_page_ = page_id;
         strip_->addPage(std::move(snapshot));
         strip_->moveTo(static_cast<qint64>(strip_->archived()) - std::max(1, strip_rows_asked_));
@@ -176,6 +178,8 @@ void SessionPreview::failHistoryRequest(const QString& message) {
     history_request_pending_ = false;
     strip_extending_ = false;
     strip_rows_asked_ = 0;
+    if (!strip_)
+        strip_screen_.reset();
     history_message_ = message;
     // With nothing kept yet, the live screen stays.
     history_active_ = strip_.has_value();
@@ -211,8 +215,11 @@ void SessionPreview::scrollHistory(int rows) {
             return; // already live
         // Rows asked for while the first page loads add up.
         strip_rows_asked_ += rows;
-        if (!history_request_pending_)
+        if (!history_request_pending_) {
+            decodeWaiting();
+            strip_screen_ = live_snapshot_;
             live_->requestHistory(wire::HistoryDirection::older, 0);
+        }
         return;
     }
     const auto top = static_cast<qint64>(strip_->top()) - rows;
@@ -234,6 +241,7 @@ void SessionPreview::returnToLive() {
     if (live_)
         live_->cancelHistoryRequest();
     strip_.reset();
+    strip_screen_.reset();
     strip_rows_asked_ = 0;
     strip_oldest_page_ = 0;
     strip_extending_ = false;

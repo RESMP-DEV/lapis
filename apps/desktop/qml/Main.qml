@@ -3254,6 +3254,96 @@ ApplicationWindow {
                     focus: visible && window.visible && !window.inputBlocked && !window.sideTerminalOpen
                     Component.onCompleted: if (focus)
                                                forceActiveFocus()
+
+                    // While history shows, a wide translucent bar down the right
+                    // edge. The whole strip answers the pointer: a press on the
+                    // thumb drags it from where it was held, one elsewhere jumps
+                    // there, and letting go at the bottom is live again. It sits
+                    // inside the terminal, so the wheel over it still scrolls.
+                    Item {
+                        id: historyScrubber
+                        objectName: "historyScrubber"
+                        readonly property var session: liveTerminal.document
+                        readonly property real inset: 4
+                        readonly property real trackHeight: Math.max(1, height - 2 * inset)
+                        readonly property real thumbHeight:
+                            Math.min(trackHeight, Math.max(40, trackHeight * (session ? session.historySpan : 1)))
+                        readonly property real travel: Math.max(1, trackHeight - thumbHeight)
+                        readonly property bool engaged: scrubArea.containsMouse || scrubArea.pressed
+                        property real grab: 0
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        anchors.right: parent.right
+                        width: 36
+                        z: 5
+                        visible: session !== null && session.live && session.historyScrubbable
+                                 && (session.historyActive || session.historyRequestPending)
+                        // The thumb's top in the track while dragging, from the pointer.
+                        function dragged(mouseY) {
+                            return Math.max(0, Math.min(mouseY - inset - grab, travel))
+                        }
+                        Rectangle {
+                            objectName: "historyTrack"
+                            anchors.right: parent.right
+                            anchors.rightMargin: 4
+                            y: historyScrubber.inset
+                            height: historyScrubber.trackHeight
+                            width: historyScrubber.engaged ? 16 : 12
+                            radius: width / 2
+                            color: Qt.alpha(window.textColor, historyScrubber.engaged ? 0.14 : 0.07)
+                            Behavior on width {
+                                enabled: window.motionEnabled
+                                NumberAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                            }
+                            Behavior on color {
+                                enabled: window.motionEnabled
+                                ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                            }
+                            Rectangle {
+                                id: historyThumb
+                                objectName: "historyThumb"
+                                width: parent.width
+                                radius: width / 2
+                                height: historyScrubber.thumbHeight
+                                y: scrubArea.pressed ? historyScrubber.dragged(scrubArea.mouseY)
+                                                     : (historyScrubber.session ? historyScrubber.session.historyPosition : 1)
+                                                       * historyScrubber.travel
+                                color: Qt.alpha(window.focusedBorderColor,
+                                                scrubArea.pressed ? 0.9 : historyScrubber.engaged ? 0.7 : 0.45)
+                                Behavior on color {
+                                    enabled: window.motionEnabled
+                                    ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                                }
+                            }
+                        }
+                        MouseArea {
+                            id: scrubArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            preventStealing: true
+                            cursorShape: Qt.ArrowCursor
+                            function jump(mouseY) {
+                                const session = historyScrubber.session
+                                if (session)
+                                    session.historyAt(historyScrubber.dragged(mouseY) / historyScrubber.travel)
+                            }
+                            onPressed: function(mouse) {
+                                const top = historyScrubber.inset + historyThumb.y
+                                const onThumb = mouse.y >= top && mouse.y <= top + historyThumb.height
+                                historyScrubber.grab = onThumb ? mouse.y - top : historyThumb.height / 2
+                                jump(mouse.y)
+                            }
+                            onPositionChanged: function(mouse) { if (pressed) jump(mouse.y) }
+                            onReleased: function(mouse) {
+                                // The thumb at the bottom is the live screen.
+                                if (historyScrubber.dragged(mouse.y) >= historyScrubber.travel - 1
+                                        && historyScrubber.session) {
+                                    historyScrubber.session.returnToLive()
+                                    preview.deferTerminalFocus()
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // While history shows, the way back to live floats over the
@@ -3270,7 +3360,7 @@ ApplicationWindow {
                     visible: liveTerminal.visible && session !== null && session.live
                              && (session.historyActive || session.historyRequestPending)
                     z: 6
-                    x: liveTerminal.x + liveTerminal.width - width - 22
+                    x: liveTerminal.x + liveTerminal.width - width - historyScrubber.width - 6
                     y: liveTerminal.y + liveTerminal.height - height - 8
                     width: historyRow.implicitWidth + 12
                     height: historyRow.implicitHeight + 8
@@ -3295,62 +3385,6 @@ ApplicationWindow {
                             onClicked: {
                                 if (historyBanner.session)
                                     historyBanner.session.returnToLive()
-                                preview.deferTerminalFocus()
-                            }
-                        }
-                    }
-                }
-
-                // While history shows, a bar on the terminal's right edge: drag
-                // it anywhere back to the first row, or to the bottom for live.
-                Item {
-                    id: historyScrubber
-                    objectName: "historyScrubber"
-                    readonly property var session: workspace.focusedSession
-                    readonly property real thumbHeight: Math.max(28, height * (session ? session.historySpan : 1))
-                    x: liveTerminal.x + liveTerminal.width - width
-                    y: liveTerminal.y
-                    z: 5
-                    width: 14
-                    height: liveTerminal.height
-                    visible: liveTerminal.visible && session !== null && session.live && session.historyScrubbable
-                             && (session.historyActive || session.historyRequestPending)
-                    Rectangle {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: 2
-                        height: parent.height
-                        color: window.borderColor
-                    }
-                    Rectangle {
-                        objectName: "historyThumb"
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: scrubArea.pressed ? 8 : 6
-                        radius: width / 2
-                        height: historyScrubber.thumbHeight
-                        y: scrubArea.pressed ? Math.max(0, Math.min(scrubArea.mouseY - height / 2, parent.height - height))
-                                             : (historyScrubber.session ? historyScrubber.session.historyPosition : 1)
-                                               * (parent.height - height)
-                        color: scrubArea.pressed || scrubArea.containsMouse ? window.focusedBorderColor
-                                                                            : window.mutedTextColor
-                    }
-                    MouseArea {
-                        id: scrubArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        preventStealing: true
-                        function jump(mouseY) {
-                            const session = historyScrubber.session
-                            if (!session)
-                                return
-                            const travel = Math.max(1, height - historyScrubber.thumbHeight)
-                            session.historyAt(Math.max(0, Math.min(1, (mouseY - historyScrubber.thumbHeight / 2) / travel)))
-                        }
-                        onPressed: function(mouse) { jump(mouse.y) }
-                        onPositionChanged: function(mouse) { if (pressed) jump(mouse.y) }
-                        onReleased: function(mouse) {
-                            // The bottom edge is the live screen.
-                            if (mouse.y >= height - 4 && historyScrubber.session) {
-                                historyScrubber.session.returnToLive()
                                 preview.deferTerminalFocus()
                             }
                         }

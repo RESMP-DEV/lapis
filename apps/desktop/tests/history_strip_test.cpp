@@ -115,6 +115,21 @@ void pages_that_do_not_say_where_they_sit_go_on_top() {
     require(view_rows(strip) == Rows({"o1", "o2"}), "and scrolls on into it");
 }
 
+void kept_rows_the_screen_shows_again_belong_to_it() {
+    // The screen grew and brought back the two newest kept rows.
+    HistoryStrip strip(rows_of(10, {"h4", "h5", "s0", "s1"}), 6);
+    strip.addPage(rows_of(10, {"h2", "h3", "h4", "h5"}, 2));
+    require(strip.archived() == 4 && strip.top() == 4,
+            "the kept rows the screen shows again are the screen's");
+    strip.moveTo(1);
+    strip.addPage(rows_of(10, {"h0", "h1"}, 0));
+    require(view_rows(strip) == Rows({"h1", "h2", "h3", "h4"}), "and the join shows each row once");
+    // Blank rows alone prove nothing: both keep theirs.
+    HistoryStrip blank(rows_of(10, {"", "s0"}), 2);
+    blank.addPage(rows_of(10, {"h0", ""}, 0));
+    require(blank.archived() == 2, "a blank row on both sides is not taken for a repeat");
+}
+
 void far_pages_are_forgotten() {
     HistoryStrip strip(rows_of(4, {"s0", "s1", "s2", "s3"}), 120);
     strip.moveTo(0);
@@ -131,6 +146,7 @@ int main() {
         views_are_whole_screens_across_pages();
         pages_of_another_width_and_color_fit_the_screen();
         pages_that_do_not_say_where_they_sit_go_on_top();
+        kept_rows_the_screen_shows_again_belong_to_it();
         far_pages_are_forgotten();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

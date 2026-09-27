@@ -2409,13 +2409,24 @@ height, and a page kept its own colors.
   notch three rows; scrolling forward past the newest row, typing, the bar's
   bottom or **Live** returns to live. Older and newer (the menu, Find) move a
   screen. The bar's thumb is the view's share of the strip.
+- **Seam.** The screen is taken when browsing is asked for, so the archive
+  that answers is at least as new: it can repeat rows the screen shows (output
+  landing in between, or a terminal that grew bringing kept rows back, as the
+  first window test showed with two rows twice) but never miss one. The newest
+  kept rows that the screen's top repeats cell for cell belong to the screen;
+  a run of blank rows alone is not taken for a repeat.
 - **Chrome.** **Live** floats over the terminal's corner, with a note while
-  history loads; the terminal keeps its size.
+  history loads; the terminal keeps its size. The bar is a translucent track
+  down the right edge in a 36-point strip that all answers the pointer: it
+  widens and brightens under it, a press on the thumb keeps its hold, one
+  elsewhere jumps there, and the wheel over it still scrolls the terminal.
 - **Older services.** A service that does not place its pages says each is all
   there is; scrolling past its top puts the next older page above.
 - Qualified by `history_strip_test` (views across a short page, widths,
-  colors, older pages on top, forgetting), the history cases in the connection
-  test, and `historyJumpsToTheStart` in the workspace suite.
+  colors, older pages on top, the seam, forgetting), the history cases in the
+  connection test, `historyJumpsToTheStart` in the workspace suite, and
+  `run_history_ui_tests` in the window tests (a real agent: each row once
+  across the seam, the bar's hover, hold, wheel and release to live).
 
 ### Predictive text in the terminal (September 26)
 

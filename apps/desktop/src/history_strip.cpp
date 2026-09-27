@@ -25,6 +25,33 @@ void copy_row(const session::TerminalSnapshot& source, std::size_t source_row,
         source.cells[source_row * source_columns + columns].kind == session::CellKind::wide_tail)
         out.cells[row * out.size.columns + columns - 1] = {};
 }
+
+// Whether two rows show the same cells; columns past a row's width are blank.
+bool same_row(const session::TerminalSnapshot& a, std::size_t a_row,
+              const session::TerminalSnapshot& b, std::size_t b_row) {
+    const std::size_t columns = std::max(a.size.columns, b.size.columns);
+    for (std::size_t column = 0; column < columns; ++column) {
+        const bool in_a = column < a.size.columns;
+        const bool in_b = column < b.size.columns;
+        const auto a_index = a_row * a.size.columns + column;
+        const auto b_index = b_row * b.size.columns + column;
+        const auto a_text = in_a ? a.text(a_index) : std::u32string_view();
+        const auto b_text = in_b ? b.text(b_index) : std::u32string_view();
+        if (a_text != b_text)
+            return false;
+        if (in_a && in_b && a.cells[a_index].style != b.cells[b_index].style)
+            return false;
+    }
+    return true;
+}
+
+bool blank_row(const session::TerminalSnapshot& snapshot, std::size_t row) {
+    for (std::size_t column = 0; column < snapshot.size.columns; ++column)
+        for (const auto value : snapshot.text(row * snapshot.size.columns + column))
+            if (value != U' ')
+                return false;
+    return true;
+}
 } // namespace
 
 HistoryStrip::HistoryStrip(session::TerminalSnapshot screen, std::uint64_t archived)
@@ -36,8 +63,34 @@ void HistoryStrip::addPage(session::TerminalSnapshot page) {
     const auto first = static_cast<std::uint64_t>(page.history.viewport_offset);
     if (first >= archived_)
         return; // archived after browsing began: below the screen kept here
+    if (!seam_settled_ && first + page.size.rows >= archived_) {
+        seam_settled_ = true;
+        settleSeam(page, first);
+    }
     pages_.insert_or_assign(first, std::move(page));
     forget();
+}
+
+void HistoryStrip::settleSeam(const session::TerminalSnapshot& page, std::uint64_t first) {
+    // The most kept rows, ending at the newest, that the screen shows again at
+    // its top; a run of blank rows alone proves nothing.
+    const auto tail = archived_ - first; // kept rows of this page, the newest last
+    const auto most = std::min<std::uint64_t>(tail, rows() > 0 ? rows() - 1 : 0);
+    for (auto overlap = most; overlap > 0; --overlap) {
+        bool same = true;
+        bool shown = false;
+        for (std::uint64_t row = 0; row < overlap && same; ++row) {
+            const auto kept = tail - overlap + row;
+            same = same_row(page, kept, screen_, row);
+            shown = shown || !blank_row(screen_, row);
+        }
+        if (same && shown) {
+            const bool at_screen = top_ == archived_;
+            archived_ -= overlap;
+            top_ = at_screen ? archived_ : std::min(top_, archived_);
+            return;
+        }
+    }
 }
 
 void HistoryStrip::prependPage(session::TerminalSnapshot page) {
