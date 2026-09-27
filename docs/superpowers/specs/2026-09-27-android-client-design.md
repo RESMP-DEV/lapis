@@ -1,10 +1,13 @@
 # lapis Android client design
 
-Date: 2026-09-27. Status: approved design, awaiting user review; implementation
-not started. This file is the working spec for the Android companion client.
-When the first milestone lands, this content consolidates into
-`docs/architecture.md` and this file is removed, per the workspace rule that
-architecture.md is the single implementation plan.
+Date: 2026-09-27. Status: in execution on `feature/android-client`. The
+gateway changes (Android admission, ZeroTier overlay) and iOS transport
+compatibility are implemented and checked; milestone A's Android scaffold is
+code-complete with JVM tests, pending device verification. This file is the
+working spec for the Android companion client. When the first milestone
+lands on a device, this content consolidates into `docs/architecture.md`
+and this file is removed, per the workspace rule that architecture.md is
+the single implementation plan.
 
 ## Purpose and scope
 
