@@ -227,9 +227,11 @@ class SessionService final : public QObject {
     void note_conversation(const QString& agent, const QString& session_id,
                            ResumeSource source = ResumeSource::observer) {
         // Printed bytes cannot impersonate the managed observer or downgrade
-        // an identity already learned through its independent protocol.
+        // an identity already learned through its independent protocol or an
+        // older Codex/Claude legacy record.
         if (source == ResumeSource::terminal &&
-            (codex_observer_ || claude_observer_ || resume_.source == ResumeSource::observer))
+            (codex_observer_ || claude_observer_ || resume_.source == ResumeSource::observer ||
+             (resume_.source == ResumeSource::legacy && observer_backed_agent(checkpoint_agent_))))
             return;
         if (!valid_resume_identity(session_id) ||
             (resume_.agent == agent && resume_.session_id == session_id &&
