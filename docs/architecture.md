@@ -296,9 +296,13 @@ For parallel changes, commit the shared contract first and assign disjoint files
 with one coordinator/build owner. Preview hosting lives in `ui_preview.*`, layout
 in `qml/`, and capture/check tooling in `ui_capture.*`, desktop tests and
 `scripts/check_ui_preview.py`. Review partial worker output before integration.
-Use `just desktop` for integrated C++ changes, targeted ASan for reload lifetimes,
-and `just ui-check` for capture behavior. QML-only iteration uses reload and focused
-visual checks; reuse pinned dependencies and update these documents in place.
+Use `just ui-review` for routine background UI review: the workspace, shortcut
+and terminal-input fixtures run with explicit Qt offscreen/software backends.
+They preserve OS focus and the pointer; this is logical UI and software-render
+coverage. Use `just desktop` for integrated C++ changes, targeted ASan for reload
+lifetimes, and native `just ui-check` for display/GPU capture behavior. Native
+macOS input and IME retain their own qualification. QML-only iteration uses these
+focused checks; reuse pinned dependencies and update these documents in place.
 
 ### Terminal adapter v0
 
@@ -1448,7 +1452,14 @@ reduced motion keeps both steady. Activity comes from three declared sources:
   ignoring the first 3 s after attaching (screen replay). It is advisory and
   never reads as a finished turn.
 
-Command-W closes the focused agent. An ended or fixture agent closes at once. A
+Command-W closes the focused agent. On September 25 it briefly closed the
+window instead (on the Mac a close hides the window, Quit is told apart by the
+application's Quit event that precedes it, and reactivation from the Dock shows
+the window again); the next day the user asked for it to close the window only
+when no agent is left, as a browser closes its last tab. It now closes the side
+terminal's panel, else the focused agent, else (on the Mac) the window, and
+Command-Shift-W always closes the window.
+An ended or fixture agent closes at once. A
 reachable running agent is confirmed and then ended through a client frame,
 `terminate` (kind 15, an additive v6 client kind): the service sends SIGHUP to
 the agent's verified process group, SIGTERM after 1.5 s and SIGKILL after 3 s,
@@ -2146,6 +2157,91 @@ are per category and the strip stays the navigation.
 Multiple windows (a category in its own window) were deferred: tiles cover a
 split on one display, and a second stage with its own focus and layout would
 touch every part of the workspace.
+
+### Keyboard home, resume, side terminal and folder order (September 25)
+
+The user's list after using 0.2.1: Command-M did nothing, Command-W should
+close the window with lapis still there, the Dock icon read small, closing every
+agent left nothing to go back to, resuming a Claude session had no form, folder
+lists put `_folders` first, and a separate terminal for a quick command should
+open from the side (on the iPhone too, picking the machine), all by keyboard.
+
+- **Window.** On the Mac a close hides the window (`hideOnClose`): a filter on
+  the application sees Quit, which every way of quitting sends before the
+  window closes, so only a close without it is refused and turned into a hide.
+  Qt reports a Dock click as the application becoming active, which shows a
+  hidden window. Command-W closes the window only when the category has no
+  agent left; Command-Shift-W always does. Command-M minimizes.
+  The Mac icon enlarges the phone's gem 1.3 times inside Apple's 824-point body.
+- **Conversation index.** Claude Code and Codex keep every conversation in
+  files; only those someone opened count (Claude's first recorded `entrypoint` "cli"; Codex
+  rollouts that are not `exec` or subagents), about 560 of 27,700 Claude files
+  on the user's Mac. The index reads them in the background and caches each by
+  size and time (`runtime/conversations.json`), so a later scan stats files and
+  rereads only the changed ones. Titles are the CLI's own (Claude's `ai-title`,
+  newest usable title in the scanned head and last 128 KiB wins; a title
+  wholly in the omitted middle can fall back to the first typed message. Codex's
+  `session_index.jsonl` thread names are preferred over the first typed message.
+  The desktop joins its scan pool before destroying the index; queued results
+  belong to the index object and cannot outlive it. The gateway reads small
+  Claude sessions once and caches Codex names by file size and modification time.
+- **Resume.** Command-O lists them newest first; every typed word must appear
+  in the title, folder or CLI. Return starts a new agent in the active category
+  with the CLI's resume option (the same table restarts use) and records the
+  pair as lapis's, so a later restart follows the conversation. The phone's
+  create request takes `resume`, and the gateway serves `/api/conversations`
+  from its own history scan. This is the form chosen for "resuming Claude
+  sessions": a searchable list of real conversations, not a flag in the form.
+- **Home.** With no agent on the stage, the stage lists new agent, resume,
+  terminal, reopen, the five latest conversations and the other categories with
+  agents. The page names its keyboard target (`focusTarget`: the side terminal,
+  the stage terminal or the home list) and the host focuses that item, so the
+  list takes the keys whenever nothing else can.
+- **Folder order.** Each conversation adds 0.5^(age / 14 days) to its folder and
+  each running agent adds 1; a child's activity includes the folders under it.
+  A folder's children list the ten most active first, then the rest by name,
+  `_folders` then hidden ones last. The gateway sends the same activity to the
+  phone, which orders its catalog the same way.
+- **Side terminal.** A plain shell per machine (the login shell here, `ssh -t`
+  for a host from the ssh config) under its own session service, never in a
+  category and never an attention source. `runtime/terminals.json` records them
+  so the next lapis reattaches a running one and the gateway can reach them like
+  agents (`terminal-` ids, only that folder's endpoints). ``Command-` `` toggles the
+  panel over the stage's right half and Command-~ picks the machine; a Mac key
+  monitor takes ``Command-` `` before AppKit's window cycling can, and ``Control-` ``
+  works everywhere. `exit` ends the shell and closes the panel. The control
+  socket adds `openTerminal` and `closeTerminal`; the phone's + offers
+  **Terminal**, lists open terminals above the agents and swipes them away.
+- **Shortcuts.** Appearance lists every action that has a key; `keybindings` in
+  `lapis.json` changes them.
+- **Names.** Agents started in one folder all read as that folder. An agent
+  that still has the name it started with takes its current conversation's
+  title (the CLI's resume record, else lapis's resume pair, looked up in the
+  conversation index, which the app rescans each minute); a chosen name is
+  recorded as `named` in the registry and stays. The phone renames through
+  `renameAgent`, so both devices share one name. Names are limited to 80 UTF-16
+  units and printable Unicode scalars across the desktop, gateway and phone.
+  Elision preserves surrogate pairs; phone name entry clips whole graphemes.
+- **Phone paging.** Swiping over an agent's screen moves between the agents of
+  its category (or the terminals); only the screen reads the swipe, since the
+  key bar scrolls sideways. The pager keeps unsent drafts by agent ID while
+  each visible agent owns its connection; paging back reattaches without
+  resurrecting the outgoing agent's input. Refreshed names and connection
+  metadata follow the selected identity.
+- **Machine in the Mac's form.** Only the phone could start an agent on another
+  machine. The Mac's new-agent form now has a Machine row (this Mac and the ssh
+  config's hosts, left and right arrows) and starts through the same ssh launch;
+  another machine's folder is typed (its `newAgent` folder, else `~`), since
+  this Mac cannot list it, and every CLI is offered because only that machine
+  knows which it has.
+- **Phone tests on one fake agent.** Several phone UI tests take turns on one
+  fake agent and each waited for its first line, "new conversation", to prove
+  the screen was live. Whether that line is still on screen depends on whether
+  the Mac side took the size back between tests: the phone taking the agent at
+  another size moves the screen into history, and the fake agent, unlike real
+  CLIs, never redraws. Small shifts in the windowless host's start-up timing
+  flipped that on every run, so the tests now prove the screen is live with a
+  marker typed through the gateway and echoed back.
 
 ### Following milestones
 

@@ -413,9 +413,8 @@ void navigation_defaults_preserve_terminal_editing() {
                               QStringLiteral("nextWindow"),   QStringLiteral("previousWindow"),
                               QStringLiteral("newAgent"),     QStringLiteral("newCategory"),
                               QStringLiteral("closeAgent"),   QStringLiteral("quit")};
-    // Command-W closes an agent; closing the window has no default key.
     require(keymap.sequences(QStringLiteral("detachWindow")).isEmpty(),
-            "the window closes only from its own control or Quit");
+            "the retired detach action stays unbound");
     for (const auto* removed : {"nextPane", "zoomPane", "paneLeft", "dividerLeft"})
         require(keymap.sequences(QString::fromLatin1(removed)).isEmpty(),
                 "the old pane actions stay retired");
@@ -431,7 +430,34 @@ void navigation_defaults_preserve_terminal_editing() {
                 keymap.sequences(QStringLiteral("newCategory")) ==
                     QStringList{QStringLiteral("Meta+N")},
             "as in a browser, Command-T opens an agent and Command-N a category");
+    // As in a browser, Command-W closes what is in front (and the window once
+    // nothing is left) and Command-Shift-W the window; Command-M minimizes.
+    require(keymap.sequences(QStringLiteral("closeAgent")) ==
+                    QStringList{QStringLiteral("Meta+W")} &&
+                keymap.sequences(QStringLiteral("closeWindow")) ==
+                    QStringList{QStringLiteral("Meta+Shift+W")} &&
+                keymap.sequences(QStringLiteral("minimizeWindow")) ==
+                    QStringList{QStringLiteral("Meta+M")},
+            "Command-W closes the agent, Command-Shift-W the window, Command-M minimizes");
+    require(keymap.sequences(QStringLiteral("toggleTerminal")) ==
+                    QStringList({QStringLiteral("Meta+`"), QStringLiteral("Ctrl+`")}) &&
+                keymap.sequences(QStringLiteral("chooseTerminal")) ==
+                    QStringList({QStringLiteral("Meta+Shift+`"), QStringLiteral("Meta+~")}) &&
+                keymap.sequences(QStringLiteral("resumeConversation")) ==
+                    QStringList{QStringLiteral("Meta+O")},
+            "terminal defaults keep both grave spellings and tilde");
 #else
+    require(keymap.sequences(QStringLiteral("closeWindow")).isEmpty(),
+            "without a dock to reopen it, closing the window has no key");
+    require(keymap.sequences(QStringLiteral("minimizeWindow")).isEmpty(),
+            "without a Dock, minimizing the window has no key");
+    require(keymap.sequences(QStringLiteral("toggleTerminal")) ==
+                    QStringList{QStringLiteral("Ctrl+`")} &&
+                keymap.sequences(QStringLiteral("chooseTerminal")) ==
+                    QStringList({QStringLiteral("Ctrl+Shift+~"), QStringLiteral("Ctrl+~")}) &&
+                keymap.sequences(QStringLiteral("resumeConversation")) ==
+                    QStringList{QStringLiteral("Ctrl+Shift+O")},
+            "terminal defaults preserve Control chords and the resume shortcut");
     require(keymap.sequences(QStringLiteral("newAgent")) ==
                     QStringList{QStringLiteral("Ctrl+Shift+T")} &&
                 keymap.sequences(QStringLiteral("newCategory")) ==

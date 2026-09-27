@@ -43,14 +43,15 @@ python3 scripts/lapis.py cli-check
 
 `scripts/lapis.py` resolves the build environment itself, so no `LAPIS_*`
 variable needs exporting. It finds the bootstrapped Ghostty prefix, supplies the
-socket path, and opens windows on the laptop panel. Equivalent `just` recipes
+socket path, and selects the local build dependencies. Equivalent `just` recipes
 (`just check`, `just desktop`, `just ui-check`, `just cli-check`) call the same
 launcher; run `python3 scripts/lapis.py` with no arguments for the full list.
 The underlying scripts still accept the documented variables directly when a
 specific prefix or display is required.
 
-The desktop steps require a logged-in graphical session and the exact dependencies
-below. Run GUI checks serially, including across worktrees, so windows do not steal
+Use `python3 scripts/lapis.py ui-review` for routine background UI reviews after
+the dependencies are ready. The baseline desktop/native steps above require a
+logged-in graphical session and the exact dependencies below. Run GUI checks serially, including across worktrees, so windows do not steal
 focus from another test. The baseline is not a substitute for the scope-specific
 sanitizer, tooling or dependency checks in the [required matrix](#checks).
 For the deferred Linux port, record a headless baseline and its platform limits; do not claim desktop
@@ -379,10 +380,19 @@ The committed `lapis.json` holds defaults only (see
   the category form.
   Command-Shift-P opens the searchable, scrollable Commands palette. Command-B
   toggles the sidebar; `sidebarVisible` persists in `lapis.json`. Command-V remains paste.
-  Command-comma opens Appearance. Command-W (`closeAgent`) closes the focused
-  agent, confirming first while it may be running. Command-Q quits the GUI and
-  the window's close button detaches it; neither stops service-owned agents.
+  Command-comma opens Appearance. Command-W (`closeAgent`) closes what is in
+  front: the side terminal's panel, else the focused agent (confirming first
+  while it may be running), else, with no agent in the category, the window.
+  Command-Shift-W (`closeWindow`) and the close button hide the window while
+  lapis keeps running, and the Dock icon brings it back; Command-M
+  (`minimizeWindow`) minimizes. Command-Q quits the GUI; none of these stops service-owned agents.
   `detachWindow` still works when configured but has no default key.
+- Command-O (`resumeConversation`) lists past Claude Code and Codex
+  conversations and resumes one as a new agent. ``Command-` `` and ``Control-` ``
+  (`toggleTerminal`) show and hide the side terminal; Command-~
+  (`chooseTerminal`) picks its machine. On the Mac a local key monitor takes
+  ``Command-` `` before AppKit's window cycling. With no agent open, the home list
+  holds the keyboard. Appearance lists every action's keys.
 - Linux uses Control-Shift-based counterparts, with Alt added for the category
   arrows and new-category creation. Bare terminal Control chords remain
   terminal input.
@@ -667,7 +677,8 @@ Run from the repository root:
 | `just desktop` | Optimized desktop/service build, PTY/transport/UI cases and static checks |
 | `just run` | Open the previously built live shell window |
 | `just ui` / `just ui-debug` | Isolated source-QML fixture, directly or in LLDB |
-| `just ui-check` | Bounded isolated captures, attention state and expected failures |
+| `just ui-review` | Focused build and background workspace UI, shortcuts and terminal-input checks; no OS focus or pointer changes |
+| `just ui-check` | Native bounded isolated captures, attention state and expected failures |
 | `just cli-check` | Isolated live service/CLI and shell GUI acceptance |
 | `just native-input` | Automated macOS keyboard/clipboard and real Japanese IME through the PTY |
 | `just ios-check` | iPhone app UI tests in a headless simulator, synced with a Mac-side client, including real Codex and Claude Code on a fake model |
@@ -689,7 +700,7 @@ union of the relevant checks; a check satisfying two rows runs once:
 | Disk history | `python3 scripts/check_history.py --disk-full` on macOS, plus desktop-enabled ASan/TSan; the disk-full fixture creates and removes its own 32 MiB disk image |
 | Python tooling | `just quality` (includes Ruff and Python unit tests), plus relevant runtime probes |
 | iPhone app or gateway (`apps/ios`, `apps/remote`) | `just quality` (includes the gateway suite, with a live service when the desktop is built) and `uv run --no-project python scripts/check_ios_remote.py --codex --claude` on macOS with an iOS Simulator runtime |
-| Before a release (Mac and iPhone together) | The full Linux gate (`lapis.py linux-gui`, whose workspace suite joins a view beside the real desktop connection and types both ways) and, on the Mac, `just quality` plus `just ios-check`, whose Mac-side client stays attached through every UI test and must see and answer the phone |
+| Before a release (Mac and iPhone together) | The macOS desktop/native gates above, `just quality` and `just ios-check`, whose Mac-side client stays attached through every UI test and must see and answer the phone. Linux UI qualification remains deferred; run its gate when that port is explicitly selected. |
 | Mac app packaging (`scripts/package_macos.py`, `apps/desktop/macos`, `LAPIS_PACKAGE`) | `just quality`, then `package_macos.py app` and `verify` on the Mac; `verify --notarized` for a release |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; run `just quality` for shared check/config/instruction changes; no unrelated C++ rebuild |
 
@@ -757,6 +768,12 @@ output directory when diagnosing a rerun.
 ### Selecting checks and reusing results
 
 Select the required commands before running them:
+
+- For routine UI review, start with `just ui-review`. It builds only the two
+  fixture targets and runs their three background cases serially, without the
+  full CTest/static-analysis gate. Use this for iteration, then apply the native
+  and integration rows above when their behavior changes. Do not run the same
+  binaries manually again after this command passes.
 
 - `just quality` includes Python lint, format checks and unit discovery. Separate
   Ruff or unittest commands are useful for focused diagnosis, but need not follow
@@ -832,6 +849,7 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `agent-checkpoint` | Desktop-enabled | Restore-hook sequences, identity/host checks, private records and observer provenance |
 | `live-connection` | Desktop-enabled | Screen-before-input, exact attention decisions/rejections, duplicate gating, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
+| `terminal-keys-mac` | Desktop-enabled, macOS | AppKit local key monitor, logical layout keys and teardown using the process's own event queue; no focus or cursor changes |
 | `keymap` | Desktop-enabled | Configuration defaults, appearance choices, persistence and invalid input |
 | `workspace` | Desktop-enabled | Category registry (private atomic writes, rollback on failure), agent create/close/reopen, per-category selection, unseen marks, status sources and parent-session marker removal |
 | `window-state` | Desktop-enabled | Machine-local window geometry, off-screen restore, isolated modes, unsafe paths, legacy layout values and modal focus |
@@ -841,7 +859,7 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `terminal-input` | Desktop-enabled, native GUI | Qt composition commit/cancel, replacement rejection, paste and focus/document/history/disconnect ownership |
 | `terminal-render` | Desktop-enabled | Real Qt Vulkan pixel regressions for cell background grids, wide/combining characters, fallback/RTL text, styles/decorations, actual Ghostty resize, cursor placement and clearing |
 
-`just desktop` runs these twenty-two suites plus static checks. The separate Python
+`just desktop` runs the registered suites plus static checks. The separate Python
 GUI harness checks five preview captures and seven expected failures. The CLI
 harness checks detached service behavior, attachment generations, fragmented
 handshakes, synchronization timeout, stale controls, bounded queue failure and
@@ -1033,18 +1051,43 @@ request kinds. See the [Milestone 2 plan](docs/architecture.md#milestone-2-atten
 
 ### History and input qualification
 
-For routine terminal input logic, run the explicit background mode after building:
+For macOS terminal shortcut routing, build `lapis_terminal_keys_mac_tests` and
+run `ctest --test-dir build/desktop -R '^terminal-keys-mac$' --output-on-failure
+--no-tests=error`. It sends events only through its own AppKit queue and opens no
+window. This covers the local monitor; it does not replace native IME or
+pasteboard qualification.
+
+For routine terminal input and workspace UI logic, use the supported background
+review command. It configures the desktop preset, builds the required targets,
+and runs the three fixtures serially:
+
+```sh
+python3 scripts/lapis.py ui-review
+python3 scripts/lapis.py ui-review --json  # same checks, machine-readable result
+```
+
+Choose one output form per run. Each invocation saves a private receipt, logs and
+software-rendered PNGs under `build/reports/ui-review/`. The receipt lists captures
+from that invocation, so agents can inspect UI layouts without opening a native
+window or rerunning the fixture. Failures return a nonzero exit code and never
+fall back to a native window. This focused command shares `build/desktop` with the desktop
+gate, so keep one build owner per checkout. It does not run static analysis or
+unrelated CTest suites. For diagnosing a single case after building its target,
+the underlying modes remain available:
 
 ```sh
 build/desktop/apps/desktop/lapis_terminal_input_tests --background
+build/desktop/apps/desktop/lapis_ui_preview_tests --background
+build/desktop/apps/desktop/lapis_ui_preview_tests --background --shortcuts-only
 ```
 
-It selects Qt's offscreen platform and software backend, checks those selections,
-and exercises the same synthetic key, composition, paste, history and ownership
-assertions against the local protocol fixture. It uses virtual window focus and
+These select Qt's offscreen platform and software backend, check those selections,
+and exercise the same synthetic key, composition, paste, history and ownership
+assertions against local protocol fixtures. They use virtual window focus and
 Qt's offscreen clipboard, without requesting macOS foreground access or moving
 the system pointer. Timeout diagnostics identify the calling assertion. This is
-logical Qt coverage; it does not qualify AppKit input, the system pasteboard,
+logical Qt coverage; the background UI mode leaves exact cursor-pixel assertions
+to the native GPU run. It does not qualify AppKit input, the system pasteboard,
 Apple IME, display rendering or GPU presentation. The ordinary CTest entry still
 requires the native desktop. Run the background mode while the desktop is in use;
 reserve short exclusive windows for the native checks below. Do not replace a

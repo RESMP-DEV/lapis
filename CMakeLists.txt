@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(lapis VERSION 0.2.1 LANGUAGES CXX)
+project(lapis VERSION 0.3.0 LANGUAGES CXX)
 
 if(NOT CMAKE_SYSTEM_NAME MATCHES "^(Darwin|Linux)$")
     message(FATAL_ERROR "lapis targets macOS and Linux")

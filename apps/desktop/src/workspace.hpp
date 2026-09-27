@@ -11,6 +11,7 @@
 #include "transport/local_protocol.hpp"
 
 #include <QColor>
+#include <QDir>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonValue>
@@ -238,8 +239,14 @@ struct AgentRequest {
     QString program; // the CLI's path on `machine`, when known
     QString model;   // passed with the CLI's model flag; empty for its default
     QString mode;    // ask, edits, plan, auto or full; empty for the CLI's own setting
+    // An explicit form or wire title is someone's choice, even when it happens
+    // to match the folder. A wire request that omits the title still gets the
+    // generated folder default and can follow the conversation.
+    bool named{};
     // Show it on the stage; otherwise the category's selection stays.
     bool select{};
+    // A conversation to resume, as the CLI's resume option takes it.
+    QString resume;
 };
 
 struct WorkspaceOptions {
@@ -312,9 +319,19 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool selectCategory(const QString& id);
     Q_INVOKABLE void nextCategory(int delta = 1);
     Q_INVOKABLE bool selectSession(const QString& id);
+    // `machine` is an ssh host; empty starts it on this Mac.
     Q_INVOKABLE bool createAgent(const QString& directory, const QString& title,
                                  const QString& harness = QStringLiteral("codex"),
-                                 const QString& model = {}, const QString& mode = {});
+                                 const QString& model = {}, const QString& mode = {},
+                                 const QString& machine = {}, bool named = true);
+    // The machines a new agent can start on besides this Mac: the ssh
+    // config's hosts, as the side terminal offers them.
+    Q_INVOKABLE [[nodiscard]] QStringList sshMachines() const;
+    void setSshConfigForTesting(const QString& path) { ssh_config_ = path; }
+    // Starts an agent in the active category that resumes `conversation`.
+    Q_INVOKABLE bool resumeAgent(const QString& directory, const QString& title,
+                                 const QString& harness, const QString& conversation,
+                                 const QString& mode = {});
     // The config's new-agent defaults, for the forms: harness, folder, and
     // the folder on each ssh machine.
     Q_INVOKABLE [[nodiscard]] QVariantMap agentDefaults() const;
@@ -336,7 +353,14 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool closeSession(const QString& id, bool abandon = false);
     Q_INVOKABLE bool restartAgent(const QString& id);
     Q_INVOKABLE bool moveSession(const QString& id, const QString& categoryId);
+    // A name someone chose; it stays until they choose another.
     Q_INVOKABLE bool renameSession(const QString& id, const QString& title);
+    // The agent's conversation title, from its CLI. It names an agent that
+    // still has the name it started with; one someone renamed keeps theirs.
+    bool followConversationTitle(const QString& id, QStringView title);
+    // Each agent's current conversation, as its CLI resumes it: agent id to
+    // conversation id, for the agents that have one.
+    [[nodiscard]] QHash<QString, QString> agentConversations() const;
     Q_INVOKABLE bool moveSessionBy(const QString& id, int delta);
     // Puts agents, in their strip order, at `index` of a category's strip (at
     // its end when `index` is past it), moving them there from any category.
@@ -396,6 +420,7 @@ class Workspace final : public QObject {
     std::vector<std::unique_ptr<SessionPreview>> sessions_;
     QHash<QString, QStringList> harness_arguments_;
     AgentDefaults agent_defaults_;
+    QString ssh_config_{QDir::home().filePath(QStringLiteral(".ssh/config"))};
     const HarnessModels* harness_models_{};
     bool restore_agents_{};
     bool update_harnesses_{};
@@ -428,6 +453,11 @@ class Workspace final : public QObject {
         QString endpoint;
         session::LaunchSpec launch;
         QString harness{QStringLiteral("codex")};
+        // Its name was chosen (on the Mac or the phone), not taken from its
+        // folder or its conversation.
+        bool named{};
+        // Its name is its conversation's title, which it keeps following.
+        bool auto_title{};
         // The exact resume pair lapis appended, or no provenance for a
         // user-authored launch. Existing unmarked records stay user-owned.
         int managed_resume_index{-1};
@@ -473,6 +503,8 @@ class Workspace final : public QObject {
     bool mutableRegistry();
     bool commit(const RegistryState& previous);
     bool save(const QString& renamedId = {}, const QString& renamedTitle = {});
+    [[nodiscard]] static QJsonObject agentRecord(const Agent& agent, const QString& id,
+                                                 const QString& title);
     void lockRegistry();
     void restore();
     void loadCategories(const QJsonArray& groups);

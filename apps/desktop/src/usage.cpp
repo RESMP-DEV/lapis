@@ -17,8 +17,8 @@
 
 namespace lapis::desktop {
 namespace {
-constexpr qint64 kChunk = qint64{8} << 20;
-constexpr qsizetype kLongestCount = qsizetype{64} << 20;
+constexpr qint64 kChunk = qint64{8} * 1024 * 1024;
+constexpr qsizetype kLongestCount = qsizetype{64} * 1024 * 1024;
 constexpr int kChartDays = 30;
 
 // The text of the JSON string after `key` (which ends with its opening

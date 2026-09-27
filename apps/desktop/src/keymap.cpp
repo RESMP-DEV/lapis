@@ -441,14 +441,14 @@ void KeyMap::apply_defaults() {
 #else
     const QString modifier = QStringLiteral("Ctrl+Shift+");
 #endif
-    // Command-W closes the focused agent, as in an IDE. Closing the window is
-    // the window's own control or Quit. As in a browser, Command-T opens an
-    // agent (a tab) and Command-N a category (a window). Categories answer to
-    // both the original Command-Option-left/right and the vertical
-    // Command-Shift-up/down.
+    // As in a browser, Command-W closes what is in front (the side terminal's
+    // panel, else the focused agent) and the window only when the category has
+    // no agent left; Command-Shift-W closes the window. On the Mac a closed
+    // window only hides and lapis keeps running. Command-M minimizes. As in a browser, Command-T
+    // opens an agent (a tab) and Command-N a category (a window). Categories answer to both the
+    // original Command-Option-left/right and the vertical Command-Shift-up/down.
     bindings_ = {
         {QStringLiteral("quit"), {modifier + QStringLiteral("Q")}},
-        {QStringLiteral("closeAgent"), {modifier + QStringLiteral("W")}},
         {QStringLiteral("category1"), {modifier + QStringLiteral("1")}},
         {QStringLiteral("category2"), {modifier + QStringLiteral("2")}},
         {QStringLiteral("category3"), {modifier + QStringLiteral("3")}},
@@ -469,6 +469,8 @@ void KeyMap::apply_defaults() {
         {QStringLiteral("textSmaller"), {modifier + QStringLiteral("-")}},
         {QStringLiteral("textReset"), {modifier + QStringLiteral("0")}},
         {QStringLiteral("find"), {modifier + QStringLiteral("F")}},
+        // A past Claude or Codex conversation, as a new agent.
+        {QStringLiteral("resumeConversation"), {modifier + QStringLiteral("O")}},
     };
 #ifdef Q_OS_MACOS
     bindings_.insert(QStringLiteral("splitDown"), {QStringLiteral("Meta+Shift+D")});
@@ -478,6 +480,15 @@ void KeyMap::apply_defaults() {
     bindings_.insert(QStringLiteral("tileDown"), {QStringLiteral("Meta+Ctrl+Down")});
     bindings_.insert(QStringLiteral("zoomTile"), {QStringLiteral("Meta+Shift+Return")});
     bindings_.insert(QStringLiteral("reopenAgent"), {QStringLiteral("Meta+Shift+T")});
+    bindings_.insert(QStringLiteral("closeAgent"), {QStringLiteral("Meta+W")});
+    bindings_.insert(QStringLiteral("closeWindow"), {QStringLiteral("Meta+Shift+W")});
+    bindings_.insert(QStringLiteral("minimizeWindow"), {QStringLiteral("Meta+M")});
+    // The side terminal: Command-` (and Control-`, as in VS Code) shows or hides
+    // it, Command-~ picks its machine.
+    bindings_.insert(QStringLiteral("toggleTerminal"),
+                     {QStringLiteral("Meta+`"), QStringLiteral("Ctrl+`")});
+    bindings_.insert(QStringLiteral("chooseTerminal"),
+                     {QStringLiteral("Meta+Shift+`"), QStringLiteral("Meta+~")});
 #else
     bindings_.insert(QStringLiteral("splitDown"), {QStringLiteral("Ctrl+Alt+Shift+D")});
     bindings_.insert(QStringLiteral("tileLeft"), {QStringLiteral("Ctrl+Alt+Left")});
@@ -486,6 +497,11 @@ void KeyMap::apply_defaults() {
     bindings_.insert(QStringLiteral("tileDown"), {QStringLiteral("Ctrl+Alt+Down")});
     bindings_.insert(QStringLiteral("zoomTile"), {QStringLiteral("Ctrl+Shift+Return")});
     bindings_.insert(QStringLiteral("reopenAgent"), {QStringLiteral("Ctrl+Alt+Shift+T")});
+    // Without a dock to bring a closed window back, closing it stays unbound.
+    bindings_.insert(QStringLiteral("closeAgent"), {modifier + QStringLiteral("W")});
+    bindings_.insert(QStringLiteral("toggleTerminal"), {QStringLiteral("Ctrl+`")});
+    bindings_.insert(QStringLiteral("chooseTerminal"),
+                     {QStringLiteral("Ctrl+Shift+~"), QStringLiteral("Ctrl+~")});
 #endif
 #ifdef Q_OS_MACOS
     bindings_.insert(QStringLiteral("nextCategory"),

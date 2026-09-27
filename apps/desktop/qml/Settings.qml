@@ -36,6 +36,8 @@ Dialog {
     property bool loginAvailable: false
     property bool launchAtLogin: false
     property bool updatesAvailable: false
+    // Every action that has a key: {label, keys}.
+    property var shortcutRows: []
 
     signal themeChosen(string name)
     signal densityChosen(string name)
@@ -703,6 +705,57 @@ Dialog {
                     detail: qsTr("Each signed-in plan under the categories (Codex, Claude, Grok, Kimi, and OMP's accounts), checked every five minutes, with a dashboard per machine. usage.meter and usage.machines in the config pick which. Off, lapis asks no CLI.")
                     on: settings.showUsage
                     onToggled: function(on) { settings.showUsageChosen(on) }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: 1
+                    color: settings.paletteBorder
+                }
+
+                SectionLabel {
+                    text: qsTr("Keyboard shortcuts")
+                }
+                GridLayout {
+                    objectName: "shortcutList"
+                    Layout.fillWidth: true
+                    columns: 2
+                    columnSpacing: 16
+                    rowSpacing: 4
+                    Repeater {
+                        model: settings.shortcutRows
+                        delegate: PlainLabel {
+                            required property var modelData
+                            required property int index
+                            Layout.row: Math.floor(index)
+                            Layout.column: 0
+                            Layout.fillWidth: true
+                            text: modelData.label
+                            color: settings.paletteText
+                            elide: Text.ElideRight
+                        }
+                    }
+                    Repeater {
+                        model: settings.shortcutRows
+                        delegate: PlainLabel {
+                            required property var modelData
+                            required property int index
+                            Layout.row: Math.floor(index)
+                            Layout.column: 1
+                            Layout.alignment: Qt.AlignRight
+                            text: modelData.keys
+                            color: settings.paletteMuted
+                            font.family: settings.resolvedFontFamily
+                            font.pixelSize: settings.readoutFont
+                        }
+                    }
+                }
+                PlainLabel {
+                    Layout.fillWidth: true
+                    text: qsTr("Change any of them under \"keybindings\" in the file below, with the action's name and up to four keys, for example \"toggleTerminal\": [\"Meta+`\"].")
+                    color: settings.paletteMuted
+                    font.pixelSize: Math.max(11, settings.uiFont - 2)
+                    wrapMode: Text.WordWrap
                 }
 
                 Rectangle {

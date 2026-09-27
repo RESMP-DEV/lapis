@@ -3,15 +3,22 @@ import UIKit
 
 struct AgentView: View {
     @State private var session: AgentSession
-    @State private var draft = ""
+    @Binding private var draft: String
     @State private var keyboardShown = false
     @State private var backgrounded = false
     @FocusState private var composing: Bool
     @AppStorage("terminalFontSize") private var fontSize = 12.0
     @Environment(\.scenePhase) private var scenePhase
+    private let agent: Agent
+    // A swipe left (+1) or right (-1) over the screen moves to a neighbor.
+    private let onSwipe: ((Int) -> Void)?
 
-    init(agent: Agent, gateway: Gateway?) {
+    init(agent: Agent, gateway: Gateway?, draft: Binding<String>,
+         onSwipe: ((Int) -> Void)? = nil) {
         _session = State(initialValue: AgentSession(agent: agent, gateway: gateway))
+        _draft = draft
+        self.agent = agent
+        self.onSwipe = onSwipe
     }
 
     private var metrics: TerminalMetrics { TerminalMetrics(fontSize: fontSize) }
@@ -30,6 +37,13 @@ struct AgentView: View {
                     .onChange(of: fontSize) { _, _ in fit(proxy.size, force: true) }
                     .onTapGesture { composing = true }
             }
+            // Only the screen: the key bar scrolls sideways itself.
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 24).onEnded { value in
+                    let (dx, dy) = (value.translation.width, value.translation.height)
+                    guard let onSwipe, abs(dx) > 70, abs(dx) > abs(dy) * 2 else { return }
+                    onSwipe(dx < 0 ? 1 : -1)
+                })
             banner
             // The Mac's terminal encodes named keys for the agent's current modes.
             KeyBar { input in session.send(input) }
@@ -58,6 +72,9 @@ struct AgentView: View {
             }
         }
         .onDisappear { session.close() }
+        .onChange(of: agent) { _, refreshed in
+            session.agent = refreshed
+        }
         .onChange(of: scenePhase) { _, phase in
             // Leave the agent while in the background; pick it up again on return.
             if phase == .background {

@@ -106,6 +106,8 @@ PHONE_ICON = ROOT / "apps/ios/Lapis/Assets.xcassets/AppIcon.appiconset/icon.png"
 MAC_ICON = ROOT / "apps/desktop/macos/lapis.icns"
 # The phone's square artwork on macOS's icon grid: an 824-point rounded
 # square with continuous corners, centred on a 1024 canvas, with a soft shadow.
+# The phone's gem fills 59% of its tile, which reads small in the Dock, so the
+# artwork is enlarged 1.3 times about the gem's centre (52% down) first.
 ICON_SCRIPT = """
 import math
 import sys
@@ -123,7 +125,11 @@ for step in range(2048):
 mask = Image.new("L", (body * oversample, body * oversample), 0)
 ImageDraw.Draw(mask).polygon(points, fill=255)
 mask = mask.resize((body, body), Image.LANCZOS)
-art = Image.open(source).convert("RGBA").resize((body, body), Image.LANCZOS)
+art = Image.open(source).convert("RGBA")
+side = art.width / 1.3
+left, top = (art.width - side) / 2, art.height * 0.52 - side / 2
+art = art.crop((round(left), round(top), round(left + side), round(top + side)))
+art = art.resize((body, body), Image.LANCZOS)
 art.putalpha(mask)
 offset = (canvas - body) // 2
 icon = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
