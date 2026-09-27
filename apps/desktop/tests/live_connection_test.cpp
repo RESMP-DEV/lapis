@@ -1,3 +1,4 @@
+#include "app_paths.hpp"
 #include "live_connection.hpp"
 #include "session_descriptor.hpp"
 #include "transport/local_protocol.hpp"
@@ -11,17 +12,25 @@
 #include <QFileInfo>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QScopeGuard>
+#include <QSemaphore>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QThreadPool>
 #include <array>
+#include <atomic>
 #include <functional>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
 namespace {
 namespace wire = lapis::session::wire;
+using lapis::desktop::ServiceLaunchRequest;
 using lapis::desktop::SessionPreview;
+using lapis::session::DescriptorStore;
+using lapis::session::DescriptorTicket;
 void require(bool value, const char* message) {
     if (!value)
         throw std::runtime_error(message);
@@ -149,6 +158,23 @@ struct Fixture {
                        request_id, page_id, message,
                        page_id == 0 ? std::nullopt : std::optional(snapshot)}));
     }
+};
+
+class BlockingDescriptorStore final : public DescriptorStore {
+  public:
+    QSemaphore entered;
+    QSemaphore release;
+
+  protected:
+    void before_commit(const DescriptorTicket&) override {
+        if (first_commit_.test_and_set())
+            return;
+        entered.release();
+        release.acquire();
+    }
+
+  private:
+    std::atomic_flag first_commit_;
 };
 
 void history_browsing_and_input_gating() {
@@ -398,6 +424,89 @@ void missing_and_replaced() {
     f.screen(discovered, 2, 2);
     require(lapis::session::read_descriptor(f.endpoint, fingerprint) == f.identity,
             "Discovery did not remember verified identity");
+}
+
+void stale_descriptor_writer_cannot_resurrect_a_replacement() {
+    Fixture f;
+    auto store = std::make_shared<BlockingDescriptorStore>();
+    auto old = std::make_unique<lapis::desktop::LiveConnection>(f.document, f.endpoint, f.launch,
+                                                                wire::AttachMode::discover, store);
+    auto old_peer = f.accept();
+    static_cast<void>(f.request(old_peer));
+    f.hello(old_peer);
+    old_peer.send(wire::Kind::snapshot,
+                  wire::encode_snapshot_message({{f.identity, 1}, 1, f.terminal.snapshot()}));
+    const auto release_old = qScopeGuard([&] {
+        store->release.release();
+        static_cast<void>(QThreadPool::globalInstance()->waitForDone(8000));
+    });
+    until([&] { return store->entered.tryAcquire(); });
+
+    // Destruction invalidates the old ticket while its worker is stopped at
+    // the commit seam. The QLocalSocket is aborted first so disconnect events
+    // cannot be delivered through the old connection during replacement.
+    old_peer.socket->abort();
+    old.reset();
+
+    const wire::SessionIdentity replacement{wire::new_id(), wire::new_id()};
+    lapis::desktop::LiveConnection newer(f.document, f.endpoint, f.launch,
+                                         wire::AttachMode::discover, store);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    peer.send(wire::Kind::hello, wire::encode_hello({{replacement, 1}, 123}));
+    until([&] { return f.document.connectionState() == QStringLiteral("synchronizing"); });
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{replacement, 1}, 1, f.terminal.snapshot()}));
+    until([&] { return f.document.connectionState() == QStringLiteral("ready"); });
+    require(wire::decode_ready(peer.read().payload).attachment == wire::Attachment{replacement, 1},
+            "Replacement synchronization used the wrong attachment");
+    require(peer.read().kind == wire::Kind::resize, "Replacement did not finish synchronization");
+    require(lapis::session::read_descriptor(
+                f.endpoint, lapis::session::launch_fingerprint(f.launch)) == replacement,
+            "Newer descriptor did not win before old writer release");
+
+    store->release.release();
+    require(QThreadPool::globalInstance()->waitForDone(8000),
+            "Old descriptor writer did not finish");
+    until([&] {
+        return QDir(QFileInfo(f.endpoint).absolutePath())
+            .entryList(QStringList() << QStringLiteral("session.sock.session.*.tmp"),
+                       QDir::Files | QDir::NoDotAndDotDot)
+            .isEmpty();
+    });
+    require(lapis::session::read_descriptor(
+                f.endpoint, lapis::session::launch_fingerprint(f.launch)) == replacement,
+            "Released stale writer replaced the newer connection identity");
+    require(f.document.inputReady(),
+            "Replacement was not the only connection able to become ready");
+}
+
+void launcher_injection_owns_only_detached_start_construction() {
+    Fixture f;
+    std::optional<ServiceLaunchRequest> launched;
+    auto codex_launch = f.launch;
+    codex_launch.agent = lapis::session::AgentMode::codex;
+    lapis::desktop::LiveConnection connection(f.document, f.endpoint, codex_launch,
+                                              wire::AttachMode::create, {},
+                                              [&](const ServiceLaunchRequest& request) {
+                                                  launched = request;
+                                                  return false;
+                                              });
+    until([&] {
+        return launched.has_value() &&
+               f.document.connectionState() == QStringLiteral("disconnected");
+    });
+    require(launched.has_value(), "Injected launcher did not receive the create request");
+    require(launched->program == lapis::desktop::session_service_program(),
+            "Launcher changed the service program");
+    require(launched->arguments.size() >= 4 &&
+                launched->arguments[0] == QStringLiteral("--session-id") &&
+                QByteArray::fromHex(launched->arguments[1].toLatin1()).size() == 16 &&
+                launched->arguments[2] == QStringLiteral("--codex") &&
+                launched->arguments[3] == f.endpoint,
+            "Launcher changed service argument construction");
+    require(launched->log == f.endpoint + QStringLiteral(".log"), "Launcher log path changed");
+    require(!f.server.hasPendingConnections(), "Failed detached start connected anyway");
 }
 void attention_routing_and_reconnect() {
     using namespace lapis::session::attention;
@@ -666,6 +775,8 @@ int main(int argc, char** argv) {
         history_capability_tracks_current_page();
         unqueued_history_is_rejected_immediately();
         missing_and_replaced();
+        stale_descriptor_writer_cannot_resurrect_a_replacement();
+        launcher_injection_owns_only_detached_start_construction();
         attention_routing_and_reconnect();
         lost_before_screen();
         legacy_server();

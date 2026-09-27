@@ -5,8 +5,13 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QUuid>
+#include <atomic>
 #include <cerrno>
 #include <fcntl.h>
+#include <limits>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <sys/stat.h>
 #include <system_error>
@@ -75,6 +80,52 @@ void validate_open_descriptor(int descriptor) {
 QString descriptor_path(const QString& endpoint) {
     return posix::prepare_endpoint(endpoint) + QLatin1String(".session");
 }
+struct DescriptorEndpointState {
+    std::mutex guard;
+    quint64 newest_serial{};
+};
+} // namespace
+
+struct DescriptorTicket::State {
+    std::shared_ptr<DescriptorEndpointState> endpoint;
+    quint64 serial{};
+    QByteArray bytes;
+    QString destination;
+    QString temporary;
+    int descriptor{-1};
+    std::atomic<bool> canceled{false};
+    std::atomic_flag released{};
+    enum class Phase { preparing, ready, committing, closed };
+    std::atomic<Phase> phase{Phase::preparing};
+    std::mutex lifecycle;
+
+    ~State() { close_locked(); }
+
+    void close_locked() {
+        if (descriptor >= 0) {
+            static_cast<void>(::close(descriptor));
+            descriptor = -1;
+        }
+        if (!temporary.isEmpty()) {
+            static_cast<void>(::unlink(QFile::encodeName(temporary).constData()));
+            temporary.clear();
+        }
+        phase = Phase::closed;
+    }
+};
+namespace {
+struct EndpointOwners {
+    std::mutex guard;
+    struct Entry {
+        std::shared_ptr<DescriptorEndpointState> state;
+        std::size_t owners{};
+    };
+    std::map<QString, Entry> endpoints;
+};
+EndpointOwners& endpoint_owners() {
+    static EndpointOwners owners;
+    return owners;
+}
 void validate_existing_descriptor(const QString& path) {
     struct stat info{};
     if (::lstat(QFile::encodeName(path).constData(), &info) != 0) {
@@ -113,10 +164,23 @@ std::optional<wire::SessionIdentity> read_descriptor(const QString& endpoint,
 
 void write_descriptor(const QString& endpoint, const QByteArray& fingerprint,
                       const wire::SessionIdentity& identity) {
-    const QString path = descriptor_path(endpoint);
-    validate_existing_descriptor(path);
-    const QByteArray bytes = encode_descriptor(fingerprint, identity);
-    const QFileInfo destination(path);
+    static DescriptorStore store;
+    store.write(endpoint, fingerprint, identity);
+}
+
+DescriptorTicket::DescriptorTicket(std::shared_ptr<State> state) : state_{std::move(state)} {}
+
+DescriptorTicket::~DescriptorTicket() { cancel(); }
+
+void DescriptorTicket::stage() {
+    auto& state = *state_;
+    if (state.canceled)
+        throw std::runtime_error("Descriptor write was canceled");
+    if (state.phase != State::Phase::preparing || state.descriptor >= 0 ||
+        !state.temporary.isEmpty())
+        throw std::runtime_error("Descriptor is already staged");
+
+    const QFileInfo destination(state.destination);
     const QString base = destination.fileName() + QLatin1Char('.');
     for (int attempt = 0; attempt < 64; ++attempt) {
         const QString temporary = destination.absoluteDir().filePath(
@@ -130,26 +194,136 @@ void write_descriptor(const QString& endpoint, const QByteArray& fingerprint,
                 continue;
             throw_system("Cannot create temporary session descriptor");
         }
-        const posix::UniqueFd owned{descriptor};
+        state.descriptor = descriptor;
+        state.temporary = temporary;
         try {
-            if (::fchmod(descriptor, 0600) != 0)
+            if (::fchmod(state.descriptor, 0600) != 0)
                 throw_system("Cannot set session descriptor permissions");
-            write_exact(descriptor, bytes);
-            validate_open_descriptor(descriptor);
-            if (::fsync(descriptor) != 0)
+            write_exact(state.descriptor, state.bytes);
+            validate_open_descriptor(state.descriptor);
+            if (::fsync(state.descriptor) != 0)
                 throw_system("Cannot sync temporary session descriptor");
-            validate_existing_descriptor(path);
-            if (::rename(QFile::encodeName(temporary).constData(),
-                         QFile::encodeName(path).constData()) != 0)
-                throw_system("Cannot replace session descriptor");
+            if (state.canceled)
+                throw std::runtime_error("Descriptor write was canceled");
+            const std::lock_guard staged{state.lifecycle};
+            if (state.canceled) {
+                state.close_locked();
+                throw std::runtime_error("Descriptor write was canceled");
+            }
+            state.phase = State::Phase::ready;
             return;
         } catch (...) {
-            const int saved_errno = errno;
-            static_cast<void>(::unlink(QFile::encodeName(temporary).constData()));
-            errno = saved_errno;
+            const std::lock_guard staged{state.lifecycle};
+            state.close_locked();
             throw;
         }
     }
     throw std::runtime_error("Cannot allocate a temporary session descriptor name");
 }
+
+void DescriptorTicket::cancel() {
+    if (!state_->endpoint || state_->released.test_and_set())
+        return;
+    {
+        auto& owners = endpoint_owners();
+        const std::lock_guard owned{owners.guard};
+        const std::lock_guard endpoint{state_->endpoint->guard};
+        state_->canceled = true;
+        const auto found = owners.endpoints.find(state_->destination);
+        if (found != owners.endpoints.end() && found->second.state == state_->endpoint) {
+            if (found->second.owners > 0)
+                --found->second.owners;
+            if (found->second.owners == 0)
+                owners.endpoints.erase(found);
+        }
+    }
+    {
+        const std::lock_guard lifecycle{state_->lifecycle};
+        if (state_->phase == State::Phase::ready)
+            state_->close_locked();
+    }
+}
+
+QString DescriptorTicket::commit() {
+    auto& state = *state_;
+    QString error;
+    {
+        const std::lock_guard endpoint{state.endpoint->guard};
+        if (state.canceled) {
+            error = QStringLiteral("Descriptor write was canceled");
+        } else if (state.serial != state.endpoint->newest_serial) {
+            error = QStringLiteral("A newer session replaced this descriptor");
+        } else if (state.phase != State::Phase::ready) {
+            error = QStringLiteral("Descriptor is not staged for commit");
+        } else {
+            try {
+                state.phase = State::Phase::committing;
+                validate_existing_descriptor(state.destination);
+                if (::rename(QFile::encodeName(state.temporary).constData(),
+                             QFile::encodeName(state.destination).constData()) != 0)
+                    throw_system("Cannot replace session descriptor");
+                const std::lock_guard lifecycle{state.lifecycle};
+                state.temporary.clear();
+                state.close_locked();
+                return {};
+            } catch (const std::exception& failure) {
+                error = QString::fromUtf8(failure.what());
+            }
+        }
+    }
+    const std::lock_guard lifecycle{state.lifecycle};
+    if (state.phase == State::Phase::ready || state.phase == State::Phase::committing)
+        state.close_locked();
+    return error;
+}
+
+std::shared_ptr<DescriptorTicket> DescriptorStore::prepare(const QString& endpoint,
+                                                           const QByteArray& fingerprint,
+                                                           const wire::SessionIdentity& identity) {
+    const QByteArray bytes = encode_descriptor(fingerprint, identity);
+    const QString destination = descriptor_path(endpoint);
+    auto state = std::make_shared<DescriptorTicket::State>();
+    state->bytes = bytes;
+    state->destination = destination;
+    // Allocate ownership before registration so an allocation failure cannot
+    // leave a retained endpoint entry with no ticket to release it.
+    auto ticket = std::shared_ptr<DescriptorTicket>(new DescriptorTicket(state));
+    auto& owners = endpoint_owners();
+    const std::lock_guard owned{owners.guard};
+    auto found = owners.endpoints.find(destination);
+    if (found == owners.endpoints.end()) {
+        auto endpoint_state = std::make_shared<DescriptorEndpointState>();
+        found =
+            owners.endpoints.emplace(destination, EndpointOwners::Entry{endpoint_state, 0}).first;
+    }
+    auto& entry = found->second;
+    const std::lock_guard ordered{entry.state->guard};
+    if (entry.state->newest_serial == std::numeric_limits<quint64>::max() ||
+        entry.owners == std::numeric_limits<std::size_t>::max())
+        throw std::runtime_error("Descriptor ticket sequence exhausted");
+    state->endpoint = entry.state;
+    state->serial = ++entry.state->newest_serial;
+    ++entry.owners;
+    return ticket;
+}
+
+QString DescriptorStore::commit(DescriptorTicket& ticket) {
+    before_commit(ticket);
+    try {
+        return ticket.commit();
+    } catch (const std::exception& failure) {
+        return QString::fromUtf8(failure.what());
+    }
+}
+
+void DescriptorStore::write(const QString& endpoint, const QByteArray& fingerprint,
+                            const wire::SessionIdentity& identity) {
+    const auto ticket = prepare(endpoint, fingerprint, identity);
+    ticket->stage();
+    const QString error = commit(*ticket);
+    if (!error.isEmpty())
+        throw std::runtime_error(error.toStdString());
+}
+
+void DescriptorStore::before_commit(const DescriptorTicket&) {}
 } // namespace lapis::session

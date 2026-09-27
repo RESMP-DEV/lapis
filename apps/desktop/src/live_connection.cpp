@@ -2,6 +2,7 @@
 #include "app_paths.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "session_descriptor.hpp"
+#include "workspace.hpp"
 #include <QDataStream>
 #include <QDateTime>
 #include <QDebug>
@@ -24,6 +25,14 @@ namespace {
 constexpr int codex_sync_timeout_ms = 15000;
 constexpr int terminal_sync_timeout_ms = 5000;
 constexpr int history_timeout_ms = 5000;
+bool start_service_detached(const ServiceLaunchRequest& launch) {
+    QProcess service;
+    service.setProgram(launch.program);
+    service.setArguments(launch.arguments);
+    service.setStandardOutputFile(launch.log, QIODevice::Append);
+    service.setStandardErrorFile(launch.log, QIODevice::Append);
+    return service.startDetached();
+}
 } // namespace
 SessionPreview::~SessionPreview() { live_.reset(); }
 void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpec& launch,
@@ -341,11 +350,16 @@ void SessionPreview::setServiceIdentity(const QByteArray& identity) {
     emit connectionChanged();
 }
 LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
-                               const session::LaunchSpec& launch, wire::AttachMode mode)
+                               const session::LaunchSpec& launch, wire::AttachMode mode,
+                               std::shared_ptr<session::DescriptorStore> descriptor_store,
+                               ServiceLauncher launcher)
     : document_(document), endpoint_(std::move(endpoint)),
       service_arguments_{QStringList{endpoint_, launch.directory, launch.program} +
                          launch.arguments},
-      fingerprint_(session::launch_fingerprint(launch)), wanted_size_(launch.size) {
+      descriptor_store_{descriptor_store ? std::move(descriptor_store)
+                                         : std::make_shared<session::DescriptorStore>()},
+      launcher_{std::move(launcher)}, fingerprint_(session::launch_fingerprint(launch)),
+      wanted_size_(launch.size) {
     retry_.setSingleShot(true);
     retry_.setInterval(100);
     handshake_.setSingleShot(true);
@@ -373,6 +387,7 @@ LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
     QTimer::singleShot(0, this, [this, mode] { begin(mode); });
 }
 LiveConnection::~LiveConnection() {
+    clearDescriptorWrite();
     retry_.stop();
     handshake_.stop();
     if (socket_) {
@@ -414,16 +429,13 @@ void LiveConnection::begin(wire::AttachMode mode) {
             request_.expected = *saved;
         } else if (mode == wire::AttachMode::create) {
             request_.expected.session_id = wire::new_id();
-            QProcess service;
-            service.setProgram(session_service_program());
-            service.setArguments(
+            const QStringList arguments =
                 QStringList{QStringLiteral("--session-id"),
                             QString::fromLatin1(request_.expected.session_id.toHex())} +
-                service_arguments_);
-            const QString log = endpoint_ + QStringLiteral(".log");
-            service.setStandardOutputFile(log, QIODevice::Append);
-            service.setStandardErrorFile(log, QIODevice::Append);
-            if (!service.startDetached())
+                service_arguments_;
+            const ServiceLaunchRequest launch_request{session_service_program(), arguments,
+                                                      endpoint_ + QStringLiteral(".log")};
+            if (!(launcher_ ? launcher_(launch_request) : start_service_detached(launch_request)))
                 throw std::runtime_error("Could not start session service");
         }
         connectSocket();
@@ -499,6 +511,7 @@ void LiveConnection::fail(const QString& message, wire::StatusCode code) {
     if (failed_)
         return;
     failed_ = true;
+    clearDescriptorWrite();
     ready_ = false;
     connected_ = false;
     retry_.stop();
@@ -689,38 +702,50 @@ void LiveConnection::persistIdentity() {
         throw std::runtime_error("Cannot persist an unbound session");
     const auto expected = *attachment_;
     const auto sequence = last_sequence_;
+    clearDescriptorWrite();
+    descriptor_ticket_ = descriptor_store_->prepare(endpoint_, fingerprint_, expected.identity);
+    const auto ticket = descriptor_ticket_;
     descriptor_write_ = std::make_unique<QFutureWatcher<QString>>();
     auto* watcher = descriptor_write_.get();
-    connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher, expected, sequence] {
-        if (failed_ || attachment_ != expected || last_sequence_ != sequence ||
-            descriptor_write_.get() != watcher)
-            return;
-        const auto error = watcher->result();
-        if (!error.isEmpty()) {
-            fail(error);
-            return;
-        }
-        try {
-            finishSynchronization();
-        } catch (const std::exception& failure) {
-            fail(QString::fromUtf8(failure.what()));
-        }
-    });
+    connect(watcher, &QFutureWatcher<QString>::finished, this,
+            [this, watcher, expected, sequence, ticket] {
+                if (descriptor_ticket_ == ticket)
+                    descriptor_ticket_.reset();
+                if (failed_ || attachment_ != expected || last_sequence_ != sequence ||
+                    descriptor_write_.get() != watcher)
+                    return;
+                const auto error = watcher->result();
+                if (!error.isEmpty()) {
+                    fail(error);
+                    return;
+                }
+                try {
+                    finishSynchronization();
+                } catch (const std::exception& failure) {
+                    fail(QString::fromUtf8(failure.what()));
+                }
+            });
     QPromise<QString> promise;
     watcher->setFuture(promise.future());
-    QThreadPool::globalInstance()->start([promise = std::move(promise), endpoint = endpoint_,
-                                          fingerprint = fingerprint_,
-                                          identity = expected.identity]() mutable {
-        promise.start();
-        QString error;
-        try {
-            session::write_descriptor(endpoint, fingerprint, identity);
-        } catch (const std::exception& failure) {
-            error = QString::fromUtf8(failure.what());
-        }
-        promise.addResult(error);
-        promise.finish();
-    });
+    QThreadPool::globalInstance()->start(
+        [promise = std::move(promise), store = descriptor_store_, ticket]() mutable {
+            promise.start();
+            QString error;
+            try {
+                ticket->stage();
+                error = store->commit(*ticket);
+            } catch (const std::exception& failure) {
+                error = QString::fromUtf8(failure.what());
+            }
+            promise.addResult(error);
+            promise.finish();
+        });
+}
+void LiveConnection::clearDescriptorWrite() {
+    if (descriptor_ticket_) {
+        descriptor_ticket_->cancel();
+        descriptor_ticket_.reset();
+    }
 }
 void LiveConnection::finishSynchronization() {
     if (!attachment_)

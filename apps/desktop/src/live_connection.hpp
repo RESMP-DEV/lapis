@@ -1,17 +1,38 @@
 #ifndef LAPIS_DESKTOP_LIVE_CONNECTION_HPP
 #define LAPIS_DESKTOP_LIVE_CONNECTION_HPP
 #include "transport/local_protocol.hpp"
-#include "workspace.hpp"
 #include <QFutureWatcher>
 #include <QLocalSocket>
+#include <QObject>
+#include <QSet>
+#include <QStringList>
 #include <QTimer>
+#include <functional>
+#include <memory>
 #include <optional>
 
+namespace lapis::session {
+class DescriptorStore;
+class DescriptorTicket;
+struct LaunchSpec;
+} // namespace lapis::session
+
 namespace lapis::desktop {
+class SessionPreview;
+
+struct ServiceLaunchRequest {
+    QString program;
+    QStringList arguments;
+    QString log;
+};
+using ServiceLauncher = std::function<bool(const ServiceLaunchRequest&)>;
+
 class LiveConnection final : public QObject {
   public:
     LiveConnection(SessionPreview& document, QString endpoint, const session::LaunchSpec& launch,
-                   session::wire::AttachMode mode);
+                   session::wire::AttachMode mode,
+                   std::shared_ptr<session::DescriptorStore> descriptor_store = {},
+                   ServiceLauncher launcher = {});
     ~LiveConnection() override;
     void begin(session::wire::AttachMode mode);
     bool send(session::wire::Kind kind, const QByteArray& payload);
@@ -38,6 +59,7 @@ class LiveConnection final : public QObject {
     void rememberCanceledHistoryRequest(quint64 request_id);
     void invalidateHistory();
     void persistIdentity();
+    void clearDescriptorWrite();
     void finishSynchronization();
     void report(const QString& message);
     void fail(const QString& message,
@@ -45,9 +67,12 @@ class LiveConnection final : public QObject {
     SessionPreview& document_;
     QString endpoint_;
     QStringList service_arguments_;
+    std::shared_ptr<session::DescriptorStore> descriptor_store_;
+    ServiceLauncher launcher_;
     QByteArray fingerprint_;
     std::unique_ptr<QLocalSocket> socket_;
     std::unique_ptr<QFutureWatcher<QString>> descriptor_write_;
+    std::shared_ptr<session::DescriptorTicket> descriptor_ticket_;
     QTimer retry_;
     QTimer handshake_;
     QTimer history_timeout_;
