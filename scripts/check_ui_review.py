@@ -392,6 +392,8 @@ def main(argv=None):
         help="parallel build jobs (default: at most 8)",
     )
     arguments = parser.parse_args(argv)
+    if arguments.jobs < 1:
+        parser.error("--jobs must be positive")
     return review(jobs=arguments.jobs, json_output=arguments.json)
 
 
