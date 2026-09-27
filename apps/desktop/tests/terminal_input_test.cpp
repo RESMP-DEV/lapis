@@ -6,9 +6,11 @@
 #include "terminal_surface.hpp"
 #include <QClipboard>
 #include <QDataStream>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QInputMethod>
 #include <QInputMethodEvent>
@@ -473,6 +475,126 @@ void links_follow_wrapped_rows() {
     zero_width.feed("https://example.com\xE2\x80\x8B/ ok");
     require(lapis::desktop::terminal_url_at(zero_width.snapshot(), 0, 0).isEmpty(),
             "A zero-width format character was allowed in an opened URL");
+
+    using lapis::desktop::TerminalLink;
+    using lapis::desktop::TerminalMatch;
+    const auto wrapped = lapis::desktop::terminal_link_at(snapshot, 5, 1);
+    require(wrapped && wrapped->kind == TerminalLink::Kind::url &&
+                wrapped->cells == std::vector<TerminalMatch>({{0, 4, 19}, {1, 0, 19}}),
+            "A wrapped link did not cover its cells on both rows");
+    // Words are paths to check: Claude Code's Update(docs/a.md), a line
+    // number after a file, and sentence punctuation after a path.
+    lapis::session::Terminal words({40, 3});
+    words.feed("Update(docs/a.md) at src/x.cpp:12:3\r\nsee ~/notes. ok");
+    const auto update = lapis::desktop::terminal_link_at(words.snapshot(), 10, 0);
+    require(update && update->kind == TerminalLink::Kind::path && update->text == "docs/a.md" &&
+                update->cells == std::vector<TerminalMatch>({{0, 7, 15}}),
+            "A path in brackets was not found as a path");
+    const auto located = lapis::desktop::terminal_link_at(words.snapshot(), 22, 0);
+    require(located && located->text == "src/x.cpp" && located->line == 12,
+            "A file's line number was not taken apart from it");
+    const auto home = lapis::desktop::terminal_link_at(words.snapshot(), 5, 1);
+    require(home && home->text == "~/notes", "Sentence punctuation stayed on a path");
+    require(!lapis::desktop::terminal_link_at(words.snapshot(), 3, 1),
+            "A space was taken for a link");
+
+    QTemporaryDir folder;
+    require(folder.isValid() && QDir(folder.path()).mkpath(QStringLiteral("sub")),
+            "Link folder failed");
+    QFile image(QDir(folder.path()).filePath(QStringLiteral("shot.png")));
+    require(image.open(QIODevice::WriteOnly) && image.write("png") == 3, "Link file failed");
+    image.close();
+    const auto same = [](const QString& a, const QString& b) {
+        return !a.isEmpty() && QFileInfo(a).canonicalFilePath() == QFileInfo(b).canonicalFilePath();
+    };
+    using lapis::desktop::resolve_terminal_path;
+    require(
+        same(resolve_terminal_path(QStringLiteral("shot.png"), folder.path()), image.fileName()) &&
+            same(resolve_terminal_path(QStringLiteral("./sub"), folder.path()),
+                 QDir(folder.path()).filePath(QStringLiteral("sub"))) &&
+            same(resolve_terminal_path(image.fileName(), {}), image.fileName()) &&
+            same(resolve_terminal_path(QStringLiteral("~"), {}), QDir::homePath()),
+        "An existing path did not resolve");
+    require(resolve_terminal_path(QStringLiteral("missing.png"), folder.path()).isEmpty() &&
+                resolve_terminal_path(QStringLiteral("shot.png"), {}).isEmpty(),
+            "A missing path, or a relative one with no folder, resolved");
+}
+
+// Holding Command over a link or an existing file underlines it and shows a
+// hand; releasing Command or moving off clears it; Command-click opens it.
+void command_links_open() {
+    Fixture f;
+    QFile image(QDir(f.directory.path()).filePath(QStringLiteral("shot.png")));
+    require(image.open(QIODevice::WriteOnly) && image.write("png") == 3, "Link file failed");
+    image.close();
+    QQuickWindow window;
+    window.setGeometry(100, 100, 640, 360);
+    lapis::desktop::TerminalSurface surface(window.contentItem());
+    surface.setSize(QSizeF(640, 360));
+    surface.setDocument(&f.document);
+    surface.setInteractive(true);
+    surface.setOpensLinksForTesting(false);
+    QStringList opened;
+    QObject::connect(&surface, &lapis::desktop::TerminalSurface::linkOpened,
+                     [&opened](const QString& target) { opened.append(target); });
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    lapis::session::Terminal screen({40, 4});
+    screen.feed("open shot.png or https://example.com/a now");
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 2, screen.snapshot()}));
+    until([&] { return f.document.snapshot().size.columns == 40; });
+    window.show();
+    until([&] { return window.isExposed(); });
+#ifdef Q_OS_MACOS
+    const auto held = Qt::MetaModifier;
+    const auto key = Qt::Key_Meta;
+#else
+    const auto held = Qt::ControlModifier;
+    const auto key = Qt::Key_Control;
+#endif
+    const auto at = [&](int column) { return surface.cellRect(column, 0).center(); };
+    const auto hover = [&](QPointF position, Qt::KeyboardModifiers modifiers) {
+        QHoverEvent event(QEvent::HoverMove, position, surface.mapToGlobal(position), position,
+                          modifiers);
+        QCoreApplication::sendEvent(&surface, &event);
+    };
+    const auto same = [](const QString& a, const QString& b) {
+        return !a.isEmpty() && QFileInfo(a).canonicalFilePath() == QFileInfo(b).canonicalFilePath();
+    };
+    hover(at(7), Qt::NoModifier);
+    require(surface.hoveredLink().isEmpty(), "A path was underlined without Command");
+    hover(at(7), held);
+    require(same(surface.hoveredLink(), image.fileName()) &&
+                surface.cursor().shape() == Qt::PointingHandCursor,
+            "Command over an existing file did not underline it");
+    hover(at(1), held);
+    require(surface.hoveredLink().isEmpty() && surface.cursor().shape() != Qt::PointingHandCursor,
+            "A word naming no file was underlined");
+    hover(at(20), held);
+    require(surface.hoveredLink() == QStringLiteral("https://example.com/a"),
+            "Command over a web link did not underline it");
+    QKeyEvent release(QEvent::KeyRelease, key, Qt::NoModifier);
+    QCoreApplication::sendEvent(&surface, &release);
+    require(surface.hoveredLink().isEmpty(), "Releasing Command left the link underlined");
+    const auto click = [&](QPointF position) {
+        QMouseEvent press(QEvent::MouseButtonPress, position, surface.mapToScene(position),
+                          surface.mapToGlobal(position), Qt::LeftButton, Qt::LeftButton, held);
+        QCoreApplication::sendEvent(&surface, &press);
+        QMouseEvent up(QEvent::MouseButtonRelease, position, surface.mapToScene(position),
+                       surface.mapToGlobal(position), Qt::LeftButton, Qt::NoButton, held);
+        QCoreApplication::sendEvent(&surface, &up);
+    };
+    click(at(7));
+    click(at(20));
+    click(at(1));
+    require(opened.size() == 2 && same(opened[0], image.fileName()) &&
+                opened[1] == QStringLiteral("https://example.com/a"),
+            "Command-click did not open the file and the link, and only those");
+    require(text_frames(peer).isEmpty(), "Command-click sent input to the agent");
 }
 // Dragging selects screen text and double-clicking selects a word. The copy
 // chord copies without sending input, typing clears the selection, and the
@@ -636,6 +758,7 @@ int main(int argc, char** argv) {
         input_contract(background);
         selection_and_scroll();
         links_follow_wrapped_rows();
+        command_links_open();
         size_returns_to_this_window();
         if (background)
             std::cout << "Background Qt/software mode; native macOS input and GPU not exercised\n";

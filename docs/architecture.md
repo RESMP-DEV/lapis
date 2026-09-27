@@ -2428,6 +2428,27 @@ height, and a page kept its own colors.
   `run_history_ui_tests` in the window tests (a real agent: each row once
   across the seam, the bar's hover, hold, wheel and release to live).
 
+### Command-hover links and files (September 26)
+
+Asked for as iTerm2 has it: holding Command shows what is clickable, and
+Command-click opens it. `terminal_link_at` finds what a cell is part of,
+across rows that wrap: an http(s) link as before, else the word around it,
+cut at spaces, quotes, brackets and list punctuation (Claude Code prints
+`Update(docs/a.md)`), without sentence punctuation after it, and with a
+`:line` or `:line:column` taken off. `resolve_terminal_path` turns that word
+into an existing file or folder: absolute, under `~`, or relative to the
+agent's folder. An agent over ssh has no folder here, so only its web links
+open. While Command is held over a target, the terminal draws a faint wash and
+an underline over its cells and shows a pointing hand; releasing Command,
+leaving, losing focus or the screen changing under the pointer updates it.
+Command-click opens a link in the browser and a path as the Finder would (an
+image in Preview, a folder in the Finder), except that an app or an
+executable file is shown in its folder rather than run. The line of
+`file.cpp:12` is parsed but a file still opens in its default app; opening it
+at that line in the configured editor is not done yet. Qualified in
+`terminal_input_test` (finding, resolving, hover with and without Command,
+release, clicks that open a file and a link and one that opens nothing).
+
 ### Predictive text in the terminal (September 26)
 
 Extra words ("as a copy,") appeared after text the user typed into a Claude

@@ -62,7 +62,7 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
 | PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS; after simulated power loss, the login helper resumes observer-verified Codex/Claude conversations and restarts advisory-only agents fresh ([check](scripts/check_restore.py)) | An actual reboot through the login helper, and later Linux qualification |
 | Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect; stale sockets left by a simulated power loss are replaced | Qualification across an actual reboot |
-| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging and link opening (Qt tests on the Linux test host) | Cross-cell contextual shaping, rectangular/multi-click selection, link hover feedback and accessibility; native Mac selection not yet exercised; Linux GUI port is deferred |
+| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging, Command-hover underlining and Command-click opening of links, files and folders (Qt tests on the Linux test host) | Cross-cell contextual shaping, rectangular/multi-click selection and accessibility; opening a file at its line in an editor; native Mac selection not yet exercised; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, history scrolled by rows as one strip, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived rows keep their original width (cut or padded, not reflowed) |
 | UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; tiles on the stage (drag from the strip, dividers, keys, zoom), dragging cards to reorder and between categories with multi-select, find in the terminal and text size (Qt tests on the Linux test host); live request badges, explicit approval/answer dialog, stale-state gating and draft preservation; live config reload, alert chimes and their repeat rules, Command-K agent search, the usage meter and per-machine dashboard, the keyboard home list, Command-O resume and the side terminal with its machine picker (Qt tests on the Linux test host); usage answers from the installed Codex 0.156.1, Claude Code 2.1.282, Grok 1.0.41, Kimi Code 0.39.1 and OMP 18.2.9, here and on a Linux host over ssh | Automatic carousel and larger session-count qualification; the chimes and usage view have not been seen and heard on a Mac by a test |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
@@ -338,12 +338,16 @@ started in the same folder are numbered in cards and menus.
 
 Command-Left/Right move to the start or end of the line, Command-Backspace
 deletes to the line start and Command-Delete to the line end (Control-A, -E, -U
-and -K to the agent). Command-click (Control-click on Linux) a web link in agent
-output to open it,
-including links that wrap across rows. Drag across the terminal to select text,
+and -K to the agent). Hold Command (Control on Linux) over a web link or a
+file or folder the agent names, and it is underlined and the pointer becomes a
+hand; Command-click opens it as the Finder would: a link in the browser, an
+image in Preview, a folder in the Finder (an app or a program is shown in its
+folder, not run). Paths count from the agent's folder, `~` and `/` included,
+and `file.cpp:12` finds the file; an agent over ssh prints paths on another
+machine, so only its web links open. Links that wrap across rows work too. Drag across the terminal to select text,
 or double-click a word; Command-C
-(Control-Shift-C on Linux) copies it, and typing clears it. The mouse wheel pages
-through history (read-only; scrolling past the newest page or typing returns to
+(Control-Shift-C on Linux) copies it, and typing clears it. The mouse wheel scrolls
+through history (read-only; scrolling past the newest row or typing returns to
 the live screen, and the typed key reaches the agent), or sends arrow keys to a
 full-screen program on the alternate screen.
 History actions are also under **Agent**. Private

@@ -17,6 +17,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <vector>
 
 namespace lapis::desktop {
 
@@ -31,7 +32,23 @@ struct TerminalMatch {
     int row{};
     int first_column{};
     int last_column{};
+    bool operator==(const TerminalMatch&) const = default;
 };
+// What a cell is part of that Command-click opens: an http(s) link, or text
+// that may name a file or folder (checked with resolve_terminal_path), with
+// the cells it covers on each row it wraps over.
+struct TerminalLink {
+    enum class Kind : std::uint8_t { url, path };
+    Kind kind{Kind::url};
+    QString text; // the URL, or the path as written without its :line
+    int line{};   // a path's line (file.cpp:12 or file.cpp:12:3), else 0
+    std::vector<TerminalMatch> cells;
+};
+[[nodiscard]] std::optional<TerminalLink>
+terminal_link_at(const session::TerminalSnapshot& snapshot, int column, int row);
+// A path as written, as an existing file or folder on this Mac: absolute,
+// under ~, or relative to `folder` (none when `folder` is empty); else empty.
+[[nodiscard]] QString resolve_terminal_path(const QString& written, const QString& folder);
 // The next match after the cell `from` (column, row), or the one before it
 // when `backwards`; searching wraps around neither end of the screen.
 [[nodiscard]] std::optional<TerminalMatch> terminal_find(const session::TerminalSnapshot& snapshot,
@@ -102,6 +119,11 @@ class TerminalSurface : public QQuickItem {
     [[nodiscard]] const QString& selectedText() const { return selection_text_; }
     // Item-coordinate bounds of a visible cell of the current screen.
     [[nodiscard]] QRectF cellRect(int column, int row) const;
+    // What Command-click would open under the pointer while Command is held:
+    // a URL or an existing file or folder, else empty.
+    [[nodiscard]] const QString& hoveredLink() const { return hovered_target_; }
+    // Tests see what would open without opening it.
+    void setOpensLinksForTesting(bool opens) { opens_links_ = opens; }
   signals:
     void documentChanged();
     void interactiveChanged();
@@ -112,6 +134,9 @@ class TerminalSurface : public QQuickItem {
     void fontChanged();
     void gridSizeChanged();
     void selectionChanged();
+    void hoveredLinkChanged();
+    // Command-click opened a URL or a file or folder's path.
+    void linkOpened(const QString& target);
 
   protected:
     QSGNode* updatePaintNode(QSGNode* old_node, UpdatePaintNodeData* data) override;
@@ -126,6 +151,8 @@ class TerminalSurface : public QQuickItem {
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void hoverMoveEvent(QHoverEvent* event) override;
+    void hoverLeaveEvent(QHoverEvent* event) override;
+    void keyReleaseEvent(QKeyEvent* event) override;
     void inputMethodEvent(QInputMethodEvent* event) override;
 
   private:
@@ -177,6 +204,15 @@ class TerminalSurface : public QQuickItem {
     QMetaObject::Connection warm_connection_;
     QMetaObject::Connection window_changed_connection_;
     QPointF last_hover_;
+    // The link under the pointer while Command is held, underlined, and what
+    // it opens.
+    void updateLink(QPointF position, Qt::KeyboardModifiers modifiers);
+    void clearLink();
+    [[nodiscard]] QString linkTarget(const TerminalLink& link) const;
+    QPointF hover_position_;
+    std::optional<TerminalLink> hovered_link_;
+    QString hovered_target_;
+    bool opens_links_{true};
 
     QString font_family_;
     QString resolved_font_family_;

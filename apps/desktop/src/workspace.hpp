@@ -193,6 +193,9 @@ class SessionPreview final : public QObject {
     [[nodiscard]] bool live() const { return live_ != nullptr; }
     [[nodiscard]] const QString& title() const { return title_; }
     [[nodiscard]] const QString& directory() const { return directory_; }
+    // The folder on this Mac that paths the agent prints are relative to;
+    // empty for an agent over ssh, whose paths are on another machine.
+    [[nodiscard]] const QString& linkFolder() const { return link_folder_; }
     [[nodiscard]] const QString& activity() const { return activity_; }
     [[nodiscard]] QColor accent() const { return accent_; }
     // The screen shown: a history page, else the newest live screen, decoded
@@ -265,6 +268,7 @@ class SessionPreview final : public QObject {
     QVariantMap snapshot_timing_;
     QString title_;
     QString directory_;
+    QString link_folder_;
     QString activity_;
     QColor accent_;
     // Caches of what the service sent: decoding a waiting screen fills them,

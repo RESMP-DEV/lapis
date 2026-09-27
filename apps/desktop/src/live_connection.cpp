@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QFile>
+#include <QFileInfo>
 #include <QFutureWatcher>
 #include <QProcess>
 #include <QPromise>
@@ -27,6 +28,8 @@ constexpr int history_timeout_ms = 5000;
 SessionPreview::~SessionPreview() { live_.reset(); }
 void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpec& launch,
                                wire::AttachMode mode) {
+    link_folder_ =
+        QFileInfo(launch.program).fileName() == QLatin1String("ssh") ? QString() : launch.directory;
     live_ = std::make_unique<LiveConnection>(*this, endpoint, launch, mode);
 }
 void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
