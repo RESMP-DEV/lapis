@@ -1,6 +1,7 @@
 #ifndef LAPIS_DESKTOP_WORKSPACE_HPP
 #define LAPIS_DESKTOP_WORKSPACE_HPP
 
+#include "harness_catalog.hpp"
 #include "harness_models.hpp"
 #include "history_strip.hpp"
 #include "keymap.hpp"
@@ -289,12 +290,6 @@ struct PreviewRequest {
     QString request_id;
     QString reason;
 };
-
-// The installed program of a CLI lapis knows ("codex", "claude", ...), or
-// empty when it is not found on this Mac.
-[[nodiscard]] QString harness_program(const QString& id);
-// A CLI's name as people call it ("Claude", "Codex"), or the id itself.
-[[nodiscard]] QString harness_label(const QString& id);
 
 // An agent to start: a CLI in a folder, in a category, on this Mac or over ssh.
 struct AgentRequest {

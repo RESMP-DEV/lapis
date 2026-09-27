@@ -18,6 +18,7 @@ if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
 endif()
 add_library(lapis_desktop_view STATIC
     src/workspace.cpp src/workspace.hpp
+    src/harness_catalog.cpp src/harness_catalog.hpp
     src/workspace_control.cpp src/workspace_control.hpp
     src/alerts.cpp src/alerts.hpp
     src/agent_search.cpp src/agent_search.hpp
