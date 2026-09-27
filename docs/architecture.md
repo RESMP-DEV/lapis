@@ -2571,6 +2571,29 @@ Q11). They also guard iPhone workspace responses across gateway changes, bound
 remote discovery/identity work, and restore focused CLI case selection. Broad
 header exports and the other module extractions remain goal 3 work.
 
+The next bounded implementation slice is Q03, typed adapter observation state.
+The September 27 source review found it still outstanding in the working tree,
+the consolidated quality branch and the terminal-usability branch. Today
+`SessionPreview::applyAttention` derives "No prompt yet" behavior from exact
+Codex diagnostic strings. Give that behavior an explicit observation phase
+owned by the adapter, carried by the service, and consumed by the desktop;
+diagnostic text remains presentation only. Preserve the existing independent
+activity, connection, readiness and request state. This slice does not add
+approval capabilities or another adapter.
+
+Start from the reconciled quality and terminal-usability baseline, preserving
+the newer UI and architecture changes. Decide old/new client and service
+compatibility before changing the attention payload; an unnegotiated field
+addition is not an acceptable shortcut. Acceptance is unchanged no-first-prompt,
+retry and reconnect behavior when diagnostic wording changes, plus defined
+handling of legacy payloads and invalid phase values. Extend the existing
+observer, protocol and workspace fixtures. Build their affected targets and run
+`codex-observer`, `attention-protocol`, `local-protocol` and `workspace` with
+`--no-tests=error`; reuse unrelated terminal-input evidence under CONTRIBUTING's
+rules and apply the required-check matrix at integration. Q04's shared harness
+identity and configuration contract follows as a separate slice because it also
+touches launch and registry persistence consumers.
+
 Q09's state transition has source review and ordinary takeover/reconnect coverage;
 its deferred-queue regression is still unqualified. The attempted pressure probe
 was timing-sensitive and contained an unreachable assertion, so it was removed
@@ -2683,17 +2706,24 @@ the summon hotkey in the macOS table below.
 Prioritized first on September 27. lapis fills secrets and never owns them,
 the same boundary that keeps lapis from changing an agent's approval policy.
 
+The first slice is detection qualification, before Keychain or biometric wiring.
 The session service already owns each PTY, and `tcgetattr` on the master
-reflects the slave line discipline, so the moment a child clears `ECHO` (sudo,
-ssh-key passphrases, `gh auth login`, API key prompts) the service can
-classify the session as asking for a secret and publish a new advisory
-attention kind. It observes; it never blocks or answers.
+reflects the slave line discipline, but disabled `ECHO` alone cannot classify
+a secret prompt: normal raw-mode TUIs disable it too. The existing Codex CLI
+fixture explicitly waits for that state before ordinary input. Qualify an
+additional signal in managed sessions, including ordinary TUI input as a
+negative control and nested tool prompts whose input may not reach the outer
+PTY. Until that evidence exists, echo state is only a candidate hint, not a
+secret attention event. Detection observes; it never blocks or answers.
 
 Filling is an explicit user action from the card or Requests surface: a
 `SecItemCopyMatching` generic-password lookup scoped to a lapis-managed
-service, written to the PTY as ordinary input. Because echo is off, the bytes
-never enter scrollback or archived history; a regression test must pin that
-the input side is never recorded anywhere, including receipts. Saving is
+service, written to the PTY as ordinary input. Disabled echo suppresses the
+terminal driver's echo, but an application can still write those bytes to its
+output; it is not a guarantee against scrollback or archived output. A
+regression test must pin that lapis never records the fill on the input side,
+including receipts, and controlled prompt checks must separately inspect
+output and archived history. Saving is
 offered only for input explicitly typed into a detected prompt, stored with
 `SecAccessControl` using `userPresence` and `WhenUnlockedThisDeviceOnly`, so
 fills and saves require Touch ID or the login password. Optionally
