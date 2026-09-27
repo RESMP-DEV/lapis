@@ -509,10 +509,14 @@ void KeyMap::apply_defaults() {
                      {QStringLiteral("Ctrl+Shift+~"), QStringLiteral("Ctrl+~")});
 #endif
 #ifdef Q_OS_MACOS
+    // Command-Shift-J/K walk the rail from the home row, down and up as in vi,
+    // beside Command-Shift-[ and ] for the agents across.
     bindings_.insert(QStringLiteral("nextCategory"),
-                     {QStringLiteral("Meta+Alt+Right"), QStringLiteral("Meta+Shift+Down")});
+                     {QStringLiteral("Meta+Alt+Right"), QStringLiteral("Meta+Shift+Down"),
+                      QStringLiteral("Meta+Shift+J")});
     bindings_.insert(QStringLiteral("previousCategory"),
-                     {QStringLiteral("Meta+Alt+Left"), QStringLiteral("Meta+Shift+Up")});
+                     {QStringLiteral("Meta+Alt+Left"), QStringLiteral("Meta+Shift+Up"),
+                      QStringLiteral("Meta+Shift+K")});
     bindings_.insert(QStringLiteral("nextWindow"), {QStringLiteral("Meta+Shift+]")});
     bindings_.insert(QStringLiteral("previousWindow"), {QStringLiteral("Meta+Shift+[")});
     bindings_.insert(QStringLiteral("openCommands"), {QStringLiteral("Meta+Shift+P")});

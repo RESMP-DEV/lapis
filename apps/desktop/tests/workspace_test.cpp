@@ -2244,14 +2244,23 @@ void alertsChimeWhileAnAgentWaits() {
     background = true;
     emit workspace.agentNeedsYou(&agent);
     require(posted.size() == 1 && posted[0][1] == QStringLiteral("agent") &&
-                posted[0][2] == QStringLiteral("Needs you: Approval"),
-            "a request in the background posts one notification naming the agent");
+                posted[0][2] == QStringLiteral("Codex needs you: Approval"),
+            "a request in the background posts one notification naming the agent and its CLI");
     emit workspace.turnFinished(&agent);
-    require(posted.size() == 2 && posted[1][2] == QStringLiteral("Finished a turn"),
+    require(posted.size() == 2 && posted[1][2] == QStringLiteral("Codex finished a turn"),
             "a finished turn posts one too");
+    // A Claude agent whose conversation is about Codex is still Claude's.
+    agent.setHarnessId(QStringLiteral("claude"));
+    agent.rename(QStringLiteral("Codex resume"));
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 3 && posted[2][1] == QStringLiteral("Codex resume") &&
+                posted[2][2] == QStringLiteral("Claude finished a turn"),
+            "the body names the agent's CLI, whatever its title says");
+    agent.setHarnessId(QStringLiteral("codex"));
+    agent.rename(QStringLiteral("agent"));
     require(keymap.setNotify(false), "turn notifications off");
     emit workspace.agentNeedsYou(&agent);
-    require(posted.size() == 2, "none with notifications off");
+    require(posted.size() == 3, "none with notifications off");
 
     const auto wav = lapis::desktop::chime_wav(lapis::desktop::Chime::needsYou);
     require(wav.startsWith("RIFF") && wav.mid(8, 8) == "WAVEfmt " && wav.size() == 44 + 27342 * 2,

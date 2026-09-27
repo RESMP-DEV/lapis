@@ -195,7 +195,8 @@ agent strip are separate navigation levels. Every category remembers its selecte
 agent. Commands and the card's context menu rename, reorder or move the selected agent without
 restarting it. Attention counts do not reorder categories or steal input.
 
-On macOS, Command-Option-left/right or Command-Shift-up/down changes category;
+On macOS, Command-Shift-J/K (down and up the rail, from the home row),
+Command-Shift-up/down or Command-Option-left/right changes category;
 Command-Shift-[ and ] moves through the category's agents. Command-1 through 9
 selects one of the first nine categories. Command-J jumps to the next agent, in any category, with a
 pending request, or else one that finished while you were elsewhere.
@@ -254,7 +255,8 @@ per machine where they differ:
 An agent that needs you chimes (two taps, rising), and again every few seconds
 while the request waits and you are looking elsewhere, up to `repeat` times; a
 Codex or Claude turn that ends out of view chimes once, quietly. While lapis is
-in the background the same moments post a notification (`notify`); clicking it
+in the background the same moments post a notification (`notify`), titled with
+the agent and naming its CLI ("Claude finished a turn"); clicking it
 shows the agent. Appearance has the switches and a Play button for each. In the
 downloaded app it also keeps agents running at login and checks for updates,
 which install from the latest release. `keepAwake` keeps the Mac from

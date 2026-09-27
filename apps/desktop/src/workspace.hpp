@@ -272,6 +272,8 @@ struct PreviewRequest {
 // The installed program of a CLI lapis knows ("codex", "claude", ...), or
 // empty when it is not found on this Mac.
 [[nodiscard]] QString harness_program(const QString& id);
+// A CLI's name as people call it ("Claude", "Codex"), or the id itself.
+[[nodiscard]] QString harness_label(const QString& id);
 
 // An agent to start: a CLI in a folder, in a category, on this Mac or over ssh.
 struct AgentRequest {

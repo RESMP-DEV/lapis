@@ -149,7 +149,10 @@ Notifier::Notifier(Workspace& workspace, const KeyMap& config, Post post, Backgr
 void Notifier::notify(const SessionPreview* item, bool needsYou) {
     if (item == nullptr || !config_.notify() || !background_())
         return;
-    QString body = needsYou ? tr("Needs you") : tr("Finished a turn");
+    // The CLI leads the body: a title is the conversation's, and one about
+    // Codex would otherwise read as a Codex agent.
+    const QString cli = harness_label(item->harnessId());
+    QString body = needsYou ? tr("%1 needs you").arg(cli) : tr("%1 finished a turn").arg(cli);
     if (needsYou && !item->attentionReason().isEmpty())
         body += QStringLiteral(": ") + item->attentionReason();
     post_(item->sessionId(), item->title(), body);

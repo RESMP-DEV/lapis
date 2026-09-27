@@ -1425,7 +1425,9 @@ the trailing new-agent card) stays in view. Short windows shrink the cards
 rather than hiding the strip; `previewsVisible` hides it. Requests and Commands
 sit at the foot of the category rail, or beside the category selector when the
 rail is collapsed. Categories take Command-Option-left/right (as originally
-approved) and Command-Shift-up/down.
+approved), Command-Shift-up/down, and Command-Shift-J/K: with eight categories
+the user found Command-8 a stretch, and J and K go down and up from the home
+row as in vi, with the same modifiers as Command-Shift-[ and ] for agents.
 
 An agent that goes from working to finished or idle, or gains a request,
 while another agent is selected is marked `unseen`; selecting it
@@ -2125,7 +2127,9 @@ are per category and the strip stays the navigation.
   page has no more.
 - **Notifications** use UNUserNotificationCenter for the chime's moments while
   lapis is not the active app, one per agent (a newer one replaces it); the
-  first asks permission. **Reopen** keeps the last ten closed agents' resume
+  first asks permission. The body names the CLI ("Claude finished a turn"):
+  the title is the conversation's, and a Claude agent titled "Codex resume"
+  read as a Codex agent finishing. **Reopen** keeps the last ten closed agents' resume
   launches for the session. The downloaded app's **login item** is an
   SMAppService agent in `Contents/Library/LaunchAgents` running
   `--restore-agents --serve`.
@@ -2344,8 +2348,8 @@ Reported: lapis felt laggy, and only four categories had a key.
   everything every half hour, when an old conversation resumed in place is
   seen. The cache file is written at most every quarter hour.
 - **Categories.** Command-1 through Command-9 (Control-Shift on Linux) select
-  the first nine categories; Command-Option-arrows and Command-Shift-up/down
-  still move through all of them.
+  the first nine categories; Command-Option-arrows, Command-Shift-up/down and
+  Command-Shift-J/K still move through all of them.
 - Qualified by the conversation index test (an old conversation kept from
   memory, a new one in a known folder, one rewritten), the keymap test, and
   `check_nine_categories` in the window tests.

@@ -423,9 +423,15 @@ void navigation_defaults_preserve_terminal_editing() {
          {"splitRight", "splitDown", "tileLeft", "tileRight", "tileUp", "tileDown", "zoomTile"})
         require(!keymap.sequences(QString::fromLatin1(tiling)).isEmpty(), "tile actions have keys");
 #ifdef Q_OS_MACOS
-    require(keymap.sequences(QStringLiteral("nextCategory")) ==
-                QStringList({QStringLiteral("Meta+Alt+Right"), QStringLiteral("Meta+Shift+Down")}),
-            "categories keep Command-Option-arrows and gain Command-Shift-arrows");
+    require(
+        keymap.sequences(QStringLiteral("nextCategory")) ==
+                QStringList({QStringLiteral("Meta+Alt+Right"), QStringLiteral("Meta+Shift+Down"),
+                             QStringLiteral("Meta+Shift+J")}) &&
+            keymap.sequences(QStringLiteral("previousCategory")) ==
+                QStringList({QStringLiteral("Meta+Alt+Left"), QStringLiteral("Meta+Shift+Up"),
+                             QStringLiteral("Meta+Shift+K")}),
+        "categories keep Command-Option-arrows and Command-Shift-arrows, and gain "
+        "Command-Shift-J/K on the home row");
     require(keymap.sequences(QStringLiteral("newAgent")) == QStringList{QStringLiteral("Meta+T")} &&
                 keymap.sequences(QStringLiteral("newCategory")) ==
                     QStringList{QStringLiteral("Meta+N")},
