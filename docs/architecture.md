@@ -1429,7 +1429,9 @@ the trailing new-agent card) stays in view. Short windows shrink the cards
 rather than hiding the strip; `previewsVisible` hides it. Requests and Commands
 sit at the foot of the category rail, or beside the category selector when the
 rail is collapsed. Categories take Command-Option-left/right (as originally
-approved) and Command-Shift-up/down.
+approved), Command-Shift-up/down, and Command-Shift-J/K: with eight categories
+the user found Command-8 a stretch, and J and K go down and up from the home
+row as in vi, with the same modifiers as Command-Shift-[ and ] for agents.
 
 An agent that goes from working to finished or idle, or gains a request,
 while another agent is selected is marked `unseen`; selecting it
@@ -2144,7 +2146,9 @@ are per category and the strip stays the navigation.
   page has no more.
 - **Notifications** use UNUserNotificationCenter for the chime's moments while
   lapis is not the active app, one per agent (a newer one replaces it); the
-  first asks permission. **Reopen** keeps the last ten closed agents' resume
+  first asks permission. The body names the CLI ("Claude finished a turn"):
+  the title is the conversation's, and a Claude agent titled "Codex resume"
+  read as a Codex agent finishing. **Reopen** keeps the last ten closed agents' resume
   launches for the session. The downloaded app's **login item** is an
   SMAppService agent in `Contents/Library/LaunchAgents` running
   `--restore-agents --serve`.
@@ -2217,7 +2221,7 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
 - **Names.** Agents started in one folder all read as that folder. An agent
   that still has the name it started with takes its current conversation's
   title (the CLI's resume record, else lapis's resume pair, looked up in the
-  conversation index, which the app rescans each minute); a chosen name is
+  conversation index, which the app updates each minute); a chosen name is
   recorded as `named` in the registry and stays. The phone renames through
   `renameAgent`, so both devices share one name. Names are limited to 80 UTF-16
   units and printable Unicode scalars across the desktop, gateway and phone.
@@ -2242,6 +2246,261 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   CLIs, never redraws. Small shifts in the windowless host's start-up timing
   flipped that on every run, so the tests now prove the screen is live with a
   marker typed through the gateway and echoed back.
+
+### The workspace and the Mac's settings from the phone (September 26)
+
+Asked after 0.3.0: the phone should arrange categories and agents, and change
+settings, as the Mac does. Everything the Mac's commands do to the workspace
+and that makes sense without its stage now goes through the control socket
+under the same `Workspace` rules; the stage itself (tiles, splits, the sidebar)
+stays the Mac's.
+
+- **Categories.** `renameCategory`, `removeCategory` (only an empty one, and
+  one always stays) and `placeCategory`. Each category heading on the phone
+  ends in a menu (new agent here, rename, arrange, remove, which says why it
+  is unavailable); Settings → Categories and "Arrange categories" open a list
+  to drag, tap to rename, swipe an empty one away and add one.
+- **Agents.** `placeAgent` puts one at a position in a category (the Mac's
+  `placeSessions`), so an agent's long-press menu offers Move to, Move earlier
+  and Move later beside Rename and Close; paging follows that order.
+  `restartAgent` restarts a stopped agent from the same menu, or from its
+  screen, which offers Restart agent beside Open here again.
+- **Refusals.** A refused request answers with the workspace's reason and then
+  clears it, so a phone's mistake is shown on the phone and never left on the
+  Mac's window. The phone keeps it in an alert until dismissed, since the list
+  refresh would otherwise replace it within seconds.
+- **Settings.** `settings` and `changeSettings` read and change, through
+  `KeyMap`'s validated batch operation, the settings that matter away from the Mac:
+  keep awake, the two chimes and how often the first repeats, background
+  notifications and plan usage. A change naming anything else, or a wrong
+  type, changes nothing. Repeat counts must be whole numbers from 1 through
+  10; placement offsets must be nonnegative whole integers. A settings batch
+  saves once and rolls back in memory on failure, retaining the diagnostic.
+  The phone serializes writes and rejects older full-settings replies; failed
+  reads hide stale controls. The Mac window's look (theme, density, layout,
+  fonts, shortcuts) is not offered: from the phone it would only restyle a
+  window no one is looking at. The phone's own text size moved into its
+  Settings too.
+- Qualified by `phoneArrangesTheWorkspace` and `phoneChangesTheMacsSettings`
+  in the workspace suite, the gateway's arrangement and settings tests, and
+  four simulator tests; after them the phone check reads the check's own
+  `lapis.json` for the changed settings.
+
+### The wheel in full-screen programs (September 26)
+
+Scrolling stopped working on both the Mac and the phone. Claude Code's
+full-screen mode (`"tui": "fullscreen"` in its settings) draws on the
+alternate screen and turns on mouse reporting (modes 1000, 1002, 1003 and SGR
+1006), then scrolls its own transcript on mouse wheel events. Nothing scrolls
+off into the archive, so the phone's history pages were empty, and the Mac's
+wheel became arrow keys, which Claude reads as prompt history.
+
+- **Encoding.** `Terminal::encode_wheel` sends a notch as the program asked:
+  wheel events in its mouse format through Ghostty's mouse encoder when it
+  reports the mouse, three arrow keys on the alternate screen when it does
+  not. The encoder can also encode mouse tracking on the primary screen, but
+  v6 clients deliberately expose wheel delivery only on the alternate screen;
+  the primary screen keeps local history navigation.
+- **Wire.** A `wheel` frame (BE i16 notches, u16 column, u16 row) joins v6.
+  Services before it drop the connection on an unknown frame, so a client
+  sends it only when the service says it takes it: new services write the
+  snapshot's alternate-screen byte as 3 instead of 1. Readers before it take
+  any nonzero byte as true, and the flag is only needed on the alternate
+  screen. Valid byte values are 0, 1 and 3; byte 2 is rejected rather than
+  extending the format incompatibly for older nonzero-is-alternate readers.
+  Joined views may send it, and it does not claim the terminal size.
+- **Mac.** Over a full-screen program the wheel goes to the service with the
+  cell under the pointer; a service from before keeps the arrow keys.
+- **Phone.** The gateway reports `wheel` in each frame and forwards
+  `{"wheel": [notches, column, row]}` only while the latest screen takes it.
+  Over such a program the phone shows only its screen and turns a vertical
+  drag into notches, one per two rows, down scrolling back.
+- Agents keep the service they started with, so a running agent scrolls this
+  way once it restarts (its conversation resumes).
+- Qualified by `wheel_input` in the terminal tests, `wheel_messages` in the
+  protocol tests, `wheelReachesAFullScreenProgram` in the workspace suite, the
+  gateway's `WheelTests` against a real service, and
+  `testDraggingScrollsAFullScreenProgram` in the simulator, each with a
+  stand-in that asks for SGR mouse reporting.
+
+### All of history, and a bar to move through it (September 26)
+
+Asked the same day: scroll back to the very start, with something on the side
+to drag, kept on disk as text. The archive already took every row that scrolled
+off, but kept each page as its own uncompressed file of styled cells (about 27
+bytes a cell), rescanned every file of every session on each write, and so
+stopped at 64 MiB a session and 4,096 pages in all: a few thousand rows.
+
+- **Store.** A session appends compressed pages (the wire snapshot, zlib) to
+  segment files of at most 16 MiB, with an in-memory index of each page's ID,
+  offset and rows. A 24-row page of agent output is about 4.5 KB, some 190 bytes
+  a row, so the 1 GiB session default holds millions of rows. Writes stat the
+  root's files for the quotas instead of reading them; eviction removes whole
+  segments, oldest first, and never another session's open one. An interrupted
+  write is cut off when the session's store next opens.
+- **Place and jumps.** A page read back carries where it sits in its history
+  fields (every kept row, its first row among them, its rows), which older
+  clients never read. `at`, a third history direction, asks for the page
+  holding a row. Services before it leave a page's fields as the page alone and
+  reject `at`, so a client jumps only after a page has said where it sits.
+- **Mac.** While history shows, a bar on the terminal's right edge: its thumb
+  covers the view's share, a drag moves the view there, and releasing at the
+  bottom returns to live (see "History scrolls as one strip" below).
+- **Phone.** The same bar down the screen's right edge, placed at the oldest
+  loaded page. Dropping it loads that page alone and scrolls to it; older pages
+  load above as before, and "Newer output skipped · Load" fetches the pages
+  between it and the live screen, eight at a time, rather than all at once.
+- **Where.** The service kept history under a folder fixed at build time,
+  inside the build checkout, so the downloaded app could not write it on any
+  other Mac, and its binary carried the build machine's user name as UTF-16,
+  which the release sweep (UTF-8 only) missed. History now goes beside the
+  endpoint, and the sweep checks UTF-16 spellings too.
+- A full-screen program keeps no rows in this history (it redraws one screen);
+  Claude Code's full-screen mode scrolls its own transcript with the wheel.
+- Qualified by `check_long_history` (1,000 pages, jumps by row, reopening) and
+  the reworked `check_store` in the store tests, the `at` request in the
+  protocol tests, `historyJumpsToTheStart` in the workspace suite,
+  `HistoryJumpTests` against a real service, and `testScrubbingJumpsToTheStart`
+  in the simulator.
+
+### Lag, nine categories and a lighter conversation scan (September 26)
+
+Reported: lapis felt laggy, and only four categories had a key.
+
+- **Where the time went.** At 12:58 pm the Mac had 33 of 36 GB in use, 5.9 GB
+  compressed and 7.7 of 9.2 GB of swap, with 73 Claude Code processes holding
+  10.1 GB (16 lapis agents, 6.2 GB; 6 in iTerm2, 2.8 GB) and Chrome, WindowServer
+  and iTerm2 the busiest processes. lapis used 5.8% of a core and 291 MB; over a
+  10-second sample its main and render threads waited throughout, and its
+  session services stayed near 0 to 2%. A new Claude Code session in
+  full-screen mode, under an installed service, echoed a keystroke in 23 ms
+  median, as `cat` did. The lag was not lapis's work.
+- **The conversation index** was lapis's one steady cost: each minute it
+  checked all 29,397 Claude and 7,448 Codex conversation files (330 had changed
+  in a day) and rewrote a 5.6 MB cache, some 8 GB of writes a day. A pass now
+  remembers the previous one, lists only folders whose time changed, looks
+  again only at conversations written in the last two days, and sweeps
+  everything every half hour, when an old conversation resumed in place is
+  seen. The cache file is written at most every quarter hour. Folder times
+  come from a coarse clock (about 4 ms on Linux), so a file added within the
+  same tick as the folder's last change leaves its time as it was; a folder
+  changed within two seconds of a pass is listed again at the next one. The
+  test caught this when it wrote a new conversation that quickly.
+- **Categories.** Command-1 through Command-9 (Control-Shift on Linux) select
+  the first nine categories; Command-Option-arrows, Command-Shift-up/down and
+  Command-Shift-J/K still move through all of them.
+- Qualified by the conversation index test (an old conversation kept from
+  memory, a new one in a known folder, one rewritten), the keymap test, and
+  `check_nine_categories` in the window tests.
+
+### Typing latency (September 26)
+
+Typing in the side terminal felt slow. The native latency probe
+(`lapis_terminal_latency_probe --native --samples 100`, 120 Hz display) put a
+key's echo on screen 56.4 ms after the key (p50; p95 61.8 ms, every sample
+over one refresh), as milestone one had recorded (60.4 ms). The shell, Claude
+Code and decoding were not it: through an installed service, a login zsh
+echoed in 28 ms and Claude Code in 32 to 37 ms, a 51 MB conversation included.
+
+- **Publication wait, 17.0 ms.** The service published a changed screen only
+  when a 16 ms timer ran out, even for the first change after a quiet spell.
+  It now publishes as soon as its event loop is free when the last screen went
+  out at least a frame ago, and batches changes within a frame into the next.
+- **Transport, 25.1 ms.** macOS gives local sockets 8 KB buffers, so a screen
+  (about 130 KB) crossed in some sixteen write and read turns of both event
+  loops. The service, lapis and the gateway now ask for 1 MiB buffers.
+- **After:** 15.3 ms p50 and 21.6 ms p95 from key to frame; publication wait
+  0.0 ms, transport 1.9 ms, screen to frame 10.7 ms (unchanged, about a
+  refresh). Sessions keep the service they started with, so a running agent or
+  side terminal has the service half of this once it restarts.
+
+The probe stops at lapis's frame, and typing still felt choppy. A Metal System
+Trace of the installed app while the user typed (74 keys, a listen-only tap
+recording only when keys went down) measured key to display at 70.7 ms p50,
+83.6 ms p90 and 180 ms at worst. About 36 ms came before lapis requested its
+frame, from sessions still on the old service. The rest came after it:
+a frame requested within 20 ms of the previous one reached the display in
+5.8 ms (p50), but one requested after 20 to 500 ms of quiet took 32 to 36 ms.
+The display idles down when nothing draws, and every echo follows a quiet
+spell. After a key press, `TerminalSurface` now asks for another frame each
+time one is swapped, for 600 ms, so the display is still at its full rate
+when the echo arrives; it stops after the pause (`terminal_input_test`).
+
+### History scrolls as one strip (September 26)
+
+The first screenshot of history browsing showed 13 rows on a tinted band over
+an otherwise empty terminal. The Mac showed one archived page at a time, and
+pages are cut as rows leave the screen: up to a screen each, the newest often
+short. A wheel notch jumped a whole page, the bar above the terminal took its
+height, and a page kept its own colors.
+
+- **Strip.** Browsing begins at the screen as it is then, below every row kept
+  so far (`HistoryStrip`). The view is always a whole screen of that strip, in
+  the screen's size and colors, from any row: kept rows above, the rest of the
+  screen below. Pages come as the view needs them (`at` by row) and those
+  within four screens stay; a page of another width is cut or padded, and a
+  wide character cut at the edge is dropped. Rows archived while browsing
+  stay below the kept screen until live again.
+- **Scrolling.** A trackpad scrolls a row per row height of travel, a wheel
+  notch three rows; scrolling forward past the newest row, typing, the bar's
+  bottom or **Live** returns to live. Older and newer (the menu, Find) move a
+  screen. The bar's thumb is the view's share of the strip.
+- **Seam.** The screen is taken when browsing is asked for, so the archive
+  that answers is at least as new: it can repeat rows the screen shows (output
+  landing in between, or a terminal that grew bringing kept rows back, as the
+  first window test showed with two rows twice) but never miss one. The newest
+  kept rows that the screen's top repeats cell for cell belong to the screen;
+  a run of blank rows alone is not taken for a repeat.
+- **Chrome.** **Live** floats over the terminal's corner, with a note while
+  history loads; the terminal keeps its size. The bar is a translucent track
+  down the right edge in a 36-point strip that all answers the pointer: it
+  widens and brightens under it, a press on the thumb keeps its hold, one
+  elsewhere jumps there, and the wheel over it still scrolls the terminal.
+- **Older services.** A service that does not place its pages says each is all
+  there is; scrolling past its top puts the next older page above.
+- Qualified by `history_strip_test` (views across a short page, widths,
+  colors, older pages on top, the seam, forgetting), the history cases in the
+  connection test, `historyJumpsToTheStart` in the workspace suite, and
+  `run_history_ui_tests` in the window tests (a real agent: each row once
+  across the seam, the bar's hover, hold, wheel and release to live).
+
+### Command-hover links and files (September 26)
+
+Asked for as iTerm2 has it: holding Command shows what is clickable, and
+Command-click opens it. `terminal_link_at` finds what a cell is part of,
+across rows that wrap: an http(s) link as before, else the word around it,
+cut at spaces, quotes, brackets and list punctuation (Claude Code prints
+`Update(docs/a.md)`), without sentence punctuation after it, and with a
+`:line` or `:line:column` taken off. `resolve_terminal_path` turns that word
+into an existing file or folder: absolute, under `~`, or relative to the
+agent's folder. An agent over ssh has no folder here, so only its web links
+open. While Command is held over a target, the terminal draws a faint wash and
+an underline over its cells and shows a pointing hand; releasing Command,
+leaving, losing focus or the screen changing under the pointer updates it.
+Command-click opens a link in the browser and a path as the Finder would (an
+image in Preview, a folder in the Finder), except that an app or an
+executable file is shown in its folder rather than run. The line of
+`file.cpp:12` is parsed but a file still opens in its default app; opening it
+at that line in the configured editor is not done yet. Qualified in
+`terminal_input_test` (finding, resolving, hover with and without Command,
+release, clicks that open a file and a link and one that opens nothing).
+
+### Predictive text in the terminal (September 26)
+
+Extra words ("as a copy,") appeared after text the user typed into a Claude
+Code prompt, and were sent unless deleted. The paste and IME paths each
+deliver once, the text Wispr Flow pasted arrived intact, and no submitted
+prompt held a repeat. macOS 14 and later offer inline predictions, grey
+completions a space or Tab accepts, to any view taking text input unless it
+declines, and Qt 6.11's view never passes `Qt::ImhNoPredictiveText` on to
+AppKit. The terminal now reports that hint, and on macOS every lapis window's
+view answers AppKit's `NSTextInputTraits` with no inline prediction,
+completion, autocorrection, spelling or grammar checking, text replacement,
+smart quotes, dashes or insert-delete, math completion or Writing Tools, as
+other terminals do. AppKit may keep a view's answers while it has focus, so
+lapis's search and name fields decline them too. The hint is tested
+(`terminal_input_test`); the AppKit answers are exercised only by typing in
+the app.
 
 ### Following milestones
 

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -194,6 +195,32 @@ void input_modes() {
     require(terminal.encode_key(lapis::session::TerminalKey::up) == "\x1b[A" &&
                 terminal.encode_paste("echo hi") == "echo hi",
             "input modes did not reset");
+}
+
+// The wheel reaches a full-screen program as it asked: mouse wheel events in
+// its format (SGR here, as Claude Code's full-screen mode asks), arrow keys
+// on the alternate screen without mouse reporting, and nothing on the primary
+// screen, whose history the view scrolls instead.
+void wheel_input() {
+    Terminal terminal({12, 4});
+    require(terminal.encode_wheel({1, 0, 0}).empty(), "the primary screen took the wheel");
+    terminal.feed("\x1b[?1049h");
+    require(terminal.encode_wheel({1, 0, 0}) == "\x1b[A\x1b[A\x1b[A" &&
+                terminal.encode_wheel({-1, 0, 0}) == "\x1b[B\x1b[B\x1b[B",
+            "the alternate screen did not scroll by arrow keys");
+    terminal.feed("\x1b[?1000h\x1b[?1006h");
+    require(terminal.encode_wheel({2, 4, 2}) == "\x1b[<64;5;3M\x1b[<64;5;3M",
+            "a wheel back was not two SGR wheel-up events at the cell");
+    require(terminal.encode_wheel({-1, 99, 99}) == "\x1b[<65;12;4M",
+            "a wheel forward was not a wheel-down event inside the screen");
+    constexpr int minimum_steps = std::numeric_limits<int>::min();
+    require(terminal.encode_wheel({minimum_steps, 4, 2}) == terminal.encode_wheel({-64, 4, 2}),
+            "INT_MIN wheel clamping did not preserve direction and bound");
+    terminal.feed("\x1b[?1006l");
+    require(terminal.encode_wheel({1, 0, 0}) == std::string("\x1b[M") + char(32 + 64) + '!' + '!',
+            "the default mouse format was not used");
+    terminal.feed("\x1b[?1000l\x1b[?1049l");
+    require(terminal.encode_wheel({1, 0, 0}).empty(), "the wheel reached a program that left");
 }
 
 void snapshots_survive_changes() {
@@ -489,6 +516,7 @@ constexpr std::array cases{
     Case{"alternate_screen", alternate_screen},
     Case{"resize_and_wrap_spacer", resize_and_wrap_spacer},
     Case{"input_modes", input_modes},
+    Case{"wheel_input", wheel_input},
     Case{"snapshot_durability", snapshots_survive_changes},
     Case{"cursor_visibility_and_shape", cursor_visibility_and_shape},
     Case{"dsr_reply_order", dsr_reply_order},

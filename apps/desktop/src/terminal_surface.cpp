@@ -4,6 +4,8 @@
 
 #include <QClipboard>
 #include <QDesktopServices>
+#include <QDir>
+#include <QFileInfo>
 #include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QGuiApplication>
@@ -116,6 +118,14 @@ QTextCharFormat text_format(const session::TerminalSnapshot& snapshot, std::size
     format.setFontItalic(cell.style.italic);
     return format;
 }
+
+#ifdef Q_OS_MACOS
+constexpr auto kLinkModifier = Qt::MetaModifier; // Command
+constexpr auto kLinkKey = Qt::Key_Meta;
+#else
+constexpr auto kLinkModifier = Qt::ControlModifier;
+constexpr auto kLinkKey = Qt::Key_Control;
+#endif
 
 void add_rectangle(QSGNode& node, const QRectF& bounds, const QColor& value) {
     auto rectangle = std::make_unique<QSGSimpleRectNode>(bounds, value);
@@ -474,6 +484,27 @@ bool same_row(const session::TerminalSnapshot& left, const session::TerminalSnap
     return true;
 }
 
+// The link under the pointer while Command is held: a faint wash and an
+// underline in the text's color, over every row it wraps across.
+void add_link(QSGNode& overlays, const session::TerminalSnapshot& snapshot,
+              const std::vector<TerminalMatch>& cells, qreal cell_width, qreal row_height) {
+    const QColor text = color(snapshot.foreground_rgb);
+    QColor wash = text;
+    wash.setAlpha(36);
+    const qreal thickness = std::max<qreal>(1, row_height / 14);
+    for (const auto& span : cells) {
+        if (span.row < 0 || span.row >= snapshot.size.rows)
+            continue;
+        const QRectF bounds(span.first_column * cell_width, span.row * row_height,
+                            (span.last_column - span.first_column + 1) * cell_width, row_height);
+        add_rectangle(overlays, bounds, wash);
+        add_rectangle(
+            overlays,
+            QRectF(bounds.left(), bounds.bottom() - thickness - 1, bounds.width(), thickness),
+            text);
+    }
+}
+
 // Selection endpoints in reading order.
 std::pair<QPoint, QPoint> ordered(QPoint first, QPoint second) {
     const bool swap = first.y() > second.y() || (first.y() == second.y() && first.x() > second.x());
@@ -572,6 +603,7 @@ struct TerminalSurface::RenderState {
     int font_pixel_size{};
     qreal minimum_scale{};
     std::optional<std::pair<QPoint, QPoint>> selection;
+    std::vector<TerminalMatch> link;
 };
 
 void TerminalSurface::publishFrame(bool snapshot_changed) {
@@ -585,6 +617,8 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
     frame->minimum_scale = minimum_scale_;
     if (selection_anchor_ && selection_head_)
         frame->selection = ordered(*selection_anchor_, *selection_head_);
+    if (hovered_link_)
+        frame->link = hovered_link_->cells;
     {
         const std::lock_guard lock(render_mutex_);
         if (!snapshot_changed && render_state_)
@@ -634,14 +668,27 @@ TerminalSurface::TerminalSurface(QQuickItem* parent)
     window_changed_connection_ =
         connect(this, &QQuickItem::windowChanged, this, &TerminalSurface::bindWindow);
     throttle_.setSingleShot(true);
-    connect(&throttle_, &QTimer::timeout, this, [this] { publishFrame(true); });
+    connect(&throttle_, &QTimer::timeout, this, [this] {
+        since_frame_.start();
+        publishFrame(true);
+    });
     bindWindow(window());
     publishFrame(true);
 }
 
 void TerminalSurface::bindWindow(QQuickWindow* current) {
+    if (warm_connection_) {
+        disconnect(warm_connection_);
+        warm_connection_ = {};
+    }
     if (window_active_connection_)
         disconnect(window_active_connection_);
+    if (window_visible_connection_)
+        disconnect(window_visible_connection_);
+    if (current)
+        window_visible_connection_ =
+            connect(current, &QWindow::visibleChanged, this, &TerminalSurface::updateViewing);
+    updateViewing();
     if (current)
         window_active_connection_ = connect(current, &QWindow::activeChanged, this, [this] {
             if (!window() || !window()->isActive()) {
@@ -657,8 +704,41 @@ void TerminalSurface::bindWindow(QQuickWindow* current) {
 TerminalSurface::~TerminalSurface() {
     disconnect(window_changed_connection_);
     disconnect(window_active_connection_);
+    disconnect(window_visible_connection_);
+    disconnect(warm_connection_);
+    if (viewed_)
+        viewed_->removeViewer(viewed_interval_);
     const std::lock_guard lock(render_mutex_);
     render_state_.reset();
+}
+
+// A new screen: redraw now, or within the view's frame interval.
+void TerminalSurface::screenChanged() {
+    // A selection names what was on screen; once that text moves or
+    // changes, the highlight would point at something else.
+    if (selection_anchor_ && selection_head_ &&
+        textBetween(*selection_anchor_, *selection_head_) != selection_text_)
+        clearSelection();
+    // The underlined link follows what is under the pointer now.
+    if (hovered_link_)
+        updateLink(hover_position_, QGuiApplication::keyboardModifiers());
+    if (frame_interval_ > 0) {
+        // A change after a quiet interval draws at once; changes
+        // within one share the frame at its end.
+        if (!throttle_.isActive()) {
+            const auto waited = since_frame_.isValid() ? since_frame_.elapsed() : frame_interval_;
+            if (waited >= frame_interval_) {
+                since_frame_.start();
+                publishFrame(true);
+            } else {
+                throttle_.start(static_cast<int>(frame_interval_ - waited));
+            }
+        }
+        updateInputContext(Qt::ImCursorRectangle);
+        return;
+    }
+    publishFrame(true);
+    updateInputContext(Qt::ImCursorRectangle);
 }
 
 void TerminalSurface::setDocument(SessionPreview* document) {
@@ -667,25 +747,13 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     if (document_)
         disconnect(document_, nullptr, this, nullptr);
     document_ = document;
+    wheel_remainder_ = 0;
+    pixel_remainder_ = 0;
     selecting_ = false;
     clearSelection();
+    clearLink();
     if (document_) {
-        connect(document_, &SessionPreview::snapshotChanged, this, [this] {
-            // A selection names what was on screen; once that text moves or
-            // changes, the highlight would point at something else.
-            if (selection_anchor_ && selection_head_ &&
-                textBetween(*selection_anchor_, *selection_head_) != selection_text_)
-                clearSelection();
-            if (frame_interval_ > 0) {
-                // The first change opens the window; later ones share its frame.
-                if (!throttle_.isActive())
-                    throttle_.start(frame_interval_);
-                updateInputContext(Qt::ImCursorRectangle);
-                return;
-            }
-            publishFrame(true);
-            updateInputContext(Qt::ImCursorRectangle);
-        });
+        connect(document_, &SessionPreview::snapshotChanged, this, &TerminalSurface::screenChanged);
         connect(document_, &SessionPreview::connectionChanged, this, [this] {
             if (!document_ || !document_->inputReady()) {
                 ++ime_epoch_;
@@ -704,12 +772,58 @@ void TerminalSurface::setDocument(SessionPreview* document) {
             emit documentChanged();
         });
     }
+    updateViewing();
     ++ime_epoch_;
     resetInputContext();
     requestResize();
     claimSize();
     publishFrame(true);
     emit documentChanged();
+}
+
+void TerminalSurface::keepFramesComing() {
+    constexpr qint64 warm_ms = 600;
+    auto* shown = window();
+    if (shown == nullptr)
+        return;
+    since_typed_.start();
+    if (!warm_connection_)
+        // Each frame asks for the next until typing has paused for warm_ms.
+        warm_connection_ = connect(
+            shown, &QQuickWindow::frameSwapped, this,
+            [this] {
+                if (window() != nullptr && since_typed_.isValid() &&
+                    since_typed_.elapsed() < warm_ms) {
+                    window()->update();
+                    return;
+                }
+                disconnect(warm_connection_);
+                warm_connection_ = {};
+            },
+            Qt::QueuedConnection);
+    shown->update();
+}
+
+// Shown while this view and its window are visible: a hidden window, a
+// hidden strip or a closed tile decodes nothing for its agent.
+void TerminalSurface::updateViewing() {
+    SessionPreview* showing =
+        document_ && isVisible() && window() != nullptr && window()->isVisible() ? document_.data()
+                                                                                 : nullptr;
+    if (showing == viewed_ && (showing == nullptr || viewed_interval_ == frame_interval_))
+        return;
+    if (viewed_)
+        viewed_->removeViewer(viewed_interval_);
+    viewed_ = showing;
+    viewed_interval_ = frame_interval_;
+    if (viewed_)
+        viewed_->addViewer(viewed_interval_);
+}
+
+void TerminalSurface::itemChange(ItemChange change, const ItemChangeData& value) {
+    QQuickItem::itemChange(change, value);
+    if (change == ItemVisibleHasChanged)
+        updateViewing();
 }
 
 void TerminalSurface::geometryChange(const QRectF& new_geometry, const QRectF& old_geometry) {
@@ -761,6 +875,8 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
     if (frame->selection)
         add_selection(*root->overlays, snapshot, frame->selection->first, frame->selection->second,
                       cell_width, row_height);
+    if (!frame->link.empty())
+        add_link(*root->overlays, snapshot, frame->link, cell_width, row_height);
     if (!frame->preedit.isEmpty() && snapshot.cursor.in_viewport) {
         auto composition = std::unique_ptr<QSGTextNode>(window()->createTextNode());
         composition->setColor(color(snapshot.foreground_rgb));
@@ -818,6 +934,7 @@ void TerminalSurface::setFrameInterval(int milliseconds) {
     if (frame_interval_ == bounded)
         return;
     frame_interval_ = bounded;
+    updateViewing();
     if (frame_interval_ == 0 && throttle_.isActive()) {
         throttle_.stop();
         publishFrame(true);
@@ -848,6 +965,7 @@ void TerminalSurface::focusOutEvent(QFocusEvent* event) {
         return;
     if (!interactive_ && activeFocusOnTab())
         setActiveFocusOnTab(false);
+    clearLink();
     ++ime_epoch_;
     resetInputContext();
 }
@@ -914,7 +1032,61 @@ void TerminalSurface::hoverMoveEvent(QHoverEvent* event) {
         last_hover_ = event->globalPosition();
         claimSize();
     }
+    updateLink(event->position(), event->modifiers());
     event->ignore();
+}
+void TerminalSurface::hoverLeaveEvent(QHoverEvent* event) {
+    clearLink();
+    event->ignore();
+}
+void TerminalSurface::keyReleaseEvent(QKeyEvent* event) {
+    if (event->key() == kLinkKey)
+        clearLink();
+    QQuickItem::keyReleaseEvent(event);
+}
+// While Command is held, the link or existing path under the pointer is
+// underlined and the pointer becomes a hand; Command-click opens it.
+void TerminalSurface::updateLink(QPointF position, Qt::KeyboardModifiers modifiers) {
+    hover_position_ = position;
+    if (!interactive_ || !document_ || !modifiers.testFlag(kLinkModifier) || !contains(position)) {
+        clearLink();
+        return;
+    }
+    const auto cell = cellAt(position);
+    auto link = terminal_link_at(document_->snapshot(), cell.x(), cell.y());
+    const auto target = link ? linkTarget(*link) : QString();
+    if (!link || target.isEmpty()) {
+        clearLink();
+        return;
+    }
+    if (hovered_link_ && hovered_link_->cells == link->cells && hovered_target_ == target)
+        return;
+    hovered_link_ = std::move(link);
+    hovered_target_ = target;
+    setCursor(Qt::PointingHandCursor);
+    publishFrame(false);
+    emit hoveredLinkChanged();
+}
+void TerminalSurface::clearLink() {
+    if (!hovered_link_)
+        return;
+    hovered_link_.reset();
+    hovered_target_.clear();
+    unsetCursor();
+    publishFrame(false);
+    emit hoveredLinkChanged();
+}
+// A web link, or a written path as an existing file or folder here; an
+// agent over ssh prints paths on another machine, so only its links open.
+QString TerminalSurface::linkTarget(const TerminalLink& link) const {
+    if (link.kind == TerminalLink::Kind::url) {
+        const QUrl url(link.text, QUrl::StrictMode);
+        return url.isValid() && (url.scheme() == QLatin1String("https") ||
+                                 url.scheme() == QLatin1String("http"))
+                   ? link.text
+                   : QString();
+    }
+    return resolve_terminal_path(link.text, document_ ? document_->linkFolder() : QString());
 }
 void TerminalSurface::mousePressEvent(QMouseEvent* event) {
     if (!interactive_) {
@@ -922,19 +1094,25 @@ void TerminalSurface::mousePressEvent(QMouseEvent* event) {
         return;
     }
     forceActiveFocus(Qt::MouseFocusReason);
-#ifdef Q_OS_MACOS
-    const auto link_modifier = Qt::MetaModifier;
-#else
-    const auto link_modifier = Qt::ControlModifier;
-#endif
-    if (event->button() == Qt::LeftButton && event->modifiers() == link_modifier && document_) {
-        // Command-click (Control-click elsewhere) opens a web link in the browser.
+    if (event->button() == Qt::LeftButton && event->modifiers() == kLinkModifier && document_) {
+        // Command-click (Control-click elsewhere) opens what it is on as a
+        // double-click in the Finder would: a web link in the browser, an
+        // image in Preview, a folder in the Finder. An app or a program is
+        // shown in its folder rather than run.
         const auto cell = cellAt(event->position());
-        const QUrl url(terminal_url_at(document_->snapshot(), cell.x(), cell.y()),
-                       QUrl::StrictMode);
-        if (url.isValid() &&
-            (url.scheme() == QLatin1String("https") || url.scheme() == QLatin1String("http")))
-            QDesktopServices::openUrl(url);
+        const auto link = terminal_link_at(document_->snapshot(), cell.x(), cell.y());
+        const auto target = link ? linkTarget(*link) : QString();
+        if (link && !target.isEmpty()) {
+            QUrl url(target);
+            if (link->kind == TerminalLink::Kind::path) {
+                const QFileInfo info(target);
+                const bool runs = info.isBundle() || (info.isFile() && info.isExecutable());
+                url = QUrl::fromLocalFile(runs ? info.absolutePath() : target);
+            }
+            emit linkOpened(target);
+            if (opens_links_)
+                QDesktopServices::openUrl(url);
+        }
         event->accept();
         return;
     }
@@ -994,35 +1172,51 @@ void TerminalSurface::wheelEvent(QWheelEvent* event) {
         event->ignore();
         return;
     }
-    wheel_remainder_ += event->angleDelta().y();
-    const int steps = wheel_remainder_ / 120;
-    wheel_remainder_ -= steps * 120;
-    if (steps != 0)
-        scrollHistory(steps);
     event->accept();
+    const bool program = document_->snapshot().alternate_screen && !document_->historyActive();
+    if (program != wheel_program_) {
+        wheel_remainder_ = 0;
+        pixel_remainder_ = 0;
+        wheel_program_ = program;
+    }
+    if (program) {
+        wheel_remainder_ += event->angleDelta().y();
+        const int steps = wheel_remainder_ / 120;
+        wheel_remainder_ -= steps * 120;
+        if (steps != 0)
+            scrollProgram(steps, cellAt(event->position()));
+        return;
+    }
+    // Kept history scrolls by rows, as in other terminals: a trackpad's
+    // pixels a row at a time, a wheel's notch three rows. Positive is back.
+    int rows = 0;
+    const auto grid = cellGrid();
+    if (!event->pixelDelta().isNull() && grid && grid->height > 0) {
+        pixel_remainder_ += event->pixelDelta().y();
+        rows = static_cast<int>(pixel_remainder_ / grid->height);
+        pixel_remainder_ -= rows * grid->height;
+    } else {
+        wheel_remainder_ += event->angleDelta().y();
+        rows = wheel_remainder_ / 40;
+        wheel_remainder_ -= rows * 40;
+    }
+    if (rows != 0)
+        document_->scrollHistory(rows);
 }
-// Positive steps scroll back. Full-screen programs scroll themselves, so on
-// the alternate screen the wheel becomes arrow keys, as in other terminals.
-void TerminalSurface::scrollHistory(int steps) {
-    if (document_->snapshot().alternate_screen && !document_->historyActive()) {
-        if (!acceptsTerminalInput())
-            return;
-        const auto key = steps > 0 ? session::TerminalKey::up : session::TerminalKey::down;
-        for (int line = 0; line < std::abs(steps) * 3; ++line)
-            document_->sendKey(key, {});
+// Full-screen programs scroll themselves: the service sends the wheel as the
+// program asked (mouse wheel events when it reports the mouse, as Claude
+// Code's full-screen mode does, else arrow keys). A service from before wheel
+// input gets arrow keys from here. Positive steps scroll back.
+void TerminalSurface::scrollProgram(int steps, QPoint cell) {
+    if (!acceptsTerminalInput())
+        return;
+    if (document_->snapshot().accepts_wheel) {
+        document_->sendWheel(steps, cell.x(), cell.y());
         return;
     }
-    if (steps > 0) {
-        document_->olderHistory();
-        return;
-    }
-    if (!document_->historyActive())
-        return;
-    // The newest page answers with a message instead of a page.
-    if (!document_->historyRequestPending() && !document_->historyMessage().isEmpty())
-        document_->returnToLive();
-    else
-        document_->newerHistory();
+    const auto key = steps > 0 ? session::TerminalKey::up : session::TerminalKey::down;
+    for (int line = 0; line < std::abs(steps) * 3; ++line)
+        document_->sendKey(key, {});
 }
 std::optional<TerminalSurface::CellGrid> TerminalSurface::cellGrid() const {
     if (!document_)
@@ -1224,34 +1418,67 @@ int TerminalSurface::countMatches(const QString& text) const {
     return count;
 }
 
-QString terminal_url_at(const session::TerminalSnapshot& snapshot, int column, int row) {
-    const int rows = snapshot.size.rows;
-    if (row < 0 || row >= rows || column < 0 || column >= snapshot.size.columns)
-        return {};
-    // A row that runs to the last column is treated as wrapping onto the next
-    // one, which is how agents print long links in a narrow terminal.
-    const auto fills = [&](const RowText& line) { return !line.text.endsWith(QLatin1Char(' ')); };
+namespace {
+// The rows a cell's line runs over, joined: a row that runs to the last column
+// is treated as wrapping onto the next one, which is how agents print long
+// links in a narrow terminal. Each unit of the text keeps its cell.
+struct JoinedRows {
+    QString text;
+    std::vector<QPoint> cells; // (column, row) of each unit
+    qsizetype target{-1};      // the unit of the asked-for cell
+};
+JoinedRows joined_rows(const session::TerminalSnapshot& snapshot, int column, int row) {
+    JoinedRows joined;
+    const auto fills = [](const RowText& line) { return !line.text.endsWith(QLatin1Char(' ')); };
     int first = row;
     while (first > 0 && fills(row_text(snapshot, first - 1)))
         --first;
-    QString joined;
-    qsizetype target = -1;
-    for (int current = first; current < rows; ++current) {
+    for (int current = first; current < snapshot.size.rows; ++current) {
         const auto line = row_text(snapshot, current);
-        if (current == row)
-            for (qsizetype unit = 0; unit < line.columns.size(); ++unit)
-                if (line.columns[unit] == column) {
-                    target = joined.size() + unit;
-                    break;
-                }
-        joined += line.text;
+        for (qsizetype unit = 0; unit < line.columns.size(); ++unit) {
+            if (current == row && joined.target < 0 && line.columns[unit] == column)
+                joined.target = joined.text.size() + unit;
+            joined.cells.emplace_back(line.columns[unit], current);
+        }
+        joined.text += line.text;
         if (current >= row && !fills(line))
             break;
     }
+    return joined;
+}
+// The cells a stretch of the joined text covers, row by row.
+std::vector<TerminalMatch> covered(const JoinedRows& joined, qsizetype start, qsizetype length) {
+    std::vector<TerminalMatch> cells;
+    for (auto unit = start; unit < start + length; ++unit) {
+        const auto cell = joined.cells[static_cast<std::size_t>(unit)];
+        if (!cells.empty() && cells.back().row == cell.y())
+            cells.back().last_column = std::max(cells.back().last_column, cell.x());
+        else
+            cells.push_back({cell.y(), cell.x(), cell.x()});
+    }
+    return cells;
+}
+// Where a written path ends: spaces, quotes, brackets and list punctuation, as
+// in Claude Code's Update(docs/a.md) or a quoted '~/x'.
+bool path_delimiter(QChar value) {
+    return value.isSpace() || QStringLiteral("\"'`()[]{}<>|,;").contains(value);
+}
+bool printable(const QString& text) {
+    const auto codepoints = text.toUcs4();
+    return std::all_of(codepoints.cbegin(), codepoints.cend(), printable_url_character);
+}
+} // namespace
+
+std::optional<TerminalLink> terminal_link_at(const session::TerminalSnapshot& snapshot, int column,
+                                             int row) {
+    if (row < 0 || row >= snapshot.size.rows || column < 0 || column >= snapshot.size.columns)
+        return std::nullopt;
+    const auto joined = joined_rows(snapshot, column, row);
+    const auto target = joined.target;
     if (target < 0)
-        return {};
+        return std::nullopt;
     static const QRegularExpression pattern(QStringLiteral(R"(https?://[^\s<>"'`]+)"));
-    for (auto matches = pattern.globalMatch(joined); matches.hasNext();) {
+    for (auto matches = pattern.globalMatch(joined.text); matches.hasNext();) {
         const auto match = matches.next();
         auto url = match.captured();
         // Sentence punctuation and unbalanced closing brackets end the link.
@@ -1259,13 +1486,60 @@ QString terminal_url_at(const session::TerminalSnapshot& snapshot, int column, i
                !(url.back() == QLatin1Char(')') &&
                  url.count(QLatin1Char('(')) > url.count(QLatin1Char(')')) - 1))
             url.chop(1);
-        const auto codepoints = url.toUcs4();
-        if (!std::all_of(codepoints.cbegin(), codepoints.cend(), printable_url_character))
+        if (!printable(url))
             continue;
         if (target >= match.capturedStart() && target < match.capturedStart() + url.size())
-            return url;
+            return TerminalLink{TerminalLink::Kind::url, url, 0,
+                                covered(joined, match.capturedStart(), url.size())};
     }
-    return {};
+    // Otherwise the word under the cell, which may name a file or folder.
+    const auto& text = joined.text;
+    if (path_delimiter(text[target]))
+        return std::nullopt;
+    auto start = target;
+    auto end = target + 1;
+    while (start > 0 && !path_delimiter(text[start - 1]))
+        --start;
+    while (end < text.size() && !path_delimiter(text[end]))
+        ++end;
+    // Sentence punctuation after a path is not part of it.
+    while (end > start && QStringLiteral(".:!?").contains(text[end - 1]))
+        --end;
+    if (target >= end || end - start > 1024)
+        return std::nullopt;
+    auto word = text.mid(start, end - start);
+    // file.cpp:12 or file.cpp:12:3 names a line of the file.
+    int line = 0;
+    static const QRegularExpression location(QStringLiteral(R"(^(.+?):(\d+)(?::\d+)?$)"));
+    if (const auto found = location.match(word); found.hasMatch()) {
+        word = found.captured(1);
+        line = found.captured(2).toInt();
+    }
+    if (!printable(word))
+        return std::nullopt;
+    return TerminalLink{TerminalLink::Kind::path, word, line, covered(joined, start, end - start)};
+}
+
+QString terminal_url_at(const session::TerminalSnapshot& snapshot, int column, int row) {
+    const auto link = terminal_link_at(snapshot, column, row);
+    return link && link->kind == TerminalLink::Kind::url ? link->text : QString();
+}
+
+QString resolve_terminal_path(const QString& written, const QString& folder) {
+    if (written.isEmpty())
+        return {};
+    QString path = written;
+    if (path == QLatin1String("~") || path.startsWith(QLatin1String("~/")))
+        path = QDir::homePath() + path.mid(1);
+    else if (path.startsWith(QLatin1String("file://")))
+        path = QUrl(path).toLocalFile();
+    if (QDir::isRelativePath(path)) {
+        if (folder.isEmpty())
+            return {};
+        path = QDir(folder).filePath(path);
+    }
+    const QFileInfo info(QDir::cleanPath(path));
+    return info.exists() ? info.absoluteFilePath() : QString();
 }
 
 QByteArray terminal_text_key(const QKeyEvent& event) {
@@ -1304,6 +1578,8 @@ QByteArray terminal_text_key(const QKeyEvent& event) {
 }
 
 void TerminalSurface::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == kLinkKey)
+        updateLink(hover_position_, event->modifiers() | kLinkModifier);
     // Copying also works on a read-only history page.
     if (interactive_ && copySelection(*event)) {
         event->accept();
@@ -1314,6 +1590,7 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
         event->ignore();
         return;
     }
+    keepFramesComing();
     // New input replaces what was selected; a modifier alone does not.
     if (!modifier_key(event->key()))
         clearSelection();
@@ -1444,6 +1721,7 @@ void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
         event->ignore();
         return;
     }
+    keepFramesComing();
     const bool valid_replacement =
         event->replacementStart() == 0 && event->replacementLength() == 0;
     if (!valid_replacement) {
@@ -1480,6 +1758,10 @@ void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
 QVariant TerminalSurface::inputMethodQuery(Qt::InputMethodQuery query) const {
     if (query == Qt::ImEnabled)
         return acceptsTerminalInput();
+    // Keys go straight to a program: no predictions, completion or
+    // corrections for the platform to type in on the user's behalf.
+    if (query == Qt::ImHints)
+        return static_cast<int>(Qt::ImhNoPredictiveText | Qt::ImhNoAutoUppercase);
     if (query == Qt::ImCursorRectangle && document_) {
         const auto& snapshot = document_->snapshot();
         const auto grid = cellGrid();

@@ -300,12 +300,22 @@ QString harness_program(const QString& id) {
     return harness ? harnessExecutable(*harness) : QString();
 }
 
+QString harness_label(const QString& id) {
+    const auto* harness = findHarness(id);
+    return harness ? QString::fromLatin1(harness->label) : id;
+}
+
 SessionPreview::SessionPreview(QString title, QString directory, QString activity, QColor accent,
                                std::string_view content)
     : title_(std::move(title)), directory_(std::move(directory)), activity_(std::move(activity)),
       accent_(accent) {
     connect(this, &SessionPreview::connectionChanged, this, &SessionPreview::statusChanged);
     connect(this, &SessionPreview::attentionChanged, this, &SessionPreview::statusChanged);
+    decode_timer_.setSingleShot(true);
+    connect(&decode_timer_, &QTimer::timeout, this, [this] {
+        if (decodeWaiting() && !history_active_)
+            emit snapshotChanged();
+    });
     quiet_timer_.setSingleShot(true);
     connect(&quiet_timer_, &QTimer::timeout, this, [this] {
         if (!output_active_)

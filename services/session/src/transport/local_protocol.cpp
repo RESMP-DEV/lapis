@@ -137,8 +137,27 @@ SnapshotMessage decode_snapshot_message(const QByteArray& payload) {
     result.snapshot = decode_snapshot(payload.sliced(snapshot_header_bytes));
     return result;
 }
+SnapshotEnvelope decode_snapshot_envelope(const QByteArray& payload) {
+    // The screen's revision (8 bytes), then its columns and rows.
+    check(payload.size() > snapshot_header_bytes + 12);
+    const unsigned char* cursor = reinterpret_cast<const unsigned char*>(payload.constData());
+    SnapshotEnvelope result;
+    result.attachment = decode_attachment(cursor);
+    result.sequence = read_quint64(cursor);
+    check(result.sequence != 0);
+    result.timing.pty_read_ns = read_quint64(cursor);
+    result.timing.parse_end_ns = read_quint64(cursor);
+    result.timing.publish_ns = read_quint64(cursor);
+    const auto* size = cursor + 8;
+    result.size = {static_cast<std::uint16_t>((unsigned{size[0]} << 8U) | size[1]),
+                   static_cast<std::uint16_t>((unsigned{size[2]} << 8U) | size[3])};
+    check(result.size.columns > 0 && result.size.rows > 0 &&
+          quint32(result.size.columns) * result.size.rows <= max_cells);
+    result.encoded = payload.sliced(snapshot_header_bytes);
+    return result;
+}
 QByteArray encode_history_request(const HistoryRequest& request) {
-    check(request.request_id != 0 && request.direction <= HistoryDirection::newer);
+    check(request.request_id != 0 && request.direction <= HistoryDirection::at);
     check(request.direction != HistoryDirection::newer || request.reference != 0);
     QByteArray bytes;
     append_quint64(bytes, request.request_id);
@@ -241,7 +260,7 @@ Status decode_status(const QByteArray& payload) {
     return {static_cast<StatusCode>(code), std::move(text)};
 }
 QByteArray frame(Kind kind, const QByteArray& payload) {
-    check(kind >= Kind::hello && kind <= Kind::terminate);
+    check(kind >= Kind::hello && kind <= Kind::wheel);
     check(payload.size() + 1 <= max_frame_bytes);
     QByteArray result;
     QDataStream out(&result, QIODevice::WriteOnly);
@@ -270,7 +289,7 @@ bool take_frame(QByteArray& buffer, qsizetype& consumed, Frame& result) {
     if (available < static_cast<qsizetype>(size) + 4)
         return false;
     const auto kind = static_cast<quint8>(header[4]);
-    check(kind >= static_cast<quint8>(Kind::hello) && kind <= static_cast<quint8>(Kind::terminate));
+    check(kind >= static_cast<quint8>(Kind::hello) && kind <= static_cast<quint8>(Kind::wheel));
     result = {static_cast<Kind>(kind), buffer.mid(consumed + 5, static_cast<qsizetype>(size) - 1)};
     consumed += static_cast<qsizetype>(size) + 4;
     if (consumed > buffer.size() / 2) {
@@ -279,6 +298,31 @@ bool take_frame(QByteArray& buffer, qsizetype& consumed, Frame& result) {
     }
     return true;
 }
+// The alternate-screen byte: 1 on the alternate screen, and bit 2 beside it
+// when this service takes wheel input. Readers before wheel input read any
+// nonzero byte as true, so the bit is only ever set with the first.
+namespace {
+quint8 alternate_byte(const TerminalSnapshot& s) { return s.alternate_screen ? 3U : 0U; }
+} // namespace
+
+QByteArray encode_wheel(const Wheel& wheel) {
+    QByteArray bytes;
+    QDataStream out(&bytes, QIODevice::WriteOnly);
+    out.setVersion(QDataStream::Qt_6_0);
+    out << wheel.steps << wheel.column << wheel.row;
+    check(out.status() == QDataStream::Ok);
+    return bytes;
+}
+Wheel decode_wheel(const QByteArray& payload) {
+    check(payload.size() == 6);
+    QDataStream in(payload);
+    in.setVersion(QDataStream::Qt_6_0);
+    Wheel wheel;
+    in >> wheel.steps >> wheel.column >> wheel.row;
+    check(in.status() == QDataStream::Ok && wheel.steps != 0);
+    return wheel;
+}
+
 QByteArray encode_snapshot(const TerminalSnapshot& s) {
     check(s.cells.size() <= max_cells && s.graphemes.size() <= max_codepoints);
     check(static_cast<std::size_t>(s.size.columns) * s.size.rows == s.cells.size());
@@ -288,7 +332,7 @@ QByteArray encode_snapshot(const TerminalSnapshot& s) {
     out << quint64(s.revision) << quint16(s.size.columns) << quint16(s.size.rows)
         << quint16(s.cursor.column) << quint16(s.cursor.row) << s.cursor.in_viewport
         << s.cursor.visible << s.cursor.blinking << s.cursor.wide_tail << quint8(s.cursor.shape)
-        << s.alternate_screen << s.bracketed_paste << s.application_cursor_keys
+        << alternate_byte(s) << s.bracketed_paste << s.application_cursor_keys
         << quint32(s.foreground_rgb) << quint32(s.background_rgb) << s.cursor_rgb.has_value()
         << quint32(s.cursor_rgb.value_or(0)) << quint64(s.history.total_rows)
         << quint64(s.history.viewport_offset) << quint64(s.history.viewport_rows);
@@ -317,10 +361,14 @@ TerminalSnapshot decode_snapshot(const QByteArray& bytes) {
     quint8 shape{};
     bool cursor_color{};
     quint32 cursor_rgb{};
+    quint8 alternate{};
     in >> revision >> columns >> height >> x >> y >> s.cursor.in_viewport >> s.cursor.visible >>
-        s.cursor.blinking >> s.cursor.wide_tail >> shape >> s.alternate_screen >>
-        s.bracketed_paste >> s.application_cursor_keys >> s.foreground_rgb >> s.background_rgb >>
-        cursor_color >> cursor_rgb >> total >> offset >> rows;
+        s.cursor.blinking >> s.cursor.wide_tail >> shape >> alternate >> s.bracketed_paste >>
+        s.application_cursor_keys >> s.foreground_rgb >> s.background_rgb >> cursor_color >>
+        cursor_rgb >> total >> offset >> rows;
+    check(alternate <= 3U && alternate != 2U); // the wheel bit only appears with the screen bit
+    s.alternate_screen = alternate != 0U;
+    s.accepts_wheel = (alternate & 2U) != 0U;
     check(columns > 0 && height > 0 && quint32(columns) * height <= max_cells);
     check(!s.cursor.in_viewport || (x < columns && y < height));
     check(offset <= total && rows <= total - offset);

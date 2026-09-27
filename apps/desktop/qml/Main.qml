@@ -156,14 +156,9 @@ ApplicationWindow {
             return [mod + "Alt+Right", mod + (mac ? "Shift+Down" : "Down")]
         if (action === "previousCategory")
             return [mod + "Alt+Left", mod + (mac ? "Shift+Up" : "Up")]
-        if (action === "category1")
-            return [mod + "1"]
-        if (action === "category2")
-            return [mod + "2"]
-        if (action === "category3")
-            return [mod + "3"]
-        if (action === "category4")
-            return [mod + "4"]
+        const numbered = /^category([1-9])$/.exec(action)
+        if (numbered)
+            return [mod + numbered[1]]
         if (action === "openSettings")
             return preview.settingsShortcuts
         if (action === "toggleSidebar")
@@ -454,7 +449,7 @@ ApplicationWindow {
         add("restartAgent", qsTr("Restart agent"), "", stopped, qsTr("Only an ended or unreachable agent restarts"), () => workspace.restartAgent(agent.sessionId))
         add("nextCategory", qsTr("Next category"), "nextCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory())
         add("previousCategory", qsTr("Previous category"), "previousCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory(-1))
-        for (let i = 0; i < Math.min(4, workspace.categories.length); ++i) {
+        for (let i = 0; i < Math.min(9, workspace.categories.length); ++i) {
             const category = workspace.categories[i]
             add("category" + (i + 1), qsTr("Switch category: %1").arg(category.name), "category" + (i + 1), true, "", () => workspace.selectCategory(category.id))
         }
@@ -515,9 +510,9 @@ ApplicationWindow {
             return textColor
         return mutedTextColor
     }
-    // Mono recall number for categories reachable by a category1-4 shortcut.
+    // Mono recall number for categories reachable by a category1-9 shortcut.
     function categoryRecall(index) {
-        return index < 4 && bindings("category" + (index + 1)).length > 0 ? String(index + 1) : ""
+        return index < 9 && bindings("category" + (index + 1)).length > 0 ? String(index + 1) : ""
     }
     function categoryAttentionElsewhere() {
         let total = 0
@@ -1334,6 +1329,31 @@ ApplicationWindow {
         objectName: "categoryShortcut4"
         targetIndex: 3
         action: "category4"
+    }
+    IndexShortcut {
+        objectName: "categoryShortcut5"
+        targetIndex: 4
+        action: "category5"
+    }
+    IndexShortcut {
+        objectName: "categoryShortcut6"
+        targetIndex: 5
+        action: "category6"
+    }
+    IndexShortcut {
+        objectName: "categoryShortcut7"
+        targetIndex: 6
+        action: "category7"
+    }
+    IndexShortcut {
+        objectName: "categoryShortcut8"
+        targetIndex: 7
+        action: "category8"
+    }
+    IndexShortcut {
+        objectName: "categoryShortcut9"
+        targetIndex: 8
+        action: "category9"
     }
     Shortcut {
         objectName: "nextSessionShortcut"
@@ -3032,76 +3052,6 @@ ApplicationWindow {
             }
 
             Rectangle {
-                id: historyBanner
-                objectName: "historyBar"
-                visible: workspace.focusedSession !== null && workspace.focusedSession.live
-                         && (workspace.focusedSession.historyActive || workspace.focusedSession.historyRequestPending)
-                Layout.fillWidth: true
-                Layout.preferredHeight: window.tabHeight + 8
-                color: window.surfaceColor
-                border.color: window.borderColor
-                border.width: 1
-                radius: window.chromeRadius
-
-                RowLayout {
-                    id: historyRow
-                    anchors.fill: parent
-                    anchors.margins: 6
-                    spacing: 6
-                    CommandButton {
-                        objectName: "historyOlder"
-                        text: qsTr("Older")
-                        enabled: {
-                            const session = workspace.focusedSession
-                            return !!session && session.live && !session.historyRequestPending
-                        }
-                        onClicked: {
-                            const session = workspace.focusedSession
-                            if (session)
-                                session.olderHistory()
-                        }
-                    }
-                    CommandButton {
-                        objectName: "historyNewer"
-                        text: qsTr("Newer")
-                        enabled: {
-                            const session = workspace.focusedSession
-                            return !!session && session.historyActive && !session.historyRequestPending
-                        }
-                        onClicked: {
-                            const session = workspace.focusedSession
-                            if (session)
-                                session.newerHistory()
-                        }
-                    }
-                    CommandButton {
-                        objectName: "historyLive"
-                        text: qsTr("Live")
-                        enabled: {
-                            const session = workspace.focusedSession
-                            return !!session && session.historyActive
-                        }
-                        onClicked: {
-                            const session = workspace.focusedSession
-                            if (session)
-                                session.returnToLive()
-                            preview.deferTerminalFocus()
-                        }
-                    }
-                    PlainLabel {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        color: window.mutedTextColor
-                        elide: Text.ElideRight
-                        text: !workspace.focusedSession ? "" :
-                              workspace.focusedSession.historyRequestPending ? qsTr("Loading history…") :
-                              qsTr("Read only") + (workspace.focusedSession.historyMessage.length > 0 ?
-                                  " · " + workspace.focusedSession.historyMessage : "")
-                    }
-                }
-            }
-
-            Rectangle {
                 id: stage
                 objectName: "focusedPane"
                 Layout.fillWidth: true
@@ -3315,6 +3265,141 @@ ApplicationWindow {
                     focus: visible && window.visible && !window.inputBlocked && !window.sideTerminalOpen
                     Component.onCompleted: if (focus)
                                                forceActiveFocus()
+
+                    // While history shows, a wide translucent bar down the right
+                    // edge. The whole strip answers the pointer: a press on the
+                    // thumb drags it from where it was held, one elsewhere jumps
+                    // there, and letting go at the bottom is live again. It sits
+                    // inside the terminal, so the wheel over it still scrolls.
+                    Item {
+                        id: historyScrubber
+                        objectName: "historyScrubber"
+                        readonly property var session: liveTerminal.document
+                        readonly property real inset: 4
+                        readonly property real trackHeight: Math.max(1, height - 2 * inset)
+                        readonly property real thumbHeight:
+                            Math.min(trackHeight, Math.max(40, trackHeight * (session ? session.historySpan : 1)))
+                        readonly property real travel: Math.max(1, trackHeight - thumbHeight)
+                        readonly property bool engaged: scrubArea.containsMouse || scrubArea.pressed
+                        property real grab: 0
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        anchors.right: parent.right
+                        width: 36
+                        z: 5
+                        visible: session !== null && session.live && session.historyScrubbable
+                                 && (session.historyActive || session.historyRequestPending)
+                        // The thumb's top in the track while dragging, from the pointer.
+                        function dragged(mouseY) {
+                            return Math.max(0, Math.min(mouseY - inset - grab, travel))
+                        }
+                        Rectangle {
+                            objectName: "historyTrack"
+                            anchors.right: parent.right
+                            anchors.rightMargin: 4
+                            y: historyScrubber.inset
+                            height: historyScrubber.trackHeight
+                            width: historyScrubber.engaged ? 16 : 12
+                            radius: width / 2
+                            color: Qt.alpha(window.textColor, historyScrubber.engaged ? 0.14 : 0.07)
+                            Behavior on width {
+                                enabled: window.motionEnabled
+                                NumberAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                            }
+                            Behavior on color {
+                                enabled: window.motionEnabled
+                                ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                            }
+                            Rectangle {
+                                id: historyThumb
+                                objectName: "historyThumb"
+                                width: parent.width
+                                radius: width / 2
+                                height: historyScrubber.thumbHeight
+                                y: scrubArea.pressed ? historyScrubber.dragged(scrubArea.mouseY)
+                                                     : (historyScrubber.session ? historyScrubber.session.historyPosition : 1)
+                                                       * historyScrubber.travel
+                                color: Qt.alpha(window.focusedBorderColor,
+                                                scrubArea.pressed ? 0.9 : historyScrubber.engaged ? 0.7 : 0.45)
+                                Behavior on color {
+                                    enabled: window.motionEnabled
+                                    ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                                }
+                            }
+                        }
+                        MouseArea {
+                            id: scrubArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            preventStealing: true
+                            cursorShape: Qt.ArrowCursor
+                            function jump(mouseY) {
+                                const session = historyScrubber.session
+                                if (session)
+                                    session.historyAt(historyScrubber.dragged(mouseY) / historyScrubber.travel)
+                            }
+                            onPressed: function(mouse) {
+                                const top = historyScrubber.inset + historyThumb.y
+                                const onThumb = mouse.y >= top && mouse.y <= top + historyThumb.height
+                                historyScrubber.grab = onThumb ? mouse.y - top : historyThumb.height / 2
+                                jump(mouse.y)
+                            }
+                            onPositionChanged: function(mouse) { if (pressed) jump(mouse.y) }
+                            onReleased: function(mouse) {
+                                // The thumb at the bottom is the live screen.
+                                if (historyScrubber.dragged(mouse.y) >= historyScrubber.travel - 1
+                                        && historyScrubber.session) {
+                                    historyScrubber.session.returnToLive()
+                                    preview.deferTerminalFocus()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // While history shows, the way back to live floats over the
+                // terminal's corner rather than above it, so the terminal keeps
+                // its size; scrolling down to the newest row, or typing, also
+                // returns.
+                Rectangle {
+                    id: historyBanner
+                    objectName: "historyBar"
+                    readonly property var session: workspace.focusedSession
+                    readonly property string note: !session ? ""
+                                                   : session.historyRequestPending ? qsTr("Loading history…")
+                                                   : session.historyMessage
+                    visible: liveTerminal.visible && session !== null && session.live
+                             && (session.historyActive || session.historyRequestPending)
+                    z: 6
+                    x: liveTerminal.x + liveTerminal.width - width - historyScrubber.width - 6
+                    y: liveTerminal.y + liveTerminal.height - height - 8
+                    width: historyRow.implicitWidth + 12
+                    height: historyRow.implicitHeight + 8
+                    color: window.surfaceColor
+                    border.color: window.borderColor
+                    border.width: 1
+                    radius: window.chromeRadius
+                    Row {
+                        id: historyRow
+                        anchors.centerIn: parent
+                        spacing: 8
+                        PlainLabel {
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: text.length > 0
+                            text: historyBanner.note
+                            color: window.mutedTextColor
+                        }
+                        CommandButton {
+                            objectName: "historyLive"
+                            text: qsTr("Live")
+                            enabled: !!historyBanner.session && historyBanner.session.historyActive
+                            onClicked: {
+                                if (historyBanner.session)
+                                    historyBanner.session.returnToLive()
+                                preview.deferTerminalFocus()
+                            }
+                        }
+                    }
                 }
 
                 // Dividers between tiles: drag to share the space differently.
@@ -3684,8 +3769,8 @@ ApplicationWindow {
                             }
                             if (session.historyMessage.length > 0 || !session.historyActive)
                                 findBar.status = qsTr("No more matches")
-                            else
-                                findBar.search(older)
+                            else // a kept screen shows at once; step on from the event loop
+                                Qt.callLater(findBar.search, older)
                         }
                     }
                     RowLayout {
@@ -4050,35 +4135,12 @@ ApplicationWindow {
         border.width: 1
         border.color: sideSurface.activeFocus ? window.focusedBorderColor : window.borderColor
         radius: window.chromeRadius
+        // Only the shell: its own prompt says where it is, and the keys that
+        // opened it close it.
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 6
-            spacing: 4
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
-                PlainText {
-                    text: qsTr("Terminal")
-                    color: window.textColor
-                    font.pixelSize: window.chromeFont
-                    font.weight: Font.DemiBold
-                }
-                PlainText {
-                    objectName: "sideTerminalMachine"
-                    text: window.terminalsAvailable && terminals.currentMachine.length > 0 ? terminals.currentMachine : qsTr("This Mac")
-                    color: window.mutedTextColor
-                    font.family: window.monoFamily
-                    font.pixelSize: window.readoutFont
-                }
-                Item { Layout.fillWidth: true }
-                PlainText {
-                    text: qsTr("%1 machine   %2 hide").arg(window.shortcutText("chooseTerminal").split(" / ")[0])
-                                                    .arg(window.shortcutText("toggleTerminal").split(" / ")[0])
-                    color: window.mutedTextColor
-                    font.family: window.monoFamily
-                    font.pixelSize: window.readoutFont
-                }
-            }
+            spacing: 0
             TerminalSurface {
                 id: sideSurface
                 objectName: "sideTerminalSurface"

@@ -62,12 +62,12 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
 | PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS; after two simulated power losses, the login helper resumes real Codex/Claude conversations and terminal-checkpoint stand-ins for four other CLIs with durable managed resume arguments ([check](scripts/check_restore.py)) | An actual reboot through the login helper, native resume qualification for the four stand-in CLIs, and later Linux qualification |
 | Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect; stale sockets left by a simulated power loss are replaced | Qualification across an actual reboot |
-| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging and link opening (Qt tests on the Linux test host) | Cross-cell contextual shaping, rectangular/multi-click selection, link hover feedback and accessibility; native Mac selection not yet exercised; Linux GUI port is deferred |
-| History and input lifecycle | Disk quotas, older/newer paging, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived pages retain their original geometry |
+| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging, Command-hover underlining and Command-click opening of links, files and folders (Qt tests on the Linux test host) | Cross-cell contextual shaping, rectangular/multi-click selection and accessibility; opening a file at its line in an editor; native Mac selection not yet exercised; Linux GUI port is deferred |
+| History and input lifecycle | Disk quotas, history scrolled by rows as one strip, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived rows keep their original width (cut or padded, not reflowed) |
 | UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; tiles on the stage (drag from the strip, dividers, keys, zoom), dragging cards to reorder and between categories with multi-select, find in the terminal and text size (Qt tests on the Linux test host); live request badges, explicit approval/answer dialog, stale-state gating and draft preservation; live config reload, alert chimes and their repeat rules, Command-K agent search, the usage meter and per-machine dashboard, the keyboard home list, Command-O resume and the side terminal with its machine picker (Qt tests on the Linux test host); usage answers from the installed Codex 0.156.1, Claude Code 2.1.282, Grok 1.0.41, Kimi Code 0.39.1 and OMP 18.2.9, here and on a Linux host over ssh | Automatic carousel and larger session-count qualification; the chimes and usage view have not been seen and heard on a Mac by a test |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
 | Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect, `/clear` continuation and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
-| iPhone app (prototype) | Gateway on the Mac over Tailscale, admitting only the owner's iOS devices; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; the phone joins beside the desktop so both stay in sync (services started by this build); starting an agent in a category from the phone through the Mac's lapis; a terminal on the Mac from the phone, and the resume list; UI tests in the iOS 26.5 Simulator against real services and the real windowless lapis host with a Mac-side client attached, fake agents, and real Codex and Claude Code on a fake model; installed and used on an iPhone 17 Pro | Agents started before sync are taken over instead; no structured requests or push notifications; starting agents needs a lapis window or the login helper running |
+| iPhone app (prototype) | Gateway on the Mac over Tailscale, admitting only the owner's iOS devices; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; the phone joins beside the desktop so both stay in sync (services started by this build); starting an agent in a category from the phone through the Mac's lapis; a terminal on the Mac from the phone, and the resume list; renaming, ordering and removing categories, moving and restarting agents, and the Mac's awake, alert and usage settings from the phone; UI tests in the iOS 26.5 Simulator against real services and the real windowless lapis host with a Mac-side client attached, fake agents, and real Codex and Claude Code on a fake model; installed and used on an iPhone 17 Pro | Agents started before sync are taken over instead; no structured requests or push notifications; starting agents needs a lapis window or the login helper running |
 | Mac app package | Qt 6.11.2 built with Vulkan (arm64, macOS 14 or later) with MoltenVK loaded directly; signed with the hardened runtime and notarized; Sparkle 2.10.0 updates signed with an EdDSA key and fed from the latest release; a login item for keeping agents running; release checks for architecture, minimum macOS, links outside the bundle, identifying strings, the update key, the bundled MoltenVK on an M4 Max, the windowless host and a launchd start taking the login shell's PATH; 0.1.0 opened and used with a live agent by a person | An update installed through Sparkle (the first comes with the release after 0.2.0); notifications, the login item and the Finder and editor actions not yet exercised by a check on a Mac; macOS 14 and 15 untested |
 | Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals; [installed binary qualification](evidence/codex-binary-update.json) | Broader binary and request-kind qualification |
 
@@ -181,8 +181,8 @@ category in the rail to move there, and onto the rail's **+** to start a new
 category; Command-click and Shift-click pick several to drag together, and
 categories drag up and down the rail.
 
-Command-F finds text in the selected terminal: the page shown first, then older
-history pages (Return goes older, Shift-Return newer). Command-plus, minus and
+Command-F finds text in the selected terminal: the screen shown first, then older
+history a screen at a time (Return goes older, Shift-Return newer). Command-plus, minus and
 zero change the text size. Files dropped on a terminal paste their quoted paths.
 The card menu and Commands show an agent's folder in Finder, open it in your
 editor (`editor` in `lapis.json`, else the first of Cursor, VS Code, Zed,
@@ -195,9 +195,10 @@ agent strip are separate navigation levels. Every category remembers its selecte
 agent. Commands and the card's context menu rename, reorder or move the selected agent without
 restarting it. Attention counts do not reorder categories or steal input.
 
-On macOS, Command-Option-left/right or Command-Shift-up/down changes category;
-Command-Shift-[ and ] moves through the category's agents. Command-1 through 4
-selects a category. Command-J jumps to the next agent, in any category, with a
+On macOS, Command-Shift-J/K (down and up the rail, from the home row),
+Command-Shift-up/down or Command-Option-left/right changes category;
+Command-Shift-[ and ] moves through the category's agents. Command-1 through 9
+selects one of the first nine categories. Command-J jumps to the next agent, in any category, with a
 pending request, or else one that finished while you were elsewhere.
 Command-W closes what is in front, as in a browser: the side terminal's panel
 (its shell keeps running), else the focused agent (a running agent is confirmed,
@@ -218,7 +219,7 @@ the Claude Code and Codex conversations you opened on this Mac, newest first
 under their CLI's own title, narrowed as you type by title, folder or CLI;
 Return resumes one as a new agent in its folder. ``Command-` `` (or ``Control-` ``, as in
 VS Code) shows a plain shell over the stage's right half for a quick command,
-and hides it again; Command-~ picks its machine, this Mac or an ssh host from
+with nothing around it but its border, and hides it again; Command-~ picks its machine, this Mac or an ssh host from
 your ssh config, by up, down and Return. It is never an agent: one shell per
 machine, in no category and with no alerts, which keeps running when lapis
 closes and closes itself when you type `exit`. With nothing open, the stage
@@ -254,7 +255,8 @@ per machine where they differ:
 An agent that needs you chimes (two taps, rising), and again every few seconds
 while the request waits and you are looking elsewhere, up to `repeat` times; a
 Codex or Claude turn that ends out of view chimes once, quietly. While lapis is
-in the background the same moments post a notification (`notify`); clicking it
+in the background the same moments post a notification (`notify`), titled with
+the agent and naming its CLI ("Claude finished a turn"); clicking it
 shows the agent. Appearance has the switches and a Play button for each. In the
 downloaded app it also keeps agents running at login and checks for updates,
 which install from the latest release. `keepAwake` keeps the Mac from
@@ -336,12 +338,16 @@ started in the same folder are numbered in cards and menus.
 
 Command-Left/Right move to the start or end of the line, Command-Backspace
 deletes to the line start and Command-Delete to the line end (Control-A, -E, -U
-and -K to the agent). Command-click (Control-click on Linux) a web link in agent
-output to open it,
-including links that wrap across rows. Drag across the terminal to select text,
+and -K to the agent). Hold Command (Control on Linux) over a web link or a
+file or folder the agent names, and it is underlined and the pointer becomes a
+hand; Command-click opens it as the Finder would: a link in the browser, an
+image in Preview, a folder in the Finder (an app or a program is shown in its
+folder, not run). Paths count from the agent's folder, `~` and `/` included,
+and `file.cpp:12` finds the file; an agent over ssh prints paths on another
+machine, so only its web links open. Links that wrap across rows work too. Drag across the terminal to select text,
 or double-click a word; Command-C
-(Control-Shift-C on Linux) copies it, and typing clears it. The mouse wheel pages
-through history (read-only; scrolling past the newest page or typing returns to
+(Control-Shift-C on Linux) copies it, and typing clears it. The mouse wheel scrolls
+through history (read-only; scrolling past the newest row or typing returns to
 the live screen, and the typed key reaches the agent), or sends arrow keys to a
 full-screen program on the alternate screen.
 History actions are also under **Agent**. Private
@@ -427,6 +433,26 @@ swipe away the same way. Swiping an agent right (or a long press) offers
 **Rename**. On an agent's screen, swiping left or right moves to the next or
 previous agent in its category (the title shows "2 of 4"), so the list is only
 needed to change category.
+
+Everything an agent prints is kept, compressed, back to its first line. Scroll
+back and history scrolls by rows as in other terminals, a whole screen at a
+time, and a bar appears down the terminal's right edge, on the Mac and the phone:
+drag it to jump anywhere in the agent's history, the top being its first line.
+Scrolling forward to the newest row, typing, or **Live** returns to live.
+
+Scrolling over a full-screen program, such as Claude Code with
+`"tui": "fullscreen"`, scrolls the program itself on both devices, as the
+wheel does in other terminals; on the phone a vertical drag turns the wheel.
+An agent started before this version scrolls that way once it restarts.
+
+Holding an agent also offers **Move to** another category, **Move earlier** and
+**Move later**, **Restart** once it has stopped, and **Close**. Each category's
+heading ends in a menu: a new agent there, **Rename**, **Arrange categories**
+(drag to order, tap to rename, add one) and **Remove**, which the Mac allows
+once the category is empty and while another remains. Settings on the phone has
+its text size, the categories, and the Mac's settings that matter away from it:
+keeping the Mac awake, its chimes, background notifications and plan usage,
+saved to the Mac's `lapis.json` as its own Settings window saves them.
 
 An agent that still has the name it started with (its folder's) takes its
 conversation's title, on the Mac and the phone alike: Claude Code's own title,

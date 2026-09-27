@@ -11,6 +11,11 @@ final class WorkspaceModel {
     }
     var listing: WorkspaceListing?
     var error: String?
+    // Why the Mac refused a change made here, until it is dismissed.
+    var notice: String?
+    // The Mac's settings, read when Settings opens; `settingsError` says why not.
+    var macSettings: MacSettings?
+    var settingsError: String?
     // Fetched ahead in the background so the new-agent sheet never waits.
     var harnesses: [Harness]?
     var defaults: AgentDefaults?
@@ -22,6 +27,11 @@ final class WorkspaceModel {
     private var fetched: [String: Date] = [:]
     private var catalogLoads: Set<String> = []
     private var prefetching = false
+    // The newest settings fetch or change. A full-settings reply may arrive
+    // out of order, but only the newest request may replace what is shown.
+    private var settingsRequest = 0
+    // Full-settings replies are versioned, and writes reach the Mac in order.
+    private var settingsWrite: Task<MacSettings, Error>?
 
     init() {
         let saved = UserDefaults.standard.string(forKey: WorkspaceModel.hostKey)
@@ -258,13 +268,7 @@ extension WorkspaceModel {
 
     // Names the agent on the Mac and here.
     func rename(_ agent: Agent, to title: String) async {
-        guard let gateway else { return }
-        do {
-            try await gateway.rename(agent: agent.id, title: title)
-            await refresh()
-        } catch {
-            self.error = describe(error)
-        }
+        await change { try await $0.rename(agent: agent.id, title: title) }
     }
 
     // Keep the row until the Mac accepts the close, then refresh its state.
@@ -272,18 +276,182 @@ extension WorkspaceModel {
         guard let gateway else { return }
         do {
             try await gateway.close(agent: agent.id)
+            arrange { categories in
+                for index in categories.indices {
+                    categories[index] = categories[index].with(categories[index].agents.filter { $0.id != agent.id })
+                }
+            }
+            await refresh()
         } catch {
-            self.error = describe(error)
-            return
+            notice = describe(error)
         }
-        if let current = listing {
-            listing = WorkspaceListing(
-                categories: current.categories.map {
-                    AgentCategory(id: $0.id, name: $0.name, agents: $0.agents.filter { $0.id != agent.id })
-                },
-                activeCategory: current.activeCategory)
+    }
+}
+
+// Categories and agents are arranged on the Mac, under its rules: the list
+// shows a change at once, then the Mac's own list, and a refusal stays in
+// `notice`.
+extension WorkspaceModel {
+    private func arrange(_ change: (inout [AgentCategory]) -> Void) {
+        guard let current = listing else { return }
+        var categories = current.categories
+        change(&categories)
+        listing = WorkspaceListing(categories: categories, activeCategory: current.activeCategory)
+    }
+
+    private func change(_ action: (Gateway) async throws -> Void) async {
+        guard let gateway else { return }
+        do {
+            try await action(gateway)
+        } catch {
+            notice = describe(error)
         }
         await refresh()
+    }
+
+    func renameCategory(_ id: String, to name: String) async {
+        arrange { categories in
+            if let index = categories.firstIndex(where: { $0.id == id }) {
+                categories[index] = AgentCategory(id: id, name: name, agents: categories[index].agents)
+            }
+        }
+        await change { try await $0.renameCategory(id, to: name) }
+    }
+
+    // Only an empty category goes, and one always stays.
+    func removeCategory(_ id: String) async {
+        arrange { categories in
+            if categories.count > 1 { categories.removeAll { $0.id == id && $0.agents.isEmpty } }
+        }
+        await change { try await $0.removeCategory(id) }
+    }
+
+    // Moves a category to `index` in the list.
+    func placeCategory(_ id: String, at index: Int) async {
+        arrange { categories in
+            guard let from = categories.firstIndex(where: { $0.id == id }) else { return }
+            let moved = categories.remove(at: from)
+            categories.insert(moved, at: min(max(index, 0), categories.count))
+        }
+        await change { try await $0.placeCategory(id, at: index) }
+    }
+
+    // Moves an agent into `category` at `index` among its other agents, or last.
+    func place(_ agent: Agent, in category: String, at index: Int? = nil) async {
+        arrange { categories in
+            for position in categories.indices {
+                categories[position] = categories[position].with(
+                    categories[position].agents.filter { $0.id != agent.id })
+            }
+            if let target = categories.firstIndex(where: { $0.id == category }) {
+                var agents = categories[target].agents
+                agents.insert(agent, at: min(index ?? agents.count, agents.count))
+                categories[target] = categories[target].with(agents)
+            }
+        }
+        await change { try await $0.place(agent: agent.id, category: category, at: index) }
+    }
+
+    // Starts a stopped agent again on the Mac, resuming its conversation where
+    // its CLI can; true once it runs.
+    func restart(_ agent: Agent) async -> Bool {
+        guard !Task.isCancelled, let gateway else { return false }
+        do {
+            try await gateway.restart(agent: agent.id)
+        } catch {
+            guard !Task.isCancelled, !(error is CancellationError),
+                  (error as? URLError)?.code != .cancelled else { return false }
+            notice = describe(error)
+            return false
+        }
+        let deadline = Date().addingTimeInterval(20)
+        var sawListing = false
+        var listingFailure: String?
+        while Date() < deadline {
+            guard !Task.isCancelled else { return false }
+            do {
+                let current = try await gateway.agents()
+                guard !Task.isCancelled else { return false }
+                listing = current
+                sawListing = true
+                if current.categories.flatMap(\.agents).contains(where: { $0.id == agent.id && $0.running }) {
+                    return true
+                }
+            } catch is CancellationError {
+                return false
+            } catch let failure as URLError where failure.code == .cancelled {
+                return false
+            } catch {
+                // The restart was accepted. A missed listing must not report it
+                // as a refusal; ask again until the deadline.
+                listingFailure = describe(error)
+                do {
+                    try await Task.sleep(for: .milliseconds(400))
+                } catch {
+                    return false
+                }
+                continue
+            }
+            do {
+                try await Task.sleep(for: .milliseconds(400))
+            } catch {
+                return false
+            }
+        }
+        guard !Task.isCancelled else { return false }
+        notice = sawListing
+            ? "The agent has not started yet. It is in the list on the Mac."
+            : (listingFailure ?? "The agent has not started yet. It is in the list on the Mac.")
+        return false
+    }
+
+    func loadMacSettings() async {
+        settingsRequest += 1
+        let request = settingsRequest
+        guard let gateway else {
+            guard request == settingsRequest else { return }
+            macSettings = nil
+            settingsError = GatewayError.invalidHost.localizedDescription
+            return
+        }
+        do {
+            if let write = settingsWrite { _ = await write.result }
+            let settings = try await gateway.settings()
+            guard request == settingsRequest else { return }
+            macSettings = settings
+            settingsError = nil
+        } catch {
+            guard request == settingsRequest else { return }
+            macSettings = nil
+            settingsError = describe(error)
+        }
+    }
+
+    // Changes Mac settings; they show changed at once, then as the Mac saved them.
+    func changeMacSettings(_ changes: [String: Any]) async {
+        settingsRequest += 1
+        let request = settingsRequest
+        guard let gateway else {
+            macSettings = nil
+            settingsError = GatewayError.invalidHost.localizedDescription
+            return
+        }
+        let previous = settingsWrite
+        let write = Task {
+            if let previous { _ = await previous.result }
+            return try await gateway.change(settings: changes)
+        }
+        settingsWrite = write
+        do {
+            let settings = try await write.value
+            guard request == settingsRequest else { return }
+            macSettings = settings
+            settingsError = nil
+        } catch {
+            guard request == settingsRequest else { return }
+            notice = describe(error)
+            await loadMacSettings()
+        }
     }
 }
 
@@ -324,7 +492,17 @@ final class AgentSession {
     // The oldest page is loaded. Nothing archived yet is not the start: more
     // output can still scroll off, so an empty history is retried.
     var historyEnd = false
+    // Every kept row, and whether the service can jump to any of them.
+    var historyTotal = 0
+    var scrubbable = false
+    // After a jump: pages are skipped between the shown ones and the live
+    // screen, and the page jumped to, for the screen to scroll to.
+    var gapAfter = false
+    var jumpedTo: UUID?
     private(set) var loadingHistory = false
+    // A scrub made while another page load owns `loadingHistory` is the
+    // user's latest destination, not a gesture to drop.
+    private var pendingJumpFraction: Double?
     private var lastEmptyCheck = Date.distantPast
     private var newerTask: Task<Void, Never>?
     private(set) var lastFrameJSON: Data?
@@ -355,6 +533,9 @@ final class AgentSession {
         state = .connecting
         history = []
         historyEnd = false
+        gapAfter = false
+        jumpedTo = nil
+        pendingJumpFraction = nil
         let events = gateway.stream(agent: agent.id, columns: columns, rows: rows)
         task = Task { [weak self] in
             do {
@@ -462,9 +643,74 @@ final class AgentSession {
     // Loads the page before the oldest one shown; the gateway archives what
     // scrolled off the top of the agent's terminal.
     func loadOlder() async {
-        guard let gateway, isLive, !historyEnd, !loadingHistory else { return }
+        guard self.gateway != nil, isLive, !historyEnd, !loadingHistory else { return }
         loadingHistory = true
-        defer { loadingHistory = false }
+        await performLoadOlder()
+        loadingHistory = false
+        await runPendingJump()
+    }
+
+    // While history is shown, pages archived since it loaded are appended so
+    // it stays contiguous with the live screen (after a jump, only on asking).
+    private func followNewHistory() {
+        guard !history.isEmpty, !gapAfter, newerTask == nil else { return }
+        newerTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            await self?.loadNewer()
+            self?.newerTask = nil
+        }
+    }
+
+    private func loadNewer() async {
+        // A jump can land between scheduling this delayed load and its first
+        // await. Intentionally skipped pages stay skipped until closeGap.
+        guard self.gateway != nil, isLive, let newest = history.last?.page, !loadingHistory, !gapAfter else { return }
+        loadingHistory = true
+        await performLoadNewer(after: newest)
+        loadingHistory = false
+        await runPendingJump()
+    }
+
+    // Every kept row, as the last page said; the scrubber's scale.
+    private func note(_ place: HistoryPage.Place?) {
+        guard let place else { return }
+        historyTotal = place.total
+        scrubbable = scrubbable || place.scrubbable
+    }
+
+    // Shows the page at `fraction` of everything kept (0 the oldest row),
+    // alone: older pages load above it as before, and the newer ones between
+    // it and the live screen when asked (closeGap).
+    func jump(to fraction: Double) async {
+        guard self.gateway != nil, isLive, scrubbable, historyTotal > 0 else { return }
+        guard !loadingHistory else {
+            pendingJumpFraction = fraction
+            return
+        }
+        loadingHistory = true
+        await performJump(to: fraction)
+        loadingHistory = false
+        await runPendingJump()
+    }
+
+    // Loads the pages skipped between a jumped-to page and the live screen,
+    // a screenful of them at a time.
+    func closeGap() async {
+        guard self.gateway != nil, isLive, gapAfter, let newest = history.last?.page, !loadingHistory else { return }
+        loadingHistory = true
+        await performCloseGap(after: newest)
+        loadingHistory = false
+        await runPendingJump()
+    }
+
+    private func runPendingJump() async {
+        guard let fraction = pendingJumpFraction else { return }
+        pendingJumpFraction = nil
+        await jump(to: fraction)
+    }
+
+    private func performLoadOlder() async {
+        guard let gateway else { return }
         // While nothing is archived, ask at most once a second, but always
         // ask again after the latest output (callers repeat on new output).
         if history.isEmpty {
@@ -484,7 +730,9 @@ final class AgentSession {
                 continue
             }
             if let lines = reply.lines, let columns = reply.columns, reply.page != 0 {
-                history.insert(HistoryChunk(page: reply.page, columns: columns, lines: lines), at: 0)
+                history.insert(HistoryChunk(page: reply.page, columns: columns, lines: lines,
+                                             offset: reply.place?.offset), at: 0)
+                note(reply.place)
                 gathered += lines.count
                 before = reply.page
                 continue
@@ -498,27 +746,48 @@ final class AgentSession {
         }
     }
 
-    // While history is shown, pages archived since it loaded are appended so
-    // it stays contiguous with the live screen.
-    private func followNewHistory() {
-        guard !history.isEmpty, newerTask == nil else { return }
-        newerTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1))
-            await self?.loadNewer()
-            self?.newerTask = nil
-        }
-    }
-
-    private func loadNewer() async {
-        guard let gateway, isLive, let newest = history.last?.page, !loadingHistory else { return }
-        loadingHistory = true
-        defer { loadingHistory = false }
+    private func performLoadNewer(after newest: UInt64) async {
+        guard let gateway else { return }
         var after = newest
         for _ in 0..<20 {
             guard let reply = try? await gateway.history(agent: agent.id, after: after),
                   !reply.busy, reply.page != 0, let lines = reply.lines, let columns = reply.columns
             else { return }
-            history.append(HistoryChunk(page: reply.page, columns: columns, lines: lines))
+            history.append(HistoryChunk(page: reply.page, columns: columns, lines: lines,
+                                        offset: reply.place?.offset))
+            note(reply.place)
+            after = reply.page
+        }
+    }
+
+    private func performJump(to fraction: Double) async {
+        guard let gateway else { return }
+        let row = Int((min(max(fraction, 0), 1) * Double(historyTotal - 1)).rounded())
+        guard let reply = try? await gateway.history(agent: agent.id, at: row),
+              reply.page != 0, let lines = reply.lines, let columns = reply.columns else { return }
+        note(reply.place)
+        let chunk = HistoryChunk(page: reply.page, columns: columns, lines: lines,
+                                 offset: reply.place?.offset)
+        history = [chunk]
+        let place = reply.place
+        historyEnd = place?.offset == 0
+        gapAfter = place.map { $0.offset + $0.rows < $0.total } ?? false
+        jumpedTo = chunk.cacheID
+    }
+
+    private func performCloseGap(after newest: UInt64) async {
+        guard let gateway else { return }
+        var after = newest
+        for _ in 0..<8 {
+            guard let reply = try? await gateway.history(agent: agent.id, after: after),
+                  !reply.busy else { return }
+            guard reply.page != 0, let lines = reply.lines, let columns = reply.columns else {
+                gapAfter = false
+                return
+            }
+            history.append(HistoryChunk(page: reply.page, columns: columns, lines: lines,
+                                        offset: reply.place?.offset))
+            note(reply.place)
             after = reply.page
         }
     }
@@ -539,5 +808,7 @@ struct HistoryChunk: Identifiable {
     let page: UInt64
     let columns: Int
     let lines: [[Run]]
+    // Its first row among every kept row, when the service says.
+    var offset: Int? = nil
     var id: UInt64 { page }
 }

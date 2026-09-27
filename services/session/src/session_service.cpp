@@ -14,6 +14,7 @@
 #include <QDataStream>
 #include <QDebug>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QLocalServer>
@@ -91,9 +92,8 @@ class SessionService final : public QObject {
                    const LaunchSpec& launch)
         : lock_(endpoint + QStringLiteral(".lock")), terminal_(launch.size, limits()),
           fingerprint_(launch_fingerprint(launch)), identity_{requested_session_id, wire::new_id()},
-          history_(qEnvironmentVariable("LAPIS_HISTORY_ROOT",
-                                        QStringLiteral(LAPIS_DEFAULT_HISTORY_ROOT)),
-                   QString::fromLatin1(requested_session_id.toHex()), history_limits()) {
+          history_(history_root(endpoint), QString::fromLatin1(requested_session_id.toHex()),
+                   history_limits()) {
         configure_history();
         resume_endpoint_ = endpoint;
         checkpoint_agent_ = checkpoint_agent_for_launch(launch);
@@ -127,7 +127,6 @@ class SessionService final : public QObject {
             (static_cast<unsigned int>(bound_socket.st_mode) & 0077U) != 0U)
             throw std::runtime_error("Bound socket is not private to the current user");
         timer_.setSingleShot(true);
-        timer_.setInterval(16);
         connect(&timer_, &QTimer::timeout, this, [this] { publish(); });
         ack_timer_.setSingleShot(true);
         ack_timer_.setInterval(launch.agent == AgentMode::codex ? codex_sync_timeout_ms
@@ -503,6 +502,14 @@ class SessionService final : public QObject {
         result.max_input_bytes = std::size_t{64} * 1024U;
         return result;
     }
+    // Beside the service's endpoint, in lapis's runtime folder, unless
+    // LAPIS_HISTORY_ROOT names another; never a path fixed when it was built.
+    static QString history_root(const QString& endpoint) {
+        const auto chosen = qEnvironmentVariable("LAPIS_HISTORY_ROOT");
+        return chosen.isEmpty()
+                   ? QFileInfo(endpoint).absoluteDir().filePath(QStringLiteral("history"))
+                   : chosen;
+    }
     static HistoryLimits history_limits() {
         HistoryLimits result;
         const auto read_limit = [](const char* name, quint64 fallback) {
@@ -511,7 +518,7 @@ class SessionService final : public QObject {
                 return fallback;
             bool valid{};
             const auto bytes = value.toULongLong(&valid);
-            if (!valid || bytes == 0 || bytes > quint64{4} * 1024 * 1024 * 1024)
+            if (!valid || bytes == 0 || bytes > quint64{64} * 1024 * 1024 * 1024)
                 throw std::invalid_argument("Invalid history byte budget");
             return bytes;
         };
@@ -726,6 +733,7 @@ class SessionService final : public QObject {
             return;
         }
         pending_.insert(incoming);
+        posix::widen_socket_buffers(incoming->socketDescriptor());
         incoming->setReadBufferSize(75); // v3 attach is exactly 74 framed bytes.
         const auto bytes = std::make_shared<QByteArray>();
         connect(incoming, &QLocalSocket::readyRead, this,
@@ -834,13 +842,19 @@ class SessionService final : public QObject {
         dirty_ = true;
         schedule();
     }
+    // A change after a quiet frame goes out as soon as the event loop is free,
+    // so a typed key echoes without waiting; changes within a frame of the
+    // last screen share the next one.
     void schedule() {
         if (!process_started_ || stopping_ || timer_.isActive())
             return;
-        if ((client_ && (!snapshot_in_flight_ || ready_) && dirty_) || views_due())
-            timer_.start();
+        if ((client_ && (!snapshot_in_flight_ || ready_) && dirty_) || views_due()) {
+            const auto since = last_publish_.isValid() ? last_publish_.elapsed() : frame_ms;
+            timer_.start(since >= frame_ms ? 0 : static_cast<int>(frame_ms - since));
+        }
     }
     void publish() {
+        last_publish_.start();
         publish_views();
         publish_client();
     }
@@ -997,6 +1011,10 @@ class SessionService final : public QObject {
         case wire::Kind::terminate:
             end_agent(control.payload);
             return;
+        case wire::Kind::wheel:
+            // Scrolling reads; it does not take the size as typing does.
+            write_input(frame.kind, control.payload);
+            return;
         case wire::Kind::text:
         case wire::Kind::paste:
         case wire::Kind::key:
@@ -1019,6 +1037,11 @@ class SessionService final : public QObject {
                 std::string_view(payload.constData(), static_cast<std::size_t>(payload.size())));
             return {encoded.data(), static_cast<qsizetype>(encoded.size())};
         }
+        if (kind == wire::Kind::wheel) {
+            const auto wheel = wire::decode_wheel(payload);
+            const auto encoded = terminal_.encode_wheel({wheel.steps, wheel.column, wheel.row});
+            return {encoded.data(), static_cast<qsizetype>(encoded.size())};
+        }
         if (payload.size() != 2)
             throw std::runtime_error("Invalid key message");
         const auto key_value = static_cast<unsigned char>(payload[0]);
@@ -1031,7 +1054,9 @@ class SessionService final : public QObject {
         return {encoded.data(), static_cast<qsizetype>(encoded.size())};
     }
     void write_input(wire::Kind kind, const QByteArray& payload) {
-        if (!pty_.writeBytes(input_bytes(kind, payload)))
+        // A wheel over the primary screen sends the program nothing.
+        const auto bytes = input_bytes(kind, payload);
+        if (!bytes.isEmpty() && !pty_.writeBytes(bytes))
             throw std::runtime_error("PTY input queue full");
     }
     static TerminalSize decode_size(const QByteArray& payload) {
@@ -1299,9 +1324,14 @@ class SessionService final : public QObject {
             request_history(view.attachment, control.payload);
             return;
         }
+        if (frame.kind == wire::Kind::wheel) {
+            write_input(frame.kind, control.payload);
+            return;
+        }
         if (frame.kind != wire::Kind::text && frame.kind != wire::Kind::paste &&
             frame.kind != wire::Kind::key)
-            throw std::runtime_error("A joined view may only type, resize and page history");
+            throw std::runtime_error(
+                "A joined view may only type, scroll, resize and page history");
         claim_size(view.wanted, view.id);
         write_input(frame.kind, control.payload);
     }
@@ -1333,6 +1363,8 @@ class SessionService final : public QObject {
     wire::Attachment attachment_;
     QByteArray buffer_;
     QTimer timer_;
+    QElapsedTimer last_publish_;
+    static constexpr qint64 frame_ms = 16;
     QTimer ack_timer_;
     quint64 generation_{};
     quint64 snapshot_sequence_{};

@@ -23,6 +23,7 @@
 #include <QDir>
 #include <QEvent>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
 #include <QInputMethodEvent>
@@ -42,7 +43,9 @@
 #include <memory>
 
 #include <array>
+#include <cmath>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -1712,6 +1715,31 @@ void check_home_and_resume(QQuickWindow& window, lapis::desktop::Workspace& work
     pump(60);
 }
 
+// Command-1 to Command-9 (Control-Shift on Linux) pick the first nine
+// categories.
+void check_nine_categories(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                           const lapis::desktop::KeyMap& keymap) {
+    const auto before = workspace.activeCategoryId();
+    QStringList added;
+    for (int number = 1; workspace.categories().size() < 9; ++number) {
+        CHECK(workspace.addCategory(QStringLiteral("Numbered %1").arg(number)));
+        added.append(workspace.activeCategoryId());
+    }
+    CHECK(workspace.selectCategory(before));
+    pump(60);
+    const auto id_at = [&workspace](int index) {
+        return workspace.categories().at(index).toMap().value(QStringLiteral("id")).toString();
+    };
+    press_action(window, keymap, "category9");
+    CHECK(workspace.activeCategoryId() == id_at(8));
+    press_action(window, keymap, "category5");
+    CHECK(workspace.activeCategoryId() == id_at(4));
+    for (const auto& id : added)
+        CHECK(workspace.removeCategory(id));
+    CHECK(workspace.selectCategory(before));
+    pump(60);
+}
+
 // The new-agent form offers this Mac and the ssh config's hosts: right and
 // left change the machine while up and down choose the CLI, and another
 // machine's folder starts at its home with no local suggestions.
@@ -2220,6 +2248,7 @@ int run_strip_ui_tests() {
     check_find_and_text_size(*window, workspace, keymap);
     check_agent_search(*window, workspace, keymap, *terminal);
     check_home_and_resume(*window, workspace, keymap);
+    check_nine_categories(*window, workspace, keymap);
     check_side_terminal(*window, terminals, keymap, *terminal);
     workspace.setSshConfigForTesting(config.filePath(QStringLiteral("ssh_config")));
     check_new_agent_machine(*window, keymap);
@@ -2261,6 +2290,137 @@ Window {
     CHECK(preview.diagnostics().contains(QStringLiteral("runtime fixture warning")));
     CHECK(notifications == 1);
     CHECK(preview.diagnostics().size() <= 4096);
+    return EXIT_SUCCESS;
+}
+
+// History through the window, with a real agent: a wide translucent bar down
+// the terminal's right edge that the whole strip answers, a press on the
+// thumb that keeps its hold, the wheel over the bar still scrolling, and
+// letting go at the bottom returning to live.
+int run_history_ui_tests() {
+    using namespace lapis::desktop;
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-history-ui-XXXXXX"));
+    CHECK(directory.isValid());
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    CHECK(root.mkpath(QStringLiteral("bin")) && root.mkpath(QStringLiteral("project")));
+    {
+        QFile script(root.filePath(QStringLiteral("bin/grok")));
+        CHECK(script.open(QIODevice::WriteOnly));
+        script.write("#!/bin/sh\n"
+                     "i=0\n"
+                     "while [ $i -lt 400 ]; do printf 'line %04d\\n' $i; i=$((i + 1)); done\n"
+                     "echo all printed\n"
+                     "exec sleep 600\n");
+        script.close();
+        CHECK(script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    }
+    const auto path = qgetenv("PATH");
+    qputenv("PATH", QFile::encodeName(root.filePath(QStringLiteral("bin"))) + ':' + path);
+    const auto restore_path = qScopeGuard([&path] { qputenv("PATH", path); });
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    Workspace workspace(WorkspaceMode::live, options);
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(root.filePath(QStringLiteral("lapis.json")));
+    UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+                                  .compact = false,
+                                  .screen = QString(),
+                                  .keymap = &keymap});
+    CHECK(preview.load());
+    auto* window = preview.window();
+    window->resize(1200, 800);
+    wait_active(*window);
+    const auto item = [window](const QString& name) {
+        auto* found = find_visual(window->contentItem(), name);
+        if (found == nullptr)
+            throw std::runtime_error("missing item " + name.toStdString());
+        return found;
+    };
+    const auto wait = [](const std::function<bool()>& done) {
+        QElapsedTimer elapsed;
+        elapsed.start();
+        while (!done() && elapsed.elapsed() < 15000)
+            pump(20);
+        return done();
+    };
+    CHECK(workspace.createAgent(root.filePath(QStringLiteral("project")), QStringLiteral("scroll"),
+                                QStringLiteral("grok")));
+    auto* agent = workspace.focusedSession();
+    CHECK(agent != nullptr);
+    CHECK(wait([agent] {
+        return agent->inputReady() &&
+               screen_text(agent->snapshot()).contains(QStringLiteral("all printed"));
+    }));
+    const auto settled = [agent] {
+        return agent->historyActive() && !agent->historyRequestPending();
+    };
+    agent->scrollHistory(3);
+    CHECK(wait(settled));
+    pump(100);
+    // Each row shows once across the join of kept rows and the screen, even
+    // after the window's size brought kept rows back onto the screen.
+    int previous = -1;
+    int lines = 0;
+    for (const auto& row : screen_text(agent->snapshot()).split(QLatin1Char('\n'))) {
+        if (!row.trimmed().startsWith(QStringLiteral("line ")))
+            continue;
+        const int number = row.trimmed().mid(5, 4).toInt();
+        CHECK(previous < 0 || number == previous + 1);
+        previous = number;
+        ++lines;
+    }
+    CHECK(lines > 3);
+    auto* terminal = item(QStringLiteral("liveTerminal"));
+    auto* bar = item(QStringLiteral("historyScrubber"));
+    auto* track = item(QStringLiteral("historyTrack"));
+    auto* thumb = item(QStringLiteral("historyThumb"));
+    CHECK(bar->isVisible() && bar->width() >= 32 && track->width() >= 12);
+    CHECK(std::abs(scene_rect(*bar).right() - scene_rect(*terminal).right()) < 1 &&
+          std::abs(scene_rect(*bar).height() - scene_rect(*terminal).height()) < 1);
+    if (const auto prefix = qEnvironmentVariable("LAPIS_WORKSPACE_CAPTURE_PREFIX");
+        !prefix.isEmpty())
+        CHECK(window->grabWindow().save(prefix + QStringLiteral("history.png")));
+    static quint64 stamp = 5'000'000;
+    const auto mouse = [window](QEvent::Type type, QPointF at, Qt::MouseButtons buttons) {
+        QMouseEvent event(type, at, window->mapToGlobal(at),
+                          type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons,
+                          Qt::NoModifier);
+        event.setTimestamp(stamp += 16);
+        QCoreApplication::sendEvent(window, &event);
+        pump(10);
+    };
+    // The pointer anywhere over the strip, even well left of the track, lights it.
+    const auto idle_width = track->width();
+    const auto strip_left = scene_rect(*bar).left() + 3;
+    mouse(QEvent::MouseMove, QPointF(strip_left, scene_rect(*bar).center().y()), Qt::NoButton);
+    pump(300);
+    CHECK(track->width() > idle_width);
+    // A press on the thumb near its top keeps that hold as it moves.
+    const auto held = scene_rect(*thumb).top() + 6;
+    const auto thumb_top = scene_rect(*thumb).top();
+    mouse(QEvent::MouseButtonPress, QPointF(strip_left, held), Qt::LeftButton);
+    CHECK(std::abs(scene_rect(*thumb).top() - thumb_top) < 2);
+    for (int step = 1; step <= 6; ++step)
+        mouse(QEvent::MouseMove, QPointF(strip_left, held - step * 20), Qt::LeftButton);
+    CHECK(std::abs(scene_rect(*thumb).top() - (thumb_top - 120)) < 2);
+    mouse(QEvent::MouseButtonRelease, QPointF(strip_left, held - 120), Qt::NoButton);
+    CHECK(wait(settled) && agent->historyActive());
+    // The wheel over the bar still scrolls the terminal.
+    const auto before = agent->historyPosition();
+    const auto over = QPointF(scene_rect(*bar).center());
+    QWheelEvent wheel(over, window->mapToGlobal(over), QPoint(), QPoint(0, 120), Qt::NoButton,
+                      Qt::NoModifier, Qt::NoScrollPhase, false);
+    QCoreApplication::sendEvent(window, &wheel);
+    CHECK(wait(settled) && agent->historyPosition() < before);
+    // Letting go with the thumb at the bottom is live again.
+    const auto grip = scene_rect(*thumb).center();
+    mouse(QEvent::MouseButtonPress, grip, Qt::LeftButton);
+    for (int step = 1; step <= 8; ++step)
+        mouse(QEvent::MouseMove, grip + QPointF(0, step * 200), Qt::LeftButton);
+    mouse(QEvent::MouseButtonRelease, grip + QPointF(0, 1600), Qt::NoButton);
+    CHECK(wait([agent] { return !agent->historyActive(); }) && !bar->isVisible());
+    CHECK(workspace.closeSession(agent->sessionId()));
+    CHECK(wait([&workspace] { return workspace.sessions().isEmpty(); }));
     return EXIT_SUCCESS;
 }
 
@@ -2309,7 +2469,8 @@ int main(int argc, char** argv) {
                    run_diagnostics_reentrancy_test() != EXIT_SUCCESS ||
                    run_surface_tests(background) != EXIT_SUCCESS ||
                    run_attention_dialog_tests() != EXIT_SUCCESS ||
-                   run_attention_ui_tests() != EXIT_SUCCESS || run_strip_ui_tests() != EXIT_SUCCESS)
+                   run_attention_ui_tests() != EXIT_SUCCESS ||
+                   run_strip_ui_tests() != EXIT_SUCCESS || run_history_ui_tests() != EXIT_SUCCESS)
             return EXIT_FAILURE;
         std::cout << "ui_preview_test: PASS"
                   << (background ? " (offscreen/software; not native input or GPU acceptance)" : "")

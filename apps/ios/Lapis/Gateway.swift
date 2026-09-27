@@ -13,6 +13,10 @@ struct AgentCategory: Codable, Identifiable {
     let id: String
     let name: String
     let agents: [Agent]
+
+    func with(_ agents: [Agent]) -> AgentCategory {
+        AgentCategory(id: id, name: name, agents: agents)
+    }
 }
 
 struct Agent: Codable, Identifiable, Hashable {
@@ -131,6 +135,18 @@ struct FolderPayload: Codable {
     let activity: [String: Double]?
 }
 
+// The Mac's settings the phone can change, kept in lapis.json there: staying
+// awake so the phone can reach it, its alerts, and its plan usage meter. How
+// the Mac's window looks is set on the Mac.
+struct MacSettings: Codable, Equatable {
+    var keepAwake: Bool
+    var alertSound: Bool
+    var alertRepeat: Int
+    var finishSound: Bool
+    var notify: Bool
+    var showUsage: Bool
+}
+
 struct StartedAgent: Decodable {
     let id: String
     // The CLI updates itself before the agent starts.
@@ -150,6 +166,10 @@ struct ScreenFrame: Decodable {
     let cursor: Cursor
     let alternateScreen: Bool
     let applicationCursor: Bool
+    // A full-screen program whose Mac service takes the wheel: dragging
+    // scrolls the program (Claude Code's full-screen mode scrolls its own
+    // transcript), not the archived history. Older gateways send none.
+    let wheel: Bool?
     let foreground: String
     let background: String
     let lines: [[Run]]
@@ -189,12 +209,22 @@ struct Run: Decodable {
 
 // An archived page of output above the live screen, oldest first on screen.
 struct HistoryPage: Decodable {
+    // Where a page sits among every kept row (0 the oldest); a service that
+    // says so can jump to any row. Older gateways send none.
+    struct Place: Decodable {
+        let total: Int
+        let offset: Int
+        let rows: Int
+        let scrubbable: Bool
+    }
+
     let page: UInt64
     let message: String
     let end: Bool
     let busy: Bool
     let columns: Int?
     let lines: [[Run]]?
+    let place: Place?
 }
 
 struct StreamStatus: Decodable {
@@ -225,9 +255,15 @@ struct Input: Encodable {
     var key: String?
     var modifiers: Int?
     var resize: [Int]?
+    // Notches (positive scrolls back), column, row.
+    var wheel: [Int]?
 
     static func key(_ key: Key, shift: Bool = false) -> Input {
         Input(key: key.rawValue, modifiers: shift ? 1 : 0)
+    }
+
+    static func wheel(_ notches: Int, column: Int, row: Int) -> Input {
+        Input(wheel: [notches, column, row])
     }
 }
 
@@ -424,13 +460,66 @@ struct Gateway {
     }
 
     // The page before `before` (0: the newest), or with `after`, the page after it.
-    func history(agent: String, before: UInt64 = 0, after: UInt64? = nil) async throws -> HistoryPage {
-        let item = after.map { URLQueryItem(name: "after", value: String($0)) }
+    // With `at`, the page holding that row (0 the oldest kept row).
+    func history(agent: String, before: UInt64 = 0, after: UInt64? = nil,
+                 at row: Int? = nil) async throws -> HistoryPage {
+        let item = row.map { URLQueryItem(name: "at", value: String($0)) }
+            ?? after.map { URLQueryItem(name: "after", value: String($0)) }
             ?? URLQueryItem(name: "before", value: String(before))
         let request = request("api/agents/\(agent)/history", query: [item])
         let (data, response) = try await Gateway.requests.data(for: request)
         try Gateway.check(response, data)
         return try JSONDecoder().decode(HistoryPage.self, from: data)
+    }
+
+    // A change to the Mac's workspace or settings, as JSON; the Mac's answer.
+    @discardableResult
+    private func post(_ path: String, _ body: [String: Any] = [:]) async throws -> Data {
+        var request = request(path)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await Gateway.requests.data(for: request)
+        try Gateway.check(response, data)
+        return data
+    }
+
+    func renameCategory(_ id: String, to name: String) async throws {
+        try await post("api/categories/\(id)/rename", ["name": name])
+    }
+
+    // Only an empty category goes, and one always stays; the Mac says why not.
+    func removeCategory(_ id: String) async throws {
+        try await post("api/categories/\(id)/remove")
+    }
+
+    func placeCategory(_ id: String, at index: Int) async throws {
+        try await post("api/categories/\(id)/place", ["index": index])
+    }
+
+    // Puts the agent at `index` among the category's other agents, or last.
+    func place(agent: String, category: String, at index: Int?) async throws {
+        var body: [String: Any] = ["category": category]
+        if let index { body["index"] = index }
+        try await post("api/agents/\(agent)/place", body)
+    }
+
+    // Starts a stopped agent again, resuming its conversation where its CLI can.
+    func restart(agent: String) async throws {
+        try await post("api/agents/\(agent)/restart")
+    }
+
+    func settings() async throws -> MacSettings {
+        struct Reply: Decodable { let settings: MacSettings }
+        let (data, response) = try await Gateway.requests.data(for: request("api/settings"))
+        try Gateway.check(response, data)
+        return try JSONDecoder().decode(Reply.self, from: data).settings
+    }
+
+    // Changes some settings; the answer is all of them.
+    func change(settings changes: [String: Any]) async throws -> MacSettings {
+        struct Reply: Decodable { let settings: MacSettings }
+        return try JSONDecoder().decode(Reply.self, from: try await post("api/settings", changes)).settings
     }
 
     // A screenshot and what the phone drew, saved on the Mac for debugging.

@@ -32,7 +32,7 @@ class LiveConnection final : public QObject {
     void receive();
     void handle(const session::wire::Frame& frame);
     void acceptHello(const session::wire::Hello& hello);
-    void acceptSnapshot(session::wire::SnapshotMessage message);
+    void acceptSnapshot(session::wire::SnapshotEnvelope message);
     void acceptHistoryReply(session::wire::HistoryReply reply);
     void rememberCanceledHistoryRequest(quint64 request_id);
     void invalidateHistory();

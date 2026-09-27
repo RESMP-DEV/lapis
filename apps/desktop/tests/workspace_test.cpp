@@ -22,6 +22,7 @@
 #include <QLockFile>
 #include <QPointer>
 #include <QProcess>
+#include <QSaveFile>
 #include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QThread>
@@ -1432,6 +1433,202 @@ QByteArray installStandInGrok(const QDir& root) {
     return path;
 }
 
+// A full-screen program that reports the mouse, as Claude Code's full-screen
+// mode does, gets the wheel as mouse wheel events at the cell under it. The
+// stand-in takes the alternate screen, reads what the wheel sends, and prints
+// it once it leaves.
+void wheelReachesAFullScreenProgram() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-wheel-XXXXXX"));
+    require(directory.isValid(), "wheel directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    {
+        QFile script(root.filePath(QStringLiteral("bin/grok")));
+        require(script.open(QIODevice::WriteOnly | QIODevice::Truncate), "write the stand-in");
+        script.write("#!/bin/sh\n"
+                     "printf '\\033[?1049h\\033[?1000h\\033[?1006hwheel ready'\n"
+                     "stty raw -echo\n"
+                     "got=$(dd bs=1 count=20 2>/dev/null | od -An -c | tr -d ' \\n')\n"
+                     "stty sane\n"
+                     "printf '\\033[?1006l\\033[?1000l\\033[?1049l'\n"
+                     "echo \"got $got\"\n"
+                     "exec sleep 600\n");
+    }
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.createAgent(root.filePath(QStringLiteral("project")),
+                                      QStringLiteral("wheel"), QStringLiteral("grok")),
+                "a full-screen stand-in");
+        auto* agent = workspace.focusedSession();
+        require(agent != nullptr && waitFor(
+                                        [agent] {
+                                            return agent->inputReady() &&
+                                                   agent->snapshot().accepts_wheel &&
+                                                   screenText(agent->snapshot())
+                                                       .contains(QStringLiteral("wheel ready"));
+                                        },
+                                        10000),
+                "the program takes the alternate screen, and the service the wheel");
+        agent->sendWheel(2, 4, 2);
+        require(waitFor(
+                    [agent] {
+                        return screenText(agent->snapshot())
+                            .contains(QStringLiteral("got 033[<64;5;3M033[<64;5;3M"));
+                    },
+                    10000),
+                "two wheel-up events at the cell reached the program");
+        require(workspace.closeSession(agent->sessionId()), "close the stand-in");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in closes");
+    }
+    qputenv("PATH", path);
+}
+
+// History reaches back to the first row, and the scrubber jumps anywhere in
+// it: the page at the start, the middle, then live again.
+void historyJumpsToTheStart() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-scrub-XXXXXX"));
+    require(directory.isValid(), "scrub directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    {
+        QFile script(root.filePath(QStringLiteral("bin/grok")));
+        require(script.open(QIODevice::WriteOnly | QIODevice::Truncate), "write the stand-in");
+        script.write("#!/bin/sh\n"
+                     "i=0\n"
+                     "while [ $i -lt 2000 ]; do printf 'line %04d\\n' $i; i=$((i + 1)); done\n"
+                     "echo all printed\n"
+                     "exec sleep 600\n");
+    }
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.createAgent(root.filePath(QStringLiteral("project")),
+                                      QStringLiteral("scrub"), QStringLiteral("grok")),
+                "a talkative stand-in");
+        auto* agent = workspace.focusedSession();
+        const auto shows = [agent](const QString& text) {
+            return screenText(agent->snapshot()).contains(text);
+        };
+        require(
+            agent != nullptr &&
+                waitFor([&] { return agent->inputReady() && shows(QStringLiteral("all printed")); },
+                        15000),
+            "it prints its lines");
+        const auto settled = [agent] {
+            return agent->historyActive() && !agent->historyRequestPending();
+        };
+        // History scrolls by rows as one strip: three rows back, the three
+        // kept lines above the screen, then the screen moved down, whole.
+        const auto live = agent->snapshot();
+        const auto live_rows = screenText(live).split(QLatin1Char('\n'));
+        agent->scrollHistory(3);
+        require(waitFor(settled, 10000), "three rows back");
+        const auto view = agent->snapshot();
+        const auto rows = screenText(view).split(QLatin1Char('\n'));
+        const auto number = [](const QString& row) {
+            return row.trimmed().startsWith(QStringLiteral("line "))
+                       ? row.trimmed().mid(5, 4).toInt()
+                       : -1;
+        };
+        require(view.size == live.size &&
+                    rows.mid(3, live.size.rows - 3) == live_rows.mid(0, live.size.rows - 3),
+                "the screen moves down three rows, and the view is a whole screen");
+        require(number(rows[0]) >= 0 && number(rows[1]) == number(rows[0]) + 1 &&
+                    number(rows[2]) == number(rows[1]) + 1 &&
+                    (number(live_rows[0]) < 0 || number(live_rows[0]) == number(rows[2]) + 1),
+                "above it, the three kept lines just before the screen");
+        agent->scrollHistory(-3);
+        require(!agent->historyActive() && shows(QStringLiteral("all printed")),
+                "three rows forward is live again");
+        agent->olderHistory();
+        require(waitFor(settled, 10000) && agent->historyScrubbable(),
+                "the newest page says where it sits");
+        agent->historyAt(0);
+        require(waitFor([&] { return settled() && shows(QStringLiteral("line 0000")); }, 10000) &&
+                    agent->historyPosition() < 0.001,
+                "the scrubber reaches the first line");
+        agent->historyAt(0.5);
+        require(waitFor([&] { return settled() && agent->historyPosition() > 0.4; }, 10000) &&
+                    agent->historyPosition() < 0.6 &&
+                    (shows(QStringLiteral("line 09")) || shows(QStringLiteral("line 10"))),
+                "and the middle");
+        agent->returnToLive();
+        require(waitFor([&] { return shows(QStringLiteral("all printed")); }, 5000),
+                "and live again");
+        require(workspace.closeSession(agent->sessionId()), "close the stand-in");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in closes");
+    }
+    qputenv("PATH", path);
+}
+
+// Screens are decoded for the views showing them: an agent nobody is looking
+// at keeps only its newest screen, encoded, until someone reads it; the stage
+// decodes each one, a preview at most every 250 ms.
+void unseenAgentsDecodeNothing() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-unseen-XXXXXX"));
+    require(directory.isValid(), "unseen directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    {
+        QFile script(root.filePath(QStringLiteral("bin/grok")));
+        require(script.open(QIODevice::WriteOnly | QIODevice::Truncate), "write the stand-in");
+        script.write(
+            "#!/bin/sh\n"
+            "echo ready\n"
+            "while read round; do\n"
+            "  i=0; while [ $i -lt 30 ]; do echo \"$round $i\"; i=$((i + 1)); sleep 0.03; done\n"
+            "  echo \"done $round\"\n"
+            "done\n");
+    }
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.createAgent(root.filePath(QStringLiteral("project")),
+                                      QStringLiteral("unseen"), QStringLiteral("grok")),
+                "a stand-in that prints on request");
+        auto* agent = workspace.focusedSession();
+        const auto shows = [agent](const QString& text) {
+            return screenText(agent->snapshot()).contains(text);
+        };
+        require(agent != nullptr &&
+                    waitFor([&] { return agent->inputReady() && shows(QStringLiteral("ready")); },
+                            10000),
+                "it starts");
+        const auto idle = [](int milliseconds) {
+            static_cast<void>(waitFor([] { return false; }, milliseconds));
+        };
+        const auto before = agent->decodedScreens();
+        agent->sendText("one\n");
+        idle(2500);
+        require(agent->decodedScreens() == before, "nobody is looking: nothing is decoded");
+        require(shows(QStringLiteral("done one")) && agent->decodedScreens() == before + 1,
+                "reading the screen decodes the newest once");
+        agent->addViewer(0);
+        const auto staged = agent->decodedScreens();
+        agent->sendText("two\n");
+        idle(2500);
+        require(agent->decodedScreens() > staged + 5, "the stage decodes each screen");
+        agent->removeViewer(0);
+        agent->addViewer(250);
+        const auto previewed = agent->decodedScreens();
+        agent->sendText("three\n");
+        idle(2500);
+        const auto decoded = agent->decodedScreens() - previewed;
+        require(decoded >= 1 && decoded <= 12, "a preview decodes at most every 250 ms");
+        agent->removeViewer(250);
+        require(workspace.closeSession(agent->sessionId()), "close the stand-in");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in closes");
+    }
+    qputenv("PATH", path);
+}
+
 // Quick-command terminals: one shell per machine under its own service, apart
 // from agents. It is reused, reattached by the next lapis, started from the
 // phone through the control socket, and leaves when its shell exits.
@@ -1745,6 +1942,192 @@ void resumingAConversationStartsItsCli() {
     qputenv("PATH", path);
 }
 
+// A workspace request as the phone gateway sends it.
+QJsonObject askVersioned(const Workspace& workspace, QJsonObject request) {
+    request.insert(QStringLiteral("version"), 1);
+    return askWorkspace(workspace.storagePath(), request);
+}
+
+bool answeredOk(const QJsonObject& answer) { return answer.value(QStringLiteral("ok")).toBool(); }
+
+struct PhoneArrangement {
+    QString agent; // running, in `later`
+    QString later;
+    QString ideas; // empty
+};
+
+// The phone renames, orders and removes categories under the Mac's rules,
+// and moves an agent to a category or a place in one, while the window keeps
+// what it shows.
+void phoneArrangesTheWorkspace(Workspace& workspace, const PhoneArrangement& place) {
+    // A copy: the requests below change the workspace through its socket.
+    // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
+    const auto shown = workspace.activeCategoryId();
+    const auto* focused = workspace.focusedSession();
+    const auto& ideas = place.ideas;
+    require(answeredOk(askVersioned(workspace,
+                                    {{QStringLiteral("request"), QStringLiteral("renameCategory")},
+                                     {QStringLiteral("id"), ideas},
+                                     {QStringLiteral("name"), QStringLiteral("Someday")}})) &&
+                workspace.categories().constLast().toMap().value(QStringLiteral("name")) ==
+                    QStringLiteral("Someday"),
+            "the phone renames a category");
+    require(answeredOk(askVersioned(workspace,
+                                    {{QStringLiteral("request"), QStringLiteral("placeCategory")},
+                                     {QStringLiteral("id"), ideas},
+                                     {QStringLiteral("index"), 0}})) &&
+                workspace.categories().constFirst().toMap().value(QStringLiteral("id")) == ideas,
+            "the phone moves a category to the top");
+    require(answeredOk(
+                askVersioned(workspace, {{QStringLiteral("request"), QStringLiteral("placeAgent")},
+                                         {QStringLiteral("id"), place.agent},
+                                         {QStringLiteral("category"), ideas},
+                                         {QStringLiteral("index"), 0}})) &&
+                workspace.agentPlace(place.agent).value(QStringLiteral("category")) ==
+                    QStringLiteral("Someday"),
+            "the phone moves an agent to another category");
+    const auto kept =
+        askVersioned(workspace, {{QStringLiteral("request"), QStringLiteral("removeCategory")},
+                                 {QStringLiteral("id"), ideas}});
+    require(!answeredOk(kept) &&
+                kept.value(QStringLiteral("error"))
+                    .toString()
+                    .contains(QStringLiteral("Move the agents out")) &&
+                workspace.workspaceError().isEmpty(),
+            "a category with agents stays, and the reason goes to the phone only");
+    require(answeredOk(
+                askVersioned(workspace, {{QStringLiteral("request"), QStringLiteral("placeAgent")},
+                                         {QStringLiteral("id"), place.agent},
+                                         {QStringLiteral("category"), place.later},
+                                         {QStringLiteral("index"), 1024 * 1024}})) &&
+                answeredOk(askVersioned(
+                    workspace, {{QStringLiteral("request"), QStringLiteral("removeCategory")},
+                                {QStringLiteral("id"), ideas}})),
+            "an emptied category is removed");
+    const auto categories = workspace.categories();
+    require(std::none_of(categories.begin(), categories.end(),
+                         [&ideas](const QVariant& category) {
+                             return category.toMap().value(QStringLiteral("id")) == ideas;
+                         }),
+            "and is gone");
+    const auto running =
+        askVersioned(workspace, {{QStringLiteral("request"), QStringLiteral("restartAgent")},
+                                 {QStringLiteral("id"), place.agent}});
+    require(!answeredOk(running) && running.value(QStringLiteral("error"))
+                                        .toString()
+                                        .contains(QStringLiteral("still running")),
+            "a running agent is not restarted");
+    require(workspace.activeCategoryId() == shown && workspace.focusedSession() == focused,
+            "the window keeps its category and agent");
+}
+
+// The Mac's settings that matter away from it, read and changed from the
+// phone and saved to lapis.json; nothing else can be changed that way.
+void phoneChangesTheMacsSettings(const Workspace& workspace,
+                                 lapis::desktop::WorkspaceControl& control, const QDir& root) {
+    require(!answeredOk(
+                askVersioned(workspace, {{QStringLiteral("request"), QStringLiteral("settings")}})),
+            "no settings without a config");
+    QFile file(root.filePath(QStringLiteral("lapis.json")));
+    require(file.open(QIODevice::WriteOnly) && file.write("{}\n") == 3, "write a config");
+    file.close();
+    lapis::desktop::KeyMap keymap;
+    keymap.setSourcePathForTesting(file.fileName());
+    require(keymap.load(), "the config loads");
+    control.setKeyMap(&keymap);
+    const auto shown =
+        askVersioned(workspace, {{QStringLiteral("request"), QStringLiteral("settings")}})
+            .value(QStringLiteral("settings"))
+            .toObject();
+    require(shown.value(QStringLiteral("keepAwake")).toBool() &&
+                shown.value(QStringLiteral("alertRepeat")).toInt() == 3 &&
+                shown.contains(QStringLiteral("showUsage")),
+            "the phone reads the Mac's settings");
+    const auto changed = askVersioned(
+        workspace, {{QStringLiteral("request"), QStringLiteral("changeSettings")},
+                    {QStringLiteral("settings"), QJsonObject{{QStringLiteral("keepAwake"), false},
+                                                             {QStringLiteral("alertRepeat"), 5}}}});
+    require(answeredOk(changed) && !keymap.keepAwake() && keymap.alertRepeat() == 5 &&
+                !changed.value(QStringLiteral("settings"))
+                     .toObject()
+                     .value(QStringLiteral("keepAwake"))
+                     .toBool(),
+            "the phone changes them");
+    require(file.open(QIODevice::ReadOnly) && !QJsonDocument::fromJson(file.readAll())
+                                                   .object()
+                                                   .value(QStringLiteral("keepAwake"))
+                                                   .toBool(true),
+            "and they are saved");
+    file.close();
+    for (const auto& bad : {QJsonObject{{QStringLiteral("keepAwake"), true},
+                                        {QStringLiteral("theme"), QStringLiteral("amber")}},
+                            QJsonObject{{QStringLiteral("keepAwake"), QStringLiteral("yes")}}})
+        require(!answeredOk(askVersioned(
+                    workspace, {{QStringLiteral("request"), QStringLiteral("changeSettings")},
+                                {QStringLiteral("settings"), bad}})) &&
+                    !keymap.keepAwake(),
+                "an unknown or mistyped setting changes nothing");
+    for (const auto& request :
+         {QJsonObject{{QStringLiteral("request"), QStringLiteral("changeSettings")}},
+          QJsonObject{{QStringLiteral("request"), QStringLiteral("changeSettings")},
+                      {QStringLiteral("settings"), QStringLiteral("no object")}}}) {
+        const auto refused = askVersioned(workspace, request);
+        require(!answeredOk(refused) &&
+                    refused.value(QStringLiteral("error"))
+                        .toString()
+                        .contains(QStringLiteral("Missing settings")) &&
+                    !keymap.keepAwake(),
+                "a missing or non-object settings value is refused");
+    }
+    for (const auto repeat : {0.0, -1.0, 0.5, 2.5, 10.5, 1e20}) {
+        const auto refused = askVersioned(
+            workspace,
+            {{QStringLiteral("request"), QStringLiteral("changeSettings")},
+             {QStringLiteral("settings"), QJsonObject{{QStringLiteral("alertRepeat"), repeat}}}});
+        require(!answeredOk(refused) &&
+                    refused.value(QStringLiteral("error"))
+                        .toString()
+                        .contains(QStringLiteral("alertRepeat")) &&
+                    keymap.alertRepeat() == 5,
+                "alertRepeat is a whole number from 1 through 10");
+    }
+
+    // A later save can fail even though the request validated. The owner must
+    // not leave a mixed batch in memory or replace the damaged file.
+    const auto before_failure = keymap.remoteSettings();
+    const auto malformed_path = root.filePath(QStringLiteral("broken-lapis.json"));
+    const QByteArray malformed = "{unfinished remote edit";
+    {
+        QSaveFile replacement(malformed_path);
+        require(replacement.open(QIODevice::WriteOnly), "open the replacement");
+        replacement.write(malformed);
+        require(replacement.commit(), "commit the malformed replacement");
+    }
+    keymap.setSourcePathForTesting(malformed_path);
+    const auto save_failed = askVersioned(
+        workspace, {{QStringLiteral("request"), QStringLiteral("changeSettings")},
+                    {QStringLiteral("settings"), QJsonObject{{QStringLiteral("keepAwake"), true},
+                                                             {QStringLiteral("alertRepeat"), 3}}}});
+    require(!answeredOk(save_failed) &&
+                save_failed.value(QStringLiteral("settings")).toObject() ==
+                    QJsonObject::fromVariantMap({{QStringLiteral("keepAwake"), false},
+                                                 {QStringLiteral("alertSound"), true},
+                                                 {QStringLiteral("finishSound"), true},
+                                                 {QStringLiteral("alertRepeat"), 5},
+                                                 {QStringLiteral("notify"), true},
+                                                 {QStringLiteral("showUsage"), true}}) &&
+                keymap.remoteSettings() == before_failure,
+            "a failed save echoes unchanged settings and preserves memory");
+    require(save_failed.value(QStringLiteral("error"))
+                .toString()
+                .contains(QStringLiteral("Could not save")),
+            "a failed save keeps a useful diagnostic");
+    QFile damaged(malformed_path);
+    require(damaged.open(QIODevice::ReadOnly), "read the failed-save config");
+    require(damaged.readAll() == malformed, "a failed save preserves disk bytes");
+    control.setKeyMap(nullptr);
+}
+
 // The phone gateway starts an agent through the window: it opens as a new tab
 // in the chosen category, while the window keeps its category and agent.
 void phoneStartsAnAgentInItsCategory() {
@@ -1856,6 +2239,33 @@ void phoneStartsAnAgentInItsCategory() {
                      .value(QStringLiteral("ok"))
                      .toBool(),
             "an empty name or an unknown agent is refused");
+        const auto ideas = made.value(QStringLiteral("id")).toString();
+        for (const auto index : {-0.5, 0.5, 2.5, 1e20}) {
+            const auto moved_category = askVersioned(
+                workspace, {{QStringLiteral("request"), QStringLiteral("placeCategory")},
+                            {QStringLiteral("id"), ideas},
+                            {QStringLiteral("index"), index}});
+            const auto moved_agent =
+                askVersioned(workspace, {{QStringLiteral("request"), QStringLiteral("placeAgent")},
+                                         {QStringLiteral("id"), id},
+                                         {QStringLiteral("category"), later},
+                                         {QStringLiteral("index"), index}});
+            require(!answeredOk(moved_category) &&
+                        moved_category.value(QStringLiteral("error"))
+                            .toString()
+                            .contains(QStringLiteral("Invalid index")) &&
+                        !answeredOk(moved_agent) &&
+                        moved_agent.value(QStringLiteral("error"))
+                            .toString()
+                            .contains(QStringLiteral("Missing category or index")),
+                    "fractional and out-of-range positions are not coerced to zero");
+        }
+        require(workspace.agentPlace(id).value(QStringLiteral("category")) ==
+                        QStringLiteral("Later") &&
+                    workspace.categories().constLast().toMap().value(QStringLiteral("id")) == ideas,
+                "rejected positions leave the workspace in place");
+        phoneArrangesTheWorkspace(workspace, {.agent = id, .later = later, .ideas = ideas});
+        phoneChangesTheMacsSettings(workspace, control, root);
         // Over ssh: the CLI runs in the folder on that machine, in its login
         // shell. A stand-in ssh prints what it was given.
         QFile ssh(root.filePath(QStringLiteral("bin/ssh")));
@@ -2066,14 +2476,27 @@ void alertsChimeWhileAnAgentWaits() {
     background = true;
     emit workspace.agentNeedsYou(&agent);
     require(posted.size() == 1 && posted[0][1] == QStringLiteral("agent") &&
-                posted[0][2] == QStringLiteral("Needs you: Approval"),
-            "a request in the background posts one notification naming the agent");
+                posted[0][2] == QStringLiteral("Codex needs you: Approval"),
+            "a request in the background posts one notification naming the agent and its CLI");
     emit workspace.turnFinished(&agent);
-    require(posted.size() == 2 && posted[1][2] == QStringLiteral("Finished a turn"),
+    require(posted.size() == 2 && posted[1][2] == QStringLiteral("Codex finished a turn"),
             "a finished turn posts one too");
+    // A Claude agent whose conversation is about Codex is still Claude's.
+    agent.setHarnessId(QStringLiteral("claude"));
+    agent.rename(QStringLiteral("Codex resume"));
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 3 && posted[2][1] == QStringLiteral("Codex resume") &&
+                posted[2][2] == QStringLiteral("Claude finished a turn"),
+            "the body names the agent's CLI, whatever its title says");
+    agent.setHarnessId({});
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 4 && posted[3][2] == QStringLiteral("Agent finished a turn"),
+            "terminal-mode notifications retain a readable subject");
+    agent.setHarnessId(QStringLiteral("codex"));
+    agent.rename(QStringLiteral("agent"));
     require(keymap.setNotify(false), "turn notifications off");
     emit workspace.agentNeedsYou(&agent);
-    require(posted.size() == 2, "none with notifications off");
+    require(posted.size() == 4, "none with notifications off");
 
     const auto wav = lapis::desktop::chime_wav(lapis::desktop::Chime::needsYou);
     require(wav.startsWith("RIFF") && wav.mid(8, 8) == "WAVEfmt " && wav.size() == 44 + 27342 * 2,
@@ -3164,6 +3587,9 @@ int main(int argc, char** argv) {
         phoneStartsAnAgentInItsCategory();
         resumingAConversationStartsItsCli();
         terminalsRunPlainShells();
+        wheelReachesAFullScreenProgram();
+        historyJumpsToTheStart();
+        unseenAgentsDecodeNothing();
         windowTakesTheWorkspaceFromTheHost();
         alertsChimeWhileAnAgentWaits();
         phoneSizeYieldsToTheDesktop();

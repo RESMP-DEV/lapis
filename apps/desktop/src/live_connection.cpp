@@ -6,10 +6,13 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QFile>
+#include <QFileInfo>
 #include <QFutureWatcher>
 #include <QProcess>
 #include <QPromise>
 #include <QThreadPool>
+#include <algorithm>
+#include <cmath>
 #include <exception>
 #include <limits>
 #include <stdexcept>
@@ -25,10 +28,13 @@ constexpr int history_timeout_ms = 5000;
 SessionPreview::~SessionPreview() { live_.reset(); }
 void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpec& launch,
                                wire::AttachMode mode) {
+    link_folder_ =
+        QFileInfo(launch.program).fileName() == QLatin1String("ssh") ? QString() : launch.directory;
     live_ = std::make_unique<LiveConnection>(*this, endpoint, launch, mode);
 }
 void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
     noteOutput();
+    waiting_.reset();
     live_snapshot_ = std::move(snapshot);
     live_snapshot_received_ = true;
     live_snapshot_ready_ = live();
@@ -37,7 +43,55 @@ void SessionPreview::applySnapshot(session::TerminalSnapshot snapshot) {
         emit snapshotChanged();
     }
 }
+void SessionPreview::offerSnapshot(QByteArray encoded) {
+    noteOutput();
+    waiting_ = std::move(encoded);
+    live_snapshot_received_ = true;
+    live_snapshot_ready_ = live();
+    if (viewers_.empty())
+        return;
+    if (*viewers_.begin() == 0) {
+        decodeWaiting();
+        if (!history_active_)
+            emit snapshotChanged();
+    } else if (!decode_timer_.isActive()) {
+        // The first screen opens the window; later ones share its decode.
+        decode_timer_.start(*viewers_.begin());
+    }
+}
+bool SessionPreview::decodeWaiting() const {
+    if (!waiting_)
+        return false;
+    auto encoded = std::move(*waiting_);
+    waiting_.reset();
+    try {
+        live_snapshot_ = wire::decode_snapshot(encoded);
+    } catch (const std::exception& error) {
+        // Keep the last good screen; the service sent one lapis cannot read.
+        qWarning().noquote() << "Screen not decoded:" << error.what();
+        return false;
+    }
+    ++decoded_screens_;
+    if (!history_active_)
+        snapshot_ = live_snapshot_;
+    return true;
+}
+void SessionPreview::addViewer(int interval_ms) {
+    const bool first = viewers_.empty();
+    viewers_.insert(std::max(0, interval_ms));
+    if (first && decodeWaiting() && !history_active_)
+        emit snapshotChanged();
+}
+void SessionPreview::removeViewer(int interval_ms) {
+    const auto found = viewers_.find(std::max(0, interval_ms));
+    if (found != viewers_.end())
+        viewers_.erase(found);
+    if (viewers_.empty())
+        decode_timer_.stop();
+}
 void SessionPreview::beginHistoryRequest() {
+    // History shows the live screen until a page comes, so take the newest.
+    decodeWaiting();
     history_active_ = true;
     history_request_pending_ = true;
     emit historyChanged();
@@ -47,24 +101,100 @@ void SessionPreview::completeHistoryRequest(quint64 page_id, session::TerminalSn
                                             const QString& message) {
     history_active_ = true;
     history_request_pending_ = false;
-    history_page_id_ = page_id;
     history_message_ = message;
-    snapshot_ = std::move(snapshot);
-    emit historyChanged();
+    // A service that places its pages says so with more than the page.
+    const auto place = snapshot.history;
+    history_scrubbable_ = place.viewport_offset > 0 || place.total_rows > place.viewport_rows;
+    if (!strip_) {
+        // The newest page: browsing begins at the screen as it is now, below
+        // every row kept so far. A service that does not place its pages
+        // says its page is all there is; older ones go on top as asked.
+        decodeWaiting();
+        strip_.emplace(strip_screen_ ? std::move(*strip_screen_) : live_snapshot_,
+                       place.total_rows);
+        strip_screen_.reset();
+        strip_oldest_page_ = page_id;
+        strip_->addPage(std::move(snapshot));
+        strip_->moveTo(static_cast<qint64>(strip_->archived()) - std::max(1, strip_rows_asked_));
+    } else if (strip_extending_) {
+        strip_oldest_page_ = page_id;
+        strip_->prependPage(std::move(snapshot));
+        strip_->moveTo(static_cast<qint64>(strip_->top()) - std::max(1, strip_rows_asked_));
+    } else {
+        strip_->addPage(std::move(snapshot));
+    }
+    strip_rows_asked_ = 0;
+    strip_extending_ = false;
     emit connectionChanged();
+    showStrip();
+}
+void SessionPreview::showStrip() {
+    if (!strip_)
+        return;
+    // Rows no page holds wait for their page; a service that cannot fetch
+    // by row shows them blank.
+    if (const auto row = strip_->missing(); row && history_scrubbable_) {
+        if (!history_request_pending_ && live_)
+            live_->requestHistory(wire::HistoryDirection::at, *row);
+        if (history_request_pending_)
+            return;
+    }
+    snapshot_ = strip_->view();
+    emit historyChanged();
     emit snapshotChanged();
 }
-void SessionPreview::failHistoryRequest(const QString& message) {
-    if (history_request_pending_) {
-        history_active_ = true;
-        history_request_pending_ = false;
-        history_message_ = message;
+void SessionPreview::extendStrip() {
+    if (history_request_pending_ || !live_)
+        return;
+    // Row 0 of a placed history is the oldest kept.
+    if (history_scrubbable_ || strip_oldest_page_ == 0) {
+        history_message_ = tr("The oldest kept row");
         emit historyChanged();
-        emit connectionChanged();
+        return;
     }
+    strip_extending_ = true;
+    live_->requestHistory(wire::HistoryDirection::older, strip_oldest_page_);
+}
+qreal SessionPreview::historyPosition() const {
+    if (!strip_ || strip_->archived() == 0)
+        return 1;
+    return static_cast<qreal>(strip_->top()) / static_cast<qreal>(strip_->archived());
+}
+qreal SessionPreview::historySpan() const {
+    if (!strip_)
+        return 1;
+    const auto rows = static_cast<qreal>(strip_->rows());
+    return rows / std::max<qreal>(1, static_cast<qreal>(strip_->archived()) + rows);
+}
+void SessionPreview::historyAt(qreal fraction) {
+    if (!strip_ || !history_scrubbable_)
+        return;
+    strip_->moveTo(
+        std::llround(std::clamp<qreal>(fraction, 0, 1) * static_cast<qreal>(strip_->archived())));
+    history_message_.clear();
+    showStrip();
+}
+void SessionPreview::failHistoryRequest(const QString& message) {
+    if (!history_request_pending_)
+        return;
+    history_request_pending_ = false;
+    strip_extending_ = false;
+    strip_rows_asked_ = 0;
+    if (!strip_)
+        strip_screen_.reset();
+    history_message_ = message;
+    // With nothing kept yet, the live screen stays.
+    history_active_ = strip_.has_value();
+    if (strip_) {
+        snapshot_ = strip_->view();
+        emit snapshotChanged();
+    }
+    emit historyChanged();
+    emit connectionChanged();
 }
 void SessionPreview::cancelHistoryRequests() {
     history_request_pending_ = false;
+    strip_extending_ = false;
     emit historyChanged();
     emit connectionChanged();
 }
@@ -73,21 +203,52 @@ void SessionPreview::setHistoryRequestId(quint64 request_id) {
         beginHistoryRequest();
 }
 void SessionPreview::olderHistory() {
-    if (!live_ || history_request_pending_)
-        return;
-    live_->requestHistory(wire::HistoryDirection::older, history_active_ ? history_page_id_ : 0);
+    scrollHistory(static_cast<int>(strip_ ? strip_->rows() : live_snapshot_.size.rows));
 }
 void SessionPreview::newerHistory() {
-    if (!live_ || history_request_pending_ || history_page_id_ == 0)
+    if (strip_)
+        scrollHistory(-static_cast<int>(strip_->rows()));
+}
+void SessionPreview::scrollHistory(int rows) {
+    if (rows == 0 || !live_)
         return;
-    live_->requestHistory(wire::HistoryDirection::newer, history_page_id_);
+    if (!strip_) {
+        if (rows < 0)
+            return; // already live
+        // Rows asked for while the first page loads add up.
+        strip_rows_asked_ += rows;
+        if (!history_request_pending_) {
+            decodeWaiting();
+            strip_screen_ = live_snapshot_;
+            live_->requestHistory(wire::HistoryDirection::older, 0);
+        }
+        return;
+    }
+    const auto top = static_cast<qint64>(strip_->top()) - rows;
+    if (rows < 0 && top >= static_cast<qint64>(strip_->archived())) {
+        returnToLive();
+        return;
+    }
+    if (top < 0 && strip_->top() == 0) {
+        strip_rows_asked_ = rows;
+        extendStrip();
+        return;
+    }
+    strip_->moveTo(top);
+    history_message_.clear();
+    showStrip();
 }
 void SessionPreview::returnToLive() {
+    decodeWaiting();
     if (live_)
         live_->cancelHistoryRequest();
+    strip_.reset();
+    strip_screen_.reset();
+    strip_rows_asked_ = 0;
+    strip_oldest_page_ = 0;
+    strip_extending_ = false;
     history_active_ = false;
     history_request_pending_ = false;
-    history_page_id_ = 0;
     history_message_.clear();
     if (live_snapshot_received_) {
         snapshot_ = live_snapshot_;
@@ -121,6 +282,17 @@ void SessionPreview::sendKey(session::TerminalKey key, session::KeyModifiers mod
     bytes.append(static_cast<char>(mods));
     if (live_)
         live_->send(wire::Kind::key, bytes);
+}
+void SessionPreview::sendWheel(int steps, int column, int row) {
+    decodeWaiting();
+    if (history_active_ || history_request_pending_ || !live_snapshot_.accepts_wheel ||
+        steps == 0 || !live_)
+        return;
+    constexpr int limit = 64;
+    live_->send(wire::Kind::wheel,
+                wire::encode_wheel({static_cast<qint16>(std::clamp(steps, -limit, limit)),
+                                    static_cast<quint16>(std::clamp(column, 0, 0xFFFF)),
+                                    static_cast<quint16>(std::clamp(row, 0, 0xFFFF))}));
 }
 void SessionPreview::claimTerminalSize() {
     if (live_ && !history_active_ && !history_request_pending_)
@@ -282,6 +454,7 @@ void LiveConnection::resetSocket() {
     socket_->setReadBufferSize(wire::max_frame_bytes + 4);
     connect(socket_.get(), &QLocalSocket::readyRead, this, [this] { receive(); });
     connect(socket_.get(), &QLocalSocket::connected, this, [this] {
+        session::posix::widen_socket_buffers(socket_->socketDescriptor());
         connected_ = true;
         retry_.stop();
         handshake_.start();
@@ -433,7 +606,7 @@ void LiveConnection::acceptHello(const wire::Hello& hello) {
     report(QStringLiteral("Restoring terminal screen"));
     qInfo() << "Connected terminal PID" << hello.pid;
 }
-void LiveConnection::acceptSnapshot(wire::SnapshotMessage message) {
+void LiveConnection::acceptSnapshot(wire::SnapshotEnvelope message) {
     if (!attachment_ || message.attachment != *attachment_ || message.sequence <= last_sequence_)
         throw std::runtime_error("Stale or mismatched terminal snapshot");
     const bool initial = last_sequence_ == 0;
@@ -441,9 +614,9 @@ void LiveConnection::acceptSnapshot(wire::SnapshotMessage message) {
     // Until a view asks for a size, keep the service's current one rather than
     // resizing a reattached agent to the launch default.
     if (initial && !wanted_size_requested_)
-        wanted_size_ = message.snapshot.size;
-    if (message.snapshot.size != shown_size_) {
-        shown_size_ = message.snapshot.size;
+        wanted_size_ = message.size;
+    if (message.size != shown_size_) {
+        shown_size_ = message.size;
         claimed_over_.reset();
     }
     document_.setSnapshotTiming(
@@ -451,7 +624,8 @@ void LiveConnection::acceptSnapshot(wire::SnapshotMessage message) {
          {QStringLiteral("pty_read_ns"), QVariant::fromValue(message.timing.pty_read_ns)},
          {QStringLiteral("parse_end_ns"), QVariant::fromValue(message.timing.parse_end_ns)},
          {QStringLiteral("publish_ns"), QVariant::fromValue(message.timing.publish_ns)}});
-    document_.applySnapshot(std::move(message.snapshot));
+    // Decoded when a view shows it (most of a millisecond for a whole screen).
+    document_.offerSnapshot(std::move(message.encoded));
     if (initial)
         persistIdentity();
 }
@@ -539,7 +713,7 @@ void LiveConnection::handle(const wire::Frame& frame) {
         acceptHello(wire::decode_hello(frame.payload));
         return;
     case wire::Kind::snapshot:
-        acceptSnapshot(wire::decode_snapshot_message(frame.payload));
+        acceptSnapshot(wire::decode_snapshot_envelope(frame.payload));
         return;
     case wire::Kind::attention_snapshot: {
         auto snapshot = wire::decode_attention_snapshot(frame.payload);

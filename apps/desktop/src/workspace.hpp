@@ -2,6 +2,7 @@
 #define LAPIS_DESKTOP_WORKSPACE_HPP
 
 #include "harness_models.hpp"
+#include "history_strip.hpp"
 #include "keymap.hpp"
 #include "tile_layout.hpp"
 #include <lapis/session/terminal.hpp>
@@ -27,6 +28,7 @@
 #include <atomic>
 #include <memory>
 #include <optional>
+#include <set>
 #include <vector>
 
 class QProcess;
@@ -62,6 +64,12 @@ class SessionPreview final : public QObject {
     Q_PROPERTY(bool historyActive READ historyActive NOTIFY historyChanged)
     Q_PROPERTY(bool historyRequestPending READ historyRequestPending NOTIFY historyChanged)
     Q_PROPERTY(QString historyMessage READ historyMessage NOTIFY historyChanged)
+    // Where the shown history page sits in everything kept, from 0 (the
+    // oldest row) to 1, and the share it covers; the scrubber's thumb. Only
+    // services that place their pages can jump (historyScrubbable).
+    Q_PROPERTY(bool historyScrubbable READ historyScrubbable NOTIFY historyChanged)
+    Q_PROPERTY(qreal historyPosition READ historyPosition NOTIFY historyChanged)
+    Q_PROPERTY(qreal historySpan READ historySpan NOTIFY historyChanged)
     Q_PROPERTY(QColor accent READ accent CONSTANT)
     // True while a close request waits for the process to end; cleared if the
     // service rejects the close and the agent remains attached.
@@ -78,9 +86,15 @@ class SessionPreview final : public QObject {
     Q_INVOKABLE void reconnect();
     Q_INVOKABLE void discoverSession();
     Q_INVOKABLE void startNewSession();
+    // A screen back or forward through kept history.
     Q_INVOKABLE void olderHistory();
     Q_INVOKABLE void newerHistory();
+    // Scrolls kept history by rows, positive back; scrolling forward past the
+    // newest row returns to live.
+    Q_INVOKABLE void scrollHistory(int rows);
     Q_INVOKABLE void returnToLive();
+    // Moves the view to `fraction` of everything kept (0 the oldest row).
+    Q_INVOKABLE void historyAt(qreal fraction);
     Q_INVOKABLE bool respondAttention(const QString& token, const QVariantMap& response);
     // Ask the session service to end this agent's process. Returns false when
     // the request could not be queued on a synchronized connection.
@@ -123,6 +137,17 @@ class SessionPreview final : public QObject {
     [[nodiscard]] const QString& connectionState() const { return connection_state_; }
     [[nodiscard]] const QString& serviceSessionId() const { return service_session_id_; }
     void applySnapshot(session::TerminalSnapshot snapshot);
+    // A screen from the service, still encoded. Decoding a whole screen takes
+    // most of a millisecond, so it is decoded only for the views showing this
+    // agent, at the pace they draw (the stage at once, a preview card every
+    // 250 ms); otherwise only the newest is kept until a view or a reader asks.
+    void offerSnapshot(QByteArray encoded);
+    // A view showing this agent's screen, redrawn every `interval_ms` (0 at
+    // once). A hidden or closed window's views are not showing anything.
+    void addViewer(int interval_ms);
+    void removeViewer(int interval_ms);
+    // Screens decoded so far, for tests.
+    [[nodiscard]] quint64 decodedScreens() const { return decoded_screens_; }
     void setSnapshotTiming(const QVariantMap& timing) { snapshot_timing_ = timing; }
     [[nodiscard]] QVariantMap snapshotTiming() const { return snapshot_timing_; }
     void beginHistoryRequest();
@@ -134,6 +159,9 @@ class SessionPreview final : public QObject {
     void setActivity(const QString& activity);
     void sendText(const QByteArray& bytes, bool paste = false);
     void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
+    // A turn of the wheel for the program on the alternate screen, over a
+    // viewport cell; only when its snapshot says the service accepts wheels.
+    void sendWheel(int steps, int column, int row);
     void resizeTerminal(session::TerminalSize size);
     // Someone is at this window: take the size back from another device.
     void claimTerminalSize();
@@ -159,12 +187,23 @@ class SessionPreview final : public QObject {
     [[nodiscard]] bool historyActive() const { return history_active_; }
     [[nodiscard]] bool historyRequestPending() const { return history_request_pending_; }
     [[nodiscard]] const QString& historyMessage() const { return history_message_; }
+    [[nodiscard]] bool historyScrubbable() const { return history_scrubbable_; }
+    [[nodiscard]] qreal historyPosition() const;
+    [[nodiscard]] qreal historySpan() const;
     [[nodiscard]] bool live() const { return live_ != nullptr; }
     [[nodiscard]] const QString& title() const { return title_; }
     [[nodiscard]] const QString& directory() const { return directory_; }
+    // The folder on this Mac that paths the agent prints are relative to;
+    // empty for an agent over ssh, whose paths are on another machine.
+    [[nodiscard]] const QString& linkFolder() const { return link_folder_; }
     [[nodiscard]] const QString& activity() const { return activity_; }
     [[nodiscard]] QColor accent() const { return accent_; }
-    [[nodiscard]] const session::TerminalSnapshot& snapshot() const { return snapshot_; }
+    // The screen shown: a history page, else the newest live screen, decoded
+    // now if it waited.
+    [[nodiscard]] const session::TerminalSnapshot& snapshot() const {
+        decodeWaiting();
+        return snapshot_;
+    }
 
   signals:
     void identityChanged();
@@ -195,6 +234,14 @@ class SessionPreview final : public QObject {
     // few quiet seconds after that as a pause. Neither implies a finished task.
     void noteOutput();
     [[nodiscard]] QString unobservedStatusKind() const;
+    // Shows the strip's view once its pages are here, fetching the next one
+    // it lacks.
+    void showStrip();
+    // Moves past the strip's oldest row: a service that does not place its
+    // pages has older ones to put on top.
+    void extendStrip();
+    // Decodes the screen that waited, if any; true when there was one.
+    bool decodeWaiting() const;
     std::vector<qint64> output_times_;
     bool output_active_{};
     bool output_quiet_{};
@@ -203,7 +250,17 @@ class SessionPreview final : public QObject {
     QTimer quiet_timer_;
     bool history_active_{};
     bool history_request_pending_{};
-    quint64 history_page_id_{};
+    bool history_scrubbable_{};
+    // Kept history as one scrolling strip, from services that place their
+    // pages; the rows to scroll back once the first page arrives; the oldest
+    // page ID fetched, for a service that does not place its pages.
+    std::optional<HistoryStrip> strip_;
+    // The screen when browsing was asked for: the archive answering is at
+    // least as new, so it can repeat rows the screen shows but never miss one.
+    std::optional<session::TerminalSnapshot> strip_screen_;
+    int strip_rows_asked_{};
+    quint64 strip_oldest_page_{};
+    bool strip_extending_{};
     bool input_ready_{};
     QString connection_state_{QStringLiteral("disconnected")};
     QString service_session_id_;
@@ -211,10 +268,17 @@ class SessionPreview final : public QObject {
     QVariantMap snapshot_timing_;
     QString title_;
     QString directory_;
+    QString link_folder_;
     QString activity_;
     QColor accent_;
-    session::TerminalSnapshot live_snapshot_;
-    session::TerminalSnapshot snapshot_;
+    // Caches of what the service sent: decoding a waiting screen fills them,
+    // so reading the screen is const.
+    mutable session::TerminalSnapshot live_snapshot_;
+    mutable session::TerminalSnapshot snapshot_;
+    mutable std::optional<QByteArray> waiting_;
+    mutable quint64 decoded_screens_{};
+    std::multiset<int> viewers_;
+    QTimer decode_timer_;
 };
 
 enum class WorkspaceMode : std::uint8_t { live, preview };
@@ -228,6 +292,8 @@ struct PreviewRequest {
 // The installed program of a CLI lapis knows ("codex", "claude", ...), or
 // empty when it is not found on this Mac.
 [[nodiscard]] QString harness_program(const QString& id);
+// A CLI's name as people call it ("Claude", "Codex"), or the id itself.
+[[nodiscard]] QString harness_label(const QString& id);
 
 // An agent to start: a CLI in a folder, in a category, on this Mac or over ssh.
 struct AgentRequest {

@@ -3,6 +3,8 @@
 import base64
 import gzip
 import http.client
+import itertools
+import io
 import json
 import os
 import shutil
@@ -16,7 +18,7 @@ import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps" / "remote"))
@@ -67,7 +69,73 @@ def cell(text, kind=0, foreground=DEFAULT, background=DEFAULT, underline=0, flag
     return (text, kind, foreground, background, underline, flags)
 
 
+class StreamFailureTests(unittest.TestCase):
+    def test_malformed_live_snapshot_reports_disconnection(self):
+        valid = snapshot(1, 1, [cell("x")])
+        for broken in (
+            snapshot(1, 1, [cell("x")], alternate=2),
+            valid[:20],
+            valid[:-1],
+        ):
+            with self.subTest(length=len(broken)):
+                session = object.__new__(remote.WireSession)
+                session.first = valid
+                session.closed = False
+                session.attachment = b"x" * remote.ATTACHMENT_BYTES
+                session.sequence = 0
+                session.wheel_accepted = False
+                message = session.attachment + struct.pack(">QQQQ", 1, 0, 0, 0) + broken
+                session.receive = Mock(
+                    side_effect=[(remote.SNAPSHOT, message), EOFError()]
+                )
+                handler = object.__new__(remote.Handler)
+                handler.wfile = io.BytesIO()
+                handler.phone_left = lambda: False
+                # Advance beyond the frame interval to exercise render validation too.
+                with patch.object(
+                    remote.time, "monotonic", side_effect=itertools.count()
+                ):
+                    handler.pump(session)
+                events = handler.wfile.getvalue().decode().split("\n\n")
+                self.assertEqual(
+                    sum(event.startswith("event: frame\n") for event in events), 1
+                )
+                status = next(
+                    event for event in events if event.startswith("event: status\n")
+                )
+                payload = json.loads(status.split("data: ", 1)[1])
+                self.assertEqual(payload["state"], "disconnected")
+                self.assertTrue(payload["message"])
+
+
 class SnapshotTests(unittest.TestCase):
+    def test_wheel_requires_the_alternate_screen_bit(self):
+        for flags in (0, 1, 2, 3, 4):
+            with self.subTest(flags=flags):
+                payload = snapshot(1, 1, [cell("x")], alternate=flags)
+                session = object.__new__(remote.WireSession)
+                session.attachment = b"x" * remote.ATTACHMENT_BYTES
+                session.sequence = 0
+                session.wheel_accepted = False
+                message = (
+                    session.attachment + struct.pack(">QQQQ", 1, 0, 0, 0) + payload
+                )
+                if flags not in (0, 1, 3):
+                    with self.assertRaises(remote.GatewayError):
+                        remote.render_snapshot(payload)
+                    with self.assertRaises(remote.GatewayError):
+                        session.accept_snapshot(remote.SNAPSHOT, message)
+                    self.assertEqual(session.sequence, 0)
+                    self.assertFalse(session.wheel_accepted)
+                else:
+                    self.assertEqual(
+                        remote.render_snapshot(payload)["wheel"], flags == 3
+                    )
+                    self.assertEqual(
+                        session.accept_snapshot(remote.SNAPSHOT, message), payload
+                    )
+                    self.assertEqual(session.wheel_accepted, flags == 3)
+
     def test_runs_colors_cursor_and_wide_cells(self):
         palette = [0] * 256
         palette[1] = 0xFF0000
@@ -154,6 +222,54 @@ class SnapshotTests(unittest.TestCase):
             ):
                 with self.assertRaises(remote.GatewayError):
                     remote.render_snapshot(payload)
+
+
+class HistoryReplyTests(unittest.TestCase):
+    def test_bounded_reply_and_truncated_place(self):
+        attachment = b"s" * remote.ATTACHMENT_BYTES
+        header = attachment + struct.pack(">QQI", 1, 4, 0)
+        screen = snapshot(2, 1, [cell("o"), cell("k")])
+        request_id, reply = remote.decode_history_reply(header + screen, attachment)
+        self.assertEqual((request_id, reply["page"], reply["snapshot"]), (1, 4, screen))
+        for bad in (
+            header[:47],
+            header + b"x",
+            header + bytes(60),
+            header[:-4] + struct.pack(">I", 50),
+        ):
+            with self.subTest(size=len(bad)), self.assertRaises(remote.GatewayError):
+                remote.decode_history_reply(bad, attachment)
+        for length in (0, 36, 60):
+            with (
+                self.subTest(place_bytes=length),
+                self.assertRaises(remote.GatewayError),
+            ):
+                remote.page_place(bytes(length))
+
+        # Exercise waiter completion with an in-process transport. A bad page
+        # fails its request promptly; the same session can then request a page.
+        session = object.__new__(remote.WireSession)
+        session.attachment = attachment
+        session.lock = threading.Lock()
+        session.history_ids = itertools.count(1)
+        session.history_waiters = {}
+        session.scrubbable = False
+
+        def answer(payload):
+            def send(kind, request):
+                self.assertEqual(kind, remote.HISTORY_REQUEST)
+                request_id = struct.unpack_from(">Q", request)[0]
+                session.deliver_history(
+                    attachment + struct.pack(">QQI", request_id, 4, 0) + payload
+                )
+
+            return send
+
+        session.send = answer(b"short")
+        with self.assertRaisesRegex(remote.GatewayError, "Truncated history snapshot"):
+            session.request_history(timeout=0.1)
+        session.send = answer(screen)
+        self.assertEqual(session.request_history(timeout=0.1)["snapshot"], screen)
 
 
 class ResizeTests(unittest.TestCase):
@@ -623,6 +739,126 @@ class StartAgentTests(unittest.TestCase):
                 status, _ = server.request("POST", "/api/agents/a1/rename", body)
                 self.assertEqual(status, 200, body)
             self.assertEqual(len(desktop.requests), asked + 2)
+
+    def test_the_phone_arranges_categories_and_agents_through_the_mac(self):
+        def answer(request):
+            if request["request"] == "removeCategory" and request["id"] == "full":
+                return {"ok": False, "error": "Move the agents out first."}
+            return {"ok": True}
+
+        with (
+            Server(self, "{}") as server,
+            FakeDesktop(server.directory, answer) as desktop,
+        ):
+            for path, body, asked in (
+                (
+                    "/api/categories/c1/rename",
+                    {"name": " Someday "},
+                    {"request": "renameCategory", "id": "c1", "name": "Someday"},
+                ),
+                (
+                    "/api/categories/c1/place",
+                    {"index": 0},
+                    {"request": "placeCategory", "id": "c1", "index": 0},
+                ),
+                (
+                    "/api/categories/c1/remove",
+                    None,
+                    {"request": "removeCategory", "id": "c1"},
+                ),
+                (
+                    "/api/agents/a1/place",
+                    {"category": "c2", "index": 1},
+                    {"request": "placeAgent", "id": "a1", "category": "c2", "index": 1},
+                ),
+                (
+                    "/api/agents/a1/place",
+                    {"category": "c2"},
+                    {
+                        "request": "placeAgent",
+                        "id": "a1",
+                        "category": "c2",
+                        "index": 1 << 20,
+                    },
+                ),
+                (
+                    "/api/agents/a1/restart",
+                    None,
+                    {"request": "restartAgent", "id": "a1"},
+                ),
+            ):
+                status, reply = server.request("POST", path, body)
+                self.assertEqual((status, reply), (200, {"ok": True}), path)
+                self.assertEqual(desktop.requests[-1], {"version": 1, **asked})
+            status, refused = server.request("POST", "/api/categories/full/remove")
+            self.assertEqual(
+                (status, refused), (422, {"error": "Move the agents out first."})
+            )
+            asked = len(desktop.requests)
+            for path, body in (
+                ("/api/categories/c1/rename", {"name": ""}),
+                ("/api/categories/c1/place", {"index": -1}),
+                ("/api/categories/c1/place", {"index": True}),
+                ("/api/categories/c1/place", {"index": "0"}),
+                ("/api/agents/a1/place", {"index": 0}),
+                ("/api/agents/a1/place", {"category": "c2", "index": 1.5}),
+                ("/api/agents/a1/place", ["c2"]),
+            ):
+                status, _ = server.request("POST", path, body)
+                self.assertEqual(status, 400, (path, body))
+            self.assertEqual(len(desktop.requests), asked, "bad requests reach nothing")
+
+    def test_the_phone_reads_and_changes_the_macs_settings(self):
+        settings = {
+            "keepAwake": True,
+            "alertSound": True,
+            "alertRepeat": 3,
+            "finishSound": True,
+            "notify": True,
+            "showUsage": True,
+        }
+
+        def answer(request):
+            settings.update(request.get("settings", {}))
+            return {"ok": True, "settings": settings}
+
+        with (
+            Server(self, "{}") as server,
+            FakeDesktop(server.directory, answer) as desktop,
+        ):
+            status, shown = server.request("GET", "/api/settings")
+            self.assertEqual((status, shown), (200, {"settings": settings}))
+            self.assertEqual(
+                desktop.requests[-1], {"version": 1, "request": "settings"}
+            )
+            status, changed = server.request(
+                "POST", "/api/settings", {"keepAwake": False, "alertRepeat": 5}
+            )
+            self.assertEqual(status, 200)
+            self.assertFalse(changed["settings"]["keepAwake"])
+            self.assertEqual(changed["settings"]["alertRepeat"], 5)
+            self.assertEqual(
+                desktop.requests[-1],
+                {
+                    "version": 1,
+                    "request": "changeSettings",
+                    "settings": {"keepAwake": False, "alertRepeat": 5},
+                },
+            )
+            asked = len(desktop.requests)
+            # The Mac's window appearance is not the phone's to change.
+            for body in (
+                {"theme": "amber"},
+                {"keepAwake": "no"},
+                {"keepAwake": 0},
+                {"alertRepeat": 0},
+                {"alertRepeat": 11},
+                {"alertRepeat": True},
+                ["keepAwake"],
+            ):
+                status, _ = server.request("POST", "/api/settings", body)
+                self.assertEqual(status, 400, body)
+            self.assertEqual(len(desktop.requests), asked, "bad settings reach nothing")
 
     def test_terminals_open_list_and_close_through_the_mac(self):
         def answer(request):
@@ -1268,51 +1504,57 @@ def screen_text(frame):
 
 
 @unittest.skipUnless(SERVICE.exists(), "needs the built session service")
+def live_agent(test, program, arguments):
+    """A real session service running `program`, and a registry naming it."""
+    test.runtime = Path(tempfile.mkdtemp(prefix="lr-", dir="/tmp"))
+    test.addCleanup(shutil.rmtree, test.runtime, True)
+    test.identifier = "11111111-2222-4333-8444-555555555555"
+    test.endpoint = test.runtime / (test.identifier + ".sock")
+    service = subprocess.Popen(
+        [str(SERVICE), str(test.endpoint), "/", program, *arguments],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        env={**os.environ, "LAPIS_HISTORY_ROOT": str(test.runtime / "history")},
+    )
+
+    def stop():
+        if service.poll() is None:
+            os.killpg(service.pid, 15)
+            service.wait(10)
+
+    test.addCleanup(stop)
+    deadline = time.monotonic() + 10
+    while not remote.service_answers(str(test.endpoint)):
+        test.assertLess(time.monotonic(), deadline, "service did not start")
+        time.sleep(0.05)
+    test.registry = json.dumps(
+        {
+            "categories": [{"id": "general", "name": "General"}],
+            "activeCategory": "general",
+            "agents": [
+                {
+                    "id": test.identifier,
+                    "title": "echo",
+                    "category": "general",
+                    "harness": "grok",
+                    "endpoint": str(test.endpoint),
+                    "program": program,
+                    "arguments": arguments,
+                    "directory": "/",
+                }
+            ],
+        }
+    )
+
+
 class LiveServiceTests(unittest.TestCase):
     def setUp(self):
-        self.runtime = Path(tempfile.mkdtemp(prefix="lr-", dir="/tmp"))
-        self.addCleanup(shutil.rmtree, self.runtime, True)
-        self.identifier = "11111111-2222-4333-8444-555555555555"
-        self.endpoint = self.runtime / (self.identifier + ".sock")
         script = (
             'printf "ready\\n"; while read line; do printf "got:%s\\n" "$line"; done'
         )
-        self.service = subprocess.Popen(
-            [str(SERVICE), str(self.endpoint), "/", "/bin/sh", "-c", script],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-            env={**os.environ, "LAPIS_HISTORY_ROOT": str(self.runtime / "history")},
-        )
-        self.addCleanup(self.stop)
-        deadline = time.monotonic() + 10
-        while not remote.service_answers(str(self.endpoint)):
-            self.assertLess(time.monotonic(), deadline, "service did not start")
-            time.sleep(0.05)
-        self.registry = json.dumps(
-            {
-                "categories": [{"id": "general", "name": "General"}],
-                "activeCategory": "general",
-                "agents": [
-                    {
-                        "id": self.identifier,
-                        "title": "echo",
-                        "category": "general",
-                        "harness": "grok",
-                        "endpoint": str(self.endpoint),
-                        "program": "/bin/sh",
-                        "arguments": ["-c", script],
-                        "directory": "/",
-                    }
-                ],
-            }
-        )
-
-    def stop(self):
-        if self.service.poll() is None:
-            os.killpg(self.service.pid, 15)
-            self.service.wait(10)
+        live_agent(self, "/bin/sh", ["-c", script])
 
     def test_a_screen_is_read_without_resizing_or_taking_the_agent(self):
         with Server(self, self.registry, self.runtime) as server:
@@ -1465,6 +1707,94 @@ class LiveServiceTests(unittest.TestCase):
             )
             self.desktop_sees(again, "got:still here")
             phone.close()
+
+
+@unittest.skipUnless(SERVICE.exists(), "needs the built session service")
+class WheelTests(unittest.TestCase):
+    """A full-screen program that reports the mouse, as Claude Code's
+    full-screen mode does, gets the phone's wheel as mouse wheel events."""
+
+    def setUp(self):
+        live_agent(self, sys.executable, [str(ROOT / "tools" / "qa" / "fake_agent.py")])
+
+    def test_the_wheel_reaches_a_full_screen_program(self):
+        with Server(self, self.registry, self.runtime) as server:
+            path = f"/api/agents/{self.identifier}"
+            events = Events(server, path + "/stream?columns=40&rows=12")
+            _, first = events.until(
+                lambda name, data: (
+                    name == "frame" and "lapis fake agent" in screen_text(data)
+                )
+            )
+            self.assertFalse(first["wheel"])
+            # The primary screen pages history instead; the wheel is refused.
+            status, _ = server.request("POST", path + "/input", {"wheel": [1, 0, 0]})
+            self.assertEqual(status, 400)
+            server.request("POST", path + "/input", {"text": "mouse\r"})
+            _, shown = events.until(
+                lambda name, data: (
+                    name == "frame" and "mouse ready" in screen_text(data)
+                )
+            )
+            self.assertTrue(shown["alternateScreen"] and shown["wheel"])
+            for bad in ([0, 1, 1], [1, -1, 0], [True, 1, 1], [1, 1]):
+                status, _ = server.request("POST", path + "/input", {"wheel": bad})
+                self.assertEqual(status, 400, bad)
+            status, _ = server.request("POST", path + "/input", {"wheel": [2, 4, 2]})
+            self.assertEqual(status, 200)
+            events.until(
+                lambda name, data: (
+                    name == "frame"
+                    and "mouse got 2 events, first ESC[<64;5;3M" in screen_text(data)
+                )
+            )
+            events.close()
+
+
+@unittest.skipUnless(SERVICE.exists(), "needs the built session service")
+class HistoryJumpTests(unittest.TestCase):
+    """History keeps everything, and the phone jumps to any row of it."""
+
+    def setUp(self):
+        script = (
+            "i=0; while [ $i -lt 2000 ]; do printf 'line %04d\\n' $i; i=$((i + 1));"
+            " done; echo all printed; exec sleep 600"
+        )
+        live_agent(self, "/bin/sh", ["-c", script])
+
+    def test_the_phone_jumps_to_the_first_row(self):
+        with Server(self, self.registry, self.runtime) as server:
+            path = f"/api/agents/{self.identifier}"
+            events = Events(server, path + "/stream?columns=40&rows=12")
+            events.until(
+                lambda name, data: (
+                    name == "frame" and "all printed" in screen_text(data)
+                )
+            )
+            # A jump needs to know the service can; the newest page says so.
+            status, _ = server.request("GET", path + "/history?at=0")
+            self.assertEqual(status, 502)
+            status, newest = server.request("GET", path + "/history?before=0")
+            self.assertEqual(status, 200)
+            place = newest["place"]
+            self.assertTrue(place["scrubbable"])
+            self.assertGreaterEqual(place["total"], 1980)
+            self.assertEqual(place["offset"] + place["rows"], place["total"])
+            status, start = server.request("GET", path + "/history?at=0")
+            self.assertEqual(status, 200)
+            self.assertEqual(start["place"]["offset"], 0)
+            self.assertIn(
+                "line 0000",
+                "\n".join(run[0] for line in start["lines"] for run in line),
+            )
+            status, middle = server.request(
+                "GET", path + f"/history?at={place['total'] // 2}"
+            )
+            self.assertEqual(status, 200)
+            offset = middle["place"]["offset"]
+            self.assertLessEqual(offset, place["total"] // 2)
+            self.assertGreater(offset + middle["place"]["rows"], place["total"] // 2)
+            events.close()
 
 
 class OldServiceTests(unittest.TestCase):

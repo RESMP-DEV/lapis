@@ -129,32 +129,67 @@ struct ScanPaths {
     QString cache;
 };
 
-// One pass over the session files, reusing what the cache says about files
-// whose size and time have not changed; the cache is rewritten when anything
-// did. `alive` stops it early when the index goes away.
+// A minute's pass looks only at folders that gained or lost files and at
+// conversations written in the last two days; a full pass, every half hour,
+// also catches an old conversation resumed in place. The cache file is
+// written at most every quarter hour.
+constexpr qint64 kFullPassMs = qint64{30} * 60 * 1000;
+constexpr qint64 kSaveMs = qint64{15} * 60 * 1000;
+constexpr qint64 kRecentMs = qint64{2} * 24 * 60 * 60 * 1000;
+// Folder times come from a coarse clock (a few milliseconds on Linux, two
+// seconds on FAT); a folder changed this close to a pass could change again
+// within the same tick, so its time is not trusted until it settles.
+constexpr qint64 kSettleMs = 2000;
+} // namespace
+
+struct ScanMemory {
+    QJsonObject files;              // path: size, time and what it held
+    QHash<QString, qint64> folders; // folder: its time at the last pass
+    bool loaded{};
+    bool unsaved{};
+    qint64 last_full{};
+    qint64 last_saved{};
+};
+
+namespace {
+// One pass over the session files, reusing what the last pass (or, at first,
+// the cache) says about files whose size and time have not changed. `alive`
+// stops it early when the index goes away.
 class Scan {
   public:
-    Scan(const ScanPaths& paths, const std::atomic_bool& alive) : paths_(paths), alive_(alive) {
-        QFile file(paths_.cache);
-        if (!file.open(QIODevice::ReadOnly))
-            return;
-        const auto document = QJsonDocument::fromJson(file.readAll()).object();
-        if (document.value(QStringLiteral("version")).toInt() == 1)
-            cached_ = document.value(QStringLiteral("files")).toObject();
+    Scan(const ScanPaths& paths, const std::atomic_bool& alive, ScanMemory& memory, qint64 now)
+        : paths_(paths), alive_(alive), memory_(memory), now_(now),
+          full_(memory.last_full == 0 || now - memory.last_full >= kFullPassMs) {
+        if (!memory_.loaded) {
+            memory_.loaded = true;
+            QFile file(paths_.cache);
+            if (file.open(QIODevice::ReadOnly)) {
+                const auto document = QJsonDocument::fromJson(file.readAll()).object();
+                if (document.value(QStringLiteral("version")).toInt() == 1)
+                    memory_.files = document.value(QStringLiteral("files")).toObject();
+            }
+        }
+        cached_ = memory_.files;
+        if (!full_)
+            for (auto entry = cached_.begin(); entry != cached_.end(); ++entry)
+                by_folder_[entry.key().left(entry.key().lastIndexOf(QLatin1Char('/')))].append(
+                    entry.key());
     }
 
     bool claude() {
         const QDir projects(QDir(paths_.claude_home).filePath(QStringLiteral("projects")));
+        const auto read = [](const QString& path) { return conversations::read_claude(path); };
         for (const auto& project : projects.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {
-            for (const auto& session :
-                 QDir(project.absoluteFilePath())
-                     .entryInfoList({QStringLiteral("*.jsonl")}, QDir::Files)) {
-                if (!alive_.load())
-                    return false;
-                if (uuid_name().match(session.completeBaseName()).hasMatch())
-                    visit(session,
-                          [](const QString& path) { return conversations::read_claude(path); });
-            }
+            const auto ok = folder(project, read, [&project] {
+                auto sessions = QDir(project.absoluteFilePath())
+                                    .entryInfoList({QStringLiteral("*.jsonl")}, QDir::Files);
+                sessions.removeIf([](const QFileInfo& session) {
+                    return !uuid_name().match(session.completeBaseName()).hasMatch();
+                });
+                return sessions;
+            });
+            if (!ok)
+                return false;
         }
         return true;
     }
@@ -162,14 +197,22 @@ class Scan {
     // The cache keeps each rollout's own first message; names apply in
     // finish(), as Codex renames a thread without touching its rollout.
     bool codex() {
-        QDirIterator rollouts(QDir(paths_.codex_home).filePath(QStringLiteral("sessions")),
-                              {QStringLiteral("rollout-*.jsonl")}, QDir::Files,
-                              QDirIterator::Subdirectories);
-        while (rollouts.hasNext()) {
-            if (!alive_.load())
+        const QString sessions = QDir(paths_.codex_home).filePath(QStringLiteral("sessions"));
+        if (!QFileInfo(sessions).isDir())
+            return true;
+        const auto read = [](const QString& path) { return conversations::read_codex(path, {}); };
+        QFileInfoList folders{QFileInfo(sessions)};
+        QDirIterator below(sessions, QDir::Dirs | QDir::NoDotAndDotDot,
+                           QDirIterator::Subdirectories);
+        while (below.hasNext())
+            folders.append(below.nextFileInfo());
+        for (const auto& day : folders) {
+            const auto ok = folder(day, read, [&day] {
+                return QDir(day.absoluteFilePath())
+                    .entryInfoList({QStringLiteral("rollout-*.jsonl")}, QDir::Files);
+            });
+            if (!ok)
                 return false;
-            visit(rollouts.nextFileInfo(),
-                  [](const QString& path) { return conversations::read_codex(path, {}); });
         }
         return true;
     }
@@ -182,7 +225,12 @@ class Scan {
             if (conversation.harness == QLatin1String("codex") && !name.isEmpty())
                 conversation.title = name;
         }
-        if (dirty_ || files_.size() != cached_.size())
+        memory_.unsaved = memory_.unsaved || dirty_ || files_.size() != cached_.size();
+        memory_.files = files_;
+        memory_.folders = std::move(folders_);
+        if (full_)
+            memory_.last_full = now_;
+        if (memory_.unsaved && (memory_.last_saved == 0 || now_ - memory_.last_saved >= kSaveMs))
             save();
         std::sort(found_.begin(), found_.end(),
                   [](const auto& a, const auto& b) { return a.modified > b.modified; });
@@ -190,6 +238,35 @@ class Scan {
     }
 
   private:
+    // A folder whose time is unchanged has the files it had: only those
+    // written lately are looked at again, the rest come from memory.
+    template <typename Read, typename List>
+    bool folder(const QFileInfo& info, const Read& read, const List& list) {
+        const auto path = info.absoluteFilePath();
+        const auto time = info.lastModified().toMSecsSinceEpoch();
+        folders_.insert(path, time >= now_ - kSettleMs ? -1 : time);
+        if (full_ || memory_.folders.value(path, -1) != time) {
+            for (const auto& file : list()) {
+                if (!alive_.load())
+                    return false;
+                visit(file, read);
+            }
+            return true;
+        }
+        for (const auto& file : by_folder_.value(path)) {
+            if (!alive_.load())
+                return false;
+            const auto entry = cached_.value(file).toObject();
+            if (entry.value(QStringLiteral("m")).toInteger() >= now_ - kRecentMs) {
+                if (const QFileInfo current(file); current.exists())
+                    visit(current, read);
+            } else {
+                keep(file, entry);
+            }
+        }
+        return true;
+    }
+
     template <typename Read> void visit(const QFileInfo& info, const Read& read) {
         const auto path = info.absoluteFilePath();
         const auto size = info.size();
@@ -202,12 +279,16 @@ class Scan {
             if (const auto conversation = read(path))
                 entry.insert(QStringLiteral("c"), to_json(*conversation));
         }
+        keep(path, entry);
+    }
+
+    void keep(const QString& path, const QJsonObject& entry) {
         files_.insert(path, entry);
         if (const auto conversation = from_json(entry.value(QStringLiteral("c"))))
             found_.push_back(*conversation);
     }
 
-    void save() const {
+    void save() {
         QSaveFile out(paths_.cache);
         if (!out.open(QIODevice::WriteOnly)) {
             qWarning().noquote() << "Conversation cache not saved:" << out.errorString();
@@ -216,20 +297,30 @@ class Scan {
         out.write(QJsonDocument(QJsonObject{{QStringLiteral("version"), 1},
                                             {QStringLiteral("files"), files_}})
                       .toJson(QJsonDocument::Compact));
-        if (!out.commit())
+        if (!out.commit()) {
             qWarning().noquote() << "Conversation cache not saved:" << paths_.cache;
+            return;
+        }
+        memory_.unsaved = false;
+        memory_.last_saved = now_;
     }
 
     const ScanPaths& paths_;
     const std::atomic_bool& alive_;
+    ScanMemory& memory_;
+    qint64 now_;
+    bool full_;
     QJsonObject cached_;
+    QHash<QString, QStringList> by_folder_;
     QJsonObject files_;
+    QHash<QString, qint64> folders_;
     bool dirty_{};
     std::vector<Conversation> found_;
 };
 
-std::vector<Conversation> scan(const ScanPaths& paths, const std::atomic_bool& alive) {
-    Scan pass(paths, alive);
+std::vector<Conversation> scan(const ScanPaths& paths, const std::atomic_bool& alive,
+                               ScanMemory& memory) {
+    Scan pass(paths, alive, memory, QDateTime::currentMSecsSinceEpoch());
     if (!pass.claude() || !pass.codex())
         return {};
     return pass.finish();
@@ -415,7 +506,7 @@ QString age_text(qint64 then_ms, qint64 now_ms) {
 ConversationIndex::ConversationIndex(QString claude_home, QString codex_home, QString cache_path,
                                      QObject* parent)
     : QObject(parent), claude_home_(std::move(claude_home)), codex_home_(std::move(codex_home)),
-      cache_path_(std::move(cache_path)) {}
+      cache_path_(std::move(cache_path)), memory_(std::make_shared<ScanMemory>()) {}
 
 ConversationIndex::~ConversationIndex() {
     alive_->store(false);
@@ -426,10 +517,10 @@ void ConversationIndex::refresh() {
     if (scanning_->exchange(true))
         return;
     scan_pool_.start([paths = ScanPaths{claude_home_, codex_home_, cache_path_}, busy = scanning_,
-                      alive = alive_, self = this] {
+                      alive = alive_, memory = memory_, self = this] {
         QElapsedTimer timer;
         timer.start();
-        auto found = scan(paths, *alive);
+        auto found = scan(paths, *alive, *memory);
         qInfo().noquote() << "Conversations:" << found.size() << "in" << timer.elapsed() << "ms";
         if (!alive->load()) {
             busy->store(false);

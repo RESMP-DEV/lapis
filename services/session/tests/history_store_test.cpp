@@ -5,13 +5,17 @@
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QProcess>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <array>
 #include <csignal>
 #include <iostream>
+#include <random>
 #include <source_location>
 #include <stdexcept>
+#include <string>
 #include <sys/resource.h>
 #include <unistd.h>
 namespace {
@@ -89,6 +93,18 @@ void check_worker_drain_deadline() {
     require(completions == 1 && pending_at_deadline);
     require(!worker.append({page()}));
 }
+// The bytes one page takes on disk, measured in a scratch store.
+quint64 record_bytes(const QString& root) {
+    HistoryStore scratch(root, QString(32, QLatin1Char('f')));
+    static_cast<void>(scratch.append(page()));
+    const auto bytes = scratch.stats().session_bytes;
+    scratch.clear();
+    return bytes;
+}
+QString segment_of(const QString& root, const QString& session, quint64 first) {
+    return root + QLatin1Char('/') + session +
+           QStringLiteral("/%1.seg").arg(first, 20, 10, QLatin1Char('0'));
+}
 void check_store() {
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-history-XXXXXX"));
     require(directory.isValid());
@@ -96,8 +112,8 @@ void check_store() {
     const QString first(32, QLatin1Char('a'));
     const QString second(32, QLatin1Char('b'));
     const auto snapshot = page();
-    const auto bytes = static_cast<quint64>(wire::encode_snapshot(snapshot).size() + 48);
-    const HistoryLimits limits{bytes * 2, bytes * 3, 4};
+    const auto bytes = record_bytes(root);
+    const HistoryLimits limits{bytes * 2, bytes * 3};
     HistoryStore store(root, first, limits);
     const auto id1 = store.append(snapshot);
     const auto id2 = store.append(snapshot);
@@ -107,35 +123,50 @@ void check_store() {
     require(present(store.older()).id == id3);
     require(present(store.older(id3)).id == id2 && !store.older(id2));
     require(present(store.newer(id1)).id == id2 && !store.newer(id3));
-    require(wire::encode_snapshot(present(store.older()).snapshot) ==
-            wire::encode_snapshot(snapshot));
+    // Pages keep their cells and say where they sit among the kept rows.
+    auto newest = present(store.older()).snapshot;
+    const auto rows = std::size_t{snapshot.size.rows};
+    require(newest.history.total_rows == rows * 2 && newest.history.viewport_offset == rows &&
+            newest.history.viewport_rows == rows);
+    newest.history = snapshot.history;
+    require(wire::encode_snapshot(newest) == wire::encode_snapshot(snapshot));
+    require(present(store.at(0)).id == id2 && present(store.at(rows - 1)).id == id2 &&
+            present(store.at(rows)).id == id3 && present(store.at(rows * 100)).id == id3);
     HistoryStore reopened(root, first, limits);
-    require(present(reopened.older()).id == id3);
+    require(present(reopened.older()).id == id3 && present(reopened.at(0)).id == id2);
     HistoryStore other(root, second, limits);
     static_cast<void>(other.append(snapshot));
     static_cast<void>(other.append(snapshot));
     require(other.stats().global_bytes <= limits.global_bytes);
+    // The other session's budget took this one's oldest segment. Stats report
+    // the surviving archive without waiting for a read to reload the index.
+    require(store.stats().pages == 1);
+    // Reading on finds what remains.
+    require(present(store.older()).id == id3 && !store.older(id3));
     store.clear();
-    require(!store.older());
+    require(!store.older() && !store.at(0));
     const auto after_clear = store.append(snapshot);
     require(after_clear > id3);
-    const auto path = root + QLatin1Char('/') + first +
-                      QStringLiteral("/%1.page").arg(after_clear, 20, 10, QLatin1Char('0'));
     {
-        QFile file(path);
+        QFile file(segment_of(root, first, after_clear));
         require(file.open(QIODevice::ReadWrite));
         require(file.seek(file.size() - 1));
         require(file.write("X") == 1);
     }
     rejects([&] { static_cast<void>(store.older()); });
     store.clear();
+    // An interrupted write leaves a short record at a segment's end: the page
+    // it held cannot be read, and the next store cuts it off.
     const auto truncated = store.append(snapshot);
     {
-        QFile file(root + QLatin1Char('/') + first +
-                   QStringLiteral("/%1.page").arg(truncated, 20, 10, QLatin1Char('0')));
+        QFile file(segment_of(root, first, truncated));
         require(file.open(QIODevice::ReadWrite) && file.resize(12));
     }
-    rejects([&] { static_cast<void>(reopened.older()); });
+    rejects([&] { static_cast<void>(store.older()); });
+    {
+        HistoryStore recovered(root, first, limits);
+        require(!recovered.older() && !QFileInfo::exists(segment_of(root, first, truncated)));
+    }
     store.clear();
     QFile partial(root + QLatin1Char('/') + first + QStringLiteral("/.unfinished.tmp"));
     require(partial.open(QIODevice::WriteOnly) && partial.write("partial") == 7);
@@ -147,9 +178,11 @@ void check_store() {
     require(interrupted.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner));
     require(interrupted.write(QByteArray(4096, 'x')) == 4096);
     interrupted.close();
-    require(!store.older());
-    require(!interrupted.exists());
-    rejects([&] { HistoryStore invalid(root, first, {0, 1024, 4}); });
+    {
+        HistoryStore opened(root, first, limits);
+        require(!opened.older() && !interrupted.exists());
+    }
+    rejects([&] { HistoryStore invalid(root, first, {0, 1024}); });
     rejects([&] { HistoryStore invalid(root, QStringLiteral("../escape"), limits); });
     const auto linked = directory.filePath(QStringLiteral("linked"));
     require(::symlink(QFile::encodeName(root).constData(), QFile::encodeName(linked).constData()) ==
@@ -167,23 +200,102 @@ void check_store() {
     require(store.append(snapshot) > preserved);
     QProcess writer_a, writer_b;
     writer_a.start(QCoreApplication::applicationFilePath(),
-                   {QStringLiteral("--writer"), root, first});
+                   {QStringLiteral("--writer"), root, first, QString::number(bytes)});
     writer_b.start(QCoreApplication::applicationFilePath(),
-                   {QStringLiteral("--writer"), root, second});
+                   {QStringLiteral("--writer"), root, second, QString::number(bytes)});
     require(writer_a.waitForFinished(10000) && writer_b.waitForFinished(10000));
     require(writer_a.exitStatus() == QProcess::NormalExit && writer_a.exitCode() == 0);
     require(writer_b.exitStatus() == QProcess::NormalExit && writer_b.exitCode() == 0);
     require(store.stats().global_bytes <= limits.global_bytes);
 }
+// Thousands of pages stay a few segment files, and any row is one read away.
+void check_long_history() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-history-long-XXXXXX"));
+    require(directory.isValid());
+    const auto root = directory.filePath(QStringLiteral("archive"));
+    const QString session(32, QLatin1Char('c'));
+    HistoryStore store(root, session);
+    Terminal terminal({80, 24});
+    for (int line = 0; line < 24; ++line)
+        terminal.feed("a line of agent output that repeats with small changes " +
+                      std::to_string(line) + "\r\n");
+    const auto sample = terminal.snapshot();
+    constexpr int pages = 1000;
+    quint64 first_id{};
+    for (int index = 0; index < pages; ++index) {
+        const auto id = store.append(sample);
+        if (index == 0)
+            first_id = id;
+    }
+    const auto stats = store.stats();
+    // Compressed at least four times over the page as the wire carries it.
+    const auto raw = static_cast<quint64>(wire::encode_snapshot(sample).size());
+    require(stats.pages == pages && stats.session_bytes * 4U < quint64{pages} * raw);
+    QDir folder(root + QLatin1Char('/') + session);
+    require(folder.entryList({QStringLiteral("*.seg")}, QDir::Files).size() <= 2);
+    const auto start = present(store.at(0));
+    require(start.id == first_id && start.snapshot.history.viewport_offset == 0 &&
+            start.snapshot.history.total_rows == std::size_t{pages} * 24U);
+    const auto middle = present(store.at(std::size_t{pages} * 12U));
+    require(middle.id == first_id + pages / 2 && middle.snapshot.size.columns == 80);
+    HistoryStore reopened(root, session);
+    require(present(reopened.at(std::size_t{pages} * 12U)).id == middle.id);
+}
+// Reach both v6 array caps with pseudorandom colors at the history boundary;
+// its compressed record and reopened header agree on the committed length.
+void check_maximum_history_page() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-history-maximum-XXXXXX"));
+    require(directory.isValid());
+    const auto root = directory.filePath(QStringLiteral("archive"));
+    const QString session(32, QLatin1Char('a'));
+    // Exercise both wire array caps with varied colors, producing a
+    // nontrivial compressed record even though the grapheme pool compresses.
+    constexpr std::size_t cells = 32768;
+    constexpr std::size_t codepoints = 65536;
+    constexpr std::size_t rows = 2;
+    const TerminalSize size{static_cast<std::uint16_t>(cells / rows), rows};
+    TerminalSnapshot snapshot;
+    snapshot.size = size;
+    snapshot.graphemes = std::u32string(codepoints, U'x');
+    snapshot.cells.resize(cells);
+    // Reproducible compression fixture, not security-sensitive randomness.
+    // NOLINTNEXTLINE(bugprone-random-generator-seed)
+    std::mt19937 random{0x61706973U};
+    std::uniform_int_distribution<std::uint16_t> byte_distribution{0, 255};
+    std::array<std::uint8_t, 3> entropy{};
+    for (std::size_t index = 0; index < cells; ++index) {
+        for (auto& byte : entropy)
+            byte = static_cast<std::uint8_t>(byte_distribution(random));
+        const auto value = static_cast<std::uint32_t>(
+            (std::uint32_t{entropy[0]} << 16U) | (std::uint32_t{entropy[1]} << 8U) | entropy[2]);
+        auto& cell = snapshot.cells[index];
+        cell.text_offset = index % codepoints;
+        cell.text_length = codepoints - cell.text_offset;
+        cell.style.foreground = {ColorKind::rgb, value};
+        cell.style.background = {ColorKind::rgb, value ^ 0xffffffU};
+        cell.style.underline_color = {ColorKind::rgb, value ^ 0x555555U};
+    }
+    constexpr qint64 record_limit = qint64{8} * 1024 * 1024;
+    const auto encoded = wire::encode_snapshot(snapshot);
+    const auto payload = qCompress(encoded, 6);
+    require(encoded.size() <= record_limit && payload.size() <= record_limit);
+    HistoryStore store(root, session);
+    const auto id = store.append(snapshot);
+    const auto stats = store.stats();
+    require(stats.pages == 1 && stats.session_bytes == stats.global_bytes);
+    require(present(store.at(0)).id == id);
+    HistoryStore reopened(root, session);
+    require(present(reopened.at(0)).id == id);
+}
 } // namespace
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
-        if (app.arguments().size() == 4 && app.arguments().at(1) == QStringLiteral("--writer")) {
+        if (app.arguments().size() == 5 && app.arguments().at(1) == QStringLiteral("--writer")) {
             const auto snapshot = page();
-            const auto bytes = static_cast<quint64>(wire::encode_snapshot(snapshot).size() + 48);
+            const auto bytes = app.arguments().at(4).toULongLong();
             HistoryStore store(app.arguments().at(2), app.arguments().at(3),
-                               {bytes * 2, bytes * 3, 4});
+                               {bytes * 2, bytes * 3});
             for (int index = 0; index < 20; ++index)
                 static_cast<void>(store.append(snapshot));
             return 0;
@@ -199,6 +311,8 @@ int main(int argc, char** argv) {
             return 0;
         }
         check_store();
+        check_long_history();
+        check_maximum_history_page();
         check_worker_drain();
         check_worker_drain_deadline();
         std::cout << "History roundtrip, quotas, corruption and write recovery passed\n";

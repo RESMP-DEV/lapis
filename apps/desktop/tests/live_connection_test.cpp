@@ -17,6 +17,7 @@
 #include <functional>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 
 namespace {
 namespace wire = lapis::session::wire;
@@ -24,6 +25,18 @@ using lapis::desktop::SessionPreview;
 void require(bool value, const char* message) {
     if (!value)
         throw std::runtime_error(message);
+}
+// The first row's text, blanks trimmed.
+std::string first_row(const lapis::session::TerminalSnapshot& snapshot) {
+    std::string text;
+    for (std::size_t column = 0; column < snapshot.size.columns; ++column) {
+        const auto cell = snapshot.text(column);
+        if (cell.empty())
+            text += ' ';
+        for (const auto value : cell)
+            text += static_cast<char>(value);
+    }
+    return text.substr(0, text.find_last_not_of(' ') + 1);
 }
 void until(const std::function<bool()>& condition) {
     QElapsedTimer time;
@@ -164,9 +177,13 @@ void history_browsing_and_input_gating() {
     historical.feed("old");
     f.historyReply(peer, first.request_id, 41, historical.snapshot());
     until([&] { return !f.document.historyRequestPending(); });
-    require(wire::encode_snapshot(f.document.snapshot()) ==
-                wire::encode_snapshot(historical.snapshot()),
-            "History page did not replace the visible page");
+    // History scrolls as one strip: a screen back shows the kept rows in a
+    // whole screen of the live size.
+    require(first_row(f.document.snapshot()) == "old" &&
+                f.document.snapshot().size == f.terminal.snapshot().size &&
+                !f.document.snapshot().cursor.in_viewport,
+            "History did not show the kept rows a screen back");
+    const auto shown = wire::encode_snapshot(f.document.snapshot());
 
     f.terminal.feed("newer-live");
     peer.send(wire::Kind::snapshot,
@@ -174,28 +191,30 @@ void history_browsing_and_input_gating() {
     until([&] {
         return f.document.snapshotTiming().value(QStringLiteral("sequence")).toULongLong() == 2;
     });
-    require(wire::encode_snapshot(f.document.snapshot()) ==
-                wire::encode_snapshot(historical.snapshot()),
-            "Live snapshot replaced the visible history page");
+    require(wire::encode_snapshot(f.document.snapshot()) == shown,
+            "Live snapshot replaced the visible history");
     f.document.sendText("still-blocked");
     f.document.sendKey(lapis::session::TerminalKey::enter, {});
     f.document.resizeTerminal({8, 4});
     settle();
     require(peer.socket->bytesAvailable() == 0, "Displayed history allowed input or resize");
 
+    // A screen forward passes the newest row: live again.
     f.document.newerHistory();
-    const auto second = f.historyRequest(peer);
-    require(second.request_id != first.request_id && second.reference == 41 &&
-                second.direction == wire::HistoryDirection::newer,
-            "Invalid newer-history request");
-    f.document.returnToLive();
     require(!f.document.historyActive() && !f.document.historyRequestPending(),
-            "Return to live did not clear history state");
+            "Scrolling past the newest row did not return to live");
     require(wire::encode_snapshot(f.document.snapshot()) ==
                 wire::encode_snapshot(f.terminal.snapshot()),
             "Return to live did not restore the retained live snapshot");
     const auto resize = peer.read();
     require(resize.kind == wire::Kind::resize, "Deferred desired size was not restored");
+    // A reply to a request that returning to live canceled is ignored.
+    f.document.olderHistory();
+    const auto second = f.historyRequest(peer);
+    require(second.request_id != first.request_id &&
+                second.direction == wire::HistoryDirection::older,
+            "Invalid second history request");
+    f.document.returnToLive();
     f.historyReply(peer, second.request_id, 42, historical.snapshot());
     settle();
     require(wire::encode_snapshot(f.document.snapshot()) ==
@@ -203,6 +222,23 @@ void history_browsing_and_input_gating() {
             "Canceled history reply replaced the live screen");
     require(f.document.connectionState() == QStringLiteral("ready"),
             "Canceled history reply disconnected a usable session");
+}
+
+void history_capability_tracks_current_page() {
+    Fixture f;
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    auto page = f.terminal.snapshot();
+    page.history = {.total_rows = 4, .viewport_offset = 2, .viewport_rows = 2};
+    f.document.completeHistoryRequest(1, page, {});
+    require(f.document.historyScrubbable(), "Placed history did not allow scrubbing");
+    f.document.returnToLive();
+    page.history = {.total_rows = 2, .viewport_offset = 0, .viewport_rows = 2};
+    f.document.completeHistoryRequest(2, page, {});
+    require(!f.document.historyScrubbable(), "A single page retained stale scrubbing capability");
 }
 
 void unqueued_history_is_rejected_immediately() {
@@ -282,8 +318,9 @@ void stale_reconnect_and_history_errors() {
     until([&] { return !f.document.historyRequestPending(); });
     require(f.document.historyMessage() == QStringLiteral("No older history"),
             "History message was not surfaced");
-    require(f.document.connectionState() == QStringLiteral("ready") && !f.document.inputReady(),
-            "No-page history reply left read-only mode");
+    require(f.document.connectionState() == QStringLiteral("ready") && f.document.inputReady() &&
+                !f.document.historyActive(),
+            "With nothing kept, the live screen did not stay");
 
     f.document.olderHistory();
     const auto malformed = f.historyRequest(next);
@@ -502,6 +539,7 @@ int main(int argc, char** argv) {
         handshake_and_reconnect();
         history_browsing_and_input_gating();
         stale_reconnect_and_history_errors();
+        history_capability_tracks_current_page();
         unqueued_history_is_rejected_immediately();
         missing_and_replaced();
         attention_routing_and_reconnect();

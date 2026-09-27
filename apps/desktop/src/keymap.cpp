@@ -453,6 +453,11 @@ void KeyMap::apply_defaults() {
         {QStringLiteral("category2"), {modifier + QStringLiteral("2")}},
         {QStringLiteral("category3"), {modifier + QStringLiteral("3")}},
         {QStringLiteral("category4"), {modifier + QStringLiteral("4")}},
+        {QStringLiteral("category5"), {modifier + QStringLiteral("5")}},
+        {QStringLiteral("category6"), {modifier + QStringLiteral("6")}},
+        {QStringLiteral("category7"), {modifier + QStringLiteral("7")}},
+        {QStringLiteral("category8"), {modifier + QStringLiteral("8")}},
+        {QStringLiteral("category9"), {modifier + QStringLiteral("9")}},
         {QStringLiteral("openSettings"), default_settings_shortcuts()},
         {QStringLiteral("reloadConfig"), {modifier + QStringLiteral("R")}},
         {QStringLiteral("newAgent"), {modifier + QStringLiteral("T")}},
@@ -504,10 +509,14 @@ void KeyMap::apply_defaults() {
                      {QStringLiteral("Ctrl+Shift+~"), QStringLiteral("Ctrl+~")});
 #endif
 #ifdef Q_OS_MACOS
+    // Command-Shift-J/K walk the rail from the home row, down and up as in vi,
+    // beside Command-Shift-[ and ] for the agents across.
     bindings_.insert(QStringLiteral("nextCategory"),
-                     {QStringLiteral("Meta+Alt+Right"), QStringLiteral("Meta+Shift+Down")});
+                     {QStringLiteral("Meta+Alt+Right"), QStringLiteral("Meta+Shift+Down"),
+                      QStringLiteral("Meta+Shift+J")});
     bindings_.insert(QStringLiteral("previousCategory"),
-                     {QStringLiteral("Meta+Alt+Left"), QStringLiteral("Meta+Shift+Up")});
+                     {QStringLiteral("Meta+Alt+Left"), QStringLiteral("Meta+Shift+Up"),
+                      QStringLiteral("Meta+Shift+K")});
     bindings_.insert(QStringLiteral("nextWindow"), {QStringLiteral("Meta+Shift+]")});
     bindings_.insert(QStringLiteral("previousWindow"), {QStringLiteral("Meta+Shift+[")});
     bindings_.insert(QStringLiteral("openCommands"), {QStringLiteral("Meta+Shift+P")});
@@ -1076,6 +1085,61 @@ bool KeyMap::setKeepAwake(bool on) {
 bool KeyMap::setShowUsage(bool on) {
     show_usage_ = on;
     return save();
+}
+
+KeyMap::RemoteSettings KeyMap::remoteSettings() const {
+    return {.keepAwake = keep_awake_,
+            .alertSound = alert_sound_,
+            .finishSound = finish_sound_,
+            .notify = notify_,
+            .showUsage = show_usage_,
+            .alertRepeat = alert_repeat_};
+}
+
+bool KeyMap::applyRemoteSettings(const RemoteSettingsPatch& changes, QString* diagnostic) {
+    const bool has_change = changes.keepAwake || changes.alertSound || changes.finishSound ||
+                            changes.notify || changes.showUsage || changes.alertRepeat;
+    if (!has_change)
+        return true;
+    if (changes.alertRepeat && (*changes.alertRepeat < 1 || *changes.alertRepeat > 10)) {
+        diagnostic_ = QStringLiteral("Alert repeat must be between 1 and 10");
+        if (diagnostic)
+            *diagnostic = diagnostic_;
+        emit changed();
+        return false;
+    }
+
+    const auto previous = remoteSettings();
+    if (changes.keepAwake)
+        keep_awake_ = *changes.keepAwake;
+    if (changes.alertSound)
+        alert_sound_ = *changes.alertSound;
+    if (changes.finishSound)
+        finish_sound_ = *changes.finishSound;
+    if (changes.notify)
+        notify_ = *changes.notify;
+    if (changes.showUsage)
+        show_usage_ = *changes.showUsage;
+    if (changes.alertRepeat)
+        alert_repeat_ = *changes.alertRepeat;
+
+    // Observers must not see a batch that could still be rolled back. On
+    // failure the file remains unchanged, so restore the fields and keep the
+    // reason persist() produced.
+    if (save_without_tentative_change()) {
+        emit changed();
+        return true;
+    }
+    if (diagnostic)
+        *diagnostic = diagnostic_;
+    keep_awake_ = previous.keepAwake;
+    alert_sound_ = previous.alertSound;
+    finish_sound_ = previous.finishSound;
+    notify_ = previous.notify;
+    show_usage_ = previous.showUsage;
+    alert_repeat_ = previous.alertRepeat;
+    emit changed();
+    return false;
 }
 
 } // namespace lapis::desktop
