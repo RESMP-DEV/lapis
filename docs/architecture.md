@@ -2206,9 +2206,9 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   for a host from the ssh config) under its own session service, never in a
   category and never an attention source. `runtime/terminals.json` records them
   so the next lapis reattaches a running one and the gateway can reach them like
-  agents (`terminal-` ids, only that folder's endpoints). Command-` toggles the
+  agents (`terminal-` ids, only that folder's endpoints). ``Command-` `` toggles the
   panel over the stage's right half and Command-~ picks the machine; a Mac key
-  monitor takes Command-` before AppKit's window cycling can, and Control-`
+  monitor takes ``Command-` `` before AppKit's window cycling can, and ``Control-` ``
   works everywhere. `exit` ends the shell and closes the panel. The control
   socket adds `openTerminal` and `closeTerminal`; the phone's + offers
   **Terminal**, lists open terminals above the agents and swipes them away.

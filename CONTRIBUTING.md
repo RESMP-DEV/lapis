@@ -387,10 +387,10 @@ The committed `lapis.json` holds defaults only (see
   (`minimizeWindow`) minimizes. Command-Q quits the GUI; none of these stops service-owned agents.
   `detachWindow` still works when configured but has no default key.
 - Command-O (`resumeConversation`) lists past Claude Code and Codex
-  conversations and resumes one as a new agent. Command-` and Control-`
+  conversations and resumes one as a new agent. ``Command-` `` and ``Control-` ``
   (`toggleTerminal`) show and hide the side terminal; Command-~
   (`chooseTerminal`) picks its machine. On the Mac a local key monitor takes
-  Command-` before AppKit's window cycling. With no agent open, the home list
+  ``Command-` `` before AppKit's window cycling. With no agent open, the home list
   holds the keyboard. Appearance lists every action's keys.
 - Linux uses Control-Shift-based counterparts, with Alt added for the category
   arrows and new-category creation. Bare terminal Control chords remain
@@ -851,7 +851,7 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `terminal-input` | Desktop-enabled, native GUI | Qt composition commit/cancel, replacement rejection, paste and focus/document/history/disconnect ownership |
 | `terminal-render` | Desktop-enabled | Real Qt Vulkan pixel regressions for cell background grids, wide/combining characters, fallback/RTL text, styles/decorations, actual Ghostty resize, cursor placement and clearing |
 
-`just desktop` runs these twenty-two suites plus static checks. The separate Python
+`just desktop` runs the registered suites plus static checks. The separate Python
 GUI harness checks five preview captures and seven expected failures. The CLI
 harness checks detached service behavior, attachment generations, fragmented
 handshakes, synchronization timeout, stale controls, bounded queue failure and
