@@ -2,7 +2,7 @@
 #define LAPIS_DESKTOP_TERMINAL_SURFACE_HPP
 
 #include "keymap.hpp"
-#include "workspace.hpp"
+#include <lapis/session/terminal.hpp>
 
 #include <QElapsedTimer>
 #include <QFont>
@@ -19,7 +19,10 @@
 #include <optional>
 #include <vector>
 
+Q_MOC_INCLUDE("workspace.hpp")
+
 namespace lapis::desktop {
+class SessionPreview;
 
 // Legacy printable-key encoding; native text/IME remains Unicode.
 [[nodiscard]] QByteArray terminal_text_key(const QKeyEvent& event);
@@ -99,7 +102,7 @@ class TerminalSurface : public QQuickItem {
     Q_INVOKABLE int countMatches(const QString& text) const;
     Q_INVOKABLE void clearSelectedText() { clearSelection(); }
     ~TerminalSurface() override;
-    [[nodiscard]] SessionPreview* document() const { return document_.data(); }
+    [[nodiscard]] SessionPreview* document() const;
     void setDocument(SessionPreview* document);
     [[nodiscard]] bool interactive() const { return interactive_; }
     void setInteractive(bool enabled);

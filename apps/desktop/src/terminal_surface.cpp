@@ -1,5 +1,6 @@
 #include "terminal_surface.hpp"
 #include "cell_shapes.hpp"
+#include "workspace.hpp"
 #include <QScopeGuard>
 
 #include <QClipboard>
@@ -35,6 +36,7 @@
 #include <utility>
 
 namespace lapis::desktop {
+SessionPreview* TerminalSurface::document() const { return document_; }
 namespace {
 
 QColor color(std::uint32_t rgb) { return QColor::fromRgb(rgb | 0xff000000U); }
