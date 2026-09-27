@@ -129,6 +129,9 @@ struct HistoryNavigation {
 }
 
 struct TerminalScreen: View {
+    // Drags are reported in the viewport; wheel cells belong to the scrolled
+    // terminal content.
+    static let contentSpace = "lapis.terminal.content"
     let frame: ScreenFrame?
     let history: [HistoryChunk]
     let historyEnd: Bool
@@ -256,6 +259,7 @@ struct TerminalScreen: View {
                     }
                 }
                 .padding(.horizontal, 4)
+                .coordinateSpace(name: Self.contentSpace)
                 .frame(width: contentWidth, alignment: .leading)
             }
             .modifier(FollowsBottom())

@@ -366,7 +366,7 @@ TerminalSnapshot decode_snapshot(const QByteArray& bytes) {
         s.cursor.blinking >> s.cursor.wide_tail >> shape >> alternate >> s.bracketed_paste >>
         s.application_cursor_keys >> s.foreground_rgb >> s.background_rgb >> cursor_color >>
         cursor_rgb >> total >> offset >> rows;
-    check(alternate <= 3U);
+    check(alternate <= 3U && alternate != 2U); // the wheel bit only appears with the screen bit
     s.alternate_screen = alternate != 0U;
     s.accepts_wheel = (alternate & 2U) != 0U;
     check(columns > 0 && height > 0 && quint32(columns) * height <= max_cells);

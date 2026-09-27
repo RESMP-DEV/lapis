@@ -104,8 +104,7 @@ void SessionPreview::completeHistoryRequest(quint64 page_id, session::TerminalSn
     history_message_ = message;
     // A service that places its pages says so with more than the page.
     const auto place = snapshot.history;
-    history_scrubbable_ =
-        history_scrubbable_ || place.viewport_offset > 0 || place.total_rows > place.viewport_rows;
+    history_scrubbable_ = place.viewport_offset > 0 || place.total_rows > place.viewport_rows;
     if (!strip_) {
         // The newest page: browsing begins at the screen as it is now, below
         // every row kept so far. A service that does not place its pages

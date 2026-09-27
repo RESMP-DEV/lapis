@@ -509,7 +509,8 @@ std::string Terminal::Impl::encode_wheel(WheelTurn turn) {
     const auto [steps, column, row] = turn;
     // A fling is a few dozen notches at most; more is a runaway sender.
     constexpr int max_notches = 64;
-    const int notches = std::min(std::abs(steps), max_notches);
+    const int bounded = std::clamp(steps, -max_notches, max_notches);
+    const int notches = std::abs(bounded);
     std::string output;
     bool reporting = false;
     terminal_get(GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING, reporting);

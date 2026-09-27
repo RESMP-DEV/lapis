@@ -3,6 +3,7 @@
 import base64
 import gzip
 import http.client
+import itertools
 import json
 import os
 import shutil
@@ -68,6 +69,33 @@ def cell(text, kind=0, foreground=DEFAULT, background=DEFAULT, underline=0, flag
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_wheel_requires_the_alternate_screen_bit(self):
+        for flags in (0, 1, 2, 3, 4):
+            with self.subTest(flags=flags):
+                payload = snapshot(1, 1, [cell("x")], alternate=flags)
+                session = object.__new__(remote.WireSession)
+                session.attachment = b"x" * remote.ATTACHMENT_BYTES
+                session.sequence = 0
+                session.wheel_accepted = False
+                message = (
+                    session.attachment + struct.pack(">QQQQ", 1, 0, 0, 0) + payload
+                )
+                if flags not in (0, 1, 3):
+                    with self.assertRaises(remote.GatewayError):
+                        remote.render_snapshot(payload)
+                    with self.assertRaises(remote.GatewayError):
+                        session.accept_snapshot(remote.SNAPSHOT, message)
+                    self.assertEqual(session.sequence, 0)
+                    self.assertFalse(session.wheel_accepted)
+                else:
+                    self.assertEqual(
+                        remote.render_snapshot(payload)["wheel"], flags == 3
+                    )
+                    self.assertEqual(
+                        session.accept_snapshot(remote.SNAPSHOT, message), payload
+                    )
+                    self.assertEqual(session.wheel_accepted, flags == 3)
+
     def test_runs_colors_cursor_and_wide_cells(self):
         palette = [0] * 256
         palette[1] = 0xFF0000
@@ -154,6 +182,54 @@ class SnapshotTests(unittest.TestCase):
             ):
                 with self.assertRaises(remote.GatewayError):
                     remote.render_snapshot(payload)
+
+
+class HistoryReplyTests(unittest.TestCase):
+    def test_bounded_reply_and_truncated_place(self):
+        attachment = b"s" * remote.ATTACHMENT_BYTES
+        header = attachment + struct.pack(">QQI", 1, 4, 0)
+        screen = snapshot(2, 1, [cell("o"), cell("k")])
+        request_id, reply = remote.decode_history_reply(header + screen, attachment)
+        self.assertEqual((request_id, reply["page"], reply["snapshot"]), (1, 4, screen))
+        for bad in (
+            header[:47],
+            header + b"x",
+            header + bytes(60),
+            header[:-4] + struct.pack(">I", 50),
+        ):
+            with self.subTest(size=len(bad)), self.assertRaises(remote.GatewayError):
+                remote.decode_history_reply(bad, attachment)
+        for length in (0, 36, 60):
+            with (
+                self.subTest(place_bytes=length),
+                self.assertRaises(remote.GatewayError),
+            ):
+                remote.page_place(bytes(length))
+
+        # Exercise waiter completion with an in-process transport. A bad page
+        # fails its request promptly; the same session can then request a page.
+        session = object.__new__(remote.WireSession)
+        session.attachment = attachment
+        session.lock = threading.Lock()
+        session.history_ids = itertools.count(1)
+        session.history_waiters = {}
+        session.scrubbable = False
+
+        def answer(payload):
+            def send(kind, request):
+                self.assertEqual(kind, remote.HISTORY_REQUEST)
+                request_id = struct.unpack_from(">Q", request)[0]
+                session.deliver_history(
+                    attachment + struct.pack(">QQI", request_id, 4, 0) + payload
+                )
+
+            return send
+
+        session.send = answer(b"short")
+        with self.assertRaisesRegex(remote.GatewayError, "Truncated history snapshot"):
+            session.request_history(timeout=0.1)
+        session.send = answer(screen)
+        self.assertEqual(session.request_history(timeout=0.1)["snapshot"], screen)
 
 
 class ResizeTests(unittest.TestCase):
@@ -1595,8 +1671,9 @@ class WheelTests(unittest.TestCase):
             self.assertEqual(status, 400)
             server.request("POST", path + "/input", {"text": "mouse\r"})
             _, shown = events.until(
-                lambda name, data: name == "frame"
-                and "mouse ready" in screen_text(data)
+                lambda name, data: (
+                    name == "frame" and "mouse ready" in screen_text(data)
+                )
             )
             self.assertTrue(shown["alternateScreen"] and shown["wheel"])
             for bad in ([0, 1, 1], [1, -1, 0], [True, 1, 1], [1, 1]):
@@ -1629,8 +1706,9 @@ class HistoryJumpTests(unittest.TestCase):
             path = f"/api/agents/{self.identifier}"
             events = Events(server, path + "/stream?columns=40&rows=12")
             events.until(
-                lambda name, data: name == "frame"
-                and "all printed" in screen_text(data)
+                lambda name, data: (
+                    name == "frame" and "all printed" in screen_text(data)
+                )
             )
             # A jump needs to know the service can; the newest page says so.
             status, _ = server.request("GET", path + "/history?at=0")

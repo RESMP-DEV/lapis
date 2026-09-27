@@ -15,7 +15,10 @@
 #include <QTimer>
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <exception>
+#include <iterator>
+#include <limits>
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -30,6 +33,14 @@ QByteArray reply(const QJsonObject& object) {
 }
 QByteArray refusal(const QString& message) {
     return reply({{QStringLiteral("ok"), false}, {QStringLiteral("error"), message}});
+}
+// A JSON number Qt can pass to the workspace as requested, instead of silently
+// turning it into the default zero.
+[[nodiscard]] bool is_whole_position(const QJsonValue& value) {
+    const auto number = value.toDouble();
+    return value.isDouble() && std::isfinite(number) && number >= 0 &&
+           number <= static_cast<double>(std::numeric_limits<int>::max()) &&
+           number == std::trunc(number);
 }
 } // namespace
 
@@ -88,7 +99,7 @@ QByteArray WorkspaceControl::answer(const QByteArray& line) {
     if (request.value(QStringLiteral("version")).toInt() != 1)
         return refusal(QStringLiteral("Unsupported request version"));
     using Handler = QByteArray (WorkspaceControl::*)(const QString&, const QJsonObject&);
-    static constexpr std::array<std::pair<std::string_view, Handler>, 15> handlers{{
+    static constexpr auto handlers = std::to_array<std::pair<std::string_view, Handler>>({
         {"harnesses", &WorkspaceControl::harnesses},
         {"createAgent", &WorkspaceControl::create},
         {"createCategory", &WorkspaceControl::category},
@@ -104,7 +115,7 @@ QByteArray WorkspaceControl::answer(const QByteArray& line) {
         {"settings", &WorkspaceControl::settings},
         {"changeSettings", &WorkspaceControl::settings},
         {"handover", &WorkspaceControl::handover},
-    }};
+    });
     const auto kind = request.value(QStringLiteral("request")).toString();
     for (const auto& [name, handler] : handlers)
         if (kind == QLatin1String(name.data(), static_cast<qsizetype>(name.size())))
@@ -190,8 +201,8 @@ QByteArray WorkspaceControl::category(const QString& kind, const QJsonObject& re
     if (kind == QStringLiteral("removeCategory"))
         return workspace_.removeCategory(id) ? reply({{QStringLiteral("ok"), true}}) : refused();
     const auto index = request.value(QStringLiteral("index"));
-    if (!index.isDouble())
-        return refusal(QStringLiteral("Missing index"));
+    if (!is_whole_position(index))
+        return refusal(QStringLiteral("Invalid index"));
     return workspace_.placeCategory(id, index.toInt()) ? reply({{QStringLiteral("ok"), true}})
                                                        : refused();
 }
@@ -212,13 +223,15 @@ QByteArray WorkspaceControl::agent(const QString& kind, const QJsonObject& reque
     } else if (kind == QStringLiteral("placeAgent")) {
         const auto category = request.value(QStringLiteral("category"));
         const auto index = request.value(QStringLiteral("index"));
-        if (!category.isString() || !index.isDouble())
+        if (!category.isString() || !is_whole_position(index))
             return refusal(QStringLiteral("Missing category or index"));
         done = workspace_.placeSessions({id}, category.toString(), index.toInt());
     } else if (kind == QStringLiteral("restartAgent")) {
         done = workspace_.restartAgent(id);
-    } else {
+    } else if (kind == QStringLiteral("closeAgent")) {
         done = workspace_.closeSession(id, false);
+    } else {
+        return refusal(QStringLiteral("Unsupported agent request"));
     }
     return done ? reply({{QStringLiteral("ok"), true}}) : refused();
 }
@@ -245,16 +258,16 @@ namespace {
 // How the window looks stays the Mac's to choose.
 struct Switch {
     std::string_view name;
+    std::optional<bool> KeyMap::RemoteSettingsPatch::* field;
     bool (KeyMap::*get)() const;
-    bool (KeyMap::*set)(bool);
 };
-constexpr std::array<Switch, 5> switches{{
-    {"keepAwake", &KeyMap::keepAwake, &KeyMap::setKeepAwake},
-    {"alertSound", &KeyMap::alertSound, &KeyMap::setAlertSound},
-    {"finishSound", &KeyMap::finishSound, &KeyMap::setFinishSound},
-    {"notify", &KeyMap::notify, &KeyMap::setNotify},
-    {"showUsage", &KeyMap::showUsage, &KeyMap::setShowUsage},
-}};
+constexpr auto switches = std::to_array<Switch>({
+    {"keepAwake", &KeyMap::RemoteSettingsPatch::keepAwake, &KeyMap::keepAwake},
+    {"alertSound", &KeyMap::RemoteSettingsPatch::alertSound, &KeyMap::alertSound},
+    {"finishSound", &KeyMap::RemoteSettingsPatch::finishSound, &KeyMap::finishSound},
+    {"notify", &KeyMap::RemoteSettingsPatch::notify, &KeyMap::notify},
+    {"showUsage", &KeyMap::RemoteSettingsPatch::showUsage, &KeyMap::showUsage},
+});
 constexpr auto repeat_name = std::string_view{"alertRepeat"};
 
 QString text(std::string_view name) {
@@ -268,14 +281,17 @@ QJsonObject current_settings(const KeyMap& keymap) {
     return values;
 }
 
-// Why `changes` cannot be applied, or empty. Nothing is applied unless all can be.
+// Why `changes` cannot be applied, or empty. Nothing is applied unless every
+// present value has the type and range the Mac accepts.
 QString invalid_change(const QJsonObject& changes) {
     for (auto entry = changes.begin(); entry != changes.end(); ++entry) {
         const bool is_switch = std::any_of(switches.begin(), switches.end(), [&](const auto& item) {
             return entry.key() == text(item.name);
         });
-        if (is_switch ? !entry.value().isBool()
-                      : entry.key() != text(repeat_name) || !entry.value().isDouble())
+        const auto repeat = entry.value().toDouble();
+        const bool valid_repeat = entry.value().isDouble() && std::isfinite(repeat) &&
+                                  repeat >= 1 && repeat <= 10 && repeat == std::trunc(repeat);
+        if (is_switch ? !entry.value().isBool() : entry.key() != text(repeat_name) || !valid_repeat)
             return QStringLiteral("Invalid setting %1").arg(entry.key());
     }
     return {};
@@ -286,17 +302,23 @@ QByteArray WorkspaceControl::settings(const QString& kind, const QJsonObject& re
     if (keymap_ == nullptr)
         return refusal(QStringLiteral("Settings are not available"));
     if (kind == QStringLiteral("changeSettings")) {
-        const auto changes = request.value(QStringLiteral("settings")).toObject();
+        const auto field = request.value(QStringLiteral("settings"));
+        if (!field.isObject())
+            return refusal(QStringLiteral("Missing settings"));
+        const auto changes = field.toObject();
         if (const auto problem = invalid_change(changes); !problem.isEmpty())
             return refusal(problem);
-        bool saved = true;
+        KeyMap::RemoteSettingsPatch patch;
         for (const auto& item : switches)
             if (const auto value = changes.value(text(item.name)); value.isBool())
-                saved = (keymap_->*item.set)(value.toBool()) && saved;
+                patch.*item.field = value.toBool();
         if (const auto repeat = changes.value(text(repeat_name)); repeat.isDouble())
-            saved = keymap_->setAlertRepeat(repeat.toInt()) && saved;
-        if (!saved)
-            return refusal(keymap_->diagnostic());
+            patch.alertRepeat = repeat.toInt();
+        QString problem;
+        if (!keymap_->applyRemoteSettings(patch, &problem))
+            return reply({{QStringLiteral("ok"), false},
+                          {QStringLiteral("error"), problem},
+                          {QStringLiteral("settings"), current_settings(*keymap_)}});
     }
     return reply(
         {{QStringLiteral("ok"), true}, {QStringLiteral("settings"), current_settings(*keymap_)}});

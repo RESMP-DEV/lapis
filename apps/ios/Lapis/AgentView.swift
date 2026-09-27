@@ -11,6 +11,7 @@ struct AgentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(WorkspaceModel.self) private var model
     @State private var restarting = false
+    @State private var restartTask: Task<Void, Never>?
     // Wheel notches this drag has sent a full-screen program.
     @State private var wheelSent = 0
     private let agent: Agent
@@ -55,7 +56,7 @@ struct AgentView: View {
                     onSwipe(dx < 0 ? 1 : -1)
                 })
             .simultaneousGesture(
-                DragGesture(minimumDistance: 6)
+                DragGesture(minimumDistance: 6, coordinateSpace: .named(TerminalScreen.contentSpace))
                     .onChanged { value in turnWheel(value) }
                     .onEnded { _ in wheelSent = 0 })
             banner
@@ -85,7 +86,11 @@ struct AgentView: View {
                 .accessibilityIdentifier("viewMenu")
             }
         }
-        .onDisappear { session.close() }
+        .onDisappear {
+            restartTask?.cancel()
+            restartTask = nil
+            session.close()
+        }
         .onChange(of: agent) { _, refreshed in
             session.agent = refreshed
         }
@@ -187,10 +192,14 @@ struct AgentView: View {
         guard abs(dy) > abs(dx) else { return }
         let notches = Int(dy / (metrics.lineHeight * 2))
         guard notches != wheelSent else { return }
+        // The gesture was created in the terminal's scrolled content space, so
+        // its start location is already the terminal cell under the finger.
         let column = Int((value.startLocation.x - 4) / metrics.cellWidth)
         let row = Int(value.startLocation.y / metrics.lineHeight)
-        session.send(.wheel(notches - wheelSent, column: min(max(column, 0), frame.columns - 1),
-                            row: min(max(row, 0), frame.rows - 1)))
+        let maxColumn = max(frame.columns - 1, 0)
+        let maxRow = max(frame.rows - 1, 0)
+        session.send(.wheel(notches - wheelSent, column: min(max(column, 0), maxColumn),
+                            row: min(max(row, 0), maxRow)))
         wheelSent = notches
     }
 
@@ -227,14 +236,21 @@ struct AgentView: View {
                         // A stopped agent starts again on the Mac, as Restart agent does there.
                         if stopped {
                             Button(restarting ? "Restarting…" : "Restart agent") {
-                                Task {
+                                restartTask = Task {
                                     restarting = true
-                                    if await model.restart(session.agent) {
+                                    let restarted = await model.restart(session.agent)
+                                    guard !Task.isCancelled else {
+                                        restarting = false
+                                        return
+                                    }
+                                    if restarted {
                                         session.open(columns: size.columns, rows: size.rows)
                                     } else {
                                         // Shown here, over the agent.
                                         session.notice = model.notice
-                                        model.notice = nil
+                                        if model.notice == session.notice {
+                                            model.notice = nil
+                                        }
                                     }
                                     restarting = false
                                 }

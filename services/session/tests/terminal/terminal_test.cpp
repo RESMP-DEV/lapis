@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -212,6 +213,9 @@ void wheel_input() {
             "a wheel back was not two SGR wheel-up events at the cell");
     require(terminal.encode_wheel({-1, 99, 99}) == "\x1b[<65;12;4M",
             "a wheel forward was not a wheel-down event inside the screen");
+    constexpr int minimum_steps = std::numeric_limits<int>::min();
+    require(terminal.encode_wheel({minimum_steps, 4, 2}) == terminal.encode_wheel({-64, 4, 2}),
+            "INT_MIN wheel clamping did not preserve direction and bound");
     terminal.feed("\x1b[?1006l");
     require(terminal.encode_wheel({1, 0, 0}) == std::string("\x1b[M") + char(32 + 64) + '!' + '!',
             "the default mouse format was not used");

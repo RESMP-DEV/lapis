@@ -452,8 +452,19 @@ final class LapisUITests: XCTestCase {
         name.typeText("Scratch")
         app.alerts.buttons["Create"].tap()
         XCTAssertTrue(app.buttons["edit-category-Scratch"].waitForExistence(timeout: 20), "a category is added")
-        drag("Someday", onto: "Build")
         let row = { (category: String) in self.app.buttons["edit-category-\(category)"] }
+        // A one-row downward move is the off-by-one case: `to` is already the
+        // post-removal destination, so sending `to - 1` makes it a no-op.
+        drag("Build", onto: "Someday")
+        eventually("Someday moves above Build") {
+            row("Someday").frame.minY < row("Build").frame.minY
+        }
+        drag("Someday", onto: "Build")
+        eventually("the move down is undone without moving Scratch") {
+            row("Build").frame.minY < row("Someday").frame.minY
+                && row("Someday").frame.minY < row("Scratch").frame.minY
+        }
+        drag("Someday", onto: "Build")
         eventually("Someday moves to the top") { row("Someday").frame.minY < row("Build").frame.minY }
         snap("16-categories")
         app.buttons["Done"].tap()
@@ -566,6 +577,10 @@ final class LapisUITests: XCTestCase {
         waitFor(terminal, valueContaining: "lapis fake agent", timeout: 20)
         XCTAssertTrue(app.buttons["historyGap"].waitForExistence(timeout: 10),
                       "the output skipped by the jump can load")
+        // The frame that scheduled `loadNewer` before the jump cannot fill the
+        // gap when its delayed task finally runs.
+        RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+        XCTAssertTrue(app.buttons["historyGap"].exists, "the intentional gap stays skipped")
         snap("21-history-start")
     }
 

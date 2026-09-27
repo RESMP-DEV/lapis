@@ -1087,4 +1087,59 @@ bool KeyMap::setShowUsage(bool on) {
     return save();
 }
 
+KeyMap::RemoteSettings KeyMap::remoteSettings() const {
+    return {.keepAwake = keep_awake_,
+            .alertSound = alert_sound_,
+            .finishSound = finish_sound_,
+            .notify = notify_,
+            .showUsage = show_usage_,
+            .alertRepeat = alert_repeat_};
+}
+
+bool KeyMap::applyRemoteSettings(const RemoteSettingsPatch& changes, QString* diagnostic) {
+    const bool has_change = changes.keepAwake || changes.alertSound || changes.finishSound ||
+                            changes.notify || changes.showUsage || changes.alertRepeat;
+    if (!has_change)
+        return true;
+    if (changes.alertRepeat && (*changes.alertRepeat < 1 || *changes.alertRepeat > 10)) {
+        diagnostic_ = QStringLiteral("Alert repeat must be between 1 and 10");
+        if (diagnostic)
+            *diagnostic = diagnostic_;
+        emit changed();
+        return false;
+    }
+
+    const auto previous = remoteSettings();
+    if (changes.keepAwake)
+        keep_awake_ = *changes.keepAwake;
+    if (changes.alertSound)
+        alert_sound_ = *changes.alertSound;
+    if (changes.finishSound)
+        finish_sound_ = *changes.finishSound;
+    if (changes.notify)
+        notify_ = *changes.notify;
+    if (changes.showUsage)
+        show_usage_ = *changes.showUsage;
+    if (changes.alertRepeat)
+        alert_repeat_ = *changes.alertRepeat;
+
+    // Observers must not see a batch that could still be rolled back. On
+    // failure the file remains unchanged, so restore the fields and keep the
+    // reason persist() produced.
+    if (save_without_tentative_change()) {
+        emit changed();
+        return true;
+    }
+    if (diagnostic)
+        *diagnostic = diagnostic_;
+    keep_awake_ = previous.keepAwake;
+    alert_sound_ = previous.alertSound;
+    finish_sound_ = previous.finishSound;
+    notify_ = previous.notify;
+    show_usage_ = previous.showUsage;
+    alert_repeat_ = previous.alertRepeat;
+    emit changed();
+    return false;
+}
+
 } // namespace lapis::desktop

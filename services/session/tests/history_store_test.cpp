@@ -9,8 +9,10 @@
 #include <QProcess>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <array>
 #include <csignal>
 #include <iostream>
+#include <random>
 #include <source_location>
 #include <stdexcept>
 #include <string>
@@ -136,8 +138,10 @@ void check_store() {
     static_cast<void>(other.append(snapshot));
     static_cast<void>(other.append(snapshot));
     require(other.stats().global_bytes <= limits.global_bytes);
-    // The other session's budget took this one's oldest segment; reading on
-    // finds what remains.
+    // The other session's budget took this one's oldest segment. Stats report
+    // the surviving archive without waiting for a read to reload the index.
+    require(store.stats().pages == 1);
+    // Reading on finds what remains.
     require(present(store.older()).id == id3 && !store.older(id3));
     store.clear();
     require(!store.older() && !store.at(0));
@@ -237,6 +241,50 @@ void check_long_history() {
     HistoryStore reopened(root, session);
     require(present(reopened.at(std::size_t{pages} * 12U)).id == middle.id);
 }
+// Reach both v6 array caps with pseudorandom colors at the history boundary;
+// its compressed record and reopened header agree on the committed length.
+void check_maximum_history_page() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-history-maximum-XXXXXX"));
+    require(directory.isValid());
+    const auto root = directory.filePath(QStringLiteral("archive"));
+    const QString session(32, QLatin1Char('a'));
+    // The wire's two array caps, filled with pseudorandom colors: this is the
+    // reachable encoded-size boundary that compression cannot shrink.
+    constexpr std::size_t cells = 32768;
+    constexpr std::size_t codepoints = 65536;
+    constexpr std::size_t rows = 2;
+    const TerminalSize size{static_cast<std::uint16_t>(cells / rows), rows};
+    TerminalSnapshot snapshot;
+    snapshot.size = size;
+    snapshot.graphemes = std::u32string(codepoints, U'x');
+    snapshot.cells.resize(cells);
+    std::mt19937 random{0x61706973U};
+    std::uniform_int_distribution<std::uint16_t> byte_distribution{0, 255};
+    std::array<std::uint8_t, 3> entropy{};
+    for (std::size_t index = 0; index < cells; ++index) {
+        for (auto& byte : entropy)
+            byte = static_cast<std::uint8_t>(byte_distribution(random));
+        const auto value = static_cast<std::uint32_t>(
+            (std::uint32_t{entropy[0]} << 16U) | (std::uint32_t{entropy[1]} << 8U) | entropy[2]);
+        auto& cell = snapshot.cells[index];
+        cell.text_offset = index % codepoints;
+        cell.text_length = codepoints - cell.text_offset;
+        cell.style.foreground = {ColorKind::rgb, value};
+        cell.style.background = {ColorKind::rgb, value ^ 0xffffffU};
+        cell.style.underline_color = {ColorKind::rgb, value ^ 0x555555U};
+    }
+    constexpr qint64 record_limit = qint64{8} * 1024 * 1024;
+    const auto encoded = wire::encode_snapshot(snapshot);
+    const auto payload = qCompress(encoded, 6);
+    require(encoded.size() <= record_limit && payload.size() <= record_limit);
+    HistoryStore store(root, session);
+    const auto id = store.append(snapshot);
+    const auto stats = store.stats();
+    require(stats.pages == 1 && stats.session_bytes == stats.global_bytes);
+    require(present(store.at(0)).id == id);
+    HistoryStore reopened(root, session);
+    require(present(reopened.at(0)).id == id);
+}
 } // namespace
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
@@ -262,6 +310,7 @@ int main(int argc, char** argv) {
         }
         check_store();
         check_long_history();
+        check_maximum_history_page();
         check_worker_drain();
         check_worker_drain_deadline();
         std::cout << "History roundtrip, quotas, corruption and write recovery passed\n";

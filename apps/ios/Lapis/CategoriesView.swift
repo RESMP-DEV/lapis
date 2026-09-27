@@ -13,9 +13,18 @@ struct CategoriesView: View {
     private var categories: [AgentCategory] { model.listing?.categories ?? [] }
 
     var body: some View {
+        // Callbacks run after refreshes and optimistic edits can replace the
+        // listing. Resolve their rendered offsets against this same snapshot.
+        let shown = categories
         List {
             Section {
-                ForEach(categories) { category in
+                if let error = model.error {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("workspaceError")
+                }
+                ForEach(shown) { category in
                     Button {
                         name = category.name
                         renaming = category
@@ -31,18 +40,21 @@ struct CategoriesView: View {
                     }
                     .accessibilityIdentifier("edit-category-\(category.name)")
                     .listRowBackground(Theme.panel)
-                    .deleteDisabled(!category.agents.isEmpty || categories.count == 1)
+                    .deleteDisabled(!category.agents.isEmpty || shown.count == 1)
                 }
                 .onMove { from, to in
-                    guard let first = from.first else { return }
-                    let moving = categories[first]
-                    // `to` counts the moved category; the Mac's index does not.
+                    guard let first = from.first,
+                          shown.indices.contains(first),
+                          to >= 0, to <= shown.count else { return }
+                    // SwiftUI counts the source row in `to`; the Mac inserts
+                    // after removing it, as move(fromOffsets:toOffset:) does.
+                    let moving = shown[first]
                     let index = to > first ? to - 1 : to
                     Task { await model.placeCategory(moving.id, at: index) }
                 }
                 .onDelete { offsets in
-                    for offset in offsets {
-                        let category = categories[offset]
+                    for offset in offsets where shown.indices.contains(offset) {
+                        let category = shown[offset]
                         Task { await model.removeCategory(category.id) }
                     }
                 }

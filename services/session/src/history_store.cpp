@@ -339,6 +339,8 @@ quint64 HistoryStore::append(const TerminalSnapshot& page) {
     if (encoded.size() > max_page_bytes || page.size.rows == 0)
         fail("History page exceeds record size limit");
     const auto payload = qCompress(encoded, 6);
+    if (payload.size() > max_page_bytes)
+        fail("History page exceeds record size limit");
     const Header header{next_id_,
                         records_.empty() ? 0 : records_.back().first + records_.back().rows,
                         page.size.rows, static_cast<quint64>(payload.size()),
@@ -429,16 +431,35 @@ HistoryPage HistoryStore::read(const Record& record) {
     return {record.id, std::move(snapshot)};
 }
 template <typename Select> std::optional<HistoryPage> HistoryStore::readSelected(Select select) {
+    // Held through selection and read: another session's budget needs this
+    // lock, and an already-open descriptor survives unlink. A non-cooperating
+    // unlink can still win the check/open race, so one missing-segment retry
+    // gives the same recovery without reporting archive failure.
+    auto lock = lock_root(root_);
     auto selected = select();
-    if (selected && !QFileInfo::exists(segmentPath(selected->segment))) {
+    auto recover = [&]() {
         // Another session's budget took it: learn what remains.
-        auto lock = lock_root(root_);
         load();
         selected = select();
+    };
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        if (selected && !QFileInfo::exists(segmentPath(selected->segment))) {
+            if (attempt != 0)
+                return std::nullopt;
+            recover();
+            continue;
+        }
+        if (!selected)
+            return std::nullopt;
+        try {
+            return read(*selected);
+        } catch (const std::runtime_error&) {
+            if (attempt != 0 || QFileInfo::exists(segmentPath(selected->segment)))
+                throw;
+            recover();
+        }
     }
-    if (!selected)
-        return std::nullopt;
-    return read(*selected);
+    return std::nullopt;
 }
 std::optional<HistoryPage> HistoryStore::older(quint64 before) {
     return readSelected([this, before]() -> std::optional<Record> {
@@ -490,6 +511,9 @@ void HistoryStore::clear() {
 }
 HistoryStats HistoryStore::stats() {
     auto lock = lock_root(root_);
+    // Another session's budget may have evicted closed segments since this
+    // index was loaded; report that archive, not stale in-memory records.
+    load();
     auto result = totals(scan(root_), session_id_);
     result.pages = records_.size();
     return result;

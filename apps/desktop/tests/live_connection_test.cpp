@@ -224,6 +224,23 @@ void history_browsing_and_input_gating() {
             "Canceled history reply disconnected a usable session");
 }
 
+void history_capability_tracks_current_page() {
+    Fixture f;
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    auto page = f.terminal.snapshot();
+    page.history = {.total_rows = 4, .viewport_offset = 2, .viewport_rows = 2};
+    f.document.completeHistoryRequest(1, page, {});
+    require(f.document.historyScrubbable(), "Placed history did not allow scrubbing");
+    f.document.returnToLive();
+    page.history = {.total_rows = 2, .viewport_offset = 0, .viewport_rows = 2};
+    f.document.completeHistoryRequest(2, page, {});
+    require(!f.document.historyScrubbable(), "A single page retained stale scrubbing capability");
+}
+
 void unqueued_history_is_rejected_immediately() {
     Fixture f;
     lapis::desktop::LiveConnection connection(f.document, f.endpoint, f.launch,
@@ -522,6 +539,7 @@ int main(int argc, char** argv) {
         handshake_and_reconnect();
         history_browsing_and_input_gating();
         stale_reconnect_and_history_errors();
+        history_capability_tracks_current_page();
         unqueued_history_is_rejected_immediately();
         missing_and_replaced();
         attention_routing_and_reconnect();

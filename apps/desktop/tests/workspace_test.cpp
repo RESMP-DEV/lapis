@@ -22,6 +22,7 @@
 #include <QLockFile>
 #include <QPointer>
 #include <QProcess>
+#include <QSaveFile>
 #include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QThread>
@@ -2040,6 +2041,64 @@ void phoneChangesTheMacsSettings(const Workspace& workspace,
                                 {QStringLiteral("settings"), bad}})) &&
                     !keymap.keepAwake(),
                 "an unknown or mistyped setting changes nothing");
+    for (const auto& request :
+         {QJsonObject{{QStringLiteral("request"), QStringLiteral("changeSettings")}},
+          QJsonObject{{QStringLiteral("request"), QStringLiteral("changeSettings")},
+                      {QStringLiteral("settings"), QStringLiteral("no object")}}}) {
+        const auto refused = askVersioned(workspace, request);
+        require(!answeredOk(refused) &&
+                    refused.value(QStringLiteral("error"))
+                        .toString()
+                        .contains(QStringLiteral("Missing settings")) &&
+                    !keymap.keepAwake(),
+                "a missing or non-object settings value is refused");
+    }
+    for (const auto repeat : {0.0, -1.0, 0.5, 2.5, 10.5, 1e20}) {
+        const auto refused = askVersioned(
+            workspace,
+            {{QStringLiteral("request"), QStringLiteral("changeSettings")},
+             {QStringLiteral("settings"), QJsonObject{{QStringLiteral("alertRepeat"), repeat}}}});
+        require(!answeredOk(refused) &&
+                    refused.value(QStringLiteral("error"))
+                        .toString()
+                        .contains(QStringLiteral("alertRepeat")) &&
+                    keymap.alertRepeat() == 5,
+                "alertRepeat is a whole number from 1 through 10");
+    }
+
+    // A later save can fail even though the request validated. The owner must
+    // not leave a mixed batch in memory or replace the damaged file.
+    const auto before_failure = keymap.remoteSettings();
+    const auto malformed_path = root.filePath(QStringLiteral("broken-lapis.json"));
+    const QByteArray malformed = "{unfinished remote edit";
+    {
+        QSaveFile replacement(malformed_path);
+        require(replacement.open(QIODevice::WriteOnly), "open the replacement");
+        replacement.write(malformed);
+        require(replacement.commit(), "commit the malformed replacement");
+    }
+    keymap.setSourcePathForTesting(malformed_path);
+    const auto save_failed = askVersioned(
+        workspace, {{QStringLiteral("request"), QStringLiteral("changeSettings")},
+                    {QStringLiteral("settings"), QJsonObject{{QStringLiteral("keepAwake"), true},
+                                                             {QStringLiteral("alertRepeat"), 3}}}});
+    require(!answeredOk(save_failed) &&
+                save_failed.value(QStringLiteral("settings")).toObject() ==
+                    QJsonObject::fromVariantMap({{QStringLiteral("keepAwake"), false},
+                                                 {QStringLiteral("alertSound"), true},
+                                                 {QStringLiteral("finishSound"), true},
+                                                 {QStringLiteral("alertRepeat"), 5},
+                                                 {QStringLiteral("notify"), true},
+                                                 {QStringLiteral("showUsage"), true}}) &&
+                keymap.remoteSettings() == before_failure,
+            "a failed save echoes unchanged settings and preserves memory");
+    require(save_failed.value(QStringLiteral("error"))
+                .toString()
+                .contains(QStringLiteral("Could not save")),
+            "a failed save keeps a useful diagnostic");
+    QFile damaged(malformed_path);
+    require(damaged.open(QIODevice::ReadOnly), "read the failed-save config");
+    require(damaged.readAll() == malformed, "a failed save preserves disk bytes");
     control.setKeyMap(nullptr);
 }
 
@@ -2154,9 +2213,32 @@ void phoneStartsAnAgentInItsCategory() {
                      .value(QStringLiteral("ok"))
                      .toBool(),
             "an empty name or an unknown agent is refused");
-        phoneArrangesTheWorkspace(
-            workspace,
-            {.agent = id, .later = later, .ideas = made.value(QStringLiteral("id")).toString()});
+        const auto ideas = made.value(QStringLiteral("id")).toString();
+        for (const auto index : {-0.5, 0.5, 2.5, 1e20}) {
+            const auto moved_category = askVersioned(
+                workspace, {{QStringLiteral("request"), QStringLiteral("placeCategory")},
+                            {QStringLiteral("id"), ideas},
+                            {QStringLiteral("index"), index}});
+            const auto moved_agent =
+                askVersioned(workspace, {{QStringLiteral("request"), QStringLiteral("placeAgent")},
+                                         {QStringLiteral("id"), id},
+                                         {QStringLiteral("category"), later},
+                                         {QStringLiteral("index"), index}});
+            require(!answeredOk(moved_category) &&
+                        moved_category.value(QStringLiteral("error"))
+                            .toString()
+                            .contains(QStringLiteral("Invalid index")) &&
+                        !answeredOk(moved_agent) &&
+                        moved_agent.value(QStringLiteral("error"))
+                            .toString()
+                            .contains(QStringLiteral("Missing category or index")),
+                    "fractional and out-of-range positions are not coerced to zero");
+        }
+        require(workspace.agentPlace(id).value(QStringLiteral("category")) ==
+                        QStringLiteral("Later") &&
+                    workspace.categories().constLast().toMap().value(QStringLiteral("id")) == ideas,
+                "rejected positions leave the workspace in place");
+        phoneArrangesTheWorkspace(workspace, {.agent = id, .later = later, .ideas = ideas});
         phoneChangesTheMacsSettings(workspace, control, root);
         // Over ssh: the CLI runs in the folder on that machine, in its login
         // shell. A stand-in ssh prints what it was given.

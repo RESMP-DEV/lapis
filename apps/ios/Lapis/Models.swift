@@ -27,6 +27,11 @@ final class WorkspaceModel {
     private var fetched: [String: Date] = [:]
     private var catalogLoads: Set<String> = []
     private var prefetching = false
+    // The newest settings fetch or change. A full-settings reply may arrive
+    // out of order, but only the newest request may replace what is shown.
+    private var settingsRequest = 0
+    // Full-settings replies are versioned, and writes reach the Mac in order.
+    private var settingsWrite: Task<MacSettings, Error>?
 
     init() {
         let saved = UserDefaults.standard.string(forKey: WorkspaceModel.hostKey)
@@ -353,38 +358,93 @@ extension WorkspaceModel {
         guard let gateway else { return false }
         do {
             try await gateway.restart(agent: agent.id)
-            let deadline = Date().addingTimeInterval(20)
-            while Date() < deadline {
+        } catch {
+            notice = describe(error)
+            return false
+        }
+        let deadline = Date().addingTimeInterval(20)
+        var sawListing = false
+        var listingFailure: String?
+        while Date() < deadline {
+            guard !Task.isCancelled else { return false }
+            do {
                 let current = try await gateway.agents()
                 listing = current
+                sawListing = true
                 if current.categories.flatMap(\.agents).contains(where: { $0.id == agent.id && $0.running }) {
                     return true
                 }
-                try await Task.sleep(for: .milliseconds(400))
+            } catch is CancellationError {
+                return false
+            } catch let failure as URLError where failure.code == .cancelled {
+                return false
+            } catch {
+                // The restart was accepted. A missed listing must not report it
+                // as a refusal; ask again until the deadline.
+                listingFailure = describe(error)
+                do {
+                    try await Task.sleep(for: .milliseconds(400))
+                } catch {
+                    return false
+                }
+                continue
             }
-            notice = "The agent has not started yet. It is in the list on the Mac."
-        } catch {
-            notice = describe(error)
+            do {
+                try await Task.sleep(for: .milliseconds(400))
+            } catch {
+                return false
+            }
         }
+        notice = sawListing
+            ? "The agent has not started yet. It is in the list on the Mac."
+            : (listingFailure ?? "The agent has not started yet. It is in the list on the Mac.")
         return false
     }
 
     func loadMacSettings() async {
-        guard let gateway else { return }
+        settingsRequest += 1
+        let request = settingsRequest
+        guard let gateway else {
+            guard request == settingsRequest else { return }
+            macSettings = nil
+            settingsError = GatewayError.invalidHost.localizedDescription
+            return
+        }
         do {
-            macSettings = try await gateway.settings()
+            if let write = settingsWrite { _ = await write.result }
+            let settings = try await gateway.settings()
+            guard request == settingsRequest else { return }
+            macSettings = settings
             settingsError = nil
         } catch {
+            guard request == settingsRequest else { return }
+            macSettings = nil
             settingsError = describe(error)
         }
     }
 
     // Changes Mac settings; they show changed at once, then as the Mac saved them.
     func changeMacSettings(_ changes: [String: Any]) async {
-        guard let gateway else { return }
+        settingsRequest += 1
+        let request = settingsRequest
+        guard let gateway else {
+            macSettings = nil
+            settingsError = GatewayError.invalidHost.localizedDescription
+            return
+        }
+        let previous = settingsWrite
+        let write = Task {
+            if let previous { _ = await previous.result }
+            return try await gateway.change(settings: changes)
+        }
+        settingsWrite = write
         do {
-            macSettings = try await gateway.change(settings: changes)
+            let settings = try await write.value
+            guard request == settingsRequest else { return }
+            macSettings = settings
+            settingsError = nil
         } catch {
+            guard request == settingsRequest else { return }
             notice = describe(error)
             await loadMacSettings()
         }
@@ -436,6 +496,9 @@ final class AgentSession {
     var gapAfter = false
     var jumpedTo: UUID?
     private(set) var loadingHistory = false
+    // A scrub made while another page load owns `loadingHistory` is the
+    // user's latest destination, not a gesture to drop.
+    private var pendingJumpFraction: Double?
     private var lastEmptyCheck = Date.distantPast
     private var newerTask: Task<Void, Never>?
     private(set) var lastFrameJSON: Data?
@@ -468,6 +531,7 @@ final class AgentSession {
         historyEnd = false
         gapAfter = false
         jumpedTo = nil
+        pendingJumpFraction = nil
         let events = gateway.stream(agent: agent.id, columns: columns, rows: rows)
         task = Task { [weak self] in
             do {
@@ -575,9 +639,74 @@ final class AgentSession {
     // Loads the page before the oldest one shown; the gateway archives what
     // scrolled off the top of the agent's terminal.
     func loadOlder() async {
-        guard let gateway, isLive, !historyEnd, !loadingHistory else { return }
+        guard self.gateway != nil, isLive, !historyEnd, !loadingHistory else { return }
         loadingHistory = true
-        defer { loadingHistory = false }
+        await performLoadOlder()
+        loadingHistory = false
+        await runPendingJump()
+    }
+
+    // While history is shown, pages archived since it loaded are appended so
+    // it stays contiguous with the live screen (after a jump, only on asking).
+    private func followNewHistory() {
+        guard !history.isEmpty, !gapAfter, newerTask == nil else { return }
+        newerTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            await self?.loadNewer()
+            self?.newerTask = nil
+        }
+    }
+
+    private func loadNewer() async {
+        // A jump can land between scheduling this delayed load and its first
+        // await. Intentionally skipped pages stay skipped until closeGap.
+        guard self.gateway != nil, isLive, let newest = history.last?.page, !loadingHistory, !gapAfter else { return }
+        loadingHistory = true
+        await performLoadNewer(after: newest)
+        loadingHistory = false
+        await runPendingJump()
+    }
+
+    // Every kept row, as the last page said; the scrubber's scale.
+    private func note(_ place: HistoryPage.Place?) {
+        guard let place else { return }
+        historyTotal = place.total
+        scrubbable = scrubbable || place.scrubbable
+    }
+
+    // Shows the page at `fraction` of everything kept (0 the oldest row),
+    // alone: older pages load above it as before, and the newer ones between
+    // it and the live screen when asked (closeGap).
+    func jump(to fraction: Double) async {
+        guard self.gateway != nil, isLive, scrubbable, historyTotal > 0 else { return }
+        guard !loadingHistory else {
+            pendingJumpFraction = fraction
+            return
+        }
+        loadingHistory = true
+        await performJump(to: fraction)
+        loadingHistory = false
+        await runPendingJump()
+    }
+
+    // Loads the pages skipped between a jumped-to page and the live screen,
+    // a screenful of them at a time.
+    func closeGap() async {
+        guard self.gateway != nil, isLive, gapAfter, let newest = history.last?.page, !loadingHistory else { return }
+        loadingHistory = true
+        await performCloseGap(after: newest)
+        loadingHistory = false
+        await runPendingJump()
+    }
+
+    private func runPendingJump() async {
+        guard let fraction = pendingJumpFraction else { return }
+        pendingJumpFraction = nil
+        await jump(to: fraction)
+    }
+
+    private func performLoadOlder() async {
+        guard let gateway else { return }
         // While nothing is archived, ask at most once a second, but always
         // ask again after the latest output (callers repeat on new output).
         if history.isEmpty {
@@ -613,21 +742,8 @@ final class AgentSession {
         }
     }
 
-    // While history is shown, pages archived since it loaded are appended so
-    // it stays contiguous with the live screen (after a jump, only on asking).
-    private func followNewHistory() {
-        guard !history.isEmpty, !gapAfter, newerTask == nil else { return }
-        newerTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1))
-            await self?.loadNewer()
-            self?.newerTask = nil
-        }
-    }
-
-    private func loadNewer() async {
-        guard let gateway, isLive, let newest = history.last?.page, !loadingHistory else { return }
-        loadingHistory = true
-        defer { loadingHistory = false }
+    private func performLoadNewer(after newest: UInt64) async {
+        guard let gateway else { return }
         var after = newest
         for _ in 0..<20 {
             guard let reply = try? await gateway.history(agent: agent.id, after: after),
@@ -640,20 +756,8 @@ final class AgentSession {
         }
     }
 
-    // Every kept row, as the last page said; the scrubber's scale.
-    private func note(_ place: HistoryPage.Place?) {
-        guard let place else { return }
-        historyTotal = place.total
-        scrubbable = scrubbable || place.scrubbable
-    }
-
-    // Shows the page at `fraction` of everything kept (0 the oldest row),
-    // alone: older pages load above it as before, and the newer ones between
-    // it and the live screen when asked (closeGap).
-    func jump(to fraction: Double) async {
-        guard let gateway, isLive, scrubbable, historyTotal > 0, !loadingHistory else { return }
-        loadingHistory = true
-        defer { loadingHistory = false }
+    private func performJump(to fraction: Double) async {
+        guard let gateway else { return }
         let row = Int((min(max(fraction, 0), 1) * Double(historyTotal - 1)).rounded())
         guard let reply = try? await gateway.history(agent: agent.id, at: row),
               reply.page != 0, let lines = reply.lines, let columns = reply.columns else { return }
@@ -667,12 +771,8 @@ final class AgentSession {
         jumpedTo = chunk.cacheID
     }
 
-    // Loads the pages skipped between a jumped-to page and the live screen,
-    // a screenful of them at a time.
-    func closeGap() async {
-        guard let gateway, isLive, gapAfter, let newest = history.last?.page, !loadingHistory else { return }
-        loadingHistory = true
-        defer { loadingHistory = false }
+    private func performCloseGap(after newest: UInt64) async {
+        guard let gateway else { return }
         var after = newest
         for _ in 0..<8 {
             guard let reply = try? await gateway.history(agent: agent.id, after: after),

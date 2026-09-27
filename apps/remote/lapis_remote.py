@@ -1281,6 +1281,7 @@ def render_snapshot(payload, show_cursor=True):
     revision, columns, rows, cursor_x, cursor_y = struct.unpack_from(">QHHHH", payload)
     in_viewport, visible = payload[16], payload[17]
     alternate, application_cursor = payload[ALTERNATE_OFFSET], payload[23]
+    require(alternate in (0, 1, 3), "Invalid alternate-screen flags")
     default_fg, default_bg = struct.unpack_from(">II", payload, 24)
     palette = struct.unpack_from(">256I", payload, PALETTE_OFFSET)
     count = struct.unpack_from(">I", payload, POOL_OFFSET)[0]
@@ -1360,12 +1361,34 @@ def render_snapshot(payload, show_cursor=True):
 def page_place(payload):
     """Where an archived page sits: every kept row, its first row among them
     (0 the oldest), its own rows, and whether its service can jump."""
+    require(len(payload) >= HISTORY_FIELDS_OFFSET + 24, "Truncated history place")
     total, offset, rows = struct.unpack_from(">QQQ", payload, HISTORY_FIELDS_OFFSET)
+    require(offset <= total and rows <= total - offset, "Invalid history place")
     return {
         "total": total,
         "offset": offset,
         "rows": rows,
         "scrubbable": offset > 0 or total > rows,
+    }
+
+
+def decode_history_reply(data, attachment):
+    """Validate a history reply before it can reach a waiter or the stream."""
+    require(
+        len(data) >= 60 and data[:ATTACHMENT_BYTES] == attachment, "Bad history reply"
+    )
+    request_id, page_id = struct.unpack_from(">QQ", data, ATTACHMENT_BYTES)
+    length = struct.unpack_from(">I", data, 56)[0]
+    require(length <= len(data) - 60, "Truncated history message")
+    message = data[60 : 60 + length].decode("utf-8", "replace")
+    snapshot = data[60 + length :]
+    if snapshot:
+        require(len(snapshot) >= POOL_OFFSET + 4, "Truncated history snapshot")
+        page_place(snapshot)
+    return request_id, {
+        "page": page_id,
+        "message": message,
+        "snapshot": snapshot or None,
     }
 
 
@@ -1460,8 +1483,10 @@ class WireSession:
         sequence = struct.unpack_from(">Q", data, ATTACHMENT_BYTES)[0]
         if sequence <= self.sequence:
             return None
-        self.sequence = sequence
         body = data[SNAPSHOT_HEADER:]
+        require(len(body) > ALTERNATE_OFFSET, "Truncated snapshot")
+        require(body[ALTERNATE_OFFSET] in (0, 1, 3), "Invalid alternate-screen flags")
+        self.sequence = sequence
         self.wheel_accepted = (
             len(body) > ALTERNATE_OFFSET and body[ALTERNATE_OFFSET] & ACCEPTS_WHEEL != 0
         )
@@ -1529,31 +1554,33 @@ class WireSession:
                 HISTORY_REQUEST, struct.pack(">QQB", request_id, reference, direction)
             )
             require(waiter[0].wait(timeout), "History did not answer")
+            require(
+                "error" not in waiter[1], waiter[1].get("error", "Bad history reply")
+            )
             return waiter[1]
         finally:
             with self.lock:
                 self.history_waiters.pop(request_id, None)
 
     def deliver_history(self, data):
+        # The attachment and request ID must be trustworthy before a malformed
+        # payload can fail only that waiter and leave live frames flowing.
         require(
-            len(data) >= 60 and data[:ATTACHMENT_BYTES] == self.attachment,
+            len(data) >= ATTACHMENT_BYTES + 8
+            and data[:ATTACHMENT_BYTES] == self.attachment,
             "Bad history reply",
         )
-        request_id, page_id = struct.unpack_from(">QQ", data, ATTACHMENT_BYTES)
-        length = struct.unpack_from(">I", data, 56)[0]
-        message = data[60 : 60 + length].decode("utf-8", "replace")
-        snapshot = data[60 + length :]
-        # A service that places its pages can jump to any row of them.
-        if snapshot and page_place(snapshot)["scrubbable"]:
-            self.scrubbable = True
+        request_id = struct.unpack_from(">Q", data, ATTACHMENT_BYTES)[0]
+        try:
+            _, reply = decode_history_reply(data, self.attachment)
+            if reply["snapshot"] and page_place(reply["snapshot"])["scrubbable"]:
+                self.scrubbable = True
+        except GatewayError as error:
+            reply = {"error": str(error)}
         with self.lock:
             waiter = self.history_waiters.get(request_id)
         if waiter is not None:
-            waiter[1] = {
-                "page": page_id,
-                "message": message,
-                "snapshot": snapshot or None,
-            }
+            waiter[1] = reply
             waiter[0].set()
 
     def resize(self, columns, rows):
@@ -2312,7 +2339,13 @@ class Handler(BaseHTTPRequestHandler):
                     )
                     return
                 if kind == HISTORY_PAGE:
-                    session.deliver_history(data)
+                    try:
+                        session.deliver_history(data)
+                    except GatewayError as error:
+                        self.event(
+                            "status", {"state": "disconnected", "message": str(error)}
+                        )
+                        return
                     continue
                 snapshot = session.accept_snapshot(kind, data)
                 if snapshot is not None:

@@ -209,6 +209,8 @@ void wheel_messages() {
     alternate[21] = 1; // a service from before wheel input
     const auto older = wire::decode_snapshot(alternate);
     require(older.alternate_screen && !older.accepts_wheel);
+    alternate[21] = 2; // malformed: wheel without a screen to receive it
+    rejects([&] { static_cast<void>(wire::decode_snapshot(alternate)); });
     alternate[21] = 4;
     rejects([&] { static_cast<void>(wire::decode_snapshot(alternate)); });
 }
