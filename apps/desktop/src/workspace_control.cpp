@@ -1,4 +1,5 @@
 #include "workspace_control.hpp"
+#include "conversation_index.hpp"
 
 #include "platform/posix/local_endpoint.hpp"
 #include "terminals.hpp"
@@ -118,7 +119,8 @@ QByteArray WorkspaceControl::create(const QJsonObject& request) {
             return refusal(QStringLiteral("Missing %1").arg(QLatin1String(field)));
     const auto directory = request.value(QStringLiteral("directory")).toString().trimmed();
     auto title = request.value(QStringLiteral("title")).toString().trimmed();
-    if (title.isEmpty()) {
+    const bool named = !title.isEmpty();
+    if (!named) {
         // As the desktop form does: the project folder's name.
         const auto parts = QDir::cleanPath(directory).split(QLatin1Char('/'));
         title = parts.constLast().isEmpty() ? QStringLiteral("/") : parts.constLast();
@@ -130,12 +132,13 @@ QByteArray WorkspaceControl::create(const QJsonObject& request) {
     const auto id =
         workspace_.startAgent({.category = request.value(QStringLiteral("category")).toString(),
                                .directory = directory,
-                               .title = title.left(80),
+                               .title = conversations::elide_title(title, 80),
                                .harness = request.value(QStringLiteral("harness")).toString(),
                                .machine = request.value(QStringLiteral("machine")).toString(),
                                .program = request.value(QStringLiteral("program")).toString(),
                                .model = request.value(QStringLiteral("model")).toString(),
                                .mode = request.value(QStringLiteral("mode")).toString(),
+                               .named = named,
                                .select = false,
                                .resume = request.value(QStringLiteral("resume")).toString()});
     if (id.isEmpty())

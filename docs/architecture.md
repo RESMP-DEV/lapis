@@ -2170,13 +2170,17 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   agent left; Command-Shift-W always does. Command-M minimizes.
   The Mac icon enlarges the phone's gem 1.3 times inside Apple's 824-point body.
 - **Conversation index.** Claude Code and Codex keep every conversation in
-  files; only those someone opened count (Claude's `entrypoint` "cli"; Codex
+  files; only those someone opened count (Claude's first recorded `entrypoint` "cli"; Codex
   rollouts that are not `exec` or subagents), about 560 of 27,700 Claude files
   on the user's Mac. The index reads them in the background and caches each by
   size and time (`runtime/conversations.json`), so a later scan stats files and
   rereads only the changed ones. Titles are the CLI's own (Claude's `ai-title`,
-  newest wins, read from the head and the last 128 KB; Codex's
-  `session_index.jsonl` thread names) or else the first typed message.
+  newest usable title in the scanned head and last 128 KiB wins; a title
+  wholly in the omitted middle can fall back to the first typed message. Codex's
+  `session_index.jsonl` thread names are preferred over the first typed message.
+  The desktop joins its scan pool before destroying the index; queued results
+  belong to the index object and cannot outlive it. The gateway reads small
+  Claude sessions once and caches Codex names by file size and modification time.
 - **Resume.** Command-O lists them newest first; every typed word must appear
   in the title, folder or CLI. Return starts a new agent in the active category
   with the CLI's resume option (the same table restarts use) and records the
@@ -2211,10 +2215,15 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   title (the CLI's resume record, else lapis's resume pair, looked up in the
   conversation index, which the app rescans each minute); a chosen name is
   recorded as `named` in the registry and stays. The phone renames through
-  `renameAgent`, so both devices share one name.
+  `renameAgent`, so both devices share one name. Names are limited to 80 UTF-16
+  units and printable Unicode scalars across the desktop, gateway and phone.
+  Elision preserves surrogate pairs; phone name entry clips whole graphemes.
 - **Phone paging.** Swiping over an agent's screen moves between the agents of
   its category (or the terminals); only the screen reads the swipe, since the
-  key bar scrolls sideways.
+  key bar scrolls sideways. The pager keeps unsent drafts by agent ID while
+  each visible agent owns its connection; paging back reattaches without
+  resurrecting the outgoing agent's input. Refreshed names and connection
+  metadata follow the selected identity.
 - **Machine in the Mac's form.** Only the phone could start an agent on another
   machine. The Mac's new-agent form now has a Machine row (this Mac and the ssh
   config's hosts, left and right arrows) and starts through the same ssh launch;

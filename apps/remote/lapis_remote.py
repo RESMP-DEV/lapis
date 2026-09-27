@@ -334,6 +334,22 @@ def first_json_line(path, limit=1 << 20):
         return json.loads(stream.readline(limit))
 
 
+def bounded_lines(stream, lines=None, byte_limit=None):
+    """Read at most line/byte bounds without trusting the file to stay still."""
+    while lines is None or lines > 0:
+        size = min(byte_limit if byte_limit is not None else 1 << 20, 1 << 20)
+        if size <= 0:
+            return
+        line = stream.readline(size)
+        if not line:
+            return
+        if byte_limit is not None:
+            byte_limit -= len(line)
+        if lines is not None:
+            lines -= 1
+        yield line
+
+
 def codex_cwd(path):
     """The folder of a Codex rollout's interactive main thread, else None."""
     try:
@@ -370,13 +386,45 @@ def claude_cwd(session):
     return cwd if entry == "cli" and isinstance(cwd, str) else None
 
 
+def utf16_length(value):
+    """The string length Qt reports: UTF-16 units, not Unicode points."""
+    return len(value.encode("utf-16-le")) // 2
+
+
+def plain_title(text, limit=140):
+    """A normalized title, keeping user names that resemble CLI wrappers."""
+    text = " ".join(str(text or "").split())
+    if not text or any(0xD800 <= ord(character) <= 0xDFFF for character in text):
+        return ""
+    if utf16_length(text) <= limit:
+        return text
+    retained = []
+    units = 0
+    for character in text:
+        width = 2 if ord(character) > 0xFFFF else 1
+        if units + width > limit - 1:
+            break
+        retained.append(character)
+        units += width
+    return "".join(retained) + "\u2026"
+
+
 def typed_title(text):
     """One line of what someone typed; the CLIs' own wrappers are not."""
     text = str(text or "").strip()
     if not text or text[0] in "<#" or text.startswith("Caveat:"):
         return ""
-    text = " ".join(text.split())
-    return text if len(text) <= 140 else text[:139] + "\u2026"
+    return plain_title(text)
+
+
+def valid_name(value, limit=80):
+    """The desktop's printable, nonempty, length-bounded name contract."""
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and value.isprintable()
+        and utf16_length(value) <= limit
+    )
 
 
 def claude_title(session):
@@ -384,7 +432,16 @@ def claude_title(session):
     first = title = ""
     try:
         with open(session, "rb") as stream:
-            for line in itertools.islice(stream, 300):
+            size = os.fstat(stream.fileno()).st_size
+            # Small sessions fit inside the tail window, so one bounded pass
+            # is enough; larger sessions deliberately scan only head and tail.
+            whole_file = size <= (128 << 10)
+            lines = bounded_lines(
+                stream,
+                lines=None if whole_file else 300,
+                byte_limit=min(size, 128 << 10),
+            )
+            for line in lines:
                 try:
                     record = json.loads(line)
                 except ValueError:
@@ -392,13 +449,16 @@ def claude_title(session):
                 if not isinstance(record, dict):
                     continue
                 if record.get("type") == "ai-title":
-                    title = typed_title(record.get("aiTitle"))
+                    title = typed_title(record.get("aiTitle")) or title
                 elif (
                     record.get("type") == "user"
                     and not first
                     and not record.get("isMeta")
                 ):
-                    content = (record.get("message") or {}).get("content")
+                    message = record.get("message")
+                    content = (
+                        message.get("content") if isinstance(message, dict) else None
+                    )
                     if isinstance(content, list):
                         content = next(
                             (
@@ -409,9 +469,10 @@ def claude_title(session):
                             "",
                         )
                     first = typed_title(content)
-            size = os.fstat(stream.fileno()).st_size
+            if whole_file:
+                return title or first
             stream.seek(max(0, size - (128 << 10)))
-            for line in stream.read().split(b"\n"):
+            for line in stream.read(128 << 10).split(b"\n"):
                 if b'"ai-title"' in line:
                     try:
                         record = json.loads(line)
@@ -428,26 +489,39 @@ def codex_title(path):
     """A Codex rollout's first typed message (its thread name is applied later)."""
     try:
         with open(path, "rb") as stream:
-            for line in itertools.islice(stream, 200):
+            for line in bounded_lines(stream, lines=200, byte_limit=1 << 20):
                 try:
                     record = json.loads(line)
                 except ValueError:
                     continue
-                payload = record.get("payload") if isinstance(record, dict) else None
-                if (
-                    record.get("type") != "response_item"
-                    or not isinstance(payload, dict)
-                    or payload.get("type") != "message"
-                    or payload.get("role") != "user"
-                ):
-                    continue
-                for part in payload.get("content") or []:
-                    if isinstance(part, dict):
-                        text = typed_title(part.get("text"))
-                        if text:
-                            return text
+                title = codex_user_title(record)
+                if title:
+                    return title
     except OSError:
         pass
+    return ""
+
+
+def codex_user_title(record):
+    """The typed title in one Codex response record, else empty."""
+    if not isinstance(record, dict):
+        return ""
+    payload = record.get("payload")
+    if (
+        record.get("type") != "response_item"
+        or not isinstance(payload, dict)
+        or payload.get("type") != "message"
+        or payload.get("role") != "user"
+    ):
+        return ""
+    content = payload.get("content")
+    if not isinstance(content, list):
+        return ""
+    for part in content:
+        if isinstance(part, dict):
+            title = typed_title(part.get("text"))
+            if title:
+                return title
     return ""
 
 
@@ -465,9 +539,7 @@ def codex_thread_names(codex_home):
                     and record.get("id")
                     and record.get("thread_name")
                 ):
-                    names[str(record["id"])] = " ".join(
-                        str(record["thread_name"]).split()
-                    )[:140]
+                    names[str(record["id"])] = plain_title(record["thread_name"])
     except OSError:
         pass
     return names
@@ -489,6 +561,8 @@ class AgentHistory:
         self.claude_home = Path(claude_home)
         self.codex = {}
         self.claude = {}
+        self.codex_names = {}
+        self.codex_names_mark = None
         self.heat = collections.Counter()
         self.conversations = []
 
@@ -518,20 +592,53 @@ class AgentHistory:
             return entry, stat.st_mtime
 
         def read_rollout(path):
-            cwd = codex_cwd(path)
+            identifier = cwd = ""
+            title = ""
+            try:
+                with open(path, "rb") as stream:
+                    for number, line in enumerate(
+                        bounded_lines(stream, lines=200, byte_limit=1 << 20)
+                    ):
+                        try:
+                            record = json.loads(line)
+                        except ValueError:
+                            continue
+                        if number == 0:
+                            payload = (
+                                record.get("payload", {})
+                                if isinstance(record, dict)
+                                else {}
+                            )
+                            if not isinstance(payload, dict):
+                                return None
+                            source = payload.get("source")
+                            if (
+                                isinstance(source, dict)
+                                or payload.get("parent_thread_id")
+                                or source == "exec"
+                            ):
+                                return None
+                            first_cwd = payload.get("cwd")
+                            if not isinstance(first_cwd, str) or not first_cwd:
+                                return None
+                            # A rollout without an id still counts for its
+                            # folder; it only cannot be resumed, so the list
+                            # leaves it out.
+                            identifier = str(payload.get("id") or "")
+                            cwd = first_cwd
+                            continue
+                        title = codex_user_title(record)
+                        if title:
+                            break
+            except OSError:
+                return None
             if not cwd:
                 return None
-            # A rollout without an id still counts for its folder; it only
-            # cannot be resumed, so the list leaves it out.
-            try:
-                identifier = str(first_json_line(path)["payload"].get("id") or "")
-            except (OSError, ValueError, KeyError, TypeError, AttributeError):
-                identifier = ""
             return {
                 "harness": "codex",
                 "id": identifier,
                 "cwd": cwd,
-                "title": codex_title(path),
+                "title": title,
             }
 
         def read_session(path):
@@ -579,7 +686,22 @@ class AgentHistory:
                 pass
         counts.pop("/", None)
         heat.pop("/", None)
-        names = codex_thread_names(self.codex_home)
+        names_path = self.codex_home / "session_index.jsonl"
+        try:
+            names_stat = names_path.stat()
+            names_mark = (names_stat.st_size, names_stat.st_mtime)
+        except OSError:
+            names_mark = None
+            names = {}
+            self.codex_names = names
+            self.codex_names_mark = names_mark
+        else:
+            if names_mark != self.codex_names_mark:
+                names = codex_thread_names(self.codex_home)
+                self.codex_names = names
+                self.codex_names_mark = names_mark
+            else:
+                names = self.codex_names
         conversations = [item for item in conversations if item["id"]]
         for conversation in conversations:
             if conversation["harness"] == "codex" and names.get(conversation["id"]):
@@ -749,10 +871,14 @@ REMOTE_SCRIPT = "\n".join(
         for item in (
             scan_folders,
             first_json_line,
+            bounded_lines,
             codex_cwd,
             claude_cwd,
+            utf16_length,
+            plain_title,
             typed_title,
             claude_title,
+            codex_user_title,
             codex_title,
             codex_thread_names,
             AgentHistory,
@@ -1849,7 +1975,7 @@ class Handler(BaseHTTPRequestHandler):
         if body is None:
             return
         title = body.get("title")
-        if not isinstance(title, str) or not 0 < len(title.strip()) <= 80:
+        if not valid_name(title):
             self.fail(HTTPStatus.BAD_REQUEST, "Use an agent name of 1-80 characters")
             return
         answer = self.ask_desktop(

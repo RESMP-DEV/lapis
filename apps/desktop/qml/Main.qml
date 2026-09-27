@@ -224,8 +224,19 @@ ApplicationWindow {
     function projectName(path) {
         return path.replace(/\/+$/, "").split("/").pop() || "/"
     }
+    function projectTitle(path) {
+        const name = projectName(path)
+        if (name.length <= 80)
+            return name
+        // Names use UTF-16 limits; keep both halves of an astral character.
+        let end = 79
+        if (name.charCodeAt(end - 1) >= 0xD800 && name.charCodeAt(end - 1) <= 0xDBFF
+                && name.charCodeAt(end) >= 0xDC00 && name.charCodeAt(end) <= 0xDFFF)
+            --end
+        return name.slice(0, end) + "…"
+    }
     function agentBaseTitle(session) {
-        return workspace.previewMode || session.title !== projectName(session.directory).slice(0, 80) ?
+        return workspace.previewMode || session.title !== projectTitle(session.directory) ?
                     session.title : workspace.displayPath(session.directory)
     }
     // Agents started in the same folder share a default title; number the
@@ -380,7 +391,7 @@ ApplicationWindow {
         const defaults = workspace.agentDefaults()
         const mode = window.lastMode.length > 0 ? window.lastMode :
                      defaults.mode && defaults.mode.length > 0 ? defaults.mode : "full"
-        workspace.resumeAgent(conversation.directory, projectName(conversation.directory).slice(0, 80),
+        workspace.resumeAgent(conversation.directory, projectTitle(conversation.directory),
                               conversation.harness, conversation.id, mode)
     }
     function openUsageDialog() {
@@ -745,7 +756,7 @@ ApplicationWindow {
 
     function commitNewAgent() {
         const folder = agentDirectoryField.text.trim()
-        const title = projectName(folder).slice(0, 80)
+        const title = projectTitle(folder)
         const folderIssue = directoryProblem(agentDirectoryField.text)
         if (folderIssue.length > 0) {
             agentDialog.localError = folderIssue
@@ -753,7 +764,7 @@ ApplicationWindow {
         }
         const model = agentDialog.chosenModel && !agentDialog.chosenModel.default ? agentDialog.chosenModel.id : ""
         if (!workspace.createAgent(agentDirectoryField.text.trim(), title, agentDialog.selectedHarness,
-                                   model, agentDialog.selectedMode, agentDialog.selectedMachine)) {
+                                   model, agentDialog.selectedMode, agentDialog.selectedMachine, false)) {
             agentDialog.localError = workspace.workspaceError.length > 0 ? workspace.workspaceError :
                                                                           qsTr("Could not start %1.").arg(agentDialog.harnessName)
             return

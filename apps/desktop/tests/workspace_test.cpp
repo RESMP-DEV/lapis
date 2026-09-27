@@ -17,6 +17,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLocalServer>
 #include <QLocalSocket>
 #include <QLockFile>
 #include <QPointer>
@@ -326,7 +327,7 @@ void failedWritesPreserveState() {
     options.storagePath = QDir(original).filePath(QStringLiteral("workspace.json"));
     QFile file(options.storagePath);
     require(file.open(QIODevice::WriteOnly), "create write-failure fixture");
-    const auto bytes =
+    auto bytes =
         QJsonDocument(
             QJsonObject{
                 {"version", 1},
@@ -400,6 +401,9 @@ void failedWritesPreserveState() {
         unchanged();
         require(!workspace.moveSessionBy(first, 1), "tab reorder rolls back");
         unchanged();
+        require(!workspace.followConversationTitle(second, second),
+                "conversation-title provenance rolls back on failed save");
+        unchanged();
         require(!workspace.removeSession(first), "ended tab removal rolls back");
         unchanged();
         require(QDir().rename(moved, original), "restore registry parent");
@@ -407,6 +411,16 @@ void failedWritesPreserveState() {
                 "write recovers when directory returns");
         require(first_object->title() == QStringLiteral("Committed") && notifications == 1,
                 "successful rename publishes exactly one identity change");
+        const auto recovered = QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                   .object()
+                                   .value(QStringLiteral("agents"))
+                                   .toArray();
+        require(std::none_of(recovered.begin(), recovered.end(),
+                             [&](const QJsonValue& entry) {
+                                 return entry[QStringLiteral("id")] == second &&
+                                        entry[QStringLiteral("autoTitle")].toBool();
+                             }),
+                "a later successful mutation does not persist the failed auto-title flag");
         const QPointer<lapis::desktop::SessionPreview> removed(first_object);
         require(workspace.removeSession(first), "remove ended agent after save recovers");
         require(removed && !workspace.session(first), "removed tab survives the QML call stack");
@@ -1429,16 +1443,18 @@ void terminalsRunPlainShells() {
     {
         QFile ssh(config);
         require(ssh.open(QIODevice::WriteOnly), "write the ssh config");
-        ssh.write("Host devbox build-*\n  HostName 10.0.0.2\nHost *\n  ServerAliveInterval 30\n"
-                  "Include extra.conf\n");
+        ssh.write(QStringLiteral("Host devbox build-*\n  HostName 10.0.0.2\nHost *\n"
+                                 "  ServerAliveInterval 30\nInclude %1\n")
+                      .arg(QDir(root).filePath(QStringLiteral("extra.conf")))
+                      .toUtf8());
         QFile extra(root.filePath(QStringLiteral("extra.conf")));
         require(extra.open(QIODevice::WriteOnly), "write the included config");
         extra.write("Host = gpu devbox\n");
     }
     const auto hosts = lapis::desktop::ssh_config_hosts(config);
-    // Include is relative to ~/.ssh; this fixture names its folder in full.
+    // Include resolves an absolute fixture path, without a developer's ~/.ssh.
     require(hosts.contains(QStringLiteral("devbox")) && !hosts.contains(QStringLiteral("*")) &&
-                !hosts.contains(QStringLiteral("build-*")),
+                !hosts.contains(QStringLiteral("build-*")) && hosts.contains(QStringLiteral("gpu")),
             "hosts come from the ssh config, without patterns");
     QFile shell(root.filePath(QStringLiteral("shell")));
     require(shell.open(QIODevice::WriteOnly), "write the stand-in shell");
@@ -1447,8 +1463,12 @@ void terminalsRunPlainShells() {
     shell.close();
     require(shell.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
             "make it executable");
+    require(root.mkpath(QStringLiteral("project")), "create the terminal's original directory");
     QString id;
     {
+        const auto original_home = qgetenv("HOME");
+        const auto restore_home = qScopeGuard([&original_home] { qputenv("HOME", original_home); });
+        qputenv("HOME", QFile::encodeName(root.filePath(QStringLiteral("project"))));
         lapis::desktop::Terminals terminals(root.path(), config);
         terminals.setShellForTesting(shell.fileName());
         require(!terminals.show(QStringLiteral("nowhere")) && !terminals.error().isEmpty(),
@@ -1476,6 +1496,18 @@ void terminalsRunPlainShells() {
         require(saved.open(QIODevice::ReadOnly) && saved.readAll().contains(id.toUtf8()),
                 "terminals.json records it for the next lapis and the phone");
     }
+    // The service keeps running after its original executable and working
+    // directory disappear; their absence must not invalidate reattachment.
+    require(QFile::rename(shell.fileName(), shell.fileName() + QStringLiteral(".moved")),
+            "move the terminal's original executable");
+    require(QFile::rename(root.filePath(QStringLiteral("project")),
+                          root.filePath(QStringLiteral("project.moved"))),
+            "move the terminal's original working directory");
+    Workspace workspace(WorkspaceMode::live, [&root] {
+        WorkspaceOptions options;
+        options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+        return options;
+    }());
     {
         // The service outlived that lapis; this one reattaches.
         lapis::desktop::Terminals terminals(root.path(), config);
@@ -1484,17 +1516,12 @@ void terminalsRunPlainShells() {
         auto* again = terminals.terminal(id);
         require(again != nullptr && waitFor([again] { return again->inputReady(); }, 10000),
                 "the next lapis reattaches the running shell");
-        Workspace workspace(WorkspaceMode::live, [&root] {
-            WorkspaceOptions options;
-            options.storagePath = root.filePath(QStringLiteral("workspace.json"));
-            return options;
-        }());
         lapis::desktop::WorkspaceControl control(workspace, false);
         control.setTerminals(&terminals);
         const auto opened = askWorkspace(
             workspace.storagePath(), {{QStringLiteral("version"), 1},
                                       {QStringLiteral("request"), QStringLiteral("openTerminal")},
-                                      {QStringLiteral("machine"), QString()}});
+                                      {QStringLiteral("machine"), QStringLiteral("")}});
         require(opened.value(QStringLiteral("ok")).toBool() &&
                     opened.value(QStringLiteral("id")).toString() == id,
                 "the phone gets this Mac's terminal");
@@ -1505,17 +1532,54 @@ void terminalsRunPlainShells() {
         require(closed.value(QStringLiteral("ok")).toBool() &&
                     waitFor([&terminals, &id] { return terminals.terminal(id) == nullptr; }, 10000),
                 "closing ends the shell and the terminal leaves");
+        require(QFile::rename(shell.fileName() + QStringLiteral(".moved"), shell.fileName()),
+                "restore the fixture executable before starting a new shell");
         require(terminals.show(QString()) && terminals.current()->sessionId() != id,
                 "the next one is a fresh shell");
         auto* fresh = terminals.current();
         require(fresh != nullptr, "a fresh terminal");
         const auto fresh_id = fresh->sessionId();
-        require(waitFor([fresh] { return fresh->inputReady(); }, 10000), "the fresh shell runs");
-        fresh->sendText(QByteArrayLiteral("exit\r"));
+        require(terminals.close(fresh_id) && terminals.terminal(fresh_id) != nullptr,
+                "the first close is accepted and owns the unsynchronized terminal");
         require(waitFor([&terminals, &fresh_id] { return terminals.terminal(fresh_id) == nullptr; },
                         10000) &&
                     !terminals.machines().front().toMap().value(QStringLiteral("open")).toBool(),
-                "a shell that exits takes its terminal with it");
+                "a close requested before synchronization ends the terminal");
+    }
+    {
+        // A saved endpoint can answer while the attach itself fails. That
+        // settled failure must not leave a permanently "open" broken entry.
+        const auto failed_id =
+            QStringLiteral("terminal-") + QUuid::createUuid().toString(QUuid::WithoutBraces);
+        const auto endpoint = root.filePath(failed_id + QStringLiteral(".sock"));
+        QLocalServer listener;
+        require(QLocalServer::removeServer(endpoint) && listener.listen(endpoint),
+                "listen on a failed-attach fixture endpoint");
+        QFile registry(root.filePath(QStringLiteral("terminals.json")));
+        require(registry.open(QIODevice::WriteOnly | QIODevice::Truncate),
+                "rewrite the failed-attach registry");
+        const auto saved = QJsonObject{
+            {"version", 1},
+            {"terminals",
+             QJsonArray{QJsonObject{{"id", failed_id},
+                                    {"machine", ""},
+                                    {"endpoint", endpoint},
+                                    {"program", "/bin/sh"},
+                                    {"arguments", QJsonArray{}},
+                                    {"directory", root.filePath(QStringLiteral("absent"))}}}}};
+        const auto records = QJsonDocument(saved).toJson(QJsonDocument::Compact);
+        require(registry.write(records) == records.size(), "write the failed-attach registry");
+        registry.close();
+        lapis::desktop::Terminals terminals(root.path(), config);
+        terminals.restore();
+        require(terminals.terminal(failed_id) != nullptr,
+                "an answering saved endpoint attaches before failure");
+        require(
+            waitFor([&terminals, &failed_id] { return terminals.terminal(failed_id) == nullptr; },
+                    10000),
+            "a failed attach removes its broken terminal");
+        require(!terminals.machines().front().toMap().value(QStringLiteral("open")).toBool(),
+                "a failed attach does not leave the machine falsely open");
     }
 }
 
@@ -1590,15 +1654,22 @@ void resumingAConversationStartsItsCli() {
             workspace.followConversationTitle(agent->sessionId(), QStringLiteral("After /clear")) &&
                 agent->title() == QStringLiteral("After /clear"),
             "it keeps following its conversation");
+        const auto rocket = QString::fromUcs4(U"\U0001f680");
+        const auto long_title = rocket.repeated(41);
+        const auto elided_title = rocket.repeated(39) + QChar(0x2026);
+        require(workspace.followConversationTitle(agent->sessionId(), long_title) &&
+                    agent->title() == elided_title,
+                "auto titles keep complete supplementary Unicode scalars");
         // A name from before chosen names were recorded stays.
         require(
-            workspace.createAgent(project, QStringLiteral("My own name"), QStringLiteral("grok")),
+            workspace.createAgent(project, QFileInfo(project).fileName(), QStringLiteral("grok")),
             "an agent with its own name");
         auto* own = workspace.focusedSession();
         require(own != nullptr, "the named agent is shown");
-        require(!workspace.followConversationTitle(own->sessionId(), QStringLiteral("Theirs")) &&
-                    own->title() == QStringLiteral("My own name"),
-                "a name that is not the folder's stays");
+        require(
+            !workspace.followConversationTitle(own->sessionId(), QFileInfo(project).fileName()) &&
+                own->title() == QFileInfo(project).fileName(),
+            "an explicit folder default is user-owned");
         const auto renamed = askWorkspace(
             workspace.storagePath(), {{QStringLiteral("version"), 1},
                                       {QStringLiteral("request"), QStringLiteral("renameAgent")},
@@ -1625,6 +1696,14 @@ void resumingAConversationStartsItsCli() {
                                                QStringLiteral("Named here");
                                 }),
                     "the chosen name is saved as chosen");
+            require(std::any_of(saved_agents.begin(), saved_agents.end(),
+                                [&](const QJsonValue& entry) {
+                                    return entry[QStringLiteral("id")] == own->sessionId() &&
+                                           entry[QStringLiteral("named")].toBool() &&
+                                           entry[QStringLiteral("title")] ==
+                                               QFileInfo(project).fileName();
+                                }),
+                    "an explicit folder default is saved as chosen");
         }
         require(waitFor(
                     [agent, phone, own] {

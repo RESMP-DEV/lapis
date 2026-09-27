@@ -1,6 +1,7 @@
 #include "workspace.hpp"
 #include "agent_checkpoint.hpp"
 #include "app_paths.hpp"
+#include "conversation_index.hpp"
 #include "live_connection.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "platform/updater_process.hpp"
@@ -540,9 +541,24 @@ bool Workspace::replayAttention(const QString& scenario) {
 
 namespace {
 bool validName(const QString& name) {
-    return !name.trimmed().isEmpty() && name.size() <= 80 &&
-           std::none_of(name.begin(), name.end(),
-                        [](QChar ch) { return ch.isNull() || !ch.isPrint(); });
+    if (name.trimmed().isEmpty() || name.size() > 80)
+        return false;
+    // Limits are UTF-16 units, but names are Unicode scalars. Accept an astral
+    // character as one printable scalar and reject unpaired surrogate units.
+    for (qsizetype at = 0; at < name.size(); ++at) {
+        const auto first = name.at(at);
+        if (first.isHighSurrogate()) {
+            if (at + 1 == name.size() || !name.at(at + 1).isLowSurrogate())
+                return false;
+            const auto point = QChar::surrogateToUcs4(first, name.at(at + 1));
+            if (point == 0 || !QChar::isPrint(point))
+                return false;
+            ++at;
+        } else if (first.isLowSurrogate() || first.isNull() || !first.isPrint()) {
+            return false;
+        }
+    }
+    return true;
 }
 QString newId() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
 } // namespace
@@ -809,9 +825,8 @@ bool Workspace::followConversationTitle(const QString& id, QStringView title) {
     const auto entry = agents_.find(id);
     if (item == nullptr || entry == agents_.end() || entry->named || preview_mode_)
         return false;
-    auto name = title.toString().simplified();
-    if (name.size() > limit)
-        name = name.left(limit - 1) + QChar(0x2026);
+    const bool was_auto = entry->auto_title;
+    auto name = conversations::elide_title(title.toString().simplified(), limit);
     // A name from before chosen names were recorded is someone's choice
     // unless it is still the folder's name, or already this title.
     const auto folder = QFileInfo(entry->launch.directory).fileName();
@@ -822,6 +837,7 @@ bool Workspace::followConversationTitle(const QString& id, QStringView title) {
         return false;
     entry->auto_title = true;
     if (!save(id, name)) {
+        entry->auto_title = was_auto;
         qWarning().noquote() << "Agent title not saved:" << error_;
         return false;
     }
@@ -1127,7 +1143,8 @@ bool Workspace::resumeAgent(const QString& directory, const QString& title, cons
 }
 QStringList Workspace::sshMachines() const { return ssh_config_hosts(ssh_config_); }
 bool Workspace::createAgent(const QString& directory, const QString& title, const QString& harness,
-                            const QString& model, const QString& mode, const QString& machine) {
+                            const QString& model, const QString& mode, const QString& machine,
+                            bool named) {
     return !startAgent({.category = active_category_,
                         .directory = directory,
                         .title = title,
@@ -1136,6 +1153,7 @@ bool Workspace::createAgent(const QString& directory, const QString& title, cons
                         .program = {},
                         .model = model,
                         .mode = mode,
+                        .named = named,
                         .select = true,
                         .resume = {}})
                 .isEmpty();
@@ -1260,6 +1278,7 @@ QString Workspace::launchAgent(const AgentRequest& request, const session::Launc
         item->setSessionId(id);
         item->setHarnessId(request.harness);
         Agent agent{request.category, endpoint, launch, request.harness};
+        agent.named = request.named;
         // A resumed conversation is lapis's pair: a later restart follows the
         // conversation wherever it goes, as a restored agent's does.
         if (!request.resume.isEmpty() && request.machine.isEmpty()) {

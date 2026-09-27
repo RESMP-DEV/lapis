@@ -146,11 +146,20 @@ bool updater_available() {
 void on_terminal_keys(const std::function<bool(bool shifted)>& handler) {
     static std::function<bool(bool)> current;
     static id monitor = nil;
+    if (!handler) {
+        if (monitor != nil) {
+            [NSEvent removeMonitor:monitor];
+            monitor = nil;
+        }
+        current = {};
+        return;
+    }
     current = handler;
-    if (monitor != nil || !handler)
+    if (monitor != nil)
         return;
     // A local monitor sees the key before the window cycling AppKit does
-    // with Command-`, so the terminal gets it on every keyboard layout.
+    // with Command-`. Match the character produced by the active layout, not
+    // an ANSI hardware key code, because layouts place these keys differently.
     monitor = [NSEvent
         addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
                                      handler:^NSEvent*(NSEvent* event) {
@@ -159,11 +168,18 @@ void on_terminal_keys(const std::function<bool(bool shifted)>& handler) {
                                            NSEventModifierFlagDeviceIndependentFlagsMask;
                                        const auto others =
                                            NSEventModifierFlagControl | NSEventModifierFlagOption;
-                                       if (event.keyCode != kVK_ANSI_Grave ||
-                                           !(flags & NSEventModifierFlagCommand) ||
+                                       NSString* const characters =
+                                           event.charactersIgnoringModifiers;
+                                       const bool terminal_key =
+                                           characters.length == 1 &&
+                                           ([characters characterAtIndex:0] == '`' ||
+                                            [characters characterAtIndex:0] == '~');
+                                       if (!terminal_key || !(flags & NSEventModifierFlagCommand) ||
                                            (flags & others) || !current)
                                            return event;
-                                       const bool shifted = (flags & NSEventModifierFlagShift) != 0;
+                                       const bool shifted =
+                                           (flags & NSEventModifierFlagShift) != 0 ||
+                                           [characters characterAtIndex:0] == '~';
                                        return current(shifted) ? nil : event;
                                      }];
 }

@@ -1,6 +1,5 @@
 #include "conversation_index.hpp"
 
-#include <QCoreApplication>
 #include <QDate>
 #include <QDateTime>
 #include <QDir>
@@ -11,11 +10,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QPointer>
 #include <QRegularExpression>
 #include <QSaveFile>
-#include <QScopeGuard>
-#include <QThreadPool>
 #include <QVariantMap>
 #include <algorithm>
 #include <cmath>
@@ -52,7 +48,7 @@ QString typed(QString text) {
         text.startsWith(QLatin1String("Caveat:")))
         return {};
     text = text.simplified();
-    return text.size() > kTitleLength ? text.left(kTitleLength - 1) + QChar(0x2026) : text;
+    return conversations::elide_title(text, kTitleLength);
 }
 
 QString claude_user_text(const QJsonObject& entry) {
@@ -73,16 +69,23 @@ QString claude_tail_title(QFile& file) {
     const auto size = file.size();
     if (!file.seek(std::max<qint64>(0, size - kTailBytes)))
         return {};
-    auto tail = file.readAll();
-    if (size > kTailBytes)
-        tail = tail.mid(tail.indexOf('\n') + 1); // the first line is partial
+    auto tail = file.read(kTailBytes);
+    if (size > kTailBytes) {
+        const auto newline = tail.indexOf('\n');
+        if (newline < 0)
+            return {}; // The entire window belongs to one partial record.
+        tail = tail.mid(newline + 1);
+    }
     QString title;
     for (const auto& line : tail.split('\n')) {
         if (!line.contains("\"ai-title\""))
             continue;
         if (const auto entry = record(line);
-            entry && entry->value(QStringLiteral("type")).toString() == QLatin1String("ai-title"))
-            title = typed(entry->value(QStringLiteral("aiTitle")).toString());
+            entry && entry->value(QStringLiteral("type")).toString() == QLatin1String("ai-title")) {
+            const auto candidate = typed(entry->value(QStringLiteral("aiTitle")).toString());
+            if (!candidate.isEmpty())
+                title = candidate;
+        }
     }
     return title;
 }
@@ -206,8 +209,10 @@ class Scan {
 
     void save() const {
         QSaveFile out(paths_.cache);
-        if (!out.open(QIODevice::WriteOnly))
+        if (!out.open(QIODevice::WriteOnly)) {
+            qWarning().noquote() << "Conversation cache not saved:" << out.errorString();
             return;
+        }
         out.write(QJsonDocument(QJsonObject{{QStringLiteral("version"), 1},
                                             {QStringLiteral("files"), files_}})
                       .toJson(QJsonDocument::Compact));
@@ -241,6 +246,18 @@ QString place(const QString& directory) {
 } // namespace
 
 namespace conversations {
+QString elide_title(QStringView text, qsizetype limit) {
+    if (limit <= 0)
+        return {};
+    if (text.size() <= limit)
+        return text.toString();
+    auto retained = limit - 1;
+    if (retained > 0 && text.at(retained - 1).isHighSurrogate() &&
+        text.at(retained).isLowSurrogate())
+        --retained;
+    return text.left(retained).toString() + QChar(0x2026);
+}
+
 std::optional<Conversation> read_claude(const QString& path) {
     QFile file(path);
     const QFileInfo info(path);
@@ -257,16 +274,19 @@ std::optional<Conversation> read_claude(const QString& path) {
             continue;
         if (entrypoint.isEmpty())
             entrypoint = entry->value(QStringLiteral("entrypoint")).toString();
-        // Automation says so on its first lines; stop reading it at once.
+        // The first recorded entrypoint identifies the conversation's origin.
+        // A later resume does not turn an interactive conversation into automation.
         if (!entrypoint.isEmpty() && entrypoint != QLatin1String("cli"))
             return std::nullopt;
         if (cwd.isEmpty())
             cwd = entry->value(QStringLiteral("cwd")).toString();
         const auto type = entry->value(QStringLiteral("type")).toString();
-        if (type == QLatin1String("ai-title"))
-            title = typed(entry->value(QStringLiteral("aiTitle")).toString());
-        else if (type == QLatin1String("user") && first.isEmpty() &&
-                 !entry->value(QStringLiteral("isMeta")).toBool())
+        if (type == QLatin1String("ai-title")) {
+            const auto candidate = typed(entry->value(QStringLiteral("aiTitle")).toString());
+            if (!candidate.isEmpty())
+                title = candidate;
+        } else if (type == QLatin1String("user") && first.isEmpty() &&
+                   !entry->value(QStringLiteral("isMeta")).toBool())
             first = claude_user_text(*entry);
     }
     if (entrypoint != QLatin1String("cli") || cwd.isEmpty())
@@ -317,7 +337,7 @@ QHash<QString, QString> codex_thread_names(const QString& path) {
         const auto id = entry->value(QStringLiteral("id")).toString();
         const auto name = entry->value(QStringLiteral("thread_name")).toString().simplified();
         if (!id.isEmpty() && !name.isEmpty())
-            names.insert(id, name.left(kTitleLength));
+            names.insert(id, elide_title(name, kTitleLength));
     }
     return names;
 }
@@ -397,28 +417,35 @@ ConversationIndex::ConversationIndex(QString claude_home, QString codex_home, QS
     : QObject(parent), claude_home_(std::move(claude_home)), codex_home_(std::move(codex_home)),
       cache_path_(std::move(cache_path)) {}
 
-ConversationIndex::~ConversationIndex() { alive_->store(false); }
+ConversationIndex::~ConversationIndex() {
+    alive_->store(false);
+    scan_pool_.waitForDone();
+}
 
 void ConversationIndex::refresh() {
     if (scanning_->exchange(true))
         return;
-    QThreadPool::globalInstance()->start([paths = ScanPaths{claude_home_, codex_home_, cache_path_},
-                                          busy = scanning_, alive = alive_,
-                                          self = QPointer<ConversationIndex>(this)] {
+    scan_pool_.start([paths = ScanPaths{claude_home_, codex_home_, cache_path_}, busy = scanning_,
+                      alive = alive_, self = this] {
         QElapsedTimer timer;
         timer.start();
         auto found = scan(paths, *alive);
         qInfo().noquote() << "Conversations:" << found.size() << "in" << timer.elapsed() << "ms";
-        auto* app = QCoreApplication::instance();
-        if (app == nullptr || !alive->load()) {
+        if (!alive->load()) {
             busy->store(false);
             return;
         }
-        QMetaObject::invokeMethod(app, [self, alive, busy, found = std::move(found)]() mutable {
+        // The destructor joins this pool before destroying the QObject. The
+        // queued callback belongs to that QObject and is discarded on deletion.
+        if (!QMetaObject::invokeMethod(
+                self,
+                [self, alive, busy, found = std::move(found)]() mutable {
+                    busy->store(false);
+                    if (alive->load())
+                        self->setConversations(std::move(found));
+                },
+                Qt::QueuedConnection))
             busy->store(false);
-            if (alive->load() && self)
-                self->setConversations(std::move(found));
-        });
     });
 }
 

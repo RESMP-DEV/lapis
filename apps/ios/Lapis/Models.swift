@@ -63,8 +63,11 @@ final class WorkspaceModel {
             let current = try await gateway.agents()
             listing = current
             error = nil
-            // A Mac too old for terminals simply has none.
-            terminals = (try? await gateway.terminals()) ?? []
+            // A failed refresh is not evidence that existing terminals closed.
+            // An older Mac starts with the empty list until it supports this.
+            if let currentTerminals = try? await gateway.terminals() {
+                terminals = currentTerminals
+            }
             DiskCache.save(current, cacheName("listing"))
             Task { await prefetch() }
         } catch is CancellationError {
@@ -232,13 +235,14 @@ extension WorkspaceModel {
     // Ends a terminal's shell on the Mac.
     func closeTerminal(_ terminal: TerminalInfo) async {
         guard let gateway else { return }
-        terminals.removeAll { $0.id == terminal.id }
         do {
             try await gateway.close(agent: terminal.id)
+            // The Mac may keep the record until its shell-exit watcher fires.
+            // Leave it visible until a refresh confirms the close.
+            await refresh()
         } catch {
             self.error = describe(error)
         }
-        await refresh()
     }
 
     // A past conversation, resumed as a new agent in `category`.
@@ -257,26 +261,27 @@ extension WorkspaceModel {
         guard let gateway else { return }
         do {
             try await gateway.rename(agent: agent.id, title: title)
+            await refresh()
         } catch {
             self.error = describe(error)
         }
-        await refresh()
     }
 
     // Ends the agent on the Mac; it leaves the list at once.
     func close(_ agent: Agent) async {
         guard let gateway else { return }
+        do {
+            try await gateway.close(agent: agent.id)
+        } catch {
+            self.error = describe(error)
+            return
+        }
         if let current = listing {
             listing = WorkspaceListing(
                 categories: current.categories.map {
                     AgentCategory(id: $0.id, name: $0.name, agents: $0.agents.filter { $0.id != agent.id })
                 },
                 activeCategory: current.activeCategory)
-        }
-        do {
-            try await gateway.close(agent: agent.id)
-        } catch {
-            self.error = describe(error)
         }
         await refresh()
     }
@@ -307,7 +312,7 @@ final class AgentSession {
         case closed(String, reopen: Bool)
     }
 
-    let agent: Agent
+    var agent: Agent
     let gateway: Gateway?
     var frame: ScreenFrame?
     var state: State = .connecting

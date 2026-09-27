@@ -58,10 +58,12 @@ struct TerminalPickerView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .disabled(opening != nil)
                 }
             }
         }
         .presentationBackground(Theme.background)
+        .interactiveDismissDisabled(opening != nil)
         .task { await model.prefetch() }
     }
 

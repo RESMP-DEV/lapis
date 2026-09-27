@@ -74,6 +74,14 @@ void claude_sessions_are_read_only_when_someone_opened_them() {
     write(path(kSecond), long_session);
     const auto second = conversations::read_claude(path(kSecond));
     require(second && second->title == "Resize bug", "the newest ai-title names the session");
+    long_session += line({{"type", "ai-title"}, {"aiTitle", ""}});
+    write(path(kSecond), long_session);
+    require(conversations::read_claude(path(kSecond))->title == "Resize bug",
+            "an empty later title does not erase the last usable title");
+    long_session += QByteArray(140 * 1024, 'x');
+    write(path(kSecond), long_session);
+    require(conversations::read_claude(path(kSecond))->title == "typed",
+            "a bounded tail containing only a partial record uses the first message");
     write(path(kThird), claude_session("sdk-cli", "/work/x") + line(user("automation")));
     require(!conversations::read_claude(path(kThird)), "SDK and -p runs are not conversations");
     write(root.filePath("notes.jsonl"), claude_session("cli", "/work/x"));
@@ -123,6 +131,16 @@ void codex_rollouts_are_interactive_main_threads() {
                      line({{"id", kFirst}, {"thread_name", "new name"}}) + "not json\n");
     require(conversations::codex_thread_names(index).value(kFirst) == "new name",
             "the latest thread name wins");
+    const auto emoji = QString::fromUcs4(U"\U0001f680");
+    const auto long_title = QString(138, QLatin1Char('a')) + emoji + QStringLiteral("more");
+    write(index, line({{"id", kFirst}, {"thread_name", long_title}}));
+    const auto shortened = conversations::codex_thread_names(index).value(kFirst);
+    require(shortened == QString(138, QLatin1Char('a')) + QChar(0x2026) && shortened.isValidUtf16(),
+            "a title limit never cuts a supplementary Unicode character in half");
+    require(conversations::elide_title(emoji, 2) == emoji &&
+                conversations::elide_title(emoji, 1) == QString(QChar(0x2026)) &&
+                conversations::elide_title(emoji, 0).isEmpty(),
+            "short title limits preserve complete scalars or only the ellipsis");
 }
 
 void activity_orders_folders() {
@@ -198,6 +216,16 @@ void the_index_scans_in_the_background_and_caches() {
     require(index.orderFolders("/work", {"api", "lapis", "_x", "b"}).mid(2) ==
                 QStringList({"b", "_x"}),
             "the index orders a folder's children by its activity");
+
+    bool late_result = false;
+    {
+        ConversationIndex closing(claude, codex, cache);
+        QObject::connect(&closing, &ConversationIndex::changed, &index,
+                         [&late_result] { late_result = true; });
+        closing.refresh();
+    }
+    QCoreApplication::sendPostedEvents();
+    require(!late_result, "destroying an active index joins its scan and retires queued results");
 }
 } // namespace
 
