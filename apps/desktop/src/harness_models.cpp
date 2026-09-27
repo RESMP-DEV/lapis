@@ -13,9 +13,9 @@
 
 namespace lapis::desktop {
 namespace {
-constexpr qsizetype kLongestAnswer = qsizetype{4} << 20;
+constexpr qsizetype kLongestAnswer = qsizetype{4} * 1024 * 1024;
 constexpr int kNewestSessions = 40;
-constexpr qint64 kSessionHead = qint64{64} << 10;
+constexpr qint64 kSessionHead = qint64{64} * 1024;
 
 // The CLI's default first, each model once, at most the number shown.
 std::vector<ModelChoice> tidy(std::vector<ModelChoice> models) {
@@ -191,14 +191,15 @@ std::vector<ModelChoice> read_kimi(const QString& home) {
     return kimi_models(
         read_text(home_setting("KIMI_CODE_HOME", home + QStringLiteral("/.kimi-code")) +
                       QStringLiteral("/config.toml"),
-                  qint64{1} << 20));
+                  qint64{1} * 1024 * 1024));
 }
 
 std::vector<ModelChoice> read_opencode(const QString& home) {
     const auto state = home_setting("XDG_STATE_HOME", home + QStringLiteral("/.local/state"));
     return opencode_models(
         QJsonDocument::fromJson(
-            read_text(state + QStringLiteral("/opencode/model.json"), qint64{1} << 20).toUtf8())
+            read_text(state + QStringLiteral("/opencode/model.json"), qint64{1} * 1024 * 1024)
+                .toUtf8())
             .object());
 }
 
@@ -232,7 +233,7 @@ QStringList omp_recent(const QString& sessions) {
 
 std::vector<ModelChoice> read_omp(const QString& home) {
     const auto agent = home + QStringLiteral("/.omp/agent");
-    return omp_models(read_text(agent + QStringLiteral("/config.yml"), qint64{1} << 20),
+    return omp_models(read_text(agent + QStringLiteral("/config.yml"), qint64{1} * 1024 * 1024),
                       omp_recent(agent + QStringLiteral("/sessions")));
 }
 } // namespace

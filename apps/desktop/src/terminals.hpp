@@ -74,6 +74,7 @@ class Terminals final : public QObject {
     Entry* start(const QString& machine);
     void attach(Entry& entry, bool create);
     void watch(Entry& entry);
+    void completeClose(Entry& entry);
     void discard(const QString& id);
     void discardIfClosed(const QString& id);
     void recover(const QString& id);

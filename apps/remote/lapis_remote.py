@@ -2019,7 +2019,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 request[field] = value
             title = body.get("title", "")
-            require(isinstance(title, str) and len(title) <= 80, "Invalid title")
+            require(title == "" or valid_name(title), "Invalid title")
             if title:
                 request["title"] = title
             for field in ("model", "mode", "resume"):

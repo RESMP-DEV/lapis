@@ -49,6 +49,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -727,7 +728,7 @@ void check_cursor_rendering(lapis::desktop::SessionPreview& document, QQuickWind
     snapshot.cursor.in_viewport = false;
     CHECK(capture(CursorShape::block, qRgb(0x44, 0x55, 0x66)).pixels == 0);
 }
-int run_surface_tests() {
+int run_surface_tests(bool background) {
     using namespace lapis::desktop;
     struct KeyCase {
         int key{};
@@ -775,7 +776,10 @@ int run_surface_tests() {
     surface->setDocument(document);
     pump(50);
     const auto original = document->snapshot();
-    check_cursor_rendering(*document, window);
+    // Pixel geometry is qualified on the production GPU backend. The software
+    // rasterizer differs at stroked edges; logical lifecycle checks below run in both.
+    if (!background)
+        check_cursor_rendering(*document, window);
     document->applySnapshot(original);
     pump(30);
     const QImage before = window.grabWindow();
@@ -2017,7 +2021,8 @@ void wait_ready(lapis::desktop::ConversationIndex& conversations) {
 int run_strip_ui_tests() {
     using namespace lapis::desktop;
     Workspace workspace(WorkspaceMode::preview);
-    QTemporaryDir config;
+    // Leave room for terminal IDs inside the POSIX local-socket path limit.
+    QTemporaryDir config(QStringLiteral("/tmp/lapis-ui-XXXXXX"));
     CHECK(config.isValid());
     KeyMap keymap;
     keymap.setSourcePathForTesting(config.filePath(QStringLiteral("strip.json")));
@@ -2420,10 +2425,29 @@ int run_history_ui_tests() {
 }
 
 int main(int argc, char** argv) {
+    bool background = false;
+    bool shortcuts_only = false;
+    for (int index = 1; index < argc; ++index) {
+        const std::string_view argument(argv[index]);
+        if (argument == "--background")
+            background = true;
+        else if (argument == "--shortcuts-only")
+            shortcuts_only = true;
+        else {
+            std::cerr << "Usage: lapis_ui_preview_tests [--background] [--shortcuts-only]\n";
+            return EXIT_FAILURE;
+        }
+    }
+    if (background) {
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+        QQuickWindow::setSceneGraphBackend("software");
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
+    } else {
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
+    }
     QCoreApplication::setAttribute(Qt::AA_MacDontSwapCtrlAndMeta);
     QGuiApplication app(argc, argv);
     app.setQuitOnLastWindowClosed(false);
-    QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
     QCoreApplication::setApplicationName(QStringLiteral("lapis-ui-preview-tests"));
     QCoreApplication::setOrganizationName(QStringLiteral("lapis"));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
@@ -2437,15 +2461,19 @@ int main(int argc, char** argv) {
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     });
     try {
-        if (app.arguments().contains(QStringLiteral("--shortcuts-only")))
+        CHECK(background == (QGuiApplication::platformName() == QStringLiteral("offscreen")));
+        if (shortcuts_only)
             return run_shortcut_focus_tests();
         if (run_workspace_tests() != EXIT_SUCCESS || run_ui_tests() != EXIT_SUCCESS ||
             run_diagnostics_reentrancy_test() != EXIT_SUCCESS ||
-            run_surface_tests() != EXIT_SUCCESS || run_attention_dialog_tests() != EXIT_SUCCESS ||
+            run_surface_tests(background) != EXIT_SUCCESS ||
+            run_attention_dialog_tests() != EXIT_SUCCESS ||
             run_attention_ui_tests() != EXIT_SUCCESS || run_strip_ui_tests() != EXIT_SUCCESS ||
             run_history_ui_tests() != EXIT_SUCCESS)
             return EXIT_FAILURE;
-        std::cout << "ui_preview_test: PASS\n";
+        std::cout << "ui_preview_test: PASS"
+                  << (background ? " (offscreen/software; not native input or GPU acceptance)" : "")
+                  << '\n';
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
         std::cerr << "ui_preview_test: " << error.what() << '\n';

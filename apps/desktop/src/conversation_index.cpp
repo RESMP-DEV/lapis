@@ -18,7 +18,7 @@
 
 namespace lapis::desktop {
 namespace {
-constexpr qint64 kLineLimit = qint64{1} << 20; // longer lines are tool output, not metadata
+constexpr qint64 kLineLimit = qint64{1} * 1024 * 1024; // longer lines are tool output, not metadata
 constexpr int kClaudeHeadLines = 300;
 constexpr int kCodexHeadLines = 200;
 constexpr qint64 kTailBytes = qint64{128} * 1024;
@@ -382,9 +382,9 @@ std::optional<Conversation> read_claude(const QString& path) {
     }
     if (entrypoint != QLatin1String("cli") || cwd.isEmpty())
         return std::nullopt;
-    if (!file.atEnd())
-        if (const auto later = claude_tail_title(file); !later.isEmpty())
-            title = later;
+    const auto later = file.atEnd() ? QString{} : claude_tail_title(file);
+    if (!later.isEmpty())
+        title = later;
     return Conversation{QStringLiteral("claude"), info.completeBaseName(), QDir::cleanPath(cwd),
                         title.isEmpty() ? first : title, info.lastModified().toMSecsSinceEpoch()};
 }

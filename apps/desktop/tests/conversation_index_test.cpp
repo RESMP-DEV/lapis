@@ -76,11 +76,13 @@ void claude_sessions_are_read_only_when_someone_opened_them() {
     require(second && second->title == "Resize bug", "the newest ai-title names the session");
     long_session += line({{"type", "ai-title"}, {"aiTitle", ""}});
     write(path(kSecond), long_session);
-    require(conversations::read_claude(path(kSecond))->title == "Resize bug",
+    const auto after_empty = conversations::read_claude(path(kSecond));
+    require(after_empty && after_empty->title == "Resize bug",
             "an empty later title does not erase the last usable title");
-    long_session += QByteArray(140 * 1024, 'x');
+    long_session += QByteArray(qsizetype{140} * 1024, 'x');
     write(path(kSecond), long_session);
-    require(conversations::read_claude(path(kSecond))->title == "typed",
+    const auto after_partial = conversations::read_claude(path(kSecond));
+    require(after_partial && after_partial->title == "typed",
             "a bounded tail containing only a partial record uses the first message");
     write(path(kThird), claude_session("sdk-cli", "/work/x") + line(user("automation")));
     require(!conversations::read_claude(path(kThird)), "SDK and -p runs are not conversations");

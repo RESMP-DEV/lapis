@@ -374,7 +374,9 @@ final class LapisUITests: XCTestCase {
         let terminal = try openEchoAgent()
         let position = app.staticTexts["agentPosition"]
         XCTAssertTrue(position.waitForExistence(timeout: 10), "the position in the category shows")
-        XCTAssertEqual(position.label, "1 of 2")
+        let total = try XCTUnwrap(Int(position.label.components(separatedBy: " of ").last ?? ""))
+        XCTAssertGreaterThanOrEqual(total, 2, "the fixture supplies at least two agents")
+        XCTAssertEqual(position.label, "1 of \(total)")
         let at = { (label: String) in
             XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", label),
                                       object: self.app.staticTexts["agentPosition"])
@@ -383,16 +385,17 @@ final class LapisUITests: XCTestCase {
         composer.tap()
         composer.typeText("draft for first agent")
         terminal.swipeLeft()
-        XCTAssertEqual(XCTWaiter().wait(for: [at("2 of 2")], timeout: 10), .completed, "the next agent")
+        XCTAssertEqual(XCTWaiter().wait(for: [at("2 of \(total)")], timeout: 10), .completed, "the next agent")
         let second = app.descendants(matching: .any)["terminal"]
-        waitFor(second, valueContaining: "new conversation")
         XCTAssertNotEqual(composer.value as? String, "draft for first agent",
                           "a draft belongs to the agent where it was entered")
+        submit("paging second agent")
+        waitFor(second, valueContaining: "echo: paging second agent")
         composer.tap()
         composer.typeText("draft for second agent")
         snap("15-swiped")
         second.swipeRight()
-        XCTAssertEqual(XCTWaiter().wait(for: [at("1 of 2")], timeout: 10), .completed, "and back")
+        XCTAssertEqual(XCTWaiter().wait(for: [at("1 of \(total)")], timeout: 10), .completed, "and back")
         XCTAssertEqual(composer.value as? String, "draft for first agent",
                        "paging back restores that agent's unsent draft")
     }

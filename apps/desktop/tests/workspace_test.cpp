@@ -1777,6 +1777,32 @@ void terminalsRunPlainShells() {
             "a failed attach removes its broken terminal");
         require(!terminals.machines().front().toMap().value(QStringLiteral("open")).toBool(),
                 "a failed attach does not leave the machine falsely open");
+        // A close owns a failed attachment until it can terminate. Exhausting
+        // bounded recovery must still permit an explicit close retry.
+        int connections = 0;
+        QObject::connect(&listener, &QLocalServer::newConnection, &listener, [&] {
+            while (auto* socket = listener.nextPendingConnection()) {
+                ++connections;
+                socket->abort();
+                socket->deleteLater();
+            }
+        });
+        require(registry.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                    registry.write(records) == records.size(),
+                "restore the failed-close fixture");
+        registry.close();
+        terminals.restore();
+        require(terminals.close(failed_id), "a close during failed attachment is accepted");
+        require(waitFor(
+                    [&terminals] {
+                        return terminals.error().contains(QStringLiteral("Could not reconnect"));
+                    },
+                    10000),
+                "recovery reaches its bounded failure");
+        const int before_retry = connections;
+        require(terminals.terminal(failed_id) != nullptr && terminals.close(failed_id) &&
+                    waitFor([&] { return connections > before_retry; }, 10000),
+                "an explicit close retries after exhausted recovery without losing ownership");
     }
 }
 

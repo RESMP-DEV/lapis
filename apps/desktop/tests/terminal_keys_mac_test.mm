@@ -23,6 +23,7 @@ void send_key(NSString* characters, unsigned short code, NSEventModifierFlags fl
                    charactersIgnoringModifiers:characters
                                      isARepeat:NO
                                        keyCode:code];
+    require(event != nil, "the local key event is created");
     [NSApp postEvent:event atStart:YES];
     NSEvent* queued = [NSApp nextEventMatchingMask:NSEventMaskKeyDown
                                          untilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]

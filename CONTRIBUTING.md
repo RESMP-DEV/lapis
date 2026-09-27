@@ -1049,18 +1049,22 @@ run `ctest --test-dir build/desktop -R '^terminal-keys-mac$' --output-on-failure
 window. This covers the local monitor; it does not replace native IME or
 pasteboard qualification.
 
-For routine terminal input logic, run the explicit background mode after building:
+For routine terminal input and workspace UI logic, run the explicit background
+modes after building their targets:
 
 ```sh
 build/desktop/apps/desktop/lapis_terminal_input_tests --background
+build/desktop/apps/desktop/lapis_ui_preview_tests --background
+build/desktop/apps/desktop/lapis_ui_preview_tests --background --shortcuts-only
 ```
 
-It selects Qt's offscreen platform and software backend, checks those selections,
+These select Qt's offscreen platform and software backend, check those selections,
 and exercises the same synthetic key, composition, paste, history and ownership
-assertions against the local protocol fixture. It uses virtual window focus and
+assertions against local protocol fixtures. They use virtual window focus and
 Qt's offscreen clipboard, without requesting macOS foreground access or moving
 the system pointer. Timeout diagnostics identify the calling assertion. This is
-logical Qt coverage; it does not qualify AppKit input, the system pasteboard,
+logical Qt coverage; the background UI mode leaves exact cursor-pixel assertions
+to the native GPU run. It does not qualify AppKit input, the system pasteboard,
 Apple IME, display rendering or GPU presentation. The ordinary CTest entry still
 requires the native desktop. Run the background mode while the desktop is in use;
 reserve short exclusive windows for the native checks below. Do not replace a

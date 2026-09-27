@@ -15,8 +15,8 @@
 
 namespace lapis::desktop {
 namespace {
-constexpr qsizetype kLongestAnswer = qsizetype{4} << 20;
-constexpr qsizetype kLongestStartup = qsizetype{64} << 10;
+constexpr qsizetype kLongestAnswer = qsizetype{4} * 1024 * 1024;
+constexpr qsizetype kLongestStartup = qsizetype{64} * 1024;
 constexpr int kWeek = 7 * 24 * 60;
 
 QString window_label(int minutes) {
