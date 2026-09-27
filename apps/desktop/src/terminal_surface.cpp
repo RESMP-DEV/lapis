@@ -1563,6 +1563,10 @@ void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
 QVariant TerminalSurface::inputMethodQuery(Qt::InputMethodQuery query) const {
     if (query == Qt::ImEnabled)
         return acceptsTerminalInput();
+    // Keys go straight to a program: no predictions, completion or
+    // corrections for the platform to type in on the user's behalf.
+    if (query == Qt::ImHints)
+        return static_cast<int>(Qt::ImhNoPredictiveText | Qt::ImhNoAutoUppercase);
     if (query == Qt::ImCursorRectangle && document_) {
         const auto& snapshot = document_->snapshot();
         const auto grid = cellGrid();

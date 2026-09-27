@@ -2387,6 +2387,23 @@ spell. After a key press, `TerminalSurface` now asks for another frame each
 time one is swapped, for 600 ms, so the display is still at its full rate
 when the echo arrives; it stops after the pause (`terminal_input_test`).
 
+### Predictive text in the terminal (September 26)
+
+Extra words ("as a copy,") appeared after text the user typed into a Claude
+Code prompt, and were sent unless deleted. The paste and IME paths each
+deliver once, the text Wispr Flow pasted arrived intact, and no submitted
+prompt held a repeat. macOS 14 and later offer inline predictions, grey
+completions a space or Tab accepts, to any view taking text input unless it
+declines, and Qt 6.11's view never passes `Qt::ImhNoPredictiveText` on to
+AppKit. The terminal now reports that hint, and on macOS every lapis window's
+view answers AppKit's `NSTextInputTraits` with no inline prediction,
+completion, autocorrection, spelling or grammar checking, text replacement,
+smart quotes, dashes or insert-delete, math completion or Writing Tools, as
+other terminals do. AppKit may keep a view's answers while it has focus, so
+lapis's search and name fields decline them too. The hint is tested
+(`terminal_input_test`); the AppKit answers are exercised only by typing in
+the app.
+
 ### Following milestones
 
 With the two-session workspace assembled, the next qualification stages are

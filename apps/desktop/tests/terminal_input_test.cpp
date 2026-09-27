@@ -226,6 +226,11 @@ void input_contract(bool background) {
     });
     static_cast<void>(text_frames(peer));
     require(surface.inputMethodQuery(Qt::ImEnabled).toBool(), "Ready terminal disabled IME");
+    // Composition stays on; predictions, completion and corrections, which
+    // the platform would type into the program, are declined.
+    require(Qt::InputMethodHints(surface.inputMethodQuery(Qt::ImHints).toInt())
+                .testFlag(Qt::ImhNoPredictiveText),
+            "Terminal accepted predictive text");
     const auto original = surface.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
     require(!original.isEmpty(), "IME candidate rectangle missing");
     composition(surface, {}, QStringLiteral("✓"));
