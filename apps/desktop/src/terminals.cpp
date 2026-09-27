@@ -16,12 +16,14 @@
 #include <QTimer>
 #include <QUuid>
 #include <algorithm>
+#include <array>
 #include <stdexcept>
 
 namespace lapis::desktop {
 namespace {
 constexpr int kIncludeDepth = 8;
-constexpr int kRecoveryAttempts = 3;
+constexpr std::array kRecoveryDelays{100, 200, 400};
+constexpr int kRecoveryAttempts = static_cast<int>(kRecoveryDelays.size());
 
 void read_ssh_config(const QString& path, QStringList& hosts, int depth);
 
@@ -248,19 +250,7 @@ void Terminals::watch(Entry& entry) {
         if (state == QLatin1String("ready")) {
             found->attach_synchronized = true;
             found->recovery_attempts = 0;
-            if (found->close_pending && ready(*session)) {
-                if (session->terminate()) {
-                    session->setClosing(true);
-                    if (!error_.isEmpty()) {
-                        error_.clear();
-                        emit errorChanged();
-                    }
-                } else {
-                    found->close_pending = false;
-                    session->setClosing(false);
-                    fail(QStringLiteral("Could not queue termination; the terminal remains open."));
-                }
-            }
+            completeClose(*found);
             return;
         }
         if (state == QLatin1String("disconnected") && !found->attach_started)
@@ -271,8 +261,9 @@ void Terminals::watch(Entry& entry) {
             // the attach; a close waits to queue termination after recovery.
             if (found->recovery_attempts < kRecoveryAttempts) {
                 ++found->recovery_attempts;
-                QTimer::singleShot(100 * (1 << (found->recovery_attempts - 1)), this,
-                                   [this, id] { recover(id); });
+                QTimer::singleShot(
+                    kRecoveryDelays.at(static_cast<std::size_t>(found->recovery_attempts - 1)),
+                    this, [this, id] { recover(id); });
             } else if (found->close_pending) {
                 fail(QStringLiteral("Could not reconnect the terminal to queue termination."));
             } else {
@@ -282,6 +273,22 @@ void Terminals::watch(Entry& entry) {
         }
         QMetaObject::invokeMethod(this, [this, id] { discardIfClosed(id); }, Qt::QueuedConnection);
     });
+}
+
+void Terminals::completeClose(Entry& entry) {
+    if (!entry.close_pending || !ready(*entry.session))
+        return;
+    if (entry.session->terminate()) {
+        entry.session->setClosing(true);
+        if (!error_.isEmpty()) {
+            error_.clear();
+            emit errorChanged();
+        }
+        return;
+    }
+    entry.close_pending = false;
+    entry.session->setClosing(false);
+    fail(QStringLiteral("Could not queue termination; the terminal remains open."));
 }
 
 Terminals::Entry* Terminals::start(const QString& machine) {
@@ -345,7 +352,9 @@ bool Terminals::close(const QString& id) {
         discard(id);
     else {
         auto* entry = entryFor(id);
-        if (entry != nullptr && !entry->close_pending) {
+        if (entry != nullptr && (!entry->close_pending ||
+                                 (session->connectionState() == QLatin1String("disconnected") &&
+                                  entry->recovery_attempts >= kRecoveryAttempts))) {
             entry->session->setClosing(true);
             entry->close_pending = true;
             if (!session->terminate()) {

@@ -479,6 +479,27 @@ class StartAgentTests(unittest.TestCase):
                 },
             )
 
+            for title, expected in (
+                ("", 200),
+                ("x" * 80, 200),
+                ("\N{FACE WITH OPEN MOUTH}" * 40, 200),
+                ("\N{FACE WITH OPEN MOUTH}" * 41, 400),
+                ("x" * 81, 400),
+                ("\ud800", 400),
+            ):
+                with self.subTest(title=repr(title)):
+                    status, _ = server.request(
+                        "POST",
+                        "/api/agents",
+                        {
+                            "harness": "codex",
+                            "directory": "~/dev/x",
+                            "category": "later",
+                            "title": title,
+                        },
+                    )
+                    self.assertEqual(status, expected)
+
     def test_refusals_and_malformed_requests(self):
         with (
             Server(self, "{}") as server,

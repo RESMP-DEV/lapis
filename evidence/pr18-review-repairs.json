@@ -1,0 +1,88 @@
+{
+  "recorded_at": "2026-09-27T05:32:43.922041+00:00",
+  "scope": "PR18 grouped review repairs, merged PR17 main changes, and background UI fixture",
+  "baseline": "e91facb11f0e5c96968e7184582c96fcc61f4a95",
+  "changes": [
+    "Bounded conversation reads and Unicode-safe titles",
+    "Joined index lifetime and terminal attach/close recovery",
+    "Phone identity-owned drafts and terminal picker lifecycle",
+    "Gateway shape validation and shared bounded title readers",
+    "AppKit local key monitor lifetime and logical shortcut mapping",
+    "Explicit offscreen/software UI checks and short Unix-socket fixture paths"
+  ],
+  "checks": [
+    {
+      "command": "python3 scripts/check_quality.py",
+      "passed": true,
+      "evidence": "build/reports/quality/receipt.json"
+    },
+    {
+      "command": "python3 scripts/lapis.py build --jobs 6",
+      "initial_result": "All targets built; 30/31 CTest suites passed; ui-preview hit its timeout; format/cppcheck passed; 8 clang-tidy units failed. Each failure was repaired and checked below.",
+      "evidence": "build/reports/desktop/receipt.json"
+    },
+    {
+      "command": "Focused clang-tidy on 11 affected translation units with build/desktop compile database",
+      "passed": true,
+      "evidence": "build/reports/desktop-repairs/receipt.json"
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R \"^(workspace|conversation-index|keymap|terminal-keys-mac)$\" --output-on-failure --no-tests=error",
+      "passed": true,
+      "suites": 4
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_ui_preview_tests",
+      "passed": true,
+      "elapsed_seconds": 17.174,
+      "evidence": "build/reports/ui-preview-short-path/receipt.json"
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_ui_preview_tests --background",
+      "passed": true,
+      "evidence": "build/reports/ui-preview-background/receipt.json"
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_ui_preview_tests --background --shortcuts-only",
+      "passed": true
+    },
+    {
+      "command": "ASan/UBSan workspace, conversation-index and terminal-keys-mac; TSan workspace and conversation-index",
+      "passed": true,
+      "scope": "Lifecycle repairs exercised before final mechanical static-analysis cleanup"
+    },
+    {
+      "command": "python3 scripts/check_restore.py",
+      "passed": true,
+      "scope": "Six agents, two abrupt interruptions and helper restart; real Codex and Claude context survived"
+    },
+    {
+      "command": "python3 scripts/check_ios_remote.py --codex --claude",
+      "initial_result": "15/16 passed. Paging fixture assumed two terminals, but optional real CLI fixtures made four. Dynamic count repair passed the selected rerun with both real CLIs."
+    }
+  ],
+  "limitations": [
+    "Background Qt checks do not qualify native input, system clipboard/IME, display or GPU presentation. Exact cursor pixels remain in native mode.",
+    "Vendor Qt and Ghostty are not sanitizer-instrumented.",
+    "Linux UI qualification remains deferred."
+  ],
+  "source_sha256": {
+    "CONTRIBUTING.md": "354bca27f8c73330620feb68213d89bccce300d9fc97df6c2cf68f3ed627a4c0",
+    "apps/desktop/src/cell_shapes.cpp": "40c3cb298414617fbf0b4a21f0c051a12de08928ef9ec5f6a60c410ac95d16bd",
+    "apps/desktop/src/conversation_index.cpp": "f3b1285d253d56129aabe84fa95caf77e221b9ce0ce2dbe793c240efc3384fe5",
+    "apps/desktop/src/harness_models.cpp": "dcf6d0bb4b2c9331ad67810dac0fbfebb53b5190d72da33358f859a6a9359028",
+    "apps/desktop/src/terminals.cpp": "285cfe21f298214db582776fb16659b3bcc654f1525857877315581112b2a456",
+    "apps/desktop/src/terminals.hpp": "863e5ed2c7a4ceca4ba2ef202d31e6c12c973062f8d3b9c13cb8f4e9c174614c",
+    "apps/desktop/src/ui_preview.cpp": "53a2952e6f5830d32cf01d8d3a7cf1f7f3bb434de6d8f5f14141e91258b58270",
+    "apps/desktop/src/usage.cpp": "37ff2e24739084a4113a26e7b17b76370007da710843e3902d8485ebe321a454",
+    "apps/desktop/src/usage_limits.cpp": "d7f0ed21dbbfeaac728f5e0be12041f69d3c92336844e1da21d2c84e8b7a21f1",
+    "apps/desktop/tests/conversation_index_test.cpp": "753364bfebed5143aa990d5e4b34209664d1e092de43e7a1af93b52ef4c4ef98",
+    "apps/desktop/tests/terminal_keys_mac_test.mm": "2d959a5c21bcb2b965a811ebbce8932b0ca2c50e34b643e8404cdd28daadbd4f",
+    "apps/desktop/tests/ui_preview_test.cpp": "fcb03d99426aed9efe1c94d5fe28b19d6daba33bc2a7524ae8bd5a7eb784408c",
+    "apps/desktop/tests/workspace_test.cpp": "a1eeead2ed2f78ff81d414e261ece0a9cbc609cc17b95a2318363449ece5befe",
+    "apps/ios/Lapis/Models.swift": "7a89d7ed1fd8402b048988662fe41e473ad93257c4431d3498b9edbeff05b55d",
+    "apps/ios/LapisUITests/LapisUITests.swift": "509aac82614e6340b5fea30af81bf15ad390c58abf492784f5e586805545fd7e",
+    "apps/remote/lapis_remote.py": "4e730264bb22d1c2af1ea0cbd7eea0cf711a389dcf5c568b6949b26af681310e",
+    "scripts/tests/test_lapis_remote.py": "b4018b428539518a4da2fe2e94dc8c1d9a75aa7a91c5092a70153fe41a6fad15"
+  }
+}

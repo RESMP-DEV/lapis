@@ -267,7 +267,7 @@ extension WorkspaceModel {
         }
     }
 
-    // Ends the agent on the Mac; it leaves the list at once.
+    // Keep the row until the Mac accepts the close, then refresh its state.
     func close(_ agent: Agent) async {
         guard let gateway else { return }
         do {

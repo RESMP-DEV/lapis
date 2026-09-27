@@ -562,11 +562,17 @@ bool UiPreview::loadCandidate() {
 
     QObject::connect(
         candidateWindow, &QQuickWindow::sceneGraphInitialized, candidateWindow,
-        [candidateWindow] {
+        [candidateWindow,
+         requestedApi = QGuiApplication::platformName() == QStringLiteral("offscreen") &&
+                                QQuickWindow::sceneGraphBackend() == QStringLiteral("software")
+                            ? QSGRendererInterface::Software
+                            : QSGRendererInterface::Vulkan] {
             qInfo() << "lapis scene graph API:"
                     << candidateWindow->rendererInterface()->graphicsApi();
-            if (candidateWindow->rendererInterface()->graphicsApi() != QSGRendererInterface::Vulkan)
-                qFatal("Requested Vulkan renderer was not selected");
+            // The application explicitly requests Vulkan. Background fixtures
+            // explicitly request software; neither accepts a silent fallback.
+            if (candidateWindow->rendererInterface()->graphicsApi() != requestedApi)
+                qFatal("Requested scene graph renderer was not selected");
         },
         Qt::DirectConnection);
     QObject::connect(candidate.get(), &QQmlApplicationEngine::warnings, this,

@@ -120,14 +120,14 @@ void blocks(char32_t code, const QRectF& cell, qreal ratio, CellShapes& shapes) 
         // Quadrants, as upper left, upper right, lower left, lower right bits.
         constexpr std::array<std::uint8_t, 10> quadrants{0b0010, 0b0001, 0b1000, 0b1011, 0b1001,
                                                          0b1110, 0b1101, 0b0100, 0b0110, 0b0111};
-        const auto bits = quadrants.at(code - 0x2596);
-        if ((bits & 0b1000) != 0)
+        const auto bits = static_cast<unsigned int>(quadrants.at(code - 0x2596));
+        if ((bits & 0b1000U) != 0)
             fill(0, 0, w / 2, h / 2);
-        if ((bits & 0b0100) != 0)
+        if ((bits & 0b0100U) != 0)
             fill(w / 2, 0, w / 2, h / 2);
-        if ((bits & 0b0010) != 0)
+        if ((bits & 0b0010U) != 0)
             fill(0, h / 2, w / 2, h / 2);
-        if ((bits & 0b0001) != 0)
+        if ((bits & 0b0001U) != 0)
             fill(w / 2, h / 2, w / 2, h / 2);
     }
 }
