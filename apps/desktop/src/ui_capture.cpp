@@ -1,6 +1,7 @@
 #include "ui_capture.hpp"
 #include "terminal_surface.hpp"
 #include "ui_preview.hpp"
+#include "workspace.hpp"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>

@@ -496,7 +496,8 @@ void launcher_injection_owns_only_detached_start_construction() {
         return launched.has_value() &&
                f.document.connectionState() == QStringLiteral("disconnected");
     });
-    require(launched.has_value(), "Injected launcher did not receive the create request");
+    if (!launched.has_value())
+        throw std::runtime_error("Injected launcher did not receive the create request");
     require(launched->program == lapis::desktop::session_service_program(),
             "Launcher changed the service program");
     require(launched->arguments.size() >= 4 &&

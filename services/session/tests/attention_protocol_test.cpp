@@ -156,6 +156,8 @@ void round_trip_and_recovery() {
     require(lapis::session::wire::decode_attention_snapshot(
                 lapis::session::wire::encode_attention_snapshot(typed, true))
                 .observation_phase == ObservationPhase::reconciling);
+    // Deliberately construct a representable, unrecognized value to test encoder rejection.
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
     typed.observation_phase = static_cast<ObservationPhase>(3);
     rejects(
         [&] { static_cast<void>(lapis::session::wire::encode_attention_snapshot(typed, true)); });

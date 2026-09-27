@@ -5,6 +5,7 @@ reviews:
     enabled: true
     base_branches:
       - main
+      - fix/consolidated-quality
       - feature/agent-strip
       - feature/session-continuity
       - feature/cli-updates

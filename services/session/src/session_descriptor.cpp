@@ -7,6 +7,7 @@
 #include <QUuid>
 #include <atomic>
 #include <cerrno>
+#include <cstdint>
 #include <fcntl.h>
 #include <limits>
 #include <map>
@@ -95,7 +96,7 @@ struct DescriptorTicket::State {
     int descriptor{-1};
     std::atomic<bool> canceled{false};
     std::atomic_flag released{};
-    enum class Phase { preparing, ready, committing, closed };
+    enum class Phase : std::uint8_t { preparing, ready, committing, closed };
     std::atomic<Phase> phase{Phase::preparing};
     std::mutex lifecycle;
 
@@ -174,7 +175,7 @@ DescriptorTicket::~DescriptorTicket() { cancel(); }
 
 void DescriptorTicket::stage() {
     auto& state = *state_;
-    if (state.canceled)
+    if (state.canceled.load())
         throw std::runtime_error("Descriptor write was canceled");
     if (state.phase != State::Phase::preparing || state.descriptor >= 0 ||
         !state.temporary.isEmpty())
@@ -203,10 +204,10 @@ void DescriptorTicket::stage() {
             validate_open_descriptor(state.descriptor);
             if (::fsync(state.descriptor) != 0)
                 throw_system("Cannot sync temporary session descriptor");
-            if (state.canceled)
+            if (state.canceled.load())
                 throw std::runtime_error("Descriptor write was canceled");
             const std::lock_guard staged{state.lifecycle};
-            if (state.canceled) {
+            if (state.canceled.load()) {
                 state.close_locked();
                 throw std::runtime_error("Descriptor write was canceled");
             }
@@ -249,7 +250,7 @@ QString DescriptorTicket::commit() {
     QString error;
     {
         const std::lock_guard endpoint{state.endpoint->guard};
-        if (state.canceled) {
+        if (state.canceled.load()) {
             error = QStringLiteral("Descriptor write was canceled");
         } else if (state.serial != state.endpoint->newest_serial) {
             error = QStringLiteral("A newer session replaced this descriptor");

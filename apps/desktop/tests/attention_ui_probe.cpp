@@ -1,6 +1,7 @@
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include "ui_preview.hpp"
+#include "workspace.hpp"
 
 #include <QElapsedTimer>
 #include <QFile>

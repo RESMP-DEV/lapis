@@ -479,7 +479,7 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
         try:
             with service.connect() as legacy:
                 legacy.snapshot(lambda snap: "label" in snap["text"])
-                for capabilities in (0x80, 0xC0):
+                for index, capabilities in enumerate((0x80, 0xC0)):
                     with WireClient(service.endpoint) as capable:
                         request = bytearray(
                             attach_payload(program, service.arguments, runtime)
@@ -516,10 +516,11 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                         capable.send(READY, capable.attachment + data[40:48])
                         # A resize forces another snapshot to the legacy attachment;
                         # its strict decoder still requires the exact old format.
-                        legacy.send(RESIZE, struct.pack(">HH", 79, 24))
+                        columns = 79 - index
+                        legacy.send(RESIZE, struct.pack(">HH", columns, 24))
                         legacy.snapshot(
                             lambda snap: (
-                                snap["columns"] == 79 and "label" in snap["text"]
+                                snap["columns"] == columns and "label" in snap["text"]
                             )
                         )
             return {

@@ -5,6 +5,7 @@
 #include "link_receiver.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
+#include "workspace.hpp"
 #include <QClipboard>
 #include <QDataStream>
 #include <QDesktopServices>

@@ -1776,11 +1776,14 @@ void Workspace::restore() {
         if (std::none_of(categories_.begin(), categories_.end(),
                          [&](const auto& category) { return category.id == active_category_; }))
             active_category_ = categories_.front().id;
-        // Restart launch metadata is transactional: plan every restarted
-        // service and save it before creating a detached child. Otherwise a
-        // failed registry commit could orphan a service the registry cannot
-        // describe after lapis restarts.
-        std::vector<SessionPreview*> restarting;
+        // Save the full restart plan before constructing create-mode connections.
+        // Existing-service reconnections keep their separate path below.
+        struct RestartPlan {
+            SessionPreview* document;
+            QString endpoint;
+            session::LaunchSpec launch;
+        };
+        std::vector<RestartPlan> restarting;
         for (const auto& item : sessions_) {
             watch(item.get());
             const auto entry = agents_.find(item->sessionId());
@@ -1794,7 +1797,7 @@ void Workspace::restore() {
                     agent.launch = launch->launch;
                     agent.managed_resume_index = launch->managed_resume_index;
                     agent.managed_resume_identity = launch->managed_resume_identity;
-                    restarting.push_back(item.get());
+                    restarting.push_back({item.get(), agent.endpoint, agent.launch});
                     continue;
                 }
             if (headless_)
@@ -1804,12 +1807,8 @@ void Workspace::restore() {
         // Restarted agents have new launch arguments, part of their fingerprint.
         if (!restarting.empty() && !save())
             throw std::runtime_error(error_.toStdString());
-        for (auto* item : restarting) {
-            const auto entry = agents_.constFind(item->sessionId());
-            if (entry == agents_.cend())
-                throw std::runtime_error("Missing restored agent metadata");
-            item->startLive(entry->endpoint, entry->launch, session::wire::AttachMode::create);
-        }
+        for (const auto& plan : restarting)
+            plan.document->startLive(plan.endpoint, plan.launch, session::wire::AttachMode::create);
         if (restore_agents_ && !headless_) {
             conversation_timer_.setInterval(60000);
             connect(&conversation_timer_, &QTimer::timeout, this, &Workspace::recordConversations);
