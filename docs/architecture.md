@@ -2571,28 +2571,53 @@ Q11). They also guard iPhone workspace responses across gateway changes, bound
 remote discovery/identity work, and restore focused CLI case selection. Broad
 header exports and the other module extractions remain goal 3 work.
 
-The next bounded implementation slice is Q03, typed adapter observation state.
-The September 27 source review found it still outstanding in the working tree,
-the consolidated quality branch and the terminal-usability branch. Today
-`SessionPreview::applyAttention` derives "No prompt yet" behavior from exact
-Codex diagnostic strings. Give that behavior an explicit observation phase
-owned by the adapter, carried by the service, and consumed by the desktop;
-diagnostic text remains presentation only. Preserve the existing independent
-activity, connection, readiness and request state. This slice does not add
-approval capabilities or another adapter.
+Q03 now carries a typed adapter observation phase from the Codex observer through
+service IPC into the desktop. Diagnostic wording no longer controls "No prompt
+yet" behavior. The phase is independent of activity, connection, readiness and
+pending requests; it adds no approval capability. Existing v6 clients retain
+exact legacy attention bytes. Attach capability `0x40` requests a trailing phase
+byte; the existing `0x80` link capability remains independent. The desktop first
+retries without phase support, retaining links where supported, then without
+links for older services. These at-most-two pre-hello retries preserve mode,
+fingerprint and expected identity, reconnect only the socket and never launch a
+new child. Legacy phase is unknown, so old services retain generic status instead
+of a diagnostic-derived first-prompt label. Unknown phase values are rejected.
+Joined views remain terminal-only; this change does not add phone attention.
 
-Start from the reconciled quality and terminal-usability baseline, preserving
-the newer UI and architecture changes. Decide old/new client and service
-compatibility before changing the attention payload; an unnegotiated field
-addition is not an acceptable shortcut. Acceptance is unchanged no-first-prompt,
-retry and reconnect behavior when diagnostic wording changes, plus defined
-handling of legacy payloads and invalid phase values. Extend the existing
-observer, protocol and workspace fixtures. Build their affected targets and run
-`codex-observer`, `attention-protocol`, `local-protocol` and `workspace` with
-`--no-tests=error`; reuse unrelated terminal-input evidence under CONTRIBUTING's
-rules and apply the required-check matrix at integration. Q04's shared harness
-identity and configuration contract follows as a separate slice because it also
-touches launch and registry persistence consumers.
+Q04's shared harness descriptor catalog owns picker order, known/retired identity,
+executable discovery, startup/model arguments, resume options, update commands and
+adapter selection. Workspace launch, restore and picker consumers use that one
+catalog. Persisted string IDs and CLI argv remain unchanged; vendor model-list
+parsing and provider-account logic remain separate. The terminal surface header
+uses a forward declaration of the workspace document with an explicit Qt moc
+include, retaining its concrete consumer without exporting the whole model.
+
+The Q02 restore plan now captures every missing service's updated launch metadata
+and saves the registry before constructing create-mode connections. Existing
+services retain their reconnect path. This makes the persistence order explicit;
+the prior queued-start behavior was not demonstrated to orphan a process. An
+unwritable-registry fixture verifies the original bytes remain and no replacement
+service is started after save failure.
+
+Q05 separates detached launch execution and descriptor persistence from
+LiveConnection. Descriptor tickets stage private files off the GUI thread; a
+short endpoint guard rejects canceled or superseded writers before rename.
+Ordering is per canonical endpoint within this process, independent of launch
+fingerprint; it is not a cross-process writer lock. Retired tickets release their
+registry entries and temporary files. A controlled blocked-writer fixture destroys
+the old connection, commits the replacement identity, then releases the old writer
+and verifies the replacement survives. The LAPIS-S1 descriptor format is unchanged.
+A snapshot-sink interface remains deferred because no distinct consumer requires
+it. Broader header-export changes also remain separate work.
+
+The [adapter-boundary receipt](../evidence/adapter-boundaries.json) records the
+combined desktop build, 28 selected CTest suites, three background UI fixtures,
+focused real-PTY capability/identity checks, static analysis and affected ASan,
+UBSan and TSan checks. The window-state fixture needs synthetic frame margins
+disabled on Qt's offscreen display; that is background geometry evidence only.
+These changes do not renew native input or GPU qualification. The uninstrumented
+Qt handoff limitation in the asynchronous harness-model TSan case remains scoped
+out; no whole-desktop race-clearance claim is made.
 
 Q09's state transition has source review and ordinary takeover/reconnect coverage;
 its deferred-queue regression is still unqualified. The attempted pressure probe
@@ -2660,7 +2685,7 @@ observable finish line before it is claimed.
 
 | Order | Batch | Gate |
 | --- | --- | --- |
-| First | Finish the [September 25 repair goals](#quality-repair-goals-september-25-audit): the Q03/Q04/Q05 boundary extractions, the Q02 registry transaction remainder, the Q09 deferred-queue regression, Q10's measured allocation decision and Q13's shared wire peer | Per the audit table; no milestone expansion |
+| First | Review the implemented Q03/Q04/Q05 boundary and Q02 restore-plan batch; then finish the [September 25 repair goals](#quality-repair-goals-september-25-audit): Q09's deferred-queue regression, Q10's measured allocation decision and Q13's shared wire peer | Per the audit table; no milestone expansion |
 | 1 | Secret prompts, Keychain fill and Touch ID | [Secret prompts section](#secret-prompts-keychain-fill-and-touch-id) |
 | 2 | Triggers; turn marks and timing; semantic file paths completed to editor-at-line (with Quick Look); the menu bar attention item and global summon hotkey | Per the spread tables below |
 | 3 | Search across all agents extended to paged history; Focus-aware chimes; thermal and low-power throttling; the Dock menu; screen-share protection and secure keyboard entry | Per the spread tables below |

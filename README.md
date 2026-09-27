@@ -79,6 +79,11 @@ The [follow-up audit and repairs](evidence/quality-followup.json) cover paste an
 gateway ownership, bounded remote discovery, explicit build dependencies, and
 focused CLI checks. The receipt distinguishes exercised behavior from remaining
 native-input, deferred-history and TSan qualification gaps.
+The [adapter-boundary follow-up](evidence/adapter-boundaries.json) carries typed
+observation phases over negotiated v6 IPC, centralizes CLI launch/resume
+configuration, persists restart plans before creating connections and cancels
+superseded descriptor writers. Legacy peers retain their existing protocol;
+the receipt records background UI, compatibility and scoped sanitizer evidence.
 The [local consolidation receipt](evidence/local-consolidation.json) records the
 rebased repairs, fresh checks and source hashes after integration with PRs 18–19.
 
