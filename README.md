@@ -216,7 +216,7 @@ as you type: by the letters of its name, folder, category, CLI or machine, or by
 text on its screen, and Return shows it. Command-O resumes a past conversation:
 the Claude Code and Codex conversations you opened on this Mac, newest first
 under their CLI's own title, narrowed as you type by title, folder or CLI;
-Return resumes one as a new agent in its folder. Command-` (or Control-`, as in
+Return resumes one as a new agent in its folder. ``Command-` `` (or ``Control-` ``, as in
 VS Code) shows a plain shell over the stage's right half for a quick command,
 and hides it again; Command-~ picks its machine, this Mac or an ssh host from
 your ssh config, by up, down and Return. It is never an agent: one shell per

@@ -387,10 +387,10 @@ The committed `lapis.json` holds defaults only (see
   (`minimizeWindow`) minimizes. Command-Q quits the GUI; none of these stops service-owned agents.
   `detachWindow` still works when configured but has no default key.
 - Command-O (`resumeConversation`) lists past Claude Code and Codex
-  conversations and resumes one as a new agent. Command-` and Control-`
+  conversations and resumes one as a new agent. ``Command-` `` and ``Control-` ``
   (`toggleTerminal`) show and hide the side terminal; Command-~
   (`chooseTerminal`) picks its machine. On the Mac a local key monitor takes
-  Command-` before AppKit's window cycling. With no agent open, the home list
+  ``Command-` `` before AppKit's window cycling. With no agent open, the home list
   holds the keyboard. Appearance lists every action's keys.
 - Linux uses Control-Shift-based counterparts, with Alt added for the category
   arrows and new-category creation. Bare terminal Control chords remain
@@ -698,7 +698,7 @@ union of the relevant checks; a check satisfying two rows runs once:
 | Disk history | `python3 scripts/check_history.py --disk-full` on macOS, plus desktop-enabled ASan/TSan; the disk-full fixture creates and removes its own 32 MiB disk image |
 | Python tooling | `just quality` (includes Ruff and Python unit tests), plus relevant runtime probes |
 | iPhone app or gateway (`apps/ios`, `apps/remote`) | `just quality` (includes the gateway suite, with a live service when the desktop is built) and `uv run --no-project python scripts/check_ios_remote.py --codex --claude` on macOS with an iOS Simulator runtime |
-| Before a release (Mac and iPhone together) | The full Linux gate (`lapis.py linux-gui`, whose workspace suite joins a view beside the real desktop connection and types both ways) and, on the Mac, `just quality` plus `just ios-check`, whose Mac-side client stays attached through every UI test and must see and answer the phone |
+| Before a release (Mac and iPhone together) | The macOS desktop/native gates above, `just quality` and `just ios-check`, whose Mac-side client stays attached through every UI test and must see and answer the phone. Linux UI qualification remains deferred; run its gate when that port is explicitly selected. |
 | Mac app packaging (`scripts/package_macos.py`, `apps/desktop/macos`, `LAPIS_PACKAGE`) | `just quality`, then `package_macos.py app` and `verify` on the Mac; `verify --notarized` for a release |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; run `just quality` for shared check/config/instruction changes; no unrelated C++ rebuild |
 
@@ -851,7 +851,7 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `terminal-input` | Desktop-enabled, native GUI | Qt composition commit/cancel, replacement rejection, paste and focus/document/history/disconnect ownership |
 | `terminal-render` | Desktop-enabled | Real Qt Vulkan pixel regressions for cell background grids, wide/combining characters, fallback/RTL text, styles/decorations, actual Ghostty resize, cursor placement and clearing |
 
-`just desktop` runs these twenty-two suites plus static checks. The separate Python
+`just desktop` runs the registered suites plus static checks. The separate Python
 GUI harness checks five preview captures and seven expected failures. The CLI
 harness checks detached service behavior, attachment generations, fragmented
 handshakes, synchronization timeout, stale controls, bounded queue failure and
@@ -1059,7 +1059,7 @@ build/desktop/apps/desktop/lapis_ui_preview_tests --background --shortcuts-only
 ```
 
 These select Qt's offscreen platform and software backend, check those selections,
-and exercises the same synthetic key, composition, paste, history and ownership
+and exercise the same synthetic key, composition, paste, history and ownership
 assertions against local protocol fixtures. They use virtual window focus and
 Qt's offscreen clipboard, without requesting macOS foreground access or moving
 the system pointer. Timeout diagnostics identify the calling assertion. This is
