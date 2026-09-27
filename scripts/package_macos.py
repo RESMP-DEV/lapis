@@ -125,11 +125,8 @@ for step in range(2048):
 mask = Image.new("L", (body * oversample, body * oversample), 0)
 ImageDraw.Draw(mask).polygon(points, fill=255)
 mask = mask.resize((body, body), Image.LANCZOS)
-art = Image.open(source).convert("RGBA")
-side = art.width / 1.3
-left, top = (art.width - side) / 2, art.height * 0.52 - side / 2
-art = art.crop((round(left), round(top), round(left + side), round(top + side)))
-art = art.resize((body, body), Image.LANCZOS)
+# The phone's full-bleed art whole, so both apps show the same icon.
+art = Image.open(source).convert("RGBA").resize((body, body), Image.LANCZOS)
 art.putalpha(mask)
 offset = (canvas - body) // 2
 icon = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
@@ -305,7 +302,9 @@ def command_qt(_arguments):
 
 
 def command_icon(_arguments):
-    """Remake apps/desktop/macos/lapis.icns from the phone's icon."""
+    """Remake lapis.icns and the site's icons from the phone's icon.
+
+    The phone's icon.png is rendered from apps/desktop/macos/icon.svg."""
     work = RELEASE / "icon"
     shutil.rmtree(work, ignore_errors=True)
     iconset = work / "lapis.iconset"
@@ -325,6 +324,13 @@ def command_icon(_arguments):
             )
     run(["iconutil", "--convert", "icns", "--output", MAC_ICON, iconset])
     print(f"Wrote {MAC_ICON.relative_to(ROOT)}", flush=True)
+    for pixels, name in ((512, "icon.png"), (64, "favicon.png")):
+        target = ROOT / "site" / name
+        run(
+            ["sips", "-z", pixels, pixels, master, "--out", target],
+            stdout=subprocess.DEVNULL,
+        )
+        print(f"Wrote {target.relative_to(ROOT)}", flush=True)
 
 
 KHRONOS = "https://raw.githubusercontent.com/KhronosGroup"
