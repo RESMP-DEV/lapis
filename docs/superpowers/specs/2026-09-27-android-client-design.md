@@ -10,10 +10,10 @@ architecture.md is the single implementation plan.
 
 Build an Android app equivalent to the existing iOS companion app
 (`apps/ios/Lapis`, SwiftUI): it connects to the `lapis_remote.py` gateway on
-the Mac over Tailscale, lists and starts categories/agents, joins an agent's
-live session beside the desktop, sends input, and pages scrollback history.
-The Mac owns the terminal engine and the agent processes; the phone only draws
-screen frames and sends input.
+the Mac over Tailscale or ZeroTier, lists and starts categories/agents,
+joins an agent's live session beside the desktop, sends input, and pages
+scrollback history. The Mac owns the terminal engine and the agent processes;
+the phone only draws screen frames and sends input.
 
 Two Android-specific features beyond parity:
 
@@ -78,19 +78,91 @@ These facts are the port's foundation; cite them in review, not folklore.
   today. The `X-Lapis-Client` header value is not validated; its presence is.
 - **SSE keepalive**: the gateway pings every 10 seconds, so a 40-second
   read timeout distinguishes quiet from dead (iOS: `Gateway.streams`).
+- **ZeroTier CLI (verified empirically on this Mac, 2026-09-27)**:
+  `zerotier-cli -j listnetworks` returns per network `id`, `name`,
+  `status` (`"OK"` when joined), `type` (`"PRIVATE"`/`"PUBLIC"`),
+  `assignedAddresses` (CIDR strings), and `routes` with
+  `target`/`via` (`{"target": "10.243.0.0/16", "via": null}`). There is no
+  `whois` equivalent: a peer's owner login and device OS are not knowable.
 
 Open verification item: Tailscale is expected to report OS `"android"` for
 Android nodes in `whois`. Verify against the real device at milestone A and
 make the allowlist comparison case-insensitive.
 
-## Gateway change (the only server-side work)
+## Gateway changes (Android admission + ZeroTier overlay)
 
-- `lapis_remote.py` `TailnetAuth.allowed`: admit `system in ("iOS", "android")`
-  (case-insensitive), update the module docstring ("an iOS or Android device
-  of the Mac owner").
-- `scripts/tests/test_lapis_remote_bounds.py`: add the android admission case
-  and keep the browser-rejection cases.
-- No other server changes. iOS behavior is untouched.
+The gateway becomes overlay-agnostic: it admits peers from the Mac's tailnet
+(unchanged rules, plus Android) or from its ZeroTier networks. Still no
+session-service or wire-protocol changes; the iOS app's behavior on a
+tailnet is untouched.
+
+### Android admission
+
+`TailnetAuth.allowed` accepts `system in ("iOS", "android")` compared
+case-insensitively; the module docstring says "an iOS or Android device of
+the Mac owner".
+
+### ZeroTier admission
+
+ZeroTier has no identity lookup, so authorization is network membership:
+joining a network requires the controller's approval, and membership is the
+trust the gateway relies on. Documented semantic difference from the tailnet
+rule: a device the owner did not authorize onto the network cannot reach the
+gateway at all, but the gateway cannot further distinguish devices the owner
+did authorize.
+
+- New `ZeroTierAuth` beside `TailnetAuth`. The peer is admitted when its
+  address lies inside a managed route (`routes[].target`, checked with the
+  `ipaddress` module) of a network with `status == "OK"` and
+  `type == "PRIVATE"`. Public networks never admit anyone. A bridged network
+  whose managed routes cover LAN ranges admits those ranges too; that is the
+  owner's network configuration, documented rather than second-guessed.
+- The network list is cached (30-second refresh under a lock); admission is
+  pure address math, so no per-peer subprocess runs (cheaper than tailnet
+  `whois`, which shells out per unknown peer).
+- The Mac's own assigned ZeroTier addresses are admitted (the simulator on
+  this Mac).
+- `hosts()` gains the Mac's ZeroTier assigned addresses (bracketed IPv6),
+  so clients may connect by raw ZeroTier address.
+
+### Startup and binding
+
+- `main()` builds admission from whichever overlays exist: the tailnet when
+  the `tailscale` CLI answers, ZeroTier when `zerotier-cli` lists an OK
+  private network. At least one is required; tailscale is no longer
+  mandatory.
+- Default bind stays the Mac's tailscale address for tailnet-only Macs. With
+  ZeroTier active (alone or beside tailnet) the gateway binds all
+  interfaces, since per-peer admission and the Host header check — not the
+  bind address — are the security boundary. `--bind` still overrides.
+- Docstrings and `--help` copy say iOS or Android over Tailscale or
+  ZeroTier.
+
+### Tests
+
+Extend the committed `scripts/tests/test_lapis_remote.py` (the untracked
+`test_lapis_remote_bounds.py` belongs to the quality branch and is out of
+scope): a `fake_zerotier` runner mirroring `fake_tailscale`; Android OS
+admission; private-network peer admitted; public network or non-member
+refused; own address admitted; `hosts()` includes the ZeroTier address;
+tailnet absent but ZeroTier present starts ZT-only; both absent fails
+cleanly.
+
+## Client transport (Tailnet or ZeroTier)
+
+Clients embed no overlay SDK; the OS-level Tailscale/ZeroTier apps provide
+connectivity, and the host setting accepts a tailnet name or a raw ZeroTier
+address (port 7349 default applies).
+
+- **iOS**: cleartext HTTP to raw private-range IPs must pass ATS.
+  `NSAllowsLocalNetworking` is expected to cover IP literals; verify
+  empirically with an app-hosted unit test hitting an `http://` stub bound
+  to this Mac's LAN or ZeroTier address, and if it fails, add
+  `NSAllowsArbitraryLoads` with a justification comment (every request goes
+  to the user-configured gateway only; browsers are refused server-side).
+  Settings hint and `describe()` error copy mention ZeroTier.
+- **Android**: `targetSdk` current disables cleartext by default; the
+  network security config permits it, justified the same way.
 
 ## Architecture
 
@@ -252,10 +324,11 @@ network, no push: foreground-refresh only, as iOS.
 
 ## Milestones
 
-- **A — Slice**: gateway admission + Gradle scaffold + gateway client +
-  workspace list + host settings. Finish line: the real Mac's categories are
-  visible on the device over Tailscale; unit and gateway tests green;
-  `whois` OS string for Android verified and recorded.
+- **A — Slice**: gateway Android admission + ZeroTier overlay + Gradle
+  scaffold + gateway client + workspace list + host settings. Finish line:
+  the real Mac's categories are visible on the device over Tailscale or
+  ZeroTier; unit and gateway tests green; `whois` OS string for Android
+  verified and recorded (stub-runner tests cover both overlays meanwhile).
 - **B — Stage**: `AgentSession` + terminal renderer + composer + history
   paging. Finish line: a live Codex agent on the cover screen; typing, resize
   and scrollback work; Mac and phone stay in sync.
@@ -275,6 +348,13 @@ network, no push: foreground-refresh only, as iOS.
 
 - `whois` OS string for Android nodes is presumed `"android"`; verified at
   milestone A before shipping the allowlist change.
+- ZeroTier admission cannot check device OS or owner login (no `whois`
+  equivalent); it trusts private-network membership. Bridged networks that
+  advertise LAN routes widen admission accordingly — an owner configuration
+  choice, documented in the gateway's help text.
+- iOS ATS treatment of raw IP cleartext under `NSAllowsLocalNetworking` is
+  presumed permissive; verified empirically in the iOS work, with
+  `NSAllowsArbitraryLoads` as the documented fallback.
 - Foldable emulator hinge simulation approximates but does not replace real
   Z Fold evidence; real-device qualification is milestone D's gate.
 - Compose recomposition cost on 120 Hz frame updates is unmeasured; milestone
