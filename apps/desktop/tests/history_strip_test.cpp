@@ -51,6 +51,38 @@ std::vector<std::string> view_rows(const HistoryStrip& strip) {
 
 using Rows = std::vector<std::string>;
 
+void resized_screen_overlap_spans_archive_pages() {
+    HistoryStrip strip(rows_of(8, {"l6", "l7", "l8", "l9", "live"}), 10);
+    strip.addPage(rows_of(8, {"l8", "l9"}, 8));
+    strip.moveTo(7);
+    require(strip.missing() == 6, "a possible resize overlap must fetch its earlier rows");
+    strip.addPage(rows_of(8, {"l2", "l3", "l4", "l5", "l6", "l7"}, 2));
+    require(strip.archived() == 6 && strip.top() == 3 &&
+                view_rows(strip) == Rows({"l3", "l4", "l5", "l6", "l7"}),
+            "resize overlap spanning pages duplicated rows or lost the requested scroll distance");
+}
+
+void hyperlinks_survive_history_composition() {
+    auto screen = rows_of(6, {"same", "tail"});
+    screen.hyperlinks = {{0, 4, "https://example.com/new"}};
+    auto page = rows_of(8, {"12345678", "same"});
+    page.hyperlinks = {{2, 10, "https://example.com/old"}};
+    HistoryStrip strip(screen, 2);
+    strip.addPage(page);
+    require(strip.top() == 2, "different link destinations were deduplicated at the history seam");
+    strip.moveTo(1);
+    auto view = strip.view();
+    require(view.hyperlinks.size() == 2 && view.hyperlinks[0].first_cell == 0 &&
+                view.hyperlinks[0].cell_count == 4 && view.hyperlinks[1].first_cell == 6 &&
+                view.hyperlinks[1].uri == "https://example.com/new",
+            "history links were lost or misaligned across the live screen seam");
+    strip.moveTo(0);
+    view = strip.view();
+    require(view.hyperlinks.size() == 1 && view.hyperlinks[0].first_cell == 2 &&
+                view.hyperlinks[0].cell_count == 8,
+            "history links were not clipped and merged at the narrower viewport");
+}
+
 void views_are_whole_screens_across_pages() {
     // Six archived rows in a page of four and a short one of two, then the
     // screen: every view is a whole screen, whatever the pages' sizes.
@@ -143,6 +175,8 @@ void far_pages_are_forgotten() {
 
 int main() {
     try {
+        resized_screen_overlap_spans_archive_pages();
+        hyperlinks_survive_history_composition();
         views_are_whole_screens_across_pages();
         pages_of_another_width_and_color_fit_the_screen();
         pages_that_do_not_say_where_they_sit_go_on_top();

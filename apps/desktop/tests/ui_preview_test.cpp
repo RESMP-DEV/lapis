@@ -485,6 +485,79 @@ void check_terminal_font_controls(QQuickWindow& window, lapis::desktop::KeyMap& 
     CHECK(keymap.terminalFontSize() == kTerminalFontSizeDefault);
     CHECK(terminal.gridSize() == base_grid);
 
+    auto* fontSizeField = find_visual(window.contentItem(), QStringLiteral("fontSizeValue"));
+    CHECK(fontSizeField != nullptr);
+    const auto replaceFontSize = [&](const QString& value) {
+        fontSizeField->forceActiveFocus();
+        CHECK(fontSizeField->hasActiveFocus());
+        CHECK(QMetaObject::invokeMethod(fontSizeField, "selectAll"));
+        for (const auto character : value) {
+            QKeyEvent press(QEvent::KeyPress, 0, Qt::NoModifier, QString(character));
+            QKeyEvent release(QEvent::KeyRelease, 0, Qt::NoModifier, QString(character));
+            QCoreApplication::sendEvent(&window, &press);
+            QCoreApplication::sendEvent(&window, &release);
+        }
+        pump(30);
+    };
+    const auto returnInFontSize = [&] {
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+        QKeyEvent release(QEvent::KeyRelease, Qt::Key_Return, Qt::NoModifier);
+        QCoreApplication::sendEvent(&window, &press);
+        QCoreApplication::sendEvent(&window, &release);
+        pump(30);
+    };
+
+    // The validator rejects text that cannot be a number without touching size.
+    replaceFontSize(QStringLiteral("wide"));
+    CHECK(fontSizeField->property("text").toString() == QString::number(kTerminalFontSizeDefault));
+    CHECK(keymap.terminalFontSize() == kTerminalFontSizeDefault);
+    CHECK(terminal.fontPixelSize() == kTerminalFontSizeDefault);
+
+    // An intermediate value is accepted while typing, but an out-of-range
+    // commit restores the current saved value rather than corrupting it.
+    replaceFontSize(QStringLiteral("99"));
+    CHECK(fontSizeField->property("text").toString() == QStringLiteral("99"));
+    returnInFontSize();
+    CHECK(fontSizeField->property("text").toString() == QString::number(kTerminalFontSizeDefault));
+    CHECK(keymap.terminalFontSize() == kTerminalFontSizeDefault);
+    CHECK(terminal.fontPixelSize() == kTerminalFontSizeDefault);
+
+    // Direct entry uses the same live-and-persisted path as the buttons.
+    const int enteredSize = kTerminalFontSizeDefault + 6;
+    replaceFontSize(QString::number(enteredSize));
+    returnInFontSize();
+    CHECK(fontSizeField->property("text").toString() == QString::number(enteredSize));
+    CHECK(keymap.terminalFontSize() == enteredSize);
+    CHECK(terminal.fontPixelSize() == enteredSize);
+    lapis::desktop::KeyMap directEntryPersisted;
+    directEntryPersisted.setSourcePathForTesting(directory.filePath(QStringLiteral("lapis.json")));
+    CHECK(directEntryPersisted.load());
+    CHECK(directEntryPersisted.terminalFontSize() == enteredSize);
+
+    // The display follows the keymap after an external +/- adjustment.
+    click_setting(window, QStringLiteral("fontSmaller"));
+    CHECK(keymap.terminalFontSize() == enteredSize - 1);
+    CHECK(terminal.fontPixelSize() == enteredSize - 1);
+    CHECK(fontSizeField->property("text").toString() == QString::number(enteredSize - 1));
+    click_setting(window, QStringLiteral("fontLarger"));
+    CHECK(keymap.terminalFontSize() == enteredSize);
+    CHECK(fontSizeField->property("text").toString() == QString::number(enteredSize));
+
+    // Empty input on focus loss restores the current size. A valid size on
+    // focus loss commits through the same path without needing Return.
+    fontSizeField->forceActiveFocus();
+    CHECK(QMetaObject::invokeMethod(fontSizeField, "selectAll"));
+    QKeyEvent erase(QEvent::KeyPress, Qt::Key_Backspace, Qt::NoModifier);
+    QCoreApplication::sendEvent(&window, &erase);
+    CHECK(fontSizeField->property("text").toString().isEmpty());
+    terminal.forceActiveFocus();
+    pump(30);
+    CHECK(fontSizeField->property("text").toString() == QString::number(enteredSize));
+    replaceFontSize(QString::number(kTerminalFontSizeDefault));
+    terminal.forceActiveFocus();
+    pump(30);
+    CHECK(keymap.terminalFontSize() == kTerminalFontSizeDefault);
+
     // A missing family falls back to the system fixed-width face and says so.
     CHECK(keymap.setTerminalFontFamily(QStringLiteral("lapis missing mono")));
     pump(30);
@@ -2351,6 +2424,9 @@ int run_history_ui_tests() {
         return agent->inputReady() &&
                screen_text(agent->snapshot()).contains(QStringLiteral("all printed"));
     }));
+    QVariant folder;
+    CHECK(QMetaObject::invokeMethod(window, "focusedFolder", Q_RETURN_ARG(QVariant, folder)));
+    CHECK(folder.toString() == root.filePath(QStringLiteral("project")));
     const auto settled = [agent] {
         return agent->historyActive() && !agent->historyRequestPending();
     };
@@ -2365,7 +2441,11 @@ int run_history_ui_tests() {
         if (!row.trimmed().startsWith(QStringLiteral("line ")))
             continue;
         const int number = row.trimmed().mid(5, 4).toInt();
-        CHECK(previous < 0 || number == previous + 1);
+        if (previous >= 0 && number != previous + 1)
+            throw std::runtime_error("History seam jumped from " + std::to_string(previous) +
+                                     " to " + std::to_string(number) + " in " +
+                                     std::to_string(agent->snapshot().size.rows) +
+                                     " rows: " + screen_text(agent->snapshot()).toStdString());
         previous = number;
         ++lines;
     }
@@ -2427,14 +2507,18 @@ int run_history_ui_tests() {
 int main(int argc, char** argv) {
     bool background = false;
     bool shortcuts_only = false;
+    bool history_only = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         if (argument == "--background")
             background = true;
         else if (argument == "--shortcuts-only")
             shortcuts_only = true;
+        else if (argument == "--history-only")
+            history_only = true;
         else {
-            std::cerr << "Usage: lapis_ui_preview_tests [--background] [--shortcuts-only]\n";
+            std::cerr << "Usage: lapis_ui_preview_tests [--background] "
+                         "[--shortcuts-only|--history-only]\n";
             return EXIT_FAILURE;
         }
     }
@@ -2462,7 +2546,11 @@ int main(int argc, char** argv) {
     });
     try {
         CHECK(background == (QGuiApplication::platformName() == QStringLiteral("offscreen")));
-        if (shortcuts_only) {
+        CHECK(!(shortcuts_only && history_only));
+        if (history_only) {
+            if (run_history_ui_tests() != EXIT_SUCCESS)
+                return EXIT_FAILURE;
+        } else if (shortcuts_only) {
             if (run_shortcut_focus_tests() != EXIT_SUCCESS)
                 return EXIT_FAILURE;
         } else if (run_workspace_tests() != EXIT_SUCCESS || run_ui_tests() != EXIT_SUCCESS ||

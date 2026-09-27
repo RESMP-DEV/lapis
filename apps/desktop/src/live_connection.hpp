@@ -31,6 +31,7 @@ class LiveConnection final : public QObject {
     void sendResize(session::TerminalSize size);
     void receive();
     void handle(const session::wire::Frame& frame);
+    void queueHistoryRequest(const session::wire::HistoryRequest& request);
     void acceptHello(const session::wire::Hello& hello);
     void acceptSnapshot(session::wire::SnapshotEnvelope message);
     void acceptHistoryReply(session::wire::HistoryReply reply);
@@ -57,11 +58,14 @@ class LiveConnection final : public QObject {
     quint64 next_history_request_id_{1};
     bool history_request_ids_exhausted_{};
     std::optional<quint64> outstanding_history_request_;
+    std::optional<session::wire::HistoryRequest> deferred_history_;
+    std::optional<session::TerminalSize> pending_resize_;
     QSet<quint64> canceled_history_requests_;
     int attempts_{};
     bool connected_{};
     bool ready_{};
     bool failed_{true};
+    bool legacy_link_retry_{};
     session::TerminalSize wanted_size_{100, 30};
     bool wanted_size_requested_{};
     session::TerminalSize shown_size_{};

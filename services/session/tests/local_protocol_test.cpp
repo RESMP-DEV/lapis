@@ -20,6 +20,68 @@ void rejects(Operation operation, std::source_location where = std::source_locat
     }
     require(rejected, where);
 }
+void hyperlink_messages() {
+    using namespace lapis::session;
+    Terminal terminal({12, 3});
+    terminal.feed("\x1b]8;;https://example.com/link\x1b\\label\x1b]8;;\x1b\\");
+    const auto snapshot = terminal.snapshot();
+    require(snapshot.hyperlinks.size() == 1);
+    const auto legacy = wire::encode_snapshot(snapshot, false);
+    const auto encoded = wire::encode_snapshot(snapshot);
+    require(encoded.startsWith(legacy) && encoded.size() > legacy.size());
+    require(wire::decode_snapshot(encoded).hyperlinks == snapshot.hyperlinks);
+    require(wire::decode_snapshot(legacy).hyperlinks.empty());
+    auto plain = snapshot;
+    plain.hyperlinks.clear();
+    require(wire::encode_snapshot(plain) == legacy);
+    // Truncation of an extension is rejected, while the complete legacy body
+    // is still readable. Malformed metadata never becomes a different target.
+    for (auto size = legacy.size() + 1; size < encoded.size(); ++size)
+        rejects([&] { static_cast<void>(wire::decode_snapshot(encoded.first(size))); });
+    for (const auto offset : {0, 4, 8, 12, 16}) {
+        auto malformed = encoded;
+        malformed[legacy.size() + offset] = static_cast<char>(0xff);
+        rejects([&] { static_cast<void>(wire::decode_snapshot(malformed)); });
+    }
+    for (const auto byte : {0xff, 0xc2}) {
+        auto invalid_utf8 = encoded;
+        invalid_utf8.back() = static_cast<char>(byte);
+        rejects([&] { static_cast<void>(wire::decode_snapshot(invalid_utf8)); });
+    }
+    rejects([&] { static_cast<void>(wire::decode_snapshot(encoded + 'x')); });
+    auto overlap = snapshot;
+    overlap.hyperlinks.push_back(overlap.hyperlinks.front());
+    rejects([&] { static_cast<void>(wire::encode_snapshot(overlap)); });
+    const wire::Attachment attachment{{wire::new_id(), wire::new_id()}, 1};
+    require(wire::decode_snapshot_message(
+                wire::encode_snapshot_message({attachment, 1, snapshot}, false))
+                .snapshot.hyperlinks.empty());
+    const wire::HistoryReply reply{attachment, 1, 1, {}, snapshot};
+    const auto linked_history = wire::decode_history_reply(wire::encode_history_reply(reply));
+    const auto legacy_history =
+        wire::decode_history_reply(wire::encode_history_reply(reply, false));
+    require(linked_history.snapshot.has_value() && legacy_history.snapshot.has_value());
+    if (linked_history.snapshot && legacy_history.snapshot) {
+        require(linked_history.snapshot->hyperlinks == snapshot.hyperlinks);
+        require(legacy_history.snapshot->hyperlinks.empty());
+    }
+    for (const auto mode : {wire::AttachMode::discover, wire::AttachMode::create,
+                            wire::AttachMode::reconnect, wire::AttachMode::join}) {
+        wire::AttachRequest request{
+            .mode = mode, .fingerprint = QByteArray(32, 'f'), .expected = {}};
+        if (mode == wire::AttachMode::create)
+            request.expected.session_id = attachment.identity.session_id;
+        if (mode == wire::AttachMode::reconnect)
+            request.expected = attachment.identity;
+        const auto old = wire::encode_attach(request);
+        request.hyperlinks = true;
+        auto capable = wire::encode_attach(request);
+        require(old.size() == capable.size() && wire::decode_attach(capable).hyperlinks &&
+                !wire::decode_attach(old).hyperlinks);
+        capable[36] = static_cast<char>(static_cast<unsigned char>(capable[36]) & 0x7fU);
+        require(capable == old);
+    }
+}
 void identity_messages() {
     using namespace lapis::session;
     const QByteArray session = wire::new_id();
@@ -219,6 +281,7 @@ int main() {
     using namespace lapis::session;
     try {
         identity_messages();
+        hyperlink_messages();
         envelope_messages();
         history_messages();
         wheel_messages();

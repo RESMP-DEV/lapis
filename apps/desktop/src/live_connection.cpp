@@ -89,6 +89,12 @@ void SessionPreview::removeViewer(int interval_ms) {
     if (viewers_.empty())
         decode_timer_.stop();
 }
+void SessionPreview::captureHistoryScreen() {
+    if (!strip_) {
+        decodeWaiting();
+        strip_screen_ = live_snapshot_;
+    }
+}
 void SessionPreview::beginHistoryRequest() {
     // History shows the live screen until a page comes, so take the newest.
     decodeWaiting();
@@ -218,8 +224,6 @@ void SessionPreview::scrollHistory(int rows) {
         // Rows asked for while the first page loads add up.
         strip_rows_asked_ += rows;
         if (!history_request_pending_) {
-            decodeWaiting();
-            strip_screen_ = live_snapshot_;
             live_->requestHistory(wire::HistoryDirection::older, 0);
         }
         return;
@@ -361,6 +365,7 @@ LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
             return;
         const auto request_id = *outstanding_history_request_;
         outstanding_history_request_.reset();
+        deferred_history_.reset();
         document_.setHistoryRequestId(0);
         document_.failHistoryRequest(QStringLiteral("History request timed out."));
         rememberCanceledHistoryRequest(request_id);
@@ -381,9 +386,11 @@ void LiveConnection::begin(wire::AttachMode mode) {
     failed_ = false;
     connected_ = false;
     ready_ = false;
+    legacy_link_retry_ = false;
     attempts_ = 0;
     last_sequence_ = 0;
     shown_size_ = {};
+    pending_resize_.reset();
     claimed_over_.reset();
     attachment_.reset();
     buffer_.clear();
@@ -395,6 +402,7 @@ void LiveConnection::begin(wire::AttachMode mode) {
     try {
         endpoint_ = session::posix::prepare_endpoint(endpoint_);
         request_ = {.mode = mode, .fingerprint = fingerprint_, .expected = {}};
+        request_.hyperlinks = true;
         if (mode == wire::AttachMode::reconnect) {
             const auto saved = session::read_descriptor(endpoint_, fingerprint_);
             if (!saved) {
@@ -424,6 +432,7 @@ void LiveConnection::begin(wire::AttachMode mode) {
 }
 
 void LiveConnection::invalidateHistory() {
+    deferred_history_.reset();
     if (outstanding_history_request_)
         rememberCanceledHistoryRequest(*outstanding_history_request_);
     history_timeout_.stop();
@@ -438,6 +447,7 @@ void LiveConnection::rememberCanceledHistoryRequest(quint64 request_id) {
 }
 
 void LiveConnection::cancelHistoryRequest() {
+    deferred_history_.reset();
     if (outstanding_history_request_) {
         rememberCanceledHistoryRequest(*outstanding_history_request_);
         outstanding_history_request_.reset();
@@ -541,7 +551,8 @@ void LiveConnection::sendResize(session::TerminalSize size) {
     QByteArray bytes;
     QDataStream out(&bytes, QIODevice::WriteOnly);
     out << quint16(size.columns) << quint16(size.rows);
-    send(wire::Kind::resize, bytes);
+    if (send(wire::Kind::resize, bytes))
+        pending_resize_ = size != shown_size_ ? std::optional(size) : std::nullopt;
 }
 
 void LiveConnection::claimSize() {
@@ -580,10 +591,20 @@ void LiveConnection::requestHistory(wire::HistoryDirection direction, quint64 re
     outstanding_history_request_ = request_id;
     document_.setHistoryRequestId(request_id);
     history_timeout_.start();
-    if (!send(wire::Kind::history_request,
-              wire::encode_history_request({request_id, reference, direction}))) {
+    const wire::HistoryRequest request{request_id, reference, direction};
+    if (pending_resize_) {
+        deferred_history_ = request;
+        return;
+    }
+    queueHistoryRequest(request);
+}
+void LiveConnection::queueHistoryRequest(const wire::HistoryRequest& request) {
+    // The frozen screen must match the size the service used for its archive.
+    document_.captureHistoryScreen();
+    if (!send(wire::Kind::history_request, wire::encode_history_request(request))) {
         history_timeout_.stop();
         outstanding_history_request_.reset();
+        deferred_history_.reset();
         document_.setHistoryRequestId(0);
         document_.failHistoryRequest(
             QStringLiteral("History request could not be queued; try again."));
@@ -626,6 +647,14 @@ void LiveConnection::acceptSnapshot(wire::SnapshotEnvelope message) {
          {QStringLiteral("publish_ns"), QVariant::fromValue(message.timing.publish_ns)}});
     // Decoded when a view shows it (most of a millisecond for a whole screen).
     document_.offerSnapshot(std::move(message.encoded));
+    if (pending_resize_ == shown_size_) {
+        pending_resize_.reset();
+        if (deferred_history_) {
+            const auto request = *deferred_history_;
+            deferred_history_.reset();
+            queueHistoryRequest(request);
+        }
+    }
     if (initial)
         persistIdentity();
 }
@@ -734,6 +763,23 @@ void LiveConnection::handle(const wire::Frame& frame) {
         return;
     case wire::Kind::status: {
         const auto status = wire::decode_status(frame.payload);
+        // Older v6 services reject the optional attach-mode bit before
+        // activating a client. Retry that handshake once with the same
+        // fingerprint and expected identity, without requesting link metadata.
+        if (!attachment_ && request_.hyperlinks && status.code == wire::StatusCode::rejected &&
+            status.message == QStringLiteral("Invalid local session message")) {
+            request_.hyperlinks = false;
+            legacy_link_retry_ = true;
+            connected_ = false;
+            handshake_.stop();
+            disconnect(socket_.get(), nullptr, this, nullptr);
+            socket_->abort();
+            QTimer::singleShot(0, this, [this] {
+                legacy_link_retry_ = false;
+                connectSocket();
+            });
+            return;
+        }
         fail(status.message, status.code);
         return;
     }
@@ -746,7 +792,7 @@ void LiveConnection::receive() {
         buffer_ += socket_->readAll();
         wire::Frame frame;
         qsizetype consumed{};
-        while (!failed_ && wire::take_frame(buffer_, consumed, frame))
+        while (!failed_ && !legacy_link_retry_ && wire::take_frame(buffer_, consumed, frame))
             handle(frame);
         if (consumed != 0)
             buffer_.remove(0, consumed);

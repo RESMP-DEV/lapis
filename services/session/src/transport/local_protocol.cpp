@@ -2,6 +2,7 @@
 #include "wire_bytes.hpp"
 #include <QDataStream>
 #include <QIODevice>
+#include <QStringConverter>
 #include <QUuid>
 #include <limits>
 #include <stdexcept>
@@ -12,6 +13,24 @@ namespace {
 void check(bool valid) {
     if (!valid)
         throw std::runtime_error("Invalid local session message");
+}
+constexpr quint32 link_extension = 0x4c4e4b31U; // LNK1
+void validate_links(const TerminalSnapshot& snapshot) {
+    check(snapshot.hyperlinks.size() <= max_hyperlink_spans);
+    std::size_t end = 0;
+    std::size_t bytes = 0;
+    for (const auto& link : snapshot.hyperlinks) {
+        check(link.first_cell >= end && link.first_cell < snapshot.cells.size() &&
+              link.cell_count > 0 && link.cell_count <= snapshot.cells.size() - link.first_cell);
+        check(!link.uri.empty() && link.uri.size() <= max_hyperlink_uri_bytes &&
+              link.uri.size() <= max_hyperlink_bytes - bytes);
+        QStringDecoder decoder(QStringDecoder::Utf8, QStringConverter::Flag::Stateless);
+        static_cast<void>(QString(
+            decoder(QByteArrayView(link.uri.data(), static_cast<qsizetype>(link.uri.size())))));
+        check(!decoder.hasError());
+        bytes += link.uri.size();
+        end = static_cast<std::size_t>(link.first_cell) + link.cell_count;
+    }
 }
 void write_color(QDataStream& out, TerminalColor color) {
     out << static_cast<quint8>(color.kind) << static_cast<quint32>(color.value);
@@ -63,7 +82,7 @@ QByteArray encode_attach(const AttachRequest& request) {
     QByteArray result;
     append_quint32(result, version);
     result += request.fingerprint;
-    result.append(static_cast<char>(mode));
+    result.append(static_cast<char>(mode | (request.hyperlinks ? 0x80U : 0U)));
     result += expected.session_id;
     result += expected.epoch;
     return result;
@@ -74,7 +93,9 @@ AttachRequest decode_attach(const QByteArray& payload) {
     check(read_quint32(cursor) == version);
     AttachRequest result;
     result.fingerprint = raw_bytes(cursor, 32);
-    const auto mode = *cursor++;
+    const auto flags = *cursor++;
+    result.hyperlinks = (flags & 0x80U) != 0;
+    const auto mode = flags & 0x7fU;
     check(mode <= static_cast<quint8>(AttachMode::join));
     result.mode = static_cast<AttachMode>(mode);
     result.expected.session_id = raw_bytes(cursor, 16);
@@ -114,14 +135,14 @@ Hello decode_hello(const QByteArray& payload) {
           cursor == reinterpret_cast<const unsigned char*>(payload.constData()) + payload.size());
     return result;
 }
-QByteArray encode_snapshot_message(const SnapshotMessage& message) {
+QByteArray encode_snapshot_message(const SnapshotMessage& message, bool hyperlinks) {
     check(message.sequence != 0);
     QByteArray result = encode_attachment(message.attachment);
     append_quint64(result, message.sequence);
     append_quint64(result, message.timing.pty_read_ns);
     append_quint64(result, message.timing.parse_end_ns);
     append_quint64(result, message.timing.publish_ns);
-    result += encode_snapshot(message.snapshot);
+    result += encode_snapshot(message.snapshot, hyperlinks);
     return result;
 }
 SnapshotMessage decode_snapshot_message(const QByteArray& payload) {
@@ -175,7 +196,7 @@ HistoryRequest decode_history_request(const QByteArray& payload) {
     static_cast<void>(encode_history_request(result));
     return result;
 }
-QByteArray encode_history_reply(const HistoryReply& reply) {
+QByteArray encode_history_reply(const HistoryReply& reply, bool hyperlinks) {
     check(reply.request_id != 0 && (reply.snapshot.has_value() == (reply.page_id != 0)));
     const auto message = reply.message.toUtf8();
     check(message.size() <= 4096);
@@ -185,7 +206,7 @@ QByteArray encode_history_reply(const HistoryReply& reply) {
     append_quint32(bytes, static_cast<quint32>(message.size()));
     bytes += message;
     if (reply.snapshot)
-        bytes += encode_snapshot(*reply.snapshot);
+        bytes += encode_snapshot(*reply.snapshot, hyperlinks);
     check(bytes.size() + 1 <= max_frame_bytes);
     return bytes;
 }
@@ -323,7 +344,7 @@ Wheel decode_wheel(const QByteArray& payload) {
     return wheel;
 }
 
-QByteArray encode_snapshot(const TerminalSnapshot& s) {
+QByteArray encode_snapshot(const TerminalSnapshot& s, bool hyperlinks) {
     check(s.cells.size() <= max_cells && s.graphemes.size() <= max_codepoints);
     check(static_cast<std::size_t>(s.size.columns) * s.size.rows == s.cells.size());
     QByteArray bytes;
@@ -348,6 +369,15 @@ QByteArray encode_snapshot(const TerminalSnapshot& s) {
         write_color(out, cell.style.background);
         write_color(out, cell.style.underline_color);
         out << quint8(cell.style.underline) << style_flags(cell.style);
+    }
+    if (hyperlinks && !s.hyperlinks.empty()) {
+        validate_links(s);
+        out << link_extension << quint32(s.hyperlinks.size());
+        for (const auto& link : s.hyperlinks) {
+            out << quint32(link.first_cell) << quint32(link.cell_count) << quint32(link.uri.size());
+            check(out.writeRawData(link.uri.data(), static_cast<qint64>(link.uri.size())) ==
+                  static_cast<qint64>(link.uri.size()));
+        }
     }
     check(out.status() == QDataStream::Ok);
     return bytes;
@@ -421,6 +451,26 @@ TerminalSnapshot decode_snapshot(const QByteArray& bytes) {
         cell.style.strikethrough = (flags & 64U) != 0;
         cell.style.overline = (flags & 128U) != 0;
         s.cells.push_back(cell);
+    }
+    if (!in.atEnd()) {
+        quint32 tag{}, links{};
+        in >> tag >> links;
+        check(in.status() == QDataStream::Ok && tag == link_extension && links > 0 &&
+              links <= max_hyperlink_spans);
+        std::size_t bytes_read = 0;
+        for (quint32 i = 0; i < links; ++i) {
+            TerminalHyperlink link;
+            quint32 length{};
+            in >> link.first_cell >> link.cell_count >> length;
+            check(in.status() == QDataStream::Ok && length > 0 &&
+                  length <= max_hyperlink_uri_bytes && length <= max_hyperlink_bytes - bytes_read &&
+                  in.device()->bytesAvailable() >= length);
+            link.uri.resize(length);
+            check(in.readRawData(link.uri.data(), length) == length);
+            bytes_read += length;
+            s.hyperlinks.push_back(std::move(link));
+        }
+        validate_links(s);
     }
     check(in.status() == QDataStream::Ok && in.atEnd());
     return s;

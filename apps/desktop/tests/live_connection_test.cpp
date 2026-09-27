@@ -208,6 +208,10 @@ void history_browsing_and_input_gating() {
             "Return to live did not restore the retained live snapshot");
     const auto resize = peer.read();
     require(resize.kind == wire::Kind::resize, "Deferred desired size was not restored");
+    f.terminal.resize({8, 4});
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 3, f.terminal.snapshot()}));
+    until([&] { return f.document.snapshot().size.rows == 4; });
     // A reply to a request that returning to live canceled is ignored.
     f.document.olderHistory();
     const auto second = f.historyRequest(peer);
@@ -532,6 +536,102 @@ void legacy_server() {
     until([&] { return f.document.connectionState() == QStringLiteral("disconnected"); });
     require(!f.document.inputReady(), "Legacy server enabled input");
 }
+void history_waits_for_resize_and_cancels() {
+    Fixture f;
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    f.document.resizeTerminal({4, 3});
+    require(peer.read().kind == wire::Kind::resize, "Resize was not sent");
+    f.document.scrollHistory(1);
+    settle();
+    require(f.document.historyRequestPending() && peer.socket->bytesAvailable() == 0,
+            "History used the pre-resize screen");
+    f.terminal.resize({4, 3});
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 2, f.terminal.snapshot()}));
+    const auto request = f.historyRequest(peer);
+    lapis::session::Terminal archive({4, 1});
+    archive.feed("old");
+    f.historyReply(peer, request.request_id, 1, archive.snapshot());
+    until([&] { return !f.document.historyRequestPending(); });
+    require(f.document.historyActive() && f.document.snapshot().size.rows == 3,
+            "History froze an obsolete screen after resize acknowledgement");
+
+    f.document.returnToLive();
+    f.document.sendText("x"); // then resize again
+    static_cast<void>(peer.read());
+    static_cast<void>(peer.read());
+    f.document.resizeTerminal({4, 4});
+    require(peer.read().kind == wire::Kind::resize, "Second resize was not sent");
+    f.document.scrollHistory(1);
+    require(f.document.historyRequestPending(), "History was not deferred");
+    // The surface returns to live before forwarding a typed key.
+    f.document.returnToLive();
+    f.document.sendText("y");
+    f.terminal.resize({4, 4});
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 3, f.terminal.snapshot()}));
+    settle();
+    peer.bytes += peer.socket->readAll();
+    wire::Frame frame;
+    while (wire::take_frame(peer.bytes, frame))
+        require(frame.kind != wire::Kind::history_request, "Canceled deferred history was sent");
+    require(!f.document.historyActive() && !f.document.historyRequestPending(),
+            "Typing left deferred history active");
+}
+
+void hyperlink_capability_falls_back_once() {
+    Fixture f;
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto first = f.accept();
+    const auto requested = f.request(first);
+    require(requested.hyperlinks, "New desktop did not request hyperlink metadata");
+    first.send(wire::Kind::status,
+               wire::encode_status(
+                   {wire::StatusCode::rejected, QStringLiteral("Invalid local session message")}));
+    auto legacy = f.accept();
+    const auto retried = f.request(legacy);
+    require(!retried.hyperlinks && retried.fingerprint == requested.fingerprint &&
+                retried.mode == requested.mode && retried.expected == requested.expected,
+            "Legacy retry changed identity or retained the unsupported capability");
+    require(!f.document.inputReady(), "Retry enabled input before synchronization");
+    f.hello(legacy);
+    f.screen(legacy);
+    require(f.document.inputReady(), "Compatible legacy service did not synchronize");
+
+    Fixture unsupported;
+    unsupported.document.startLive(unsupported.endpoint, unsupported.launch,
+                                   wire::AttachMode::discover);
+    auto unsupported_first = unsupported.accept();
+    static_cast<void>(unsupported.request(unsupported_first));
+    unsupported_first.send(wire::Kind::status,
+                           wire::encode_status({wire::StatusCode::rejected,
+                                                QStringLiteral("Invalid local session message")}));
+    auto unsupported_retry = unsupported.accept();
+    require(!unsupported.request(unsupported_retry).hyperlinks,
+            "Second attempt retained capability");
+    unsupported_retry.send(wire::Kind::status,
+                           wire::encode_status({wire::StatusCode::rejected,
+                                                QStringLiteral("Invalid local session message")}));
+    until([&] { return unsupported.document.connectionState() == QStringLiteral("disconnected"); });
+    settle();
+    require(!unsupported.server.hasPendingConnections(), "Unsupported service retried repeatedly");
+
+    Fixture rejected;
+    rejected.document.startLive(rejected.endpoint, rejected.launch, wire::AttachMode::discover);
+    auto denied = rejected.accept();
+    static_cast<void>(rejected.request(denied));
+    denied.send(wire::Kind::status,
+                wire::encode_status(
+                    {wire::StatusCode::replaced, QStringLiteral("Session identity mismatch")}));
+    until([&] { return rejected.document.connectionState() == QStringLiteral("replaced"); });
+    settle();
+    require(!rejected.server.hasPendingConnections() && !rejected.document.inputReady(),
+            "Identity rejection was bypassed by a capability retry");
+}
 } // namespace
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
@@ -545,6 +645,8 @@ int main(int argc, char** argv) {
         attention_routing_and_reconnect();
         lost_before_screen();
         legacy_server();
+        history_waits_for_resize_and_cancels();
+        hyperlink_capability_falls_back_once();
         std::cout << "Identity, initial-screen gating, history paging/cancellation, explicit "
                      "reconnect/discovery, stale snapshot and legacy rejection passed\n";
         return 0;

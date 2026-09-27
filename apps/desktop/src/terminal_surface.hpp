@@ -34,7 +34,8 @@ struct TerminalMatch {
     int last_column{};
     bool operator==(const TerminalMatch&) const = default;
 };
-// What a cell is part of that Command-click opens: an http(s) link, or text
+// What a cell is part of that Command-click opens: an OSC 8 destination, a
+// visible http(s)/www link, or text
 // that may name a file or folder (checked with resolve_terminal_path), with
 // the cells it covers on each row it wraps over.
 struct TerminalLink {
@@ -84,6 +85,7 @@ class TerminalSurface : public QQuickItem {
     // Text chosen by dragging or double-clicking; copied with Command-C
     // (Control-Shift-C on Linux) and cleared by typing.
     Q_PROPERTY(QString selectedText READ selectedText NOTIFY selectionChanged)
+    Q_PROPERTY(QString hoveredLink READ hoveredLink NOTIFY hoveredLinkChanged)
   public:
     explicit TerminalSurface(QQuickItem* parent = nullptr);
     // Text as if pasted (bracketed when the agent asked for it): what files

@@ -469,6 +469,64 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
         finally:
             service.stop()
 
+    def hyperlink_capability():
+        # The legacy decoder stays strict. A capable joined view receives the
+        # same text plus OSC 8 destinations without replacing the old client.
+        code = "import sys; print('\\x1b]8;;https://example.com/target\\x1b\\\\label\\x1b]8;;\\x1b\\\\', flush=True); sys.stdin.readline()"
+        service = Service(
+            binary, runtime, artifacts, "links", program, ["-u", "-c", code], runtime
+        )
+        try:
+            with service.connect() as legacy:
+                legacy.snapshot(lambda snap: "label" in snap["text"])
+                with WireClient(service.endpoint) as capable:
+                    request = bytearray(
+                        attach_payload(program, service.arguments, runtime)
+                    )
+                    request[36] = 0x83  # join, requesting hyperlink metadata
+                    capable.send(ATTACH, request)
+                    require(
+                        capable.hello() == service.child_pid,
+                        "Joined view replaced the child",
+                    )
+                    kind, data = capable.receive()
+                    require(
+                        kind == SNAPSHOT and data[:40] == capable.attachment,
+                        "Wrong joined screen",
+                    )
+                    snapshot = data[72:]
+                    points = struct.unpack_from(">I", snapshot, 1085)[0]
+                    offset = 1089 + points * 4
+                    cells = struct.unpack_from(">I", snapshot, offset)[0]
+                    end = offset + 4 + cells * 27
+                    require(
+                        "label" in decode_snapshot(snapshot[:end])["text"],
+                        "Joined text was lost",
+                    )
+                    marker, spans, first, count, length = struct.unpack_from(
+                        ">IIIII", snapshot, end
+                    )
+                    require(
+                        (marker, spans, first, count) == (0x4C4E4B31, 1, 0, 5)
+                        and snapshot[end + 20 :] == b"https://example.com/target"
+                        and length == len(snapshot[end + 20 :]),
+                        "OSC 8 destination was lost between PTY and joined client",
+                    )
+                    capable.send(READY, capable.attachment + data[40:48])
+                    # A resize forces another snapshot to the legacy attachment;
+                    # its strict decoder still requires the exact old format.
+                    legacy.send(RESIZE, struct.pack(">HH", 79, 24))
+                    legacy.snapshot(
+                        lambda snap: snap["columns"] == 79 and "label" in snap["text"]
+                    )
+            return {
+                "legacy_and_capable_views": True,
+                "same_child": True,
+                "osc8_from_real_pty": True,
+            }
+        finally:
+            service.stop()
+
     def literal_resize_exit():
         with session("literal") as service, service.connect() as client:
             argv_hash = hashlib.sha256(
@@ -1198,6 +1256,11 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             service.stop()
 
     entries = [
+        (
+            "OSC 8 metadata negotiates independently for legacy and joined clients",
+            hyperlink_capability,
+            None,
+        ),
         (
             "invalid resize preserves geometry and signal exit status",
             invalid_resize_and_signal,

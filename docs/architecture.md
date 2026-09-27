@@ -331,8 +331,9 @@ Ghostty integration under `src/terminal/`, and behavioral cases under
   The service adds per-session/shared-root disk quotas and a bounded I/O queue;
   these remain separate from allocator and process RSS accounting.
 - The verified input subset is navigation key presses with modifiers and pure text
-  paste encoding. Clipboard access, full text/key protocols, mouse, IME, selection,
-  hyperlinks and image presentation are not exposed. Image storage and external
+  paste encoding. Clipboard access, full text/key protocols, mouse, IME, selection
+  and image presentation are not exposed by this engine boundary. OSC 8 hyperlink
+  spans are exposed as bounded snapshot metadata. Image storage and external
   image media are disabled. A terminal reply never writes directly to a PTY.
 
 This is an in-process boundary, not an IPC schema. The normal CMake build always
@@ -1322,7 +1323,7 @@ with no service, protocol or dependency change:
   connection, dash ended, hollow box opening or unknown. The selected tab keeps
   its text label.
 - [x] One configurable fixed-width family. `terminalFont` in `lapis.json`
-  (`family`, `size` 10–32 pixels, default 16) is edited only in Appearance and
+  (`family`, `size` 10–32 pixels, default 14) is edited only in Appearance and
   applies live. The GUI resolves it; a missing or proportional family falls
   back to the platform fixed-width font and Appearance says so. The terminal,
   paths, shortcut keycaps, status labels and counts share the resolved family;
@@ -1330,7 +1331,7 @@ with no service, protocol or dependency change:
 - [x] Tactile controls. Commands separates keyboard selection (filled row with a
   focus edge) from pointer hover (lighter wash), and shows shortcuts as
   fixed-width keycaps. Appearance uses one hover/press/selection treatment, a
-  font family picker previewed in each face, and a size stepper. Feedback is
+  font family picker previewed in each face, direct numeric size entry, and a size stepper. Feedback is
   color only, within the theme's motion duration; reduced motion and
   zero-duration themes change instantly. Dialogs open without an enter
   transition, so typing is never gated. The sidebar remains one discrete resize.
@@ -1340,6 +1341,36 @@ with no service, protocol or dependency change:
   pixels by brightness (`smoothstep(0.16, 0.34, brightest)`), so it can replace
   intentional dark terminal colors, not just the background. This is a concrete
   fidelity concern from source inspection, not a measured rendering result.
+
+Terminal hyperlinks retain OSC 8 destinations as ordered, nonoverlapping cell
+spans, separate from glyphs and styles. Ghostty supplies live and history links;
+archive slicing and desktop history composition clip and rebase their spans.
+Snapshots bound destinations to 4 KiB each, 1,024 spans and 64 KiB total URI bytes;
+excess or invalid UTF-8 metadata is omitted without dropping terminal text.
+Command-hover shows the destination and Command-click opens HTTP(S) or a local
+file URI. Visible HTTP(S), `www.` and existing file paths remain discoverable
+without OSC 8. Unsupported explicit URI schemes do not fall back to opening the
+label. Remote session paths and nonlocal file authorities cannot identify a
+local file. Opening a file at a reported line still needs an editor integration.
+
+The v6 attach mode byte reserves bit `0x80` for hyperlink metadata. Legacy
+attachments retain their exact snapshot format; requesting clients receive an
+optional `LNK1` extension after the cells. Each attached or joined view negotiates
+independently. A new desktop retries once without that bit if an old service
+rejects the initial attachment as an invalid message before sending hello. The
+retry preserves the launch fingerprint and expected identity and never replaces
+or restarts the agent. Other failures remain failures. Labeled links require a
+service built with this support. Disk history keeps the extension inside existing
+checksummed records: new services read old archives, but downgrading the service
+cannot read newly archived pages containing links. Existing legacy clients of a
+new service receive those pages with metadata removed.
+
+History browsing waits for any in-flight resize snapshot before freezing its
+live-screen boundary; typing cancels that deferred request. Resize overlap can
+span several archived pages, so the history strip fetches missing rows for a
+plausible overlap and preserves the requested distance from the live screen.
+The desktop's focused-folder actions call the QML-exposed workspace lookup.
+These cases are covered by connection, history-strip and background UI checks.
 
 A font change rebuilds the retained terminal rows once and requests the new cell
 grid as one resize; a failed configuration save rolls back without applying the

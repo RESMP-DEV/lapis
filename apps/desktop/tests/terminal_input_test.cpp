@@ -2,10 +2,12 @@
 #include "session_descriptor.hpp"
 #include "transport/local_protocol.hpp"
 
+#include "link_receiver.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include <QClipboard>
 #include <QDataStream>
+#include <QDesktopServices>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -24,6 +26,7 @@
 #include <QSGRendererInterface>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QUrl>
 #include <QWheelEvent>
 #include <array>
 #include <atomic>
@@ -209,6 +212,9 @@ void input_contract(bool background) {
     window.setGeometry(100, 100, 640, 360);
     lapis::desktop::TerminalSurface surface(window.contentItem());
     surface.setSize(QSizeF(640, 360));
+    // These fixed-grid input fixtures do not implement service resize replies.
+    // Real resize/history ordering is exercised by the connection and UI cases.
+    surface.setHoldResize(true);
     surface.setDocument(&f.document);
     surface.setInteractive(true);
     f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
@@ -569,9 +575,12 @@ void command_links_open() {
     window.setGeometry(100, 100, 640, 360);
     lapis::desktop::TerminalSurface surface(window.contentItem());
     surface.setSize(QSizeF(640, 360));
+    // These fixed-grid input fixtures do not implement service resize replies.
+    // Real resize/history ordering is exercised by the connection and UI cases.
+    surface.setHoldResize(true);
     surface.setDocument(&f.document);
     surface.setInteractive(true);
-    surface.setOpensLinksForTesting(false);
+    LinkReceiver receiver;
     QStringList opened;
     QObject::connect(&surface, &lapis::desktop::TerminalSurface::linkOpened,
                      [&opened](const QString& target) { opened.append(target); });
@@ -619,12 +628,13 @@ void command_links_open() {
     QCoreApplication::sendEvent(&surface, &release);
     require(surface.hoveredLink().isEmpty(), "Releasing Command left the link underlined");
     const auto click = [&](QPointF position) {
-        QMouseEvent press(QEvent::MouseButtonPress, position, surface.mapToScene(position),
-                          surface.mapToGlobal(position), Qt::LeftButton, Qt::LeftButton, held);
-        QCoreApplication::sendEvent(&surface, &press);
-        QMouseEvent up(QEvent::MouseButtonRelease, position, surface.mapToScene(position),
-                       surface.mapToGlobal(position), Qt::LeftButton, Qt::NoButton, held);
-        QCoreApplication::sendEvent(&surface, &up);
+        const auto scene = surface.mapToScene(position);
+        QMouseEvent press(QEvent::MouseButtonPress, scene, scene, surface.mapToGlobal(position),
+                          Qt::LeftButton, Qt::LeftButton, held);
+        QCoreApplication::sendEvent(&window, &press);
+        QMouseEvent up(QEvent::MouseButtonRelease, scene, scene, surface.mapToGlobal(position),
+                       Qt::LeftButton, Qt::NoButton, held);
+        QCoreApplication::sendEvent(&window, &up);
     };
     click(at(7));
     click(at(20));
@@ -632,6 +642,31 @@ void command_links_open() {
     require(opened.size() == 2 && same(opened[0], image.fileName()) &&
                 opened[1] == QStringLiteral("https://example.com/a"),
             "Command-click did not open the file and the link, and only those");
+    require(receiver.urls.size() == 2 && receiver.urls[0].isLocalFile() &&
+                same(receiver.urls[0].toLocalFile(), image.fileName()),
+            "Command-click did not reach the OS URL dispatcher");
+    // Real OSC 8 output, including a file URI whose visible label names no path.
+    lapis::session::Terminal labeled({40, 4});
+    const auto file_uri = QUrl::fromLocalFile(image.fileName()).toEncoded();
+    labeled.feed("\x1b]8;;https://example.com/destination\x1b\\docs\x1b]8;;\x1b\\ ");
+    labeled.feed(std::string("\x1b]8;;") + file_uri.toStdString() + "\x1b\\image\x1b]8;;\x1b\\ ");
+    labeled.feed(
+        "www.example.com\r\n\x1b]8;;javascript:alert(1)\x1b\\https://example.com\x1b]8;;\x1b\\");
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 3, labeled.snapshot()}));
+    until([&] { return f.document.snapshot().hyperlinks.size() == 3; });
+    hover(at(1), held);
+    require(surface.hoveredLink() == QStringLiteral("https://example.com/destination"),
+            "Labeled link hover did not expose its actual destination");
+    click(at(1));
+    click(at(7));
+    click(at(14));
+    click(surface.cellRect(3, 1).center());
+    require(opened.size() == 5 && receiver.urls.size() == 5 &&
+                opened[2] == QStringLiteral("https://example.com/destination") &&
+                same(opened[3], image.fileName()) &&
+                opened[4] == QStringLiteral("https://www.example.com"),
+            "Labeled/web/file links did not dispatch, or an unsupported target dispatched");
     require(text_frames(peer).isEmpty(), "Command-click sent input to the agent");
 }
 // Dragging selects screen text and double-clicking selects a word. The copy
@@ -643,6 +678,9 @@ void selection_and_scroll() {
     window.setGeometry(100, 100, 640, 360);
     lapis::desktop::TerminalSurface surface(window.contentItem());
     surface.setSize(QSizeF(640, 360));
+    // These fixed-grid input fixtures do not implement service resize replies.
+    // Real resize/history ordering is exercised by the connection and UI cases.
+    surface.setHoldResize(true);
     surface.setDocument(&f.document);
     surface.setInteractive(true);
     f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
