@@ -91,7 +91,7 @@ struct AgentListView: View {
             ContentUnavailableView {
                 Label("Connect to your Mac", systemImage: "desktopcomputer")
             } description: {
-                Text("Enter the Mac's Tailscale name in Settings.")
+                Text("Enter the Mac's Tailscale name or ZeroTier address in Settings.")
             } actions: {
                 Button("Settings") { showingSettings = true }
             }
