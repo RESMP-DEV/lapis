@@ -1,0 +1,104 @@
+{
+  "schema": "lapis.pr19-background-review/1",
+  "recorded_at": "2026-09-27T07:05:16.805452+00:00",
+  "source_revision": "a37d537a4202503e1936ba1679bf989ac7ae0a8f",
+  "platform": "macOS",
+  "source_sha256": {
+    "apps/desktop/src/alerts.cpp": "ee6969666bbcbcf5de73dc35966017330bf62dbbd32bb8b99e9e2c4875c59e57",
+    "apps/desktop/src/terminal_surface.cpp": "2e39c5b71301a697c6e2096fa11e8cbbdf204ed0bc6ee792e71dea5f97cc266d",
+    "apps/desktop/src/terminal_surface.hpp": "9dbbe11592c274430a12e0591a7efeb3749e573e4a943ac2a6dfed6f9ba44d43",
+    "apps/desktop/tests/terminal_input_test.cpp": "5fe96f5d18a489acb1d84be92a650f435b4b6a04e97316778279af0b62082a25",
+    "apps/desktop/tests/workspace_test.cpp": "5efc5764576888258359e403d729af3f5ae3a44898331faaf83324315b5a7e9b",
+    "apps/desktop/tests/ui_preview_test.cpp": "c1be7d204f7c146c1a1d5a9c3613ecf4611ed7b7699603cf7b17a616ed587bb0",
+    "apps/remote/lapis_remote.py": "57be371aa6818b2579661d3faaee34d35091abdded25f3da48576dba3c15987c",
+    "scripts/tests/test_lapis_remote.py": "b2768b3a9ce8309b50f80cc53db298d033d558bc92d01f74c4b1d89399c3396a"
+  },
+  "background_review": {
+    "command": "python3 scripts/lapis.py ui-review --json",
+    "passed": true,
+    "scope": {
+      "mode": "background",
+      "qt_platform": "offscreen",
+      "scene_graph": "software",
+      "native_gpu_exercised": false,
+      "native_os_input_exercised": false,
+      "excludes": [
+        "native GPU presentation",
+        "macOS AppKit keyboard/input routing",
+        "system IME",
+        "system pasteboard"
+      ]
+    },
+    "checks": [
+      {
+        "name": "ui-full-background",
+        "passed": true,
+        "exit_code": 0,
+        "seconds": 18.632,
+        "capture_count": 30
+      },
+      {
+        "name": "ui-shortcuts-background",
+        "passed": true,
+        "exit_code": 0,
+        "seconds": 2.188,
+        "capture_count": 0
+      },
+      {
+        "name": "terminal-input-background",
+        "passed": true,
+        "exit_code": 0,
+        "seconds": 4.4,
+        "capture_count": 0
+      }
+    ]
+  },
+  "review_findings": [
+    {
+      "finding": "Empty notification subject for terminal-mode sessions",
+      "disposition": "fixed",
+      "change": "Use SessionPreview.agentName(), including its Agent fallback. Existing notifier test now checks the empty harness case."
+    },
+    {
+      "finding": "Wheel remainder crosses primary and alternate screen units",
+      "disposition": "fixed",
+      "change": "Reset wheel and pixel remainders on mode or document changes. Protocol fixture covers both transitions with partial deltas and verifies complete rows/notches still reach the target.",
+      "before": "The new background regression failed with A partial wheel angle crossed screen modes.",
+      "after": "Background terminal-input fixture passes."
+    },
+    {
+      "finding": "Malformed live snapshots close SSE without a status event",
+      "disposition": "fixed",
+      "change": "Catch GatewayError across snapshot acceptance, rendering and history delivery, then emit disconnected status.",
+      "before": "All three malformed-stream subcases raised an uncaught GatewayError.",
+      "after": "Invalid flags, truncated header and malformed cell payload retain the initial frame and emit one disconnected status."
+    },
+    {
+      "finding": "Missing link column bounds",
+      "disposition": "defensive preference",
+      "evidence": "add_link is private; terminal_link_at, joined_rows and covered produce cell spans within the validated snapshot grid. No external span input or reachable invalid-column producer was identified."
+    },
+    {
+      "finding": "Queued frame callback after receiver destruction",
+      "disposition": "false positive",
+      "evidence": "The connection uses this as its QObject context. A local Qt 6.11.2 QCoreApplication probe queued the same signal to live and deleted receivers, then processed posted events: live_callbacks=1, destroyed_callbacks=0. No GUI opened."
+    },
+    {
+      "finding": "Reset output throttle on every publication",
+      "disposition": "conflicts with current contract",
+      "evidence": "frameInterval explicitly bounds redraws caused by output; since_frame_ records the last throttled frame. Most cited geometry/font/link/IME publications use publishFrame(false) and deliberately retain the output timing reference. No scheduling change was retained."
+    }
+  ],
+  "checks": {
+    "quality_passed": true,
+    "python_tests": 186,
+    "workspace_ctest": "passed",
+    "changed_cpp_clang_tidy": "5 affected translation units passed",
+    "clang_format": "passed",
+    "ios": "testTakenElsewhereThenReopened and testSyncedWithTheMac passed in the headless simulator; Mac client stayed attached and saw phone input"
+  },
+  "visual_review": "Inspected the captured history view: row text, full-height scrubber and Live action are present and within the terminal geometry.",
+  "integration": "Merged background review tooling from PR18, preserving PR19 history UI tests. Resolved the shared test entry-point conflict before the passing assembled run.",
+  "reuse": "Native GPU/IME, sanitizer, service and other iPhone evidence remain at their original revisions in pr19-review-repairs.json. No native desktop focus or pointer injection was used for this follow-up.",
+  "artifacts": "Per-run logs, JSON and 30 software PNGs under build/reports/ui-review/; no second fixture launch is needed for visual review."
+}
