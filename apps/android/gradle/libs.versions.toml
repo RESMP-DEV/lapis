@@ -1,0 +1,49 @@
+# Pinned dependency catalog for the lapis Android companion app.
+# The design spec (docs/superpowers/specs/2026-09-27-android-client-design.md)
+# allows exactly: OkHttp, kotlinx.serialization, kotlinx.coroutines, Jetpack
+# DataStore, Compose (+ material3-window-size-class). No DI framework, no
+# Retrofit. activity-compose and lifecycle are the canonical androidx
+# companions of that stack.
+
+[versions]
+# AGP 9.4.1 is the current stable line; the 2026 androidx stable set
+# (compose 1.12, core-ktx 1.19) requires AGP 9.1+ and compileSdk 37.
+# The standalone Kotlin Android plugin (the spec pins Kotlin explicitly in
+# this catalog) runs with it through android.newDsl=false in gradle.properties.
+agp = "9.4.1"
+kotlin = "2.3.21"
+coreKtx = "1.19.1"
+activityCompose = "1.13.0"
+lifecycle = "2.11.0"
+composeBom = "2026.09.00"
+datastore = "1.2.1"
+okhttp = "5.5.0"
+coroutines = "1.11.0"
+serializationJson = "1.9.0"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
+androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+compose-ui = { group = "androidx.compose.ui", name = "ui" }
+compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+# "class" is a reserved token in version-catalog aliases, hence the collapsed name.
+compose-material3-windowsizeclass = { group = "androidx.compose.material3", name = "material3-window-size-class" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serializationJson" }
+# kotlin-test-junit: on Android unit-test source sets the bare kotlin-test
+# marker does not resolve the JUnit4 engine; name the variant explicitly.
+kotlin-test = { group = "org.jetbrains.kotlin", name = "kotlin-test-junit", version.ref = "kotlin" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+# Kotlin compilation comes from AGP 9's built-in Kotlin; only its compiler
+# plugins are applied as standalone plugins.
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

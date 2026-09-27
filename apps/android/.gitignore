@@ -1,0 +1,13 @@
+# Gradle
+.gradle/
+build/
+local.properties
+
+# IDE
+*.iml
+.idea/
+*.ipr
+*.iws
+
+# Kotlin/Native and misc build output
+.kotlin/
