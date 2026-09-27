@@ -1053,7 +1053,7 @@ void TerminalSurface::updateLink(QPointF position, Qt::KeyboardModifiers modifie
     const auto cell = cellAt(position);
     auto link = terminal_link_at(document_->snapshot(), cell.x(), cell.y());
     const auto target = link ? linkTarget(*link) : QString();
-    if (target.isEmpty()) {
+    if (!link || target.isEmpty()) {
         clearLink();
         return;
     }
@@ -1100,7 +1100,7 @@ void TerminalSurface::mousePressEvent(QMouseEvent* event) {
         const auto cell = cellAt(event->position());
         const auto link = terminal_link_at(document_->snapshot(), cell.x(), cell.y());
         const auto target = link ? linkTarget(*link) : QString();
-        if (!target.isEmpty()) {
+        if (link && !target.isEmpty()) {
             QUrl url(target);
             if (link->kind == TerminalLink::Kind::path) {
                 const QFileInfo info(target);
