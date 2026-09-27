@@ -2371,6 +2371,18 @@ echoed in 28 ms and Claude Code in 32 to 37 ms, a 51 MB conversation included.
   refresh). Sessions keep the service they started with, so a running agent or
   side terminal has the service half of this once it restarts.
 
+The probe stops at lapis's frame, and typing still felt choppy. A Metal System
+Trace of the installed app while the user typed (74 keys, a listen-only tap
+recording only when keys went down) measured key to display at 70.7 ms p50,
+83.6 ms p90 and 180 ms at worst. About 36 ms came before lapis requested its
+frame, from sessions still on the old service. The rest came after it:
+a frame requested within 20 ms of the previous one reached the display in
+5.8 ms (p50), but one requested after 20 to 500 ms of quiet took 32 to 36 ms.
+The display idles down when nothing draws, and every echo follows a quiet
+spell. After a key press, `TerminalSurface` now asks for another frame each
+time one is swapped, for 600 ms, so the display is still at its full rate
+when the echo arrives; it stops after the pause (`terminal_input_test`).
+
 ### Following milestones
 
 With the two-session workspace assembled, the next qualification stages are
