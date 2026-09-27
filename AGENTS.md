@@ -117,25 +117,40 @@ Quality/maintenance tasks do not authorize feature wiring or resuming a tabled
 milestone. Review findings must distinguish defects from optional preferences;
 keep cleanup scoped and preserve other contributors' changes.
 
-Default test execution belongs on the Linux test host. Do not open test
-windows, post keyboard events, or change input sources on the user's Mac during
-ordinary development. A necessary macOS-specific acceptance pass must be explicitly
-scheduled with the user. Linux or headless results do not replace Apple-specific
-input/IME qualification. Until remote access and dependencies are verified,
-report testing as blocked rather than silently falling back to Mac GUI tests.
+## Test host selection
 
-The Linux test host's ssh name, route and checkout path are machine-local and
-are not recorded in this public repository; keep them in your own agent notes.
-Run `uv run --no-project python scripts/lapis.py linux-gui` in that checkout for the full
-software-rendered GUI check, or supply focused command arguments after `linux-gui`.
-The wrapper creates its own virtual display and window manager and does not use
-the shared physical GPU. Keep native GPU qualification separate.
+<test_host_selection>
 
-During edits in the configured Linux checkout, build the affected CMake target
-and run focused CTest cases with `--no-tests=error`. `lapis.py build` and bare
-`linux-gui` run the full validation gate, including all clang-tidy analyses;
-reserve those for integration checkpoints and handoff rather than every edit.
+macOS is the active target; Linux UI work is deferred. Use the current checkout
+for local builds, unit tests and background checks when it has the required
+capabilities. Never require a particular hostname, SSH alias, account or absolute
+checkout path. A remote machine is optional: use it only when selected by the
+operator or current session, and verify its checkout and dependencies first.
+An unavailable remote does not block suitable local checks.
 
+Use `python3 scripts/lapis.py ui-review` (or `just ui-review`) for routine UI
+reviews. It builds the required targets and runs workspace UI, shortcuts and
+terminal input with explicit offscreen/software modes, preserving the user's
+cursor, OS focus and system clipboard. It does not open the product application.
+Use `--json` for a machine-readable result; logs, software-rendered PNG captures
+and the receipt live under ignored `build/reports/ui-review/`. Inspect the saved
+captures for visual changes. This is the default review path during edits.
+
+Native desktop input, clipboard/input-source changes and foreground test windows
+require authorization for that interaction; reuse authorization already given in
+the session. Run those GUI checks serially. Background Qt/software results do not
+replace native macOS input/IME or GPU acceptance. Keep `lapis.py build`, native
+CTest entries and `lapis.py ui-check` for their documented integration and native
+qualification scope. Report the specific missing capability when a check cannot
+run; never substitute a background pass for failed native evidence.
+
+For other compiled checks, build the affected CMake target and run focused CTest
+expressions with `--no-tests=error`. Reserve the full static-analysis gate for
+integration and handoff. If Linux is explicitly selected, `lapis.py linux-gui`
+uses its own virtual display/window manager; keep that software-rendered evidence
+platform-scoped.
+
+</test_host_selection>
 
 ## Responsiveness and resource policy
 

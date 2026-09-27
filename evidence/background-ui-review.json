@@ -1,0 +1,62 @@
+{
+  "schema": "lapis.background-ui-review/1",
+  "recorded_at": "2026-09-27T07:03:42.525525+00:00",
+  "base_revision": "efc6d79fd780062181343b4867acad853d36f923",
+  "platform": "macOS",
+  "command": "python3 scripts/lapis.py ui-review --json",
+  "passed": true,
+  "scope": {
+    "mode": "background",
+    "qt_platform": "offscreen",
+    "scene_graph": "software",
+    "native_gpu_exercised": false,
+    "native_os_input_exercised": false,
+    "excludes": [
+      "native GPU presentation",
+      "macOS AppKit keyboard/input routing",
+      "system IME",
+      "system pasteboard"
+    ]
+  },
+  "source_sha256": {
+    "scripts/check_ui_review.py": "fafa78d9a0b70ba6f65ca3a329886db33e71acc3ff3a5e1c6cf52f644e318de9",
+    "scripts/check_cpp.py": "53d3f916130ec21b7cc8fda2922a9b91e80eadb4d0a48e21edd2ef519f10e5cc",
+    "scripts/lapis.py": "72a9b43791d7c1f58f4e74b00055ab85ddc13eeef038c69859b4dee81d841f91",
+    "scripts/tests/test_check_ui_review.py": "9f9722cbe779505ee95841d999313636510ec63747ffb770a5da14f60c27c774",
+    "scripts/tests/test_check_cpp.py": "67e64d0f70c39e3cc0449a610eae5b23a63cb51cd374786395b93e830dfdb5fc",
+    "apps/desktop/tests/ui_preview_test.cpp": "7851cca47aecf49a8c0308c8b2ffb3f4604c6b0fd30c70e5a927ef5616f39ce3"
+  },
+  "checks": [
+    {
+      "name": "ui-full-background",
+      "exit_code": 0,
+      "passed": true,
+      "seconds": 16.731,
+      "capture_count": 29
+    },
+    {
+      "name": "ui-shortcuts-background",
+      "exit_code": 0,
+      "passed": true,
+      "seconds": 2.778,
+      "capture_count": 0
+    },
+    {
+      "name": "terminal-input-background",
+      "exit_code": 0,
+      "passed": true,
+      "seconds": 2.641,
+      "capture_count": 0
+    }
+  ],
+  "quality": {
+    "passed": true,
+    "python_test_count": 179,
+    "tool_detector_gate": "passed",
+    "changed_cpp_clang_tidy": "passed"
+  },
+  "visual_review": "Inspected saved attention, appearance, command palette and new-agent captures; controls and layouts are present in the software-rendered fixture.",
+  "initial_failure": "The shortcut-only fixture returned success before printing its completion scope. The common success path now labels both full and shortcut-only runs; the assembled runner then passed.",
+  "reuse": "Existing native GPU/input and full desktop evidence in pr18-review-repairs.json remains scoped to its original inputs; this run adds background review tooling and does not refresh native qualification.",
+  "artifacts": "Private per-run JSON, logs and PNG files are generated under build/reports/ui-review/. Captures are produced during the existing full UI fixture, without a second GUI run."
+}

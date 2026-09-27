@@ -2302,13 +2302,14 @@ int main(int argc, char** argv) {
     });
     try {
         CHECK(background == (QGuiApplication::platformName() == QStringLiteral("offscreen")));
-        if (shortcuts_only)
-            return run_shortcut_focus_tests();
-        if (run_workspace_tests() != EXIT_SUCCESS || run_ui_tests() != EXIT_SUCCESS ||
-            run_diagnostics_reentrancy_test() != EXIT_SUCCESS ||
-            run_surface_tests(background) != EXIT_SUCCESS ||
-            run_attention_dialog_tests() != EXIT_SUCCESS ||
-            run_attention_ui_tests() != EXIT_SUCCESS || run_strip_ui_tests() != EXIT_SUCCESS)
+        if (shortcuts_only) {
+            if (run_shortcut_focus_tests() != EXIT_SUCCESS)
+                return EXIT_FAILURE;
+        } else if (run_workspace_tests() != EXIT_SUCCESS || run_ui_tests() != EXIT_SUCCESS ||
+                   run_diagnostics_reentrancy_test() != EXIT_SUCCESS ||
+                   run_surface_tests(background) != EXIT_SUCCESS ||
+                   run_attention_dialog_tests() != EXIT_SUCCESS ||
+                   run_attention_ui_tests() != EXIT_SUCCESS || run_strip_ui_tests() != EXIT_SUCCESS)
             return EXIT_FAILURE;
         std::cout << "ui_preview_test: PASS"
                   << (background ? " (offscreen/software; not native input or GPU acceptance)" : "")

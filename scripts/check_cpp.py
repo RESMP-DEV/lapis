@@ -18,10 +18,22 @@ else:
 
 ROOT = Path(__file__).resolve().parents[1]
 CPP_SUFFIXES = {".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh", ".hxx", ".ipp", ".mm"}
+TOOL_NAMES = (
+    "clang++",
+    "clang-tidy",
+    "clang-format",
+    "clangd",
+    "cppcheck",
+    "cmake",
+    "ctest",
+)
 
 
-def toolchain():
+def toolchain(tools=None):
     """Use one LLVM installation without changing the user's shell PATH."""
+    requested = TOOL_NAMES if tools is None else tuple(tools)
+    if unknown := set(requested) - set(TOOL_NAMES):
+        raise RuntimeError(f"Unknown verification tools: {', '.join(sorted(unknown))}")
     llvm_bin = os.environ.get("LAPIS_LLVM_BIN")
     if not llvm_bin and sys.platform == "darwin" and shutil.which("brew"):
         result = subprocess.run(
@@ -34,15 +46,7 @@ def toolchain():
         if result.returncode == 0:
             llvm_bin = str(Path(result.stdout.strip()) / "bin")
     tools = {}
-    for name in (
-        "clang++",
-        "clang-tidy",
-        "clang-format",
-        "clangd",
-        "cppcheck",
-        "cmake",
-        "ctest",
-    ):
+    for name in requested:
         candidate = (
             Path(llvm_bin) / name if llvm_bin and name.startswith("clang") else None
         )
@@ -59,6 +63,30 @@ def toolchain():
             raise RuntimeError(f"Missing {name}; see CONTRIBUTING.md")
         tools[name] = location
     return tools
+
+
+def configure_command(tools, mode):
+    """Build the shared CMake configure command for a desktop-capable preset."""
+    command = [
+        tools["cmake"],
+        "--preset",
+        mode,
+        f"-DCMAKE_CXX_COMPILER={tools['clang++']}",
+    ]
+    if prefix := os.environ.get("LAPIS_GHOSTTY_PREFIX"):
+        command.append(f"-DLAPIS_GHOSTTY_PREFIX={prefix}")
+    if ccache := shutil.which("ccache"):
+        command.append(f"-DCMAKE_CXX_COMPILER_LAUNCHER={ccache}")
+    if sys.platform == "darwin":
+        sdk = subprocess.run(
+            ["xcrun", "--show-sdk-path"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        ).stdout.strip()
+        command.append(f"-DCMAKE_OSX_SYSROOT={sdk}")
+    return command
 
 
 def run(label, command, log_dir, *, expect_failure=None, cwd=ROOT, timeout=300):
@@ -168,25 +196,7 @@ def main():
         result = run("format", [tools["clang-format"], "-i", *sources], log_dir)
         return 0 if result["passed"] else 1
 
-    configure = [
-        tools["cmake"],
-        "--preset",
-        args.mode,
-        f"-DCMAKE_CXX_COMPILER={tools['clang++']}",
-    ]
-    if prefix := os.environ.get("LAPIS_GHOSTTY_PREFIX"):
-        configure.append(f"-DLAPIS_GHOSTTY_PREFIX={prefix}")
-    if shutil.which("ccache"):
-        configure.append(f"-DCMAKE_CXX_COMPILER_LAUNCHER={shutil.which('ccache')}")
-    if sys.platform == "darwin":
-        sdk = subprocess.run(
-            ["xcrun", "--show-sdk-path"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=15,
-        ).stdout.strip()
-        configure.append(f"-DCMAKE_OSX_SYSROOT={sdk}")
+    configure = configure_command(tools, args.mode)
     result = run("configure", configure, log_dir)
     results.append(result)
     if result["passed"]:

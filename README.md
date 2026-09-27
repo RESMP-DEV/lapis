@@ -350,11 +350,16 @@ workspace metadata and window geometry live under ignored `runtime/` (in
 local captures live under ignored `build/`. Runtime state is not project config
 and must not be copied between hosts.
 
-For development, `lapis.py quality`, `check`, `ui-check` and `cli-check` remain
-available. `build` is the full desktop validation gate. During edits use a focused
-CMake target and `ctest -R ... --no-tests=error` on the Linux test host. `linux-gui` wraps supplied
-commands in a private Xvfb/Openbox software-rendered display. Native Mac input
-checks are a separately scheduled acceptance step.
+For routine UI reviews during development, run `python3 scripts/lapis.py ui-review`
+(or `just ui-review`). It builds only the required fixtures and checks workspace
+UI, shortcuts and terminal input in Qt's offscreen/software mode, without taking
+OS focus or moving the pointer. It saves PNGs for visual review alongside its
+logs; add `--json` for the result and artifact paths.
+See the [background and native test procedure](CONTRIBUTING.md#history-and-input-qualification).
+`build` remains the full desktop validation gate; `ui-check` and native input
+checks retain their separate display/GPU and macOS acceptance scope. Use focused
+CMake targets and CTest expressions for other edits. macOS is the active target;
+`linux-gui` is available only for an explicitly selected Linux port check.
 
 Standalone shell fixtures require `--development-shell` and are not offered in
 the product. Explicit managed probes retain `--codex --socket ... --cwd ...

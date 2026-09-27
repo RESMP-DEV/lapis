@@ -43,14 +43,15 @@ python3 scripts/lapis.py cli-check
 
 `scripts/lapis.py` resolves the build environment itself, so no `LAPIS_*`
 variable needs exporting. It finds the bootstrapped Ghostty prefix, supplies the
-socket path, and opens windows on the laptop panel. Equivalent `just` recipes
+socket path, and selects the local build dependencies. Equivalent `just` recipes
 (`just check`, `just desktop`, `just ui-check`, `just cli-check`) call the same
 launcher; run `python3 scripts/lapis.py` with no arguments for the full list.
 The underlying scripts still accept the documented variables directly when a
 specific prefix or display is required.
 
-The desktop steps require a logged-in graphical session and the exact dependencies
-below. Run GUI checks serially, including across worktrees, so windows do not steal
+Use `python3 scripts/lapis.py ui-review` for routine background UI reviews after
+the dependencies are ready. The baseline desktop/native steps above require a
+logged-in graphical session and the exact dependencies below. Run GUI checks serially, including across worktrees, so windows do not steal
 focus from another test. The baseline is not a substitute for the scope-specific
 sanitizer, tooling or dependency checks in the [required matrix](#checks).
 For the deferred Linux port, record a headless baseline and its platform limits; do not claim desktop
@@ -676,7 +677,8 @@ Run from the repository root:
 | `just desktop` | Optimized desktop/service build, PTY/transport/UI cases and static checks |
 | `just run` | Open the previously built live shell window |
 | `just ui` / `just ui-debug` | Isolated source-QML fixture, directly or in LLDB |
-| `just ui-check` | Bounded isolated captures, attention state and expected failures |
+| `just ui-review` | Focused build and background workspace UI, shortcuts and terminal-input checks; no OS focus or pointer changes |
+| `just ui-check` | Native bounded isolated captures, attention state and expected failures |
 | `just cli-check` | Isolated live service/CLI and shell GUI acceptance |
 | `just native-input` | Automated macOS keyboard/clipboard and real Japanese IME through the PTY |
 | `just ios-check` | iPhone app UI tests in a headless simulator, synced with a Mac-side client, including real Codex and Claude Code on a fake model |
@@ -766,6 +768,12 @@ output directory when diagnosing a rerun.
 ### Selecting checks and reusing results
 
 Select the required commands before running them:
+
+- For routine UI review, start with `just ui-review`. It builds only the two
+  fixture targets and runs their three background cases serially, without the
+  full CTest/static-analysis gate. Use this for iteration, then apply the native
+  and integration rows above when their behavior changes. Do not run the same
+  binaries manually again after this command passes.
 
 - `just quality` includes Python lint, format checks and unit discovery. Separate
   Ruff or unittest commands are useful for focused diagnosis, but need not follow
@@ -1049,8 +1057,23 @@ run `ctest --test-dir build/desktop -R '^terminal-keys-mac$' --output-on-failure
 window. This covers the local monitor; it does not replace native IME or
 pasteboard qualification.
 
-For routine terminal input and workspace UI logic, run the explicit background
-modes after building their targets:
+For routine terminal input and workspace UI logic, use the supported background
+review command. It configures the desktop preset, builds the required targets,
+and runs the three fixtures serially:
+
+```sh
+python3 scripts/lapis.py ui-review
+python3 scripts/lapis.py ui-review --json  # same checks, machine-readable result
+```
+
+Choose one output form per run. Each invocation saves a private receipt, logs and
+software-rendered PNGs under `build/reports/ui-review/`. The receipt lists captures
+from that invocation, so agents can inspect UI layouts without opening a native
+window or rerunning the fixture. Failures return a nonzero exit code and never
+fall back to a native window. This focused command shares `build/desktop` with the desktop
+gate, so keep one build owner per checkout. It does not run static analysis or
+unrelated CTest suites. For diagnosing a single case after building its target,
+the underlying modes remain available:
 
 ```sh
 build/desktop/apps/desktop/lapis_terminal_input_tests --background
