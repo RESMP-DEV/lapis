@@ -237,6 +237,7 @@ class TerminalSurface : public QQuickItem {
     QString selection_text_;
     QPoint press_cell_;
     bool selecting_{};
+    bool wheel_program_{}; // wheel units change between program and history scrolling
     int wheel_remainder_{};
     qreal pixel_remainder_{}; // a trackpad's scroll, short of a row
 };

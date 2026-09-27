@@ -735,6 +735,48 @@ void selection_and_scroll() {
     QCoreApplication::sendEvent(&surface, &resume);
     require(!f.document.historyActive(), "Typing did not return to the live screen");
     require(text_frames(peer, 1) == QByteArray("y"), "Typing on a history page was dropped");
+    // Partial trackpad/wheel angles must not cross the primary/alternate
+    // boundary: history uses 40 units per row, programs use 120 per notch.
+    quint64 sequence = 4;
+    const auto switch_screen = [&](bool alternate) {
+        f.terminal.feed(alternate ? "\x1b[?1049h" : "\x1b[?1049l");
+        peer.send(wire::Kind::snapshot, wire::encode_snapshot_message(
+                                            {{f.identity, 1}, ++sequence, f.terminal.snapshot()}));
+        until([&] { return f.document.snapshot().alternate_screen == alternate; });
+        static_cast<void>(text_frames(peer));
+    };
+    const auto scroll = [&](int angle) {
+        QWheelEvent event(middle, surface.mapToGlobal(middle), QPoint(), QPoint(0, angle),
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(&surface, &event);
+    };
+    const auto no_scroll = [&] {
+        settle();
+        peer.bytes += peer.socket->readAll();
+        require(peer.bytes.isEmpty(), "A partial wheel angle crossed screen modes");
+    };
+    switch_screen(true);
+    scroll(100);
+    no_scroll();
+    switch_screen(false);
+    scroll(20);
+    no_scroll();
+    scroll(20);
+    const auto partial_history = f.historyRequest(peer);
+    require(partial_history.direction == wire::HistoryDirection::older,
+            "A complete normal-screen wheel row was lost");
+    f.historyReply(peer, partial_history.request_id, 0, {}, QStringLiteral("No more history"));
+    until([&] { return !f.document.historyRequestPending(); });
+    scroll(20);
+    no_scroll();
+    switch_screen(true);
+    scroll(100);
+    no_scroll();
+    scroll(20);
+    const auto program_wheel = peer.read();
+    require(program_wheel.kind == wire::Kind::wheel &&
+                wire::decode_wheel(wire::decode_control(program_wheel.payload).payload).steps == 1,
+            "A complete alternate-screen notch did not reach the program");
 }
 } // namespace
 int main(int argc, char** argv) {

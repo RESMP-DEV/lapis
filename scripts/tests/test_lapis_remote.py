@@ -4,6 +4,7 @@ import base64
 import gzip
 import http.client
 import itertools
+import io
 import json
 import os
 import shutil
@@ -17,7 +18,7 @@ import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps" / "remote"))
@@ -66,6 +67,45 @@ DEFAULT = (0, 0)
 
 def cell(text, kind=0, foreground=DEFAULT, background=DEFAULT, underline=0, flags=0):
     return (text, kind, foreground, background, underline, flags)
+
+
+class StreamFailureTests(unittest.TestCase):
+    def test_malformed_live_snapshot_reports_disconnection(self):
+        valid = snapshot(1, 1, [cell("x")])
+        for broken in (
+            snapshot(1, 1, [cell("x")], alternate=2),
+            valid[:20],
+            valid[:-1],
+        ):
+            with self.subTest(length=len(broken)):
+                session = object.__new__(remote.WireSession)
+                session.first = valid
+                session.closed = False
+                session.attachment = b"x" * remote.ATTACHMENT_BYTES
+                session.sequence = 0
+                session.wheel_accepted = False
+                message = session.attachment + struct.pack(">QQQQ", 1, 0, 0, 0) + broken
+                session.receive = Mock(
+                    side_effect=[(remote.SNAPSHOT, message), EOFError()]
+                )
+                handler = object.__new__(remote.Handler)
+                handler.wfile = io.BytesIO()
+                handler.phone_left = lambda: False
+                # Advance beyond the frame interval to exercise render validation too.
+                with patch.object(
+                    remote.time, "monotonic", side_effect=itertools.count()
+                ):
+                    handler.pump(session)
+                events = handler.wfile.getvalue().decode().split("\n\n")
+                self.assertEqual(
+                    sum(event.startswith("event: frame\n") for event in events), 1
+                )
+                status = next(
+                    event for event in events if event.startswith("event: status\n")
+                )
+                payload = json.loads(status.split("data: ", 1)[1])
+                self.assertEqual(payload["state"], "disconnected")
+                self.assertTrue(payload["message"])
 
 
 class SnapshotTests(unittest.TestCase):

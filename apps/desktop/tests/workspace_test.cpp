@@ -2488,11 +2488,15 @@ void alertsChimeWhileAnAgentWaits() {
     require(posted.size() == 3 && posted[2][1] == QStringLiteral("Codex resume") &&
                 posted[2][2] == QStringLiteral("Claude finished a turn"),
             "the body names the agent's CLI, whatever its title says");
+    agent.setHarnessId({});
+    emit workspace.turnFinished(&agent);
+    require(posted.size() == 4 && posted[3][2] == QStringLiteral("Agent finished a turn"),
+            "terminal-mode notifications retain a readable subject");
     agent.setHarnessId(QStringLiteral("codex"));
     agent.rename(QStringLiteral("agent"));
     require(keymap.setNotify(false), "turn notifications off");
     emit workspace.agentNeedsYou(&agent);
-    require(posted.size() == 3, "none with notifications off");
+    require(posted.size() == 4, "none with notifications off");
 
     const auto wav = lapis::desktop::chime_wav(lapis::desktop::Chime::needsYou);
     require(wav.startsWith("RIFF") && wav.mid(8, 8) == "WAVEfmt " && wav.size() == 44 + 27342 * 2,

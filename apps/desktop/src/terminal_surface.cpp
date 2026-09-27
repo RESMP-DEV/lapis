@@ -747,6 +747,8 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     if (document_)
         disconnect(document_, nullptr, this, nullptr);
     document_ = document;
+    wheel_remainder_ = 0;
+    pixel_remainder_ = 0;
     selecting_ = false;
     clearSelection();
     clearLink();
@@ -1171,7 +1173,13 @@ void TerminalSurface::wheelEvent(QWheelEvent* event) {
         return;
     }
     event->accept();
-    if (document_->snapshot().alternate_screen && !document_->historyActive()) {
+    const bool program = document_->snapshot().alternate_screen && !document_->historyActive();
+    if (program != wheel_program_) {
+        wheel_remainder_ = 0;
+        pixel_remainder_ = 0;
+        wheel_program_ = program;
+    }
+    if (program) {
         wheel_remainder_ += event->angleDelta().y();
         const int steps = wheel_remainder_ / 120;
         wheel_remainder_ -= steps * 120;

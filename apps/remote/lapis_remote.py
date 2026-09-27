@@ -2307,6 +2307,13 @@ class Handler(BaseHTTPRequestHandler):
             return True
 
     def pump(self, session):
+        """Report invalid live data through SSE before releasing the attachment."""
+        try:
+            self.pump_frames(session)
+        except GatewayError as error:
+            self.event("status", {"state": "disconnected", "message": str(error)})
+
+    def pump_frames(self, session):
         """Forward the newest screen at most every 50 ms until either side leaves."""
         self.event("frame", render_snapshot(session.first))
         latest, last_sent, last_ping = None, time.monotonic(), time.monotonic()
@@ -2339,13 +2346,7 @@ class Handler(BaseHTTPRequestHandler):
                     )
                     return
                 if kind == HISTORY_PAGE:
-                    try:
-                        session.deliver_history(data)
-                    except GatewayError as error:
-                        self.event(
-                            "status", {"state": "disconnected", "message": str(error)}
-                        )
-                        return
+                    session.deliver_history(data)
                     continue
                 snapshot = session.accept_snapshot(kind, data)
                 if snapshot is not None:

@@ -151,7 +151,7 @@ void Notifier::notify(const SessionPreview* item, bool needsYou) {
         return;
     // The CLI leads the body: a title is the conversation's, and one about
     // Codex would otherwise read as a Codex agent.
-    const QString cli = harness_label(item->harnessId());
+    const QString cli = item->agentName();
     QString body = needsYou ? tr("%1 needs you").arg(cli) : tr("%1 finished a turn").arg(cli);
     if (needsYou && !item->attentionReason().isEmpty())
         body += QStringLiteral(": ") + item->attentionReason();
