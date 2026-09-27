@@ -379,13 +379,22 @@ final class LapisUITests: XCTestCase {
             XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", label),
                                       object: self.app.staticTexts["agentPosition"])
         }
+        let composer = app.descendants(matching: .any)["composer"]
+        composer.tap()
+        composer.typeText("draft for first agent")
         terminal.swipeLeft()
         XCTAssertEqual(XCTWaiter().wait(for: [at("2 of 2")], timeout: 10), .completed, "the next agent")
         let second = app.descendants(matching: .any)["terminal"]
         waitFor(second, valueContaining: "new conversation")
+        XCTAssertNotEqual(composer.value as? String, "draft for first agent",
+                          "a draft belongs to the agent where it was entered")
+        composer.tap()
+        composer.typeText("draft for second agent")
         snap("15-swiped")
         second.swipeRight()
         XCTAssertEqual(XCTWaiter().wait(for: [at("1 of 2")], timeout: 10), .completed, "and back")
+        XCTAssertEqual(composer.value as? String, "draft for first agent",
+                       "paging back restores that agent's unsent draft")
     }
 
     private func eventually(_ what: String, timeout: TimeInterval = 20, _ condition: () -> Bool) {

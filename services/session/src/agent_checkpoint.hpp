@@ -30,6 +30,11 @@ struct ResumeRecord {
 // managed Codex/Claude integration or the terminal executable's harness name.
 [[nodiscard]] QString checkpoint_agent_for_launch(const LaunchSpec& launch);
 
+// Whether this harness has a lapis conversation observer. This is a resume
+// policy capability, so it remains true for an older service launched before
+// an observer was attached.
+[[nodiscard]] bool observer_backed_agent(const QString& agent);
+
 // Agent session hooks for terminal restore tools write
 // OSC 1337 SetUserVar=agent_checkpoint=<base64 JSON> to their terminal. This
 // recognizes it in PTY output across read boundaries, keeping a bounded tail.

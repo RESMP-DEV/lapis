@@ -68,8 +68,11 @@ final class WorkspaceModel {
             let current = try await gateway.agents()
             listing = current
             error = nil
-            // A Mac too old for terminals simply has none.
-            terminals = (try? await gateway.terminals()) ?? []
+            // A failed refresh is not evidence that existing terminals closed.
+            // An older Mac starts with the empty list until it supports this.
+            if let currentTerminals = try? await gateway.terminals() {
+                terminals = currentTerminals
+            }
             DiskCache.save(current, cacheName("listing"))
             Task { await prefetch() }
         } catch is CancellationError {
@@ -237,13 +240,14 @@ extension WorkspaceModel {
     // Ends a terminal's shell on the Mac.
     func closeTerminal(_ terminal: TerminalInfo) async {
         guard let gateway else { return }
-        terminals.removeAll { $0.id == terminal.id }
         do {
             try await gateway.close(agent: terminal.id)
+            // The Mac may keep the record until its shell-exit watcher fires.
+            // Leave it visible until a refresh confirms the close.
+            await refresh()
         } catch {
             self.error = describe(error)
         }
-        await refresh()
     }
 
     // A past conversation, resumed as a new agent in `category`.
@@ -262,14 +266,20 @@ extension WorkspaceModel {
         await change { try await $0.rename(agent: agent.id, title: title) }
     }
 
-    // Ends the agent on the Mac; it leaves the list at once.
+    // Keep the row until the Mac accepts the close, then refresh its state.
     func close(_ agent: Agent) async {
-        arrange { categories in
-            for index in categories.indices {
-                categories[index] = categories[index].with(categories[index].agents.filter { $0.id != agent.id })
+        guard let gateway else { return }
+        do {
+            try await gateway.close(agent: agent.id)
+            arrange { categories in
+                for index in categories.indices {
+                    categories[index] = categories[index].with(categories[index].agents.filter { $0.id != agent.id })
+                }
             }
+            await refresh()
+        } catch {
+            notice = describe(error)
         }
-        await change { try await $0.close(agent: agent.id) }
     }
 }
 
@@ -406,7 +416,7 @@ final class AgentSession {
         case closed(String, reopen: Bool)
     }
 
-    let agent: Agent
+    var agent: Agent
     let gateway: Gateway?
     var frame: ScreenFrame?
     var state: State = .connecting

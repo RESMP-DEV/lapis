@@ -1705,7 +1705,11 @@ from advisory OSC 1337 `SetUserVar=agent_checkpoint=<base64 JSON>` printed in
 terminal output. Printed fields cannot claim observer provenance, replace a
 managed Codex/Claude observer, or downgrade an already observed record. Version 1
 records read as legacy (their source was not recorded). Unknown versions and
-malformed sources fail closed.
+malformed sources fail closed. Legacy is read-only provenance: new version 2
+records must name terminal or observer as their source.
+For older Claude/Codex services without an observer, terminal output preserves
+the loaded legacy record until an independent observer can replace it. Otherwise
+one restart could downgrade the record and prevent the next automatic resume.
 
 Every agent resumes its conversation (the user's requirement, September 25:
 starting fresh is not acceptable). Codex and Claude resume only from their
@@ -1743,8 +1747,13 @@ unix://<endpoint>.codex` command line and reads the rollouts it holds open
 (the rule is under Restore at login below); this was checked against real
 Codex 0.155.1 with the fake model after deleting the record. Restart agent (Commands) applies
 the restore path to one ended or unreachable card and refuses while its service
-answers. Explicit Antigravity resumes use `agy --conversation`; its printed
-checkpoint does not authorize automatic resume.
+answers. Antigravity resumes use `agy --conversation`; its terminal checkpoint
+supplies that identity under the same policy as other CLIs without an observer.
+This resume route does not qualify an independent attention/response adapter.
+For these observerless CLIs, the terminal checkpoint is the identity source, not
+independent authentication: any producer of that same PTY output can name a
+conversation. The record remains terminal provenance, is tied to the launched
+harness, and never changes the CLI account, execution policy or approval settings.
 
 Restore at login and after power loss (September 24, requested because losing
 agents to a reboot is the user's main pain point). `lapis_desktop
@@ -1794,11 +1803,17 @@ second runs as a launchd job with the LaunchAgent's minimal environment
 `startDetached`'s new session). Codex and Claude must return to their observed
 conversation, show that exchange, accept a follow-up, and keep the identity
 with exactly one resume argument; the model must receive the growing context.
-The four stand-ins provide terminal-only advisory checkpoints, so they must
-restart fresh without injecting that unverified identity into their arguments.
+The four stand-ins provide terminal-only checkpoints and must return to the
+same conversation, announce that resume and accept a follow-up. Every saved
+launch must contain exactly one native resume pair with matching managed
+provenance; terminal records keep their terminal source.
 The fixture waits for observer provenance where required and binds its fake
 model to an ephemeral loopback port. A final helper run with everything alive
 must restart nothing.
+The [PR 17 review check](../evidence/pr17-review.json) records both power-loss
+cycles and the normal, ASan/UBSan and TSan workspace/checkpoint suites on macOS.
+It also covers a legacy Claude identity surviving printed output and managed
+Codex/Claude resume pairs being retired when only a terminal record is available.
 
 CLI updates (September 24, requested so agents never open on an update
 prompt). Before a new agent starts, the desktop runs that CLI's own
@@ -2159,13 +2174,17 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   agent left; Command-Shift-W always does. Command-M minimizes.
   The Mac icon enlarges the phone's gem 1.3 times inside Apple's 824-point body.
 - **Conversation index.** Claude Code and Codex keep every conversation in
-  files; only those someone opened count (Claude's `entrypoint` "cli"; Codex
+  files; only those someone opened count (Claude's first recorded `entrypoint` "cli"; Codex
   rollouts that are not `exec` or subagents), about 560 of 27,700 Claude files
   on the user's Mac. The index reads them in the background and caches each by
   size and time (`runtime/conversations.json`), so a later scan stats files and
   rereads only the changed ones. Titles are the CLI's own (Claude's `ai-title`,
-  newest wins, read from the head and the last 128 KB; Codex's
-  `session_index.jsonl` thread names) or else the first typed message.
+  newest usable title in the scanned head and last 128 KiB wins; a title
+  wholly in the omitted middle can fall back to the first typed message. Codex's
+  `session_index.jsonl` thread names are preferred over the first typed message.
+  The desktop joins its scan pool before destroying the index; queued results
+  belong to the index object and cannot outlive it. The gateway reads small
+  Claude sessions once and caches Codex names by file size and modification time.
 - **Resume.** Command-O lists them newest first; every typed word must appear
   in the title, folder or CLI. Return starts a new agent in the active category
   with the CLI's resume option (the same table restarts use) and records the
@@ -2200,10 +2219,15 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   title (the CLI's resume record, else lapis's resume pair, looked up in the
   conversation index, which the app updates each minute); a chosen name is
   recorded as `named` in the registry and stays. The phone renames through
-  `renameAgent`, so both devices share one name.
+  `renameAgent`, so both devices share one name. Names are limited to 80 UTF-16
+  units and printable Unicode scalars across the desktop, gateway and phone.
+  Elision preserves surrogate pairs; phone name entry clips whole graphemes.
 - **Phone paging.** Swiping over an agent's screen moves between the agents of
   its category (or the terminals); only the screen reads the swipe, since the
-  key bar scrolls sideways.
+  key bar scrolls sideways. The pager keeps unsent drafts by agent ID while
+  each visible agent owns its connection; paging back reattaches without
+  resurrecting the outgoing agent's input. Refreshed names and connection
+  metadata follow the selected identity.
 - **Machine in the Mac's form.** Only the phone could start an agent on another
   machine. The Mac's new-agent form now has a Machine row (this Mac and the ssh
   config's hosts, left and right arrows) and starts through the same ssh launch;

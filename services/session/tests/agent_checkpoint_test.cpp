@@ -146,6 +146,23 @@ void records_are_private() {
                 normalized->source == lapis::session::ResumeSource::legacy,
             "record agents use the same lowercase spelling as checkpoints, and a version 1 "
             "record reads as legacy");
+    QFile unchanged_record(record_path);
+    require(unchanged_record.open(QIODevice::ReadOnly), "open the legacy record");
+    const auto unchanged_bytes = unchanged_record.readAll();
+    unchanged_record.close();
+    bool legacy_refused = false;
+    try {
+        lapis::session::write_resume_record(endpoint,
+                                            {QStringLiteral("claude"), QStringLiteral("s-2"),
+                                             lapis::session::ResumeSource::legacy});
+    } catch (const std::invalid_argument&) {
+        legacy_refused = true;
+    }
+    require(legacy_refused, "legacy provenance is read-only");
+    require(unchanged_record.open(QIODevice::ReadOnly) &&
+                unchanged_record.readAll() == unchanged_bytes,
+            "a rejected legacy record leaves the file unchanged");
+    unchanged_record.close();
     QFile wrong_version(record_path);
     require(wrong_version.open(QIODevice::WriteOnly | QIODevice::Truncate),
             "open the record for a version test");

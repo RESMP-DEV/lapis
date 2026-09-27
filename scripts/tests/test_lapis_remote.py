@@ -582,10 +582,26 @@ class StartAgentTests(unittest.TestCase):
                 },
             )
             asked = len(desktop.requests)
-            for body in ({"title": ""}, {"title": "x" * 81}, {"title": 3}, ["x"]):
+            rejected = (
+                {"title": ""},
+                {"title": "x" * 81},
+                {"title": "\N{FACE WITH OPEN MOUTH}" * 41},
+                {"title": "x\n"},
+                {"title": "\ud800"},
+                {"title": 3},
+                ["x"],
+            )
+            for body in rejected:
                 status, _ = server.request("POST", "/api/agents/a1/rename", body)
                 self.assertEqual(status, 400, body)
             self.assertEqual(len(desktop.requests), asked, "bad names reach nothing")
+            for body in (
+                {"title": "x" * 80},
+                {"title": "\N{FACE WITH OPEN MOUTH}" * 40},
+            ):
+                status, _ = server.request("POST", "/api/agents/a1/rename", body)
+                self.assertEqual(status, 200, body)
+            self.assertEqual(len(desktop.requests), asked + 2)
 
     def test_the_phone_arranges_categories_and_agents_through_the_mac(self):
         def answer(request):
@@ -1065,6 +1081,127 @@ class FolderTests(unittest.TestCase):
             )
             # Rollouts without an id count for their folder but cannot resume.
             self.assertEqual(len(listed["conversations"]), 5)
+
+    def test_history_ignores_malformed_records_and_keeps_a_good_title(self):
+        codex_id = "30000000-0000-4000-8000-000000000000"
+        codex = (
+            self.codex
+            / "sessions"
+            / "2026"
+            / "09"
+            / "24"
+            / f"rollout-2026-09-24T12-00-00-{codex_id}.jsonl"
+        )
+        codex.write_text(
+            json.dumps(
+                {
+                    "type": "session_meta",
+                    "payload": {
+                        "id": codex_id,
+                        "cwd": str(self.home / "b"),
+                        "source": "cli",
+                    },
+                }
+            )
+            + "\nnull\n"
+            + json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": 42,
+                    },
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "text", "text": "typed rollout"}],
+                    },
+                }
+            )
+            + "\n"
+        )
+        project = self.claude / "projects" / "-home-b"
+        project.mkdir(parents=True, exist_ok=True)
+        session = project / "31000000-0000-4000-8000-000000000000.jsonl"
+        session.write_text(
+            json.dumps({"cwd": str(self.home / "b"), "entrypoint": "cli"})
+            + "\nnull\n"
+            + json.dumps({"type": "user", "message": "not an object"})
+            + "\n"
+            + json.dumps({"type": "ai-title", "aiTitle": "Generated title"})
+            + "\n"
+            + json.dumps({"type": "ai-title", "aiTitle": "   "})
+            + "\n"
+        )
+        (self.codex / "session_index.jsonl").write_text(
+            "[]\n"
+            + json.dumps({"id": codex_id, "thread_name": "typed  rollout"})
+            + "\n"
+        )
+        history = remote.AgentHistory(self.codex, self.claude)
+
+        def titles():
+            history.counts(None)
+            return {item["id"]: item["title"] for item in history.conversations}
+
+        conversations = titles()
+        self.assertEqual(conversations[codex_id], "typed rollout")
+        self.assertEqual(
+            conversations["31000000-0000-4000-8000-000000000000"],
+            "Generated title",
+        )
+
+        names_index = self.codex / "session_index.jsonl"
+        names_index.write_text(
+            "[]\n"
+            + json.dumps({"id": codex_id, "thread_name": "# wrapper preserved"})
+            + "\n"
+        )
+        self.assertEqual(
+            titles()[codex_id],
+            "# wrapper preserved",
+            "a changed index is parsed and wrapper-like names are kept",
+        )
+
+        names_index.unlink()
+        self.assertEqual(
+            titles()[codex_id],
+            "typed rollout",
+            "deleting names clears the cached title",
+        )
+
+        names_index.write_text(
+            "[]\n"
+            + json.dumps({"id": codex_id, "thread_name": "# wrapper recreated"})
+            + "\n"
+        )
+        self.assertEqual(titles()[codex_id], "# wrapper recreated")
+
+        # Exercise the self-contained program actually sent over SSH, with
+        # fixture homes. A compile-only check misses omitted helper definitions.
+        result = subprocess.run(
+            [sys.executable, "-c", remote.REMOTE_SCRIPT],
+            env={
+                **os.environ,
+                "HOME": str(self.home),
+                "CODEX_HOME": str(self.codex),
+                "CLAUDE_CONFIG_DIR": str(self.claude),
+            },
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        self.assertTrue(result.stdout.startswith(remote.REMOTE_MARKER))
+        report = json.loads(result.stdout[len(remote.REMOTE_MARKER) :])
+        self.assertIn("b", report["activity"])
 
     def test_the_phone_downloads_the_index_once(self):
         index = remote.FolderIndex(

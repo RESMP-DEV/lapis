@@ -2,7 +2,6 @@
 #define LAPIS_DESKTOP_TERMINALS_HPP
 #include "launch_spec.hpp"
 #include <QObject>
-#include <QPointer>
 #include <QString>
 #include <QStringList>
 #include <QVariantList>
@@ -60,17 +59,30 @@ class Terminals final : public QObject {
         QString endpoint;
         session::LaunchSpec launch;
         std::unique_ptr<SessionPreview> session;
+        // The legacy connection state starts "disconnected"; do not mistake
+        // that initial value for a settled attach failure.
+        bool attach_started{};
+        // A ready connection can still lose its socket. A pending close waits
+        // for input readiness and a bounded reconnect retries transient loss.
+        bool attach_synchronized{};
+        bool close_pending{};
+        int recovery_attempts{};
     };
     [[nodiscard]] session::LaunchSpec launchFor(const QString& machine) const;
     Entry* find(const QString& machine);
+    Entry* entryFor(const QString& id);
     Entry* start(const QString& machine);
     void attach(Entry& entry, bool create);
     void watch(Entry& entry);
     void discard(const QString& id);
+    void discardIfClosed(const QString& id);
+    void recover(const QString& id);
     void save() const;
     bool fail(const QString& message);
+    [[nodiscard]] bool closed(const Entry& entry) const;
     QString runtime_;
     QString ssh_config_;
+    QStringList ssh_hosts_;
     QString shell_;
     std::vector<Entry> entries_;
     QString current_machine_;

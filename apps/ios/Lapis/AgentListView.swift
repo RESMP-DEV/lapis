@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct AgentListView: View {
     @Environment(WorkspaceModel.self) private var model
@@ -87,12 +88,12 @@ struct AgentListView: View {
                         .accessibilityIdentifier("agentName")
                     Button("Save") {
                         let chosen = newName.trimmingCharacters(in: .whitespaces)
-                        if let agent = renaming, !chosen.isEmpty {
-                            Task { await model.rename(agent, to: String(chosen.prefix(80))) }
+                        if let agent = renaming, let chosen = AgentName.clipped(chosen) {
+                            Task { await model.rename(agent, to: chosen) }
                         }
                         renaming = nil
                     }
-                    .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(AgentName.clipped(newName.trimmingCharacters(in: .whitespaces)) == nil)
                     Button("Cancel", role: .cancel) { renaming = nil }
                 } message: {
                     Text("It keeps this name instead of its conversation's title.")
@@ -415,15 +416,17 @@ struct NewCategoryFields: View {
             .accessibilityIdentifier("categoryName")
         Button("Create") {
             let chosen = name.trimmingCharacters(in: .whitespaces)
-            Task {
-                do {
-                    created(try await model.createCategory(named: chosen))
-                } catch {
-                    model.error = describe(error)
+            if let chosen = AgentName.clipped(chosen) {
+                Task {
+                    do {
+                        created(try await model.createCategory(named: chosen))
+                    } catch {
+                        model.error = describe(error)
+                    }
                 }
             }
         }
-        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+        .disabled(AgentName.clipped(name.trimmingCharacters(in: .whitespaces)) == nil)
         Button("Cancel", role: .cancel) {}
     }
 }
@@ -432,6 +435,28 @@ struct NewCategoryFields: View {
 struct NewAgentTarget: Identifiable {
     let category: String
     var id: String { category }
+}
+
+// The desktop bounds names by UTF-16 units. Keep a whole grapheme whenever
+// an over-long name has to be clipped.
+enum AgentName {
+    static let limit = 80
+
+    static func clipped(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard trimmed.utf16.count > limit else { return trimmed }
+
+        var clipped = ""
+        var length = 0
+        for character in trimmed {
+            let units = character.utf16.count
+            guard length + units <= limit else { break }
+            clipped.append(character)
+            length += units
+        }
+        return clipped.isEmpty ? nil : clipped
+    }
 }
 
 // A card with cut corners and a harness-tinted edge, in the desktop's
@@ -586,17 +611,38 @@ extension EnvironmentValues {
 struct AgentPager: View {
     @Environment(WorkspaceModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dismiss) private var dismiss
     @State private var current: Agent
     @State private var forward = true
+    @State private var drafts: [String: String] = [:]
 
     init(agent: Agent) {
         _current = State(initialValue: agent)
     }
 
     private var siblings: [Agent] {
-        if current.id.hasPrefix("terminal-") { return model.terminals.map(\.asAgent) }
+        if current.id.hasPrefix("terminal-") {
+            let terminals = model.terminals.map(\.asAgent)
+            return terminals.contains { $0.id == current.id } ? terminals : [current]
+        }
         let category = model.listing?.categories.first { $0.agents.contains { $0.id == current.id } }
         return category?.agents ?? [current]
+    }
+
+    private var currentIsMissing: Bool {
+        if current.id.hasPrefix("terminal-") {
+            return !model.terminals.contains { $0.id == current.id }
+        }
+        return model.listing?.categories.contains { $0.agents.contains { $0.id == current.id } } == false
+    }
+
+    private var draft: Binding<String> {
+        let id = current.id
+        return Binding {
+            drafts[id] ?? ""
+        } set: { newValue in
+            drafts[id] = newValue
+        }
     }
 
     var body: some View {
@@ -604,7 +650,7 @@ struct AgentPager: View {
         let index = list.firstIndex { $0.id == current.id }
         let shown = index.map { list[$0] } ?? current
         ZStack {
-            AgentView(agent: current, gateway: model.gateway) { step in
+            AgentView(agent: current, gateway: model.gateway, draft: draft) { step in
                 guard let index, list.indices.contains(index + step) else { return }
                 forward = step > 0
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -619,6 +665,12 @@ struct AgentPager: View {
                                     removal: .move(edge: forward ? .leading : .trailing)))
         }
         .clipped()
+        .onChange(of: shown) { _, refreshed in
+            current = refreshed
+        }
+        .onChange(of: currentIsMissing) { _, missing in
+            if missing { dismiss() }
+        }
         .toolbar {
             if let index, list.count > 1 {
                 ToolbarItem(placement: .principal) {

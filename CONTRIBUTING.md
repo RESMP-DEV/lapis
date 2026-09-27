@@ -841,6 +841,7 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `agent-checkpoint` | Desktop-enabled | Restore-hook sequences, identity/host checks, private records and observer provenance |
 | `live-connection` | Desktop-enabled | Screen-before-input, exact attention decisions/rejections, duplicate gating, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
+| `terminal-keys-mac` | Desktop-enabled, macOS | AppKit local key monitor, logical layout keys and teardown using the process's own event queue; no focus or cursor changes |
 | `keymap` | Desktop-enabled | Configuration defaults, appearance choices, persistence and invalid input |
 | `workspace` | Desktop-enabled | Category registry (private atomic writes, rollback on failure), agent create/close/reopen, per-category selection, unseen marks, status sources and parent-session marker removal |
 | `window-state` | Desktop-enabled | Machine-local window geometry, off-screen restore, isolated modes, unsafe paths, legacy layout values and modal focus |
@@ -1041,6 +1042,12 @@ is required for another binary hash. It qualifies only the two exercised blockin
 request kinds. See the [Milestone 2 plan](docs/architecture.md#milestone-2-attention-and-codex-plan).
 
 ### History and input qualification
+
+For macOS terminal shortcut routing, build `lapis_terminal_keys_mac_tests` and
+run `ctest --test-dir build/desktop -R '^terminal-keys-mac$' --output-on-failure
+--no-tests=error`. It sends events only through its own AppKit queue and opens no
+window. This covers the local monitor; it does not replace native IME or
+pasteboard qualification.
 
 For routine terminal input logic, run the explicit background mode after building:
 

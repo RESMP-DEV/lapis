@@ -391,13 +391,20 @@ void route_terminal_keys(lapis::desktop::UiPreview& view, const lapis::desktop::
         auto* window = view.window();
         const auto action =
             shifted ? QStringLiteral("chooseTerminal") : QStringLiteral("toggleTerminal");
-        const auto key = shifted ? QStringLiteral("Meta+Shift+`") : QStringLiteral("Meta+`");
-        if (window == nullptr || !window->isActive() || !keymap.sequences(action).contains(key))
+        const auto keys = keymap.sequences(action);
+        const bool bound = shifted ? keys.contains(QStringLiteral("Meta+Shift+`")) ||
+                                         keys.contains(QStringLiteral("Meta+~"))
+                                   : keys.contains(QStringLiteral("Meta+`"));
+        if (window == nullptr || !window->isActive() || !bound)
             return false;
-        QMetaObject::invokeMethod(window, shifted ? "chooseTerminal" : "toggleTerminal");
-        return true;
+        return QMetaObject::invokeMethod(window, shifted ? "chooseTerminal" : "toggleTerminal");
     });
 }
+// A monitor must never outlive this scope. Clear it in reverse construction
+// order, including when load or exec unwinds after an exception.
+struct TerminalKeyMonitorGuard {
+    ~TerminalKeyMonitorGuard() { lapis::desktop::platform::on_terminal_keys({}); }
+};
 void register_qml_types() {
     using namespace lapis::desktop;
     qmlRegisterUncreatableType<SessionPreview>("Lapis", 1, 0, "SessionPreview",
@@ -652,6 +659,7 @@ int main(int argc, char** argv) {
         view.setSystemReducedMotion(system_reduced_motion());
         view.setReducedMotion(parser.isSet(QStringLiteral("reduced-motion")));
         follow_activation(app, view, shown, hide_on_close);
+        const TerminalKeyMonitorGuard terminal_key_monitor;
         QObject::connect(&view, &UiPreview::windowChanged, &view, [&](QQuickWindow* window) {
             shown = window;
             wire_window(*window, view, workspace, parser);
@@ -669,7 +677,6 @@ int main(int argc, char** argv) {
                 << "system reduced motion:" << view.systemReducedMotion();
         const int result = QGuiApplication::exec();
         platform::on_notification_opened({});
-        platform::on_terminal_keys({});
         return result;
     } catch (const std::exception& error) {
         qCritical().noquote() << error.what();

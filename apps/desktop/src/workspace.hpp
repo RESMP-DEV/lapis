@@ -305,6 +305,10 @@ struct AgentRequest {
     QString program; // the CLI's path on `machine`, when known
     QString model;   // passed with the CLI's model flag; empty for its default
     QString mode;    // ask, edits, plan, auto or full; empty for the CLI's own setting
+    // An explicit form or wire title is someone's choice, even when it happens
+    // to match the folder. A wire request that omits the title still gets the
+    // generated folder default and can follow the conversation.
+    bool named{};
     // Show it on the stage; otherwise the category's selection stays.
     bool select{};
     // A conversation to resume, as the CLI's resume option takes it.
@@ -385,7 +389,7 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool createAgent(const QString& directory, const QString& title,
                                  const QString& harness = QStringLiteral("codex"),
                                  const QString& model = {}, const QString& mode = {},
-                                 const QString& machine = {});
+                                 const QString& machine = {}, bool named = true);
     // The machines a new agent can start on besides this Mac: the ssh
     // config's hosts, as the side terminal offers them.
     Q_INVOKABLE [[nodiscard]] QStringList sshMachines() const;

@@ -4,6 +4,8 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QStringView>
+#include <QThreadPool>
 #include <QVariantList>
 #include <atomic>
 #include <functional>
@@ -23,6 +25,9 @@ struct Conversation {
 };
 
 namespace conversations {
+// Limits are UTF-16 units. Keep complete Unicode scalars and reserve one unit
+// for an ellipsis when shortening a title.
+[[nodiscard]] QString elide_title(QStringView text, qsizetype limit);
 // A Claude Code session file. Only sessions someone opened in a terminal
 // (entrypoint "cli") count; -p and SDK runs are automation.
 [[nodiscard]] std::optional<Conversation> read_claude(const QString& path);
@@ -87,6 +92,9 @@ class ConversationIndex final : public QObject {
     std::shared_ptr<ScanMemory> memory_;
     std::shared_ptr<std::atomic_bool> scanning_{std::make_shared<std::atomic_bool>(false)};
     std::shared_ptr<std::atomic_bool> alive_{std::make_shared<std::atomic_bool>(true)};
+    // Joined before this QObject is destroyed: a scan may safely queue its
+    // result to this owner, including while shutdown waits for cancellation.
+    QThreadPool scan_pool_;
     bool ready_{};
 };
 } // namespace lapis::desktop

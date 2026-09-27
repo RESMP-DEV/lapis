@@ -20,7 +20,6 @@
 #include <QClipboard>
 #include <QCommandLineParser>
 #include <QCoreApplication>
-#include <QDateTime>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
@@ -1826,8 +1825,8 @@ void check_side_terminal(QQuickWindow& window, lapis::desktop::Terminals& termin
     send_binding(window, QStringLiteral("Return"));
     CHECK(pump_until(
         [&terminals] {
-            return screen_text(terminals.current()->snapshot())
-                .contains(QStringLiteral("ran hello"));
+            return terminals.current() != nullptr && screen_text(terminals.current()->snapshot())
+                                                         .contains(QStringLiteral("ran hello"));
         },
         10000));
     capture_step(window, "side-terminal");

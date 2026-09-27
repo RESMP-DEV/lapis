@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-26T03:13:39.043147+00:00",
+  "platform": "macOS arm64",
+  "scope": "PR17 resume review repair, including legacy preservation and the updated restore acceptance contract",
+  "reviewed_head": "68b6530451c63a795d4b16c97f29587ff29d5848",
+  "source_dirty_at_verification": true,
+  "source_sha256": {
+    "README.md": "5611317a4142a8ba9f75986eccb2bd7edad3856b485dd7a77592beb3e0221b93",
+    "apps/desktop/src/workspace.cpp": "fe42beba3d9e0e9c287d82c01b5908b23307258c0c671e5cb900640c75cac6a3",
+    "apps/desktop/tests/workspace_test.cpp": "6b8c2c0cf4e10611f6b2f25d81e66609f614816e4c80ada68f0bb7e332213387",
+    "docs/architecture.md": "b0a2e2e3a43780667795b7bb0ff59e1fe685babbc14111a71e9e53ceb5953b67",
+    "scripts/check_restore.py": "b5cd6fcdd32d83f9116581c15855aa05a630ef6366d3182b41d9bc5d38a4110d",
+    "scripts/tests/test_check_restore.py": "bcd4657e21cc1bc6381c5afced2d0c21a068f0f06fdc9600b6d5dc1b5c9c7502",
+    "services/session/src/agent_checkpoint.cpp": "41af86c3014198781066745d96c52c1cde60575547886d920f87c60ca6433d0f",
+    "services/session/src/agent_checkpoint.hpp": "b10c91b8f28ffa72ca90d0a074cd7fb40472573457a576ab665e3471fcb71a38",
+    "services/session/src/session_service.cpp": "6c99aeb67dd2a93a71ecbcfb82733657683fe6a0bd4d86b7b3f0e01429dfaabc",
+    "services/session/tests/agent_checkpoint_test.cpp": "ecbaf802866a63e165ca09878a9fa2788e4791be6c4bc1bf652eec323ddc7ef0"
+  },
+  "checks": {
+    "ctest": [
+      {
+        "mode": "desktop",
+        "command": [
+          "ctest",
+          "--test-dir",
+          "build/desktop",
+          "-R",
+          "^(workspace|agent-checkpoint)$",
+          "--output-on-failure",
+          "--no-tests=error"
+        ],
+        "exit_code": 0,
+        "seconds": 18.01
+      },
+      {
+        "mode": "desktop-asan",
+        "command": [
+          "ctest",
+          "--test-dir",
+          "build/desktop-asan",
+          "-R",
+          "^(workspace|agent-checkpoint)$",
+          "--output-on-failure",
+          "--no-tests=error"
+        ],
+        "exit_code": 0,
+        "seconds": 26.04
+      },
+      {
+        "mode": "desktop-tsan",
+        "command": [
+          "ctest",
+          "--test-dir",
+          "build/desktop-tsan",
+          "-R",
+          "^(workspace|agent-checkpoint)$",
+          "--output-on-failure",
+          "--no-tests=error"
+        ],
+        "exit_code": 0,
+        "seconds": 90.88
+      }
+    ],
+    "static": {
+      "passed": true,
+      "translation_units": 5,
+      "checks": 7,
+      "commands": [
+        "clang-format --dry-run --Werror <affected files>",
+        "cppcheck --project=<five-entry compile_commands.json> --library=qt --enable=warning,performance,portability --error-exitcode=1 --inline-suppr",
+        "clang-tidy -p <filtered compile database> <affected translation unit>"
+      ]
+    },
+    "quality": {
+      "command": "just quality",
+      "passed": true,
+      "python_tests": 166
+    },
+    "restore": {
+      "command": "SHELL=<isolated-login-shell> python3 -u scripts/check_restore.py",
+      "passed": true,
+      "power_loss_cycles": 2,
+      "second_cycle_via_launchd": true,
+      "real_clis": [
+        "codex",
+        "claude"
+      ],
+      "stand_ins": [
+        "grok",
+        "kimi",
+        "opencode",
+        "omp"
+      ],
+      "exact_managed_resume_pair_all_six": true,
+      "context_items": {
+        "codex": [
+          3,
+          5,
+          7
+        ],
+        "claude": [
+          2,
+          5,
+          8
+        ]
+      },
+      "last_helper_restarted_nothing": true
+    },
+    "diff_check": {
+      "command": "git diff --check",
+      "passed": true
+    }
+  },
+  "native_cli_sha256": {
+    "codex": "e1e083ab281668d370b5aa4d21a2803158723380ef1a04be80ffa459e700d407",
+    "claude": "387a5c5dcdbb815085edf0baf79591f9d8894efe922bceaf3d75b1b08055229d"
+  },
+  "reused_evidence": {
+    "source": "original PR17 validation on 68b6530",
+    "scope": "Unchanged iOS, QML and package assets; not claimed as rerun on repaired source"
+  },
+  "limits": [
+    "Simulated power loss is not an actual reboot.",
+    "Four other CLIs use stand-ins; native resume remains unqualified.",
+    "ASan/UBSan and TSan cover the two affected CTest suites; vendor Qt/Ghostty remain uninstrumented and leak checking was disabled.",
+    "No native GUI input, focus interaction, iOS simulator rerun, package publication or release update.",
+    "Observerless terminal checkpoints retain terminal provenance and are not independent authentication."
+  ]
+}

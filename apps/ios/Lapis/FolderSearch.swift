@@ -55,7 +55,7 @@ final class FolderCatalog: Sendable {
         return total
     }
 
-    // As on the Mac: the ten most active folders first, then the rest by
+    // The phone's picker: the ten most active folders first, then the rest by
     // name, with _folders and then hidden ones last.
     static func ordered(_ list: [String], heat: [String: Double], hot: Int = 10) -> [String] {
         let warm = list.filter { (heat[$0] ?? 0) > 0 }.sorted { left, right in

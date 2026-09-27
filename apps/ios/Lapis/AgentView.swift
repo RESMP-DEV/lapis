@@ -3,7 +3,7 @@ import UIKit
 
 struct AgentView: View {
     @State private var session: AgentSession
-    @State private var draft = ""
+    @Binding private var draft: String
     @State private var keyboardShown = false
     @State private var backgrounded = false
     @FocusState private var composing: Bool
@@ -13,11 +13,15 @@ struct AgentView: View {
     @State private var restarting = false
     // Wheel notches this drag has sent a full-screen program.
     @State private var wheelSent = 0
+    private let agent: Agent
     // A swipe left (+1) or right (-1) over the screen moves to a neighbor.
     private let onSwipe: ((Int) -> Void)?
 
-    init(agent: Agent, gateway: Gateway?, onSwipe: ((Int) -> Void)? = nil) {
+    init(agent: Agent, gateway: Gateway?, draft: Binding<String>,
+         onSwipe: ((Int) -> Void)? = nil) {
         _session = State(initialValue: AgentSession(agent: agent, gateway: gateway))
+        _draft = draft
+        self.agent = agent
         self.onSwipe = onSwipe
     }
 
@@ -82,6 +86,9 @@ struct AgentView: View {
             }
         }
         .onDisappear { session.close() }
+        .onChange(of: agent) { _, refreshed in
+            session.agent = refreshed
+        }
         .onChange(of: scenePhase) { _, phase in
             // Leave the agent while in the background; pick it up again on return.
             if phase == .background {
