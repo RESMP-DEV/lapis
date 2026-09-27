@@ -5,7 +5,7 @@ import json
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -47,6 +47,19 @@ class UiReviewOrchestrationTests(unittest.TestCase):
         progress = patch.object(check_ui_review, "progress", Mock())
         progress.start()
         self.addCleanup(progress.stop)
+
+    def test_invalid_jobs_are_usage_errors_without_starting_a_review(self):
+        for jobs in ("0", "-1"):
+            with (
+                self.subTest(jobs=jobs),
+                patch.object(check_ui_review, "review") as review,
+            ):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                    check_ui_review.main(["--jobs", jobs])
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn("--jobs must be positive", stderr.getvalue())
+                review.assert_not_called()
 
     def test_fixture_order_always_selects_explicit_background(self):
         runner = FixedRunner([UI_STDOUT, UI_STDOUT, TERMINAL_STDOUT])
