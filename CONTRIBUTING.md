@@ -619,6 +619,18 @@ reproducible symptom; a screenshot alone does not establish an application defec
 Apple silicon Mac with Xcode, Homebrew's `vulkan-headers` and `molten-vk`, and a
 bootstrapped Ghostty build. Everything goes under ignored `build/release/`.
 
+The canonical app icon is [assets/lapis.svg](assets/lapis.svg): the gold-star
+Cabochon with a solid blue face and raised rim. To regenerate its checked-in
+Mac ICNS, iPhone PNG and website SVG/PNGs, run
+`python3 scripts/package_macos.py icon` on macOS with `rsvg-convert` installed
+(`brew install librsvg`; exercised with librsvg 2.63.2). This build tool adds no
+application runtime dependency. The command renders every Mac size from vectors
+and writes source/output hashes to `build/release/icon/receipt.json`.
+Preserve the SVG's `tile-edge`, `tile-face`, `cabochon` and gradient IDs: the
+iPhone export uses the tile bounds and background color for an opaque square,
+leaving corner masking to iOS. The Mac and website retain the SVG's existing
+margin and rim, without an additional crop or mask.
+
 ```sh
 uv run --no-project python scripts/package_macos.py qt       # once: Qt from pinned source
 uv run --no-project python scripts/package_macos.py app      # build, bundle, sign

@@ -33,6 +33,7 @@ import tarfile
 import tempfile
 import time
 import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,44 +103,9 @@ ALLOWED_LIBRARY_PREFIXES = (
     "/System/Library/",
     "/usr/lib/",
 )
+ICON_SOURCE = ROOT / "assets/lapis.svg"
 PHONE_ICON = ROOT / "apps/ios/Lapis/Assets.xcassets/AppIcon.appiconset/icon.png"
 MAC_ICON = ROOT / "apps/desktop/macos/lapis.icns"
-# The phone's square artwork on macOS's icon grid: an 824-point rounded
-# square with continuous corners, centred on a 1024 canvas, with a soft shadow.
-# The phone's gem fills 59% of its tile, which reads small in the Dock, so the
-# artwork is enlarged 1.3 times about the gem's centre (52% down) first.
-ICON_SCRIPT = """
-import math
-import sys
-from PIL import Image, ImageDraw, ImageFilter
-source, target = sys.argv[1], sys.argv[2]
-canvas, body, oversample = 1024, 824, 4
-half = body * oversample / 2
-# A superellipse (exponent 5) approximates Apple's continuous corners.
-points = []
-for step in range(2048):
-    angle = 2 * math.pi * step / 2048
-    c, s = math.cos(angle), math.sin(angle)
-    points.append((half + half * math.copysign(abs(c) ** 0.4, c),
-                   half + half * math.copysign(abs(s) ** 0.4, s)))
-mask = Image.new("L", (body * oversample, body * oversample), 0)
-ImageDraw.Draw(mask).polygon(points, fill=255)
-mask = mask.resize((body, body), Image.LANCZOS)
-art = Image.open(source).convert("RGBA")
-side = art.width / 1.3
-left, top = (art.width - side) / 2, art.height * 0.52 - side / 2
-art = art.crop((round(left), round(top), round(left + side), round(top + side)))
-art = art.resize((body, body), Image.LANCZOS)
-art.putalpha(mask)
-offset = (canvas - body) // 2
-icon = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
-shade = Image.new("RGBA", (body, body), (0, 0, 0, 0))
-shade.putalpha(mask.point(lambda value: value * 90 // 255))
-icon.paste(shade, (offset, offset + 10), shade)
-icon = icon.filter(ImageFilter.GaussianBlur(14))
-icon.paste(art, (offset, offset), art)
-icon.save(target)
-"""
 
 
 class PackageError(RuntimeError):
@@ -305,26 +271,111 @@ def command_qt(_arguments):
 
 
 def command_icon(_arguments):
-    """Remake apps/desktop/macos/lapis.icns from the phone's icon."""
+    """Generate Mac, iPhone and website icons from the canonical SVG."""
     work = RELEASE / "icon"
-    shutil.rmtree(work, ignore_errors=True)
-    iconset = work / "lapis.iconset"
-    iconset.mkdir(parents=True)
-    master = work / "lapis-1024.png"
-    run(
-        ["uv", "run", "--no-project", "--with", "pillow>=11", "python", "-c"]
-        + [ICON_SCRIPT, PHONE_ICON, master]
-    )
-    for points in (16, 32, 128, 256, 512):
-        for factor, suffix in ((1, ""), (2, "@2x")):
-            pixels = points * factor
-            name = iconset / f"icon_{points}x{points}{suffix}.png"
+    work.mkdir(parents=True, exist_ok=True)
+    receipt = work / "receipt.json"
+    receipt.unlink(missing_ok=True)
+    renderer = shutil.which("rsvg-convert")
+    if renderer is None:
+        raise PackageError("SVG renderer is missing: brew install librsvg")
+    if shutil.which("iconutil") is None:
+        raise PackageError("Generating the Mac icon requires macOS iconutil")
+    with tempfile.TemporaryDirectory(prefix="generate-", dir=work) as temporary:
+        stage = Path(temporary)
+        phone_source = stage / "phone.svg"
+        write_phone_icon(phone_source)
+
+        def render(source, target, pixels):
             run(
-                ["sips", "-z", pixels, pixels, master, "--out", name],
-                stdout=subprocess.DEVNULL,
+                [
+                    renderer,
+                    "--width",
+                    pixels,
+                    "--height",
+                    pixels,
+                    "--output",
+                    target,
+                    source,
+                ]
             )
-    run(["iconutil", "--convert", "icns", "--output", MAC_ICON, iconset])
-    print(f"Wrote {MAC_ICON.relative_to(ROOT)}", flush=True)
+
+        # Render each size from vectors, including both Mac scale factors.
+        iconset = stage / "lapis.iconset"
+        iconset.mkdir()
+        for points in (16, 32, 128, 256, 512):
+            for factor, suffix in ((1, ""), (2, "@2x")):
+                render(
+                    ICON_SOURCE,
+                    iconset / f"icon_{points}x{points}{suffix}.png",
+                    points * factor,
+                )
+        run(
+            ["iconutil", "--convert", "icns", "--output", stage / "lapis.icns", iconset]
+        )
+        render(phone_source, stage / "phone.png", 1024)
+        render(ICON_SOURCE, stage / "site.png", 1024)
+        render(ICON_SOURCE, stage / "favicon.png", 32)
+        shutil.copy2(ICON_SOURCE, stage / "icon.svg")
+        outputs = {
+            stage / "lapis.icns": MAC_ICON,
+            stage / "phone.png": PHONE_ICON,
+            stage / "site.png": ROOT / "site/icon.png",
+            stage / "favicon.png": ROOT / "site/favicon.png",
+            stage / "icon.svg": ROOT / "site/icon.svg",
+        }
+        # Finish all rendering before replacing checked-in assets.
+        for source, target in outputs.items():
+            shutil.copy2(source, target)
+            print(f"Wrote {target.relative_to(ROOT)}", flush=True)
+        receipt.write_text(
+            json.dumps(
+                {
+                    "source": str(ICON_SOURCE.relative_to(ROOT)),
+                    "source_sha256": sha256(ICON_SOURCE),
+                    "renderer": capture([renderer, "--version"]).splitlines()[0],
+                    "outputs": {
+                        str(target.relative_to(ROOT)): sha256(target)
+                        for target in outputs.values()
+                    },
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+
+def write_phone_icon(target):
+    """Let iOS mask an opaque square; keep the stone's scale within the tile."""
+    namespace = "http://www.w3.org/2000/svg"
+    ET.register_namespace("", namespace)
+    try:
+        artwork = ET.parse(ICON_SOURCE).getroot()
+    except (OSError, ET.ParseError) as error:
+        raise PackageError(f"Cannot read the icon SVG: {error}") from error
+    edge = artwork.find(".//*[@id='tile-edge']")
+    face = artwork.find(".//*[@id='tile-face']")
+    stone = artwork.find(".//*[@id='cabochon']")
+    definitions = artwork.find(f"{{{namespace}}}defs")
+    if any(element is None for element in (edge, face, stone, definitions)):
+        raise PackageError("Icon SVG needs tile-edge, tile-face, cabochon and defs")
+    geometry = {key: edge.get(key) for key in ("x", "y", "width", "height")}
+    fill = face.get("fill")
+    if any(value is None for value in geometry.values()) or not fill:
+        raise PackageError("Icon SVG needs tile bounds and a solid face fill")
+    phone = ET.Element(
+        f"{{{namespace}}}svg",
+        {
+            "width": "1024",
+            "height": "1024",
+            "viewBox": " ".join(geometry.values()),
+        },
+    )
+    phone.append(definitions)
+    ET.SubElement(phone, f"{{{namespace}}}rect", {**geometry, "fill": fill})
+    phone.append(stone)
+    ET.ElementTree(phone).write(target, encoding="utf-8", xml_declaration=True)
 
 
 KHRONOS = "https://raw.githubusercontent.com/KhronosGroup"
@@ -1063,7 +1114,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("qt", help="Build Qt with Vulkan from pinned source")
-    commands.add_parser("icon", help="Remake the macOS icon from the phone's")
+    commands.add_parser(
+        "icon", help="Generate Mac, iPhone and site icons from assets/lapis.svg"
+    )
     commands.add_parser("notices", help="Regenerate the Qt and MoltenVK notices")
     commands.add_parser("app", help="Build, bundle and sign lapis.app")
     commands.add_parser("dmg", help="Put the signed app in a signed DMG")

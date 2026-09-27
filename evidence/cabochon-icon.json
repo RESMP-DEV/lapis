@@ -1,0 +1,134 @@
+{
+  "source": "assets/lapis.svg",
+  "source_sha256": "a896cc7f84892e0b16727feccd65897cd1cf0cc1e47dea72985e4b3119f820d8",
+  "renderer": "rsvg-convert version 2.63.2",
+  "outputs": {
+    "apps/desktop/macos/lapis.icns": "6fc962d04fd6f175b50d27de017350b5f64cc72c047d44c5a6085303f6679f2a",
+    "apps/ios/Lapis/Assets.xcassets/AppIcon.appiconset/icon.png": "e70e88d4e31767026e48bf65b7608e79a79cfbb7bf13d1c7fc2e3744765e1b0b",
+    "site/icon.png": "41cbfa3a3314336a0d43704a8b59bbccc7cd6fc403c2bef23cfdbc9f545aacb0",
+    "site/favicon.png": "b6f90c8e5e46958e8f34b75e531d3939caace07d4b4e4d1dd2a276aab1e74756",
+    "site/icon.svg": "a896cc7f84892e0b16727feccd65897cd1cf0cc1e47dea72985e4b3119f820d8"
+  },
+  "scope": "Gold macOS Cabochon source adoption; no release or installed-app replacement.",
+  "source_revision": "bad6e1576b0bee6b418a452fc0aeadd255162a0e",
+  "checks": {
+    "approved_export_identical": true,
+    "desktop_bundle_icon_identical": true,
+    "ios_asset_catalog_compile": true,
+    "bundle_icon_reference": "lapis",
+    "quality": {
+      "passed": true,
+      "python_tests": 189,
+      "receipt": "build/reports/quality/receipt.json"
+    },
+    "ios_png": {
+      "size": [
+        1024,
+        1024
+      ],
+      "has_alpha": false,
+      "tool": "sips"
+    },
+    "website_svg_loaded": {
+      "path": "site/icon.svg",
+      "intrinsic_size": [
+        1024,
+        1024
+      ],
+      "tool": "headless Chrome"
+    },
+    "visual_review": [
+      "Mac and iPhone generated icon previews",
+      "Website header SVG"
+    ]
+  },
+  "icns_decoded_sizes": [
+    {
+      "file": "icon_128x128.png",
+      "dimensions": [
+        128,
+        128
+      ]
+    },
+    {
+      "file": "icon_128x128@2x.png",
+      "dimensions": [
+        256,
+        256
+      ]
+    },
+    {
+      "file": "icon_16x16.png",
+      "dimensions": [
+        16,
+        16
+      ]
+    },
+    {
+      "file": "icon_16x16@2x.png",
+      "dimensions": [
+        32,
+        32
+      ]
+    },
+    {
+      "file": "icon_256x256.png",
+      "dimensions": [
+        256,
+        256
+      ]
+    },
+    {
+      "file": "icon_256x256@2x.png",
+      "dimensions": [
+        512,
+        512
+      ]
+    },
+    {
+      "file": "icon_32x32.png",
+      "dimensions": [
+        32,
+        32
+      ]
+    },
+    {
+      "file": "icon_32x32@2x.png",
+      "dimensions": [
+        64,
+        64
+      ]
+    },
+    {
+      "file": "icon_512x512.png",
+      "dimensions": [
+        512,
+        512
+      ]
+    },
+    {
+      "file": "icon_512x512@2x.png",
+      "dimensions": [
+        1024,
+        1024
+      ]
+    }
+  ],
+  "release_qualification": {
+    "status": "blocked",
+    "reason": "Release Qt toolchain absent; package_macos.py app exits 1 with Build Qt first: package_macos.py qt. No staged release exists for verify."
+  },
+  "review": {
+    "provider": "zai,glm-5.3-flashx",
+    "mode": "read-only",
+    "disposition": "Initial missing-source/group findings closed by canonical SVG. Verified opaque iOS output, exact approved Mac framing, all ICNS sizes and website references. Renderer version documented. External img embedding avoids inline gradient collisions."
+  },
+  "evidence": [
+    "build/cabochon-adoption/assets.png",
+    "build/cabochon-adoption/site.png",
+    "build/cabochon-adoption/actool.log",
+    "build/cabochon-adoption/desktop-build.log",
+    "build/cabochon-adoption/package-app.log"
+  ],
+  "local_artifact_policy": "Paths under build are optional local diagnostics of the dated adoption run. Source/output hashes remain durable; fresh consolidation checks are recorded separately."
+}

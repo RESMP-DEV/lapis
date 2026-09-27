@@ -2064,6 +2064,12 @@ not yet exercised.
 A release is `lapis.app` in a signed DMG, built by `scripts/package_macos.py`
 (procedure in [Contributing](../CONTRIBUTING.md#build-the-mac-app)).
 
+- **One icon source.** [assets/lapis.svg](../assets/lapis.svg) is the selected
+  gold-star Cabochon: solid ultramarine, a six-ray gold star and narrow edge
+  relief. The `icon` packaging command derives the Mac ICNS, iPhone asset and
+  website icons from it. The Mac keeps the approved framing; the iPhone uses
+  the same stone relative to an opaque tile, with corners supplied by iOS.
+  White-star and Material treatments remain design-study alternatives.
 - **Qt built for lapis.** The official Qt 6.11.2 macOS binaries are built without
   Vulkan (`QT_FEATURE_vulkan` is off), and Homebrew's Qt requires macOS 26 and
   brings glib, ICU, OpenSSL and a dozen other libraries. The release builds
@@ -2176,7 +2182,7 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   Qt reports a Dock click as the application becoming active, which shows a
   hidden window. Command-W closes the window only when the category has no
   agent left; Command-Shift-W always does. Command-M minimizes.
-  The Mac icon enlarges the phone's gem 1.3 times inside Apple's 824-point body.
+  The current Mac icon comes from the canonical Cabochon SVG described in the downloadable-app section.
 - **Conversation index.** Claude Code and Codex keep every conversation in
   files; only those someone opened count (Claude's first recorded `entrypoint` "cli"; Codex
   rollouts that are not `exec` or subagents), about 560 of 27,700 Claude files
