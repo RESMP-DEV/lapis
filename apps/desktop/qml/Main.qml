@@ -998,17 +998,30 @@ ApplicationWindow {
         return place.machine && place.machine.length > 0 ? "" : session.directory
     }
     // Dropped files become their paths, quoted for a shell, as in Terminal.
-    function pastePaths(urls) {
+    function quoteDroppedPaths(urls) {
         const quoted = []
         for (const url of urls) {
             const text = url.toString()
             if (!text.startsWith("file://"))
                 continue
-            const path = decodeURIComponent(text.slice(7))
-            quoted.push("'" + path.replace(/'/g, "'\\''") + "'")
+            try {
+                const path = decodeURIComponent(text.slice(7))
+                quoted.push("'" + path.replace(/'/g, "'\\''") + "'")
+            } catch (_) {
+                // A malformed URI cannot become a shell path.
+            }
         }
-        if (quoted.length > 0)
-            liveTerminal.pasteText(quoted.join(" ") + " ")
+        return quoted.length > 0 ? quoted.join(" ") + " " : ""
+    }
+    function pastePaths(text, destinationId) {
+        if (!window.interactionArmed || text.length === 0)
+            return false
+        const destination = workspace.focusedSession
+        if (!destination || liveTerminal.document !== destination)
+            return false
+        if (destination.sessionId !== destinationId)
+            return false
+        return liveTerminal.pasteText(text)
     }
     function untileFocused() {
         const session = workspace.focusedSession
@@ -3672,19 +3685,27 @@ ApplicationWindow {
                     objectName: "fileDrop"
                     anchors.fill: parent
                     keys: ["text/uri-list"]
-                    enabled: workspace.focusedSession !== null
+                    enabled: workspace.focusedSession !== null && window.interactionArmed
                     onDropped: function(drop) {
                         if (!drop.hasUrls)
                             return
+                        const text = window.quoteDroppedPaths(drop.urls)
+                        if (text.length === 0)
+                            return
+                        let destinationId = workspace.focusedSession !== null ?
+                                                workspace.focusedSession.sessionId : ""
                         if (stage.tiled && !stage.zoomed)
                             for (const tile of stage.tiles) {
                                 const frame = stage.frameOf(tile)
                                 if (drop.x >= frame.x && drop.x <= frame.x + frame.width
                                         && drop.y >= frame.y && drop.y <= frame.y + frame.height)
-                                    workspace.selectSession(tile.sessionId)
+                                    destinationId = tile.sessionId
                             }
-                        const urls = drop.urls
-                        Qt.callLater(() => window.pastePaths(urls))
+                        if (destinationId.length === 0)
+                            return
+                        if (workspace.selectSession(destinationId)) {
+                            Qt.callLater(() => window.pastePaths(text, destinationId))
+                        }
                         drop.acceptProposedAction()
                     }
                 }

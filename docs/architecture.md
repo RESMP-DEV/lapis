@@ -1819,6 +1819,13 @@ cycles and the normal, ASan/UBSan and TSan workspace/checkpoint suites on macOS.
 It also covers a legacy Claude identity surviving printed output and managed
 Codex/Claude resume pairs being retired when only a terminal record is available.
 
+The [PR 17 integration check](../evidence/pr17-integration.json) exercises both
+power-loss cycles, including the launchd path, with the quality repair batch
+assembled. The workspace regression also covers a pre-adapter Claude launch:
+its legacy record supplies a managed resume pair, survives printed output, and
+resumes again. The receipt distinguishes these local changes from the pushed
+PR head and retains the earlier native-input and Qt sanitizer limitations.
+
 CLI updates (September 24, requested so agents never open on an update
 prompt). Before a new agent starts, the desktop runs that CLI's own
 non-interactive update command (Claude `update`, OMP `update`, Grok `update`,
@@ -2501,6 +2508,82 @@ other terminals do. AppKit may keep a view's answers while it has focus, so
 lapis's search and name fields decline them too. The hint is tested
 (`terminal_input_test`); the AppKit answers are exercised only by typing in
 the app.
+
+### Quality repair goals (September 25 audit)
+
+These maintenance goals precede further milestone work. Preserve the assembled
+workspace, tiles, service-owned processes and keyboard ownership. The audit
+separated reproduced defects from architectural change hazards; file size alone
+does not justify an extraction. Each row is a reviewable batch with its own
+finish line, coordinated against one shared baseline.
+
+| Goal | Scope and ownership | Acceptance and dependency |
+| --- | --- | --- |
+| 1. Repair lifecycle and ownership defects | iOS owner: cancel history work and reject stale completions after reopen (Q01). Workspace owner: persist the complete reopen plan before launch and retain retry state on save failure (Q02). Input owner: share composition/paste ownership between file drops and keyboard paste (Q08). Service owner: retire deferred history work before attachment takeover (Q09). Tooling owner: reuse bounded process-group cleanup (Q14). | Controlled old-response/replacement fixtures, injected registry save failure, focused paste/IME ownership and service takeover cases, and a TERM-resistant child cleanup regression. No milestone expansion. |
+| 2. Make standards and evidence gates reliable | Core owner: reconcile reducer/wire attention limits with an explicit compatibility decision (Q06). Desktop owner: remove the four sources' signed-bitwise violations (Q07). Tooling owner: cover all first-party Python, prevent stale check receipts and keep the documented CTest inventory accurate (Q12). | Boundary cases prove the chosen limits; affected native static checks pass; quality discovers apps/tools as well as scripts; failed tool/version probes cannot leave a passing receipt. Can proceed alongside independent goal 1 repairs. |
+| 3. Strengthen module boundaries | Coordinator agrees contracts before parallel edits: typed adapter status instead of vendor diagnostic strings (Q03), shared harness identity/configuration types (Q04), launcher/descriptor-store/snapshot-sink seams in LiveConnection (Q05), explicit CMake dependencies (Q11), and remaining registry transaction ownership (Q02). | Preserve or explicitly version wire compatibility; replay equivalent adapter states; verify restore rollback and live-connection lifecycle. Begin each extraction after its affected correctness fixes pass. Keep adapters independent and introduce only interfaces with concrete consumers. |
+| 4. Consolidate fixtures and measure copy cost | Verification owner: share the duplicated wire peer while retaining separate transport and input assertions (Q13). Rendering owner: measure snapshot allocations by size and surface count before choosing an optimization (Q10). | Both suites retain distinct diagnostics and detect malformed handshakes. Publish measured allocation/latency evidence before changing immutable snapshot ownership; no claimed performance improvement from source inspection alone. |
+
+The first implementation batch covers Q01, the reopen correctness portion of Q02,
+Q07, Q12's tooling/documentation work and Q14. Three workers own disjoint files;
+the coordinator owns shared documentation, native builds and integration checks.
+This batch is implemented and locally exercised; the
+[repair receipt](../evidence/quality-repairs.json) records source hashes, checks
+and the corrected regression fixtures. The
+[two follow-up passes](../evidence/quality-followup.json) add shared paste ownership
+for keyboard input and file drops (Q08), retire the old attachment's deferred
+history request on takeover (Q09), and name direct CMake dependencies (part of
+Q11). They also guard iPhone workspace responses across gateway changes, bound
+remote discovery/identity work, and restore focused CLI case selection. Broad
+header exports and the other module extractions remain goal 3 work.
+
+Q09's state transition has source review and ordinary takeover/reconnect coverage;
+its deferred-queue regression is still unqualified. The attempted pressure probe
+was timing-sensitive and contained an unreachable assertion, so it was removed
+from the supported tools and its receipts are not acceptance evidence. Do not
+replace that gap with repeated output floods. Q08 has background Qt/software,
+ASan and TSan evidence; this pass does not renew native macOS IME or Finder-drop
+qualification.
+
+For Q06, retain the interactive attention v1 bounds (256-byte metadata and at
+most 16 choices) and the broader existing wire envelope (1024 bytes/32 choices).
+Transport decoding is not semantic admission. Current Codex and Claude producers
+preflight the narrower limits; the review found no producer reaching the mismatch.
+Future adapters must validate that core contract or report degraded observation.
+Widening the core or tightening the wire requires an explicit compatibility and
+UI/resource decision, rather than silently equating the two limits.
+
+Remote folder discovery admits four concurrent SSH builds and retains up to 32
+reports and 32 failures; failures wait 60 seconds before retry and successful
+reports refresh after ten minutes. Tailnet identity admits four concurrent whois
+lookups, coalesces duplicates, and keeps up to 256 verdicts (allowed for five
+minutes, rejected/failed for one). Cache reads update recency. Saturation refuses
+new work and keeps stale reports usable. The HTTP server's total connection/thread
+count is a separate remaining bound; these limits do not claim a gateway load test.
+
+iPhone workspace work captures a host generation across each await, including
+follow-up mutations and cache writes. Saving an unchanged host keeps current
+state. Disk-cache keys use a digest of the complete host spelling; ambiguous
+legacy names are ignored and repopulated from the gateway. Production preferences
+and cache defaults stay unchanged; Foundation probes inject disposable stores
+and compile into per-run directories so concurrent diagnostics cannot overwrite
+each other's executable or compiler cache.
+Keep detailed execution logs under ignored `build/`; record verified outcomes here
+and sanitized handoff evidence under `evidence/`. An individual worker's passing
+check is not acceptance of the assembled change.
+
+Goal 2 also includes qualifying queued-result handoffs with a TSan-instrumented
+Qt Core build. The current uninstrumented Qt 6.11.2 produces matching reports in
+the model/usage suites and a minimal valid queued-handoff control. The workspace
+and cell-shapes TSan suites pass; the other two are not race-cleared. Keep these
+results visible while preserving the current ownership semantics.
+
+The September 27 [consolidation receipt](../evidence/local-consolidation.json)
+binds these repairs to the current workspace and phone controls from PRs 18–19.
+It also checks host changes while both the agent-list and terminal-list requests
+are outstanding: a stale response cannot publish state, write a cache, or start
+follow-up work. The earlier receipts remain dated evidence for their original
+source, not qualification of the assembled revision.
 
 ### Following milestones
 

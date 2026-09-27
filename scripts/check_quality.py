@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RECEIPT_SCHEMA_VERSION = 1
 MAX_WORKERS = 4
 REVISION_PATTERN = re.compile(r"[0-9a-f]{40}")
+PYTHON_CHECK_DIRECTORIES = ("apps", "scripts", "tools")
 PYTHON_TEST_PROGRAM = """import sys, unittest
 suite = unittest.defaultTestLoader.discover('scripts/tests')
 if not suite.countTestCases():
@@ -98,7 +99,7 @@ def run_quality_checks(
                 "check",
                 "--config",
                 root / "ruff.toml",
-                "scripts",
+                *PYTHON_CHECK_DIRECTORIES,
             ],
             report_dir,
             root,
@@ -111,7 +112,7 @@ def run_quality_checks(
                 "--check",
                 "--config",
                 root / "ruff.toml",
-                "scripts",
+                *PYTHON_CHECK_DIRECTORIES,
             ],
             report_dir,
             root,

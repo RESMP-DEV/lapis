@@ -225,6 +225,19 @@ def client_for(stream):
 
 
 class ViewTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unrelated_failure_with_deadline_text_remains_fatal(self):
+        stream = StreamSocket([])
+        client = client_for(stream)
+        failure = CheckError("Frame deadline expired")
+        with patch.object(client, "receive", side_effect=failure):
+            view = View(client)
+            with self.assertRaises(CheckError) as raised:
+                await view.wait(lambda: False, 2)
+            self.assertIs(raised.exception, failure)
+            with self.assertRaises(CheckError):
+                await view.close()
+        self.assertTrue(stream.closed)
+
     async def test_partial_frame_deadline_preserves_and_completes_frame(self):
         payload = b"a" * 40 + b"exact-retry-token"
         encoded = frame(ATTENTION_RETRY, payload)

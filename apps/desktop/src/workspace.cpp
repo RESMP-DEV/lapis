@@ -1274,7 +1274,8 @@ QString Workspace::startAgent(const AgentRequest& request) {
         return failed(QString::fromUtf8(error.what()));
     }
 }
-QString Workspace::launchAgent(const AgentRequest& request, const session::LaunchSpec& launch) {
+QString Workspace::launchAgent(const AgentRequest& request, const session::LaunchSpec& launch,
+                               int managed_resume_index, const QString& managed_resume_identity) {
     // An explicit attach has no registry to record the agent in.
     if (storage_path_.isEmpty())
         return failed(QStringLiteral("Agent launch requires a persisted workspace."));
@@ -1288,6 +1289,8 @@ QString Workspace::launchAgent(const AgentRequest& request, const session::Launc
         item->setSessionId(id);
         item->setHarnessId(request.harness);
         Agent agent{request.category, endpoint, launch, request.harness};
+        agent.managed_resume_index = managed_resume_index;
+        agent.managed_resume_identity = managed_resume_identity;
         agent.named = request.named;
         // A resumed conversation is lapis's pair: a later restart follows the
         // conversation wherever it goes, as a restored agent's does.
@@ -2128,14 +2131,15 @@ bool Workspace::reopenAgent() {
                                .mode = {},
                                .select = true,
                                .resume = {}};
-    const auto id = launchAgent(request, closed.plan.launch);
-    if (id.isEmpty())
+    const auto id = launchAgent(request, closed.plan.launch, closed.plan.managed_resume_index,
+                                closed.plan.managed_resume_identity);
+    if (id.isEmpty()) {
+        // A failed launch leaves the closed entry retryable, including the
+        // unstarted full resume plan.
+        closed_.push_back(std::move(closed));
+        emit closedChanged();
         return false;
-    // The resume pair lapis added stays lapis's to update on later restarts.
-    auto& agent = agents_[id];
-    agent.managed_resume_index = closed.plan.managed_resume_index;
-    agent.managed_resume_identity = closed.plan.managed_resume_identity;
-    static_cast<void>(save());
+    }
     return selectSession(id);
 }
 

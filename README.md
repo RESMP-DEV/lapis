@@ -71,6 +71,17 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | Mac app package | Qt 6.11.2 built with Vulkan (arm64, macOS 14 or later) with MoltenVK loaded directly; signed with the hardened runtime and notarized; Sparkle 2.10.0 updates signed with an EdDSA key and fed from the latest release; a login item for keeping agents running; release checks for architecture, minimum macOS, links outside the bundle, identifying strings, the update key, the bundled MoltenVK on an M4 Max, the windowless host and a launchd start taking the login shell's PATH; 0.1.0 opened and used with a live agent by a person | An update installed through Sparkle (the first comes with the release after 0.2.0); notifications, the login item and the Finder and editor actions not yet exercised by a check on a Mac; macOS 14 and 15 untested |
 | Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals; [installed binary qualification](evidence/codex-binary-update.json) | Broader binary and request-kind qualification |
 
+The [first quality repair batch](evidence/quality-repairs.json) exercises iPhone
+history retirement across reconnects, atomic managed-session reopening, and the
+expanded verification gates. Remaining repairs have bounded acceptance in the
+[quality goals](docs/architecture.md#quality-repair-goals-september-25-audit).
+The [follow-up audit and repairs](evidence/quality-followup.json) cover paste and
+gateway ownership, bounded remote discovery, explicit build dependencies, and
+focused CLI checks. The receipt distinguishes exercised behavior from remaining
+native-input, deferred-history and TSan qualification gaps.
+The [local consolidation receipt](evidence/local-consolidation.json) records the
+rebased repairs, fresh checks and source hashes after integration with PRs 18–19.
+
 [Desktop evidence](evidence/desktop-preview.json),
 [UI refinement evidence](evidence/ui-preview.json),
 [reconciled UI and test evidence](evidence/reconciliation.json) and

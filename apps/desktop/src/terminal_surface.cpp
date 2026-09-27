@@ -1382,11 +1382,25 @@ std::optional<TerminalMatch> terminal_find(const session::TerminalSnapshot& snap
 }
 
 bool TerminalSurface::pasteText(const QString& text) {
-    if (!document_ || text.isEmpty() || !interactive_ || !document_->live())
+    if (!document_ || text.isEmpty() || !interactive_ || !document_->live() || pasting_)
         return false;
     if (document_->historyActive())
         document_->returnToLive();
     if (!acceptsTerminalInput())
+        return false;
+    const auto owner = document_;
+    pasting_ = true;
+    emit inputOwnershipChanged();
+    const auto release_paste = qScopeGuard([this] {
+        pasting_ = false;
+        emit inputOwnershipChanged();
+    });
+    ++ime_epoch_;
+    resetInputContext();
+    // Resetting the input context can re-enter input handling. Keep the paste
+    // bound to its captured document and send only when that destination still
+    // owns the keyboard after the reset.
+    if (document_ != owner || !acceptsTerminalInput())
         return false;
     clearSelection();
     document_->sendText(text.toUtf8(), true);
@@ -1597,18 +1611,8 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
     if (composition_state_ == CompositionState::stale)
         composition_state_ = CompositionState::idle;
     if (event->matches(QKeySequence::Paste)) {
-        pasting_ = true;
-        emit inputOwnershipChanged();
-        const auto release_paste = qScopeGuard([this] {
-            pasting_ = false;
-            emit inputOwnershipChanged();
-        });
-        const auto owner = document_;
         const QString text = QGuiApplication::clipboard()->text();
-        ++ime_epoch_;
-        resetInputContext();
-        if (document_ == owner && acceptsTerminalInput())
-            document_->sendText(text.toUtf8(), true);
+        static_cast<void>(pasteText(text));
         event->accept();
         return;
     }

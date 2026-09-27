@@ -18,6 +18,7 @@ import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -952,6 +953,25 @@ class StartAgentTests(unittest.TestCase):
             self.assertIn("not running on the Mac", reply["error"])
 
 
+class WindowlessHostCleanupTests(unittest.TestCase):
+    def test_inventory_failure_still_reaps_the_owned_host(self):
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            start_new_session=True,
+        )
+        failure = PermissionError("process inventory denied")
+        fixture = SimpleNamespace(host=process, stop_services=Mock(side_effect=failure))
+        try:
+            with self.assertRaises(PermissionError) as raised:
+                WindowlessHostTests.stop(fixture)
+            self.assertIs(raised.exception, failure)
+            self.assertIsNotNone(process.poll(), "owned host survived cleanup failure")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+
+
 @unittest.skipUnless(DESKTOP and SERVICE.is_file(), "desktop build required")
 class WindowlessHostTests(unittest.TestCase):
     """The real windowless host (lapis_desktop --serve) behind the gateway."""
@@ -1003,6 +1023,17 @@ class WindowlessHostTests(unittest.TestCase):
             time.sleep(0.1)
 
     def stop(self):
+        try:
+            self.stop_services()
+        finally:
+            self.host.terminate()
+            try:
+                self.host.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                self.host.kill()
+                self.host.wait(timeout=5)
+
+    def stop_services(self):
         rows = subprocess.run(
             ["ps", "-axo", "pid=,command="], capture_output=True, text=True
         ).stdout.splitlines()
@@ -1012,7 +1043,6 @@ class WindowlessHostTests(unittest.TestCase):
                     os.kill(int(row.split(None, 1)[0]), 9)
                 except (ProcessLookupError, ValueError):
                     pass
-        self.host.wait(10)
 
     def test_the_host_starts_an_agent_in_its_category(self):
         with Server(

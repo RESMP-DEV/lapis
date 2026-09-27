@@ -338,6 +338,44 @@ void input_contract(bool background) {
     }
     composition(surface, {}, QStringLiteral("late-after-paste"));
     require(text_frames(peer).isEmpty(), "Pre-paste composition committed late");
+    {
+        composition(surface, QStringLiteral("before-drop"));
+        bool paste_claimed = false;
+        bool paste_released = false;
+        const QMetaObject::Connection paste_ownership_connection = QObject::connect(
+            &surface, &lapis::desktop::TerminalSurface::inputOwnershipChanged, [&] {
+                if (surface.pasting())
+                    paste_claimed = true;
+                else
+                    paste_released = true;
+            });
+        require(surface.pasteText(QStringLiteral("dropped界 ")),
+                "Programmatic file-drop paste was rejected");
+        require(text_frames(peer, QStringLiteral("dropped界 ").toUtf8().size()) ==
+                    QStringLiteral("dropped界 ").toUtf8(),
+                "File-drop paste was split or changed");
+        require(paste_claimed && paste_released, "File-drop paste bypassed paste ownership");
+        require(!surface.composing() && !surface.pasting(),
+                "File-drop paste retained stale input ownership");
+        composition(surface, {}, QStringLiteral("late-after-drop"));
+        require(text_frames(peer).isEmpty(), "File-drop composition committed late");
+        QObject::disconnect(paste_ownership_connection);
+    }
+    {
+        SessionPreview replacement(QStringLiteral("replacement"), QStringLiteral("/tmp"), {},
+                                   QColor(Qt::white), "");
+        const auto rebind = QObject::connect(
+            &surface, &lapis::desktop::TerminalSurface::inputOwnershipChanged, [&] {
+                if (surface.pasting())
+                    surface.setDocument(&replacement);
+            });
+        require(!surface.pasteText(QStringLiteral("wrong-destination")),
+                "Paste accepted a destination replaced during ownership notification");
+        require(text_frames(peer).isEmpty(), "Rebound paste reached the old terminal");
+        require(!surface.pasting(), "Rejected paste retained ownership");
+        QObject::disconnect(rebind);
+        surface.setDocument(&f.document);
+    }
     composition(surface, QStringLiteral("before-history"));
     f.document.olderHistory();
     composition(surface, {}, QStringLiteral("history-leak"));

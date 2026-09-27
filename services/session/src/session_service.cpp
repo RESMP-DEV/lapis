@@ -804,6 +804,12 @@ class SessionService final : public QObject {
             incoming->disconnectFromServer();
             return;
         }
+        // Takeover retires the previous client's deferred history request while
+        // its attachment is still known. Waiting for detach_client() is too
+        // late: attachment_ has already advanced, so the old owner cannot be
+        // matched and the next client sees a stale busy slot.
+        if (pending_history_ && pending_history_->first == attachment_)
+            pending_history_.reset();
         ++generation_;
         attachment_ = {.identity = identity_, .generation = generation_};
         ready_ = false;

@@ -1,6 +1,7 @@
 """Verification failures must preserve evidence and remain failures."""
 
 import os
+import json
 import subprocess
 import sys
 import tempfile
@@ -119,6 +120,131 @@ class BuildSelectionTests(unittest.TestCase):
                 check=True,
                 timeout=15,
             )
+
+
+class ReceiptFreshnessTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.logs = self.root / "build" / "reports"
+        root_patch = patch.object(check_cpp, "ROOT", self.root)
+        root_patch.start()
+        self.addCleanup(root_patch.stop)
+
+    def invoke(self, mode, *arguments):
+        argv = patch.object(sys, "argv", ["check_cpp.py", mode, *arguments])
+        with argv:
+            return check_cpp.main()
+
+    def test_invalid_jobs_replaces_success_without_starting_tools(self):
+        directory = self.logs / "dev"
+        directory.mkdir(parents=True)
+        (directory / "receipt.json").write_text('{"passed": true}\n')
+        with patch.object(check_cpp, "toolchain") as toolchain:
+            self.assertEqual(self.invoke("dev", "--jobs", "0"), 2)
+        toolchain.assert_not_called()
+        receipt = self.read_receipt("dev")
+        self.assertFalse(receipt["passed"])
+        self.assertEqual(receipt["checks"][0]["check"], "arguments")
+        self.assertIn("--jobs must be positive", receipt["checks"][0]["diagnostic"])
+
+    def test_toolchain_startup_failure_replaces_a_stale_receipt(self):
+        self.logs.mkdir(parents=True)
+        (self.logs / "format").mkdir()
+        stale = self.logs / "format" / "receipt.json"
+        stale.write_text('{"passed": true, "checks": []}\n')
+
+        with patch.object(check_cpp, "toolchain", side_effect=RuntimeError("no llvm")):
+            exit_code = self.invoke("format")
+
+        self.assertEqual(exit_code, 1)
+        receipt = self.read_receipt("format")
+        self.assertFalse(receipt["passed"])
+        self.assertEqual(
+            receipt["scope"], "format: startup failed before C++ checks could run."
+        )
+        self.assertEqual(receipt["checks"][0]["check"], "toolchain")
+        self.assertIn("no llvm", receipt["checks"][0]["diagnostic"])
+
+    def test_format_success_and_failure_both_record_current_receipts(self):
+        executable = self.root / "clang-format"
+        executable.write_text("# fixture\n", encoding="utf-8")
+        tools = {"clang-format": str(executable)}
+        listing = subprocess.CompletedProcess(["git"], 0, "src/example.cpp\0", "")
+        for passed in (True, False):
+            with (
+                patch.object(check_cpp, "toolchain", return_value=tools),
+                patch.object(
+                    check_cpp.subprocess, "run", return_value=listing
+                ) as git_run,
+                patch.object(
+                    check_cpp,
+                    "run",
+                    return_value={
+                        "check": "format",
+                        "passed": passed,
+                        "exit_code": 0 if passed else 1,
+                    },
+                ) as format_run,
+                patch.object(
+                    check_cpp, "_probe_version", return_value=("Fixture 1.0", None)
+                ),
+            ):
+                exit_code = self.invoke("format")
+
+            self.assertEqual(exit_code, 0 if passed else 1)
+            receipt = self.read_receipt("format")
+            self.assertEqual(receipt["passed"], passed)
+            self.assertEqual(
+                receipt["scope"],
+                "format: tracked C++ sources only; not compilation or test coverage.",
+            )
+            self.assertEqual(receipt["checks"][0]["check"], "format")
+            self.assertEqual(receipt["checks"][0]["passed"], passed)
+            self.assertEqual(format_run.call_count, 1)
+            self.assertEqual(git_run.call_count, 1)
+
+    def read_receipt(self, mode):
+        return json.loads((self.logs / mode / "receipt.json").read_text())
+
+
+class VersionProbeTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+
+    def executable(self, name, body):
+        path = self.bin / name
+        path.write_text(f"#!/usr/bin/env python3\n{body}\n", encoding="utf-8")
+        path.chmod(0o755)
+        return path
+
+    def test_failed_version_probe_fails_and_is_recorded_in_receipt(self):
+        good = self.executable("good-tool", "print('Fixture 1.2.3')")
+        bad = self.executable("bad-tool", "raise SystemExit(7)")
+        results = [{"check": "format", "passed": True}]
+
+        passed = check_cpp.write_receipt(
+            self.root / "receipt.json",
+            {"good": str(good), "bad": str(bad)},
+            results,
+            "fixture receipt",
+        )
+
+        receipt = json.loads((self.root / "receipt.json").read_text())
+
+        self.assertFalse(passed)
+        self.assertFalse(receipt["passed"])
+        self.assertEqual(receipt["tools"]["good"]["version"], "Fixture 1.2.3")
+        self.assertIn("exited with code 7", receipt["tools"]["bad"]["error"])
+        failed = receipt["checks"][-1]
+        self.assertEqual(failed["check"], "version-probe-bad")
+        self.assertFalse(failed["passed"])
+        self.assertTrue(receipt["checks"][0]["passed"])
 
 
 if __name__ == "__main__":

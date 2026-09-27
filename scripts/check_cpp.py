@@ -144,27 +144,58 @@ def run(label, command, log_dir, *, expect_failure=None, cwd=ROOT, timeout=300):
 
 
 def write_receipt(path, tools, results, scope):
+    version_results = []
     versions = {}
     for name, executable in tools.items():
-        version = subprocess.run(
-            [executable, "--version"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=15,
-        ).stdout.splitlines()[0]
-        versions[name] = {"path": executable, "version": version}
+        version, error = _probe_version(executable)
+        if error is None:
+            versions[name] = {"path": executable, "version": version}
+        else:
+            versions[name] = {"path": executable, "error": error}
+            version_results.append(
+                {
+                    "check": f"version-probe-{name}",
+                    "kind": "version-probe",
+                    "passed": False,
+                    "diagnostic": error,
+                }
+            )
+    checks = [*results, *version_results]
     receipt = {
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "platform": sys.platform,
         "scope": scope,
         "tools": versions,
-        "passed": bool(results) and all(result["passed"] for result in results),
-        "checks": results,
+        "passed": bool(checks) and all(result["passed"] for result in checks),
+        "checks": checks,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(receipt, indent=2) + "\n")
     return receipt["passed"]
+
+
+def _probe_version(executable):
+    """Return the first version line or a bounded, actionable probe failure."""
+    try:
+        result = subprocess.run(
+            [executable, "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return None, f"Unable to probe {executable}: {error}"
+    if result.returncode != 0:
+        output = (result.stderr or result.stdout).strip()
+        diagnostic = f"Version probe exited with code {result.returncode}"
+        if output:
+            diagnostic = f"{diagnostic}: {output}"
+        return None, diagnostic
+    output = result.stdout.splitlines()
+    if not output:
+        return None, "Version probe produced no output"
+    return output[0], None
 
 
 def main():
@@ -177,29 +208,63 @@ def main():
     )
     parser.add_argument("--jobs", type=int, default=min(os.cpu_count() or 1, 8))
     args = parser.parse_args()
-    if args.jobs < 1:
-        parser.error("--jobs must be positive")
-    tools = toolchain()
     log_dir = ROOT / "build" / "reports" / args.mode
+    receipt_path = log_dir / "receipt.json"
+    # Every parsed invocation owns receipt freshness, including startup failures.
+    receipt_path.unlink(missing_ok=True)
+    if args.jobs < 1:
+        result = _startup_failure("arguments", "--jobs must be positive", log_dir)
+        _write_failure_receipt(
+            receipt_path,
+            {},
+            [result],
+            f"{args.mode}: invalid arguments; C++ checks did not run.",
+        )
+        return 2
+    try:
+        tools = toolchain()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        receipt_result = _startup_failure("toolchain", error, log_dir)
+        return _write_failure_receipt(
+            receipt_path,
+            {},
+            [receipt_result],
+            f"{args.mode}: startup failed before C++ checks could run.",
+        )
     results = []
     if args.mode == "format":
-        names = subprocess.run(
-            ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.split("\0")
-        sources = sorted({name for name in names if Path(name).suffix in CPP_SUFFIXES})
-        if not sources:
-            raise RuntimeError("No C++ sources to format")
-        result = run("format", [tools["clang-format"], "-i", *sources], log_dir)
-        return 0 if result["passed"] else 1
+        try:
+            names = subprocess.run(
+                ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            ).stdout.split("\0")
+            sources = sorted(
+                {name for name in names if Path(name).suffix in CPP_SUFFIXES}
+            )
+            if not sources:
+                raise RuntimeError("No C++ sources to format")
+            results.append(
+                run("format", [tools["clang-format"], "-i", *sources], log_dir)
+            )
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            results.append(_startup_failure("format-setup", error, log_dir))
+        return _finish(receipt_path, tools, results, args.mode, "format")
 
-    configure = configure_command(tools, args.mode)
-    result = run("configure", configure, log_dir)
-    results.append(result)
-    if result["passed"]:
+    try:
+        results.extend(_run_gate(tools, args, log_dir))
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+        results.append(_startup_failure("check-setup", error, log_dir))
+    return _finish(receipt_path, tools, results, args.mode, "gate")
+
+
+def _run_gate(tools, arguments, log_dir):
+    configure = configure_command(tools, arguments.mode)
+    results = [run("configure", configure, log_dir)]
+    if results[-1]["passed"]:
         results.append(
             run(
                 "build",
@@ -207,83 +272,121 @@ def main():
                     tools["cmake"],
                     "--build",
                     "--preset",
-                    args.mode,
+                    arguments.mode,
                     "--parallel",
-                    args.jobs,
+                    arguments.jobs,
                 ],
                 log_dir,
             )
         )
-    if all(result["passed"] for result in results):
-        tasks = [
-            ("ctest", [tools["ctest"], "--preset", args.mode, "--parallel", args.jobs])
+    if not all(result["passed"] for result in results):
+        return results
+
+    tasks = [
+        (
+            "ctest",
+            [tools["ctest"], "--preset", arguments.mode, "--parallel", arguments.jobs],
+        )
+    ]
+    if arguments.mode in ("dev", "desktop"):
+        analysis_failed = False
+        try:
+            tasks.extend(_analysis_tasks(tools, arguments, log_dir))
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+            results.append(_startup_failure("analysis-setup", error, log_dir))
+            analysis_failed = True
+        if analysis_failed:
+            return results
+    with ThreadPoolExecutor(max_workers=arguments.jobs) as pool:
+        futures = [
+            pool.submit(run, label, command, log_dir) for label, command in tasks
         ]
-        if args.mode in ("dev", "desktop"):
-            database = ROOT / "build" / args.mode / "compile_commands.json"
-            entries = json.loads(database.read_text())
-            # Qt-generated MOC/RCC files are compiler-checked, not hand-maintained
-            # source. Analyze first-party translation units with their real flags.
-            entries = [
-                entry
-                for entry in entries
-                if not Path(entry["file"]).is_relative_to(ROOT / "build")
-            ]
-            sources = sorted({entry["file"] for entry in entries})
-            analysis_database = log_dir / "compile_commands.json"
-            analysis_database.write_text(json.dumps(entries, indent=2) + "\n")
-            if not sources:
-                raise RuntimeError(
-                    "Compilation database has no C++ sources; refusing an empty check"
-                )
-            names = subprocess.run(
-                ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                check=True,
-            ).stdout.split("\0")
-            format_sources = sorted(
-                {name for name in names if Path(name).suffix in CPP_SUFFIXES}
-            )
-            tasks.append(
-                (
-                    "clang-format",
-                    [tools["clang-format"], "--dry-run", "--Werror", *format_sources],
-                )
-            )
-            tasks.append(
-                (
-                    "cppcheck",
-                    [
-                        tools["cppcheck"],
-                        f"--project={analysis_database}",
-                        *(["--library=qt"] if args.mode == "desktop" else []),
-                        "--enable=warning,performance,portability",
-                        "--error-exitcode=1",
-                        "--inline-suppr",
-                        "--template=gcc",
-                    ],
-                )
-            )
-            for index, source in enumerate(sources):
-                tasks.append(
-                    (
-                        f"clang-tidy-{index}",
-                        [tools["clang-tidy"], "-p", database.parent, source],
-                    )
-                )
-        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            futures = [
-                pool.submit(run, label, command, log_dir) for label, command in tasks
-            ]
-            results.extend(future.result() for future in futures)
-    passed = write_receipt(
-        log_dir / "receipt.json",
-        tools,
-        results,
-        f"{args.mode}: compiled targets and registered CTest cases only; not GUI or performance acceptance.",
+        for future in futures:
+            results.append(future.result())
+    return results
+
+
+def _analysis_tasks(tools, arguments, log_dir):
+    database = ROOT / "build" / arguments.mode / "compile_commands.json"
+    entries = json.loads(database.read_text())
+    # Qt-generated MOC/RCC files are compiler-checked, not hand-maintained
+    # source. Analyze first-party translation units with their real flags.
+    entries = [
+        entry
+        for entry in entries
+        if not Path(entry["file"]).is_relative_to(ROOT / "build")
+    ]
+    sources = sorted({entry["file"] for entry in entries})
+    analysis_database = log_dir / "compile_commands.json"
+    analysis_database.write_text(json.dumps(entries, indent=2) + "\n")
+    if not sources:
+        raise RuntimeError(
+            "Compilation database has no C++ sources; refusing an empty check"
+        )
+    names = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    ).stdout.split("\0")
+    format_sources = sorted(
+        {name for name in names if Path(name).suffix in CPP_SUFFIXES}
     )
-    return 0 if passed else 1
+    return [
+        (
+            "clang-format",
+            [tools["clang-format"], "--dry-run", "--Werror", *format_sources],
+        ),
+        (
+            "cppcheck",
+            [
+                tools["cppcheck"],
+                f"--project={analysis_database}",
+                *(["--library=qt"] if arguments.mode == "desktop" else []),
+                "--enable=warning,performance,portability",
+                "--error-exitcode=1",
+                "--inline-suppr",
+                "--template=gcc",
+            ],
+        ),
+        *(
+            (
+                f"clang-tidy-{index}",
+                [tools["clang-tidy"], "-p", database.parent, source],
+            )
+            for index, source in enumerate(sources)
+        ),
+    ]
+
+
+def _finish(receipt_path, tools, results, mode, suffix):
+    if suffix == "format":
+        scope = "format: tracked C++ sources only; not compilation or test coverage."
+    else:
+        scope = (
+            f"{mode}: compiled targets and registered CTest cases only; "
+            "not GUI or performance acceptance."
+        )
+    return 0 if write_receipt(receipt_path, tools, results, scope) else 1
+
+
+def _write_failure_receipt(path, tools, results, scope):
+    return 0 if write_receipt(path, tools, results, scope) else 1
+
+
+def _startup_failure(label, error, log_dir):
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{label}.log"
+    log_path.write_text(f"{error}\n")
+    return {
+        "check": label,
+        "kind": "startup",
+        "passed": False,
+        "diagnostic": str(error),
+        "log": str(log_path.relative_to(ROOT)),
+    }
 
 
 if __name__ == "__main__":

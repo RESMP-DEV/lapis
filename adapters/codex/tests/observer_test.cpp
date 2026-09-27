@@ -703,8 +703,34 @@ void every_qualified_hash_is_accepted() {
     }
 }
 
+void unsupported_approval_decisions_are_observed_only() {
+    State state{"unanswerable", "codex"};
+    Source source;
+    source.start();
+    Observer observer{state};
+    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    require(wait_for([&] { return state.ready(); }), "unanswerable fixture ready");
+    auto request = large_approval(-101);
+    auto params = request["params"].toObject();
+    params.insert("availableDecisions", QJsonArray{QJsonObject{{"type", QStringLiteral("accept")}},
+                                                   QStringLiteral("accept_for_session")});
+    request.insert("params", params);
+    source.send(request);
+    const RequestId identifier{-101};
+    require(wait_for([&] { return state.pending().contains(identifier); }),
+            "unanswerable approval remains observable");
+    const auto& core = state.pending().at(identifier).request;
+    require(core.reason == "Respond in terminal" && core.summary == "Respond in terminal" &&
+                core.choices.empty(),
+            "unsupported approval choices explicitly require terminal response");
+    const auto revision = state.pending().at(identifier).revision;
+    require(!observer.decide(state.epoch(), identifier, revision, QStringLiteral("accept"), {}),
+            "unsupported approval decision is not routed");
+}
+
 int run(int argc, char** argv) {
     QCoreApplication application(argc, argv);
+    unsupported_approval_decisions_are_observed_only();
     initial_binding_requires_persistent_metadata(true);
     initial_binding_requires_persistent_metadata(false);
     unclassified_event_queue_is_bounded();

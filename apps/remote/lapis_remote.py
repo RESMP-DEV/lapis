@@ -1101,16 +1101,23 @@ class RemoteFolders:
     and again when older than ten minutes; the last one is served meanwhile."""
 
     STALE = 600
+    MAX_REPORTS = 32
+    MAX_ERRORS = 32
+    MAX_ACTIVE_BUILDS = 4
+    ERROR_RETRY = 60.0
+    TOO_MANY_MESSAGE = "Too many remote machines are loading; try again"
 
     def __init__(self):
         self.lock = threading.Lock()
-        self.reports = {}  # machine -> (payload, compressed, built)
-        self.building = set()
-        self.errors = {}
+        self.reports = collections.OrderedDict()
+        self.errors = collections.OrderedDict()
+        self.clock = time.monotonic
+        self.builds = {}
 
     def build(self, machine):
         try:
             report = remote_folder_report(machine)
+            require(isinstance(report, dict), "Remote folder report must be an object")
             version = hashlib.sha256(
                 json.dumps(report, sort_keys=True).encode()
             ).hexdigest()[:16]
@@ -1119,31 +1126,68 @@ class RemoteFolders:
                 json.dumps(payload, separators=(",", ":")).encode()
             )
             with self.lock:
-                self.reports[machine] = (payload, compressed, time.monotonic())
+                self.reports[machine] = (payload, compressed, self.clock())
+                self.reports.move_to_end(machine)
+                while len(self.reports) > self.MAX_REPORTS:
+                    self.reports.popitem(last=False)
                 self.errors.pop(machine, None)
         except (OSError, ValueError, subprocess.SubprocessError, GatewayError) as error:
             with self.lock:
-                self.errors[machine] = str(error)
+                self.errors[machine] = (str(error), self.clock() + self.ERROR_RETRY)
+                self.errors.move_to_end(machine)
+                while len(self.errors) > self.MAX_ERRORS:
+                    self.errors.popitem(last=False)
         finally:
             with self.lock:
-                self.building.discard(machine)
+                self.builds.pop(machine, None).set()
 
     def current(self, machine, timeout=30.0):
         with self.lock:
             report = self.reports.get(machine)
-            stale = report is None or time.monotonic() - report[2] > self.STALE
-            start = stale and machine not in self.building
-            if start:
-                self.building.add(machine)
-        if start:
-            thread = threading.Thread(target=self.build, args=(machine,), daemon=True)
-            thread.start()
-            if report is None:
-                thread.join(timeout)
+            if report is not None:
+                self.reports.move_to_end(machine)
+            now = self.clock()
+            stale = report is None or now - report[2] > self.STALE
+            failure = self.errors.get(machine)
+            if failure is not None:
+                self.errors.move_to_end(machine)
+            retry_ready = failure is None or now >= failure[1]
+            build = self.builds.get(machine)
+            waited = build is not None and report is None
+            if build is None and stale and retry_ready:
+                if len(self.builds) >= self.MAX_ACTIVE_BUILDS:
+                    if report is None:
+                        return None, failure[0] if failure else self.TOO_MANY_MESSAGE
+                else:
+                    event = threading.Event()
+                    self.builds[machine] = event
+                    try:
+                        threading.Thread(
+                            target=self.build,
+                            args=(machine,),
+                            name=f"lapis-remote-folders-{machine}",
+                            daemon=True,
+                        ).start()
+                    except RuntimeError as error:
+                        # No worker owns cleanup if the OS cannot start it.
+                        self.builds.pop(machine)
+                        self.errors[machine] = (str(error), now + self.ERROR_RETRY)
+                        self.errors.move_to_end(machine)
+                        while len(self.errors) > self.MAX_ERRORS:
+                            self.errors.popitem(last=False)
+                        event.set()
+                    build, waited = event, report is None
+            elif build is None and stale and report is None:
+                return None, failure[0]
+        if waited:
+            # State is never locked while an ssh subprocess runs or while waiting.
+            build.wait(timeout)
         with self.lock:
             report = self.reports.get(machine)
             return (
-                (report[0], report[1]) if report else (None, self.errors.get(machine))
+                (report[0], report[1])
+                if report
+                else (None, self.errors.get(machine, (self.TOO_MANY_MESSAGE, 0))[0])
             )
 
     def program(self, machine, harness):
@@ -1621,12 +1665,20 @@ def status_message(data):
 class TailnetAuth:
     """Admit only the Mac owner's iOS devices and this Mac itself."""
 
+    MAX_WHOIS = 4
+    MAX_CACHE = 256
+    ALLOWED_TTL = 300.0
+    REJECTED_TTL = 60.0
+    WAIT_SECONDS = 5.0
+
     def __init__(self, tailscale="tailscale", allow_local=False, runner=None):
         self.tailscale = tailscale
         self.allow_local = allow_local
         self.runner = runner or self._run
-        self.cache = {}
+        self.clock = time.monotonic
+        self.cache = collections.OrderedDict()
         self.lock = threading.Lock()
+        self.pending = {}
         status = self.runner([self.tailscale, "status", "--json"])
         own = status["Self"]
         self.owner = status["User"][str(own["UserID"])]["LoginName"]
@@ -1645,21 +1697,63 @@ class TailnetAuth:
             return True
         if self.allow_local and address in ("127.0.0.1", "::1"):
             return True
-        now = time.monotonic()
         with self.lock:
+            now = self.clock()
             cached = self.cache.get(address)
-            if cached and cached[1] > now:
+            if cached is not None and cached[1] > now:
+                self.cache.move_to_end(address)
                 return cached[0]
+            self.cache.pop(address, None)
+            event = self.pending.get(address)
+            owned = event is None
+            if owned:
+                if len(self.pending) >= self.MAX_WHOIS:
+                    return False
+                event = threading.Event()
+                self.pending[address] = event
+        if not owned:
+            event.wait(self.WAIT_SECONDS)
+            return self._cached(address)
+        verdict, ttl = False, self.REJECTED_TTL
         try:
             who = self.runner([self.tailscale, "whois", "--json", address])
             login = who["UserProfile"]["LoginName"]
             system = who["Node"]["Hostinfo"].get("OS", "")
             verdict = login == self.owner and system == "iOS"
-        except (subprocess.SubprocessError, OSError, KeyError, ValueError, TypeError):
-            return False
-        with self.lock:
-            self.cache[address] = (verdict, now + 300)
+            ttl = self.ALLOWED_TTL if verdict else self.REJECTED_TTL
+        except (
+            subprocess.SubprocessError,
+            OSError,
+            KeyError,
+            ValueError,
+            TypeError,
+            AttributeError,
+        ):
+            pass
+        finally:
+            self._publish(address, verdict, ttl)
         return verdict
+
+    def _publish(self, address, verdict, ttl):
+        try:
+            with self.lock:
+                self.cache[address] = (verdict, self.clock() + ttl)
+                self.cache.move_to_end(address)
+                while len(self.cache) > self.MAX_CACHE:
+                    self.cache.popitem(last=False)
+        finally:
+            with self.lock:
+                event = self.pending.pop(address, None)
+            if event is not None:
+                event.set()
+
+    def _cached(self, address):
+        with self.lock:
+            cached = self.cache.get(address)
+            if cached is not None and cached[1] > self.clock():
+                self.cache.move_to_end(address)
+                return cached[0]
+        return False
 
     def hosts(self, port):
         names = set(self.addresses) | {self.dns_name, self.dns_name.split(".")[0]}
