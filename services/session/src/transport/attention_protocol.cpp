@@ -107,6 +107,8 @@ bool valid_snapshot(const AttentionSnapshot& snapshot) {
         snapshot.requests.size() > max_requests ||
         static_cast<quint8>(snapshot.activity) >
             static_cast<quint8>(attention::Activity::turn_completed) ||
+        static_cast<quint8>(snapshot.observation_phase) >
+            static_cast<quint8>(attention::ObservationPhase::reconciling) ||
         snapshot.diagnostic.toUtf8().size() > max_diagnostic_bytes)
         return false;
     if (snapshot.ready &&
@@ -255,7 +257,7 @@ AttentionItem request(Reader& reader) {
 }
 } // namespace
 
-QByteArray encode_attention_snapshot(const AttentionSnapshot& snapshot) {
+QByteArray encode_attention_snapshot(const AttentionSnapshot& snapshot, bool observation_phase) {
     check(valid_snapshot(snapshot));
     QByteArray bytes;
     append_quint32(bytes, version);
@@ -275,7 +277,10 @@ QByteArray encode_attention_snapshot(const AttentionSnapshot& snapshot) {
         check(record.size() <= static_cast<qsizetype>(max_snapshot_bytes) - bytes.size());
         bytes += record;
     }
-    check(bytes.size() <= static_cast<qsizetype>(max_snapshot_bytes));
+    check(bytes.size() + (observation_phase ? 1U : 0U) <=
+          static_cast<qsizetype>(max_snapshot_bytes));
+    if (observation_phase)
+        bytes.append(static_cast<char>(snapshot.observation_phase));
     return bytes;
 }
 
@@ -298,6 +303,13 @@ AttentionSnapshot decode_attention_snapshot(const QByteArray& payload) {
     result.requests.reserve(request_count);
     for (quint32 index = 0; index < request_count; ++index)
         result.requests.push_back(request(reader));
+    if (!reader.done()) {
+        // A negotiated one-byte extension must be all-or-nothing. Unknown or
+        // invalid phase values fail the snapshot rather than becoming unknown.
+        result.observation_phase = static_cast<attention::ObservationPhase>(reader.quint8_value());
+        check(static_cast<quint8>(result.observation_phase) <=
+              static_cast<quint8>(attention::ObservationPhase::reconciling));
+    }
     check(reader.done() && valid_snapshot(result));
     return result;
 }

@@ -9,6 +9,8 @@
 #include <variant>
 #include <vector>
 
+#include <lapis/session/observation_phase.hpp>
+
 namespace lapis::session::attention {
 inline constexpr std::uint32_t contract_version = 1;
 using RequestId = std::variant<std::int64_t, std::string>;

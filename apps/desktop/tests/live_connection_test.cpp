@@ -583,24 +583,40 @@ void history_waits_for_resize_and_cancels() {
             "Typing left deferred history active");
 }
 
-void hyperlink_capability_falls_back_once() {
-    Fixture f;
-    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
-    auto first = f.accept();
-    const auto requested = f.request(first);
-    require(requested.hyperlinks, "New desktop did not request hyperlink metadata");
-    first.send(wire::Kind::status,
-               wire::encode_status(
-                   {wire::StatusCode::rejected, QStringLiteral("Invalid local session message")}));
-    auto legacy = f.accept();
-    const auto retried = f.request(legacy);
-    require(!retried.hyperlinks && retried.fingerprint == requested.fingerprint &&
-                retried.mode == requested.mode && retried.expected == requested.expected,
-            "Legacy retry changed identity or retained the unsupported capability");
-    require(!f.document.inputReady(), "Retry enabled input before synchronization");
-    f.hello(legacy);
-    f.screen(legacy);
-    require(f.document.inputReady(), "Compatible legacy service did not synchronize");
+void capabilities_downgrade_without_losing_supported_links() {
+    for (const bool supports_links : {true, false}) {
+        Fixture f;
+        f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+        auto first = f.accept();
+        const auto requested = f.request(first);
+        require(requested.hyperlinks && requested.attention_phase,
+                "New desktop did not request both capabilities");
+        const auto reject = wire::encode_status(
+            {wire::StatusCode::rejected, QStringLiteral("Invalid local session message")});
+        first.send(wire::Kind::status, reject);
+        auto links = f.accept();
+        const auto retried = f.request(links);
+        require(retried.hyperlinks && !retried.attention_phase &&
+                    retried.fingerprint == requested.fingerprint &&
+                    retried.mode == requested.mode && retried.expected == requested.expected,
+                "Phase downgrade lost supported links or changed identity");
+        require(!f.document.inputReady(), "Retry enabled input before synchronization");
+        if (supports_links) {
+            f.hello(links);
+            f.screen(links);
+        } else {
+            links.send(wire::Kind::status, reject);
+            auto legacy = f.accept();
+            const auto old = f.request(legacy);
+            require(!old.hyperlinks && !old.attention_phase &&
+                        old.fingerprint == requested.fingerprint && old.mode == requested.mode &&
+                        old.expected == requested.expected,
+                    "Legacy downgrade changed identity or retained an unsupported capability");
+            f.hello(legacy);
+            f.screen(legacy);
+        }
+        require(f.document.inputReady(), "Compatible service did not synchronize");
+    }
 
     Fixture unsupported;
     unsupported.document.startLive(unsupported.endpoint, unsupported.launch,
@@ -611,11 +627,19 @@ void hyperlink_capability_falls_back_once() {
                            wire::encode_status({wire::StatusCode::rejected,
                                                 QStringLiteral("Invalid local session message")}));
     auto unsupported_retry = unsupported.accept();
-    require(!unsupported.request(unsupported_retry).hyperlinks,
-            "Second attempt retained capability");
+    const auto unsupported_request = unsupported.request(unsupported_retry);
+    require(unsupported_request.hyperlinks, "Phase downgrade discarded link capability");
+    require(!unsupported_request.attention_phase, "Second attempt retained phase capability");
     unsupported_retry.send(wire::Kind::status,
                            wire::encode_status({wire::StatusCode::rejected,
                                                 QStringLiteral("Invalid local session message")}));
+    auto final_retry = unsupported.accept();
+    const auto final_request = unsupported.request(final_retry);
+    require(!final_request.hyperlinks && !final_request.attention_phase,
+            "Final attempt retained unsupported capabilities");
+    final_retry.send(wire::Kind::status,
+                     wire::encode_status({wire::StatusCode::rejected,
+                                          QStringLiteral("Invalid local session message")}));
     until([&] { return unsupported.document.connectionState() == QStringLiteral("disconnected"); });
     settle();
     require(!unsupported.server.hasPendingConnections(), "Unsupported service retried repeatedly");
@@ -646,7 +670,7 @@ int main(int argc, char** argv) {
         lost_before_screen();
         legacy_server();
         history_waits_for_resize_and_cancels();
-        hyperlink_capability_falls_back_once();
+        capabilities_downgrade_without_losing_supported_links();
         std::cout << "Identity, initial-screen gating, history paging/cancellation, explicit "
                      "reconnect/discovery, stale snapshot and legacy rejection passed\n";
         return 0;

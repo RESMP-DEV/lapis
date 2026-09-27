@@ -386,7 +386,7 @@ void LiveConnection::begin(wire::AttachMode mode) {
     failed_ = false;
     connected_ = false;
     ready_ = false;
-    legacy_link_retry_ = false;
+    capability_retry_ = false;
     attempts_ = 0;
     last_sequence_ = 0;
     shown_size_ = {};
@@ -403,6 +403,7 @@ void LiveConnection::begin(wire::AttachMode mode) {
         endpoint_ = session::posix::prepare_endpoint(endpoint_);
         request_ = {.mode = mode, .fingerprint = fingerprint_, .expected = {}};
         request_.hyperlinks = true;
+        request_.attention_phase = true;
         if (mode == wire::AttachMode::reconnect) {
             const auto saved = session::read_descriptor(endpoint_, fingerprint_);
             if (!saved) {
@@ -763,19 +764,23 @@ void LiveConnection::handle(const wire::Frame& frame) {
         return;
     case wire::Kind::status: {
         const auto status = wire::decode_status(frame.payload);
-        // Older v6 services reject the optional attach-mode bit before
-        // activating a client. Retry that handshake once with the same
-        // fingerprint and expected identity, without requesting link metadata.
-        if (!attachment_ && request_.hyperlinks && status.code == wire::StatusCode::rejected &&
+        // Downgrade phase first, retaining links on services that support them,
+        // then links for older v6 services. Both retries preserve identity and
+        // reconnect the socket only; neither path launches a service.
+        if (!attachment_ && (request_.attention_phase || request_.hyperlinks) &&
+            status.code == wire::StatusCode::rejected &&
             status.message == QStringLiteral("Invalid local session message")) {
-            request_.hyperlinks = false;
-            legacy_link_retry_ = true;
+            if (request_.attention_phase)
+                request_.attention_phase = false;
+            else
+                request_.hyperlinks = false;
+            capability_retry_ = true;
             connected_ = false;
             handshake_.stop();
             disconnect(socket_.get(), nullptr, this, nullptr);
             socket_->abort();
             QTimer::singleShot(0, this, [this] {
-                legacy_link_retry_ = false;
+                capability_retry_ = false;
                 connectSocket();
             });
             return;
@@ -792,7 +797,7 @@ void LiveConnection::receive() {
         buffer_ += socket_->readAll();
         wire::Frame frame;
         qsizetype consumed{};
-        while (!failed_ && !legacy_link_retry_ && wire::take_frame(buffer_, consumed, frame))
+        while (!failed_ && !capability_retry_ && wire::take_frame(buffer_, consumed, frame))
             handle(frame);
         if (consumed != 0)
             buffer_.remove(0, consumed);

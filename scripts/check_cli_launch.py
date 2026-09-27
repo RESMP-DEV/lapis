@@ -479,50 +479,54 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
         try:
             with service.connect() as legacy:
                 legacy.snapshot(lambda snap: "label" in snap["text"])
-                with WireClient(service.endpoint) as capable:
-                    request = bytearray(
-                        attach_payload(program, service.arguments, runtime)
-                    )
-                    request[36] = 0x83  # join, requesting hyperlink metadata
-                    capable.send(ATTACH, request)
-                    require(
-                        capable.hello() == service.child_pid,
-                        "Joined view replaced the child",
-                    )
-                    kind, data = capable.receive()
-                    require(
-                        kind == SNAPSHOT and data[:40] == capable.attachment,
-                        "Wrong joined screen",
-                    )
-                    snapshot = data[72:]
-                    points = struct.unpack_from(">I", snapshot, 1085)[0]
-                    offset = 1089 + points * 4
-                    cells = struct.unpack_from(">I", snapshot, offset)[0]
-                    end = offset + 4 + cells * 27
-                    require(
-                        "label" in decode_snapshot(snapshot[:end])["text"],
-                        "Joined text was lost",
-                    )
-                    marker, spans, first, count, length = struct.unpack_from(
-                        ">IIIII", snapshot, end
-                    )
-                    require(
-                        (marker, spans, first, count) == (0x4C4E4B31, 1, 0, 5)
-                        and snapshot[end + 20 :] == b"https://example.com/target"
-                        and length == len(snapshot[end + 20 :]),
-                        "OSC 8 destination was lost between PTY and joined client",
-                    )
-                    capable.send(READY, capable.attachment + data[40:48])
-                    # A resize forces another snapshot to the legacy attachment;
-                    # its strict decoder still requires the exact old format.
-                    legacy.send(RESIZE, struct.pack(">HH", 79, 24))
-                    legacy.snapshot(
-                        lambda snap: snap["columns"] == 79 and "label" in snap["text"]
-                    )
+                for capabilities in (0x80, 0xC0):
+                    with WireClient(service.endpoint) as capable:
+                        request = bytearray(
+                            attach_payload(program, service.arguments, runtime)
+                        )
+                        request[36] = capabilities | 3  # join, independent capabilities
+                        capable.send(ATTACH, request)
+                        require(
+                            capable.hello() == service.child_pid,
+                            "Joined view replaced the child",
+                        )
+                        kind, data = capable.receive()
+                        require(
+                            kind == SNAPSHOT and data[:40] == capable.attachment,
+                            "Wrong joined screen",
+                        )
+                        snapshot = data[72:]
+                        points = struct.unpack_from(">I", snapshot, 1085)[0]
+                        offset = 1089 + points * 4
+                        cells = struct.unpack_from(">I", snapshot, offset)[0]
+                        end = offset + 4 + cells * 27
+                        require(
+                            "label" in decode_snapshot(snapshot[:end])["text"],
+                            "Joined text was lost",
+                        )
+                        marker, spans, first, count, length = struct.unpack_from(
+                            ">IIIII", snapshot, end
+                        )
+                        require(
+                            (marker, spans, first, count) == (0x4C4E4B31, 1, 0, 5)
+                            and snapshot[end + 20 :] == b"https://example.com/target"
+                            and length == len(snapshot[end + 20 :]),
+                            "OSC 8 destination was lost between PTY and joined client",
+                        )
+                        capable.send(READY, capable.attachment + data[40:48])
+                        # A resize forces another snapshot to the legacy attachment;
+                        # its strict decoder still requires the exact old format.
+                        legacy.send(RESIZE, struct.pack(">HH", 79, 24))
+                        legacy.snapshot(
+                            lambda snap: (
+                                snap["columns"] == 79 and "label" in snap["text"]
+                            )
+                        )
             return {
                 "legacy_and_capable_views": True,
                 "same_child": True,
                 "osc8_from_real_pty": True,
+                "phase_capability_preserves_links": True,
             }
         finally:
             service.stop()

@@ -509,8 +509,9 @@ void truthfulStatus() {
     require(item.attentionCount() == 1, "stale requests remain visible for reconciliation");
     lapis::session::wire::AttentionSnapshot fresh;
     fresh.available = fresh.connected = true;
-    // The live Codex 0.155.1 observer reports this until the first turn.
+    // The producer owns the lifecycle phase; this diagnostic is display-only.
     fresh.diagnostic = QStringLiteral("Waiting for Codex thread history");
+    fresh.observation_phase = lapis::session::attention::ObservationPhase::awaiting_first_prompt;
     lapis::desktop::SessionPreview first(QStringLiteral("Codex"), {}, {}, QColor{}, "");
     first.applyAttention(fresh);
     require(first.statusLabel() == QStringLiteral("No prompt yet"),
@@ -526,11 +527,21 @@ void truthfulStatus() {
     claude.applyAttention(idle);
     require(claude.attentionCount() == 0 && claude.statusKind() == QStringLiteral("finished"),
             "an idle notice after a finished turn is not a pending request");
-    fresh.diagnostic = QStringLiteral("Reconciling Codex requests");
+    fresh.diagnostic = QStringLiteral("Vendor text changed during retry");
+    fresh.observation_phase = lapis::session::attention::ObservationPhase::reconciling;
     first.applyAttention(fresh);
     require(first.statusLabel() == QStringLiteral("No prompt yet"),
-            "an older service's one-second retry does not end the wait");
+            "a typed retry does not end a producer-established wait");
+    fresh.observation_phase = lapis::session::attention::ObservationPhase::unknown;
+    first.applyAttention(fresh);
+    require(first.statusLabel() == QStringLiteral("Status pending"),
+            "an unknown phase is not relabeled from vendor text");
+    lapis::desktop::SessionPreview legacy(QStringLiteral("Codex"), {}, {}, QColor{}, "");
+    legacy.applyAttention(fresh);
+    require(legacy.statusLabel() == QStringLiteral("Status pending"),
+            "legacy snapshots retain conservative unknown semantics");
     lapis::desktop::SessionPreview reconnecting(QStringLiteral("Codex"), {}, {}, QColor{}, "");
+    fresh.observation_phase = lapis::session::attention::ObservationPhase::reconciling;
     reconnecting.applyAttention(fresh);
     require(reconnecting.statusLabel() == QStringLiteral("Status pending"),
             "reconciliation alone still reads as pending");

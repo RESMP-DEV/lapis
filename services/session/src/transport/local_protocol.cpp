@@ -15,6 +15,8 @@ void check(bool valid) {
         throw std::runtime_error("Invalid local session message");
 }
 constexpr quint32 link_extension = 0x4c4e4b31U; // LNK1
+constexpr quint8 attach_link_capability = 0x80U;
+constexpr quint8 attach_phase_capability = 0x40U;
 void validate_links(const TerminalSnapshot& snapshot) {
     check(snapshot.hyperlinks.size() <= max_hyperlink_spans);
     std::size_t end = 0;
@@ -82,7 +84,8 @@ QByteArray encode_attach(const AttachRequest& request) {
     QByteArray result;
     append_quint32(result, version);
     result += request.fingerprint;
-    result.append(static_cast<char>(mode | (request.hyperlinks ? 0x80U : 0U)));
+    result.append(static_cast<char>(mode | (request.hyperlinks ? attach_link_capability : 0U) |
+                                    (request.attention_phase ? attach_phase_capability : 0U)));
     result += expected.session_id;
     result += expected.epoch;
     return result;
@@ -94,8 +97,9 @@ AttachRequest decode_attach(const QByteArray& payload) {
     AttachRequest result;
     result.fingerprint = raw_bytes(cursor, 32);
     const auto flags = *cursor++;
-    result.hyperlinks = (flags & 0x80U) != 0;
-    const auto mode = flags & 0x7fU;
+    result.hyperlinks = (flags & attach_link_capability) != 0;
+    result.attention_phase = (flags & attach_phase_capability) != 0;
+    const auto mode = flags & 0x3fU;
     check(mode <= static_cast<quint8>(AttachMode::join));
     result.mode = static_cast<AttachMode>(mode);
     result.expected.session_id = raw_bytes(cursor, 16);

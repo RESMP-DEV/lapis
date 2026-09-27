@@ -65,7 +65,7 @@ class LiveConnection final : public QObject {
     bool connected_{};
     bool ready_{};
     bool failed_{true};
-    bool legacy_link_retry_{};
+    bool capability_retry_{};
     session::TerminalSize wanted_size_{100, 30};
     bool wanted_size_requested_{};
     session::TerminalSize shown_size_{};

@@ -157,16 +157,14 @@ void SessionPreview::applyAttention(session::wire::AttentionSnapshot snapshot) {
             arrived = true;
     }
     submitted_attention_.intersect(current);
-    // A new Codex session has no thread rollout until its first prompt (Codex
-    // 0.155.1 answers resume with "no rollout found"). Services built before
-    // the observer kept that diagnostic briefly report reconciliation on each
-    // one-second retry; that does not end the wait.
-    const auto& diagnostic = snapshot.diagnostic;
-    const bool waiting = diagnostic == QLatin1String("Waiting for Codex thread history") ||
-                         diagnostic == QLatin1String("Waiting for a persistent Codex thread");
-    const bool retrying = diagnostic == QLatin1String("Reconciling Codex requests");
-    awaiting_first_prompt_ =
-        snapshot.connected && !snapshot.ready && (waiting || (retrying && awaiting_first_prompt_));
+    // A typed `reconciling` update preserves an already-established wait.
+    // Legacy snapshots have no phase byte and conservatively remain unknown.
+    using Phase = session::attention::ObservationPhase;
+    if (snapshot.observation_phase == Phase::awaiting_first_prompt)
+        awaiting_first_prompt_ = true;
+    else if (snapshot.observation_phase != Phase::reconciling)
+        awaiting_first_prompt_ = false;
+    awaiting_first_prompt_ = awaiting_first_prompt_ && snapshot.connected && !snapshot.ready;
     attention_ = std::move(snapshot);
     if (arrived)
         ++attention_serial_;
@@ -179,6 +177,7 @@ void SessionPreview::invalidateAttention() {
         return;
     attention_->ready = false;
     attention_->connected = false;
+    attention_->observation_phase = session::attention::ObservationPhase::unknown;
     attention_->diagnostic = QStringLiteral("Connection lost; reconnect before responding");
     for (auto& item : attention_->requests)
         item.pending.status = session::attention::RequestStatus::stale;

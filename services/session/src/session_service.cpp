@@ -256,24 +256,27 @@ class SessionService final : public QObject {
         QLocalSocket* const destination = client_;
         const auto owner = attachment_;
         try {
-            wire::AttentionSnapshot snapshot{.attachment = owner,
-                                             .available = true,
-                                             .connected = state->connected(),
-                                             .ready = state->ready(),
-                                             .source_epoch = state->epoch(),
-                                             .activity = state->activity(),
-                                             .diagnostic =
-                                                 !decision_error_.isEmpty() ? decision_error_
-                                                 : !codex_error_.isEmpty()  ? codex_error_
-                                                 : codex_observer_ ? codex_observer_->diagnostic()
-                                                                   : claude_observer_->diagnostic(),
-                                             .requests = {}};
+            wire::AttentionSnapshot snapshot{
+                .attachment = owner,
+                .available = true,
+                .connected = state->connected(),
+                .ready = state->ready(),
+                .source_epoch = state->epoch(),
+                .activity = state->activity(),
+                .observation_phase = codex_observer_ ? codex_observer_->observationPhase()
+                                                     : attention::ObservationPhase::unknown,
+                .diagnostic = !decision_error_.isEmpty() ? decision_error_
+                              : !codex_error_.isEmpty()  ? codex_error_
+                              : codex_observer_          ? codex_observer_->diagnostic()
+                                                         : claude_observer_->diagnostic(),
+                .requests = {}};
             for (const auto& [id, pending] : state->pending())
                 snapshot.requests.push_back({pending, codex_observer_
                                                           ? codex_observer_->details(id)
                                                           : claude_observer_->details(id)});
-            const auto bytes = wire::frame(wire::Kind::attention_snapshot,
-                                           wire::encode_attention_snapshot(snapshot));
+            const auto bytes =
+                wire::frame(wire::Kind::attention_snapshot,
+                            wire::encode_attention_snapshot(snapshot, client_attention_phase_));
             if (destination->bytesToWrite() + bytes.size() > wire::max_frame_bytes ||
                 destination->write(bytes) != bytes.size())
                 throw std::runtime_error("Attention output queue unavailable");
@@ -800,12 +803,12 @@ class SessionService final : public QObject {
             if (request.mode == wire::AttachMode::join)
                 join(incoming, request.hyperlinks);
             else
-                activate(incoming, request.hyperlinks);
+                activate(incoming, request.hyperlinks, request.attention_phase);
         } catch (const std::exception& error) {
             reject_attachment(incoming, QString::fromUtf8(error.what()));
         }
     }
-    void activate(QLocalSocket* incoming, bool hyperlinks) {
+    void activate(QLocalSocket* incoming, bool hyperlinks, bool attention_phase) {
         if (generation_ == std::numeric_limits<quint64>::max()) {
             send_status(incoming, wire::StatusCode::overloaded, "Attachment generation overflow");
             incoming->disconnectFromServer();
@@ -829,6 +832,7 @@ class SessionService final : public QObject {
         }
         client_ = incoming;
         client_hyperlinks_ = hyperlinks;
+        client_attention_phase_ = attention_phase;
         client_wanted_.reset();
         attention_dirty_ = true;
         if (codex_observer_ && pty_requested_ && !codex_state_->connected() &&
@@ -1390,6 +1394,7 @@ class SessionService final : public QObject {
     bool dirty_{true};
     bool ready_{};
     bool client_hyperlinks_{};
+    bool client_attention_phase_{};
     bool snapshot_in_flight_{};
     bool process_started_{};
     bool stopping_{};

@@ -75,11 +75,21 @@ void hyperlink_messages() {
             request.expected = attachment.identity;
         const auto old = wire::encode_attach(request);
         request.hyperlinks = true;
+        request.attention_phase = true;
         auto capable = wire::encode_attach(request);
         require(old.size() == capable.size() && wire::decode_attach(capable).hyperlinks &&
-                !wire::decode_attach(old).hyperlinks);
-        capable[36] = static_cast<char>(static_cast<unsigned char>(capable[36]) & 0x7fU);
+                wire::decode_attach(capable).attention_phase &&
+                !wire::decode_attach(old).hyperlinks && !wire::decode_attach(old).attention_phase);
+        auto links_only = capable;
+        links_only[36] = static_cast<char>(static_cast<unsigned char>(links_only[36]) & 0xbfU);
+        require(wire::decode_attach(links_only).hyperlinks &&
+                !wire::decode_attach(links_only).attention_phase);
+        require(static_cast<unsigned char>(capable[36]) ==
+                (static_cast<unsigned char>(old[36]) | 0xc0U));
+        capable[36] = static_cast<char>(static_cast<unsigned char>(capable[36]) & 0x3fU);
         require(capable == old);
+        capable[36] = static_cast<char>(static_cast<unsigned char>(capable[36]) | 0x20U);
+        rejects([&] { static_cast<void>(wire::decode_attach(capable)); });
     }
 }
 void identity_messages() {

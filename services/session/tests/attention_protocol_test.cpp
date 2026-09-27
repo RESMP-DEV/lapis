@@ -12,6 +12,7 @@
 
 namespace {
 using lapis::session::attention::Activity;
+using lapis::session::attention::ObservationPhase;
 using lapis::session::attention::Pending;
 using lapis::session::attention::Request;
 using lapis::session::attention::RequestId;
@@ -138,6 +139,34 @@ void round_trip_and_recovery() {
             restored.requests.front().pending.status == RequestStatus::responding);
     require(lapis::session::wire::encode_attention_snapshot(restored) == recovery_encoded);
 
+    AttentionSnapshot typed = original;
+    typed.observation_phase = ObservationPhase::awaiting_first_prompt;
+    const QByteArray typed_encoded = lapis::session::wire::encode_attention_snapshot(typed, true);
+    require(typed_encoded.size() == encoded.size() + 1 && typed_encoded.startsWith(encoded) &&
+            typed_encoded.endsWith('\1'));
+    const auto typed_restored = lapis::session::wire::decode_attention_snapshot(typed_encoded);
+    require(typed_restored.observation_phase == ObservationPhase::awaiting_first_prompt);
+    require(lapis::session::wire::encode_attention_snapshot(typed_restored, true) == typed_encoded);
+    // An unextended snapshot is the legacy contract and defaults conservatively.
+    require(lapis::session::wire::decode_attention_snapshot(encoded).observation_phase ==
+            ObservationPhase::unknown);
+    require(lapis::session::wire::encode_attention_snapshot(typed) == encoded);
+
+    typed.observation_phase = ObservationPhase::reconciling;
+    require(lapis::session::wire::decode_attention_snapshot(
+                lapis::session::wire::encode_attention_snapshot(typed, true))
+                .observation_phase == ObservationPhase::reconciling);
+    typed.observation_phase = static_cast<ObservationPhase>(3);
+    rejects(
+        [&] { static_cast<void>(lapis::session::wire::encode_attention_snapshot(typed, true)); });
+    auto invalid_phase = typed_encoded;
+    invalid_phase.back() = '\3';
+    rejects(
+        [&] { static_cast<void>(lapis::session::wire::decode_attention_snapshot(invalid_phase)); });
+    rejects([&] {
+        static_cast<void>(lapis::session::wire::decode_attention_snapshot(typed_encoded + 'x'));
+    });
+
     const AttentionDecision original_decision = decision(std::numeric_limits<std::int64_t>::min());
     const QByteArray decision_encoded =
         lapis::session::wire::encode_attention_decision(original_decision);
@@ -249,6 +278,16 @@ void golden_wire_bytes() {
                                 "0000000000000001" // source epoch
                                 "00000000"         // empty diagnostic
                                 "00000000"));      // no requests
+    require(lapis::session::wire::encode_attention_snapshot(minimal, true) ==
+            QByteArray::fromHex("00000006"                         // wire version
+                                "01010101010101010101010101010101" // session ID
+                                "02020202020202020202020202020202" // service epoch
+                                "0000000000000001"                 // attachment generation
+                                "01010102"         // available, connected, ready, idle
+                                "0000000000000001" // source epoch
+                                "00000000"         // empty diagnostic
+                                "00000000"         // no requests
+                                "00"));            // unknown phase
 
     AttentionDecision minimal_decision{quint64{1}, std::int64_t{0}, quint64{1}, QStringLiteral("y"),
                                        QJsonObject{}};

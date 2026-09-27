@@ -61,7 +61,8 @@ struct AttachRequest {
     AttachMode mode{AttachMode::discover};
     QByteArray fingerprint;
     SessionIdentity expected;
-    bool hyperlinks{}; // Optional mode bit 0x80; legacy requests leave it clear.
+    bool hyperlinks{};      // Optional mode bit 0x80; legacy requests leave it clear.
+    bool attention_phase{}; // Optional capability bit 0x40; legacy requests leave it clear.
 };
 struct Hello {
     Attachment attachment;
