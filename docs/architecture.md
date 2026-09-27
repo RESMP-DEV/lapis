@@ -2346,7 +2346,11 @@ Reported: lapis felt laggy, and only four categories had a key.
   remembers the previous one, lists only folders whose time changed, looks
   again only at conversations written in the last two days, and sweeps
   everything every half hour, when an old conversation resumed in place is
-  seen. The cache file is written at most every quarter hour.
+  seen. The cache file is written at most every quarter hour. Folder times
+  come from a coarse clock (about 4 ms on Linux), so a file added within the
+  same tick as the folder's last change leaves its time as it was; a folder
+  changed within two seconds of a pass is listed again at the next one. The
+  test caught this when it wrote a new conversation that quickly.
 - **Categories.** Command-1 through Command-9 (Control-Shift on Linux) select
   the first nine categories; Command-Option-arrows, Command-Shift-up/down and
   Command-Shift-J/K still move through all of them.

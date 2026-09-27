@@ -133,6 +133,10 @@ struct ScanPaths {
 constexpr qint64 kFullPassMs = qint64{30} * 60 * 1000;
 constexpr qint64 kSaveMs = qint64{15} * 60 * 1000;
 constexpr qint64 kRecentMs = qint64{2} * 24 * 60 * 60 * 1000;
+// Folder times come from a coarse clock (a few milliseconds on Linux, two
+// seconds on FAT); a folder changed this close to a pass could change again
+// within the same tick, so its time is not trusted until it settles.
+constexpr qint64 kSettleMs = 2000;
 } // namespace
 
 struct ScanMemory {
@@ -237,7 +241,7 @@ class Scan {
     bool folder(const QFileInfo& info, const Read& read, const List& list) {
         const auto path = info.absoluteFilePath();
         const auto time = info.lastModified().toMSecsSinceEpoch();
-        folders_.insert(path, time);
+        folders_.insert(path, time >= now_ - kSettleMs ? -1 : time);
         if (full_ || memory_.folders.value(path, -1) != time) {
             for (const auto& file : list()) {
                 if (!alive_.load())
