@@ -2259,7 +2259,9 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   minute instead of leaving a frozen tab. A split copies the launch with a new
   id. Agents started before this, and other CLIs, whose conversation lapis
   cannot name over ssh, are not reconnected: a fresh start would clear the
-  screen for nothing. Verified with a stand-in `claude` in zsh on a Linux
+  screen for nothing. `/clear` or `/resume` inside the agent moves to a
+  conversation the saved id does not follow; a reconnect returns to the
+  launch's own. Verified with a stand-in `claude` in zsh on a Linux
   machine (first launch, resume after a drop with the old copy stopped, TERM
   for one ignoring the hangup) and in the workspace test with a stand-in ssh.
 - **Phone tests on one fake agent.** Several phone UI tests take turns on one
