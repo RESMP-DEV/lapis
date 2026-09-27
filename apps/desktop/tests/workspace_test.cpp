@@ -2714,6 +2714,45 @@ void restartReportsValidationFailures() {
             "validation failure exposes its actual cause to the user");
 }
 
+// A restarted service must wait until its launch metadata is durable. The
+// readable but non-writable registry makes QSaveFile refuse the save after
+// restore planning, without racing a missing service or changing file flags.
+void restoreSaveFailureStartsNoService() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-restore-save-XXXXXX"));
+    require(directory.isValid(), "restore save-failure directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QString id = uuid();
+    WorkspaceOptions options;
+    options.restoreAgents = true;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                    {"agents", QJsonArray{agentRecord(canonical, id, "general")}}});
+    const auto original = readRegistry(options.storagePath);
+    const auto endpoint = QDir(canonical).filePath(id + QStringLiteral(".sock"));
+    const auto restore_permissions = qScopeGuard([&] {
+        if (!QFile::setPermissions(options.storagePath, QFile::ReadOwner | QFile::WriteOwner))
+            qWarning() << "Could not restore fixture registry permissions";
+    });
+    require(QFile::setPermissions(options.storagePath, QFile::ReadOwner),
+            "make the registry readable while its QSaveFile write fails");
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.workspaceError().contains(QStringLiteral("Cannot save workspace:")),
+                "restore reports the failed metadata commit");
+        require(workspace.sessions().isEmpty(), "failed restore retains no session objects");
+    }
+    require(readRegistry(options.storagePath) == original,
+            "failed restore leaves the original registry bytes intact");
+    require(!QFileInfo::exists(endpoint) && !QFileInfo::exists(endpoint + QStringLiteral(".log")),
+            "failed restore starts neither a service nor its log");
+    require(QDir(canonical).entryList({QStringLiteral("workspace.json.*")}, QDir::Files).isEmpty(),
+            "QSaveFile removed its failed restore temporary");
+}
+
 // The session service ends the agent's process group; the tab closes after.
 // Agents whose session service is gone (a reboot or crash) come back when
 // lapis opens, resuming the conversation their service recorded, like a
@@ -3709,6 +3748,7 @@ int main(int argc, char** argv) {
         outputEstimate();
         agentsStartWithoutParentSessionMarkers();
         restartRefusesClosingAgent();
+        restoreSaveFailureStartsNoService();
         agentsRestoreAfterServiceLoss();
         reopenFailurePreservesTheRetryableManagedPlan();
         updaterLifecycle();
