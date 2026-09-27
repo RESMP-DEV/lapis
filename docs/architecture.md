@@ -296,9 +296,13 @@ For parallel changes, commit the shared contract first and assign disjoint files
 with one coordinator/build owner. Preview hosting lives in `ui_preview.*`, layout
 in `qml/`, and capture/check tooling in `ui_capture.*`, desktop tests and
 `scripts/check_ui_preview.py`. Review partial worker output before integration.
-Use `just desktop` for integrated C++ changes, targeted ASan for reload lifetimes,
-and `just ui-check` for capture behavior. QML-only iteration uses reload and focused
-visual checks; reuse pinned dependencies and update these documents in place.
+Use `just ui-review` for routine background UI review: the workspace, shortcut
+and terminal-input fixtures run with explicit Qt offscreen/software backends.
+They preserve OS focus and the pointer; this is logical UI and software-render
+coverage. Use `just desktop` for integrated C++ changes, targeted ASan for reload
+lifetimes, and native `just ui-check` for display/GPU capture behavior. Native
+macOS input and IME retain their own qualification. QML-only iteration uses these
+focused checks; reuse pinned dependencies and update these documents in place.
 
 ### Terminal adapter v0
 

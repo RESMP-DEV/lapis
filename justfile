@@ -62,6 +62,10 @@ ui-debug:
 ui-check:
     python3 scripts/lapis.py ui-check
 
+# Routine offscreen/software UI and input fixtures; never opens native windows.
+ui-review:
+    python3 scripts/lapis.py ui-review
+
 # Dedicated service/desktop launch cases; no model turn or live-shell reuse.
 cli-check:
     python3 scripts/lapis.py cli-check
