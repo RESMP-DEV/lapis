@@ -272,6 +272,31 @@ def fake_tailscale(peers):
     return runner
 
 
+def fake_zerotier(networks):
+    """A runner answering `zerotier-cli -j listnetworks` with these networks."""
+
+    def runner(command):
+        return networks
+
+    return runner
+
+
+def missing_cli(command):
+    raise FileNotFoundError(2, "No such file or directory", command[0])
+
+
+# The shape this Mac's ZeroTier network has in `zerotier-cli -j listnetworks`,
+# with the identifiers sanitized.
+ZT_NETWORK = {
+    "id": "7d319a9c02e4f5b6",
+    "name": "VPN",
+    "status": "OK",
+    "type": "PRIVATE",
+    "assignedAddresses": ["10.243.203.187/16"],
+    "routes": [{"flags": 0, "metric": 0, "target": "10.243.0.0/16", "via": None}],
+}
+
+
 class AdmissionTests(unittest.TestCase):
     def test_only_the_owners_ios_devices_and_this_mac(self):
         auth = remote.TailnetAuth(
@@ -291,6 +316,100 @@ class AdmissionTests(unittest.TestCase):
         self.assertIn("mac.example.ts.net:7349", auth.hosts(7349))
         self.assertNotIn("localhost:7349", auth.hosts(7349))
 
+    def test_android_devices_of_the_owner(self):
+        auth = remote.TailnetAuth(
+            runner=fake_tailscale(
+                {
+                    "100.64.0.5": ("owner@example.com", "android"),
+                    "100.64.0.6": ("owner@example.com", "Android"),
+                }
+            )
+        )
+        self.assertTrue(auth.allowed("100.64.0.5"))
+        self.assertTrue(auth.allowed("100.64.0.6"))
+        # Other systems and other owners' Android devices are still refused.
+        auth = remote.TailnetAuth(
+            runner=fake_tailscale(
+                {
+                    "100.64.0.3": ("owner@example.com", "linux"),
+                    "100.64.0.4": ("someone@example.com", "android"),
+                }
+            )
+        )
+        self.assertFalse(auth.allowed("100.64.0.3"))
+        self.assertFalse(auth.allowed("100.64.0.4"))
+
+    def test_zerotier_members_and_this_mac(self):
+        auth = remote.ZeroTierAuth(runner=fake_zerotier([ZT_NETWORK]))
+        self.assertTrue(auth.allowed("10.243.9.7"))  # a member inside the route
+        self.assertTrue(auth.allowed("10.243.203.187"))  # this Mac's address
+        self.assertFalse(auth.allowed("10.244.0.1"))  # outside every route
+        self.assertFalse(auth.allowed("never-an-address"))
+        ipv6 = {
+            **ZT_NETWORK,
+            "assignedAddresses": ["fd5b:1a3c:9e22::99/64"],
+            "routes": [
+                {"flags": 0, "metric": 0, "target": "fd5b:1a3c:9e22::/64", "via": None}
+            ],
+        }
+        auth = remote.ZeroTierAuth(runner=fake_zerotier([ipv6]))
+        self.assertTrue(auth.allowed("fd5b:1a3c:9e22::1"))
+
+    def test_public_or_unjoined_networks_admit_nobody(self):
+        for network in (
+            {**ZT_NETWORK, "type": "PUBLIC"},
+            {**ZT_NETWORK, "status": "REQUESTING_CONFIGURATION"},
+        ):
+            with self.subTest(status=network["status"], type=network["type"]):
+                auth = remote.ZeroTierAuth(runner=fake_zerotier([network]))
+                self.assertFalse(auth.allowed("10.243.9.7"))
+                self.assertEqual(auth.hosts(7349), set())
+
+    def test_hosts_carry_the_assigned_addresses(self):
+        auth = remote.ZeroTierAuth(runner=fake_zerotier([ZT_NETWORK]))
+        self.assertIn("10.243.203.187:7349", auth.hosts(7349))
+        ipv6 = {**ZT_NETWORK, "assignedAddresses": ["fd5b:1a3c:9e22::99/64"]}
+        auth = remote.ZeroTierAuth(runner=fake_zerotier([ipv6]))
+        self.assertIn("[fd5b:1a3c:9e22::99]:7349", auth.hosts(7349))
+
+    def test_a_silent_zerotier_admits_nobody(self):
+        auth = remote.ZeroTierAuth(runner=missing_cli)
+        self.assertEqual(auth.current(), [])
+        self.assertFalse(auth.allowed("10.243.9.7"))
+        self.assertEqual(auth.hosts(7349), set())
+
+    def test_either_overlay_admits(self):
+        admission = remote.Admission(
+            tailnet=remote.TailnetAuth(
+                runner=fake_tailscale({"100.64.0.2": ("owner@example.com", "iOS")})
+            ),
+            zerotier=remote.ZeroTierAuth(runner=fake_zerotier([ZT_NETWORK])),
+        )
+        self.assertTrue(admission.allowed("100.64.0.2"))  # a tailnet device
+        self.assertTrue(admission.allowed("10.243.9.7"))  # a ZeroTier member
+        self.assertFalse(admission.allowed("10.244.0.1"))
+        self.assertEqual(admission.dns_name, "mac.example.ts.net")
+        hosts = admission.hosts(7349)
+        self.assertIn("mac.example.ts.net:7349", hosts)
+        self.assertIn("10.243.203.187:7349", hosts)
+
+    def test_either_overlay_admits_a_request(self):
+        auth = remote.Admission(
+            tailnet=remote.TailnetAuth(allow_local=True, runner=fake_tailscale({})),
+            zerotier=remote.ZeroTierAuth(runner=fake_zerotier([ZT_NETWORK])),
+        )
+        with Server(self, "{}", auth=auth) as server:
+            for host, expected in (
+                (f"10.243.203.187:{server.port}", 200),  # a ZeroTier address
+                (f"mac.example.ts.net:{server.port}", 200),  # the tailnet name
+                (f"10.244.0.1:{server.port}", 421),
+            ):
+                with self.subTest(host=host):
+                    status, _ = server.request(
+                        "GET", "/api/health", headers={"Host": host}
+                    )
+                    self.assertEqual(status, expected)
+
     def test_browsers_and_unknown_hosts_are_refused(self):
         with Server(self, "{}") as server:
             for headers, expected in (
@@ -306,11 +425,37 @@ class AdmissionTests(unittest.TestCase):
                     self.assertEqual(status, expected)
 
 
+class StartupTests(unittest.TestCase):
+    def test_zerotier_serves_alone_when_tailscale_is_absent(self):
+        tailnet, zerotier = remote.build_admission(
+            tailnet_runner=missing_cli, zerotier_runner=fake_zerotier([ZT_NETWORK])
+        )
+        self.assertIsNone(tailnet)
+        self.assertTrue(zerotier.allowed("10.243.9.7"))
+
+    def test_both_overlays_are_built_when_both_answer(self):
+        tailnet, zerotier = remote.build_admission(
+            tailnet_runner=fake_tailscale({}),
+            zerotier_runner=fake_zerotier([ZT_NETWORK]),
+        )
+        self.assertEqual(tailnet.dns_name, "mac.example.ts.net")
+        self.assertTrue(zerotier.allowed("10.243.9.7"))
+
+    def test_without_any_overlay_the_error_names_both(self):
+        with self.assertRaises(remote.GatewayError) as raised:
+            remote.build_admission(
+                tailnet_runner=missing_cli, zerotier_runner=missing_cli
+            )
+        self.assertIn("Tailscale", str(raised.exception))
+        self.assertIn("ZeroTier", str(raised.exception))
+
+
 class Server:
     """A gateway on 127.0.0.1 with a local-only admission rule."""
 
-    def __init__(self, test, registry_text, runtime=None, **gateway):
+    def __init__(self, test, registry_text, runtime=None, auth=None, **gateway):
         self.test = test
+        self.auth = auth
         self.gateway = gateway
         if runtime is None:
             self.directory = Path(tempfile.mkdtemp(prefix="lr-", dir="/tmp"))
@@ -321,13 +466,14 @@ class Server:
         self.registry.write_text(registry_text)
 
     def __enter__(self):
-        auth = remote.TailnetAuth(allow_local=True, runner=fake_tailscale({}))
+        if self.auth is None:
+            self.auth = remote.TailnetAuth(allow_local=True, runner=fake_tailscale({}))
         remote.Handler.log_message = lambda *_: None
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), remote.Handler)
         self.httpd.daemon_threads = True
         self.port = self.httpd.server_address[1]
         remote.Handler.gateway = remote.Gateway(
-            self.registry, auth, self.port, **self.gateway
+            self.registry, self.auth, self.port, **self.gateway
         )
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         return self

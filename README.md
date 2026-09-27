@@ -347,10 +347,11 @@ options literally and installs no attention hooks or approval settings.
 ## Use it from your iPhone
 
 The iPhone app (`apps/ios`) talks to a small gateway on the Mac
-(`apps/remote/lapis_remote.py`) over Tailscale. There is nothing to sign in to:
-the gateway listens only on the Mac's Tailscale address and serves a request
-only when `tailscale whois` names the Mac owner's login on an iOS device. The
-phone must be signed in to Tailscale with the same account as the Mac.
+(`apps/remote/lapis_remote.py`) over Tailscale or ZeroTier. There is nothing
+to sign in to: the gateway serves a request only when `tailscale whois` names
+the Mac owner's login on an iOS or Android device, or when the peer belongs
+to one of the Mac's private ZeroTier networks. The phone must be signed in to
+Tailscale with the same account as the Mac, or joined to its ZeroTier network.
 Keep Tailscale active on both devices when using HTTP; its WireGuard connection
 provides transport encryption. The configured gateway address is trusted input,
 and arbitrary LAN hosts are outside this transport contract. An explicit HTTPS
