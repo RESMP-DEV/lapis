@@ -2,7 +2,10 @@
 
 This is the single implementation plan for lapis. See the
 [current status](../README.md#current-status) for what has been implemented and exercised.
-macOS is the active target. Milestones 1 and 2 are qualified for the recorded
+macOS is the active target, and the signed Mac app is now the working daily
+environment; the [pseudo-production section](#pseudo-production-direction-and-integration-spread-september-27)
+below owns the current work order and re-weights the remaining milestones.
+Milestones 1 and 2 are qualified for the recorded
 single-session scope: a persistent terminal and managed Codex attention with
 explicit desktop responses. The quality baseline from PR #6 remains in force.
 [Milestone 3](#milestone-3-supervising-two-live-sessions-on-macos) has
@@ -2616,9 +2619,215 @@ are outstanding: a stale response cannot publish state, write a cache, or start
 follow-up work. The earlier receipts remain dated evidence for their original
 source, not qualification of the assembled revision.
 
+### Pseudo-production direction and integration spread (September 27)
+
+lapis is now run as the primary daily workspace: the signed Mac app with its
+login item, the iPhone remote beside it, and real Codex and Claude Code traffic
+across categories and tiles. That daily use is the working acceptance
+environment for ordering what comes next. It is not a controlled measurement;
+the scale experiment stays a separate qualification exit. This section adds the
+September 27 feature spread (an iTerm2 comparison, the upstream adapter survey
+plus macOS-native integration) and works the existing priorities back through
+daily-use value.
+Except for the already-present pieces the rescoped rows below mark as
+verified, nothing here is implemented yet; each batch carries its own
+observable finish line before it is claimed.
+
+#### Work order
+
+| Order | Batch | Gate |
+| --- | --- | --- |
+| First | Finish the [September 25 repair goals](#quality-repair-goals-september-25-audit): the Q03/Q04/Q05 boundary extractions, the Q02 registry transaction remainder, the Q09 deferred-queue regression, Q10's measured allocation decision and Q13's shared wire peer | Per the audit table; no milestone expansion |
+| 1 | Secret prompts, Keychain fill and Touch ID | [Secret prompts section](#secret-prompts-keychain-fill-and-touch-id) |
+| 2 | Triggers; turn marks and timing; semantic file paths completed to editor-at-line (with Quick Look); the menu bar attention item and global summon hotkey | Per the spread tables below |
+| 3 | Search across all agents extended to paged history; Focus-aware chimes; thermal and low-power throttling; the Dock menu; screen-share protection and secure keyboard entry | Per the spread tables below |
+| 4 (eventual) | Instant replay; the `lapis://` scheme, Services and App Intents; the desktop widget; Handoff; paste history; copy mode; per-folder presets; the automation API | Design notes below; each needs its own reviewed contract first |
+
+Defects found in daily use enter the repair queue ahead of every batch. The
+iTerm2 candidate list was shared with an external reviewer on September 27,
+who answered the same day: cut the paste guard and broadcast input, defer
+instant replay behind paged history plus turn marks, narrow semantic file
+paths and cross-agent search to their missing pieces, and build triggers and
+turn marks first. The reviewer's reasons: multiline prompts are the normal
+case and a paste into an agent's input executes nothing, so a confirmation
+step buys no safety there; broadcast input breaks the keyboard-ownership
+policy when every agent runs its own conversation. The summon hotkey stays
+on the Carbon route, which needs no accessibility permission. Cuts update
+these tables, not the parity statements.
+
+#### iTerm2 comparison position
+
+Splits and tiling, window arrangements with process restore, request-aware
+notifications, undo-close and the command palette are already at parity or
+better. Rectangular and multi-click selection, link hover feedback and
+terminal accessibility remain tracked terminal-fidelity gaps in the README
+status table; this re-ordering does not change their queue. The valuable
+deltas are attention reach and ergonomics:
+
+| Feature | Direction | Acceptance |
+| --- | --- | --- |
+| Triggers | Bounded regex rules over agent output, per agent and global, evaluated in the session service. A match emits a new advisory attention kind with configurable actions: row highlight, chime, badge count, notification. Rules live in `lapis.json` and reload live. No rule can send input, approve anything or move focus; rules respect the advisory-evidence contract like hooks and bells. Evaluation has a per-session budget whose overflow is reported, not silently dropped. | A rule on a plain CLI (Grok, OpenCode, OMP, Kimi, Antigravity) raises the same card and request presentation as adapter events; noisy-output fixtures show bounded CPU; an oversized rule set reports overflow. This upgrades those harnesses from Output active/Quiet to observed attention without writing adapters. |
+| Semantic file paths | Mostly present, as the September 27 review found: holding Command already underlines and washes link and path targets, and Command-click opens a web link in the browser or an existing file or folder resolved absolute, under `~` or relative to the agent's folder (`terminal_link_at` and `resolve_terminal_path`, Finder-style, executables shown not run; an agent over ssh has no local folder, so only its web links open). `file.cpp:12` has its line parsed but the file still opens in its default app. The batch is the missing piece the review named: open the path at that line in the configured editor, reusing the card menu's editor integration (Cursor, VS Code, Zed or `editor` in `lapis.json`). Unknown paths miss quietly. A Quick Look variant previews instead of opening. | Path tokenization including wrapped rows and quotes stays covered by `terminal_input_test`; live Codex/Claude output opens files at the line from the agent's cwd in the configured editor; no new config surface. |
+| Search across all agents | Half present, as the review noted: Command-K's agent index already ranks every session's live screen (title, place, harness, machine and screen text with snippets). The batch extends that index to archived pages with bounded fan-out and result caps, joining Command-F's page model, so a result selects the agent, loads the page and shows the match. | Answers which agent printed that error with 8+ sessions including archived history; result cap enforced; no memory blowup from the fan-out. |
+| Instant replay (deferred) | Deferred to the eventual tier by the September 27 review: paged history plus turn marks cover most of the need. Direction otherwise unchanged: per-session bounded ring of rendered screen states at a coarse cadence (about 1 Hz, last 60 to 300 s, configurable), scrubbed in the stage. Never resizes the PTY and is excluded from previews. | Replay shows prior states with second timestamps; the ring's memory bound is measured and competes with history budgets under the resource policy. |
+| Turn marks and timing | Turn boundaries from the Codex observer and Claude hook adapter are recorded with history pages; jump keys move between turns and show durations. Marks are adapter-sourced, never screen heuristics, so TUI redraws cannot fake them. Plain CLIs get no marks unless a prompt heuristic is separately qualified. | Marks survive paging and reattachment; durations displayed; no false marks on redraw-heavy output. |
+
+Smaller tier, taken individually or with adjacent batches: per-line
+timestamps, paste history, copy mode, a status strip under the stage, a
+find-cursor action after deep scrolling, and per-folder agent presets
+(iTerm2's automatic profile switching analog). The hotkey-window analog is
+the summon hotkey in the macOS table below.
+
+#### Secret prompts, Keychain fill and Touch ID
+
+Prioritized first on September 27. lapis fills secrets and never owns them,
+the same boundary that keeps lapis from changing an agent's approval policy.
+
+The session service already owns each PTY, and `tcgetattr` on the master
+reflects the slave line discipline, so the moment a child clears `ECHO` (sudo,
+ssh-key passphrases, `gh auth login`, API key prompts) the service can
+classify the session as asking for a secret and publish a new advisory
+attention kind. It observes; it never blocks or answers.
+
+Filling is an explicit user action from the card or Requests surface: a
+`SecItemCopyMatching` generic-password lookup scoped to a lapis-managed
+service, written to the PTY as ordinary input. Because echo is off, the bytes
+never enter scrollback or archived history; a regression test must pin that
+the input side is never recorded anywhere, including receipts. Saving is
+offered only for input explicitly typed into a detected prompt, stored with
+`SecAccessControl` using `userPresence` and `WhenUnlockedThisDeviceOnly`, so
+fills and saves require Touch ID or the login password. Optionally
+(configurable, default off) the Requests dialog requires Touch ID
+(`LAContext`, `deviceOwnerAuthentication`) before sending a Full-access
+approval.
+
+lapis must not store agent CLI credentials itself or install anything into a
+CLI's own auth; the macOS 26 Credentials framework is passkey and app sign-in
+oriented and is not the tool here. Acceptance: a live sudo, ssh-keygen or
+`gh auth login` prompt inside a managed agent is detected and shown; a fill
+completes with no trace in scrollback, archived pages or receipts; Touch ID
+gates saves, fills when configured, and Full-access approvals; the signed
+package performs the Keychain and biometric flows under the hardened runtime.
+
+#### macOS-native integration spread
+
+Everything lands behind the existing platform boundary (`desktop_actions_mac.mm`
+and equivalents) so the deferred Linux port is not blocked, and nothing here
+claims Linux support.
+
+| Integration | Direction | Priority |
+| --- | --- | --- |
+| Global summon hotkey | A Carbon `RegisterEventHotKey` chord (no accessibility permission needed; `NSEvent` global key monitors are the fallback and do need one) raises lapis from any application and runs the Command-J next-request jump. Configurable in `lapis.json`, with conflict reporting. | Batch 2 |
+| Menu bar attention item | `NSStatusItem` showing the attention count and a bounded pending list; click jumps to an agent. Build against the current macOS 26 SDK and verify on the pinned target, since Tahoe's Liquid Glass changed menu-bar behavior and newer builds report `NSStatusItem` quirks. | Batch 2 |
+| Dock menu | `QApplication::dockMenu()` listing top requesting agents; jump on select. | Batch 3 |
+| Focus-aware chimes | The custom chime path bypasses Focus today. While a Focus is active, defer to the notification path with a time-sensitive interruption level for requests, so important moments break through and routine ones stay muted. | Batch 3 |
+| Thermal and low-power awareness | `thermalState` and `isLowPowerModeEnabled` transitions modulate the preview strip rate and hidden-panel background work through the existing budgets; no behavior change in nominal state. | Batch 3 |
+| Screen-share protection and secure keyboard entry | Opt-in settings: exclude lapis windows from screen sharing (`sharingType = NSWindowSharingNone`) and enable `EnableSecureEventInput` while a terminal holds keyboard focus, so agent terminals stop leaking into meetings, recordings and event taps. | Batch 3 |
+| Quick Look | Preview a Command-clicked file path with `QLPreviewPanel` instead of opening the editor; complements semantic paths. | Batch 2, with semantic paths |
+| URL scheme | `lapis://agent/<id>` focuses an agent; `lapis://new` starts one. Registered in the package and added to packaging checks; later used by notifications and the phone app. | Batch 4 |
+| Services and App Intents | A Finder Service (open folder as a lapis agent) first, then App Intents in Swift exposing new-agent, next-request and status, surfacing in Spotlight and Shortcuts. The full scripting API stays strategic; the phone gateway is its proto-version. | Batch 4 |
+| Desktop widget | A WidgetKit extension showing attention counts and pending names, refreshed from a small service-written snapshot within widget refresh budgets. Explicitly eventual. | Batch 4 |
+| Handoff | Continue viewing the same agent on the phone via `NSUserActivity`. Minor; the Tailscale app covers the need. | Batch 4 |
+
+#### Upstream adapter surfaces (September 27 survey)
+
+A September 27 survey read both upstream projects at current heads
+(anthropics/claude-code main `7779afb`, September 25, with release notes through
+2.1.283, and openai/codex main `67a709665a`, September 27, with release notes
+through stable 0.157.1), the installed CLIs' help and schema surfaces, and each
+repository's issue tracker, against the two recorded baselines: Claude hook
+observation qualified against 2.1.280 and the Codex observer pinned to 0.155.1,
+both on September 22. Nothing below is implemented or qualified; every row
+carries the live evidence its adoption needs. The headline is that both CLIs
+now expose decision-capable routes beyond the qualified observation levels,
+while nothing in the qualified paths broke: all ten Codex methods lapis tracks
+are unchanged at the surveyed head, and no Claude hook event lapis consumes
+changed payload shape. The Claude reference now documents 33 hook events where
+lapis registers nine; the Codex app-server registry has grown to 170
+client-request methods and 84 server notifications around lapis's ten.
+
+| Order | Surface | What it adds | Gate before claiming it |
+| --- | --- | --- | --- |
+| 1 | Claude decision hooks | `PermissionRequest` accepts an answer: a `command` or `http` hook may return a `decision` object (`behavior` `allow`/`deny`, `updatedInput`, `updatedPermissions`, `interrupt`), confirmed by the installed binary's own validation strings and documented for print mode; exit code 2 alone does nothing for this event. The relay lapis already runs can therefore upgrade from advisory to authoritative without owning Claude's stdin. This changes that session's approval policy, so it is an explicit per-session opt-in mode, never a default, global or silent installation. | Live disposable-session qualification in the [Claude hook procedure](#claude-code-hooks-an-observation-only-extension) style: a real permission request answered through the relay, matching tool execution or denial, turn continuation, reconnect behavior, and the decision schema re-pinned against the installed version; then relax the adapter's observation-only declaration in the same reviewed change. |
+| 2 | Codex native hooks | The Claude-style hooks engine is upstream-stable and default-on: 12 events (`PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `SubagentStart`, `SubagentStop`, `Stop`, `Interrupt`), declared per config layer in `hooks.json` or inline `[hooks]`, with trust hashes and `command`/`mcp_tool` handlers. `PermissionRequest` handlers decide before the guardian and the user, with the resolution recorded as sourced from the hook, and `Stop` can force continuation under its own loop guard. Because the engine lives in core Session it covers ordinary TUI sessions, which have no structured attention today, and hook runs surface over app-server as `hook/started`/`hook/completed`. | Requalify a current binary by the [documented procedure](../CONTRIBUTING.md#codex-attention-qualification) first (the pin is 0.155.1; upstream stable is 0.157.1), then qualify dispatch, payload and return semantics live on disposable sessions, including the trust flow, before mapping events onto advisory or decision kinds. The investigation's "native hooks remain unqualified" stands until then. |
+| 3 | Claude background sessions | `claude --bg` keeps a session alive across GUI restarts, and `claude agents`, `attach`, `logs`, `stop\|kill`, `respawn` and `rm` manage those sessions; `--session-id` lets lapis own the identity, and `--resume` also accepts a transcript path. Transcripts and `sessions-index.json` under `~/.claude/projects/` make sessions enumerable without running Claude. | Moving the child from lapis's PTY into Claude's daemon conflicts with the service-owned process contract as written, so this needs its own reviewed contract, a distinct session mode like managed Codex, and live detach/reattach/stop evidence. Reading the transcript index for discovery is the safe first slice and needs no contract change. |
+| 4 | Codex app-server expansion | Around lapis's ten methods the registry now carries 170 client methods and 84 server notifications: `turn/steer` and `turn/interrupt`, `thread/queue/*`, `thread/tokenUsage/updated` and `account/rateLimits/updated`, item streaming with `item/commandExecution/outputDelta` and `terminalInteraction` (live preview content without a terminal resize), `thread/increment_elicitation`/`thread/decrement_elicitation` (pauses turn-timeout accounting while an approval UI holds a request), reasoning and plan deltas, `fs/watch`, and `command/exec` PTY sessions. The `error` notification now carries `will_retry`. `thread/rollback` was removed upstream (0.156.0); lapis never called it. | Same requalification gate as order 2, then adopt by capability cluster in separate reviewable slices with replay plus live evidence, preserving the exclusive-thread-queue reconciliation contract the resume/read boundary depends on. |
+| 5 | Claude control lane | `--input-format stream-json` carries control frames on the same pipe: `can_use_tool` with the same decision schema, `interrupt` (with a receipt capability flag), `set_permission_mode`, and an `initialize` handshake whose response lists `pending_permission_requests`, so a reattaching supervisor can answer held requests. This is the Agent SDK transport; it is de facto stable but not documented as a CLI contract. | Its own reviewed contract before implementation; treat frame shapes as provisional and re-pin them per installed version; qualify a fully headless Claude session without a PTY end to end before claiming anything. |
+| 6 | Cheap observation adds | The statusline stdin feed (session, cost, context window), Codex TUI `[tui] notification_method = osc9\|bel` and the OSC-0 title's "action required" state, `codex exec --json` with `codex exec resume\|fork` for tool-shaped embedding, disk-side session enumeration for both CLIs, and `codex queue --thread --message` input injection through the daemon. | Each is an advisory or observation source under the existing capability tiers; TUI title and OSC9 signals route through the triggers batch's advisory kind rather than new adapter surface, and `exec --json` is a separate session mode, not ordinary-TUI coverage. |
+
+Changed upstream with no action required yet: Claude 2.1.281-2.1.283 fixed
+held-approval and deferred-tool durability in streaming sessions, added
+`plugin_errors[].path` to the stream-json `system/init` frame, require
+workspace trust before `--bg` runs project hooks (2.1.281), default sessions on
+third-party providers with telemetry off to auto mode when no permission mode
+is configured (2.1.283, which touches lapis's fixture profiles), honor
+OpenTelemetry export variables only from user or managed settings (2.1.282),
+and refuse MCP OAuth over plain-HTTP non-loopback endpoints since 2.1.281
+without a changelog entry. Codex made daemon auto-start the default for
+eligible interactive sessions (0.157.0), so the shared daemon with
+`app-server proxy` is now the mainstream attach case and `--no-daemon` the
+escape; marked legacy `notify` for removal in favor of the hooks engine; and
+moved its changelog to GitHub releases, so protocol deltas must be read from
+source. `codex exec` defaults to `approval_policy = never`, so on that lane
+approvals surface as declined statuses, never blocking requests.
+
+Watch items from the trackers: anthropics/claude-code
+[#94675](https://github.com/anthropics/claude-code/issues/94675)
+(`UserPromptSubmit` fires for system-injected messages with no distinguishing
+field, an injection surface in supervised transcripts),
+[#97196](https://github.com/anthropics/claude-code/issues/97196) (a
+`PreToolUse` defer can be dropped when a resume carries a user message, which
+is the hold-approval-then-resume pattern),
+[#79680](https://github.com/anthropics/claude-code/issues/79680) (a background
+Task Bash denial bypasses `canUseTool` and wedges the parent), and
+[#81818](https://github.com/anthropics/claude-code/issues/81818) (block
+decisions always render a visible notice); openai/codex
+[#42740](https://github.com/openai/codex/issues/42740) (idle local stdio MCP
+servers can exhaust the async runtime's blocking pool and stall the
+app-server, which is lapis's long-lived hosting shape),
+[#48043](https://github.com/openai/codex/issues/48043) (a Windows daemon
+privilege regression on 0.157.x) and
+[#48208](https://github.com/openai/codex/issues/48208) (thread hydration
+regressions already landing in the 0.158 alpha line). Two open Codex RFCs,
+persistent work threads with bounded command dispatch
+([#35846](https://github.com/openai/codex/issues/35846)) and strict delegation
+authority ceilings ([#36381](https://github.com/openai/codex/issues/36381)),
+would become sanctioned supervisor primitives if accepted; track them rather
+than preempting them.
+
+This section records conclusions and pinned revisions, not the survey's full
+per-event and per-method inventories; when a gate above starts, re-run the
+survey against the then-current heads and record the refreshed inventories in
+the owning adapter document.
+
+#### Working the priorities back through pseudo-production
+
+- Milestone 4 (32-session scale) stays the measurement exit for the assembled
+  architecture but moves behind batches 1 to 3. Daily multi-agent use is
+  longitudinal evidence and must not be conflated with the controlled
+  workload.
+- Milestone 5 (second independent adapter) narrows to what triggers cannot
+  supply: response routing and reconciliation. A second adapter is chosen for
+  a CLI whose decisions actually matter, not to fix blind cards, because
+  triggers give every non-integrated CLI advisory observation.
+- The upstream survey re-weights the adapter track: both integrated CLIs now
+  expose decision-capable routes, so qualified response routing comes from
+  upgrading Claude and Codex (survey orders 1, 2 and 4) before a third adapter
+  is considered; triggers still give every non-integrated CLI its advisory
+  observation.
+- The opt-in carousel stays deferred. The summon hotkey, menu bar list and
+  Command-J cover jump-to-attention without automatic focus movement, which
+  is the safer direction while usage grows.
+- Multiple windows remain deferred as decided on September 25.
+- The automation direction is URL scheme and Services first, App Intents
+  second, a full API as a strategic decision with its own review. Listing it
+  here is not authorization to build it.
+
 ### Following milestones
 
-With the two-session workspace assembled, the next qualification stages are
+The [September 27 pseudo-production section](#pseudo-production-direction-and-integration-spread-september-27)
+orders the near-term batches; this table keeps the qualification exits. With
+the two-session workspace assembled, the remaining qualification stages are
 scale, another independent adapter, and platform completion. A later Linux port
 still needs actual input, rendering and lifecycle evidence. These stages remain
 planned; they are not implied by Milestone 3 passing.
