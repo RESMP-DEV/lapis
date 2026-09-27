@@ -2266,10 +2266,14 @@ stays the Mac's.
   Mac's window. The phone keeps it in an alert until dismissed, since the list
   refresh would otherwise replace it within seconds.
 - **Settings.** `settings` and `changeSettings` read and change, through
-  `KeyMap`'s own setters and save, the settings that matter away from the Mac:
+  `KeyMap`'s validated batch operation, the settings that matter away from the Mac:
   keep awake, the two chimes and how often the first repeats, background
   notifications and plan usage. A change naming anything else, or a wrong
-  type, changes nothing. The Mac window's look (theme, density, layout,
+  type, changes nothing. Repeat counts must be whole numbers from 1 through
+  10; placement offsets must be nonnegative whole integers. A settings batch
+  saves once and rolls back in memory on failure, retaining the diagnostic.
+  The phone serializes writes and rejects older full-settings replies; failed
+  reads hide stale controls. The Mac window's look (theme, density, layout,
   fonts, shortcuts) is not offered: from the phone it would only restyle a
   window no one is looking at. The phone's own text size moved into its
   Settings too.
@@ -2290,13 +2294,17 @@ wheel became arrow keys, which Claude reads as prompt history.
 - **Encoding.** `Terminal::encode_wheel` sends a notch as the program asked:
   wheel events in its mouse format through Ghostty's mouse encoder when it
   reports the mouse, three arrow keys on the alternate screen when it does
-  not, and nothing on the primary screen, whose history the view pages.
+  not. The encoder can also encode mouse tracking on the primary screen, but
+  v6 clients deliberately expose wheel delivery only on the alternate screen;
+  the primary screen keeps local history navigation.
 - **Wire.** A `wheel` frame (BE i16 notches, u16 column, u16 row) joins v6.
   Services before it drop the connection on an unknown frame, so a client
   sends it only when the service says it takes it: new services write the
   snapshot's alternate-screen byte as 3 instead of 1. Readers before it take
   any nonzero byte as true, and the flag is only needed on the alternate
-  screen. Joined views may send it, and it does not claim the terminal size.
+  screen. Valid byte values are 0, 1 and 3; byte 2 is rejected rather than
+  extending the format incompatibly for older nonzero-is-alternate readers.
+  Joined views may send it, and it does not claim the terminal size.
 - **Mac.** Over a full-screen program the wheel goes to the service with the
   cell under the pointer; a service from before keeps the arrow keys.
 - **Phone.** The gateway reports `wheel` in each frame and forwards

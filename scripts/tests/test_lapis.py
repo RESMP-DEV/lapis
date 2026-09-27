@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import socket
 import stat
 import subprocess
 import sys
@@ -245,23 +246,36 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(os.lstat(self.runtime), before)
         self.assertEqual(marker.read_text(), "kept")
 
-    def test_cli_check_rejects_unsafe_runtime_before_exercise(self):
+    def test_cli_check_owns_short_private_runtime(self):
         from scripts import check_cli_launch
 
         self.runtime.mkdir(mode=0o755)
         self.runtime.chmod(0o755)
+        marker = self.runtime / "untouched"
+        marker.write_text("application state")
         output = self.temporary_root / "cli-receipt.json"
+        observed = []
+
+        def exercise(_build, runtime, *_options):
+            observed.append(runtime)
+            self.assertNotEqual(runtime, self.runtime)
+            self.assertEqual(stat.S_IMODE(runtime.stat().st_mode), 0o700)
+            # Exercise the OS path limit, including a backend socket suffix.
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                listener.bind(str(runtime / "codex-arguments-12.sock.codex"))
+            return [{"name": "isolated fixture", "passed": True}]
+
         with (
             patch.object(lapis, "RUNTIME_DIR", self.runtime),
             patch.object(sys, "argv", ["check_cli_launch", "--output", str(output)]),
-            patch.object(check_cli_launch, "exercise") as exercise,
+            patch.object(check_cli_launch, "exercise", side_effect=exercise),
             redirect_stdout(io.StringIO()),
         ):
-            self.assertEqual(check_cli_launch.main(), 1)
-        exercise.assert_not_called()
-        receipt = json.loads(output.read_text())
-        self.assertFalse(receipt["passed"])
-        self.assertIn("mode 0700", receipt["error"])
+            self.assertEqual(check_cli_launch.main(), 0)
+        self.assertEqual(len(observed), 1)
+        self.assertFalse(observed[0].exists(), "fixture state is removed")
+        self.assertTrue(json.loads(output.read_text())["passed"])
+        self.assertEqual(marker.read_text(), "application state")
         self.assertEqual(stat.S_IMODE(self.runtime.stat().st_mode), 0o755)
 
     def test_unsafe_runtime_permissions_are_rejected_without_repair(self):

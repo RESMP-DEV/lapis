@@ -1999,7 +1999,7 @@ void phoneArrangesTheWorkspace(Workspace& workspace, const PhoneArrangement& pla
                 askVersioned(workspace, {{QStringLiteral("request"), QStringLiteral("placeAgent")},
                                          {QStringLiteral("id"), place.agent},
                                          {QStringLiteral("category"), place.later},
-                                         {QStringLiteral("index"), 1 << 20}})) &&
+                                         {QStringLiteral("index"), 1024 * 1024}})) &&
                 answeredOk(askVersioned(
                     workspace, {{QStringLiteral("request"), QStringLiteral("removeCategory")},
                                 {QStringLiteral("id"), ideas}})),

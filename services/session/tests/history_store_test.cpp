@@ -248,8 +248,8 @@ void check_maximum_history_page() {
     require(directory.isValid());
     const auto root = directory.filePath(QStringLiteral("archive"));
     const QString session(32, QLatin1Char('a'));
-    // The wire's two array caps, filled with pseudorandom colors: this is the
-    // reachable encoded-size boundary that compression cannot shrink.
+    // Exercise both wire array caps with varied colors, producing a
+    // nontrivial compressed record even though the grapheme pool compresses.
     constexpr std::size_t cells = 32768;
     constexpr std::size_t codepoints = 65536;
     constexpr std::size_t rows = 2;
@@ -258,6 +258,8 @@ void check_maximum_history_page() {
     snapshot.size = size;
     snapshot.graphemes = std::u32string(codepoints, U'x');
     snapshot.cells.resize(cells);
+    // Reproducible compression fixture, not security-sensitive randomness.
+    // NOLINTNEXTLINE(bugprone-random-generator-seed)
     std::mt19937 random{0x61706973U};
     std::uniform_int_distribution<std::uint16_t> byte_distribution{0, 255};
     std::array<std::uint8_t, 3> entropy{};

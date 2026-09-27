@@ -1279,7 +1279,6 @@ def main():
         "scope": "Controlled fixture, optional Qt captures and optional no-prompt Codex TUI; no agent attention qualification.",
     }
     try:
-        runtime_root = lapis.private_runtime_dir()
         if args.codex:
             executable = Path(shutil.which(args.codex) or args.codex).resolve(
                 strict=True
@@ -1290,10 +1289,12 @@ def main():
                     "arguments": [],
                     "prompt_submitted": False,
                 }
-        with tempfile.TemporaryDirectory(prefix="cli-", dir=runtime_root) as directory:
+        # The fixture owns private disposable state. Keep its path short enough
+        # for Unix sockets even when the checkout is a deeply nested worktree.
+        with tempfile.TemporaryDirectory(prefix="lapis-cli-", dir="/tmp") as directory:
             receipt["checks"] = exercise(
                 args.build_dir.resolve(),
-                Path(directory),
+                Path(directory).resolve(),
                 artifacts,
                 args.desktop,
                 args.codex,

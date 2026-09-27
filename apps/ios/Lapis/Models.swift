@@ -355,10 +355,12 @@ extension WorkspaceModel {
     // Starts a stopped agent again on the Mac, resuming its conversation where
     // its CLI can; true once it runs.
     func restart(_ agent: Agent) async -> Bool {
-        guard let gateway else { return false }
+        guard !Task.isCancelled, let gateway else { return false }
         do {
             try await gateway.restart(agent: agent.id)
         } catch {
+            guard !Task.isCancelled, !(error is CancellationError),
+                  (error as? URLError)?.code != .cancelled else { return false }
             notice = describe(error)
             return false
         }
@@ -369,6 +371,7 @@ extension WorkspaceModel {
             guard !Task.isCancelled else { return false }
             do {
                 let current = try await gateway.agents()
+                guard !Task.isCancelled else { return false }
                 listing = current
                 sawListing = true
                 if current.categories.flatMap(\.agents).contains(where: { $0.id == agent.id && $0.running }) {
@@ -395,6 +398,7 @@ extension WorkspaceModel {
                 return false
             }
         }
+        guard !Task.isCancelled else { return false }
         notice = sawListing
             ? "The agent has not started yet. It is in the list on the Mac."
             : (listingFailure ?? "The agent has not started yet. It is in the list on the Mac.")

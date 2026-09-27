@@ -499,11 +499,25 @@ final class LapisUITests: XCTestCase {
         menuItem("Move to").tap()
         menuItem("Build").tap()
         eventually("it is listed under Build") { parked.frame.maxY < later.frame.minY }
+        // Optional real CLI fixtures add rows. Capture the actual neighbor's
+        // identity before opening the menu, rather than assuming two agents.
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "agent-"))
+            .allElementsBoundByIndex
+        let identifiers = rows.map(\.identifier)
+        let parkedIndex = try XCTUnwrap(identifiers.firstIndex(of: "agent-parked"))
+        XCTAssertGreaterThan(parkedIndex, 0)
+        guard parkedIndex > 0 else { return }
+        let aboveID = identifiers[parkedIndex - 1]
         parked.press(forDuration: 1.2)
         XCTAssertFalse(menuItem("Move later").isEnabled, "the last agent cannot move later")
         menuItem("Move earlier").tap()
-        let second = app.buttons["agent-second agent"]
-        eventually("it moves before the agent above it") { parked.frame.minY < second.frame.minY }
+        eventually("it moves before the agent above it") {
+            let ordered = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "agent-"))
+                .allElementsBoundByIndex.map(\.identifier)
+            guard let moved = ordered.firstIndex(of: "agent-parked"),
+                  let previous = ordered.firstIndex(of: aboveID) else { return false }
+            return moved < previous
+        }
         snap("17-moved")
         parked.press(forDuration: 1.2)
         menuItem("Move to").tap()

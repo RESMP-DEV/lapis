@@ -258,8 +258,8 @@ namespace {
 // How the window looks stays the Mac's to choose.
 struct Switch {
     std::string_view name;
-    std::optional<bool> KeyMap::RemoteSettingsPatch::* field;
-    bool (KeyMap::*get)() const;
+    std::optional<bool> KeyMap::RemoteSettingsPatch::* field{};
+    bool (KeyMap::*get)() const {};
 };
 constexpr auto switches = std::to_array<Switch>({
     {"keepAwake", &KeyMap::RemoteSettingsPatch::keepAwake, &KeyMap::keepAwake},
