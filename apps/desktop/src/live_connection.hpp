@@ -42,6 +42,8 @@ class LiveConnection final : public QObject {
     void claimSize();
     void setWantedSize(session::TerminalSize size);
     void applyWantedSize();
+    // The size asked for, when the terminal has another and none is on its way.
+    void sendWantedSize();
     void requestHistory(session::wire::HistoryDirection direction, quint64 reference);
     void cancelHistoryRequest();
 

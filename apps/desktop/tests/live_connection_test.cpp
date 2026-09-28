@@ -693,6 +693,33 @@ void history_waits_for_resize_and_cancels() {
             "Typing left deferred history active");
 }
 
+// A view asking for the size it already asked for sends it again when the
+// terminal has another: a resize lost earlier, or another device's since,
+// would otherwise leave the stage drawing it scaled.
+void asking_again_takes_the_size_back() {
+    Fixture f;
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    f.document.resizeTerminal({6, 3});
+    require(peer.read().kind == wire::Kind::resize, "Resize was not sent");
+    f.terminal.resize({6, 3});
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 2, f.terminal.snapshot()}));
+    settle();
+    f.document.resizeTerminal({6, 3});
+    settle();
+    require(peer.socket->bytesAvailable() == 0, "A size the terminal has was sent again");
+    f.terminal.resize({5, 2}); // another device's size
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 3, f.terminal.snapshot()}));
+    settle();
+    f.document.resizeTerminal({6, 3});
+    require(peer.read().kind == wire::Kind::resize, "The view did not take its size back");
+}
+
 void capabilities_downgrade_without_losing_supported_links() {
     for (const bool supports_links : {true, false}) {
         Fixture f;
@@ -782,6 +809,7 @@ int main(int argc, char** argv) {
         lost_before_screen();
         legacy_server();
         history_waits_for_resize_and_cancels();
+        asking_again_takes_the_size_back();
         capabilities_downgrade_without_losing_supported_links();
         std::cout << "Identity, initial-screen gating, history paging/cancellation, explicit "
                      "reconnect/discovery, stale snapshot and legacy rejection passed\n";

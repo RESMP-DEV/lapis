@@ -198,11 +198,14 @@ void SessionPreview::failHistoryRequest(const QString& message) {
     if (!strip_)
         strip_screen_.reset();
     history_message_ = message;
-    // With nothing kept yet, the live screen stays.
+    // With nothing kept yet, the live screen stays, at the size asked for
+    // while the request was out.
     history_active_ = strip_.has_value();
     if (strip_) {
         snapshot_ = strip_->view();
         emit snapshotChanged();
+    } else if (live_) {
+        live_->sendWantedSize();
     }
     emit historyChanged();
     emit connectionChanged();
@@ -210,6 +213,8 @@ void SessionPreview::failHistoryRequest(const QString& message) {
 void SessionPreview::cancelHistoryRequests() {
     history_request_pending_ = false;
     strip_extending_ = false;
+    if (!history_active_ && live_)
+        live_->sendWantedSize();
     emit historyChanged();
     emit connectionChanged();
 }
@@ -553,8 +558,14 @@ bool LiveConnection::send(wire::Kind kind, const QByteArray& payload) {
 }
 void LiveConnection::resize(session::TerminalSize size) {
     wanted_size_requested_ = true;
-    if (size == wanted_size_)
+    // Asked again for the size it wants: sent only when the terminal has
+    // another and none is on its way. A resize lost while history showed, or
+    // another device's since, would otherwise leave the stage scaling it.
+    if (size == wanted_size_ && (!ready_ || size == shown_size_ || pending_resize_ == size))
         return;
+    // Taking it back from another size is that size's claim.
+    if (size == wanted_size_)
+        claimed_over_ = shown_size_;
     wanted_size_ = size;
     if (!ready_)
         return;
@@ -580,6 +591,12 @@ void LiveConnection::claimSize() {
 void LiveConnection::setWantedSize(session::TerminalSize size) {
     wanted_size_requested_ = true;
     wanted_size_ = size;
+}
+
+void LiveConnection::sendWantedSize() {
+    if (ready_ && wanted_size_requested_ && wanted_size_ != shown_size_ &&
+        pending_resize_ != wanted_size_)
+        sendResize(wanted_size_);
 }
 
 void LiveConnection::applyWantedSize() {
