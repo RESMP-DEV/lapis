@@ -1523,13 +1523,14 @@ exec sleep 600
         const auto id = far->sessionId();
         require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 1; }, 10000), "ssh starts");
         const auto first = call(QStringLiteral("devbox"), 1);
-        require(first.startsWith(QStringLiteral("-o\nControlPath=none\n-o\nServerAliveInterval=15\n"
-                                                "-o\nServerAliveCountMax=4\n-t\ndevbox\n")) &&
-                    first.contains(QStringLiteral("cd ~/dev/far && s=")) &&
-                    !conversation(first).isEmpty() &&
-                    first.contains(QStringLiteral(
-                        R"(-lic 'export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-1}"; claude '"$o $s")")),
-                "ssh has its own connection, kept alive, and names the conversation");
+        require(
+            first.startsWith(QStringLiteral("-o\nControlPath=none\n-o\nServerAliveInterval=15\n"
+                                            "-o\nServerAliveCountMax=4\n-t\ndevbox\n")) &&
+                first.contains(QStringLiteral("cd ~/dev/far && s=")) &&
+                !conversation(first).isEmpty() &&
+                first.contains(QStringLiteral(
+                    R"(-lic 'export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-1}"; claude '"$o $s")")),
+            "ssh has its own connection, kept alive, and names the conversation");
         require(workspace.agentPlace(id).value(QStringLiteral("place")) ==
                     QStringLiteral("devbox:~/dev/far"),
                 "the agent's place is still its machine and folder");
@@ -1723,6 +1724,125 @@ void agentsStartAtTheStageSize() {
         require(workspace.closeSession(item->sessionId(), true), "close it");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "it closes");
+    }
+    qputenv("PATH", path);
+}
+
+// Claude Code plans: a session takes its machine's own sign-in, a new one
+// takes a plan with room when that is full, a remote session moves once its
+// plan fills and its output is quiet, reading the kept token on that machine,
+// and a switch can be asked for. Stand-ins say which plan they run on.
+void plansFollowTheirLoad() {
+    using lapis::desktop::account_home_name;
+    using lapis::desktop::account_load_key;
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-plans-XXXXXX"));
+    require(directory.isValid(), "plans directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    writeExecutable(root.filePath(QStringLiteral("bin/claude")),
+                    "#!/bin/sh\necho \"plan ${CLAUDE_CODE_OAUTH_TOKEN:-own}\"\nexec sleep 600\n");
+    writeExecutable(root.filePath(QStringLiteral("bin/ssh")), R"(#!/bin/sh
+d=$(dirname "$0"); host=$(printf '%s\n' "$@" | sed -n '/^-t$/{n;p;q;}')
+n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1)); echo $n > "$d/$host.count"
+printf '%s\n' "$@" > "$d/$host.call$n"
+for i in 1 2 3 4 5 6 7 8; do echo "connected $i"; sleep 0.05; done
+exec sleep 600
+)");
+    QFile config(root.filePath(QStringLiteral("ssh_config")));
+    require(config.open(QIODevice::WriteOnly), "write an ssh config");
+    config.write("Host devbox\n");
+    config.close();
+    require(root.mkpath(QStringLiteral("accounts/claude")), "a credentials folder");
+    QFile token(root.filePath(QStringLiteral("accounts/claude/spare.token")));
+    require(token.open(QIODevice::WriteOnly), "write a token");
+    token.write("token-for-spare\n");
+    token.close();
+    const auto calls = [&root](const QString& host) {
+        QFile count(root.filePath(QStringLiteral("bin/%1.count").arg(host)));
+        return count.open(QIODevice::ReadOnly) ? count.readAll().trimmed().toInt() : 0;
+    };
+    const auto call = [&root](const QString& host, int number) {
+        QFile file(root.filePath(QStringLiteral("bin/%1.call%2").arg(host).arg(number)));
+        return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+    };
+    const auto shows = [](lapis::desktop::SessionPreview* item, const char* text) {
+        return waitFor(
+            [item, text] {
+                return screenText(item->snapshot()).contains(QString::fromLatin1(text));
+            },
+            10000);
+    };
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    options.accounts = lapis::desktop::parse_accounts(QJsonDocument::fromJson(R"({"claude": [
+            {"name": "mine", "email": "me@example.com", "home": "local"},
+            {"name": "dev", "email": "dev@example.com", "home": "devbox"},
+            {"name": "spare", "email": "spare@example.com", "machines": ["local", "devbox"]}]})")
+                                                          .object());
+    const auto claude = QStringLiteral("claude");
+    const auto mine_full = std::pair{account_load_key(claude, QStringLiteral("me@example.com")),
+                                     lapis::desktop::AccountLoad{97, 40}};
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        workspace.setSshConfigForTesting(config.fileName());
+        workspace.setAccountsRootForTesting(root.filePath(QStringLiteral("accounts")));
+        const auto project = root.filePath(QStringLiteral("project"));
+        require(workspace.createAgent(project, QStringLiteral("here"), claude), "a Claude agent");
+        auto* here = workspace.focusedSession();
+        require(here != nullptr && shows(here, "plan own") &&
+                    workspace.agentAccount(here->sessionId()) == QStringLiteral("mine"),
+                "it runs on this Mac's own sign-in");
+        require(workspace.createAgent(QStringLiteral("~/far"), QStringLiteral("far"), claude, {},
+                                      {}, QStringLiteral("devbox")),
+                "a Claude agent on another machine");
+        auto* far = workspace.focusedSession();
+        const auto far_id = far->sessionId();
+        require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 1; }, 10000) &&
+                    !call(QStringLiteral("devbox"), 1).contains(QStringLiteral("{ a=")) &&
+                    workspace.agentAccount(far_id) == QStringLiteral("dev"),
+                "it runs on that machine's own sign-in");
+
+        workspace.setAccountLoads({mine_full});
+        require(workspace.createAgent(project, QStringLiteral("next"), claude),
+                "another Claude agent");
+        auto* next = workspace.focusedSession();
+        require(next != nullptr && shows(next, "plan token-for-spare") &&
+                    workspace.agentAccount(next->sessionId()) == QStringLiteral("spare"),
+                "a new session takes the plan with room, its token in the environment");
+
+        workspace.setAccountLoads(
+            {mine_full,
+             {account_load_key(claude, account_home_name(QStringLiteral("devbox"))), {99, 99}}});
+        require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 2; }, 20000),
+                "a remote session moves once its plan fills and it is quiet");
+        const auto first = call(QStringLiteral("devbox"), 1);
+        const auto second = call(QStringLiteral("devbox"), 2);
+        static const QRegularExpression conversation(
+            QStringLiteral(R"( && s=([0-9a-f-]{36}) && )"));
+        require(second.contains(
+                    QStringLiteral(R"({ a=spare; t="$HOME/.lapis/accounts/claude/$a.token"; )")) &&
+                    !second.contains(QStringLiteral("token-for-spare")) &&
+                    conversation.match(second).captured(1) ==
+                        conversation.match(first).captured(1) &&
+                    workspace.agentAccount(far_id) == QStringLiteral("spare"),
+                "it reads the kept token there and resumes the same conversation");
+
+        workspace.setAccountLoads({});
+        require(
+            workspace.canSwitchAccount(next->sessionId()) &&
+                workspace.switchAccount(next->sessionId()) &&
+                waitFor(
+                    [&] {
+                        return workspace.agentAccount(next->sessionId()) ==
+                                   QStringLiteral("mine") &&
+                               screenText(next->snapshot()).contains(QStringLiteral("plan own"));
+                    },
+                    10000),
+            "a switch asked for moves the agent to the next plan with room");
+        for (const auto& closing : {here->sessionId(), far_id, next->sessionId()})
+            require(workspace.closeSession(closing, true), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in agents close");
     }
     qputenv("PATH", path);
 }
@@ -4159,6 +4279,7 @@ int main(int argc, char** argv) {
         phoneStartsAnAgentInItsCategory();
         remoteClaudeReconnectsToItsConversation();
         reloadStartsAgentsAgain();
+        plansFollowTheirLoad();
         agentsStartAtTheStageSize();
         resumingAConversationStartsItsCli();
         terminalsRunPlainShells();

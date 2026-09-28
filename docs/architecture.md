@@ -3010,6 +3010,54 @@ the launch fingerprint, so reattaching is unchanged. An agent restored at login 
 at 100 by 30. `agentsStartAtTheStageSize` in the workspace suite checks a
 stand-in CLI reads the stage's grid from its terminal at start.
 
+### Plans shared across machines (September 28)
+
+OMP keeps several OAuth logins per provider and, because it makes each API
+call itself, picks one per request: sessions stay on one account while it has
+room, accounts whose five hour window is 85% spent rank behind cool ones, and
+a usage-limit error rotates to a sibling. Claude Code and Codex make their own
+calls with their own sign-in, so lapis chooses a plan per session instead.
+OMP's `auth-gateway` could route requests per account, but it translates each
+request through OMP's own model layer, which would lose Claude Code's and
+Codex's own features; and `codex login --with-access-token` does not take
+OMP's ChatGPT access tokens (it expects an agent identity token), so Codex
+plans need their own login.
+
+- **Credentials.** A Claude Code plan is carried by a setup token
+  (`claude setup-token`, a year, subscription inference) passed as
+  `CLAUDE_CODE_OAUTH_TOKEN`; everything else stays in `~/.claude`, so a
+  session resumes the same conversation on another plan. A Codex plan is a
+  home `~/.lapis/accounts/codex/NAME` with its own `auth.json` from
+  `codex login` there and links to every other entry of `~/.codex`, so
+  sessions resume across plans and each login refreshes itself on one
+  machine. Tokens are kept 0600 under `~/.lapis/accounts`, never on a command
+  line or in the workspace file: a local session's service gets the variable
+  in its environment, and a remote session's command gains a preamble that
+  reads the file on that machine (missing, the machine's own sign-in is used).
+- **Loads.** From the usage probes lapis already runs: each machine's own
+  sign-ins, known by the machine (a plan's `home`), and OMP's accounts by
+  email. Usage keeps polling while plans are configured, dashboard or not.
+- **Choice.** `AccountPool` keeps a session on its plan while that is below
+  `switchAt` (95%); a new session takes its machine's own sign-in while that
+  is; otherwise the usable plan with the most room, cool five hour windows
+  first, measured before unmeasured, then least used. With every plan full a
+  session stays where it is. The choice is made at every start (new agent,
+  restart, reload, restore at login, start after a CLI update) and saved as
+  the agent's `account`.
+- **Moving.** When a session's plan passes the switch point and another has
+  room, lapis reloads it once it is between turns (idle or turn finished, or
+  no status and no output for 10 s); the restart chooses the plan and
+  resumes the conversation. A remote agent that cannot name its conversation
+  (Codex over ssh, or a Claude agent started before its launch carried an id)
+  keeps its plan. **Switch plan** moves one by hand.
+
+The `accounts` test covers parsing and the ranking;
+`plansFollowTheirLoad` checks a local session's token in its environment, a
+new session taking a plan with room, a remote session moving once its plan
+fills with its command reading the kept token there and the same
+conversation, and a switch asked for. `scripts/tests/test_lapis_accounts.py`
+covers the helper's config merge and that a setup token is never shown.
+
 ## Contracts to preserve
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal

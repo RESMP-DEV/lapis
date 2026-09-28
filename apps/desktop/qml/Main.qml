@@ -452,6 +452,10 @@ ApplicationWindow {
         add("reloadTab", qsTr("Reload tab"), "", hasAgent && agent.live, needAgent, () => workspace.reloadAgent(agent.sessionId))
         add("reloadCategory", qsTr("Reload category"), "", workspace.categorySessions.length > 0, qsTr("This category has no agents"), () => workspace.reloadCategory())
         add("reloadWindow", qsTr("Reload window"), "", workspace.sessions.length > 0, qsTr("No agents are open"), () => workspace.reloadAll())
+        // Claude Code and Codex plans (accounts in lapis.json): which one this
+        // agent runs on, and a move to the one with the most room.
+        const plan = hasAgent ? workspace.agentAccount(agent.sessionId) : ""
+        add("switchPlan", plan.length > 0 ? qsTr("Switch plan (on %1)").arg(plan) : qsTr("Switch plan"), "", hasAgent && workspace.canSwitchAccount(agent.sessionId), qsTr("No other Claude Code or Codex plan has room for this agent"), () => workspace.switchAccount(agent.sessionId))
         add("nextCategory", qsTr("Next category"), "nextCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory())
         add("previousCategory", qsTr("Previous category"), "previousCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory(-1))
         for (let i = 0; i < Math.min(9, workspace.categories.length); ++i) {

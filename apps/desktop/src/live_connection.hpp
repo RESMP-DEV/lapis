@@ -2,6 +2,7 @@
 #define LAPIS_DESKTOP_LIVE_CONNECTION_HPP
 #include "transport/local_protocol.hpp"
 #include <QFutureWatcher>
+#include <QHash>
 #include <QLocalSocket>
 #include <QObject>
 #include <QSet>
@@ -24,6 +25,9 @@ struct ServiceLaunchRequest {
     QString program;
     QStringList arguments;
     QString log;
+    // Added to this process's environment for the service and its CLI; never
+    // written anywhere (it can hold a credential).
+    QHash<QString, QString> environment{};
 };
 using ServiceLauncher = std::function<bool(const ServiceLaunchRequest&)>;
 
