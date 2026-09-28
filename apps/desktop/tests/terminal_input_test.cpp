@@ -679,6 +679,14 @@ void command_links_open() {
     require(receiver.urls.size() == 2 && receiver.urls[0].isLocalFile() &&
                 same(receiver.urls[0].toLocalFile(), image.fileName()),
             "Command-click did not reach the OS URL dispatcher");
+    QFile replacement_file(QDir(f.directory.path()).filePath(QStringLiteral("invalid\uFFFD")));
+    require(replacement_file.open(QIODevice::WriteOnly) && replacement_file.write("x") == 1,
+            "Replacement-character link fixture failed");
+    replacement_file.close();
+    const auto replacement_uri = QUrl::fromLocalFile(replacement_file.fileName()).toEncoded();
+    auto invalid_uri = replacement_uri;
+    invalid_uri.replace("%EF%BF%BD", "%FF");
+    require(invalid_uri != replacement_uri, "Invalid UTF-8 fixture was not encoded");
     // Real OSC 8 output, including a file URI whose visible label names no path.
     lapis::session::Terminal labeled({40, 4});
     const auto file_uri = QUrl::fromLocalFile(image.fileName()).toEncoded();
@@ -686,9 +694,13 @@ void command_links_open() {
     labeled.feed(std::string("\x1b]8;;") + file_uri.toStdString() + "\x1b\\image\x1b]8;;\x1b\\ ");
     labeled.feed(
         "www.example.com\r\n\x1b]8;;javascript:alert(1)\x1b\\https://example.com\x1b]8;;\x1b\\");
+    labeled.feed(std::string("\r\n\x1b]8;;") + invalid_uri.toStdString() +
+                 "\x1b\\bad\x1b]8;;\x1b\\ ");
+    labeled.feed(std::string("\x1b]8;;") + replacement_uri.toStdString() +
+                 "\x1b\\valid\x1b]8;;\x1b\\");
     peer.send(wire::Kind::snapshot,
               wire::encode_snapshot_message({{f.identity, 1}, 3, labeled.snapshot()}));
-    until([&] { return f.document.snapshot().hyperlinks.size() == 3; });
+    until([&] { return f.document.snapshot().hyperlinks.size() == 5; });
     hover(at(1), held);
     require(surface.hoveredLink() == QStringLiteral("https://example.com/destination"),
             "Labeled link hover did not expose its actual destination");
@@ -701,6 +713,15 @@ void command_links_open() {
                 same(opened[3], image.fileName()) &&
                 opened[4] == QStringLiteral("https://www.example.com"),
             "Labeled/web/file links did not dispatch, or an unsupported target dispatched");
+    click(surface.cellRect(1, 2).center());
+    require(opened.size() == 5 && receiver.urls.size() == 5,
+            "Invalid UTF-8 OSC 8 URI dispatched a different local filename");
+    hover(surface.cellRect(1, 2).center(), held);
+    require(surface.hoveredLink().isEmpty(), "Invalid UTF-8 OSC 8 URI exposed a hover target");
+    click(surface.cellRect(5, 2).center());
+    require(opened.size() == 6 && receiver.urls.size() == 6 &&
+                same(opened.back(), replacement_file.fileName()),
+            "A valid encoded replacement-character filename did not open");
     require(text_frames(peer).isEmpty(), "Command-click sent input to the agent");
 }
 // Dragging selects screen text and double-clicking selects a word. The copy
