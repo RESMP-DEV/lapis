@@ -197,5 +197,60 @@
     "Background checks and Vulkan instance creation do not renew native IME/input or GPU presentation qualification.",
     "Existing whole-desktop TSan harness-model limitation remains; this receipt covers the workspace suite.",
     "No user application deployment or restart; root dirty work and unrelated worktrees preserved."
-  ]
+  ],
+  "late_review_followup": {
+    "source": "e66969d",
+    "combined_package": "e70b04d4e078953c6896c0c4ac72354a673e4837",
+    "thread": "https://github.com/RESMP-DEV/lapis/pull/24#discussion_r4118243056",
+    "fix": "Shared strict UTF-8/NUL validation applies to both dropped file URLs and OSC 8 file links. Invalid encoded bytes cannot select a replacement-character filename.",
+    "control": {
+      "old_exit": 1,
+      "fixed_exit": 0,
+      "diagnostic": "Invalid UTF-8 OSC 8 URI dispatched a different local filename",
+      "valid_counterexample": "The correctly encoded replacement-character filename still opens."
+    },
+    "checks": [
+      {
+        "preset": "desktop",
+        "command": [
+          "build/desktop/apps/desktop/lapis_terminal_input_tests",
+          "--background"
+        ],
+        "exit_code": 0
+      },
+      {
+        "preset": "asan",
+        "command": [
+          "build/asan/apps/desktop/lapis_terminal_input_tests",
+          "--background"
+        ],
+        "exit_code": 0
+      },
+      {
+        "preset": "tsan",
+        "command": [
+          "build/tsan/apps/desktop/lapis_terminal_input_tests",
+          "--background"
+        ],
+        "exit_code": 0
+      },
+      {
+        "command": "Scoped clang-format, clang-tidy and Cppcheck for terminal_surface.cpp and terminal_input_test.cpp",
+        "exit_code": 0
+      },
+      {
+        "command": "python3 scripts/lapis.py ui-review --jobs 3",
+        "exit_code": 0
+      },
+      {
+        "command": "LAPIS_SIGN_IDENTITY=- python3 scripts/package_macos.py app; python3 scripts/package_macos.py verify",
+        "exit_code": 0
+      }
+    ],
+    "reuse": "Workspace source and tests are unchanged; retain the preceding full normal/ASan/UBSan/TSan workspace evidence. Packaging reran on the final changed production source.",
+    "input_sha256": {
+      "apps/desktop/src/terminal_surface.cpp": "356bc105cc885179ea9c0c609a645d85a2f4f53e654d48f00d92fb63aa1992c9",
+      "apps/desktop/tests/terminal_input_test.cpp": "c514e1b8dfe590549f54a132643d71d2c0dd36ccbe0c0b13e833e4c0459d21de"
+    }
+  }
 }
