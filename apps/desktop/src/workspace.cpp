@@ -2,6 +2,7 @@
 #include "agent_checkpoint.hpp"
 #include "app_paths.hpp"
 #include "conversation_index.hpp"
+#include "harness_catalog.hpp"
 #include "live_connection.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "platform/updater_process.hpp"
@@ -38,33 +39,6 @@
 
 namespace lapis::desktop {
 namespace {
-struct Harness {
-    const char* id;
-    const char* label;
-    const char* command;
-    // The CLI's own non-interactive update command, if lapis runs it. Codex
-    // has none: its observer accepts only qualified binaries, so lapis keeps
-    // the qualified build and turns off Codex's update prompt instead.
-    const char* update;
-    // Offered in the new-agent pickers; a retired CLI is kept only so saved
-    // agents of it still restore.
-    bool offered;
-};
-// In the order the pickers offer them.
-constexpr std::array harness_catalog{Harness{"claude", "Claude", "claude", "update", true},
-                                     Harness{"codex", "Codex", "codex", nullptr, true},
-                                     Harness{"opencode", "OpenCode", "opencode", "upgrade", true},
-                                     Harness{"grok", "Grok", "grok", "update", true},
-                                     Harness{"omp", "OMP", "omp", "update", true},
-                                     Harness{"agy", "Antigravity", "agy", "update", true},
-                                     Harness{"kimi", "Kimi", "kimi", "upgrade", true},
-                                     Harness{"gemini", "Gemini", "gemini", nullptr, false}};
-// Arguments lapis always gives a new agent of a CLI, before the user's own.
-QStringList defaultArguments(const QString& harness) {
-    if (harness == QLatin1String("codex"))
-        return {QStringLiteral("-c"), QStringLiteral("check_for_update_on_startup=false")};
-    return {};
-}
 bool hasCodexUpdateSetting(const QStringList& arguments) {
     for (qsizetype index = 0; index < arguments.size(); ++index) {
         const auto& argument = arguments.at(index);
@@ -110,7 +84,10 @@ bool waitForHelperMarker(QLockFile& lock, QFile& marker) {
     }
 }
 
-QString resumeOption(const QString& harness);
+QString resumeOption(const QString& harness) {
+    const auto* descriptor = find_harness(harness);
+    return descriptor ? descriptor->resumeOption : QString();
+}
 bool resumable(const session::ResumeRecord& record, const QString& harness);
 
 bool managedResumeMatches(const QStringList& arguments, qsizetype index, const QString& option,
@@ -119,31 +96,30 @@ bool managedResumeMatches(const QStringList& arguments, qsizetype index, const Q
            arguments.at(index + 1) == identity;
 }
 
-QString harness_id(session::AgentMode mode) {
-    switch (mode) {
-    case session::AgentMode::codex:
-        return QStringLiteral("codex");
-    case session::AgentMode::claude:
-        return QStringLiteral("claude");
-    case session::AgentMode::terminal:
-        return {};
+session::AgentMode launchMode(const HarnessDescriptor& harness) {
+    switch (harness.adapter) {
+    case HarnessAdapter::codex:
+        return session::AgentMode::codex;
+    case HarnessAdapter::claude:
+        return session::AgentMode::claude;
+    case HarnessAdapter::terminal:
+        return session::AgentMode::terminal;
     }
-    return {};
+    return session::AgentMode::terminal;
 }
 
-const Harness* findHarness(const QString& id) {
-    const auto found = std::find_if(harness_catalog.begin(), harness_catalog.end(),
-                                    [&](const auto& item) { return id == QLatin1String(item.id); });
-    return found == harness_catalog.end() ? nullptr : &*found;
+QString harness_id(session::AgentMode mode) {
+    const auto& catalog = harnesses();
+    const auto found =
+        std::find_if(catalog.begin(), catalog.end(), [&](const HarnessDescriptor& harness) {
+            return (mode == session::AgentMode::codex &&
+                    harness.adapter == HarnessAdapter::codex) ||
+                   (mode == session::AgentMode::claude &&
+                    harness.adapter == HarnessAdapter::claude);
+        });
+    return found == catalog.end() ? QString() : found->id;
 }
-QString harnessExecutable(const Harness& harness) {
-    auto paths = qEnvironmentVariable("PATH").split(QDir::listSeparator(), Qt::SkipEmptyParts);
-    for (const auto* suffix :
-         {"/.local/bin", "/.bun/bin", "/.grok/bin", "/.kimi-code/bin", "/.opencode/bin", "/bin"})
-        paths.append(QDir::homePath() + QLatin1String(suffix));
-    paths << QStringLiteral("/opt/homebrew/bin") << QStringLiteral("/usr/local/bin");
-    return QStandardPaths::findExecutable(QLatin1String(harness.command), paths);
-}
+
 // Three approval modes, and the flags each CLI takes for them (checked
 // against each CLI's --help, September 24). A CLI is offered only those it
 // has: OMP, OpenCode and Antigravity have no Auto, and Kimi and OpenCode no
@@ -192,21 +168,6 @@ QVariantList harnessModes(const QString& harness) {
             modes.append(QVariantMap{{QStringLiteral("id"), QString::fromLatin1(mode)},
                                      {QStringLiteral("name"), QString::fromLatin1(name)}});
     return modes;
-}
-// The CLI's model flag with a model name; empty when it has none here. The
-// CLI id and the model are both strings; call sites name each.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-QStringList modelArguments(const QString& harness, const QString& model) {
-    if (model.isEmpty())
-        return {};
-    if (harness == QLatin1String("omp"))
-        return {QStringLiteral("--model=") + model};
-    if (harness == QLatin1String("claude") || harness == QLatin1String("agy"))
-        return {QStringLiteral("--model"), model};
-    if (harness == QLatin1String("codex") || harness == QLatin1String("grok") ||
-        harness == QLatin1String("kimi") || harness == QLatin1String("opencode"))
-        return {QStringLiteral("-m"), model};
-    return {};
 }
 bool validModel(const QString& model) {
     static const QRegularExpression name(
@@ -341,16 +302,6 @@ Workspace::~Workspace() {
     }
     if (headless_ && registry_lock_ && registry_lock_->isLocked())
         QFile::remove(storage_path_ + QStringLiteral(".restoring"));
-}
-
-QString harness_program(const QString& id) {
-    const auto* harness = findHarness(id);
-    return harness ? harnessExecutable(*harness) : QString();
-}
-
-QString harness_label(const QString& id) {
-    const auto* harness = findHarness(id);
-    return harness ? QString::fromLatin1(harness->label) : id;
 }
 
 SessionPreview::SessionPreview(QString title, QString directory, QString activity, QColor accent,
@@ -1073,7 +1024,6 @@ bool Workspace::discardSession(const QString& id) {
     const auto* item = session(id);
     if (!item)
         return false;
-    reconnects_.remove(id);
     const auto item_category = agents_.value(id).category;
     const auto closed_agent = agents_.value(id);
     const auto closed_title = item->title();
@@ -1111,6 +1061,7 @@ bool Workspace::discardSession(const QString& id) {
         emit errorChanged();
         return false;
     }
+    reconnects_.remove(id);
     last_kind_.remove(item);
     rememberClosed(closed_agent, closed_title);
     changed();
@@ -1121,8 +1072,8 @@ bool Workspace::discardSession(const QString& id) {
 QString Workspace::homeDirectory() const { return QDir::homePath(); }
 
 QString SessionPreview::agentName() const {
-    const auto* harness = findHarness(harness_id_);
-    return harness ? QString::fromLatin1(harness->label) : QStringLiteral("Agent");
+    const auto* harness = find_harness(harness_id_);
+    return harness ? harness->label : QStringLiteral("Agent");
 }
 void SessionPreview::setHarnessId(const QString& id) {
     if (harness_id_ == id)
@@ -1156,22 +1107,21 @@ std::vector<ModelChoice> Workspace::modelChoices(const QString& harness) const {
 
 QVariantList Workspace::availableHarnesses() const {
     QVariantList result;
-    for (const auto& harness : harness_catalog) {
+    for (const auto& harness : harnesses()) {
         if (!harness.offered)
             continue;
-        const auto program = harnessExecutable(harness);
-        const auto id = QString::fromLatin1(harness.id);
         QVariantList models;
-        if (!modelArguments(id, QStringLiteral("x")).isEmpty())
-            for (const auto& model : modelChoices(id))
+        if (harness.modelOption != HarnessModelOption::unsupported)
+            for (const auto& model : modelChoices(harness.id))
                 models.append(QVariantMap{{QStringLiteral("id"), model.id},
                                           {QStringLiteral("name"), model.name},
                                           {QStringLiteral("default"), model.isDefault}});
-        result.append(QVariantMap{{QStringLiteral("id"), id},
-                                  {QStringLiteral("name"), QString::fromLatin1(harness.label)},
-                                  {QStringLiteral("installed"), !program.isEmpty()},
-                                  {QStringLiteral("models"), models},
-                                  {QStringLiteral("modes"), harnessModes(id)}});
+        result.append(
+            QVariantMap{{QStringLiteral("id"), harness.id},
+                        {QStringLiteral("name"), harness.label},
+                        {QStringLiteral("installed"), !harness_program(harness.id).isEmpty()},
+                        {QStringLiteral("models"), models},
+                        {QStringLiteral("modes"), harnessModes(harness.id)}});
     }
     return result;
 }
@@ -1260,7 +1210,7 @@ std::optional<session::LaunchSpec> Workspace::agentLaunch(const AgentRequest& re
         fail(message);
         return std::nullopt;
     };
-    const auto* harness = findHarness(request.harness);
+    const auto* harness = find_harness(request.harness);
     if (!harness)
         return refuse(QStringLiteral("Unknown agent harness."));
     const auto& directory = request.directory;
@@ -1268,24 +1218,23 @@ std::optional<session::LaunchSpec> Workspace::agentLaunch(const AgentRequest& re
         directory.contains(QLatin1Char('\n')))
         return refuse(QStringLiteral("Choose a project directory (at most 4096 characters)."));
     if (!validModel(request.model) ||
-        modelArguments(request.harness, request.model).isEmpty() != request.model.isEmpty())
+        harness->modelArguments(request.model).isEmpty() != request.model.isEmpty())
         return refuse(QStringLiteral("This agent cannot take that model."));
     if (!request.mode.isEmpty() && modeArguments(request.harness, request.mode).isEmpty())
         return refuse(QStringLiteral("This agent has no such mode."));
     if (!request.resume.isEmpty() &&
-        (!validConversation(request.resume) || resumeOption(request.harness).isEmpty()))
+        (!validConversation(request.resume) || harness->resumeOption.isEmpty()))
         return refuse(QStringLiteral("This agent cannot resume that conversation."));
     // The user's configured arguments, this agent's model and mode, then the
     // conversation to resume.
-    auto arguments = defaultArguments(request.harness) + harness_arguments_.value(request.harness) +
-                     modelArguments(request.harness, request.model) +
+    auto arguments = harness->defaultArguments() + harness_arguments_.value(request.harness) +
+                     harness->modelArguments(request.model) +
                      modeArguments(request.harness, request.mode);
     if (!request.resume.isEmpty())
-        arguments += QStringList{resumeOption(request.harness), request.resume};
+        arguments += QStringList{harness->resumeOption, request.resume};
     if (!request.machine.isEmpty()) {
         std::optional<session::LaunchSpec> launch;
-        const auto refusal =
-            remoteLaunch(request, QString::fromLatin1(harness->command), arguments, launch);
+        const auto refusal = remoteLaunch(request, harness->command, arguments, launch);
         return refusal.isEmpty() ? launch : refuse(refusal);
     }
     const QString project =
@@ -1295,15 +1244,13 @@ std::optional<session::LaunchSpec> Workspace::agentLaunch(const AgentRequest& re
     if (!QFileInfo(project).isDir())
         return refuse(
             QStringLiteral("Choose an existing project directory (at most 4096 characters)."));
-    const auto program = harnessExecutable(*harness);
+    const auto program = harness_program(harness->id);
     if (program.isEmpty())
-        return refuse(QStringLiteral("%1 is not installed or is not available on PATH.")
-                          .arg(QString::fromLatin1(harness->label)));
+        return refuse(
+            QStringLiteral("%1 is not installed or is not available on PATH.").arg(harness->label));
     // Codex and Claude Code have service-side observers; other CLIs run as
     // plain terminal agents.
-    const auto mode = request.harness == QStringLiteral("codex")    ? session::AgentMode::codex
-                      : request.harness == QStringLiteral("claude") ? session::AgentMode::claude
-                                                                    : session::AgentMode::terminal;
+    const auto mode = launchMode(*harness);
     return session::validate_launch({program, arguments, project, {100, 30}, mode});
 }
 QString Workspace::startAgent(const AgentRequest& request) {
@@ -1476,21 +1423,6 @@ void Workspace::loadCategories(const QJsonArray& groups) {
     categories_ = std::move(categories);
 }
 namespace {
-// The agent's own option (or Codex's subcommand) that takes a conversation to
-// resume; harnesses whose option is unknown restart fresh in the same folder.
-QString resumeOption(const QString& harness) {
-    if (harness == QLatin1String("codex"))
-        return QStringLiteral("resume");
-    if (harness == QLatin1String("claude") || harness == QLatin1String("omp"))
-        return QStringLiteral("--resume");
-    if (harness == QLatin1String("grok"))
-        return QStringLiteral("-r");
-    if (harness == QLatin1String("opencode") || harness == QLatin1String("kimi"))
-        return QStringLiteral("--session");
-    if (harness == QLatin1String("agy"))
-        return QStringLiteral("--conversation");
-    return {};
-}
 // Services built before resume records keep none, and services built before
 // the rollout scan do not follow /new. A Codex agent's app-server, found by the
 // backend socket it listens on, still holds its threads' rollouts open.
@@ -1724,7 +1656,9 @@ void Workspace::applyStartupDefaults(const Agent& agent, ResumeLaunch& plan) {
     // service is gone. Reattach keeps the recorded launch untouched.
     if (agent.harness == QLatin1String("codex") && !hasCodexUpdateSetting(plan.launch.arguments)) {
         if (plan.launch.arguments.size() + 2 <= max_saved_arguments) {
-            plan.launch.arguments = defaultArguments(agent.harness) + plan.launch.arguments;
+            const auto* descriptor = find_harness(agent.harness);
+            plan.launch.arguments = (descriptor ? descriptor->defaultArguments() : QStringList()) +
+                                    plan.launch.arguments;
             if (plan.managed_resume_index >= 0)
                 plan.managed_resume_index += 2;
         } else {
@@ -1736,9 +1670,12 @@ void Workspace::applyStartupDefaults(const Agent& agent, ResumeLaunch& plan) {
 auto Workspace::restoredLaunch(const Agent& agent, QString* diagnostic)
     -> std::optional<ResumeLaunch> {
     auto launch = agent.launch;
-    if (const auto* harness = findHarness(agent.harness);
-        harness && !QFileInfo(launch.program).isExecutable())
-        launch.program = harnessExecutable(*harness);
+    // Relocate a CLI whose recorded binary disappeared; never turn a saved
+    // transport such as ssh into the harness program while keeping its argv.
+    if (const auto* harness = find_harness(agent.harness);
+        harness && QFileInfo(launch.program).fileName() == harness->command &&
+        !QFileInfo(launch.program).isExecutable())
+        launch.program = harness_program(harness->id);
     if (launch.program.isEmpty() || !QFileInfo(launch.directory).isDir())
         return std::nullopt;
     const auto option = resumeOption(agent.harness);
@@ -1839,8 +1776,8 @@ void Workspace::loadAgents(const QJsonArray& agents) {
         const auto title = object.value(QStringLiteral("title")).toString();
         const auto harness =
             object.value(QStringLiteral("harness")).toString(QStringLiteral("codex"));
-        if (!findHarness(harness) || (object.contains(QStringLiteral("harness")) &&
-                                      !object.value(QStringLiteral("harness")).isString()))
+        if (!find_harness(harness) || (object.contains(QStringLiteral("harness")) &&
+                                       !object.value(QStringLiteral("harness")).isString()))
             throw std::runtime_error("Invalid agent harness");
         Agent agent{object.value(QStringLiteral("category")).toString(),
                     object.value(QStringLiteral("endpoint")).toString(),
@@ -1953,7 +1890,14 @@ void Workspace::restore() {
         if (std::none_of(categories_.begin(), categories_.end(),
                          [&](const auto& category) { return category.id == active_category_; }))
             active_category_ = categories_.front().id;
-        bool restarted = false;
+        // Save the full restart plan before constructing create-mode connections.
+        // Existing-service reconnections keep their separate path below.
+        struct RestartPlan {
+            SessionPreview* document;
+            QString endpoint;
+            session::LaunchSpec launch;
+        };
+        std::vector<RestartPlan> restarting;
         for (const auto& item : sessions_) {
             watch(item.get());
             const auto entry = agents_.find(item->sessionId());
@@ -1967,9 +1911,7 @@ void Workspace::restore() {
                     agent.launch = launch->launch;
                     agent.managed_resume_index = launch->managed_resume_index;
                     agent.managed_resume_identity = launch->managed_resume_identity;
-                    item->startLive(agent.endpoint, agent.launch,
-                                    session::wire::AttachMode::create);
-                    restarted = true;
+                    restarting.push_back({item.get(), agent.endpoint, agent.launch});
                     continue;
                 }
             if (headless_)
@@ -1977,8 +1919,10 @@ void Workspace::restore() {
             item->startLive(agent.endpoint, agent.launch, session::wire::AttachMode::reconnect);
         }
         // Restarted agents have new launch arguments, part of their fingerprint.
-        if (restarted && !save())
+        if (!restarting.empty() && !save())
             throw std::runtime_error(error_.toStdString());
+        for (const auto& plan : restarting)
+            plan.document->startLive(plan.endpoint, plan.launch, session::wire::AttachMode::create);
         if (restore_agents_ && !headless_) {
             conversation_timer_.setInterval(60000);
             connect(&conversation_timer_, &QTimer::timeout, this, &Workspace::recordConversations);
@@ -2008,8 +1952,8 @@ bool Workspace::deferForUpdate(const QString& id) {
         return false;
     const auto harness = entry->harness;
     const auto program = entry->launch.program;
-    const auto* selected = findHarness(harness);
-    if (!update_harnesses_ || !selected || !selected->update)
+    const auto* selected = find_harness(harness);
+    if (!update_harnesses_ || !selected || selected->updateCommand.isEmpty())
         return false;
     const bool running = harness_updates_.value(harness) != nullptr;
     constexpr qint64 fresh_ms = qint64{30} * 60 * 1000;
@@ -2020,13 +1964,13 @@ bool Workspace::deferForUpdate(const QString& id) {
     if (!queued.contains(id))
         queued.append(id);
     if (auto* item = session(id))
-        item->setUpdating(QStringLiteral("Updating %1…").arg(QLatin1String(selected->label)));
+        item->setUpdating(QStringLiteral("Updating %1…").arg(selected->label));
     if (running)
         return true;
     auto* process = new UpdaterProcess(this);
     harness_updates_.insert(harness, process);
     process->setProgram(program);
-    process->setArguments({QString::fromLatin1(selected->update)});
+    process->setArguments({selected->updateCommand});
     process->setStandardInputFile(QProcess::nullDevice());
     process->setProcessChannelMode(QProcess::MergedChannels);
     updater_output_.insert(process, {});

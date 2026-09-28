@@ -1,6 +1,7 @@
 #ifndef LAPIS_DESKTOP_WORKSPACE_HPP
 #define LAPIS_DESKTOP_WORKSPACE_HPP
 
+#include "harness_catalog.hpp"
 #include "harness_models.hpp"
 #include "history_strip.hpp"
 #include "keymap.hpp"
@@ -153,6 +154,7 @@ class SessionPreview final : public QObject {
     void setSnapshotTiming(const QVariantMap& timing) { snapshot_timing_ = timing; }
     [[nodiscard]] QVariantMap snapshotTiming() const { return snapshot_timing_; }
     void beginHistoryRequest();
+    void captureHistoryScreen();
     void completeHistoryRequest(quint64 page_id, session::TerminalSnapshot snapshot,
                                 const QString& message);
     void failHistoryRequest(const QString& message);
@@ -291,12 +293,6 @@ struct PreviewRequest {
     QString reason;
 };
 
-// The installed program of a CLI lapis knows ("codex", "claude", ...), or
-// empty when it is not found on this Mac.
-[[nodiscard]] QString harness_program(const QString& id);
-// A CLI's name as people call it ("Claude", "Codex"), or the id itself.
-[[nodiscard]] QString harness_label(const QString& id);
-
 // An agent to start: a CLI in a folder, in a category, on this Mac or over ssh.
 struct AgentRequest {
     QString category;
@@ -415,7 +411,7 @@ class Workspace final : public QObject {
     Q_INVOKABLE [[nodiscard]] QVariantMap agentDefaults() const;
     // Where an agent is: its category's name, its ssh machine (or ""), and
     // its folder as the card shows it ("~/x", or "host:~/x" over ssh).
-    [[nodiscard]] QVariantMap agentPlace(const QString& id) const;
+    Q_INVOKABLE [[nodiscard]] QVariantMap agentPlace(const QString& id) const;
     void setAgentDefaults(const AgentDefaults& defaults) { agent_defaults_ = defaults; }
     // Where the new-agent forms' model lists come from; lapis keeps it.
     void setHarnessModels(const HarnessModels* models) { harness_models_ = models; }

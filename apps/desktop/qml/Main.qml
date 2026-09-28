@@ -46,7 +46,7 @@ ApplicationWindow {
     // One fixed-width family for the terminal and every machine readout (paths,
     // shortcut hints, states, counts). Human names and prose use the UI face.
     readonly property string monoFamily: liveTerminal.resolvedFontFamily
-    readonly property int terminalFontSize: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSize : 16
+    readonly property int terminalFontSize: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSize : 14
     // Composition and paste own the keyboard until they finish.
     readonly property bool terminalBusy: liveTerminal.composing || liveTerminal.pasting
 
@@ -1665,9 +1665,9 @@ ApplicationWindow {
         fontFamily: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontFamily : ""
         resolvedFontFamily: window.monoFamily
         fontSize: liveTerminal.fontPixelSize
-        fontSizeMinimum: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeMinimum : 16
-        fontSizeMaximum: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeMaximum : 16
-        fontSizeDefault: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeDefault : 16
+        fontSizeMinimum: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeMinimum : 14
+        fontSizeMaximum: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeMaximum : 14
+        fontSizeDefault: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeDefault : 14
         motionDuration: window.motionDuration
         motionEnabled: window.motionEnabled
         alertSound: (typeof keymap !== "undefined" && keymap !== null) ? keymap.alertSound : true
@@ -3254,6 +3254,9 @@ ApplicationWindow {
 
                 TerminalSurface {
                     id: liveTerminal
+                    ToolTip.visible: hoveredLink.length > 0
+                    ToolTip.text: hoveredLink
+                    ToolTip.delay: 250
                     objectName: "liveTerminal"
                     x: stage.tiled ? stage.focusedFrame.x + 4 : stage.inset
                     y: stage.tiled ? stage.focusedFrame.y + stage.headerHeight : stage.inset
@@ -4159,6 +4162,9 @@ ApplicationWindow {
             spacing: 0
             TerminalSurface {
                 id: sideSurface
+                ToolTip.visible: hoveredLink.length > 0
+                ToolTip.text: hoveredLink
+                ToolTip.delay: 250
                 objectName: "sideTerminalSurface"
                 Layout.fillWidth: true
                 Layout.fillHeight: true

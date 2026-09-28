@@ -2,7 +2,7 @@
 #define LAPIS_DESKTOP_TERMINAL_SURFACE_HPP
 
 #include "keymap.hpp"
-#include "workspace.hpp"
+#include <lapis/session/terminal.hpp>
 
 #include <QElapsedTimer>
 #include <QFont>
@@ -19,7 +19,10 @@
 #include <optional>
 #include <vector>
 
+Q_MOC_INCLUDE("workspace.hpp")
+
 namespace lapis::desktop {
+class SessionPreview;
 
 // Legacy printable-key encoding; native text/IME remains Unicode.
 [[nodiscard]] QByteArray terminal_text_key(const QKeyEvent& event);
@@ -34,7 +37,8 @@ struct TerminalMatch {
     int last_column{};
     bool operator==(const TerminalMatch&) const = default;
 };
-// What a cell is part of that Command-click opens: an http(s) link, or text
+// What a cell is part of that Command-click opens: an OSC 8 destination, a
+// visible http(s)/www link, or text
 // that may name a file or folder (checked with resolve_terminal_path), with
 // the cells it covers on each row it wraps over.
 struct TerminalLink {
@@ -84,6 +88,7 @@ class TerminalSurface : public QQuickItem {
     // Text chosen by dragging or double-clicking; copied with Command-C
     // (Control-Shift-C on Linux) and cleared by typing.
     Q_PROPERTY(QString selectedText READ selectedText NOTIFY selectionChanged)
+    Q_PROPERTY(QString hoveredLink READ hoveredLink NOTIFY hoveredLinkChanged)
   public:
     explicit TerminalSurface(QQuickItem* parent = nullptr);
     // Text as if pasted (bracketed when the agent asked for it): what files
@@ -100,7 +105,7 @@ class TerminalSurface : public QQuickItem {
     Q_INVOKABLE int countMatches(const QString& text) const;
     Q_INVOKABLE void clearSelectedText() { clearSelection(); }
     ~TerminalSurface() override;
-    [[nodiscard]] SessionPreview* document() const { return document_.data(); }
+    [[nodiscard]] SessionPreview* document() const;
     void setDocument(SessionPreview* document);
     [[nodiscard]] bool interactive() const { return interactive_; }
     void setInteractive(bool enabled);

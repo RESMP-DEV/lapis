@@ -456,9 +456,11 @@ Appearance settings offer coordinated palettes (including OLED black, whose
 resting surfaces are all `#000000`), border/motion treatments,
 three chrome densities and the terminal font. The Command color theme is the
 default. `terminalFont` holds an optional `family` and a `size` of 10–32 pixels
-(default 16); omitting `family` uses the platform fixed-width font, and an
+(default 14); omitting `family` uses the platform fixed-width font, and an
 unavailable or proportional family falls back to it. The same family is used for
-machine readouts in the window. These choices persist
+machine readouts in the window. Enter a size directly in Appearance or use the
+plus/minus controls; Enter or focus loss applies a valid size, while invalid
+values restore the saved size. Existing saved sizes remain unchanged. These choices persist
 atomically in `lapis.json`; category/session identities and window geometry live
 in private local runtime files. Legacy layout values can still be read for config
 compatibility but do not reintroduce preview panes or change the single stage.
@@ -842,6 +844,12 @@ permission/input, terminal or GUI checks above. Keep failed receipts in a separa
 output directory when diagnosing a rerun.
 
 ### Selecting checks and reusing results
+
+For history UI iteration after a desktop build, run
+`build/desktop/apps/desktop/lapis_ui_preview_tests --background --history-only`.
+This selects the real-service history/resize fixture without repeating unrelated
+workspace captures. Use the full background UI runner for an assembled handoff.
+
 
 Select the required commands before running them:
 

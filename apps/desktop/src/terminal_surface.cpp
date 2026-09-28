@@ -1,5 +1,6 @@
 #include "terminal_surface.hpp"
 #include "cell_shapes.hpp"
+#include "workspace.hpp"
 #include <QScopeGuard>
 
 #include <QClipboard>
@@ -19,8 +20,9 @@
 #include <QSGGeometryNode>
 #include <QSGSimpleRectNode>
 #include <QSGTextNode>
-#include <QStringDecoder>
+#include <QStringConverter>
 #include <QStringList>
+#include <QSysInfo>
 #include <QTextCharFormat>
 #include <QTextLayout>
 #include <QUrl>
@@ -34,9 +36,17 @@
 #include <utility>
 
 namespace lapis::desktop {
+SessionPreview* TerminalSurface::document() const { return document_; }
 namespace {
 
 QColor color(std::uint32_t rgb) { return QColor::fromRgb(rgb | 0xff000000U); }
+
+bool valid_file_url_path(const QUrl& url) {
+    QStringDecoder decoder(QStringDecoder::Utf8, QStringConverter::Flag::Stateless);
+    const QString decoded =
+        decoder(QByteArray::fromPercentEncoding(url.path(QUrl::FullyEncoded).toUtf8()));
+    return !decoder.hasError() && !decoded.contains(u'\0');
+}
 
 struct SurfaceLayout {
     qreal scale{};
@@ -1082,12 +1092,26 @@ void TerminalSurface::clearLink() {
 QString TerminalSurface::linkTarget(const TerminalLink& link) const {
     if (link.kind == TerminalLink::Kind::url) {
         const QUrl url(link.text, QUrl::StrictMode);
-        return url.isValid() && (url.scheme() == QLatin1String("https") ||
-                                 url.scheme() == QLatin1String("http"))
+        return url.isValid() && !url.host().isEmpty() &&
+                       (url.scheme() == QLatin1String("https") ||
+                        url.scheme() == QLatin1String("http"))
                    ? link.text
                    : QString();
     }
-    return resolve_terminal_path(link.text, document_ ? document_->linkFolder() : QString());
+    const auto folder = document_ ? document_->linkFolder() : QString();
+    if (folder.isEmpty())
+        return {}; // Paths printed by a remote agent do not identify local files.
+    if (link.text.startsWith(QLatin1String("file:"), Qt::CaseInsensitive)) {
+        const QUrl uri(link.text, QUrl::StrictMode);
+        const auto host = uri.host();
+        if (!uri.isValid() || !uri.isLocalFile() || !valid_file_url_path(uri) ||
+            (!host.isEmpty() &&
+             host.compare(QLatin1String("localhost"), Qt::CaseInsensitive) != 0 &&
+             host.compare(QSysInfo::machineHostName(), Qt::CaseInsensitive) != 0))
+            return {};
+        return resolve_terminal_path(uri.path(QUrl::FullyDecoded), folder);
+    }
+    return resolve_terminal_path(link.text, folder);
 }
 void TerminalSurface::mousePressEvent(QMouseEvent* event) {
     if (!interactive_) {
@@ -1110,9 +1134,10 @@ void TerminalSurface::mousePressEvent(QMouseEvent* event) {
                 const bool runs = info.isBundle() || (info.isFile() && info.isExecutable());
                 url = QUrl::fromLocalFile(runs ? info.absolutePath() : target);
             }
-            emit linkOpened(target);
-            if (opens_links_)
-                QDesktopServices::openUrl(url);
+            if (!opens_links_ || QDesktopServices::openUrl(url))
+                emit linkOpened(target);
+            else
+                qWarning() << "Could not open terminal link:" << url;
         }
         event->accept();
         return;
@@ -1416,10 +1441,7 @@ QString TerminalSurface::localFilePath(const QString& url) const {
         !parsed.path().startsWith(u'/') || parsed.port() != -1 || !parsed.userName().isEmpty() ||
         !parsed.password().isEmpty() || parsed.hasQuery() || parsed.hasFragment())
         return {};
-    QStringDecoder decoder(QStringDecoder::Utf8, QStringConverter::Flag::Stateless);
-    const QString decoded =
-        decoder(QByteArray::fromPercentEncoding(parsed.path(QUrl::FullyEncoded).toUtf8()));
-    if (decoder.hasError() || decoded.contains(u'\0'))
+    if (!valid_file_url_path(parsed))
         return {};
     const QString path = parsed.toLocalFile();
     return path.isEmpty() || path.contains(u'\0') ? QString() : path;
@@ -1499,17 +1521,48 @@ bool printable(const QString& text) {
     const auto codepoints = text.toUcs4();
     return std::all_of(codepoints.cbegin(), codepoints.cend(), printable_url_character);
 }
-} // namespace
-
-std::optional<TerminalLink> terminal_link_at(const session::TerminalSnapshot& snapshot, int column,
-                                             int row) {
-    if (row < 0 || row >= snapshot.size.rows || column < 0 || column >= snapshot.size.columns)
+std::vector<TerminalMatch> hyperlink_cells(const session::TerminalSnapshot& snapshot,
+                                           const session::TerminalHyperlink& span) {
+    std::vector<TerminalMatch> cells;
+    for (std::size_t at = span.first_cell; at < span.first_cell + span.cell_count; ++at) {
+        if (snapshot.cells[at].style.invisible ||
+            snapshot.cells[at].kind == session::CellKind::wrap_spacer)
+            continue;
+        const int y = static_cast<int>(at / snapshot.size.columns);
+        const int x = static_cast<int>(at % snapshot.size.columns);
+        if (!cells.empty() && cells.back().row == y && cells.back().last_column + 1 == x)
+            cells.back().last_column = x;
+        else
+            cells.push_back({y, x, x});
+    }
+    return cells;
+}
+std::optional<TerminalLink> explicit_link(const session::TerminalSnapshot& snapshot,
+                                          const session::TerminalHyperlink& span,
+                                          std::size_t index) {
+    if (span.first_cell >= snapshot.cells.size() ||
+        span.cell_count > snapshot.cells.size() - span.first_cell ||
+        snapshot.cells[index].style.invisible ||
+        snapshot.cells[index].kind == session::CellKind::wrap_spacer)
         return std::nullopt;
-    const auto joined = joined_rows(snapshot, column, row);
+    QStringDecoder decoder(QStringDecoder::Utf8, QStringConverter::Flag::Stateless);
+    const QString uri =
+        decoder(QByteArrayView(span.uri.data(), static_cast<qsizetype>(span.uri.size())));
+    const QUrl url(uri, QUrl::StrictMode);
+    const bool web =
+        url.scheme() == QLatin1String("https") || url.scheme() == QLatin1String("http");
+    if (decoder.hasError() || !printable(uri) || !url.isValid() || (!web && !url.isLocalFile()) ||
+        (web && url.host().isEmpty()))
+        return std::nullopt;
+    return TerminalLink{web ? TerminalLink::Kind::url : TerminalLink::Kind::path, uri, 0,
+                        hyperlink_cells(snapshot, span)};
+}
+std::optional<TerminalLink> visible_link(const JoinedRows& joined) {
     const auto target = joined.target;
     if (target < 0)
         return std::nullopt;
-    static const QRegularExpression pattern(QStringLiteral(R"(https?://[^\s<>"'`]+)"));
+    static const QRegularExpression pattern(QStringLiteral(R"((?:https?://|www\.)[^\s<>"'`]+)"),
+                                            QRegularExpression::CaseInsensitiveOption);
     for (auto matches = pattern.globalMatch(joined.text); matches.hasNext();) {
         const auto match = matches.next();
         auto url = match.captured();
@@ -1521,8 +1574,11 @@ std::optional<TerminalLink> terminal_link_at(const session::TerminalSnapshot& sn
         if (!printable(url))
             continue;
         if (target >= match.capturedStart() && target < match.capturedStart() + url.size())
-            return TerminalLink{TerminalLink::Kind::url, url, 0,
-                                covered(joined, match.capturedStart(), url.size())};
+            return TerminalLink{TerminalLink::Kind::url,
+                                url.startsWith(QLatin1String("www."), Qt::CaseInsensitive)
+                                    ? QStringLiteral("https://") + url
+                                    : url,
+                                0, covered(joined, match.capturedStart(), url.size())};
     }
     // Otherwise the word under the cell, which may name a file or folder.
     const auto& text = joined.text;
@@ -1550,6 +1606,20 @@ std::optional<TerminalLink> terminal_link_at(const session::TerminalSnapshot& sn
     if (!printable(word))
         return std::nullopt;
     return TerminalLink{TerminalLink::Kind::path, word, line, covered(joined, start, end - start)};
+}
+} // namespace
+
+std::optional<TerminalLink> terminal_link_at(const session::TerminalSnapshot& snapshot, int column,
+                                             int row) {
+    if (row < 0 || row >= snapshot.size.rows || column < 0 || column >= snapshot.size.columns)
+        return std::nullopt;
+    const auto index =
+        static_cast<std::size_t>(row) * snapshot.size.columns + static_cast<std::size_t>(column);
+    // An explicit but unsupported OSC 8 destination must not open its label.
+    for (const auto& span : snapshot.hyperlinks)
+        if (index >= span.first_cell && index - span.first_cell < span.cell_count)
+            return explicit_link(snapshot, span, index);
+    return visible_link(joined_rows(snapshot, column, row));
 }
 
 QString terminal_url_at(const session::TerminalSnapshot& snapshot, int column, int row) {

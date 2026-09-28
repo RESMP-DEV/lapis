@@ -2,6 +2,7 @@
 #include "app_paths.hpp"
 #include "platform/posix/local_endpoint.hpp"
 #include "session_descriptor.hpp"
+#include "workspace.hpp"
 #include <QDataStream>
 #include <QDateTime>
 #include <QDebug>
@@ -24,6 +25,14 @@ namespace {
 constexpr int codex_sync_timeout_ms = 15000;
 constexpr int terminal_sync_timeout_ms = 5000;
 constexpr int history_timeout_ms = 5000;
+bool start_service_detached(const ServiceLaunchRequest& launch) {
+    QProcess service;
+    service.setProgram(launch.program);
+    service.setArguments(launch.arguments);
+    service.setStandardOutputFile(launch.log, QIODevice::Append);
+    service.setStandardErrorFile(launch.log, QIODevice::Append);
+    return service.startDetached();
+}
 } // namespace
 SessionPreview::~SessionPreview() { live_.reset(); }
 void SessionPreview::startLive(const QString& endpoint, const session::LaunchSpec& launch,
@@ -88,6 +97,12 @@ void SessionPreview::removeViewer(int interval_ms) {
         viewers_.erase(found);
     if (viewers_.empty())
         decode_timer_.stop();
+}
+void SessionPreview::captureHistoryScreen() {
+    if (!strip_) {
+        decodeWaiting();
+        strip_screen_ = live_snapshot_;
+    }
 }
 void SessionPreview::beginHistoryRequest() {
     // History shows the live screen until a page comes, so take the newest.
@@ -218,8 +233,6 @@ void SessionPreview::scrollHistory(int rows) {
         // Rows asked for while the first page loads add up.
         strip_rows_asked_ += rows;
         if (!history_request_pending_) {
-            decodeWaiting();
-            strip_screen_ = live_snapshot_;
             live_->requestHistory(wire::HistoryDirection::older, 0);
         }
         return;
@@ -337,11 +350,16 @@ void SessionPreview::setServiceIdentity(const QByteArray& identity) {
     emit connectionChanged();
 }
 LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
-                               const session::LaunchSpec& launch, wire::AttachMode mode)
+                               const session::LaunchSpec& launch, wire::AttachMode mode,
+                               std::shared_ptr<session::DescriptorStore> descriptor_store,
+                               ServiceLauncher launcher)
     : document_(document), endpoint_(std::move(endpoint)),
       service_arguments_{QStringList{endpoint_, launch.directory, launch.program} +
                          launch.arguments},
-      fingerprint_(session::launch_fingerprint(launch)), wanted_size_(launch.size) {
+      descriptor_store_{descriptor_store ? std::move(descriptor_store)
+                                         : std::make_shared<session::DescriptorStore>()},
+      launcher_{std::move(launcher)}, fingerprint_(session::launch_fingerprint(launch)),
+      wanted_size_(launch.size) {
     retry_.setSingleShot(true);
     retry_.setInterval(100);
     handshake_.setSingleShot(true);
@@ -361,6 +379,7 @@ LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
             return;
         const auto request_id = *outstanding_history_request_;
         outstanding_history_request_.reset();
+        deferred_history_.reset();
         document_.setHistoryRequestId(0);
         document_.failHistoryRequest(QStringLiteral("History request timed out."));
         rememberCanceledHistoryRequest(request_id);
@@ -368,6 +387,7 @@ LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
     QTimer::singleShot(0, this, [this, mode] { begin(mode); });
 }
 LiveConnection::~LiveConnection() {
+    clearDescriptorWrite();
     retry_.stop();
     handshake_.stop();
     if (socket_) {
@@ -381,9 +401,11 @@ void LiveConnection::begin(wire::AttachMode mode) {
     failed_ = false;
     connected_ = false;
     ready_ = false;
+    capability_retry_ = false;
     attempts_ = 0;
     last_sequence_ = 0;
     shown_size_ = {};
+    pending_resize_.reset();
     claimed_over_.reset();
     attachment_.reset();
     buffer_.clear();
@@ -395,6 +417,8 @@ void LiveConnection::begin(wire::AttachMode mode) {
     try {
         endpoint_ = session::posix::prepare_endpoint(endpoint_);
         request_ = {.mode = mode, .fingerprint = fingerprint_, .expected = {}};
+        request_.hyperlinks = true;
+        request_.attention_phase = true;
         if (mode == wire::AttachMode::reconnect) {
             const auto saved = session::read_descriptor(endpoint_, fingerprint_);
             if (!saved) {
@@ -405,16 +429,13 @@ void LiveConnection::begin(wire::AttachMode mode) {
             request_.expected = *saved;
         } else if (mode == wire::AttachMode::create) {
             request_.expected.session_id = wire::new_id();
-            QProcess service;
-            service.setProgram(session_service_program());
-            service.setArguments(
+            const QStringList arguments =
                 QStringList{QStringLiteral("--session-id"),
                             QString::fromLatin1(request_.expected.session_id.toHex())} +
-                service_arguments_);
-            const QString log = endpoint_ + QStringLiteral(".log");
-            service.setStandardOutputFile(log, QIODevice::Append);
-            service.setStandardErrorFile(log, QIODevice::Append);
-            if (!service.startDetached())
+                service_arguments_;
+            const ServiceLaunchRequest launch_request{session_service_program(), arguments,
+                                                      endpoint_ + QStringLiteral(".log")};
+            if (!(launcher_ ? launcher_(launch_request) : start_service_detached(launch_request)))
                 throw std::runtime_error("Could not start session service");
         }
         connectSocket();
@@ -424,6 +445,7 @@ void LiveConnection::begin(wire::AttachMode mode) {
 }
 
 void LiveConnection::invalidateHistory() {
+    deferred_history_.reset();
     if (outstanding_history_request_)
         rememberCanceledHistoryRequest(*outstanding_history_request_);
     history_timeout_.stop();
@@ -438,6 +460,7 @@ void LiveConnection::rememberCanceledHistoryRequest(quint64 request_id) {
 }
 
 void LiveConnection::cancelHistoryRequest() {
+    deferred_history_.reset();
     if (outstanding_history_request_) {
         rememberCanceledHistoryRequest(*outstanding_history_request_);
         outstanding_history_request_.reset();
@@ -488,6 +511,7 @@ void LiveConnection::fail(const QString& message, wire::StatusCode code) {
     if (failed_)
         return;
     failed_ = true;
+    clearDescriptorWrite();
     ready_ = false;
     connected_ = false;
     retry_.stop();
@@ -541,7 +565,8 @@ void LiveConnection::sendResize(session::TerminalSize size) {
     QByteArray bytes;
     QDataStream out(&bytes, QIODevice::WriteOnly);
     out << quint16(size.columns) << quint16(size.rows);
-    send(wire::Kind::resize, bytes);
+    if (send(wire::Kind::resize, bytes))
+        pending_resize_ = size != shown_size_ ? std::optional(size) : std::nullopt;
 }
 
 void LiveConnection::claimSize() {
@@ -580,10 +605,20 @@ void LiveConnection::requestHistory(wire::HistoryDirection direction, quint64 re
     outstanding_history_request_ = request_id;
     document_.setHistoryRequestId(request_id);
     history_timeout_.start();
-    if (!send(wire::Kind::history_request,
-              wire::encode_history_request({request_id, reference, direction}))) {
+    const wire::HistoryRequest request{request_id, reference, direction};
+    if (pending_resize_) {
+        deferred_history_ = request;
+        return;
+    }
+    queueHistoryRequest(request);
+}
+void LiveConnection::queueHistoryRequest(const wire::HistoryRequest& request) {
+    // The frozen screen must match the size the service used for its archive.
+    document_.captureHistoryScreen();
+    if (!send(wire::Kind::history_request, wire::encode_history_request(request))) {
         history_timeout_.stop();
         outstanding_history_request_.reset();
+        deferred_history_.reset();
         document_.setHistoryRequestId(0);
         document_.failHistoryRequest(
             QStringLiteral("History request could not be queued; try again."));
@@ -626,6 +661,14 @@ void LiveConnection::acceptSnapshot(wire::SnapshotEnvelope message) {
          {QStringLiteral("publish_ns"), QVariant::fromValue(message.timing.publish_ns)}});
     // Decoded when a view shows it (most of a millisecond for a whole screen).
     document_.offerSnapshot(std::move(message.encoded));
+    if (pending_resize_ == shown_size_) {
+        pending_resize_.reset();
+        if (deferred_history_) {
+            const auto request = *deferred_history_;
+            deferred_history_.reset();
+            queueHistoryRequest(request);
+        }
+    }
     if (initial)
         persistIdentity();
 }
@@ -659,38 +702,50 @@ void LiveConnection::persistIdentity() {
         throw std::runtime_error("Cannot persist an unbound session");
     const auto expected = *attachment_;
     const auto sequence = last_sequence_;
+    clearDescriptorWrite();
+    descriptor_ticket_ = descriptor_store_->prepare(endpoint_, fingerprint_, expected.identity);
+    const auto ticket = descriptor_ticket_;
     descriptor_write_ = std::make_unique<QFutureWatcher<QString>>();
     auto* watcher = descriptor_write_.get();
-    connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher, expected, sequence] {
-        if (failed_ || attachment_ != expected || last_sequence_ != sequence ||
-            descriptor_write_.get() != watcher)
-            return;
-        const auto error = watcher->result();
-        if (!error.isEmpty()) {
-            fail(error);
-            return;
-        }
-        try {
-            finishSynchronization();
-        } catch (const std::exception& failure) {
-            fail(QString::fromUtf8(failure.what()));
-        }
-    });
+    connect(watcher, &QFutureWatcher<QString>::finished, this,
+            [this, watcher, expected, sequence, ticket] {
+                if (descriptor_ticket_ == ticket)
+                    descriptor_ticket_.reset();
+                if (failed_ || attachment_ != expected || last_sequence_ != sequence ||
+                    descriptor_write_.get() != watcher)
+                    return;
+                const auto error = watcher->result();
+                if (!error.isEmpty()) {
+                    fail(error);
+                    return;
+                }
+                try {
+                    finishSynchronization();
+                } catch (const std::exception& failure) {
+                    fail(QString::fromUtf8(failure.what()));
+                }
+            });
     QPromise<QString> promise;
     watcher->setFuture(promise.future());
-    QThreadPool::globalInstance()->start([promise = std::move(promise), endpoint = endpoint_,
-                                          fingerprint = fingerprint_,
-                                          identity = expected.identity]() mutable {
-        promise.start();
-        QString error;
-        try {
-            session::write_descriptor(endpoint, fingerprint, identity);
-        } catch (const std::exception& failure) {
-            error = QString::fromUtf8(failure.what());
-        }
-        promise.addResult(error);
-        promise.finish();
-    });
+    QThreadPool::globalInstance()->start(
+        [promise = std::move(promise), store = descriptor_store_, ticket]() mutable {
+            promise.start();
+            QString error;
+            try {
+                ticket->stage();
+                error = store->commit(*ticket);
+            } catch (const std::exception& failure) {
+                error = QString::fromUtf8(failure.what());
+            }
+            promise.addResult(error);
+            promise.finish();
+        });
+}
+void LiveConnection::clearDescriptorWrite() {
+    if (descriptor_ticket_) {
+        descriptor_ticket_->cancel();
+        descriptor_ticket_.reset();
+    }
 }
 void LiveConnection::finishSynchronization() {
     if (!attachment_)
@@ -734,6 +789,27 @@ void LiveConnection::handle(const wire::Frame& frame) {
         return;
     case wire::Kind::status: {
         const auto status = wire::decode_status(frame.payload);
+        // Downgrade phase first, retaining links on services that support them,
+        // then links for older v6 services. Both retries preserve identity and
+        // reconnect the socket only; neither path launches a service.
+        if (!attachment_ && (request_.attention_phase || request_.hyperlinks) &&
+            status.code == wire::StatusCode::rejected &&
+            status.message == QStringLiteral("Invalid local session message")) {
+            if (request_.attention_phase)
+                request_.attention_phase = false;
+            else
+                request_.hyperlinks = false;
+            capability_retry_ = true;
+            connected_ = false;
+            handshake_.stop();
+            disconnect(socket_.get(), nullptr, this, nullptr);
+            socket_->abort();
+            QTimer::singleShot(0, this, [this] {
+                capability_retry_ = false;
+                connectSocket();
+            });
+            return;
+        }
         fail(status.message, status.code);
         return;
     }
@@ -746,7 +822,7 @@ void LiveConnection::receive() {
         buffer_ += socket_->readAll();
         wire::Frame frame;
         qsizetype consumed{};
-        while (!failed_ && wire::take_frame(buffer_, consumed, frame))
+        while (!failed_ && !capability_retry_ && wire::take_frame(buffer_, consumed, frame))
             handle(frame);
         if (consumed != 0)
             buffer_.remove(0, consumed);

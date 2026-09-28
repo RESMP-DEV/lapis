@@ -1,0 +1,652 @@
+{
+  "passed": true,
+  "source_revision": "353e062e571930fcea2db4d61b6093dd7d8c5844",
+  "control_expected_failure": [
+    {
+      "name": "control-build",
+      "command": [
+        "cmake",
+        "--build",
+        "--preset",
+        "desktop",
+        "--parallel",
+        "4",
+        "--target",
+        "lapis_history_strip_tests"
+      ],
+      "exit_code": 0,
+      "log": "build/pr-review-round/history-checks/control-build.log"
+    },
+    {
+      "name": "control-ctest",
+      "command": [
+        "ctest",
+        "--preset",
+        "desktop",
+        "--no-tests=error",
+        "--output-on-failure",
+        "-R",
+        "^history-strip$"
+      ],
+      "exit_code": 8,
+      "log": "build/pr-review-round/history-checks/control-ctest.log"
+    }
+  ],
+  "checks": [
+    {
+      "name": "desktop-build",
+      "command": [
+        "cmake",
+        "--build",
+        "--preset",
+        "desktop",
+        "--parallel",
+        "4",
+        "--target",
+        "lapis_history_strip_tests"
+      ],
+      "exit_code": 0,
+      "log": "build/pr-review-round/history-checks/desktop-build.log"
+    },
+    {
+      "name": "desktop-ctest",
+      "command": [
+        "ctest",
+        "--preset",
+        "desktop",
+        "--no-tests=error",
+        "--output-on-failure",
+        "-R",
+        "^history-strip$"
+      ],
+      "exit_code": 0,
+      "log": "build/pr-review-round/history-checks/desktop-ctest.log"
+    },
+    {
+      "name": "asan-build",
+      "command": [
+        "cmake",
+        "--build",
+        "--preset",
+        "asan",
+        "--parallel",
+        "4",
+        "--target",
+        "lapis_history_strip_tests"
+      ],
+      "exit_code": 0,
+      "log": "build/pr-review-round/history-checks/asan-build.log"
+    },
+    {
+      "name": "asan-ctest",
+      "command": [
+        "ctest",
+        "--preset",
+        "asan",
+        "--no-tests=error",
+        "--output-on-failure",
+        "-R",
+        "^history-strip$"
+      ],
+      "exit_code": 0,
+      "log": "build/pr-review-round/history-checks/asan-ctest.log"
+    },
+    {
+      "name": "tsan-build",
+      "command": [
+        "cmake",
+        "--build",
+        "--preset",
+        "tsan",
+        "--parallel",
+        "4",
+        "--target",
+        "lapis_history_strip_tests"
+      ],
+      "exit_code": 0,
+      "log": "build/pr-review-round/history-checks/tsan-build.log"
+    },
+    {
+      "name": "tsan-ctest",
+      "command": [
+        "ctest",
+        "--preset",
+        "tsan",
+        "--no-tests=error",
+        "--output-on-failure",
+        "-R",
+        "^history-strip$"
+      ],
+      "exit_code": 0,
+      "log": "build/pr-review-round/history-checks/tsan-ctest.log"
+    }
+  ],
+  "source_sha256": {
+    "apps/desktop/src/history_strip.cpp": "415f7a8bd8dd67b52c7fa77a96f2b0b7fb562fc9a8a1138b67d072d02359711e",
+    "apps/desktop/tests/history_strip_test.cpp": "38ec11c301c81c4b67afa4993b643bc8bcea50293e9b44fe4a1458750a8b26e8"
+  },
+  "schema": "lapis.pr-review-resolution/1",
+  "findings": [
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6mZ89w",
+      "disposition": "fixed",
+      "detail": "Missing or blank-only history pages leave the screen/history overlap unsettled until evidence arrives."
+    }
+  ],
+  "static_checks": [
+    {
+      "name": "format",
+      "exit_code": 0,
+      "command": [
+        "/opt/homebrew/opt/llvm/bin/clang-format",
+        "--dry-run",
+        "--Werror",
+        "apps/desktop/src/history_strip.cpp",
+        "apps/desktop/tests/history_strip_test.cpp"
+      ]
+    },
+    {
+      "name": "tidy-0",
+      "exit_code": 0,
+      "command": [
+        "/opt/homebrew/opt/llvm/bin/clang-tidy",
+        "-p",
+        "build/desktop",
+        "apps/desktop/src/history_strip.cpp"
+      ]
+    },
+    {
+      "name": "tidy-1",
+      "exit_code": 0,
+      "command": [
+        "/opt/homebrew/opt/llvm/bin/clang-tidy",
+        "-p",
+        "build/desktop",
+        "apps/desktop/tests/history_strip_test.cpp"
+      ]
+    },
+    {
+      "name": "cppcheck",
+      "exit_code": 0,
+      "command": [
+        "cppcheck",
+        "--project=build/pr-review-round/history-checks/compile_commands.json",
+        "--library=qt",
+        "-DQ_MOC_INCLUDE(x)=",
+        "--enable=warning,performance,portability",
+        "--error-exitcode=1",
+        "--inline-suppr"
+      ]
+    }
+  ],
+  "background_ui": {
+    "command": "cmake --build --preset desktop --parallel 4 --target lapis_ui_preview_tests && build/desktop/apps/desktop/lapis_ui_preview_tests --background --history-only",
+    "passed": true,
+    "log": "build/pr-review-round/history-checks/ui-history.log"
+  },
+  "limits": [
+    "Offscreen Qt/software evidence; native input and GPU qualification were not repeated."
+  ],
+  "integration": {
+    "source_revision": "0681cd17456f7966bbf3055120c7c904dfd9e144",
+    "base_pr": 22,
+    "base_revision": "4457be0f0e9ae9f8bfbc9ebdf1810adb4e80bf35",
+    "checks": [
+      {
+        "command": "uv run --no-project python scripts/check_ios_remote.py --only testTakenElsewhereThenReopened --only testScrollingBackLoadsHistory",
+        "passed": true,
+        "case_count": 2,
+        "scope": "Headless iOS Simulator and disposable local services; no installed agent or desktop window",
+        "log": "build/ios/test.log"
+      },
+      {
+        "command": "python3 scripts/lapis.py quality",
+        "passed": true,
+        "log": "build/pr-review-round/combined-quality.log"
+      }
+    ],
+    "source_sha256": {
+      "apps/ios/Lapis/Models.swift": "27c2a956ead8e9003b7fc2058826303057a4852c17f1c52fcc7144fa82a3aa01",
+      "scripts/check_ios_remote.py": "77c0238572dd5719c2a2dc5fc5210e06be0deab0cf46a74a6fa81ec1d5afc070",
+      "scripts/tests/test_lapis_remote_bounds.py": "1302dad5e0d821627635544c3330b5bb4baf74c29c2d109d07370c539ac0d056"
+    }
+  },
+  "additional_review_leads": {
+    "review": "incomplete Nemotron result;45 of48 files completed",
+    "head": "353e062e571930fcea2db4d61b6093dd7d8c5844",
+    "dispositions": [
+      {
+        "id": 1,
+        "classification": "inapplicable",
+        "evidence": "OMP assignment argv is unchanged from base455a99b workspace.cpp:203; catalog extraction preserves the verified adapter contract."
+      },
+      {
+        "id": 2,
+        "classification": "inapplicable",
+        "evidence": "PATH-first executable discovery and fallback paths are unchanged from base455a99b workspace.cpp:139-145. macOS is the active target; arbitrary non-PATH Linux installations are out of scope."
+      },
+      {
+        "id": 3,
+        "classification": "inapplicable",
+        "evidence": "Only one scoped LinkReceiver exists in terminal_input_test.cpp:584. CTest processes have separate QDesktopServices registries; no overlapping instance path exists."
+      },
+      {
+        "id": 4,
+        "classification": "false-positive",
+        "evidence": "live_connection.cpp:592 rejects a second request while outstanding_history_request_ is set, before deferred_history_ can be overwritten. No unbounded history queue is intended."
+      },
+      {
+        "id": 5,
+        "classification": "preference",
+        "evidence": "The injected ServiceLauncher is authoritative and its failure is tested. Falling back would unexpectedly launch a real process after an injected failure."
+      },
+      {
+        "id": 6,
+        "classification": "false-positive",
+        "evidence": "Qt6 qprocess.h:136 declares non-static bool startDetached(qint64* = nullptr); the static overload at240 requires a program. live_connection.cpp:35 calls the configured instance."
+      },
+      {
+        "id": 7,
+        "classification": "preference",
+        "evidence": "Requested Doxygen coverage for private helpers does not identify a current behavioral defect; queueHistoryRequest already documents frozen-screen ordering."
+      },
+      {
+        "id": 8,
+        "classification": "false-positive",
+        "evidence": "Same incorrect static-overload premise as6. The instance startDetached uses configured output/error redirection; existing real-service tests cover log creation."
+      },
+      {
+        "id": 9,
+        "classification": "preference",
+        "evidence": "The independent strict legacy decoder is intentional compatibility evidence. A fixed-format mixed-version probe should fail when negotiated bytes drift; no current parse error identified."
+      },
+      {
+        "id": 10,
+        "classification": "inapplicable",
+        "evidence": "check_cpp.py already states moc consumes the annotation and the C++ compiler sees a no-op. Q_MOC_INCLUDE is a Qt-defined annotation, not product code."
+      },
+      {
+        "id": 11,
+        "classification": "verified",
+        "evidence": "PR24 intentionally targets fix/consolidated-quality; the live branch and PR base both exist. CodeRabbit used base configuration, so this review was manually triggered."
+      },
+      {
+        "id": 12,
+        "classification": "false-positive",
+        "evidence": "session_descriptor.cpp:232 sets canceled before removing endpoint ownership; commit at252 rejects it before serial/rename, even if endpoint state is recreated. Controlled replacement writer test covers this interleaving."
+      },
+      {
+        "id": 13,
+        "classification": "false-positive",
+        "evidence": "Lock acquisition is a partial order owners then endpoint then lifecycle; no reverse acquisition exists. The finding itself admits no current cycle and hypothesizes future edits."
+      },
+      {
+        "id": 14,
+        "classification": "false-positive",
+        "evidence": "Pinned Ghostty grid_ref.h:187-191 declares size_t *out_len. std::size_t matches; production compilation validates pointer compatibility."
+      },
+      {
+        "id": 15,
+        "classification": "inapplicable",
+        "evidence": "architecture.md explicitly states joined views remain terminal-only and no phone attention capability is added. Primary-only attention is intentional."
+      },
+      {
+        "id": 16,
+        "classification": "preference",
+        "evidence": "Naming the bounded64 temporary-name attempts is optional style with no defect or acceptance gap."
+      },
+      {
+        "id": 17,
+        "classification": "false-positive",
+        "evidence": "terminal.cpp:69 already requires lead>=0xc2; C0/C1 are rejected directly. The finding cites code that is not present in the reviewed head."
+      }
+    ]
+  },
+  "followups": [
+    {
+      "base_revision": "7b361ae1371e02349ee8ed9ae845821bc0c3bacc",
+      "source_revision": "85d74d0dd6198b1d61dc8da78668d3522be6825c",
+      "source_sha256": {
+        "CONTRIBUTING.md": "bb6db9dac9372b6f162d422df456e69f61baa8bc61a6b39a4fdbfedcc9832e4d",
+        "apps/desktop/qml/Main.qml": "df6b27375899350b2e83f4a11a7e5a0bc1906b314d11493b2e071ad091ab47e8",
+        "apps/desktop/src/terminal_surface.cpp": "22af085c4379918a7584f523de81eef63dec802fa1f9b0f94f053399d6f9e1ed",
+        "apps/desktop/src/terminal_surface.hpp": "09388243b95384dad846a5d4608898aec91e84391fff90ca03e223594b9b4f82",
+        "apps/desktop/tests/terminal_input_test.cpp": "ab418ba2505ed70fb56676ecefc01a2398e39d600eada0ddfb8aad848667901a",
+        "apps/desktop/tests/ui_preview_test.cpp": "f01cd91f229d46978d5deb11353a1b2afc94adbe6085dcf810c099532fb8b6bd",
+        "docs/architecture.md": "c0e6b93ad9bd28ba6f17bb35e9f5378e296f612b7daba0b4caeb72d3da20e2af",
+        "scripts/check_cpp.py": "5d8fa8c7c73660c7c05eb567c60ab06ecb842c473ce5acb460179be6466b4fb3",
+        "scripts/tests/test_check_cpp.py": "625694f51d40222f8aefbae6c9d09f49dbce99cd4ddf9dd4b747410c4a48d88b",
+        "scripts/tests/test_history_lifecycle_probe.py": "d82b95a09afb9c8323bbdc75e4cd790a82148ad6537c5a47edc0dc17bc6891d3",
+        "tools/qa/history_lifecycle_probe.swift": "8c8371b5a04ba4b359125874f61d2f89cb8ed67b52d82370833089b24260a08a",
+        "tools/qa/run_history_lifecycle_probe.py": "7b7cead2573ff8fc2a6305183fe358d27c46100e49ee4de40d3843273bc42b36"
+      },
+      "base_review_repairs": "PR22 follow-up in evidence/pr22-review-followup.json",
+      "validation": {
+        "background_ui_passed": true,
+        "terminal_input_presets": [
+          "desktop",
+          "asan",
+          "tsan"
+        ],
+        "terminal_input_all_passed": true,
+        "affected_static_analysis_passed": true,
+        "combined_quality_passed": true,
+        "qml_drop_control_failed_before_fix": true
+      },
+      "additional_review_leads": {
+        "reviewed_head": "353e062e571930fcea2db4d61b6093dd7d8c5844",
+        "current_head": "7b361ae1371e02349ee8ed9ae845821bc0c3bacc",
+        "review_status": "partial; not approval",
+        "coordinator_triage": true,
+        "open_actionable_defects": 0,
+        "dispositions": [
+          {
+            "index": 1,
+            "path": "apps/desktop/src/harness_catalog.cpp",
+            "classification": "preference",
+            "evidence": "harness_catalog.cpp:27-40 keeps the switch exhaustive after the early unsupported return; removing its enum case triggers switch diagnostics."
+          },
+          {
+            "index": 2,
+            "path": "apps/desktop/src/live_connection.cpp",
+            "classification": "false-positive",
+            "evidence": "live_connection.cpp:35 calls the configured instance overload. Installed Qt qprocess.h declares nonstatic startDetached(qint64*); same premise rejected in the prior review."
+          },
+          {
+            "index": 3,
+            "path": "apps/desktop/src/live_connection.hpp",
+            "classification": "false-positive",
+            "evidence": "live_connection.hpp:48-65 already declares queueHistoryRequest and clearDescriptorWrite under private."
+          },
+          {
+            "index": 4,
+            "path": "apps/desktop/src/live_connection.cpp",
+            "classification": "false-positive",
+            "evidence": "live_connection.cpp:375-386 times out deferred requests, fail() invalidates them, and begin():408 resets pending_resize_. An unresponsive service cannot supply synchronized history; requests fail boundedly and reconnect clears the size state."
+          },
+          {
+            "index": 5,
+            "path": "apps/desktop/src/live_connection.cpp",
+            "classification": "preference",
+            "evidence": "Smart pointers and optionals initialize empty; capability_retry_ has a brace initializer. No uninitialized read or changed type exists."
+          },
+          {
+            "index": 6,
+            "path": "apps/desktop/src/terminal_surface.cpp",
+            "classification": "inapplicable",
+            "evidence": "visible_link accepts syntactically valid hosts without doing DNS on the GUI thread. www.example is a two-label domain; whether a domain resolves is not a parser correctness test."
+          },
+          {
+            "index": 7,
+            "path": "apps/desktop/src/terminal_surface.cpp",
+            "classification": "limitation",
+            "evidence": "linkTarget():1099 accepts localhost or the runtime local hostname, not arbitrary DNS aliases. QSysInfo does not guarantee a short name as asserted. Alias expansion is outside the documented local-file qualification, not a demonstrated regression."
+          },
+          {
+            "index": 8,
+            "path": "apps/desktop/src/terminal_surface.cpp",
+            "classification": "inapplicable",
+            "evidence": "linkOpened denotes accepted dispatch, with failure logged at mousePressEvent():1131. The only connected consumer is a fixture; no claimed analytics/fallback consumer exists."
+          },
+          {
+            "index": 9,
+            "path": "apps/desktop/src/workspace.cpp",
+            "classification": "inapplicable",
+            "evidence": "workspace.cpp:111-122 intentionally maps only uniquely identifiable managed adapters. terminal mode cannot identify which of several CLIs ran; preserving an empty id avoids inventing identity. Behavior is unchanged from the base."
+          },
+          {
+            "index": 10,
+            "path": "apps/desktop/src/workspace.cpp",
+            "classification": "preference",
+            "evidence": "launchMode():99-109 exhausts all current enums without a default; -Wall/-Werror already diagnose adding an unhandled enum. Replacing the fallback with unreachable adds no current behavior coverage."
+          },
+          {
+            "index": 11,
+            "path": "apps/desktop/tests/link_receiver.hpp",
+            "classification": "hypothetical",
+            "evidence": "LinkReceiver is a scoped test fixture with synchronous handler registration. No tested throwing partial-registration path exists; speculative allocation failure does not justify a new rollback framework."
+          },
+          {
+            "index": 12,
+            "path": "apps/desktop/tests/link_receiver.hpp",
+            "classification": "hypothetical",
+            "evidence": "The fixture invokes and destroys the URL receiver synchronously on one thread. No concurrent receive/destruction path exists."
+          },
+          {
+            "index": 13,
+            "path": "apps/desktop/tests/link_receiver.hpp",
+            "classification": "false-positive",
+            "evidence": "LinkReceiver inherits QObject, whose copy operations are deleted. Its user-declared destructor and nonmovable base prevent the suggested copy/move scenario."
+          },
+          {
+            "index": 14,
+            "path": "apps/desktop/tests/ui_preview_test.cpp",
+            "classification": "preference",
+            "evidence": "The Return press triggers the field commit; Qt does not require matching text on release. No differing validation result was demonstrated."
+          },
+          {
+            "index": 15,
+            "path": "apps/desktop/tests/ui_preview_test.cpp",
+            "classification": "false-positive",
+            "evidence": "ui_preview_test.cpp:60 defines CHECK using require, which throws runtime_error; there is no continuing test-framework failure collector to bypass."
+          },
+          {
+            "index": 16,
+            "path": "apps/desktop/tests/ui_preview_test.cpp",
+            "classification": "preference",
+            "evidence": "Either invalid flag/platform combination exits with a diagnostic. Error precedence is optional polish, not a false passing check."
+          },
+          {
+            "index": 17,
+            "path": "apps/desktop/tests/ui_preview_test.cpp",
+            "classification": "false-positive",
+            "evidence": "focusedFolder is compared to a nonempty temporary project path at ui_preview_test.cpp:2429. An invalid QVariant converts to empty and fails the existing assertion."
+          },
+          {
+            "index": 18,
+            "path": "evidence/terminal-usability.json",
+            "classification": "inapplicable",
+            "evidence": "The receipt hashes bind dated test inputs; they are not a claimed supply-chain verification mechanism. CONTRIBUTING explicitly defines evidence source hashes and reuse obligations."
+          },
+          {
+            "index": 19,
+            "path": "evidence/terminal-usability.json",
+            "classification": "preference",
+            "evidence": "The sanitizer receipt names suites and modes with commands/scope. It does not claim coverage metrics or whole-application clearance; supplementary case counts are optional."
+          },
+          {
+            "index": 20,
+            "path": "evidence/terminal-usability.json",
+            "classification": "limitation",
+            "evidence": "Native input/GPU/external handlers and upgrading running user services are explicitly unqualified in the receipt and PR. This repeats the recorded boundary rather than identifying an unreported defect."
+          },
+          {
+            "index": 21,
+            "path": "apps/desktop/tests/ui_preview_test.cpp",
+            "classification": "addressed",
+            "evidence": "Paired the synthetic Backspace press with a release in ui_preview_test.cpp. This improves fixture fidelity; no production key handling changed."
+          },
+          {
+            "index": 22,
+            "path": "services/session/include/lapis/session/attention.hpp",
+            "classification": "preference",
+            "evidence": "The observation_phase include exposes the attention namespace type to consumers; unused local references do not establish a broken API. Removing the umbrella exposure is optional include cleanup."
+          },
+          {
+            "index": 23,
+            "path": "scripts/check_cli_launch.py",
+            "classification": "preference",
+            "evidence": "The strict independent wire decoder deliberately fixes v6 layout offsets so compatibility drift fails at runtime. Sharing production constants would reduce oracle independence."
+          },
+          {
+            "index": 24,
+            "path": "scripts/check_cli_launch.py",
+            "classification": "preference",
+            "evidence": "Explicit 0x80/0xC0 bytes are intentional independent compatibility expectations, verified against real service replies."
+          },
+          {
+            "index": 25,
+            "path": "scripts/check_cli_launch.py",
+            "classification": "preference",
+            "evidence": "READY forwards the sequence from the validated snapshot envelope. A named offset could improve readability; no incorrect bytes are sent."
+          },
+          {
+            "index": 26,
+            "path": "scripts/check_cli_launch.py",
+            "classification": "inapplicable",
+            "evidence": "Each capability iteration must resize to a new size to force a fresh legacy snapshot; 79 then 78 provides that distinction."
+          },
+          {
+            "index": 27,
+            "path": "scripts/check_cli_launch.py",
+            "classification": "preference",
+            "evidence": "The example.com fixture string is repeated only for independent producer/consumer verification; factoring it is optional."
+          },
+          {
+            "index": 28,
+            "path": "services/session/src/session_descriptor.cpp",
+            "classification": "limitation",
+            "evidence": "Descriptor cleanup is best-effort and nonthrowing, including destruction. Stage/fsync/rename failures are reported. Retrying close after an error can close a reused fd; denied unlink can leave a temporary file, an environmental cleanup limit rather than proof of a synchronization defect."
+          },
+          {
+            "index": 29,
+            "path": "services/session/src/session_descriptor.cpp",
+            "classification": "false-positive",
+            "evidence": "write_descriptor has a throwing contract. prepare, stage and converted commit failures all propagate exceptions to that one caller boundary; callers do not need separate error protocols. Serial wrap would violate ordering."
+          },
+          {
+            "index": 30,
+            "path": "services/session/src/session_descriptor.hpp",
+            "classification": "false-positive",
+            "evidence": "session_descriptor.hpp includes local_protocol.hpp, which explicitly includes QByteArray, QString and QtGlobal. Standalone inclusion compiles; adding redundant direct includes is optional."
+          },
+          {
+            "index": 31,
+            "path": "services/session/src/session_descriptor.cpp",
+            "classification": "false-positive",
+            "evidence": "Waiting for another thread to release a mutex is not a deadlock. The established owners->endpoint->lifecycle order has no reversed acquisition or self-cycle in the cited destruction path."
+          },
+          {
+            "index": 32,
+            "path": "services/session/src/session_descriptor.hpp",
+            "classification": "preference",
+            "evidence": "before_commit is an intentional pre-lock test barrier; the final endpoint/cancellation validation happens afterward. Acquiring the lock around the hook would prevent the tested cancellation interleaving."
+          },
+          {
+            "index": 33,
+            "path": "scripts/check_cli_launch.py",
+            "classification": "preference",
+            "evidence": "Join flag 3 is explicitly commented in the independent v6 wire fixture; naming it is optional test readability."
+          },
+          {
+            "index": 34,
+            "path": "scripts/check_cli_launch.py",
+            "classification": "preference",
+            "evidence": "LNK1 is an independently asserted wire marker; changing the production marker must fail this compatibility fixture."
+          },
+          {
+            "index": 35,
+            "path": "scripts/check_cli_launch.py",
+            "classification": "false-positive",
+            "evidence": "The attach flags/identity layout is the v6 contract for discover and join, not a coincidence. The fixture validates the returned identity, snapshot and live child; format drift does not silently pass."
+          },
+          {
+            "index": 36,
+            "path": "scripts/check_cli_launch.py",
+            "classification": "preference",
+            "evidence": "points is a local count used to calculate the codepoint-section length; renaming it is optional and does not change parsing."
+          },
+          {
+            "index": 37,
+            "path": "services/session/src/session_descriptor.cpp",
+            "classification": "false-positive",
+            "evidence": "local_protocol.hpp explicitly includes QtGlobal. The descriptor implementation obtains quint64 from that required protocol dependency, not accidentally from QUuid."
+          },
+          {
+            "index": 38,
+            "path": "services/session/src/session_descriptor.cpp",
+            "classification": "false-positive",
+            "evidence": "CMakeLists.txt:8-9 requires C++20. std::atomic supports trivially copyable enum types before C++20 as well."
+          },
+          {
+            "index": 39,
+            "path": "services/session/src/session_descriptor.cpp",
+            "classification": "false-positive",
+            "evidence": "shared_ptr(T*) deletes the supplied object if control-block allocation fails. The raw-pointer construction does not leak and precedes endpoint registration intentionally."
+          },
+          {
+            "index": 40,
+            "path": "services/session/src/session_descriptor.cpp",
+            "classification": "preference",
+            "evidence": "State destruction occurs at last ownership, without concurrent access. Its private cleanup helper can therefore run without locking; acquiring a mutex adds no safety."
+          },
+          {
+            "index": 41,
+            "path": "services/session/src/session_descriptor.cpp",
+            "classification": "preference",
+            "evidence": "Cancel removes map ownership only after marking the old ticket canceled; a new endpoint serial domain cannot revive that ticket. Existing replacement tests cover this identity boundary."
+          },
+          {
+            "index": 42,
+            "path": "services/session/src/session_service.cpp",
+            "classification": "false-positive",
+            "evidence": "client_hyperlinks_ and client_attention_phase_ already have brace default initializers. Moving them to a constructor list changes style only."
+          },
+          {
+            "index": 43,
+            "path": "services/session/src/session_descriptor.hpp",
+            "classification": "inapplicable",
+            "evidence": "DescriptorStore exposes a narrow test hook, not a general customization framework. Making state transitions virtual or making a hook-bearing class final would change the intended contract."
+          },
+          {
+            "index": 44,
+            "path": "services/session/src/session_descriptor.hpp",
+            "classification": "hypothetical",
+            "evidence": "Current callers retain the shared_ptr for the duration of commit. Destroying ownership and then dereferencing a dangling reference is caller misuse, not a present lifetime bug."
+          },
+          {
+            "index": 45,
+            "path": "services/session/src/session_descriptor.hpp",
+            "classification": "preference",
+            "evidence": "commit returns a documented error QString and is nodiscard. Replacing this established API with a Result type is broader optional refactoring."
+          },
+          {
+            "index": 46,
+            "path": "services/session/src/session_descriptor.hpp",
+            "classification": "inapplicable",
+            "evidence": "The hook is used for controlled scheduling, not inspecting/mutating private descriptor state. Additional public accessors have no concrete consumer."
+          },
+          {
+            "index": 47,
+            "path": "services/session/src/session_descriptor.hpp",
+            "classification": "preference",
+            "evidence": "The header already states one worker stages/commits while the owning UI thread may cancel. No missing current thread-ownership rule was identified."
+          },
+          {
+            "index": 48,
+            "path": "services/session/src/terminal/terminal.cpp",
+            "classification": "false-positive",
+            "evidence": "add_hyperlink first caps uri.size at max_hyperlink_uri_bytes, below the global budget. The subtraction cannot underflow; the proposed addition form can overflow."
+          },
+          {
+            "index": 49,
+            "path": "services/session/src/transport/attention_protocol.cpp",
+            "classification": "preference",
+            "evidence": "observation_phase is a capability boolean and snapshot.observation_phase is explicitly qualified; parameter renaming is optional readability."
+          },
+          {
+            "index": 50,
+            "path": "services/session/src/transport/attention_protocol.cpp",
+            "classification": "preference",
+            "evidence": "The nonnegative bounded byte size and 0/1 addition are safe under the current types. Existing -Wconversion/-Wsign-conversion checks pass; no overflow or comparison error is present."
+          }
+        ]
+      },
+      "limits": [
+        "Background Qt/software evidence does not qualify native macOS drop/input or GPU behavior.",
+        "The new OCR result was partial; its leads were inspected directly after the read-only GLM worker hit a provider rate limit.",
+        "Known alias-file-URL, native qualification and environmental descriptor-cleanup limits remain recorded as limits, not silently counted as tested."
+      ]
+    }
+  ]
+}

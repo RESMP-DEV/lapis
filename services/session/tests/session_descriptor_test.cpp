@@ -9,9 +9,9 @@
 #include <unistd.h>
 
 namespace {
-void require(bool condition) {
+void require(bool condition, const char* message = "Descriptor expectation failed") {
     if (!condition)
-        throw std::runtime_error("Descriptor expectation failed");
+        throw std::runtime_error(message);
 }
 template <typename Operation> void rejects(Operation operation) {
     bool rejected = false;
@@ -125,6 +125,32 @@ int main() {
         require(read_descriptor(endpoint, fingerprint) == before);
         write_descriptor(endpoint, fingerprint, {wire::new_id(), epoch});
         require(read_descriptor(endpoint, fingerprint) != before);
+
+        DescriptorStore store;
+        const wire::SessionIdentity canceled_identity{wire::new_id(), epoch};
+        const auto canceled = store.prepare(endpoint, fingerprint, canceled_identity);
+        canceled->stage();
+        canceled->cancel();
+        require(!canceled->commit().isEmpty(), "Canceled descriptor committed");
+        require(QDir(directory.path())
+                    .entryList(QStringList() << QStringLiteral("session.sock.session.*.tmp"),
+                               QDir::Files | QDir::NoDotAndDotDot)
+                    .isEmpty());
+        require(read_descriptor(endpoint, fingerprint) != canceled_identity);
+
+        const wire::SessionIdentity older{wire::new_id(), epoch};
+        const wire::SessionIdentity newest{wire::new_id(), epoch};
+        const auto stale = store.prepare(endpoint, fingerprint, older);
+        const auto current = store.prepare(endpoint, fingerprint, newest);
+        stale->stage();
+        current->stage();
+        require(!stale->commit().isEmpty(), "Older descriptor committed over a newer ticket");
+        require(current->commit().isEmpty(), "Newest descriptor commit failed");
+        require(read_descriptor(endpoint, fingerprint) == newest);
+        require(QDir(directory.path())
+                    .entryList(QStringList() << QStringLiteral("session.sock.session.*.tmp"),
+                               QDir::Files | QDir::NoDotAndDotDot)
+                    .isEmpty());
 
         rejects([&] { write_descriptor(endpoint, QByteArray(31, 'F'), identity); });
         rejects([&] { write_descriptor(endpoint, fingerprint, {}); });

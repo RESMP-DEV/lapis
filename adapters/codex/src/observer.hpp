@@ -6,6 +6,7 @@
 #include <QString>
 #include <QStringList>
 #include <lapis/session/attention.hpp>
+#include <lapis/session/observation_phase.hpp>
 #include <memory>
 
 namespace lapis::codex {
@@ -23,6 +24,7 @@ class Observer final : public QObject {
     void reconnect(); // Explicit only; no response retransmission.
     void stop();
     [[nodiscard]] QString diagnostic() const;
+    [[nodiscard]] session::attention::ObservationPhase observationPhase() const;
     [[nodiscard]] QString threadId() const;
     // Display-only bounded details: method, command/cwd or questions/options.
     [[nodiscard]] QJsonObject details(const session::attention::RequestId& id) const;

@@ -1,4 +1,5 @@
 #include "terminal_surface.hpp"
+#include "workspace.hpp"
 
 #include <lapis/session/terminal.hpp>
 

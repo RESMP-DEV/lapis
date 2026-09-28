@@ -40,7 +40,8 @@ HistoryPage present(std::optional<HistoryPage> page) {
 }
 TerminalSnapshot page() {
     Terminal terminal({20, 4});
-    terminal.feed("\\unused\r\n\x1b[1;3;31m界é\x1b[0m");
+    terminal.feed("\\unused\r\n\x1b[1;3;31m界é\x1b[0m\x1b]8;;https://example.com/"
+                  "history\x1b\\link\x1b]8;;\x1b\\");
     auto result = terminal.snapshot();
     result.cursor = {};
     return result;

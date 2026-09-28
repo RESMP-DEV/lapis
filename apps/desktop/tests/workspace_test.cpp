@@ -510,8 +510,9 @@ void truthfulStatus() {
     require(item.attentionCount() == 1, "stale requests remain visible for reconciliation");
     lapis::session::wire::AttentionSnapshot fresh;
     fresh.available = fresh.connected = true;
-    // The live Codex 0.155.1 observer reports this until the first turn.
+    // The producer owns the lifecycle phase; this diagnostic is display-only.
     fresh.diagnostic = QStringLiteral("Waiting for Codex thread history");
+    fresh.observation_phase = lapis::session::attention::ObservationPhase::awaiting_first_prompt;
     lapis::desktop::SessionPreview first(QStringLiteral("Codex"), {}, {}, QColor{}, "");
     first.applyAttention(fresh);
     require(first.statusLabel() == QStringLiteral("No prompt yet"),
@@ -527,11 +528,21 @@ void truthfulStatus() {
     claude.applyAttention(idle);
     require(claude.attentionCount() == 0 && claude.statusKind() == QStringLiteral("finished"),
             "an idle notice after a finished turn is not a pending request");
-    fresh.diagnostic = QStringLiteral("Reconciling Codex requests");
+    fresh.diagnostic = QStringLiteral("Vendor text changed during retry");
+    fresh.observation_phase = lapis::session::attention::ObservationPhase::reconciling;
     first.applyAttention(fresh);
     require(first.statusLabel() == QStringLiteral("No prompt yet"),
-            "an older service's one-second retry does not end the wait");
+            "a typed retry does not end a producer-established wait");
+    fresh.observation_phase = lapis::session::attention::ObservationPhase::unknown;
+    first.applyAttention(fresh);
+    require(first.statusLabel() == QStringLiteral("Status pending"),
+            "an unknown phase is not relabeled from vendor text");
+    lapis::desktop::SessionPreview legacy(QStringLiteral("Codex"), {}, {}, QColor{}, "");
+    legacy.applyAttention(fresh);
+    require(legacy.statusLabel() == QStringLiteral("Status pending"),
+            "legacy snapshots retain conservative unknown semantics");
     lapis::desktop::SessionPreview reconnecting(QStringLiteral("Codex"), {}, {}, QColor{}, "");
+    fresh.observation_phase = lapis::session::attention::ObservationPhase::reconciling;
     reconnecting.applyAttention(fresh);
     require(reconnecting.statusLabel() == QStringLiteral("Status pending"),
             "reconciliation alone still reads as pending");
@@ -1438,7 +1449,7 @@ QByteArray installStandInGrok(const QDir& root) {
 // launch names it, and a reconnect after the connection dropped, a restart
 // and nothing else resume it. A stand-in ssh records what it was given, per
 // host: devbox drops the first connection (ssh exits 255), then the second
-// ends by itself; typo never connects.
+// ends by itself; typo exits immediately and never holds a connection.
 void remoteClaudeReconnectsToItsConversation() {
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-reconnect-XXXXXX"));
     require(directory.isValid(), "reconnect directory");
@@ -1478,8 +1489,8 @@ exec sleep 600
     {
         Workspace workspace(WorkspaceMode::live, options);
         workspace.setSshConfigForTesting(config.fileName());
-        workspace.setReconnectTimingForTesting(
-            {.first_hold = std::chrono::milliseconds(300), .wait = std::chrono::milliseconds(100)});
+        workspace.setReconnectTimingForTesting({.first_hold = std::chrono::milliseconds(300),
+                                                .wait = std::chrono::milliseconds(2000)});
         require(workspace.createAgent(QStringLiteral("~/dev/far"), QStringLiteral("far"),
                                       QStringLiteral("claude"), {}, {}, QStringLiteral("devbox")),
                 "a Claude Code agent on another machine");
@@ -1497,9 +1508,40 @@ exec sleep 600
         require(workspace.agentPlace(id).value(QStringLiteral("place")) ==
                     QStringLiteral("devbox:~/dev/far"),
                 "the agent's place is still its machine and folder");
+        require(waitFor(
+                    [&] {
+                        return calls(QStringLiteral("devbox")) >= 1 &&
+                               far->connectionState() == QStringLiteral("ended") &&
+                               far->activity().contains(QStringLiteral("Reconnecting in"));
+                    },
+                    10000),
+                "the first connection drops");
+        // Hold the pending retry while a real QSaveFile failure rolls the
+        // discard back. The retry state must survive that rollback with the card.
+        const auto held_registry = QDir(root).filePath(QStringLiteral("workspace-held.json"));
+        require(QFile::rename(options.storagePath, held_registry),
+                "move complete reconnect registry bytes");
+        const auto restore_registry = qScopeGuard([&] {
+            if (QFileInfo::exists(held_registry)) {
+                QDir(options.storagePath).removeRecursively();
+                QFile::rename(held_registry, options.storagePath);
+            }
+        });
+        require(QDir().mkpath(options.storagePath), "replace the registry path with a directory");
+        workspace.clearError();
+        require(!workspace.closeSession(id, true),
+                "a failed discard during a pending retry reports failure");
+        require(workspace.workspaceError().contains(QStringLiteral("Cannot save workspace:")) &&
+                    workspace.session(id) == far,
+                "a failed discard retains the reconnecting card");
+        require(QDir(options.storagePath).removeRecursively() &&
+                    QFile::rename(held_registry, options.storagePath),
+                "restore complete reconnect registry bytes");
         require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 2; }, 10000) &&
                     call(QStringLiteral("devbox"), 2) == first,
-                "a dropped connection reconnects to the same conversation");
+                "a dropped connection reconnects after a failed discard");
+        workspace.setReconnectTimingForTesting(
+            {.first_hold = std::chrono::milliseconds(300), .wait = std::chrono::milliseconds(100)});
         require(waitFor(
                     [&] {
                         return far->connectionState() == QStringLiteral("ended") &&
@@ -1528,6 +1570,10 @@ exec sleep 600
         const auto fourth = call(QStringLiteral("devbox"), 4);
         require(!conversation(fourth).isEmpty() && conversation(fourth) != conversation(first),
                 "as a new conversation of its own");
+        // Instrumented event delivery can stretch a 300 ms hold, so prove the
+        // never-held policy with a test-only wide threshold and fast retries.
+        workspace.setReconnectTimingForTesting(
+            {.first_hold = std::chrono::seconds(5), .wait = std::chrono::milliseconds(20)});
         require(workspace.createAgent(QStringLiteral("~"), QStringLiteral("typo"),
                                       QStringLiteral("claude"), {}, {}, QStringLiteral("typo")),
                 "an agent on a machine that never answers");
@@ -1539,14 +1585,15 @@ exec sleep 600
         require(typo != nullptr, "the agent is listed");
         // It ends before or just after the window attaches, depending on timing.
         require(waitFor(
-                    [typo] {
-                        return typo->connectionState() == QStringLiteral("ended") ||
-                               typo->connectionState() == QStringLiteral("disconnected");
+                    [&] {
+                        return calls(QStringLiteral("typo")) >= 1 &&
+                               (typo->connectionState() == QStringLiteral("ended") ||
+                                typo->connectionState() == QStringLiteral("disconnected"));
                     },
                     10000),
                 "its connection fails");
         settle.restart();
-        waitFor([&] { return settle.elapsed() > 800; }, 2000);
+        waitFor([&] { return settle.elapsed() >= 300; }, 1000);
         require(calls(QStringLiteral("typo")) == 1, "a connection that never worked stays ended");
         // The unreachable one is abandoned; the others end.
         for (const auto& closing : {id, split, typo->sessionId()})
@@ -2827,6 +2874,142 @@ void restartReportsValidationFailures() {
             "validation failure exposes its actual cause to the user");
 }
 
+// A catalog fallback owns the CLI program, not every saved program for that
+// harness. Relocate a missing native CLI, but refuse to run it with arguments
+// belonging to an ssh transport.
+void restoreProgramFallbackSeparatesTransportFromHarness() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-transport-XXXXXX"));
+    require(directory.isValid(), "transport-fallback directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QDir root(canonical);
+    require(root.mkpath(QStringLiteral("bin")), "transport fixture bin");
+    const QDir bin(root.filePath(QStringLiteral("bin")));
+    const auto missing_ssh = root.filePath(QStringLiteral("missing/ssh"));
+    const auto missing_grok = root.filePath(QStringLiteral("missing/grok"));
+    const auto local_claude = bin.filePath(QStringLiteral("claude"));
+    const auto fake_grok = bin.filePath(QStringLiteral("grok"));
+    const auto bad_invocation = root.filePath(QStringLiteral("local-claude-launched"));
+    writeExecutable(local_claude, "#!/bin/sh\nprintf 'local-claude-launch\\n' > '" +
+                                      QFile::encodeName(bad_invocation) + "'\nexit 9\n");
+    writeExecutable(fake_grok, QByteArrayLiteral("#!/bin/sh\n"
+                                                 "echo grok ready\n"
+                                                 "exec /bin/sleep 60\n"));
+    const auto previous_path = qgetenv("PATH");
+    const auto restore_path = qScopeGuard([&] { qputenv("PATH", previous_path); });
+    qputenv("PATH", QFile::encodeName(bin.path()));
+
+    const QString remote_id = uuid();
+    const QString native_id = uuid();
+    const QJsonArray remote_arguments{
+        QStringLiteral("-o"),
+        QStringLiteral("ServerAliveInterval=15"),
+        QStringLiteral("-o"),
+        QStringLiteral("ServerAliveCountMax=4"),
+        QStringLiteral("-t"),
+        QStringLiteral("devbox"),
+        QStringLiteral("cd ~/dev/far && s=%1 && exec \"${SHELL:-/bin/sh}\" -lic "
+                       "'claude '\"$o $s\"")
+            .arg(uuid())};
+    auto remote = agentRecord(canonical, remote_id, "general");
+    remote.insert(QStringLiteral("program"), missing_ssh);
+    remote.insert(QStringLiteral("harness"), QStringLiteral("claude"));
+    remote.insert(QStringLiteral("arguments"), remote_arguments);
+    auto native = agentRecord(canonical, native_id, "general");
+    native.insert(QStringLiteral("program"), missing_grok);
+    native.insert(QStringLiteral("harness"), QStringLiteral("grok"));
+
+    WorkspaceOptions options;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                    {"agents", QJsonArray{remote, native}}});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "transport-fallback fixture loads");
+    auto* native_item = workspace.session(native_id);
+    require(workspace.session(remote_id) != nullptr && native_item != nullptr,
+            "transport-fallback agents load");
+
+    require(!workspace.restartAgent(remote_id),
+            "a missing remote transport is not replaced by its harness");
+    require(
+        workspace.workspaceError().contains(QStringLiteral("Program is not an executable file")),
+        "a missing remote transport names the launch failure");
+    const auto saved_agent = [&](const QString& id) {
+        for (const auto& value : QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                     .object()
+                                     .value(QStringLiteral("agents"))
+                                     .toArray())
+            if (value.toObject().value(QStringLiteral("id")).toString() == id)
+                return value.toObject();
+        throw std::runtime_error("transport-fallback agent is missing");
+    };
+    const auto saved_remote = saved_agent(remote_id);
+    require(saved_remote.value(QStringLiteral("program")).toString() == missing_ssh &&
+                saved_remote.value(QStringLiteral("arguments")).toArray() == remote_arguments,
+            "a failed remote restart preserves the transport launch");
+    require(!QFileInfo::exists(bad_invocation), "remote arguments do not launch local Claude");
+
+    require(workspace.restartAgent(native_id),
+            "a missing native harness program relocates through the catalog");
+    require(waitFor([native_item] { return native_item->inputReady(); }, 10000),
+            "the relocated native CLI starts");
+    require(saved_agent(native_id).value(QStringLiteral("program")).toString() == fake_grok,
+            "native relocation records the catalog executable");
+    require(saved_agent(remote_id).value(QStringLiteral("program")).toString() == missing_ssh,
+            "native relocation does not rewrite the remote transport");
+    require(workspace.closeSession(native_id) && waitFor(
+                                                     [&workspace, native_id] {
+                                                         return workspace.sessions().size() == 1 &&
+                                                                workspace.session(native_id) ==
+                                                                    nullptr;
+                                                     },
+                                                     10000),
+            "the relocated native fixture closes");
+    require(!QFileInfo::exists(bad_invocation), "the transport is never invoked as local Claude");
+}
+
+// A restarted service must wait until its launch metadata is durable. The
+// readable but non-writable registry makes QSaveFile refuse the save after
+// restore planning, without racing a missing service or changing file flags.
+void restoreSaveFailureStartsNoService() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-restore-save-XXXXXX"));
+    require(directory.isValid(), "restore save-failure directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QString id = uuid();
+    WorkspaceOptions options;
+    options.restoreAgents = true;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                    {"agents", QJsonArray{agentRecord(canonical, id, "general")}}});
+    const auto original = readRegistry(options.storagePath);
+    const auto endpoint = QDir(canonical).filePath(id + QStringLiteral(".sock"));
+    const auto restore_permissions = qScopeGuard([&] {
+        if (!QFile::setPermissions(options.storagePath, QFile::ReadOwner | QFile::WriteOwner))
+            qWarning() << "Could not restore fixture registry permissions";
+    });
+    require(QFile::setPermissions(options.storagePath, QFile::ReadOwner),
+            "make the registry readable while its QSaveFile write fails");
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.workspaceError().contains(QStringLiteral("Cannot save workspace:")),
+                "restore reports the failed metadata commit");
+        require(workspace.sessions().isEmpty(), "failed restore retains no session objects");
+    }
+    require(readRegistry(options.storagePath) == original,
+            "failed restore leaves the original registry bytes intact");
+    require(!QFileInfo::exists(endpoint) && !QFileInfo::exists(endpoint + QStringLiteral(".log")),
+            "failed restore starts neither a service nor its log");
+    require(QDir(canonical).entryList({QStringLiteral("workspace.json.*")}, QDir::Files).isEmpty(),
+            "QSaveFile removed its failed restore temporary");
+}
+
 // The session service ends the agent's process group; the tab closes after.
 // Agents whose session service is gone (a reboot or crash) come back when
 // lapis opens, resuming the conversation their service recorded, like a
@@ -3822,6 +4005,8 @@ int main(int argc, char** argv) {
         outputEstimate();
         agentsStartWithoutParentSessionMarkers();
         restartRefusesClosingAgent();
+        restoreSaveFailureStartsNoService();
+        restoreProgramFallbackSeparatesTransportFromHarness();
         agentsRestoreAfterServiceLoss();
         reopenFailurePreservesTheRetryableManagedPlan();
         updaterLifecycle();

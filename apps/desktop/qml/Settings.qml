@@ -544,14 +544,50 @@ Dialog {
                         enabled: settings.fontSize > settings.fontSizeMinimum
                         onClicked: settings.fontSizeChosen(settings.fontSize - 1)
                     }
-                    PlainLabel {
+                    TextField {
+                        id: fontSizeField
                         objectName: "fontSizeValue"
-                        text: qsTr("%1 px").arg(settings.fontSize)
+                        text: settings.fontSize
                         color: settings.paletteText
                         font.family: settings.resolvedFontFamily
                         font.pixelSize: Math.max(12, settings.uiFont - 1)
                         horizontalAlignment: Text.AlignHCenter
-                        Layout.preferredWidth: Math.max(implicitWidth, settings.uiFont * 3.5)
+                        verticalAlignment: TextInput.AlignVCenter
+                        Layout.preferredWidth: settings.uiFont * 3.5
+
+                        validator: RegularExpressionValidator { regularExpression: /[0-9]{1,3}/ }
+                        maximumLength: 3
+                        inputMethodHints: Qt.ImhDigitsOnly
+                        selectByMouse: true
+                        Accessible.name: qsTr("Terminal font size in pixels")
+
+                        background: ChoiceSurface {
+                            hovered: fontSizeField.hovered
+                            pressed: fontSizeField.activeFocus
+                            border.width: fontSizeField.activeFocus ? 2 : 1
+                            border.color: fontSizeField.activeFocus ? settings.paletteAccent :
+                                                                       settings.paletteBorder
+                        }
+
+                        function commitFontSize() {
+                            const pixels = Number.parseInt(fontSizeField.text, 10)
+                            if (Number.isInteger(pixels) &&
+                                    pixels >= settings.fontSizeMinimum &&
+                                    pixels <= settings.fontSizeMaximum &&
+                                    pixels !== settings.fontSize)
+                                settings.fontSizeChosen(pixels)
+                            fontSizeField.text = Qt.binding(() => settings.fontSize)
+                        }
+
+                        onEditingFinished: commitFontSize()
+                        onActiveFocusChanged: if (!activeFocus) commitFontSize()
+                    }
+                    PlainLabel {
+                        objectName: "fontSizeUnit"
+                        text: qsTr("px")
+                        color: settings.paletteMuted
+                        font.family: settings.resolvedFontFamily
+                        font.pixelSize: Math.max(12, settings.uiFont - 1)
                     }
                     StepButton {
                         objectName: "fontLarger"

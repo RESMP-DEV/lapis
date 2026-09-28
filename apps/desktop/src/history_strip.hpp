@@ -36,11 +36,12 @@ class HistoryStrip {
     [[nodiscard]] const session::TerminalSnapshot* holding(std::uint64_t row,
                                                            std::uint64_t* first) const;
     void forget();
-    void settleSeam(const session::TerminalSnapshot& page, std::uint64_t first);
+    void settleSeam();
     session::TerminalSnapshot screen_;
     std::uint64_t archived_{};
     std::uint64_t top_{};
     bool seam_settled_{};
+    std::optional<std::uint64_t> seam_missing_;
     std::map<std::uint64_t, session::TerminalSnapshot> pages_; // by first row
 };
 } // namespace lapis::desktop

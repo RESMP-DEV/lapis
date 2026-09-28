@@ -334,8 +334,9 @@ Ghostty integration under `src/terminal/`, and behavioral cases under
   The service adds per-session/shared-root disk quotas and a bounded I/O queue;
   these remain separate from allocator and process RSS accounting.
 - The verified input subset is navigation key presses with modifiers and pure text
-  paste encoding. Clipboard access, full text/key protocols, mouse, IME, selection,
-  hyperlinks and image presentation are not exposed. Image storage and external
+  paste encoding. Clipboard access, full text/key protocols, mouse, IME, selection
+  and image presentation are not exposed by this engine boundary. OSC 8 hyperlink
+  spans are exposed as bounded snapshot metadata. Image storage and external
   image media are disabled. A terminal reply never writes directly to a PTY.
 
 This is an in-process boundary, not an IPC schema. The normal CMake build always
@@ -1325,7 +1326,7 @@ with no service, protocol or dependency change:
   connection, dash ended, hollow box opening or unknown. The selected tab keeps
   its text label.
 - [x] One configurable fixed-width family. `terminalFont` in `lapis.json`
-  (`family`, `size` 10–32 pixels, default 16) is edited only in Appearance and
+  (`family`, `size` 10–32 pixels, default 14) is edited only in Appearance and
   applies live. The GUI resolves it; a missing or proportional family falls
   back to the platform fixed-width font and Appearance says so. The terminal,
   paths, shortcut keycaps, status labels and counts share the resolved family;
@@ -1333,7 +1334,7 @@ with no service, protocol or dependency change:
 - [x] Tactile controls. Commands separates keyboard selection (filled row with a
   focus edge) from pointer hover (lighter wash), and shows shortcuts as
   fixed-width keycaps. Appearance uses one hover/press/selection treatment, a
-  font family picker previewed in each face, and a size stepper. Feedback is
+  font family picker previewed in each face, direct numeric size entry, and a size stepper. Feedback is
   color only, within the theme's motion duration; reduced motion and
   zero-duration themes change instantly. Dialogs open without an enter
   transition, so typing is never gated. The sidebar remains one discrete resize.
@@ -1343,6 +1344,36 @@ with no service, protocol or dependency change:
   pixels by brightness (`smoothstep(0.16, 0.34, brightest)`), so it can replace
   intentional dark terminal colors, not just the background. This is a concrete
   fidelity concern from source inspection, not a measured rendering result.
+
+Terminal hyperlinks retain OSC 8 destinations as ordered, nonoverlapping cell
+spans, separate from glyphs and styles. Ghostty supplies live and history links;
+archive slicing and desktop history composition clip and rebase their spans.
+Snapshots bound destinations to 4 KiB each, 1,024 spans and 64 KiB total URI bytes;
+excess or invalid UTF-8 metadata is omitted without dropping terminal text.
+Command-hover shows the destination and Command-click opens HTTP(S) or a local
+file URI. Visible HTTP(S), `www.` and existing file paths remain discoverable
+without OSC 8. Unsupported explicit URI schemes do not fall back to opening the
+label. Remote session paths and nonlocal file authorities cannot identify a
+local file. Opening a file at a reported line still needs an editor integration.
+
+The v6 attach mode byte reserves bit `0x80` for hyperlink metadata. Legacy
+attachments retain their exact snapshot format; requesting clients receive an
+optional `LNK1` extension after the cells. Each attached or joined view negotiates
+independently. A new desktop retries once without that bit if an old service
+rejects the initial attachment as an invalid message before sending hello. The
+retry preserves the launch fingerprint and expected identity and never replaces
+or restarts the agent. Other failures remain failures. Labeled links require a
+service built with this support. Disk history keeps the extension inside existing
+checksummed records: new services read old archives, but downgrading the service
+cannot read newly archived pages containing links. Existing legacy clients of a
+new service receive those pages with metadata removed.
+
+History browsing waits for any in-flight resize snapshot before freezing its
+live-screen boundary; typing cancels that deferred request. Resize overlap can
+span several archived pages, so the history strip fetches missing rows for a
+plausible overlap and preserves the requested distance from the live screen.
+The desktop's focused-folder actions call the QML-exposed workspace lookup.
+These cases are covered by connection, history-strip and background UI checks.
 
 A font change rebuilds the retained terminal rows once and requests the new cell
 grid as one resize; a failed configuration save rolls back without applying the
@@ -2274,7 +2305,10 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   cannot name over ssh, are not reconnected: a fresh start would clear the
   screen for nothing. `/clear` or `/resume` inside the agent moves to a
   conversation the saved id does not follow; a reconnect returns to the
-  launch's own. Verified with a stand-in `claude` in zsh on a Linux
+  launch's own. A failed close preserves the pending reconnect when registry
+  persistence rolls back. Restore can relocate a missing native CLI through its
+  catalog entry; a missing SSH transport is rejected with its saved program and
+  arguments intact. Verified with a stand-in `claude` in zsh on a Linux
   machine (first launch, resume after a drop with the old copy stopped, TERM
   for one ignoring the hangup) and in the workspace test with a stand-in ssh.
 - **Phone tests on one fake agent.** Several phone UI tests take turns on one
@@ -2569,6 +2603,54 @@ Q11). They also guard iPhone workspace responses across gateway changes, bound
 remote discovery/identity work, and restore focused CLI case selection. Broad
 header exports and the other module extractions remain goal 3 work.
 
+Q03 now carries a typed adapter observation phase from the Codex observer through
+service IPC into the desktop. Diagnostic wording no longer controls "No prompt
+yet" behavior. The phase is independent of activity, connection, readiness and
+pending requests; it adds no approval capability. Existing v6 clients retain
+exact legacy attention bytes. Attach capability `0x40` requests a trailing phase
+byte; the existing `0x80` link capability remains independent. The desktop first
+retries without phase support, retaining links where supported, then without
+links for older services. These at-most-two pre-hello retries preserve mode,
+fingerprint and expected identity, reconnect only the socket and never launch a
+new child. Legacy phase is unknown, so old services retain generic status instead
+of a diagnostic-derived first-prompt label. Unknown phase values are rejected.
+Joined views remain terminal-only; this change does not add phone attention.
+
+Q04's shared harness descriptor catalog owns picker order, known/retired identity,
+executable discovery, startup/model arguments, resume options, update commands and
+adapter selection. Workspace launch, restore and picker consumers use that one
+catalog. Persisted string IDs and CLI argv remain unchanged; vendor model-list
+parsing and provider-account logic remain separate. The terminal surface header
+uses a forward declaration of the workspace document with an explicit Qt moc
+include, retaining its concrete consumer without exporting the whole model.
+
+The Q02 restore plan now captures every missing service's updated launch metadata
+and saves the registry before constructing create-mode connections. Existing
+services retain their reconnect path. This makes the persistence order explicit;
+the prior queued-start behavior was not demonstrated to orphan a process. An
+unwritable-registry fixture verifies the original bytes remain and no replacement
+service is started after save failure.
+
+Q05 separates detached launch execution and descriptor persistence from
+LiveConnection. Descriptor tickets stage private files off the GUI thread; a
+short endpoint guard rejects canceled or superseded writers before rename.
+Ordering is per canonical endpoint within this process, independent of launch
+fingerprint; it is not a cross-process writer lock. Retired tickets release their
+registry entries and temporary files. A controlled blocked-writer fixture destroys
+the old connection, commits the replacement identity, then releases the old writer
+and verifies the replacement survives. The LAPIS-S1 descriptor format is unchanged.
+A snapshot-sink interface remains deferred because no distinct consumer requires
+it. Broader header-export changes also remain separate work.
+
+The [adapter-boundary receipt](../evidence/adapter-boundaries.json) records the
+combined desktop build, 28 selected CTest suites, three background UI fixtures,
+focused real-PTY capability/identity checks, static analysis and affected ASan,
+UBSan and TSan checks. The window-state fixture needs synthetic frame margins
+disabled on Qt's offscreen display; that is background geometry evidence only.
+These changes do not renew native input or GPU qualification. The uninstrumented
+Qt handoff limitation in the asynchronous harness-model TSan case remains scoped
+out; no whole-desktop race-clearance claim is made.
+
 Q09's state transition has source review and ordinary takeover/reconnect coverage;
 its deferred-queue regression is still unqualified. The attempted pressure probe
 was timing-sensitive and contained an unreachable assertion, so it was removed
@@ -2635,7 +2717,7 @@ observable finish line before it is claimed.
 
 | Order | Batch | Gate |
 | --- | --- | --- |
-| First | Finish the [September 25 repair goals](#quality-repair-goals-september-25-audit): the Q03/Q04/Q05 boundary extractions, the Q02 registry transaction remainder, the Q09 deferred-queue regression, Q10's measured allocation decision and Q13's shared wire peer | Per the audit table; no milestone expansion |
+| First | Review the implemented Q03/Q04/Q05 boundary and Q02 restore-plan batch; then finish the [September 25 repair goals](#quality-repair-goals-september-25-audit): Q09's deferred-queue regression, Q10's measured allocation decision and Q13's shared wire peer | Per the audit table; no milestone expansion |
 | 1 | Secret prompts, Keychain fill and Touch ID | [Secret prompts section](#secret-prompts-keychain-fill-and-touch-id) |
 | 2 | Triggers; turn marks and timing; semantic file paths completed to editor-at-line (with Quick Look); the menu bar attention item and global summon hotkey | Per the spread tables below |
 | 3 | Search across all agents extended to paged history; Focus-aware chimes; thermal and low-power throttling; the Dock menu; screen-share protection and secure keyboard entry | Per the spread tables below |
@@ -2681,17 +2763,24 @@ the summon hotkey in the macOS table below.
 Prioritized first on September 27. lapis fills secrets and never owns them,
 the same boundary that keeps lapis from changing an agent's approval policy.
 
+The first slice is detection qualification, before Keychain or biometric wiring.
 The session service already owns each PTY, and `tcgetattr` on the master
-reflects the slave line discipline, so the moment a child clears `ECHO` (sudo,
-ssh-key passphrases, `gh auth login`, API key prompts) the service can
-classify the session as asking for a secret and publish a new advisory
-attention kind. It observes; it never blocks or answers.
+reflects the slave line discipline, but disabled `ECHO` alone cannot classify
+a secret prompt: normal raw-mode TUIs disable it too. The existing Codex CLI
+fixture explicitly waits for that state before ordinary input. Qualify an
+additional signal in managed sessions, including ordinary TUI input as a
+negative control and nested tool prompts whose input may not reach the outer
+PTY. Until that evidence exists, echo state is only a candidate hint, not a
+secret attention event. Detection observes; it never blocks or answers.
 
 Filling is an explicit user action from the card or Requests surface: a
 `SecItemCopyMatching` generic-password lookup scoped to a lapis-managed
-service, written to the PTY as ordinary input. Because echo is off, the bytes
-never enter scrollback or archived history; a regression test must pin that
-the input side is never recorded anywhere, including receipts. Saving is
+service, written to the PTY as ordinary input. Disabled echo suppresses the
+terminal driver's echo, but an application can still write those bytes to its
+output; it is not a guarantee against scrollback or archived output. A
+regression test must pin that lapis never records the fill on the input side,
+including receipts, and controlled prompt checks must separately inspect
+output and archived history. Saving is
 offered only for input explicitly typed into a detected prompt, stored with
 `SecAccessControl` using `userPresence` and `WhenUnlockedThisDeviceOnly`, so
 fills and saves require Touch ID or the login password. Optionally
