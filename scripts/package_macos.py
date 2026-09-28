@@ -106,8 +106,8 @@ PHONE_ICON = ROOT / "apps/ios/Lapis/Assets.xcassets/AppIcon.appiconset/icon.png"
 MAC_ICON = ROOT / "apps/desktop/macos/lapis.icns"
 # The phone's square artwork on macOS's icon grid: an 824-point rounded
 # square with continuous corners, centred on a 1024 canvas, with a soft shadow.
-# The phone's gem fills 59% of its tile, which reads small in the Dock, so the
-# artwork is enlarged 1.3 times about the gem's centre (52% down) first.
+# Use the phone's full-bleed artwork whole, so macOS and iPhone show the same
+# icon.
 ICON_SCRIPT = """
 import math
 import sys
