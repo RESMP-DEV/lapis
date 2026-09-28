@@ -62,7 +62,7 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | Component | Exercised | Remaining |
 | --- | --- | --- |
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
-| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS; after two simulated power losses, the login helper resumes real Codex/Claude conversations and terminal-checkpoint stand-ins for four other CLIs with durable managed resume arguments ([check](scripts/check_restore.py)) | An actual reboot through the login helper, native resume qualification for the four stand-in CLIs, and later Linux qualification |
+| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS; after two simulated power losses, the login helper resumes real Codex/Claude conversations and terminal-checkpoint stand-ins for four other CLIs with durable managed resume arguments ([check](scripts/check_restore.py)) | An actual reboot through the login helper, native resume qualification for the four stand-in CLIs, and later Linux qualification; on macOS 27 services share the window's coalition, so surviving a window quit depends on macOS allowing lapis in the background |
 | Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect; stale sockets left by a simulated power loss are replaced | Qualification across an actual reboot |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging, Command-hover destinations and Command-click opening of visible/OSC 8 links and local files; 14-pixel default and direct size controls (macOS background Qt tests, with URL dispatch intercepted) | Cross-cell contextual shaping, rectangular/multi-click selection and accessibility; opening a file at its line in an editor; native Mac selection not yet exercised; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, history scrolled by rows as one strip, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived rows keep their original width (cut or padded, not reflowed) |
@@ -347,11 +347,23 @@ Explicit supported-CLI creation uses the same update queue; reconnect and
 discovery do not. Pass `--no-harness-updates` to keep a chosen CLI installation
 unchanged. Queued agents wait until the updater and its installer children have
 stopped; restarting a queued agent cannot bypass that wait.
+A running agent keeps the version it started with. **Update this tab's CLI and
+reload it** and **Update Claude Code and reload its tabs** in Commands run the
+update where each agent runs (over ssh, without a terminal or password prompt,
+for an agent on another machine), once per CLI and machine however many agents
+wait on it, then reload those agents. They read **Updating Claude…** meanwhile
+and keep working; an update that fails says why and leaves them running.
 
 Upgrading lapis does not disturb running agents: quit the old build and open
 the new one, and it reattaches to the same processes. Launch fingerprints,
 the service protocol, the workspace registry and resume records are kept
-compatible across builds, and a test pins the fingerprints.
+compatible across builds, and a test pins the fingerprints. On macOS 27 two
+conditions apply, because agents started from the window count as its
+background processes: lapis must be allowed under **Allow in the Background**
+(System Settings, General, Login Items & Extensions; macOS adds it on the
+first quit that leaves agents running), and the old `lapis.app` must stay in
+place until the old window has exited. Otherwise macOS ends every agent when
+the window quits.
 
 **Requests** appears when the selected agent needs a response. Open it, select a
 request, then explicitly approve, decline, cancel or send answers. Opening or
