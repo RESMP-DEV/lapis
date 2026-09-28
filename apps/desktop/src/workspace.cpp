@@ -1644,9 +1644,10 @@ bool Workspace::restartAgent(const QString& id) {
     item->startLive(entry->endpoint, entry->launch, session::wire::AttachMode::create);
     return true;
 }
-// A remote agent whose connection dropped (ssh itself exits 255) starts again
-// after a short wait, and again with longer waits while the network is still
-// away, resuming its conversation. Only launches that resume (see
+// An ssh process exiting 255 is treated as a possible dropped connection;
+// a remote command exiting 255 is indistinguishable and follows the same
+// bounded retry path. Retry after increasing waits, resuming the conversation.
+// Only launches that resume (see
 // remoteLaunch) reconnect; a fresh start would lose the screen for nothing.
 // An agent that never stayed connected, such as one with a mistyped host,
 // stays ended.

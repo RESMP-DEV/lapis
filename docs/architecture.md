@@ -2251,11 +2251,14 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   every later launch stops any process there still holding that id (hangup,
   then TERM after 5 s) and passes `--resume` once the transcript exists. The id
   is written as `$s`, so no command line but the CLI's holds it beside the
-  option and the stop never matches its own shell. When ssh itself exits 255
-  after the connection held 20 s, lapis restarts the agent after 2, 5, 10, 20,
-  then every 30 s, for up to 15 minutes; a connection that never held (a
-  mistyped host, a refused login) stays ended, as does an agent that exits by
-  itself. Keepalives end a connection whose network went away within about a
+  option and the stop never matches its own shell. When the ssh process exits
+  255 after the connection held 20 s, lapis restarts the agent after 2, 5, 10, 20,
+  then every 30 s, for up to 15 minutes. Status 255 is ambiguous: ssh also
+  forwards a remote command's exit status, so a remote shell or CLI exiting
+  255 follows this same bounded reconnect path. This is an advisory signal of
+  a dropped connection, not proof. Other exit statuses and a connection that
+  never held (a mistyped host, a refused login) stay ended. Keepalives end a
+  connection whose network went away within about a
   minute instead of leaving a frozen tab. A split copies the launch with a new
   id. Agents started before this, and other CLIs, whose conversation lapis
   cannot name over ssh, are not reconnected: a fresh start would clear the
