@@ -204,7 +204,7 @@ void local_file_url_contract(lapis::desktop::TerminalSurface& surface) {
     struct Case {
         QString url;
         QString expected;
-        const char* message;
+        const char* message{};
     };
     QString raw_nul = QStringLiteral("file:///tmp/before");
     raw_nul.append(QChar(u'\0'));
