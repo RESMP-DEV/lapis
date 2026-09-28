@@ -35,6 +35,10 @@ class CheckError(RuntimeError):
     pass
 
 
+class FrameDeadline(CheckError):
+    pass
+
+
 def require(condition, message):
     if not condition:
         raise CheckError(message)
@@ -179,7 +183,8 @@ class WireClient:
                     del self.buffer[: size + 4]
                     return kind, payload
             remaining = deadline - time.monotonic()
-            require(remaining > 0, "Frame deadline expired")
+            if remaining <= 0:
+                raise FrameDeadline("Frame deadline expired")
             self.socket.settimeout(remaining)
             chunk = self.socket.recv(65536)
             if not chunk:
@@ -446,7 +451,7 @@ def run_capture(desktop, options, artifacts, name, expect_success=True):
     return code
 
 
-def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
+def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
     binary = build / "services/session/lapis_session_service"
     desktop = build / "apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop"
     if sys.platform != "darwin":
@@ -455,38 +460,75 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
     values = ["has space", "meta*$=!;|<>", "quote'\\\"", "line\nbreak", "", "界😀"]
     values += ["-platform", "literal-not-a-platform", "--help"]
     arguments = ["-u", "-c", FIXTURE, *values]
-    results = []
-
-    def record(name, action):
-        started = time.monotonic()
-        try:
-            observed = action()
-            result = {"name": name, "passed": True}
-            if observed is not None:
-                result["observed"] = observed
-        except (
-            CheckError,
-            OSError,
-            ValueError,
-            EOFError,
-            struct.error,
-            subprocess.SubprocessError,
-        ) as error:
-            result = {
-                "name": name,
-                "passed": False,
-                "error": f"{type(error).__name__}: {error}",
-                "traceback": traceback.format_exc(),
-            }
-        result["seconds"] = round(time.monotonic() - started, 3)
-        results.append(result)
-        print(json.dumps(result), flush=True)
 
     @contextmanager
     def session(name):
         service = Service(binary, runtime, artifacts, name, program, arguments, runtime)
         try:
             yield service
+        finally:
+            service.stop()
+
+    def hyperlink_capability():
+        # The legacy decoder stays strict. A capable joined view receives the
+        # same text plus OSC 8 destinations without replacing the old client.
+        code = "import sys; print('\\x1b]8;;https://example.com/target\\x1b\\\\label\\x1b]8;;\\x1b\\\\', flush=True); sys.stdin.readline()"
+        service = Service(
+            binary, runtime, artifacts, "links", program, ["-u", "-c", code], runtime
+        )
+        try:
+            with service.connect() as legacy:
+                legacy.snapshot(lambda snap: "label" in snap["text"])
+                for index, capabilities in enumerate((0x80, 0xC0)):
+                    with WireClient(service.endpoint) as capable:
+                        request = bytearray(
+                            attach_payload(program, service.arguments, runtime)
+                        )
+                        request[36] = capabilities | 3  # join, independent capabilities
+                        capable.send(ATTACH, request)
+                        require(
+                            capable.hello() == service.child_pid,
+                            "Joined view replaced the child",
+                        )
+                        kind, data = capable.receive()
+                        require(
+                            kind == SNAPSHOT and data[:40] == capable.attachment,
+                            "Wrong joined screen",
+                        )
+                        snapshot = data[72:]
+                        points = struct.unpack_from(">I", snapshot, 1085)[0]
+                        offset = 1089 + points * 4
+                        cells = struct.unpack_from(">I", snapshot, offset)[0]
+                        end = offset + 4 + cells * 27
+                        require(
+                            "label" in decode_snapshot(snapshot[:end])["text"],
+                            "Joined text was lost",
+                        )
+                        marker, spans, first, count, length = struct.unpack_from(
+                            ">IIIII", snapshot, end
+                        )
+                        require(
+                            (marker, spans, first, count) == (0x4C4E4B31, 1, 0, 5)
+                            and snapshot[end + 20 :] == b"https://example.com/target"
+                            and length == len(snapshot[end + 20 :]),
+                            "OSC 8 destination was lost between PTY and joined client",
+                        )
+                        capable.send(READY, capable.attachment + data[40:48])
+                        # A resize forces another snapshot to the legacy attachment;
+                        # its strict decoder still requires the exact old format.
+                        columns = 79 - index
+                        legacy.send(RESIZE, struct.pack(">HH", columns, 24))
+                        legacy.snapshot(
+                            lambda snap: (
+                                snap["columns"] == columns and "label" in snap["text"]
+                            )
+                        )
+            return {
+                "legacy_and_capable_views": True,
+                "same_child": True,
+                "osc8_from_real_pty": True,
+                "phase_capability_preserves_links": True,
+            }
         finally:
             service.stop()
 
@@ -1218,39 +1260,115 @@ def exercise(build, runtime, artifacts, desktop_enabled, codex=None):
         finally:
             service.stop()
 
-    record(
-        "invalid resize preserves geometry and signal exit status",
-        invalid_resize_and_signal,
-    )
-    record(
-        "identity generations reject stale input and preserve active clients",
-        identity_boundaries,
-    )
-    record(
-        "initial screen acknowledgement, fragmentation and protocol version boundaries",
-        synchronization_boundaries,
-    )
-    record("PTY queue overflow and non-reading attachment", backpressure)
-    record(
-        "history backpressure detaches only the owning receive client",
-        history_backpressure_receive_batch,
-    )
-    record("replacement service rejects remembered identity", replacement_service)
-    record("snapshot limit preserves child and permits recovery", snapshot_limit)
-    record("literal argv, cwd, resize, paste and exit", literal_resize_exit)
-    record("detached output and same-PID reattachment", detach)
-    record("mismatch and malformed attachment preserve active client", mismatch)
-    record("failed executable and cwd", failures)
-    record("Codex config values and literal separator", codex_config_arguments)
-    record("Codex backend exit diagnostics exclude private stderr", codex_backend_exit)
-    record("Codex bind-before-listen startup and reattachment", delayed_codex_listener)
-    if desktop_enabled:
-        record("desktop capture, reattachment, shell default and option rejection", gui)
-    if codex:
-        record(
+    entries = [
+        (
+            "OSC 8 metadata negotiates independently for legacy and joined clients",
+            hyperlink_capability,
+            None,
+        ),
+        (
+            "invalid resize preserves geometry and signal exit status",
+            invalid_resize_and_signal,
+            None,
+        ),
+        (
+            "identity generations reject stale input and preserve active clients",
+            identity_boundaries,
+            None,
+        ),
+        (
+            "initial screen acknowledgement, fragmentation and protocol version boundaries",
+            synchronization_boundaries,
+            None,
+        ),
+        ("PTY queue overflow and non-reading attachment", backpressure, None),
+        (
+            "history backpressure detaches only the owning receive client",
+            history_backpressure_receive_batch,
+            None,
+        ),
+        ("replacement service rejects remembered identity", replacement_service, None),
+        ("snapshot limit preserves child and permits recovery", snapshot_limit, None),
+        ("literal argv, cwd, resize, paste and exit", literal_resize_exit, None),
+        ("detached output and same-PID reattachment", detach, None),
+        ("mismatch and malformed attachment preserve active client", mismatch, None),
+        ("failed executable and cwd", failures, None),
+        ("Codex config values and literal separator", codex_config_arguments, None),
+        (
+            "Codex backend exit diagnostics exclude private stderr",
+            codex_backend_exit,
+            None,
+        ),
+        (
+            "Codex bind-before-listen startup and reattachment",
+            delayed_codex_listener,
+            None,
+        ),
+        (
+            "desktop capture, reattachment, shell default and option rejection",
+            gui,
+            "desktop",
+        ),
+        (
             "installed Codex TUI input, navigation, paste, resize, reattach and interrupt",
             codex_terminal,
-        )
+            "codex",
+        ),
+    ]
+    return entries
+
+
+def case_catalog(build):
+    # Defining actions is inert: no runtime, artifact, or tool is opened.
+    return [
+        {
+            "case": action.__name__.replace("_", "-"),
+            "description": name,
+            "requires": needed,
+        }
+        for name, action, needed in _case_actions(build, None, None, False)
+    ]
+
+
+def exercise(build, runtime, artifacts, desktop_enabled, codex=None, *, cases=None):
+    results = []
+
+    def record(name, action):
+        started = time.monotonic()
+        try:
+            observed = action()
+            result = {"name": name, "passed": True}
+            if observed is not None:
+                result["observed"] = observed
+        except (
+            CheckError,
+            OSError,
+            ValueError,
+            EOFError,
+            struct.error,
+            subprocess.SubprocessError,
+        ) as error:
+            result = {
+                "name": name,
+                "passed": False,
+                "error": f"{type(error).__name__}: {error}",
+                "traceback": traceback.format_exc(),
+            }
+        result["seconds"] = round(time.monotonic() - started, 3)
+        result["case"] = action.__name__.replace("_", "-")
+        results.append(result)
+        print(json.dumps(result), flush=True)
+
+    entries = _case_actions(build, runtime, artifacts, desktop_enabled, codex)
+    for name, action, needed in entries:
+        key = action.__name__.replace("_", "-")
+        if cases and key not in cases:
+            continue
+        if needed == "desktop" and not desktop_enabled:
+            continue
+        if needed == "codex" and not codex:
+            continue
+        record(name, action)
     return results
 
 
@@ -1267,7 +1385,29 @@ def main():
         const="codex",
         help="Optional installed Codex TUI probe; submits no prompt",
     )
+    parser.add_argument(
+        "--list-cases", action="store_true", help="List cases without starting tools"
+    )
+    parser.add_argument(
+        "--case",
+        action="append",
+        default=[],
+        help="Run only this case; repeat to select several",
+    )
     args = parser.parse_args()
+    catalog = case_catalog(args.build_dir)
+    if args.list_cases:
+        print(json.dumps(catalog, indent=2))
+        return 0
+    args.output.unlink(missing_ok=True)
+    args.case = list(dict.fromkeys(args.case))
+    known = {entry["case"]: entry for entry in catalog}
+    for selected in args.case:
+        if selected not in known:
+            parser.error(f"Unknown case: {selected}; use --list-cases")
+        needed = known[selected]["requires"]
+        if needed and not getattr(args, needed):
+            parser.error(f"Case {selected} requires --{needed}")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     artifacts = Path(tempfile.mkdtemp(prefix="run-", dir=args.output.parent))
     receipt = {
@@ -1279,7 +1419,7 @@ def main():
         "scope": "Controlled fixture, optional Qt captures and optional no-prompt Codex TUI; no agent attention qualification.",
     }
     try:
-        if args.codex:
+        if args.codex and (not args.case or "codex-terminal" in args.case):
             executable = Path(shutil.which(args.codex) or args.codex).resolve(
                 strict=True
             )
@@ -1298,8 +1438,13 @@ def main():
                 artifacts,
                 args.desktop,
                 args.codex,
+                cases=set(args.case),
             )
-        receipt["passed"] = all(check["passed"] for check in receipt["checks"])
+        receipt["selection_mode"] = "subset" if args.case else "all"
+        receipt["selected_cases"] = [check["case"] for check in receipt["checks"]]
+        receipt["passed"] = bool(receipt["checks"]) and all(
+            check["passed"] for check in receipt["checks"]
+        )
     except (
         CheckError,
         lapis.SetupError,

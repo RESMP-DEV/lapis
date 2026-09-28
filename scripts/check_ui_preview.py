@@ -10,8 +10,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 if __package__:
+    from .probe_terminal import stop_process_group
     from .lapis import desktop_binary_path
 else:
+    from probe_terminal import stop_process_group
     from lapis import desktop_binary_path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,13 +69,13 @@ def run(
     timed_out = False
     try:
         output, _ = process.communicate(timeout=TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as error:
         timed_out = True
-        stop_process_group(process)
+        stop_process_group(process, error)
         output, _ = process.communicate(timeout=5)
         output = f"Timed out after {TIMEOUT_SECONDS} seconds\n{output}"
-    except BaseException:
-        stop_process_group(process)
+    except BaseException as error:
+        stop_process_group(process, error)
         raise
     elapsed = time.monotonic() - started
     exit_code = None if timed_out else process.returncode
@@ -97,26 +99,6 @@ def report(result: CheckResult, artifacts: Path) -> dict:
         "exit_code": result.exit_code,
         "elapsed_seconds": round(result.elapsed_seconds, 3),
     }
-
-
-def stop_process_group(process: subprocess.Popen[str]) -> None:
-    try:
-        os.killpg(process.pid, 15)
-    except ProcessLookupError:
-        pass
-    try:
-        process.wait(timeout=1)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, 9)
-        except ProcessLookupError:
-            pass
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired as cleanup_error:
-            raise CheckError(
-                f"Could not reap timed-out process {process.pid}"
-            ) from cleanup_error
 
 
 def capture_ok(image: Path, trace: Path, scenario: str, reduced: bool) -> bool:
@@ -243,6 +225,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         binary, artifacts = args.binary.resolve(), args.artifacts.resolve()
+        (artifacts / "receipt.json").unlink(missing_ok=True)
         if not binary.is_file() or not os.access(binary, os.X_OK):
             raise CheckError(f"Desktop binary is missing or not executable: {binary}")
         artifacts.mkdir(parents=True, exist_ok=True)
@@ -252,7 +235,13 @@ def main() -> int:
             json.dumps({"passed": passed, "checks": results}, indent=2) + "\n"
         )
         return 0 if passed else 1
-    except (OSError, ValueError, KeyError, CheckError) as error:
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        CheckError,
+        subprocess.SubprocessError,
+    ) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
 

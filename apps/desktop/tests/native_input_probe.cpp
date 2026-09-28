@@ -1,6 +1,7 @@
 #include "clipboard_backup.hpp"
 #include "platform/native_input_driver.hpp"
 #include "terminal_surface.hpp"
+#include "workspace.hpp"
 #include <QClipboard>
 #include <QCommandLineParser>
 #include <QElapsedTimer>

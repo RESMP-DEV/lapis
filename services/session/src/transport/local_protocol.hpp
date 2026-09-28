@@ -61,6 +61,8 @@ struct AttachRequest {
     AttachMode mode{AttachMode::discover};
     QByteArray fingerprint;
     SessionIdentity expected;
+    bool hyperlinks{};      // Optional mode bit 0x80; legacy requests leave it clear.
+    bool attention_phase{}; // Optional capability bit 0x40; legacy requests leave it clear.
 };
 struct Hello {
     Attachment attachment;
@@ -111,7 +113,7 @@ struct HistoryReply {
 // their own attachment and request ID, independent of live snapshot sequence.
 [[nodiscard]] QByteArray encode_history_request(const HistoryRequest& request);
 [[nodiscard]] HistoryRequest decode_history_request(const QByteArray& payload);
-[[nodiscard]] QByteArray encode_history_reply(const HistoryReply& reply);
+[[nodiscard]] QByteArray encode_history_reply(const HistoryReply& reply, bool hyperlinks = true);
 [[nodiscard]] HistoryReply decode_history_reply(const QByteArray& payload);
 struct ControlMessage {
     Attachment attachment;
@@ -138,7 +140,8 @@ struct Status {
 [[nodiscard]] Hello decode_hello(const QByteArray& payload);
 // Snapshot: attachment[40], BE u64 sequence, three monotonic BE u64 timestamps,
 // existing snapshot encoding. Zero timing means no observed PTY output yet.
-[[nodiscard]] QByteArray encode_snapshot_message(const SnapshotMessage& message);
+[[nodiscard]] QByteArray encode_snapshot_message(const SnapshotMessage& message,
+                                                 bool hyperlinks = true);
 [[nodiscard]] SnapshotMessage decode_snapshot_message(const QByteArray& payload);
 [[nodiscard]] SnapshotEnvelope decode_snapshot_envelope(const QByteArray& payload);
 // Text/paste/key/resize: attachment[40], existing payload (at most 64 KiB).
@@ -159,7 +162,7 @@ struct Frame {
 [[nodiscard]] bool take_frame(QByteArray& buffer, Frame& result);
 // consumed tracks the parsed prefix and is compacted lazily.
 [[nodiscard]] bool take_frame(QByteArray& buffer, qsizetype& consumed, Frame& result);
-[[nodiscard]] QByteArray encode_snapshot(const TerminalSnapshot& snapshot);
+[[nodiscard]] QByteArray encode_snapshot(const TerminalSnapshot& snapshot, bool hyperlinks = true);
 [[nodiscard]] TerminalSnapshot decode_snapshot(const QByteArray& bytes);
 } // namespace lapis::session::wire
 #endif

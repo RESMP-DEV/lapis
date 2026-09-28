@@ -18,6 +18,7 @@ if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
 endif()
 add_library(lapis_desktop_view STATIC
     src/workspace.cpp src/workspace.hpp
+    src/harness_catalog.cpp src/harness_catalog.hpp
     src/workspace_control.cpp src/workspace_control.hpp
     src/alerts.cpp src/alerts.hpp
     src/agent_search.cpp src/agent_search.hpp
@@ -56,8 +57,9 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/count_tokens.
 file(READ src/count_tokens.py LAPIS_COUNT_TOKENS_SCRIPT)
 configure_file(src/count_tokens.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/count_tokens.hpp" @ONLY)
 target_include_directories(lapis_desktop_view PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options
-    PUBLIC lapis_terminal lapis_local_protocol Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network)
+target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options lapis_session_platform
+    PUBLIC lapis_terminal lapis_attention lapis_session_launch lapis_local_protocol
+        Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network)
 if(LAPIS_PACKAGE)
     # The downloadable app finds everything inside its bundle and keeps its
     # data in ~/.lapis; no path on the build machine is compiled in.
@@ -167,7 +169,7 @@ if(BUILD_TESTING)
     # Isolate focus ownership from the destructive QML engine-reload fixtures.
     add_test(NAME appearance-input COMMAND lapis_ui_preview_tests --shortcuts-only)
     set_tests_properties(ui-preview appearance-input PROPERTIES RESOURCE_LOCK "qt_gui" TIMEOUT 20 ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
-    add_executable(lapis_terminal_input_tests tests/terminal_input_test.cpp)
+    add_executable(lapis_terminal_input_tests tests/terminal_input_test.cpp tests/link_receiver.hpp)
     target_link_libraries(lapis_terminal_input_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME terminal-input COMMAND lapis_terminal_input_tests)
     set_tests_properties(terminal-input PROPERTIES TIMEOUT 30 RESOURCE_LOCK "qt_gui" ENVIRONMENT

@@ -1,0 +1,713 @@
+{
+  "schema": "lapis.quality-followup/1",
+  "recorded_on": "2026-09-25",
+  "baseline_revision": "bad6e1576b0bee6b418a452fc0aeadd255162a0e",
+  "branch": "fix/quality-correctness",
+  "source_dirty": true,
+  "scope": "Two additional maintenance audit passes and scoped repairs; existing UI preserved, no milestone expansion, PR, merge or commit.",
+  "passes": [
+    {
+      "pass": 1,
+      "areas": [
+        "session ownership",
+        "desktop input/render lifetimes",
+        "iOS and remote gateway",
+        "test tooling and evidence"
+      ],
+      "disposition": "Four confirmed repair areas plus remote resource bounds and workspace host ownership. Session pressure probe rejected during parent review."
+    },
+    {
+      "pass": 2,
+      "areas": [
+        "native/session/core/adapters and CMake",
+        "remote Python and selectors",
+        "Swift lifecycle and probe evidence"
+      ],
+      "disposition": "Fresh independent reviewers plus coordinator review. Repaired URI-only drop selection, CLI stale receipts, cached positive identity regression, thread-start admission failure, host cache collisions, equal-host invalidation, follow-up host guards and probe isolation. Final Swift recheck found only help text, which was corrected."
+    }
+  ],
+  "repairs": [
+    {
+      "finding": "Q08",
+      "change": "Keyboard and programmatic paste share IME reset, scoped ownership and post-reset destination checks. QML validates/quotes file URLs before selecting a tile and carries its destination ID through the deferred paste."
+    },
+    {
+      "finding": "Q09",
+      "change": "Takeover retires only the old client attachment's deferred history request before advancing identity; joined-view work remains owned.",
+      "qualification": "Reviewed and ordinary takeover exercised; deterministic deferred-queue acceptance remains open."
+    },
+    {
+      "finding": "Q11 partial",
+      "change": "Production CMake targets directly declare terminal, attention, launch and platform dependencies. Internal include-tree export narrowing remains planned."
+    },
+    {
+      "finding": "Workspace gateway ownership",
+      "change": "Host generations guard all asynchronous mutations; same-host save preserves state. Complete-host digests separate disk caches. Preferences and cache are injected without production fixture environment flags."
+    },
+    {
+      "finding": "Remote discovery bounds",
+      "change": "Four concurrent SSH builds; 32 reports and 32 failures; 60-second failure retry. Four whois lookups and 256 cached verdicts; 300-second allowed/60-second denied TTL. Duplicates coalesce, cached allows stay allowed, failed thread start frees admission, malformed report objects are recorded as failures."
+    },
+    {
+      "finding": "Verification efficiency and truthfulness",
+      "change": "CLI lists/selects cases with inert discovery, prerequisites, deduplication, no empty success and actual-case receipts. Invalid jobs/selection cannot preserve a passing receipt. Foundation compile failures clean unique run artifacts and write failures; durable sanitized first-batch check records are preserved."
+    }
+  ],
+  "compatibility_decision": {
+    "finding": "Q06",
+    "core": "Interactive v1 metadata 256 bytes and at most 16 choices",
+    "wire": "Existing envelope 1024 bytes and 32 choices retained",
+    "evidence": "Current Codex/Claude producers preflight the core limits; no reachable first-party over-core producer found. Future adapters must validate semantic admission; changing either limit requires explicit compatibility/UI/resource review."
+  },
+  "verification": {
+    "python_quality": {
+      "local_artifact": "build/quality-followup-20260925/quality-receipt.json",
+      "sha256": "50d89ae0247ee65bc3f303fe76ae9ef095ee713783afa27f9578b8a491ca3112",
+      "bytes": 3469,
+      "passed": true,
+      "scope": "Non-GUI quality gate: repository contracts, diff hygiene, Python lint and format, and script unit tests.",
+      "checks": [
+        {
+          "check": "source-revision",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.005
+        },
+        {
+          "check": "source-status",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.007
+        },
+        {
+          "check": "claude-instructions-symlink",
+          "passed": true
+        },
+        {
+          "check": "sindexer-ignore",
+          "passed": true
+        },
+        {
+          "check": "git-diff-check",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.013
+        },
+        {
+          "check": "ruff-check",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.01
+        },
+        {
+          "check": "ruff-format-check",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.01
+        },
+        {
+          "check": "python-unittests",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 15.013
+        }
+      ],
+      "python_tests": 188
+    },
+    "headless_shared_build": {
+      "local_artifact": "build/quality-followup-20260925/headless-receipt.json",
+      "sha256": "73a457ee4f9bdc539e032070ad195f62d39c5881c96ea6333048bd4d3e8930d1",
+      "bytes": 13865,
+      "passed": true,
+      "scope": "dev: compiled targets and registered CTest cases only; not GUI or performance acceptance.",
+      "checks": [
+        {
+          "check": "configure",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.088
+        },
+        {
+          "check": "build",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.014
+        },
+        {
+          "check": "ctest",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.055
+        },
+        {
+          "check": "clang-format",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.689
+        },
+        {
+          "check": "cppcheck",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.179
+        },
+        {
+          "check": "clang-tidy-0",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 1.643
+        },
+        {
+          "check": "clang-tidy-1",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.134
+        },
+        {
+          "check": "clang-tidy-2",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.071
+        },
+        {
+          "check": "clang-tidy-3",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 1.847
+        },
+        {
+          "check": "clang-tidy-4",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.72
+        },
+        {
+          "check": "clang-tidy-5",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 1.727
+        },
+        {
+          "check": "clang-tidy-6",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.66
+        },
+        {
+          "check": "clang-tidy-7",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 1.587
+        },
+        {
+          "check": "clang-tidy-8",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.388
+        }
+      ]
+    },
+    "native_static": {
+      "local_artifact": "build/quality-followup-20260925/static/receipt.json",
+      "sha256": "06880e12cef23525a32bf2d7afe9fa09954c2e590fcf24841f703020e732c455",
+      "bytes": 3825,
+      "passed": true,
+      "scope": "Three changed native translation units; prior unchanged analysis reused. No GUI, runtime, vendor or Swift/QML acceptance.",
+      "checks": [
+        {
+          "check": "clang-format",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.069
+        },
+        {
+          "check": "cppcheck",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.352
+        },
+        {
+          "check": "clang-tidy-000",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 8.672
+        },
+        {
+          "check": "clang-tidy-001",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 2.465
+        },
+        {
+          "check": "clang-tidy-002",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 10.168
+        }
+      ]
+    },
+    "verification_tool_faults": {
+      "local_artifact": "build/quality-followup-20260925/verify-tools-receipt.json",
+      "sha256": "c261876315aab5ad7d8b8c782ef8fa4897cc81dd4e7d5433ab92eec730cb3c4b",
+      "bytes": 7402,
+      "passed": true,
+      "scope": "Deliberately faulty disposable fixtures verify detector activation; not application tests.",
+      "checks": [
+        {
+          "check": "compiler-warning",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 1,
+          "elapsed_seconds": 0.023
+        },
+        {
+          "check": "formatting",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 1,
+          "elapsed_seconds": 0.021
+        },
+        {
+          "check": "static-null",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 1,
+          "elapsed_seconds": 0.028
+        },
+        {
+          "check": "cppcheck-null",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 1,
+          "elapsed_seconds": 0.007
+        },
+        {
+          "check": "address-compile",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.149
+        },
+        {
+          "check": "address-detection-0",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": -6,
+          "elapsed_seconds": 0.187
+        },
+        {
+          "check": "undefined-compile",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.107
+        },
+        {
+          "check": "undefined-detection-0",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": -6,
+          "elapsed_seconds": 0.017
+        },
+        {
+          "check": "thread-compile",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": 0,
+          "elapsed_seconds": 0.184
+        },
+        {
+          "check": "thread-detection-0",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": -6,
+          "elapsed_seconds": 0.185
+        },
+        {
+          "check": "thread-detection-1",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": -6,
+          "elapsed_seconds": 0.171
+        },
+        {
+          "check": "thread-detection-2",
+          "passed": true,
+          "timed_out": false,
+          "exit_code": -6,
+          "elapsed_seconds": 0.183
+        }
+      ]
+    },
+    "native_runtime": [
+      {
+        "local_artifact": "build/quality-followup-20260925/native-tests.log",
+        "sha256": "80bde42eb58d2fa741de2c1bb91ae79e9591e5d6a85516ebefe45c6830457046",
+        "bytes": 507,
+        "passed": true,
+        "scope": "Four native suites: workspace, live-connection, local-protocol, attention-protocol"
+      },
+      {
+        "local_artifact": "build/quality-followup-20260925/background-input-final.log",
+        "sha256": "241ad6d638e600395f39bc0041304faf3ee942168671caf873c517b713bd91d5",
+        "bytes": 721,
+        "passed": true,
+        "scope": "Qt offscreen/software input contract, including programmatic paste and reentrant destination change"
+      },
+      {
+        "local_artifact": "build/quality-followup-20260925/asan-input.log",
+        "sha256": "6d74396b02925502adcc07b11f4a5bab418783d917838327d3d385fec9f4d959",
+        "bytes": 721,
+        "passed": true,
+        "scope": "Same background input contract under ASan/UBSan"
+      },
+      {
+        "local_artifact": "build/quality-followup-20260925/asan-tests.log",
+        "sha256": "67190d271d6016ed943e3465b35c4a6b5214b61dbb514c16d6ad4606bd1db366",
+        "bytes": 216,
+        "passed": true,
+        "scope": "Live-connection under ASan/UBSan"
+      },
+      {
+        "local_artifact": "build/quality-followup-20260925/tsan-input.log",
+        "sha256": "43d34d2485c876d427047fff9013f9118c3203521ec401810a9002e65562dca3",
+        "bytes": 721,
+        "passed": true,
+        "scope": "Same background input contract under TSan"
+      },
+      {
+        "local_artifact": "build/quality-followup-20260925/tsan-tests.log",
+        "sha256": "fa2f6c9be58b18996dd99b9ce387304268c579f0d95c5d464668dbf1e5ba565c",
+        "bytes": 216,
+        "passed": true,
+        "scope": "Live-connection under TSan"
+      }
+    ],
+    "cli": {
+      "local_artifact": "build/quality-followup-20260925/cli-ownership-final.json",
+      "sha256": "e7e4cc128bc75b942ec020d8d5b1a38c7eb12ed83039d0d982fb13e699ba69b7",
+      "bytes": 1114,
+      "passed": true,
+      "selection_mode": "subset",
+      "actual_cases": [
+        "identity-boundaries",
+        "synchronization-boundaries"
+      ],
+      "seconds": 3.468,
+      "duplicate_selection_ran_once": true
+    },
+    "foundation": {
+      "local_artifact": "build/quality-followup-20260925/history-final.json",
+      "sha256": "657d5cf3735d26a8b665bc8b1a481e4561d58ea10e35cf2f929261213cd454d0",
+      "bytes": 1828,
+      "passed": true,
+      "observed": {
+        "staleOlderRejected": true,
+        "staleNewerRejected": true,
+        "workspaceAtoBtoARejected": true,
+        "staleInputRejected": true,
+        "attachmentRevisions": [
+          1,
+          2,
+          4
+        ],
+        "replacementPrefetchRequests": 2,
+        "pagingRequests": 4,
+        "emptyRetryRequests": 3
+      },
+      "fixture_state": {
+        "stale": {
+          "streams": 3,
+          "history": 5,
+          "frames": 4,
+          "revisions": [
+            1,
+            2,
+            4
+          ]
+        },
+        "prefetch": {
+          "streams": 2,
+          "history": 2,
+          "frames": 2,
+          "revisions": [
+            1,
+            2
+          ]
+        },
+        "paging": {
+          "streams": 1,
+          "history": 4,
+          "frames": 1,
+          "revisions": [
+            1
+          ]
+        },
+        "retry": {
+          "streams": 1,
+          "history": 3,
+          "frames": 1,
+          "revisions": [
+            1
+          ]
+        },
+        "input": {
+          "streams": 2,
+          "history": 2,
+          "frames": 2,
+          "revisions": [
+            1,
+            2
+          ],
+          "input": 3
+        },
+        "workspace": {
+          "base": 1,
+          "held": 1
+        }
+      },
+      "source_sha256": {
+        "apps/ios/Lapis/Models.swift": "5d59cccd172b7a9dd70f76fd90289632289f9f553c0f7119ed69c9bbb984ff4f",
+        "apps/ios/Lapis/Gateway.swift": "cdf5427ecff92c37579946ba47315ffeadf0bdee7b41720a1ccc4beacce864ec",
+        "apps/ios/Lapis/FolderSearch.swift": "67e8fe831e834100427831137d3176a9b50a741a8675bbfae4e2e9089a9c2e55",
+        "tools/qa/history_lifecycle_probe.swift": "e4cf9f019b84de08b48533b7d930c6849e424c84171e82e04f90d45d5f3788d3"
+      },
+      "additional_assertions": [
+        "same-host save preserves live notice/listing",
+        "formerly colliding host spelling sees no listing",
+        "returning to original host restores its cached listing"
+      ]
+    },
+    "negative_control": {
+      "local_artifact": "build/quality-followup-20260925/history-negative.json",
+      "sha256": "992bbc09479b9880ccfffb823e7df2183c457dba43fd2e757eeaeff5c7d162da",
+      "bytes": 1755,
+      "expected_failure_detected": true,
+      "mutation": "Remove only WorkspaceModel.refresh post-response generation guard",
+      "diagnostic": "old-host listing survived an A-to-B-to-A host change",
+      "control_source_sha256": "7c98ccd6fd63e880c876e1f1703dde8f317e17786ffd6ff6673e08b1dda55a39"
+    },
+    "ios": {
+      "local_artifact": "build/quality-followup-20260925/ios-final-summary.json",
+      "sha256": "15128d2f8601ee101374396428449e9fa8030058209ee28b1641c93a67234b0c",
+      "bytes": 746,
+      "result": "Passed",
+      "passed_tests": 2,
+      "failed_tests": 0,
+      "methods": [
+        "testSettingsChecksTheConnection",
+        "testFoldersAndMachines"
+      ],
+      "scope": "Headless iOS Simulator on final Swift sources; no Mac desktop input. Earlier three-case run also passed, including testTakenElsewhereThenReopened, before final host-cache fixes. This is not the full real-agent/simultaneous-client gate."
+    },
+    "builds": [
+      {
+        "local_artifact": "build/quality-followup-20260925/native-build.log",
+        "sha256": "d64d6abf325f0472440fab47c799b294bddefc8993cb816af6d72f557eba7246",
+        "bytes": 4126
+      },
+      {
+        "local_artifact": "build/quality-followup-20260925/input-rebuild.log",
+        "sha256": "098e69aa99682587ecdce5054191a909bb2545630bf9d73a201562953bc7c022",
+        "bytes": 240
+      },
+      {
+        "local_artifact": "build/quality-followup-20260925/qml-build.log",
+        "sha256": "70df6877ae4950c8611c143e52d4028879f46ae58a5d3133cb26a629f1a36d8b",
+        "bytes": 812
+      },
+      {
+        "local_artifact": "build/quality-followup-20260925/asan-build.log",
+        "sha256": "9a04ad99fa2345bacded166fba63492b1f411de5741183496c4c1071ca8eaf67",
+        "bytes": 3992
+      },
+      {
+        "local_artifact": "build/quality-followup-20260925/tsan-build.log",
+        "sha256": "b87db134321c2e8d2bf4e83961c864613cdd844a6317213af47788780e2e6bf3",
+        "bytes": 3851
+      }
+    ],
+    "documentation": "Local links, diff whitespace, CLAUDE.md relative symlink and .sindexer/ ignore verified."
+  },
+  "review_workers": [
+    {
+      "assignment": "session",
+      "model": "zai,glm-5.3-flashx",
+      "outcome": "cancelled",
+      "exit_code": 130,
+      "read_only": false,
+      "automatically_verified": false
+    },
+    {
+      "assignment": "desktop",
+      "model": "zai,glm-5.3-flashx",
+      "outcome": "completed",
+      "exit_code": 0,
+      "read_only": false,
+      "automatically_verified": false
+    },
+    {
+      "assignment": "remote",
+      "model": "zai,glm-5.3-flashx",
+      "outcome": "completed",
+      "exit_code": 0,
+      "read_only": true,
+      "automatically_verified": false
+    },
+    {
+      "assignment": "remote-fix",
+      "model": "zai,glm-5.3-flashx",
+      "outcome": "completed",
+      "exit_code": 0,
+      "read_only": false,
+      "automatically_verified": false
+    },
+    {
+      "assignment": "ios",
+      "model": "zai,glm-5.3-flashx",
+      "outcome": "completed",
+      "exit_code": 0,
+      "read_only": false,
+      "automatically_verified": false
+    },
+    {
+      "assignment": "review-native",
+      "model": "zai,glm-5.3-flashx",
+      "outcome": "completed",
+      "exit_code": 0,
+      "read_only": true,
+      "automatically_verified": false
+    },
+    {
+      "assignment": "review-remote",
+      "model": "zai,glm-5.3-flashx",
+      "outcome": "completed",
+      "exit_code": 0,
+      "read_only": true,
+      "automatically_verified": false
+    },
+    {
+      "assignment": "review-ios",
+      "model": "zai,glm-5.3-flashx",
+      "outcome": "completed",
+      "exit_code": 0,
+      "read_only": true,
+      "automatically_verified": false
+    },
+    {
+      "assignment": "recheck-ios",
+      "model": "zai,glm-5.3-flashx",
+      "outcome": "completed",
+      "exit_code": 0,
+      "read_only": true,
+      "automatically_verified": false
+    }
+  ],
+  "rejected_evidence": {
+    "probe": "Quarantined history pressure experiment in ignored build directory. Unstable queue timing, invalid handshake variants and an unreachable assertion make its positive receipts unsuitable for acceptance.",
+    "control": "A removed-Q09-fix binary was prepared but never paired with a valid deterministic probe; no negative-control claim is made for it.",
+    "first_batch": "evidence/quality-repairs-checks.json preserves dated inputs and results; it is not a rerun of subsequent edits."
+  },
+  "remaining": [
+    "Bounded deterministic deferred-history takeover regression; current small state fix is not that acceptance evidence.",
+    "Native macOS Finder-drop and OS IME/input renewal; current new input evidence uses Qt offscreen/software.",
+    "TSan with instrumented Qt Core for the prior harness-models/usage reports; passing input/connection suites do not clear those reports.",
+    "Typed adapter status, shared harness/configuration contract, LiveConnection seams, broader registry transactions and internal header boundaries.",
+    "Shared wire-peer fixture consolidation and measured snapshot-copy cost before optimization.",
+    "Total gateway HTTP connection/thread bounds and sustained-load qualification."
+  ],
+  "source_sha256": {
+    "apps/desktop/CMakeLists.txt": "34e17f905a8184366f0c18bb85190859a4fb2801997403d1463640f05e8d994e",
+    "apps/desktop/qml/Main.qml": "dede4aa3cbd704a31abe8acf7e162d1fb5ea8d4e1dbbc85498540f571696f1e6",
+    "apps/desktop/src/cell_shapes.cpp": "43792589e73db0221bf5295b94851bbb31e17f775761050f44c93e315ac63cf7",
+    "apps/desktop/src/harness_models.cpp": "dcf6d0bb4b2c9331ad67810dac0fbfebb53b5190d72da33358f859a6a9359028",
+    "apps/desktop/src/terminal_surface.cpp": "ada5f170ec7bafcd0cbb3f3f118fab53f0ffab3df45e67f630701dc9c70c7a6e",
+    "apps/desktop/src/usage.cpp": "37ff2e24739084a4113a26e7b17b76370007da710843e3902d8485ebe321a454",
+    "apps/desktop/src/usage_limits.cpp": "d7f0ed21dbbfeaac728f5e0be12041f69d3c92336844e1da21d2c84e8b7a21f1",
+    "apps/desktop/src/workspace.cpp": "1003001098d12c1cb1e76a1910ab40bc1aebd8fb1a4272dcc957094842b8487c",
+    "apps/desktop/src/workspace.hpp": "e00e4914ecb00a53cd41e8954da1e5a4bde39cd8f9634ca3ab458b7ebaff815d",
+    "apps/desktop/tests/terminal_input_test.cpp": "fcb68667b00a550bbb8216a127649ee07e263f140ad05b5f856b6f5066b0f3ab",
+    "apps/desktop/tests/workspace_test.cpp": "d87030eaee748ac948c58b1bfcd5f6f9351a380f202b364997c4c36192f0c20d",
+    "apps/ios/Lapis/Models.swift": "5d59cccd172b7a9dd70f76fd90289632289f9f553c0f7119ed69c9bbb984ff4f",
+    "apps/remote/lapis_remote.py": "e17861408f50b20d804ba3788bd1f00a7392e0f5d8b8a68665a3cd779fca030b",
+    "scripts/check_cli_launch.py": "af62669f44463cc14eb17f79c4ea253de0cbefb4245314ab2179686af67dde81",
+    "scripts/check_cpp.py": "e1d498275975d62076bf78ecc50d76d75dd7cbef80cbf60d89e05b5efcd62897",
+    "scripts/check_quality.py": "03db7949ad2cea5423595c7e21f1d6e7fe4b6452dac234c8fdadd3c7bf916f38",
+    "scripts/check_ui_preview.py": "6c6742cde762b92422a9e051af87b7d15d90ac93ff1895b8294dfc0543022471",
+    "scripts/tests/test_check_cli_launch.py": "22fd47acd75075801132ccfa7bf7ba6bf3808ecd10aa0611acb9d0d87263a841",
+    "scripts/tests/test_check_cpp.py": "6e35c3a91068bb48c865910c3967126ea572c60817632814195a7eab2e124638",
+    "scripts/tests/test_check_quality.py": "60a5a008bc741dac4e4304214b58b01d1e5275ef303de9263ec929b447f946d0",
+    "scripts/tests/test_check_ui_preview.py": "d864c04e252df2a3a46c0b2a8272e7661396a63843c130d01583f26554c89a62",
+    "scripts/tests/test_history_lifecycle_probe.py": "ac0866560d2368d9cbc0fb9ad4ad8ad0dafcaf0ed3832e59ed8a13d6b4ab9c2e",
+    "scripts/tests/test_lapis_remote_bounds.py": "0a8263a294ef06353d42fa9a08da68c43cd496b7e40fdcd826975a8ca2fdcb8c",
+    "services/session/CMakeLists.txt": "50e42d8c8264b00823135d43a9581319579c43a4912f4e8debcab79f46757eb4",
+    "services/session/src/session_service.cpp": "43eda0abf7f11d6f9a7c306e82e84c9926a24cf7eff065c5c20c442b280ad8fd",
+    "tools/qa/history_lifecycle_probe.swift": "e4cf9f019b84de08b48533b7d930c6849e424c84171e82e04f90d45d5f3788d3",
+    "tools/qa/run_history_lifecycle_probe.py": "ccd71d7402e94aa82ca4cb569ecd7be019163d1f5f59ff917fb177cafc8e3152"
+  },
+  "local_artifact_policy": "This tracked receipt contains outcomes, source identity and original diagnostic hashes. Paths under build are optional local diagnostics; no raw private transcripts or credentials are included.",
+  "cleanup": {
+    "removed_owned_probe_directories": [
+      {
+        "path": "/tmp/lapis-history-takeover-final",
+        "files": 74,
+        "bytes": 66723017
+      },
+      {
+        "path": "/tmp/lapis-history-takeover-final-2",
+        "files": 74,
+        "bytes": 66725101
+      },
+      {
+        "path": "/tmp/lapis-history-takeover-positive",
+        "files": 74,
+        "bytes": 66696865
+      },
+      {
+        "path": "/tmp/lapis-history-takeover-positive-2",
+        "files": 74,
+        "bytes": 66696993
+      },
+      {
+        "path": "/tmp/lapis-history-takeover-positive-3",
+        "files": 74,
+        "bytes": 66696737
+      },
+      {
+        "path": "/tmp/lapis-history-takeover-positive-4",
+        "files": 74,
+        "bytes": 66724169
+      },
+      {
+        "path": "/tmp/lapis-history-takeover-stage",
+        "files": 74,
+        "bytes": 66695389
+      }
+    ]
+  }
+}

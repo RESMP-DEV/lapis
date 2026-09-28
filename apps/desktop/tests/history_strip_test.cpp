@@ -51,6 +51,38 @@ std::vector<std::string> view_rows(const HistoryStrip& strip) {
 
 using Rows = std::vector<std::string>;
 
+void resized_screen_overlap_spans_archive_pages() {
+    HistoryStrip strip(rows_of(8, {"l6", "l7", "l8", "l9", "live"}), 10);
+    strip.addPage(rows_of(8, {"l8", "l9"}, 8));
+    strip.moveTo(7);
+    require(strip.missing() == 6, "a possible resize overlap must fetch its earlier rows");
+    strip.addPage(rows_of(8, {"l2", "l3", "l4", "l5", "l6", "l7"}, 2));
+    require(strip.archived() == 6 && strip.top() == 3 &&
+                view_rows(strip) == Rows({"l3", "l4", "l5", "l6", "l7"}),
+            "resize overlap spanning pages duplicated rows or lost the requested scroll distance");
+}
+
+void hyperlinks_survive_history_composition() {
+    auto screen = rows_of(6, {"same", "tail"});
+    screen.hyperlinks = {{0, 4, "https://example.com/new"}};
+    auto page = rows_of(8, {"12345678", "same"});
+    page.hyperlinks = {{2, 10, "https://example.com/old"}};
+    HistoryStrip strip(screen, 2);
+    strip.addPage(page);
+    require(strip.top() == 2, "different link destinations were deduplicated at the history seam");
+    strip.moveTo(1);
+    auto view = strip.view();
+    require(view.hyperlinks.size() == 2 && view.hyperlinks[0].first_cell == 0 &&
+                view.hyperlinks[0].cell_count == 4 && view.hyperlinks[1].first_cell == 6 &&
+                view.hyperlinks[1].uri == "https://example.com/new",
+            "history links were lost or misaligned across the live screen seam");
+    strip.moveTo(0);
+    view = strip.view();
+    require(view.hyperlinks.size() == 1 && view.hyperlinks[0].first_cell == 2 &&
+                view.hyperlinks[0].cell_count == 8,
+            "history links were not clipped and merged at the narrower viewport");
+}
+
 void views_are_whole_screens_across_pages() {
     // Six archived rows in a page of four and a short one of two, then the
     // screen: every view is a whole screen, whatever the pages' sizes.
@@ -130,6 +162,31 @@ void kept_rows_the_screen_shows_again_belong_to_it() {
     require(blank.archived() == 2, "a blank row on both sides is not taken for a repeat");
 }
 
+void pages_without_seam_evidence_stay_unsettled() {
+    // Rows 0 and 1 are known, but every plausible overlap starts at rows 4
+    // and 5. The distant page cannot settle a seam it never reached.
+    HistoryStrip distant(rows_of(10, {"h4", "h5", "s0", "s1"}), 6);
+    distant.addPage(rows_of(10, {"d0", "d1"}, 0));
+    distant.moveTo(5);
+    require(distant.missing() == 5, "a page away from the seam still requests its missing row");
+    distant.moveTo(6);
+    distant.addPage(rows_of(10, {"h2", "h3", "h4", "h5"}, 2));
+    require(distant.archived() == 4 && distant.top() == 4 &&
+                view_rows(distant) == Rows({"h4", "h5", "s0", "s1"}),
+            "a later seam page still removes rows shown by the screen");
+
+    // The blank row matches, but the other half of this possible overlap is
+    // missing; together they are not evidence that two rows repeat.
+    HistoryStrip partial(rows_of(10, {"h1", "", "s0"}), 3);
+    partial.addPage(rows_of(10, {""}, 2));
+    require(partial.archived() == 3 && partial.top() == 3,
+            "a blank row beside a missing row does not settle the seam");
+    partial.addPage(rows_of(10, {"h0", "h1"}, 0));
+    require(partial.archived() == 1 && partial.top() == 1 && !partial.missing() &&
+                view_rows(partial) == Rows({"h1", "", "s0"}),
+            "a later page can prove a partial blank-and-missing overlap");
+}
+
 void far_pages_are_forgotten() {
     HistoryStrip strip(rows_of(4, {"s0", "s1", "s2", "s3"}), 120);
     strip.moveTo(0);
@@ -143,10 +200,13 @@ void far_pages_are_forgotten() {
 
 int main() {
     try {
+        resized_screen_overlap_spans_archive_pages();
+        hyperlinks_survive_history_composition();
         views_are_whole_screens_across_pages();
         pages_of_another_width_and_color_fit_the_screen();
         pages_that_do_not_say_where_they_sit_go_on_top();
         kept_rows_the_screen_shows_again_belong_to_it();
+        pages_without_seam_evidence_stay_unsettled();
         far_pages_are_forgotten();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

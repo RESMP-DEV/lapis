@@ -1,0 +1,1292 @@
+{
+  "schema": "lapis.quality-checks/1",
+  "recorded_on": "2026-09-25",
+  "baseline_revision": "bad6e1576b0bee6b418a452fc0aeadd255162a0e",
+  "scope": "Durable sanitized records of the first repair batch. Local artifacts are optional diagnostics; their digests identify the observed originals. These are dated observations, not reruns of later edits.",
+  "source_sha256": {
+    "apps/desktop/src/cell_shapes.cpp": "43792589e73db0221bf5295b94851bbb31e17f775761050f44c93e315ac63cf7",
+    "apps/desktop/src/harness_models.cpp": "dcf6d0bb4b2c9331ad67810dac0fbfebb53b5190d72da33358f859a6a9359028",
+    "apps/desktop/src/usage.cpp": "37ff2e24739084a4113a26e7b17b76370007da710843e3902d8485ebe321a454",
+    "apps/desktop/src/usage_limits.cpp": "d7f0ed21dbbfeaac728f5e0be12041f69d3c92336844e1da21d2c84e8b7a21f1",
+    "apps/desktop/src/workspace.cpp": "1003001098d12c1cb1e76a1910ab40bc1aebd8fb1a4272dcc957094842b8487c",
+    "apps/desktop/src/workspace.hpp": "e00e4914ecb00a53cd41e8954da1e5a4bde39cd8f9634ca3ab458b7ebaff815d",
+    "apps/desktop/tests/workspace_test.cpp": "d87030eaee748ac948c58b1bfcd5f6f9351a380f202b364997c4c36192f0c20d",
+    "apps/ios/Lapis/Models.swift": "497a6e4956b1ba420a669390be15ae4a221c27f2adcd5d90c9f0e402d8e1aec5",
+    "scripts/check_cpp.py": "06f7fcd6dc0af71e3a75f1cf7cd216329416d5b929d971390076e248cc9a33bc",
+    "scripts/check_quality.py": "03db7949ad2cea5423595c7e21f1d6e7fe4b6452dac234c8fdadd3c7bf916f38",
+    "scripts/check_ui_preview.py": "6c6742cde762b92422a9e051af87b7d15d90ac93ff1895b8294dfc0543022471",
+    "scripts/tests/test_check_cpp.py": "58ecbd89da8542ef92156bf0052305cebe6eb0b9c2f468aa7da7d10d1112c415",
+    "scripts/tests/test_check_quality.py": "60a5a008bc741dac4e4304214b58b01d1e5275ef303de9263ec929b447f946d0",
+    "scripts/tests/test_check_ui_preview.py": "d864c04e252df2a3a46c0b2a8272e7661396a63843c130d01583f26554c89a62",
+    "tools/qa/history_lifecycle_probe.swift": "ad1b4c29a115ff073441bbfae7ac4d814156547dd3b3ce697354256186cf0f73",
+    "tools/qa/run_history_lifecycle_probe.py": "189b8e6738305f9662b1019fbc3132103095c71eb0efa2a4b21f5c215a2f7919"
+  },
+  "records": [
+    {
+      "local_artifact": "build/quality-repairs-20260925/cleanup-negative-control.json",
+      "sha256": "c77061eae5ac2a00229fb2676484f14a854e4b9eb1f5c333cf688475ada040ec",
+      "bytes": 155,
+      "result": {
+        "baseline": "bad6e1576b0bee6b418a452fc0aeadd255162a0e",
+        "expected_failure_detected": true,
+        "case": "cleanup_kills_group_after_leader_has_exited"
+      }
+    },
+    {
+      "local_artifact": "build/quality-repairs-20260925/history-final.json",
+      "sha256": "0e8bf6155d2d7dc47691ecd20f8df614b7503129734a0ad2c5334456ee7ffa80",
+      "bytes": 1051,
+      "result": {
+        "command": [
+          "history-lifecycle-probe",
+          "<disposable loopback endpoint>"
+        ],
+        "exit_code": 0,
+        "observed": {
+          "staleOlderRejected": true,
+          "staleNewerRejected": true,
+          "attachmentRevisions": [
+            1,
+            2,
+            4
+          ],
+          "replacementPrefetchRequests": 2,
+          "pagingRequests": 4,
+          "emptyRetryRequests": 3
+        },
+        "fixture_state": {
+          "stale": {
+            "streams": 3,
+            "history": 5,
+            "frames": 4,
+            "revisions": [
+              1,
+              2,
+              4
+            ]
+          },
+          "prefetch": {
+            "streams": 2,
+            "history": 2,
+            "frames": 2,
+            "revisions": [
+              1,
+              2
+            ]
+          },
+          "paging": {
+            "streams": 1,
+            "history": 4,
+            "frames": 1,
+            "revisions": [
+              1
+            ]
+          },
+          "retry": {
+            "streams": 1,
+            "history": 3,
+            "frames": 1,
+            "revisions": [
+              1
+            ]
+          }
+        },
+        "stderr": "",
+        "scope": "Production Foundation Models/Gateway/FolderSearch with controlled HTTP/SSE barriers. No simulator, application window or GUI input."
+      }
+    },
+    {
+      "local_artifact": "build/quality-repairs-20260925/history-negative-control.json",
+      "sha256": "27b1c4b17f936c43ce6d847f5730cf698b105e0de53e7221c08c2c1a23092df1",
+      "bytes": 437,
+      "result": {
+        "control": "Remove only the older-history generation guard from defer in an ignored copy of Models.swift.",
+        "exit_code": -5,
+        "expected_failure_detected": true,
+        "diagnostic": "Swift/ErrorType.swift:254: Fatal error: Error raised at top level: Error Domain=history-lifecycle-probe Code=5 \"old completion cleared replacement loading state\" UserInfo={NSLocalizedDescription=old completion cleared replacement loading state}\n"
+      }
+    },
+    {
+      "local_artifact": "build/quality-repairs-20260925/ios-summary.json",
+      "sha256": "1ec57b3a039c8bd6dea0321006339ee79cca364a91349330390cee1e7295096a",
+      "bytes": 1018,
+      "result": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "145F779A-C09B-4BD0-A4D7-23F0DAC2E964",
+              "deviceName": "iPhone 17 Pro",
+              "modelName": "iPhone 17 Pro",
+              "osBuildNumber": "23E254a",
+              "osVersion": "26.4.1",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 0,
+            "passedTests": 2,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Transient Testing \u00b7 Built with macOS 26.7",
+        "expectedFailures": 0,
+        "failedTests": 0,
+        "finishTime": 1790339753.002,
+        "passedTests": 2,
+        "result": "Passed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790339708.833,
+        "statistics": [],
+        "testFailures": [],
+        "title": "Test - Transient Testing",
+        "topInsights": [],
+        "totalTestCount": 2
+      }
+    },
+    {
+      "local_artifact": "build/quality-repairs-20260925/native-tests.log",
+      "sha256": "4857a537ea4d451d1714a17ff2ada227645192aebca5b945c99c121531d854ef",
+      "bytes": 1763
+    },
+    {
+      "local_artifact": "build/quality-repairs-20260925/positive-runner-receipt.json",
+      "sha256": "fb2a3ad20b39c142f4c4e026a75fa451947036f841e059cdc2bbf0966db70616",
+      "bytes": 13867,
+      "result": {
+        "recorded_at": "2026-09-25T12:33:46.064794+00:00",
+        "platform": "darwin",
+        "scope": "dev: compiled targets and registered CTest cases only; not GUI or performance acceptance.",
+        "passed": true
+      },
+      "tools": {
+        "clang++": {
+          "version": "Homebrew clang version 23.1.2"
+        },
+        "clang-tidy": {
+          "version": "Homebrew LLVM version 23.1.2"
+        },
+        "clang-format": {
+          "version": "Homebrew clang-format version 23.1.2"
+        },
+        "clangd": {
+          "version": "Homebrew clangd version 23.1.2"
+        },
+        "cppcheck": {
+          "version": "Cppcheck 2.22.0"
+        },
+        "cmake": {
+          "version": "cmake version 4.4.3"
+        },
+        "ctest": {
+          "version": "ctest version 4.4.3"
+        }
+      },
+      "checks": [
+        {
+          "check": "configure",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.076
+        },
+        {
+          "check": "build",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.564
+        },
+        {
+          "check": "ctest",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.028
+        },
+        {
+          "check": "clang-format",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.536
+        },
+        {
+          "check": "cppcheck",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.156
+        },
+        {
+          "check": "clang-tidy-0",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.495
+        },
+        {
+          "check": "clang-tidy-1",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.123
+        },
+        {
+          "check": "clang-tidy-2",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.068
+        },
+        {
+          "check": "clang-tidy-3",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.603
+        },
+        {
+          "check": "clang-tidy-4",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.593
+        },
+        {
+          "check": "clang-tidy-5",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.536
+        },
+        {
+          "check": "clang-tidy-6",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.547
+        },
+        {
+          "check": "clang-tidy-7",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.465
+        },
+        {
+          "check": "clang-tidy-8",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.299
+        }
+      ]
+    },
+    {
+      "local_artifact": "build/quality-repairs-20260925/quality-asan.json",
+      "sha256": "99075d6256f6e87dc742a9546dec79aff1037df42218fd90ef8f46696be2799f",
+      "bytes": 1468,
+      "result": [
+        {
+          "command": [
+            "/opt/homebrew/bin/cmake",
+            "--preset",
+            "asan",
+            "-B",
+            "$REPO/build/desktop-asan",
+            "-DLAPIS_BUILD_DESKTOP=ON",
+            "-DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++",
+            "-DCMAKE_OBJCXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++",
+            "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+            "-DLAPIS_GHOSTTY_PREFIX=$REPO/build/terminal-probe/reproduce/ghostty/runs/059c2552dd9a4a7681b11e5c52a5c059/prefix",
+            "-DCMAKE_OBJCXX_FLAGS=-Xclang -fobjc-dispatch-method=legacy"
+          ],
+          "exit_code": 0,
+          "seconds": 0.675,
+          "log": "quality-asan-0.log"
+        },
+        {
+          "command": [
+            "/opt/homebrew/bin/cmake",
+            "--build",
+            "$REPO/build/desktop-asan",
+            "--parallel",
+            "4",
+            "--target",
+            "lapis_workspace_tests",
+            "lapis_session_service",
+            "lapis_harness_models_tests",
+            "lapis_usage_tests",
+            "lapis_cell_shapes_tests"
+          ],
+          "exit_code": 0,
+          "seconds": 10.779,
+          "log": "quality-asan-1.log"
+        },
+        {
+          "command": [
+            "/opt/homebrew/bin/ctest",
+            "--test-dir",
+            "$REPO/build/desktop-asan",
+            "-R",
+            "^(workspace|harness-models|usage|cell-shapes)$",
+            "--output-on-failure",
+            "--no-tests=error"
+          ],
+          "exit_code": 0,
+          "seconds": 25.918,
+          "log": "quality-asan-2.log"
+        }
+      ]
+    },
+    {
+      "local_artifact": "build/quality-repairs-20260925/quality-receipt.json",
+      "sha256": "4910f3a95302ee8a0a31d0f351a13caea9128e0ffc95000f287c27b4b87442c8",
+      "bytes": 3469,
+      "result": {
+        "recorded_at": "2026-09-25T12:43:08.862763+00:00",
+        "platform": "darwin",
+        "scope": "Non-GUI quality gate: repository contracts, diff hygiene, Python lint and format, and script unit tests.",
+        "passed": true
+      },
+      "tools": {},
+      "checks": [
+        {
+          "check": "source-revision",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.006,
+          "diagnostic": null
+        },
+        {
+          "check": "source-status",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.009,
+          "diagnostic": null
+        },
+        {
+          "check": "claude-instructions-symlink",
+          "passed": true,
+          "diagnostic": null
+        },
+        {
+          "check": "sindexer-ignore",
+          "passed": true,
+          "diagnostic": null
+        },
+        {
+          "check": "git-diff-check",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.01,
+          "diagnostic": null
+        },
+        {
+          "check": "ruff-check",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.013,
+          "diagnostic": null
+        },
+        {
+          "check": "ruff-format-check",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.01,
+          "diagnostic": null
+        },
+        {
+          "check": "python-unittests",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 14.941,
+          "diagnostic": null
+        }
+      ]
+    },
+    {
+      "local_artifact": "build/quality-repairs-20260925/quality-tsan.json",
+      "sha256": "ee433dee2f0fcd96daa74730483a914606b14f2f903c78dda83e2e42d9a64eb7",
+      "bytes": 1466,
+      "result": [
+        {
+          "command": [
+            "/opt/homebrew/bin/cmake",
+            "--preset",
+            "tsan",
+            "-B",
+            "$REPO/build/desktop-tsan",
+            "-DLAPIS_BUILD_DESKTOP=ON",
+            "-DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++",
+            "-DCMAKE_OBJCXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++",
+            "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+            "-DLAPIS_GHOSTTY_PREFIX=$REPO/build/terminal-probe/reproduce/ghostty/runs/059c2552dd9a4a7681b11e5c52a5c059/prefix",
+            "-DCMAKE_OBJCXX_FLAGS=-Xclang -fobjc-dispatch-method=legacy"
+          ],
+          "exit_code": 0,
+          "seconds": 0.676,
+          "log": "quality-tsan-0.log"
+        },
+        {
+          "command": [
+            "/opt/homebrew/bin/cmake",
+            "--build",
+            "$REPO/build/desktop-tsan",
+            "--parallel",
+            "4",
+            "--target",
+            "lapis_workspace_tests",
+            "lapis_session_service",
+            "lapis_harness_models_tests",
+            "lapis_usage_tests",
+            "lapis_cell_shapes_tests"
+          ],
+          "exit_code": 0,
+          "seconds": 9.84,
+          "log": "quality-tsan-1.log"
+        },
+        {
+          "command": [
+            "/opt/homebrew/bin/ctest",
+            "--test-dir",
+            "$REPO/build/desktop-tsan",
+            "-R",
+            "^(workspace|harness-models|usage|cell-shapes)$",
+            "--output-on-failure",
+            "--no-tests=error"
+          ],
+          "exit_code": 8,
+          "seconds": 88.479,
+          "log": "quality-tsan-2.log"
+        }
+      ],
+      "disposition": "Unresolved qualification: workspace and cell-shapes passed; harness-models and usage reported races also reproduced by a valid control with uninstrumented Qt 6.11.2. No suppression or clearance. Instrumented Qt Core control and product reruns remain required."
+    },
+    {
+      "local_artifact": "build/quality-repairs-20260925/restore.log",
+      "sha256": "277e944e661bbb67e1329fbbedfad241b458f99edddd506ba980591a816f62e0",
+      "bytes": 955
+    },
+    {
+      "local_artifact": "build/quality-repairs-20260925/static/receipt.json",
+      "sha256": "c947fd42bedf4b580db0dbbc0e1880d629ac37d9aa1ca86d1ab2a5715c4cd68e",
+      "bytes": 47118,
+      "result": {
+        "recorded_at": "2026-09-25T12:38:01.697997+00:00",
+        "platform": "darwin",
+        "scope": "Whole first-party native compilation database static audit; no rebuild, GUI, runtime test, vendor or Swift/QML acceptance.",
+        "passed": true
+      },
+      "tools": {
+        "clang++": {
+          "version": "Homebrew clang version 23.1.2"
+        },
+        "clang-tidy": {
+          "version": "Homebrew LLVM version 23.1.2"
+        },
+        "clang-format": {
+          "version": "Homebrew clang-format version 23.1.2"
+        },
+        "clangd": {
+          "version": "Homebrew clangd version 23.1.2"
+        },
+        "cppcheck": {
+          "version": "Cppcheck 2.22.0"
+        },
+        "cmake": {
+          "version": "cmake version 4.4.3"
+        },
+        "ctest": {
+          "version": "ctest version 4.4.3"
+        }
+      },
+      "checks": [
+        {
+          "check": "clang-format",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.52
+        },
+        {
+          "check": "cppcheck",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 4.242
+        },
+        {
+          "check": "clang-tidy-000",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 3.242
+        },
+        {
+          "check": "clang-tidy-001",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.896
+        },
+        {
+          "check": "clang-tidy-002",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.646
+        },
+        {
+          "check": "clang-tidy-003",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.569
+        },
+        {
+          "check": "clang-tidy-004",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.742
+        },
+        {
+          "check": "clang-tidy-005",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 4.721
+        },
+        {
+          "check": "clang-tidy-006",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.061
+        },
+        {
+          "check": "clang-tidy-007",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 3.028
+        },
+        {
+          "check": "clang-tidy-008",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.109
+        },
+        {
+          "check": "clang-tidy-009",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.001
+        },
+        {
+          "check": "clang-tidy-010",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 4.418
+        },
+        {
+          "check": "clang-tidy-011",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.939
+        },
+        {
+          "check": "clang-tidy-012",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.044
+        },
+        {
+          "check": "clang-tidy-013",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.15
+        },
+        {
+          "check": "clang-tidy-014",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 5.244
+        },
+        {
+          "check": "clang-tidy-015",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 13.742
+        },
+        {
+          "check": "clang-tidy-016",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.802
+        },
+        {
+          "check": "clang-tidy-017",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 3.544
+        },
+        {
+          "check": "clang-tidy-018",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.799
+        },
+        {
+          "check": "clang-tidy-019",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.529
+        },
+        {
+          "check": "clang-tidy-020",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.765
+        },
+        {
+          "check": "clang-tidy-021",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 10.268
+        },
+        {
+          "check": "clang-tidy-022",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 4.743
+        },
+        {
+          "check": "clang-tidy-023",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.561
+        },
+        {
+          "check": "clang-tidy-024",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 4.753
+        },
+        {
+          "check": "clang-tidy-025",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 7.961
+        },
+        {
+          "check": "clang-tidy-026",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 4.456
+        },
+        {
+          "check": "clang-tidy-027",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 17.587
+        },
+        {
+          "check": "clang-tidy-028",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.43
+        },
+        {
+          "check": "clang-tidy-029",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.269
+        },
+        {
+          "check": "clang-tidy-030",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.273
+        },
+        {
+          "check": "clang-tidy-031",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.538
+        },
+        {
+          "check": "clang-tidy-032",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.939
+        },
+        {
+          "check": "clang-tidy-033",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.343
+        },
+        {
+          "check": "clang-tidy-034",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.253
+        },
+        {
+          "check": "clang-tidy-035",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.395
+        },
+        {
+          "check": "clang-tidy-036",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 3.902
+        },
+        {
+          "check": "clang-tidy-037",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.491
+        },
+        {
+          "check": "clang-tidy-038",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 5.402
+        },
+        {
+          "check": "clang-tidy-039",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.532
+        },
+        {
+          "check": "clang-tidy-040",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.789
+        },
+        {
+          "check": "clang-tidy-041",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.355
+        },
+        {
+          "check": "clang-tidy-042",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.48
+        },
+        {
+          "check": "clang-tidy-043",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.363
+        },
+        {
+          "check": "clang-tidy-044",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 10.079
+        },
+        {
+          "check": "clang-tidy-045",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 4.704
+        },
+        {
+          "check": "clang-tidy-046",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.226
+        },
+        {
+          "check": "clang-tidy-047",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.454
+        },
+        {
+          "check": "clang-tidy-048",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 5.221
+        },
+        {
+          "check": "clang-tidy-049",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.467
+        },
+        {
+          "check": "clang-tidy-050",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.57
+        },
+        {
+          "check": "clang-tidy-051",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 3.28
+        },
+        {
+          "check": "clang-tidy-052",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 2.59
+        },
+        {
+          "check": "clang-tidy-053",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.849
+        },
+        {
+          "check": "clang-tidy-054",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.96
+        },
+        {
+          "check": "clang-tidy-055",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.117
+        },
+        {
+          "check": "clang-tidy-056",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.975
+        },
+        {
+          "check": "clang-tidy-057",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.062
+        },
+        {
+          "check": "clang-tidy-058",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.995
+        },
+        {
+          "check": "clang-tidy-059",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 10.867
+        },
+        {
+          "check": "clang-tidy-060",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.696
+        },
+        {
+          "check": "clang-tidy-061",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 4.552
+        },
+        {
+          "check": "clang-tidy-062",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.852
+        },
+        {
+          "check": "clang-tidy-063",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.112
+        },
+        {
+          "check": "clang-tidy-064",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.389
+        },
+        {
+          "check": "clang-tidy-065",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.59
+        },
+        {
+          "check": "clang-tidy-066",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.167
+        },
+        {
+          "check": "clang-tidy-067",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.986
+        },
+        {
+          "check": "clang-tidy-068",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.703
+        },
+        {
+          "check": "clang-tidy-069",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.904
+        },
+        {
+          "check": "clang-tidy-070",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.966
+        },
+        {
+          "check": "clang-tidy-071",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.594
+        },
+        {
+          "check": "clang-tidy-072",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.548
+        },
+        {
+          "check": "clang-tidy-073",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 1.498
+        },
+        {
+          "check": "clang-tidy-074",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.297
+        }
+      ]
+    },
+    {
+      "local_artifact": "build/quality-repairs-20260925/verify-tools-receipt.json",
+      "sha256": "12d63d481ff102bb530c75d48e0db4e956a20b3bfa5e188942290d4910a6f50d",
+      "bytes": 7398,
+      "result": {
+        "recorded_at": "2026-09-25T12:33:24.282563+00:00",
+        "platform": "darwin",
+        "scope": "Deliberately faulty disposable fixtures verify detector activation; not application tests.",
+        "passed": true
+      },
+      "tools": {
+        "clang++": {
+          "version": "Homebrew clang version 23.1.2"
+        },
+        "clang-tidy": {
+          "version": "Homebrew LLVM version 23.1.2"
+        },
+        "clang-format": {
+          "version": "Homebrew clang-format version 23.1.2"
+        },
+        "clangd": {
+          "version": "Homebrew clangd version 23.1.2"
+        },
+        "cppcheck": {
+          "version": "Cppcheck 2.22.0"
+        },
+        "cmake": {
+          "version": "cmake version 4.4.3"
+        },
+        "ctest": {
+          "version": "ctest version 4.4.3"
+        }
+      },
+      "checks": [
+        {
+          "check": "compiler-warning",
+          "passed": true,
+          "exit_code": 1,
+          "timed_out": false,
+          "expected_diagnostic": "unused-variable",
+          "elapsed_seconds": 0.023
+        },
+        {
+          "check": "formatting",
+          "passed": true,
+          "exit_code": 1,
+          "timed_out": false,
+          "expected_diagnostic": "clang-format-violations",
+          "elapsed_seconds": 0.02
+        },
+        {
+          "check": "static-null",
+          "passed": true,
+          "exit_code": 1,
+          "timed_out": false,
+          "expected_diagnostic": "clang-analyzer-core.NullDereference",
+          "elapsed_seconds": 0.027
+        },
+        {
+          "check": "cppcheck-null",
+          "passed": true,
+          "exit_code": 1,
+          "timed_out": false,
+          "expected_diagnostic": "nullPointer",
+          "elapsed_seconds": 0.008
+        },
+        {
+          "check": "address-compile",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.15
+        },
+        {
+          "check": "address-detection-0",
+          "passed": true,
+          "exit_code": -6,
+          "timed_out": false,
+          "expected_diagnostic": "AddressSanitizer: heap-buffer-overflow",
+          "elapsed_seconds": 0.305
+        },
+        {
+          "check": "undefined-compile",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.1
+        },
+        {
+          "check": "undefined-detection-0",
+          "passed": true,
+          "exit_code": -6,
+          "timed_out": false,
+          "expected_diagnostic": "runtime error: signed integer overflow",
+          "elapsed_seconds": 0.017
+        },
+        {
+          "check": "thread-compile",
+          "passed": true,
+          "exit_code": 0,
+          "timed_out": false,
+          "expected_diagnostic": null,
+          "elapsed_seconds": 0.181
+        },
+        {
+          "check": "thread-detection-0",
+          "passed": true,
+          "exit_code": -6,
+          "timed_out": false,
+          "expected_diagnostic": "ThreadSanitizer: data race",
+          "elapsed_seconds": 0.282
+        },
+        {
+          "check": "thread-detection-1",
+          "passed": true,
+          "exit_code": -6,
+          "timed_out": false,
+          "expected_diagnostic": "ThreadSanitizer: data race",
+          "elapsed_seconds": 0.183
+        },
+        {
+          "check": "thread-detection-2",
+          "passed": true,
+          "exit_code": -6,
+          "timed_out": false,
+          "expected_diagnostic": "ThreadSanitizer: data race",
+          "elapsed_seconds": 0.172
+        }
+      ]
+    },
+    {
+      "local_artifact": "build/quality-repairs-20260925/workspace-ready-retest.log",
+      "sha256": "6565581460639b6698ad4294be2b80ebe066e94e517ad4cc57a781d510b4e80f",
+      "bytes": 205
+    }
+  ]
+}

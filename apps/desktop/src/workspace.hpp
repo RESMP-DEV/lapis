@@ -1,6 +1,7 @@
 #ifndef LAPIS_DESKTOP_WORKSPACE_HPP
 #define LAPIS_DESKTOP_WORKSPACE_HPP
 
+#include "harness_catalog.hpp"
 #include "harness_models.hpp"
 #include "history_strip.hpp"
 #include "keymap.hpp"
@@ -13,6 +14,7 @@
 
 #include <QColor>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonValue>
@@ -26,6 +28,7 @@
 #include <QVariantList>
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <set>
@@ -151,6 +154,7 @@ class SessionPreview final : public QObject {
     void setSnapshotTiming(const QVariantMap& timing) { snapshot_timing_ = timing; }
     [[nodiscard]] QVariantMap snapshotTiming() const { return snapshot_timing_; }
     void beginHistoryRequest();
+    void captureHistoryScreen();
     void completeHistoryRequest(quint64 page_id, session::TerminalSnapshot snapshot,
                                 const QString& message);
     void failHistoryRequest(const QString& message);
@@ -289,12 +293,6 @@ struct PreviewRequest {
     QString reason;
 };
 
-// The installed program of a CLI lapis knows ("codex", "claude", ...), or
-// empty when it is not found on this Mac.
-[[nodiscard]] QString harness_program(const QString& id);
-// A CLI's name as people call it ("Claude", "Codex"), or the id itself.
-[[nodiscard]] QString harness_label(const QString& id);
-
 // An agent to start: a CLI in a folder, in a category, on this Mac or over ssh.
 struct AgentRequest {
     QString category;
@@ -394,6 +392,16 @@ class Workspace final : public QObject {
     // config's hosts, as the side terminal offers them.
     Q_INVOKABLE [[nodiscard]] QStringList sshMachines() const;
     void setSshConfigForTesting(const QString& path) { ssh_config_ = path; }
+    // Tests reconnect in milliseconds: a first connection counts once it held
+    // `first_hold`, and each wait before reconnecting is `wait`.
+    struct ReconnectTiming {
+        std::chrono::milliseconds first_hold;
+        std::chrono::milliseconds wait;
+    };
+    void setReconnectTimingForTesting(ReconnectTiming timing) {
+        reconnect_first_hold_ = timing.first_hold;
+        reconnect_wait_ = timing.wait;
+    }
     // Starts an agent in the active category that resumes `conversation`.
     Q_INVOKABLE bool resumeAgent(const QString& directory, const QString& title,
                                  const QString& harness, const QString& conversation,
@@ -403,7 +411,7 @@ class Workspace final : public QObject {
     Q_INVOKABLE [[nodiscard]] QVariantMap agentDefaults() const;
     // Where an agent is: its category's name, its ssh machine (or ""), and
     // its folder as the card shows it ("~/x", or "host:~/x" over ssh).
-    [[nodiscard]] QVariantMap agentPlace(const QString& id) const;
+    Q_INVOKABLE [[nodiscard]] QVariantMap agentPlace(const QString& id) const;
     void setAgentDefaults(const AgentDefaults& defaults) { agent_defaults_ = defaults; }
     // Where the new-agent forms' model lists come from; lapis keeps it.
     void setHarnessModels(const HarnessModels* models) { harness_models_ = models; }
@@ -540,8 +548,11 @@ class Workspace final : public QObject {
     // The launch for a new agent, or nullopt with workspaceError().
     std::optional<session::LaunchSpec> agentLaunch(const AgentRequest& request);
     QString insertCategory(const QString& name, bool select);
-    // Starts an agent from a finished launch; the rest of startAgent.
-    QString launchAgent(const AgentRequest& request, const session::LaunchSpec& launch);
+    // Starts an agent from a finished launch; the rest of startAgent. A
+    // managed resume plan is committed in the same registry save as the
+    // launch, before the process starts.
+    QString launchAgent(const AgentRequest& request, const session::LaunchSpec& launch,
+                        int managed_resume_index = -1, const QString& managed_resume_identity = {});
     Category* category(const QString& id);
     [[nodiscard]] const Category* activeCategory() const;
     // After an agent leaves a category: off its stage, and one tile is no split.
@@ -605,6 +616,17 @@ class Workspace final : public QObject {
     void changed();
     void restoreSelection();
     void watch(SessionPreview* item);
+    // A remote agent's reconnection after its connection dropped.
+    struct Reconnect {
+        QElapsedTimer ready; // since its session last became ready
+        QElapsedTimer since; // since the drop these attempts follow
+        std::size_t count{};
+        int generation{};
+    };
+    QHash<QString, Reconnect> reconnects_;
+    std::chrono::milliseconds reconnect_first_hold_{std::chrono::seconds(20)};
+    std::optional<std::chrono::milliseconds> reconnect_wait_;
+    void reconnectIfDropped(const QString& id);
     int focused_index_{-1};
     bool preview_mode_{};
 };

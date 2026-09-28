@@ -21,6 +21,7 @@ namespace lapis::codex {
 namespace {
 namespace attention = session::attention;
 using attention::Activity;
+using attention::ObservationPhase;
 using attention::RequestId;
 constexpr qsizetype message_limit = qsizetype{64} * 1024;
 constexpr qsizetype details_limit = qsizetype{16} * 1024;
@@ -81,6 +82,8 @@ void parse_approval(Request& result, const QJsonObject& params) {
                 result.core.choices.end())
             result.core.choices.push_back(value);
     }
+    if (result.core.choices.empty())
+        result.core.reason = "Respond in terminal";
 }
 void parse_questions(Request& result, const QJsonObject& params) {
     result.core.reason = "User input";
@@ -189,6 +192,7 @@ class Observer::Impl final : public QObject {
         if (!Observer::qualifiedBinarySha256s().contains(hash)) {
             unsupported_source_ = true;
             diagnostic_ = "Unsupported Codex binary hash";
+            phase_ = ObservationPhase::unknown;
             emit owner_.changed();
             return;
         }
@@ -201,6 +205,7 @@ class Observer::Impl final : public QObject {
         unsupported_source_ = false;
         path_.clear();
         diagnostic_ = "Codex observer stopped";
+        phase_ = ObservationPhase::unknown;
         emit owner_.changed();
     }
     void reconnect() {
@@ -215,6 +220,8 @@ class Observer::Impl final : public QObject {
         }
         state_.connect(state_.epoch() + 1, {true, true, true});
         sequence_ = 0;
+        phase_ = thread_.isEmpty() ? ObservationPhase::awaiting_first_prompt
+                                   : ObservationPhase::reconciling;
         retired_.clear();
         initialized_ = false;
         discovering_ = true;
@@ -239,6 +246,7 @@ class Observer::Impl final : public QObject {
         emit owner_.changed();
     }
     [[nodiscard]] const QString& diagnostic() const { return diagnostic_; }
+    [[nodiscard]] ObservationPhase observation_phase() const { return phase_; }
     [[nodiscard]] const QString& thread_id() const { return thread_; }
     [[nodiscard]] QJsonObject details(const RequestId& id) const {
         const auto entry = requests_.find(id);
@@ -302,6 +310,7 @@ class Observer::Impl final : public QObject {
     void fail(const QString& reason) {
         close();
         diagnostic_ = reason;
+        phase_ = ObservationPhase::unknown;
         emit owner_.changed();
     }
     attention::Position next() {
@@ -337,6 +346,7 @@ class Observer::Impl final : public QObject {
             return;
         state_.overflow();
         recovering_ = true;
+        phase_ = ObservationPhase::reconciling;
         // Discovery events are not the authoritative replay. Start fresh after
         // binding the persistent thread, before issuing resume/read.
         replay_.clear();
@@ -442,6 +452,7 @@ class Observer::Impl final : public QObject {
         pending_details_bytes_ = replacement_details_bytes;
         retired_ = std::move(resolved_ids);
         check(state_.activity(next(), activity(thread.value("status").toObject())));
+        phase_ = ObservationPhase::unknown;
         // Record resolutions in the core after the authoritative replacement,
         // preventing subsequent late replays from recreating retired requests.
         for (const auto& id : retired_)
@@ -505,6 +516,7 @@ class Observer::Impl final : public QObject {
                 reconcile();
             else {
                 diagnostic_ = "Waiting for a persistent Codex thread";
+                phase_ = ObservationPhase::awaiting_first_prompt;
                 emit owner_.changed();
             }
             return;
@@ -575,6 +587,7 @@ class Observer::Impl final : public QObject {
                 replay_.clear();
                 replay_bytes_ = 0;
                 diagnostic_ = waiting_for_history;
+                phase_ = ObservationPhase::awaiting_first_prompt;
                 retry_.start(1000);
                 emit owner_.changed();
                 return;
@@ -635,6 +648,7 @@ class Observer::Impl final : public QObject {
     QString path_;
     QString thread_;
     QString diagnostic_;
+    ObservationPhase phase_{ObservationPhase::unknown};
     QString waiting_;
     bool unsupported_source_{};
     qint64 rpc_id_{};
@@ -668,6 +682,9 @@ void Observer::start(const QString& socket, const QString& hash) { impl_->start(
 void Observer::reconnect() { impl_->reconnect(); }
 void Observer::stop() { impl_->stop(); }
 QString Observer::diagnostic() const { return impl_->diagnostic(); }
+attention::ObservationPhase Observer::observationPhase() const {
+    return impl_->observation_phase();
+}
 QString Observer::threadId() const { return impl_->thread_id(); }
 QJsonObject Observer::details(const RequestId& id) const { return impl_->details(id); }
 bool Observer::decide(quint64 epoch, const RequestId& id, quint64 revision, const QString& choice,

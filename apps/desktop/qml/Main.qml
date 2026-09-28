@@ -46,7 +46,7 @@ ApplicationWindow {
     // One fixed-width family for the terminal and every machine readout (paths,
     // shortcut hints, states, counts). Human names and prose use the UI face.
     readonly property string monoFamily: liveTerminal.resolvedFontFamily
-    readonly property int terminalFontSize: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSize : 16
+    readonly property int terminalFontSize: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSize : 14
     // Composition and paste own the keyboard until they finish.
     readonly property bool terminalBusy: liveTerminal.composing || liveTerminal.pasting
 
@@ -998,17 +998,25 @@ ApplicationWindow {
         return place.machine && place.machine.length > 0 ? "" : session.directory
     }
     // Dropped files become their paths, quoted for a shell, as in Terminal.
-    function pastePaths(urls) {
+    function quoteDroppedPaths(urls) {
         const quoted = []
         for (const url of urls) {
-            const text = url.toString()
-            if (!text.startsWith("file://"))
+            const path = liveTerminal.localFilePath(url.toString())
+            if (path.length === 0)
                 continue
-            const path = decodeURIComponent(text.slice(7))
             quoted.push("'" + path.replace(/'/g, "'\\''") + "'")
         }
-        if (quoted.length > 0)
-            liveTerminal.pasteText(quoted.join(" ") + " ")
+        return quoted.length > 0 ? quoted.join(" ") + " " : ""
+    }
+    function pastePaths(text, destinationId) {
+        if (!window.interactionArmed || text.length === 0)
+            return false
+        const destination = workspace.focusedSession
+        if (!destination || liveTerminal.document !== destination)
+            return false
+        if (destination.sessionId !== destinationId)
+            return false
+        return liveTerminal.pasteText(text)
     }
     function untileFocused() {
         const session = workspace.focusedSession
@@ -1657,9 +1665,9 @@ ApplicationWindow {
         fontFamily: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontFamily : ""
         resolvedFontFamily: window.monoFamily
         fontSize: liveTerminal.fontPixelSize
-        fontSizeMinimum: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeMinimum : 16
-        fontSizeMaximum: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeMaximum : 16
-        fontSizeDefault: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeDefault : 16
+        fontSizeMinimum: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeMinimum : 14
+        fontSizeMaximum: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeMaximum : 14
+        fontSizeDefault: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeDefault : 14
         motionDuration: window.motionDuration
         motionEnabled: window.motionEnabled
         alertSound: (typeof keymap !== "undefined" && keymap !== null) ? keymap.alertSound : true
@@ -3246,6 +3254,9 @@ ApplicationWindow {
 
                 TerminalSurface {
                     id: liveTerminal
+                    ToolTip.visible: hoveredLink.length > 0
+                    ToolTip.text: hoveredLink
+                    ToolTip.delay: 250
                     objectName: "liveTerminal"
                     x: stage.tiled ? stage.focusedFrame.x + 4 : stage.inset
                     y: stage.tiled ? stage.focusedFrame.y + stage.headerHeight : stage.inset
@@ -3672,19 +3683,27 @@ ApplicationWindow {
                     objectName: "fileDrop"
                     anchors.fill: parent
                     keys: ["text/uri-list"]
-                    enabled: workspace.focusedSession !== null
+                    enabled: workspace.focusedSession !== null && window.interactionArmed
                     onDropped: function(drop) {
                         if (!drop.hasUrls)
                             return
+                        const text = window.quoteDroppedPaths(drop.urls)
+                        if (text.length === 0)
+                            return
+                        let destinationId = workspace.focusedSession !== null ?
+                                                workspace.focusedSession.sessionId : ""
                         if (stage.tiled && !stage.zoomed)
                             for (const tile of stage.tiles) {
                                 const frame = stage.frameOf(tile)
                                 if (drop.x >= frame.x && drop.x <= frame.x + frame.width
                                         && drop.y >= frame.y && drop.y <= frame.y + frame.height)
-                                    workspace.selectSession(tile.sessionId)
+                                    destinationId = tile.sessionId
                             }
-                        const urls = drop.urls
-                        Qt.callLater(() => window.pastePaths(urls))
+                        if (destinationId.length === 0)
+                            return
+                        if (workspace.selectSession(destinationId)) {
+                            Qt.callLater(() => window.pastePaths(text, destinationId))
+                        }
                         drop.acceptProposedAction()
                     }
                 }
@@ -4143,6 +4162,9 @@ ApplicationWindow {
             spacing: 0
             TerminalSurface {
                 id: sideSurface
+                ToolTip.visible: hoveredLink.length > 0
+                ToolTip.text: hoveredLink
+                ToolTip.delay: 250
                 objectName: "sideTerminalSurface"
                 Layout.fillWidth: true
                 Layout.fillHeight: true

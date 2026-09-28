@@ -100,6 +100,30 @@ class CommandAggregationTests(unittest.TestCase):
         self.assertIn("Missing required executable", result["diagnostic"])
         self.assertTrue((self.report / "ruff-check.log").is_file())
 
+    def test_python_commands_cover_every_first_party_directory(self):
+        def result(name, command, report_dir, cwd):
+            return {
+                "check": name,
+                "passed": True,
+                "exit_code": 0,
+                "log": "unused.log",
+            }
+
+        with patch.object(check_quality, "_run_bounded", side_effect=result) as run:
+            check_quality.run_quality_checks(self.root, self.report, self.tools)
+
+        ruff_commands = {
+            call.args[0]: call.args[1]
+            for call in run.call_args_list
+            if call.args[0] in {"ruff-check", "ruff-format-check"}
+        }
+        for command in ruff_commands.values():
+            self.assertEqual(
+                command[-len(check_quality.PYTHON_CHECK_DIRECTORIES) :],
+                list(check_quality.PYTHON_CHECK_DIRECTORIES),
+            )
+            self.assertNotIn("scripts", command[:-3])
+
     def test_runner_exception_is_reported_and_does_not_stop_aggregation(self):
         def failure(name, command, report_dir, cwd):
             if name == "git-diff-check":

@@ -12,6 +12,7 @@
 #include "ui_capture.hpp"
 #include "ui_preview.hpp"
 #include "usage.hpp"
+#include "workspace.hpp"
 #include "workspace_control.hpp"
 
 #include "launch_spec.hpp"

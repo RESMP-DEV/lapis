@@ -69,7 +69,7 @@ struct Theme {
 
 // Terminal text size in pixels. Machine readouts in the chrome share the same
 // family at the chrome's own size.
-inline constexpr int kTerminalFontSizeDefault = 16;
+inline constexpr int kTerminalFontSizeDefault = 14;
 inline constexpr int kTerminalFontSizeMinimum = 10;
 inline constexpr int kTerminalFontSizeMaximum = 32;
 

@@ -1,5 +1,7 @@
 #include "history_strip.hpp"
 #include <algorithm>
+#include <iterator>
+#include <string_view>
 #include <utility>
 namespace lapis::desktop {
 namespace {
@@ -8,9 +10,9 @@ constexpr std::uint64_t kept_screens = 4;
 
 // One row of `source` into row `row` of `out`, cut or padded to its width.
 void copy_row(const session::TerminalSnapshot& source, std::size_t source_row,
-              session::TerminalSnapshot& out, std::size_t row) {
+              session::TerminalSnapshot& out, std::size_t row, std::size_t& hyperlink_bytes) {
     const std::size_t source_columns = source.size.columns;
-    const std::size_t columns = std::min<std::size_t>(source_columns, out.size.columns);
+    std::size_t columns = std::min<std::size_t>(source_columns, out.size.columns);
     for (std::size_t column = 0; column < columns; ++column) {
         const auto index = source_row * source_columns + column;
         auto cell = source.cells[index];
@@ -22,8 +24,45 @@ void copy_row(const session::TerminalSnapshot& source, std::size_t source_row,
     }
     // A wide character cut at the edge would lose its second half.
     if (columns > 0 && columns < source_columns &&
-        source.cells[source_row * source_columns + columns].kind == session::CellKind::wide_tail)
+        source.cells[source_row * source_columns + columns].kind == session::CellKind::wide_tail) {
         out.cells[row * out.size.columns + columns - 1] = {};
+        --columns;
+    }
+    const auto begin = source_row * source_columns;
+    for (const auto& link : source.hyperlinks) {
+        const auto first = std::max<std::size_t>(link.first_cell, begin);
+        const auto end =
+            std::min<std::size_t>(std::size_t{link.first_cell} + link.cell_count, begin + columns);
+        if (end <= first)
+            continue;
+        const auto target = row * out.size.columns + first - begin;
+        const auto count = static_cast<std::uint32_t>(end - first);
+        if (!out.hyperlinks.empty()) {
+            auto& previous = out.hyperlinks.back();
+            if (std::size_t{previous.first_cell} + previous.cell_count == target &&
+                previous.uri == link.uri) {
+                previous.cell_count += count;
+                continue;
+            }
+        }
+        if (link.uri.size() > session::max_hyperlink_uri_bytes ||
+            hyperlink_bytes > session::max_hyperlink_bytes - link.uri.size() ||
+            out.hyperlinks.size() == session::max_hyperlink_spans)
+            continue;
+        out.hyperlinks.push_back({static_cast<std::uint32_t>(target), count, link.uri});
+        hyperlink_bytes += link.uri.size();
+    }
+}
+
+std::string_view uri_at(const session::TerminalSnapshot& snapshot, std::size_t cell) {
+    const auto found = std::upper_bound(
+        snapshot.hyperlinks.begin(), snapshot.hyperlinks.end(), cell,
+        [](std::size_t index, const auto& link) { return index < link.first_cell; });
+    if (found == snapshot.hyperlinks.begin())
+        return {};
+    const auto& link = *std::prev(found);
+    return cell - link.first_cell < link.cell_count ? std::string_view(link.uri)
+                                                    : std::string_view();
 }
 
 // Whether two rows show the same cells; columns past a row's width are blank.
@@ -37,7 +76,8 @@ bool same_row(const session::TerminalSnapshot& a, std::size_t a_row,
         const auto b_index = b_row * b.size.columns + column;
         const auto a_text = in_a ? a.text(a_index) : std::u32string_view();
         const auto b_text = in_b ? b.text(b_index) : std::u32string_view();
-        if (a_text != b_text)
+        if (a_text != b_text || (in_a ? uri_at(a, a_index) : std::string_view()) !=
+                                    (in_b ? uri_at(b, b_index) : std::string_view()))
             return false;
         if (in_a && in_b && a.cells[a_index].style != b.cells[b_index].style)
             return false;
@@ -63,34 +103,53 @@ void HistoryStrip::addPage(session::TerminalSnapshot page) {
     const auto first = static_cast<std::uint64_t>(page.history.viewport_offset);
     if (first >= archived_)
         return; // archived after browsing began: below the screen kept here
-    if (!seam_settled_ && first + page.size.rows >= archived_) {
-        seam_settled_ = true;
-        settleSeam(page, first);
-    }
     pages_.insert_or_assign(first, std::move(page));
+    if (!seam_settled_)
+        settleSeam();
     forget();
 }
 
-void HistoryStrip::settleSeam(const session::TerminalSnapshot& page, std::uint64_t first) {
-    // The most kept rows, ending at the newest, that the screen shows again at
-    // its top; a run of blank rows alone proves nothing.
-    const auto tail = archived_ - first; // kept rows of this page, the newest last
-    const auto most = std::min<std::uint64_t>(tail, rows() > 0 ? rows() - 1 : 0);
+void HistoryStrip::settleSeam() {
+    // A grown screen can overlap more than the newest archive page. Compare
+    // known rows first, and fetch earlier rows only for a plausible overlap.
+    seam_missing_.reset();
+    const auto most = std::min<std::uint64_t>(archived_, rows() > 0 ? rows() - 1 : 0);
+    bool established = false;
+    bool unavailable = false;
+    bool comparable = false;
     for (auto overlap = most; overlap > 0; --overlap) {
         bool same = true;
         bool shown = false;
+        std::optional<std::uint64_t> missing;
         for (std::uint64_t row = 0; row < overlap && same; ++row) {
-            const auto kept = tail - overlap + row;
-            same = same_row(page, kept, screen_, row);
+            const auto kept = archived_ - overlap + row;
+            std::uint64_t first{};
+            const auto* page = holding(kept, &first);
+            if (!page) {
+                unavailable = true;
+                if (!missing)
+                    missing = kept;
+                continue;
+            }
+            comparable = comparable || !blank_row(screen_, row);
+            same = same_row(*page, kept - first, screen_, row);
             shown = shown || !blank_row(screen_, row);
         }
-        if (same && shown) {
-            const bool at_screen = top_ == archived_;
-            archived_ -= overlap;
-            top_ = at_screen ? archived_ : std::min(top_, archived_);
+        if (!same || !shown)
+            continue;
+        if (missing) {
+            seam_missing_ = missing;
             return;
         }
+        const auto distance = archived_ - top_;
+        archived_ -= overlap;
+        top_ = distance < archived_ ? archived_ - distance : 0;
+        established = true;
+        break;
     }
+    // Rows no page holds, and blank rows alone, prove nothing about the seam.
+    // Leave it open until a page offers comparable nonblank evidence.
+    seam_settled_ = established || (!unavailable && comparable);
 }
 
 void HistoryStrip::prependPage(session::TerminalSnapshot page) {
@@ -126,6 +185,8 @@ const session::TerminalSnapshot* HistoryStrip::holding(std::uint64_t row,
 }
 
 std::optional<std::uint64_t> HistoryStrip::missing() const {
+    if (seam_missing_)
+        return seam_missing_;
     const auto end = std::min(archived_, top_ + rows());
     for (auto row = top_; row < end;) {
         std::uint64_t first{};
@@ -147,15 +208,16 @@ session::TerminalSnapshot HistoryStrip::view() const {
     out.cursor_rgb = screen_.cursor_rgb;
     out.palette = screen_.palette;
     out.cells.resize(static_cast<std::size_t>(out.size.columns) * out.size.rows);
+    std::size_t hyperlink_bytes{};
     for (std::uint64_t row = 0; row < rows(); ++row) {
         const auto strip_row = top_ + row;
         if (strip_row >= archived_) {
-            copy_row(screen_, strip_row - archived_, out, row);
+            copy_row(screen_, strip_row - archived_, out, row, hyperlink_bytes);
             continue;
         }
         std::uint64_t first{};
         if (const auto* page = holding(strip_row, &first))
-            copy_row(*page, strip_row - first, out, row);
+            copy_row(*page, strip_row - first, out, row, hyperlink_bytes);
     }
     out.history = {archived_ + rows(), top_, rows(), true};
     return out;

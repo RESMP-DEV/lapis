@@ -22,6 +22,7 @@
 #include <QLockFile>
 #include <QPointer>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QScopeGuard>
 #include <QTemporaryDir>
@@ -509,8 +510,9 @@ void truthfulStatus() {
     require(item.attentionCount() == 1, "stale requests remain visible for reconciliation");
     lapis::session::wire::AttentionSnapshot fresh;
     fresh.available = fresh.connected = true;
-    // The live Codex 0.155.1 observer reports this until the first turn.
+    // The producer owns the lifecycle phase; this diagnostic is display-only.
     fresh.diagnostic = QStringLiteral("Waiting for Codex thread history");
+    fresh.observation_phase = lapis::session::attention::ObservationPhase::awaiting_first_prompt;
     lapis::desktop::SessionPreview first(QStringLiteral("Codex"), {}, {}, QColor{}, "");
     first.applyAttention(fresh);
     require(first.statusLabel() == QStringLiteral("No prompt yet"),
@@ -526,11 +528,21 @@ void truthfulStatus() {
     claude.applyAttention(idle);
     require(claude.attentionCount() == 0 && claude.statusKind() == QStringLiteral("finished"),
             "an idle notice after a finished turn is not a pending request");
-    fresh.diagnostic = QStringLiteral("Reconciling Codex requests");
+    fresh.diagnostic = QStringLiteral("Vendor text changed during retry");
+    fresh.observation_phase = lapis::session::attention::ObservationPhase::reconciling;
     first.applyAttention(fresh);
     require(first.statusLabel() == QStringLiteral("No prompt yet"),
-            "an older service's one-second retry does not end the wait");
+            "a typed retry does not end a producer-established wait");
+    fresh.observation_phase = lapis::session::attention::ObservationPhase::unknown;
+    first.applyAttention(fresh);
+    require(first.statusLabel() == QStringLiteral("Status pending"),
+            "an unknown phase is not relabeled from vendor text");
+    lapis::desktop::SessionPreview legacy(QStringLiteral("Codex"), {}, {}, QColor{}, "");
+    legacy.applyAttention(fresh);
+    require(legacy.statusLabel() == QStringLiteral("Status pending"),
+            "legacy snapshots retain conservative unknown semantics");
     lapis::desktop::SessionPreview reconnecting(QStringLiteral("Codex"), {}, {}, QColor{}, "");
+    fresh.observation_phase = lapis::session::attention::ObservationPhase::reconciling;
     reconnecting.applyAttention(fresh);
     require(reconnecting.statusLabel() == QStringLiteral("Status pending"),
             "reconciliation alone still reads as pending");
@@ -1431,6 +1443,129 @@ QByteArray installStandInGrok(const QDir& root) {
     const auto path = qgetenv("PATH");
     qputenv("PATH", QFile::encodeName(root.filePath(QStringLiteral("bin"))) + ':' + path);
     return path;
+}
+
+// A Claude Code agent on another machine keeps one conversation: its first
+// launch names it, and a reconnect after the connection dropped, a restart
+// and nothing else resume it. A stand-in ssh records what it was given, per
+// host: devbox drops the first connection (ssh exits 255), then the second
+// ends by itself; typo never connects.
+void remoteClaudeReconnectsToItsConversation() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-reconnect-XXXXXX"));
+    require(directory.isValid(), "reconnect directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    QFile ssh(root.filePath(QStringLiteral("bin/ssh")));
+    require(ssh.open(QIODevice::WriteOnly), "write the stand-in ssh");
+    ssh.write(R"(#!/bin/sh
+d=$(dirname "$0"); host=$6
+n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1)); echo $n > "$d/$host.count"
+printf '%s\n' "$@" > "$d/$host.call$n"
+case "$host:$n" in typo:*) exit 255;; devbox:1) sleep 1; exit 255;; devbox:2) sleep 1; exit 1;; esac
+echo connected
+exec sleep 600
+)");
+    ssh.close();
+    require(ssh.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "make it executable");
+    QFile config(root.filePath(QStringLiteral("ssh_config")));
+    require(config.open(QIODevice::WriteOnly), "write an ssh config");
+    config.write("Host devbox typo\n");
+    config.close();
+    const auto calls = [&root](const QString& host) {
+        QFile count(root.filePath(QStringLiteral("bin/%1.count").arg(host)));
+        return count.open(QIODevice::ReadOnly) ? count.readAll().trimmed().toInt() : 0;
+    };
+    const auto call = [&root](const QString& host, int number) {
+        QFile file(root.filePath(QStringLiteral("bin/%1.call%2").arg(host).arg(number)));
+        return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+    };
+    const auto conversation = [](const QString& arguments) {
+        static const QRegularExpression id(QStringLiteral(R"( && s=([0-9a-f-]{36}) && )"));
+        return id.match(arguments).captured(1);
+    };
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        workspace.setSshConfigForTesting(config.fileName());
+        workspace.setReconnectTimingForTesting(
+            {.first_hold = std::chrono::milliseconds(300), .wait = std::chrono::milliseconds(100)});
+        require(workspace.createAgent(QStringLiteral("~/dev/far"), QStringLiteral("far"),
+                                      QStringLiteral("claude"), {}, {}, QStringLiteral("devbox")),
+                "a Claude Code agent on another machine");
+        auto* far = workspace.focusedSession();
+        require(far != nullptr, "the new agent is shown");
+        const auto id = far->sessionId();
+        require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 1; }, 10000), "ssh starts");
+        const auto first = call(QStringLiteral("devbox"), 1);
+        require(first.startsWith(QStringLiteral("-o\nServerAliveInterval=15\n-o\n"
+                                                "ServerAliveCountMax=4\n-t\ndevbox\n")) &&
+                    first.contains(QStringLiteral("cd ~/dev/far && s=")) &&
+                    !conversation(first).isEmpty() &&
+                    first.contains(QStringLiteral(R"(-lic 'claude '"$o $s")")),
+                "ssh keeps the connection alive and names the conversation");
+        require(workspace.agentPlace(id).value(QStringLiteral("place")) ==
+                    QStringLiteral("devbox:~/dev/far"),
+                "the agent's place is still its machine and folder");
+        require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 2; }, 10000) &&
+                    call(QStringLiteral("devbox"), 2) == first,
+                "a dropped connection reconnects to the same conversation");
+        require(waitFor(
+                    [&] {
+                        return far->connectionState() == QStringLiteral("ended") &&
+                               far->activity() == QStringLiteral("Process exited (1)");
+                    },
+                    10000),
+                "the reconnected agent ends by itself");
+        QElapsedTimer settle;
+        settle.start();
+        waitFor([&] { return settle.elapsed() > 800; }, 2000);
+        require(calls(QStringLiteral("devbox")) == 2, "an agent that ended itself stays ended");
+        require(workspace.restartAgent(id) &&
+                    waitFor([&] { return calls(QStringLiteral("devbox")) >= 3; }, 10000) &&
+                    call(QStringLiteral("devbox"), 3) == first,
+                "a restart resumes the same conversation");
+        require(
+            waitFor(
+                [far] { return screenText(far->snapshot()).contains(QStringLiteral("connected")); },
+                10000),
+            "the restarted agent is connected");
+        workspace.selectSession(id);
+        const auto split = workspace.splitAgent(QStringLiteral("right"));
+        require(!split.isEmpty() &&
+                    waitFor([&] { return calls(QStringLiteral("devbox")) >= 4; }, 10000),
+                "a split starts the same CLI beside it");
+        const auto fourth = call(QStringLiteral("devbox"), 4);
+        require(!conversation(fourth).isEmpty() && conversation(fourth) != conversation(first),
+                "as a new conversation of its own");
+        require(workspace.createAgent(QStringLiteral("~"), QStringLiteral("typo"),
+                                      QStringLiteral("claude"), {}, {}, QStringLiteral("typo")),
+                "an agent on a machine that never answers");
+        lapis::desktop::SessionPreview* typo = nullptr;
+        for (const auto& listed : workspace.sessions())
+            if (auto* item = listed.value<lapis::desktop::SessionPreview*>();
+                item != nullptr && item->title() == QStringLiteral("typo"))
+                typo = item;
+        require(typo != nullptr, "the agent is listed");
+        // It ends before or just after the window attaches, depending on timing.
+        require(waitFor(
+                    [typo] {
+                        return typo->connectionState() == QStringLiteral("ended") ||
+                               typo->connectionState() == QStringLiteral("disconnected");
+                    },
+                    10000),
+                "its connection fails");
+        settle.restart();
+        waitFor([&] { return settle.elapsed() > 800; }, 2000);
+        require(calls(QStringLiteral("typo")) == 1, "a connection that never worked stays ended");
+        // The unreachable one is abandoned; the others end.
+        for (const auto& closing : {id, split, typo->sessionId()})
+            require(workspace.closeSession(closing, true), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in agents close");
+    }
+    qputenv("PATH", path);
 }
 
 // A full-screen program that reports the mouse, as Claude Code's full-screen
@@ -2703,6 +2838,45 @@ void restartReportsValidationFailures() {
             "validation failure exposes its actual cause to the user");
 }
 
+// A restarted service must wait until its launch metadata is durable. The
+// readable but non-writable registry makes QSaveFile refuse the save after
+// restore planning, without racing a missing service or changing file flags.
+void restoreSaveFailureStartsNoService() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-restore-save-XXXXXX"));
+    require(directory.isValid(), "restore save-failure directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QString id = uuid();
+    WorkspaceOptions options;
+    options.restoreAgents = true;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                    {"agents", QJsonArray{agentRecord(canonical, id, "general")}}});
+    const auto original = readRegistry(options.storagePath);
+    const auto endpoint = QDir(canonical).filePath(id + QStringLiteral(".sock"));
+    const auto restore_permissions = qScopeGuard([&] {
+        if (!QFile::setPermissions(options.storagePath, QFile::ReadOwner | QFile::WriteOwner))
+            qWarning() << "Could not restore fixture registry permissions";
+    });
+    require(QFile::setPermissions(options.storagePath, QFile::ReadOwner),
+            "make the registry readable while its QSaveFile write fails");
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.workspaceError().contains(QStringLiteral("Cannot save workspace:")),
+                "restore reports the failed metadata commit");
+        require(workspace.sessions().isEmpty(), "failed restore retains no session objects");
+    }
+    require(readRegistry(options.storagePath) == original,
+            "failed restore leaves the original registry bytes intact");
+    require(!QFileInfo::exists(endpoint) && !QFileInfo::exists(endpoint + QStringLiteral(".log")),
+            "failed restore starts neither a service nor its log");
+    require(QDir(canonical).entryList({QStringLiteral("workspace.json.*")}, QDir::Files).isEmpty(),
+            "QSaveFile removed its failed restore temporary");
+}
+
 // The session service ends the agent's process group; the tab closes after.
 // Agents whose session service is gone (a reboot or crash) come back when
 // lapis opens, resuming the conversation their service recorded, like a
@@ -2825,6 +2999,143 @@ void requireProcessArguments(const QJsonArray& arguments, const QString& directo
                 },
                 10000),
             "the restarted process received the saved resume arguments");
+}
+
+// A reopen's resume arguments and managed provenance must commit together
+// before a process exists. A failed transaction also keeps the closed plan
+// retryable instead of losing it behind a launch that never happened.
+void reopenFailurePreservesTheRetryableManagedPlan() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-reopen-save-XXXXXX"));
+    require(directory.isValid(), "reopen save-failure directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const auto script = QDir(canonical).filePath(QStringLiteral("agent.sh"));
+    writeExecutable(script,
+                    QByteArrayLiteral("#!/usr/bin/env bash\n"
+                                      "printf '%s\\n' \"$@\" > \"$(dirname \"$0\")/args.$$.txt\"\n"
+                                      "read -r -t 60 line\n"));
+    const QString retained_id = QStringLiteral("ef715fac-a03a-45d4-8466-b0f2740c6b7b");
+    const QString managed_id = uuid();
+    auto retained = agentRecord(canonical, retained_id, "general");
+    retained.insert(QStringLiteral("program"), script);
+    retained.insert(QStringLiteral("harness"), QStringLiteral("kimi"));
+    auto managed = agentRecord(canonical, managed_id, "closed");
+    managed.insert(QStringLiteral("program"), script);
+    managed.insert(QStringLiteral("harness"), QStringLiteral("kimi"));
+    managed.insert(QStringLiteral("arguments"), QJsonArray{QStringLiteral("--user")});
+    WorkspaceOptions options;
+    options.restoreAgents = true;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{
+            {"version", 2},
+            {"activeCategory", "closed"},
+            {"categories",
+             QJsonArray{
+                 QJsonObject{{"id", "general"}, {"name", "General"}, {"selected", retained_id}},
+                 QJsonObject{{"id", "closed"}, {"name", "Closed"}, {"selected", managed_id}}}},
+            {"agents", QJsonArray{retained, managed}}});
+    writeObservedResume(QDir(canonical).filePath(managed_id + QStringLiteral(".sock")),
+                        {QStringLiteral("kimi"), QStringLiteral("m-1")});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "load reopen save-failure fixture");
+    auto* retained_item = workspace.session(retained_id);
+    auto* managed_item = workspace.session(managed_id);
+    require(waitFor(
+                [retained_item, managed_item] {
+                    return retained_item && managed_item && retained_item->inputReady() &&
+                           managed_item->inputReady();
+                },
+                10000),
+            "the reopen fixture starts");
+    const auto saved_agent = [&](const QString& id) {
+        for (const auto& value : QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                     .object()
+                                     .value(QStringLiteral("agents"))
+                                     .toArray())
+            if (value.toObject().value(QStringLiteral("id")).toString() == id)
+                return value.toObject();
+        throw std::runtime_error("reopen fixture agent is missing");
+    };
+    const QJsonArray expected_arguments{QStringLiteral("--user"), QStringLiteral("--session"),
+                                        QStringLiteral("m-1")};
+    const auto initial = saved_agent(managed_id);
+    require(initial.value(QStringLiteral("arguments")).toArray() == expected_arguments,
+            "restore planning preserves user arguments around the managed pair");
+    const auto initial_provenance = initial.value(QStringLiteral("managedResume")).toObject();
+    require(initial_provenance.value(QStringLiteral("index")).toInt(-1) == 1 &&
+                initial_provenance.value(QStringLiteral("identity")).toString() ==
+                    QStringLiteral("m-1"),
+            "the restored managed plan has provenance");
+    requireProcessArguments(expected_arguments, canonical);
+    for (const auto& name : QDir(canonical).entryList({QStringLiteral("args.*.txt")}, QDir::Files))
+        require(QFile::remove(QDir(canonical).filePath(name)), "remove startup argv receipts");
+
+    require(workspace.closeSession(managed_id) &&
+                waitFor([&workspace] { return workspace.sessions().size() == 1; }, 10000),
+            "close the managed reopen fixture");
+    require(workspace.canReopenAgent(), "the closed managed plan is retryable");
+    const auto previous_focus = workspace.focusedSession();
+    const auto previous_category = workspace.activeCategoryId();
+    const auto held_registry = QDir(canonical).filePath(QStringLiteral("registry-held"));
+    require(QFile::rename(options.storagePath, held_registry), "move complete registry bytes");
+    const auto complete_registry = readRegistry(held_registry);
+    require(
+        QDir().mkpath(options.storagePath, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+        "replace the registry path with a directory");
+    workspace.clearError();
+    require(!workspace.reopenAgent(), "a failed reopen save does not report success");
+    require(!workspace.workspaceError().isEmpty(), "a failed reopen names its save failure");
+    require(workspace.canReopenAgent(), "a failed reopen remains retryable");
+    require(workspace.sessions().size() == 1 && workspace.session(retained_id) == retained_item &&
+                workspace.focusedSession() == previous_focus &&
+                workspace.activeCategoryId() == previous_category,
+            "a failed reopen preserves the existing session and selection");
+    require(QDir(canonical).entryList({QStringLiteral("args.*.txt")}, QDir::Files).isEmpty(),
+            "a failed reopen starts no agent process");
+    require(readRegistry(held_registry) == complete_registry,
+            "a failed reopen leaves complete registry bytes unchanged");
+
+    require(QDir(options.storagePath).removeRecursively(), "remove the save-failure directory");
+    require(QFile::rename(held_registry, options.storagePath), "restore complete registry bytes");
+    QJsonObject first_published_record;
+    QObject::connect(&workspace, &Workspace::sessionsChanged, &workspace, [&] {
+        if (first_published_record.isEmpty() && workspace.sessions().size() == 2)
+            first_published_record = saved_agent(workspace.focusedSession()->sessionId());
+    });
+    require(workspace.reopenAgent() && workspace.sessions().size() == 2,
+            "a retryable reopen commits and starts");
+    auto* reopened = workspace.focusedSession();
+    require(reopened != nullptr && reopened->title() == managed_id &&
+                workspace.activeCategoryId() == QStringLiteral("closed"),
+            "a retried reopen restores its category and selection");
+    const auto root = QJsonDocument::fromJson(readRegistry(options.storagePath)).object();
+    const auto agents = root.value(QStringLiteral("agents")).toArray();
+    require(agents.size() == 2 &&
+                agents.first().toObject().value(QStringLiteral("id")).toString() == retained_id &&
+                agents.last().toObject().value(QStringLiteral("id")).toString() ==
+                    reopened->sessionId(),
+            "a retried reopen appends without changing existing registry order");
+    const auto reopened_record = agents.last().toObject();
+    require(reopened_record.value(QStringLiteral("arguments")).toArray() == expected_arguments,
+            "one save persists the full managed resume arguments");
+    const auto provenance = reopened_record.value(QStringLiteral("managedResume")).toObject();
+    require(first_published_record.value(QStringLiteral("managedResume")).toObject() ==
+                initial_provenance,
+            "the first published reopen already has durable managed provenance");
+    require(provenance.value(QStringLiteral("index")).toInt(-1) == 1 &&
+                provenance.value(QStringLiteral("identity")).toString() == QStringLiteral("m-1"),
+            "one save persists managed provenance with the launch");
+    requireProcessArguments(expected_arguments, canonical);
+    require(waitFor([reopened] { return reopened->inputReady(); }, 10000),
+            "the reopened process completes attachment before closing");
+
+    require(workspace.closeSession(reopened->sessionId()), "close the retried agent");
+    require(waitFor([&workspace] { return workspace.sessions().size() == 1; }, 10000),
+            "the retried agent ends");
+    require(workspace.closeSession(retained_id), "close the retained fixture agent");
+    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "reopen save-failure agents close");
 }
 
 // A launch already at the registry's durable argument cap must not receive an
@@ -3561,7 +3872,9 @@ int main(int argc, char** argv) {
         outputEstimate();
         agentsStartWithoutParentSessionMarkers();
         restartRefusesClosingAgent();
+        restoreSaveFailureStartsNoService();
         agentsRestoreAfterServiceLoss();
+        reopenFailurePreservesTheRetryableManagedPlan();
         updaterLifecycle();
         updaterOutputIsDrainedWithABoundedTail();
         failedUpdaterStartClearsTheQueue();
@@ -3585,6 +3898,7 @@ int main(int argc, char** argv) {
         harnessesUpdateBeforeNewAgents();
         windowWaitsForTheRestoreHelper();
         phoneStartsAnAgentInItsCategory();
+        remoteClaudeReconnectsToItsConversation();
         resumingAConversationStartsItsCli();
         terminalsRunPlainShells();
         wheelReachesAFullScreenProgram();

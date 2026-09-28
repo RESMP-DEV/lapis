@@ -2,10 +2,13 @@
 #include "session_descriptor.hpp"
 #include "transport/local_protocol.hpp"
 
+#include "link_receiver.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
+#include "workspace.hpp"
 #include <QClipboard>
 #include <QDataStream>
+#include <QDesktopServices>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -24,6 +27,7 @@
 #include <QSGRendererInterface>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QUrl>
 #include <QWheelEvent>
 #include <array>
 #include <atomic>
@@ -200,6 +204,38 @@ void composition(lapis::desktop::TerminalSurface& surface, QStringView preedit,
     event.setCommitString(commit, replace, replace == 0 ? 0 : 1);
     QCoreApplication::sendEvent(&surface, &event);
 }
+void local_file_url_contract(lapis::desktop::TerminalSurface& surface) {
+    struct Case {
+        QString url;
+        QString expected;
+        const char* message{};
+    };
+    QString raw_nul = QStringLiteral("file:///tmp/before");
+    raw_nul.append(QChar(u'\0'));
+    raw_nul.append(QStringLiteral("after"));
+    const std::array cases{
+        Case{QStringLiteral("file://server/share/file"), QStringLiteral("//server/share/file"),
+             "UNC file URL lost its network path"},
+        Case{QStringLiteral("file:///local/file"), QStringLiteral("/local/file"),
+             "Ordinary file URL did not become its local path"},
+        Case{QStringLiteral("file:///drop%20o%27clock%2F%E7%95%8C"),
+             QStringLiteral("/drop o'clock/界"),
+             "Encoded spaces, apostrophes, slashes or Unicode were not decoded"},
+        Case{QStringLiteral("file:///%2"), {}, "A malformed percent escape was accepted as a path"},
+        Case{QStringLiteral("https://example.invalid/file"),
+             {},
+             "A non-file URL was accepted as a local path"},
+        Case{QStringLiteral("file:///invalid%FF"),
+             {},
+             "Invalid encoded UTF-8 was accepted as a different filename"},
+        Case{QStringLiteral("file:///before%00after"),
+             {},
+             "A percent-encoded NUL was accepted as a path"},
+        Case{raw_nul, {}, "A raw NUL was accepted in a file URL"},
+    };
+    for (const auto& tested : cases)
+        require(surface.localFilePath(tested.url) == tested.expected, tested.message);
+}
 void input_contract(bool background) {
     Fixture f;
     QQuickWindow window;
@@ -209,6 +245,9 @@ void input_contract(bool background) {
     window.setGeometry(100, 100, 640, 360);
     lapis::desktop::TerminalSurface surface(window.contentItem());
     surface.setSize(QSizeF(640, 360));
+    // These fixed-grid input fixtures do not implement service resize replies.
+    // Real resize/history ordering is exercised by the connection and UI cases.
+    surface.setHoldResize(true);
     surface.setDocument(&f.document);
     surface.setInteractive(true);
     f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
@@ -227,6 +266,7 @@ void input_contract(bool background) {
         return window.isActive() && surface.hasActiveFocus();
     });
     static_cast<void>(text_frames(peer));
+    local_file_url_contract(surface);
     require(surface.inputMethodQuery(Qt::ImEnabled).toBool(), "Ready terminal disabled IME");
     // Composition stays on; predictions, completion and corrections, which
     // the platform would type into the program, are declined.
@@ -338,6 +378,44 @@ void input_contract(bool background) {
     }
     composition(surface, {}, QStringLiteral("late-after-paste"));
     require(text_frames(peer).isEmpty(), "Pre-paste composition committed late");
+    {
+        composition(surface, QStringLiteral("before-drop"));
+        bool paste_claimed = false;
+        bool paste_released = false;
+        const QMetaObject::Connection paste_ownership_connection = QObject::connect(
+            &surface, &lapis::desktop::TerminalSurface::inputOwnershipChanged, [&] {
+                if (surface.pasting())
+                    paste_claimed = true;
+                else
+                    paste_released = true;
+            });
+        require(surface.pasteText(QStringLiteral("dropped界 ")),
+                "Programmatic file-drop paste was rejected");
+        require(text_frames(peer, QStringLiteral("dropped界 ").toUtf8().size()) ==
+                    QStringLiteral("dropped界 ").toUtf8(),
+                "File-drop paste was split or changed");
+        require(paste_claimed && paste_released, "File-drop paste bypassed paste ownership");
+        require(!surface.composing() && !surface.pasting(),
+                "File-drop paste retained stale input ownership");
+        composition(surface, {}, QStringLiteral("late-after-drop"));
+        require(text_frames(peer).isEmpty(), "File-drop composition committed late");
+        QObject::disconnect(paste_ownership_connection);
+    }
+    {
+        SessionPreview replacement(QStringLiteral("replacement"), QStringLiteral("/tmp"), {},
+                                   QColor(Qt::white), "");
+        const auto rebind = QObject::connect(
+            &surface, &lapis::desktop::TerminalSurface::inputOwnershipChanged, [&] {
+                if (surface.pasting())
+                    surface.setDocument(&replacement);
+            });
+        require(!surface.pasteText(QStringLiteral("wrong-destination")),
+                "Paste accepted a destination replaced during ownership notification");
+        require(text_frames(peer).isEmpty(), "Rebound paste reached the old terminal");
+        require(!surface.pasting(), "Rejected paste retained ownership");
+        QObject::disconnect(rebind);
+        surface.setDocument(&f.document);
+    }
     composition(surface, QStringLiteral("before-history"));
     f.document.olderHistory();
     composition(surface, {}, QStringLiteral("history-leak"));
@@ -531,9 +609,12 @@ void command_links_open() {
     window.setGeometry(100, 100, 640, 360);
     lapis::desktop::TerminalSurface surface(window.contentItem());
     surface.setSize(QSizeF(640, 360));
+    // These fixed-grid input fixtures do not implement service resize replies.
+    // Real resize/history ordering is exercised by the connection and UI cases.
+    surface.setHoldResize(true);
     surface.setDocument(&f.document);
     surface.setInteractive(true);
-    surface.setOpensLinksForTesting(false);
+    LinkReceiver receiver;
     QStringList opened;
     QObject::connect(&surface, &lapis::desktop::TerminalSurface::linkOpened,
                      [&opened](const QString& target) { opened.append(target); });
@@ -581,12 +662,13 @@ void command_links_open() {
     QCoreApplication::sendEvent(&surface, &release);
     require(surface.hoveredLink().isEmpty(), "Releasing Command left the link underlined");
     const auto click = [&](QPointF position) {
-        QMouseEvent press(QEvent::MouseButtonPress, position, surface.mapToScene(position),
-                          surface.mapToGlobal(position), Qt::LeftButton, Qt::LeftButton, held);
-        QCoreApplication::sendEvent(&surface, &press);
-        QMouseEvent up(QEvent::MouseButtonRelease, position, surface.mapToScene(position),
-                       surface.mapToGlobal(position), Qt::LeftButton, Qt::NoButton, held);
-        QCoreApplication::sendEvent(&surface, &up);
+        const auto scene = surface.mapToScene(position);
+        QMouseEvent press(QEvent::MouseButtonPress, scene, scene, surface.mapToGlobal(position),
+                          Qt::LeftButton, Qt::LeftButton, held);
+        QCoreApplication::sendEvent(&window, &press);
+        QMouseEvent up(QEvent::MouseButtonRelease, scene, scene, surface.mapToGlobal(position),
+                       Qt::LeftButton, Qt::NoButton, held);
+        QCoreApplication::sendEvent(&window, &up);
     };
     click(at(7));
     click(at(20));
@@ -594,6 +676,31 @@ void command_links_open() {
     require(opened.size() == 2 && same(opened[0], image.fileName()) &&
                 opened[1] == QStringLiteral("https://example.com/a"),
             "Command-click did not open the file and the link, and only those");
+    require(receiver.urls.size() == 2 && receiver.urls[0].isLocalFile() &&
+                same(receiver.urls[0].toLocalFile(), image.fileName()),
+            "Command-click did not reach the OS URL dispatcher");
+    // Real OSC 8 output, including a file URI whose visible label names no path.
+    lapis::session::Terminal labeled({40, 4});
+    const auto file_uri = QUrl::fromLocalFile(image.fileName()).toEncoded();
+    labeled.feed("\x1b]8;;https://example.com/destination\x1b\\docs\x1b]8;;\x1b\\ ");
+    labeled.feed(std::string("\x1b]8;;") + file_uri.toStdString() + "\x1b\\image\x1b]8;;\x1b\\ ");
+    labeled.feed(
+        "www.example.com\r\n\x1b]8;;javascript:alert(1)\x1b\\https://example.com\x1b]8;;\x1b\\");
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 3, labeled.snapshot()}));
+    until([&] { return f.document.snapshot().hyperlinks.size() == 3; });
+    hover(at(1), held);
+    require(surface.hoveredLink() == QStringLiteral("https://example.com/destination"),
+            "Labeled link hover did not expose its actual destination");
+    click(at(1));
+    click(at(7));
+    click(at(14));
+    click(surface.cellRect(3, 1).center());
+    require(opened.size() == 5 && receiver.urls.size() == 5 &&
+                opened[2] == QStringLiteral("https://example.com/destination") &&
+                same(opened[3], image.fileName()) &&
+                opened[4] == QStringLiteral("https://www.example.com"),
+            "Labeled/web/file links did not dispatch, or an unsupported target dispatched");
     require(text_frames(peer).isEmpty(), "Command-click sent input to the agent");
 }
 // Dragging selects screen text and double-clicking selects a word. The copy
@@ -605,6 +712,9 @@ void selection_and_scroll() {
     window.setGeometry(100, 100, 640, 360);
     lapis::desktop::TerminalSurface surface(window.contentItem());
     surface.setSize(QSizeF(640, 360));
+    // These fixed-grid input fixtures do not implement service resize replies.
+    // Real resize/history ordering is exercised by the connection and UI cases.
+    surface.setHoldResize(true);
     surface.setDocument(&f.document);
     surface.setInteractive(true);
     f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);

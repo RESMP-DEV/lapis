@@ -1,0 +1,112 @@
+{
+  "schema": "lapis.terminal-usability/1",
+  "recorded_at": "2026-09-27T09:58:53.740478+00:00",
+  "base_revision": "fa8f6e901d1dd484c8eabc89d50f8be410bbd7e1",
+  "platform": "macOS arm64",
+  "implementation": [
+    "Bounded OSC 8 destinations survive Ghostty, negotiated v6 snapshots and disk/live history.",
+    "Command-click dispatches visible HTTP(S), www addresses, labeled HTTP(S) and local file URIs; hover exposes the destination.",
+    "Default terminal text is 14 pixels; Appearance accepts direct 10-32 pixel entry and preserves saved sizes.",
+    "Old-service attachment fallback is bounded to one retry with the same identity and fingerprint.",
+    "History waits for a pending resize and cancels deferred requests on return to live; overlap reconciliation spans archive pages.",
+    "Focused-folder lookup is exposed to QML."
+  ],
+  "checks": [
+    {
+      "name": "headless C++ build and CTest",
+      "passed": true,
+      "cases": 4
+    },
+    {
+      "name": "desktop C++ build and non-GUI CTest",
+      "passed": true,
+      "cases": 28,
+      "reuse": "Unchanged cases retain the original pass; workspace and connection cases rerun after the final history changes."
+    },
+    {
+      "name": "background UI, shortcuts and input",
+      "passed": true,
+      "cases": 3,
+      "mode": "Qt offscreen/software; URL dispatcher intercepted; no browser or file-handler app opened."
+    },
+    {
+      "name": "C++ format, Cppcheck and clang-tidy",
+      "passed": true,
+      "reuse": "Full first-party analysis followed by affected translation-unit reruns after fixes."
+    },
+    {
+      "name": "desktop-enabled AddressSanitizer and UndefinedBehaviorSanitizer",
+      "passed": true,
+      "cases": "terminal, protocol, history store, history strip, live connection, background terminal input"
+    },
+    {
+      "name": "desktop-enabled ThreadSanitizer",
+      "passed": true,
+      "cases": "terminal, protocol, history store, history strip, live connection"
+    },
+    {
+      "name": "real-service CLI attachment and OSC 8 negotiation",
+      "passed": true,
+      "cases": [
+        "identity-boundaries",
+        "synchronization-boundaries",
+        "detach",
+        "mismatch",
+        "hyperlink-capability"
+      ]
+    },
+    {
+      "name": "disk history including real ENOSPC and recovery",
+      "passed": true
+    },
+    {
+      "name": "quality",
+      "passed": true,
+      "cases": "Ruff, instruction/symlink/ignore checks and Python unit suite"
+    }
+  ],
+  "regression_controls": [
+    "Cross-page resize overlap failed before its fix and passed afterward.",
+    "Malformed/truncated/oversized link metadata is rejected or omitted without dropping normal terminal text.",
+    "Invalid explicit destinations cannot fall back to opening the visible label.",
+    "Legacy and link-aware clients attach concurrently to the same real PTY child.",
+    "Invalid font entry restores the saved size; successful entry updates the live grid and persisted settings."
+  ],
+  "limitations": [
+    "Native macOS pointer delivery, external application launching, native IME and GPU qualification were not rerun; these are background Qt results.",
+    "Existing services need the new service binary to supply OSC 8 metadata; the desktop falls back to visible links with an older service.",
+    "New services read old disk archives; older service binaries cannot decode newly archived pages containing the link extension.",
+    "The running user app and services were not replaced or restarted."
+  ],
+  "source_files_sha256": {
+    "CONTRIBUTING.md": "075b02b30de5da755c1406991a49b2f40cb689405a7db582f5db7db59b68fc35",
+    "README.md": "e2d0b94f1f1c9ae99a33abb9ddfe8eabeaca9375a43f04c5e80199d802d06e11",
+    "apps/desktop/CMakeLists.txt": "9ca1a886a01dff1c8ef0fd460bd75d722ddb5b52851c26363d1d58ec4ca9e11d",
+    "apps/desktop/qml/Main.qml": "bad6734e8e2abf45143e24a607bd26e4ebf027d3fdc1fd9604413425433781b5",
+    "apps/desktop/qml/Settings.qml": "f3b38002f7611098423bc6e4d62c009208786fcc82656805ae8f19bffdeab91e",
+    "apps/desktop/src/history_strip.cpp": "b40a200ba8441769098dd63d64299247136401c0cce2134d57e7b025bbbda263",
+    "apps/desktop/src/history_strip.hpp": "f9e8404c9ce8754cc2483fc3f710182629b0deb8782f21b4c7ae2df4e45ae1b4",
+    "apps/desktop/src/keymap.hpp": "05a5b6aaa18cc6e9e60e744256ba9ec560a89284b5cb6a3f93267cc68f147ebe",
+    "apps/desktop/src/live_connection.cpp": "bc7a04e425024c825605eb796e34672b3cb2477e7ac96e2532f49e5a285bb123",
+    "apps/desktop/src/live_connection.hpp": "8918e3438188efbde0509ed9be8222366b2f7c97910fe420b9dbe8759f4c4a3b",
+    "apps/desktop/src/terminal_surface.cpp": "fc00aad7b0ce32594499636d311b5b85e14150eced608dd495a115f27c502bc9",
+    "apps/desktop/src/terminal_surface.hpp": "e4cbe8c78257361dd179978dbeb8940500fad593a1a0e929bacc819527a669f9",
+    "apps/desktop/src/workspace.hpp": "078534d6ce77a343be32d3222f0a64988db9610cf7c58870835b27d01da289fd",
+    "apps/desktop/tests/history_strip_test.cpp": "668dc7bd7b53ee3b3ff3c163a47a777b340366c6930efbdcb5a946a2641a631b",
+    "apps/desktop/tests/link_receiver.hpp": "9fe8f679dafe8debd6f03864c62127ac319599b29c6ded9743d64391023b8ff7",
+    "apps/desktop/tests/live_connection_test.cpp": "ac3a197d4941b467e63c771f4e035b6c0152d2c44e8eab99d3f69e680a4de9cd",
+    "apps/desktop/tests/terminal_input_test.cpp": "f81894ce32b87e9f4d8bda4227888d00b0132702167484b7198ed6098d8d0ef6",
+    "apps/desktop/tests/ui_preview_test.cpp": "668160176054c578eede47c548f97c50ee89b27a906c9c713a722bc6f807978d",
+    "docs/architecture.md": "341ab7c02ef4a8edb0b574f6c90966547e8d337d46b65d29cc6dda09f826772d",
+    "scripts/check_cli_launch.py": "4fc74d5618a8524009a3e91c84ca28a706225b0f7aeb20fd336c5ecf5211f874",
+    "services/session/include/lapis/session/terminal.hpp": "2cda68268b4c4b37495c27d366f35960dfceaa08ea9a10f7d8103bbf077859fa",
+    "services/session/src/session_service.cpp": "5cfd8b1020617b5348eceda8eaa37860baefa4aa4e050b7fb5c910eac43a7f92",
+    "services/session/src/terminal/terminal.cpp": "8c59a506c5ef0895c1527e19d89b52a3f487334951de07a26c56cedaf7fd7747",
+    "services/session/src/transport/local_protocol.cpp": "93abb738bf0bd05aebbece9cc92db889b3a2ad5669b2d6bcd02c96bc9475a4ca",
+    "services/session/src/transport/local_protocol.hpp": "157c25c48224cd49ae7b6165a9c426a4fff46fb0243e717d927d4f1d387028e2",
+    "services/session/tests/history_store_test.cpp": "11999be0f579dc54368e533ddcc1a635b6bc990bcad2fbf06a69e416595f7824",
+    "services/session/tests/local_protocol_test.cpp": "3b455b14dd8681843786cfb8aaa57b500bb20e8c1eac1e30213f9a598e3d8017",
+    "services/session/tests/terminal/terminal_test.cpp": "dfd64f1470ec12eaec2c0fdfd6738a64a0fd88b0c13a3fefb80f48807d31635e"
+  },
+  "private_receipt_directory": "build/reports/"
+}

@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-26T01:18:34.610435+00:00",
+  "platform": "darwin",
+  "scope": "Local PR 17 consolidation with the uncommitted quality repair batch; source and acceptance fixes for resume continuity. No PR update, merge or release was performed.",
+  "base_revision": "bad6e1576b0bee6b418a452fc0aeadd255162a0e",
+  "source_dirty": true,
+  "pr": {
+    "number": 17,
+    "head": "68b6530451c63a795d4b16c97f29587ff29d5848",
+    "url": "https://github.com/RESMP-DEV/lapis/pull/17",
+    "unresolved_threads": 0,
+    "reviewers": {
+      "kimi": {
+        "state": "completed",
+        "findings": 0,
+        "head": "68b6530451c63a795d4b16c97f29587ff29d5848",
+        "kind": "COMMENTED; not a human approval",
+        "verification_limit": "Reviewer ran Python quality and inspected C++; coordinator now ran combined native checks."
+      },
+      "coderabbit": {
+        "state": "skipped/unavailable",
+        "reason": "Automatic review skipped for repository with fewer than 10 stars; green check is not approval."
+      },
+      "glm-5-2": {
+        "state": "skipped/unavailable",
+        "reason": "Provider cooldown; durable job pending",
+        "retry_not_before": "2026-09-26T07:00:00Z"
+      },
+      "minimax-m3": {
+        "state": "skipped/unavailable",
+        "reason": "Provider cooldown; durable job pending",
+        "retry_not_before": "2026-09-26T07:00:00Z"
+      }
+    },
+    "protection_observation": "main branch protection API reports not protected; effective branch rules empty. No bypass used."
+  },
+  "changes": [
+    "Applied PR 17 resume policy/version/legacy reader on top of the existing quality repairs.",
+    "Preserved loaded legacy Claude/Codex identities against printed checkpoint downgrade while allowing independent observer replacement.",
+    "Shared the existing real-service checkpoint fixture; verifies automatic managed legacy resume and no downgrade after consumed output.",
+    "Updated the restore acceptance helper for all six same-conversation resumes and exact durable managed provenance; unit control rejects stale, duplicate and mismatched plans.",
+    "Corrected README/architecture checkpoint and Antigravity behavior."
+  ],
+  "checks": [
+    {
+      "command": "SHELL=<isolated-login-shell> QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop -R '^workspace$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "seconds": 18.33,
+      "local_log": "build/pr17-integration/ctest-final-desktop.log"
+    },
+    {
+      "command": "SHELL=<isolated-login-shell> QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop-asan -R '^workspace$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "seconds": 24.18,
+      "local_log": "build/pr17-integration/ctest-final-desktop-asan.log"
+    },
+    {
+      "command": "SHELL=<isolated-login-shell> QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop-tsan -R '^workspace$' --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "seconds": 80.35,
+      "local_log": "build/pr17-integration/ctest-final-desktop-tsan.log"
+    },
+    {
+      "command": "ctest --test-dir build/<desktop-mode> -R \"^(workspace|agent-checkpoint)$\" --output-on-failure --no-tests=error",
+      "exit_code": 0,
+      "scope": "Pre-legacy-fix integration passed in native, ASan/UBSan and TSan. Agent-checkpoint source/test are unchanged since; workspace was rerun above after the legacy fix.",
+      "local_logs": [
+        "build/pr17-integration/ctest-desktop.log",
+        "build/pr17-integration/ctest-asan.log",
+        "build/pr17-integration/ctest-tsan.log"
+      ]
+    },
+    {
+      "command": "python3 build/pr17-integration/audit_checks.py; python3 build/pr17-integration/audit_final.py",
+      "exit_code": 0,
+      "scope": "clang-format, Cppcheck and clang-tidy: workspace/checkpoint implementation and tests, then final service and workspace-test changes. Final pass supersedes earlier workspace-test analysis.",
+      "local_receipts": [
+        "build/pr17-integration/static/receipt.json",
+        "build/pr17-integration/static-final/receipt.json"
+      ]
+    },
+    {
+      "command": "SHELL=<isolated-login-shell> python3 -u scripts/check_restore.py",
+      "exit_code": 0,
+      "scope": "Disposable windowless workspace; native Codex and Claude against a loopback fake model, and Grok/Kimi/OpenCode/OMP stand-ins. Two simulated power losses, second through launchd. All six same identities resumed with exactly one managed pair; final live helper restarted nothing.",
+      "codex_context_items": [
+        3,
+        5,
+        7
+      ],
+      "claude_context_messages": [
+        2,
+        5,
+        8
+      ],
+      "local_log": "build/pr17-integration/restore-live.log"
+    },
+    {
+      "command": "SHELL=<isolated-login-shell> just quality",
+      "exit_code": 0,
+      "python_tests": 189,
+      "python_test_seconds": 14.846,
+      "scope": "Repository contracts, diff, Python lint/format and unit discovery; documentation updates after this run have separate link/diff checks.",
+      "local_receipt": "build/pr17-integration/quality-report/receipt.json"
+    },
+    {
+      "command": "git diff --check plus source-hash, document-link, instruction-symlink and owned-fixture cleanup checks",
+      "exit_code": 0,
+      "local_receipt": "build/pr17-integration/document-cleanup-checks.json"
+    }
+  ],
+  "native_cli_identity": {
+    "codex": {
+      "sha256": "e1e083ab281668d370b5aa4d21a2803158723380ef1a04be80ffa459e700d407",
+      "version": "codex-cli 0.0.0"
+    },
+    "claude": {
+      "sha256": "387a5c5dcdbb815085edf0baf79591f9d8894efe922bceaf3d75b1b08055229d",
+      "version": "2.1.280 (Claude Code)"
+    }
+  },
+  "source_sha256": {
+    "CMakeLists.txt": "9ffbfd7aa614be3c783a976fd1f58468f09b8891325c10570c83c236820412d0",
+    "apps/desktop/src/workspace.cpp": "726df8b96d278f86eae7937654eb11a725ab7be70aaf44a104222186616b69f4",
+    "apps/desktop/src/workspace.hpp": "e00e4914ecb00a53cd41e8954da1e5a4bde39cd8f9634ca3ab458b7ebaff815d",
+    "apps/desktop/tests/workspace_test.cpp": "a85a4331027d67076ec19ec01a2488d234e7d6d0921c33a9ae47e9e7f7a205e7",
+    "services/session/src/session_service.cpp": "133a797a3f18f7eadb9b601e2833fd58a8308e95b152af159a3c1831a13ef366",
+    "services/session/src/agent_checkpoint.cpp": "48ae904ed2dd7ef4e214df31eae3a0b0c650b531700ce5e511047dc4a3066d8e",
+    "services/session/src/agent_checkpoint.hpp": "ba2d4a68b4a41cd3906efb0158e1192b1539699b6951b7d38d96279cef881370",
+    "services/session/tests/agent_checkpoint_test.cpp": "f00f8870eb46bbcce87dae55c229e1c012b96a370e7e823ae0e08fcaaf85316f",
+    "scripts/check_restore.py": "b5cd6fcdd32d83f9116581c15855aa05a630ef6366d3182b41d9bc5d38a4110d",
+    "scripts/tests/test_check_restore.py": "bcd4657e21cc1bc6381c5afced2d0c21a068f0f06fdc9600b6d5dc1b5c9c7502",
+    "README.md": "669d58ac8e30409a0678d7d7f868c7238c77ad3f473b2d148e3590156fb3dfdd",
+    "docs/architecture.md": "f73080bf0e35abb23449e320d086dfcc28e3eec108fb0ad8dc65af16bd2e9a91",
+    "AGENTS.md": "79b21ea05b4559cf339b10a248cdca64e2325211a9886369fbb25c0d232e6d90",
+    "CONTRIBUTING.md": "418ee86ffc169628447087772245c3e9f00923ae1e1cc6f70b4f02e0c9c97d9a"
+  },
+  "prior_evidence": {
+    "path": "evidence/quality-followup.json",
+    "unchanged_source_files": 24,
+    "source_hash_check": "build/pr17-integration/preserved-quality-inputs.json",
+    "scope": "Earlier independent iOS/remote/input/tooling source hashes preserved. Do not relabel earlier checks as fresh; changed service/workspace behavior has fresh validation above."
+  },
+  "limits": [
+    "These integration fixes are local and uncommitted; Kimi reviewed the pushed PR head, not this dirty combined source.",
+    "Optional reviewers remain skipped/deferred as listed; their cooldown is not approval.",
+    "Simulated power loss is not an actual reboot. Four other CLIs use stand-ins, not native resume qualification.",
+    "Workspace TSan passing does not clear the earlier harness-models/usage reports requiring instrumented Qt Core.",
+    "The prior deferred-history queue regression and native macOS Finder-drop/IME acceptance gaps remain; no GUI input or cursor interaction was used."
+  ],
+  "local_artifact_policy": "Only sanitized outcomes and hashes are stored here; detailed logs and disposable fixture output stay under ignored build/."
+}

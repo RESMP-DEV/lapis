@@ -36,6 +36,51 @@ void write(const QString& path, const QByteArray& text) {
     require(file.open(QIODevice::WriteOnly) && file.write(text) == text.size(), "write a fixture");
 }
 
+// One identity/config catalog backs the picker, launch argv, restore and
+// model flags; unknown ids never become a CLI, and retired Gemini stays known.
+void shares_harness_identity_and_configuration() {
+    QStringList order;
+    for (const auto& harness : lapis::desktop::harnesses())
+        order << harness.id;
+    require(order == QStringList({QStringLiteral("claude"), QStringLiteral("codex"),
+                                  QStringLiteral("opencode"), QStringLiteral("grok"),
+                                  QStringLiteral("omp"), QStringLiteral("agy"),
+                                  QStringLiteral("kimi"), QStringLiteral("gemini")}),
+            "the shared catalog keeps the CLI order, including retired Gemini");
+
+    require(lapis::desktop::find_harness(QStringLiteral("not-a-cli")) == nullptr,
+            "an unknown external harness has no descriptor");
+    require(lapis::desktop::harness_program(QStringLiteral("not-a-cli")).isEmpty(),
+            "an unknown external harness has no program");
+    require(lapis::desktop::harness_label(QStringLiteral("not-a-cli")) ==
+                QStringLiteral("not-a-cli"),
+            "an unknown external harness keeps its id as its label");
+
+    const auto* codex = lapis::desktop::find_harness(QStringLiteral("codex"));
+    require(codex != nullptr && codex->offered &&
+                codex->defaultArguments() ==
+                    QStringList({QStringLiteral("-c"),
+                                 QStringLiteral("check_for_update_on_startup=false")}) &&
+                codex->resumeOption == QStringLiteral("resume") &&
+                codex->modelArguments(QStringLiteral("gpt-6-astra")) ==
+                    QStringList({QStringLiteral("-m"), QStringLiteral("gpt-6-astra")}),
+            "Codex keeps its startup setting, native resume subcommand and short model flag");
+
+    const auto* omp = lapis::desktop::find_harness(QStringLiteral("omp"));
+    require(omp != nullptr && omp->modelArguments(QStringLiteral("provider/model")) ==
+                                  QStringList{QStringLiteral("--model=provider/model")},
+            "OMP keeps its assignment model flag");
+
+    const auto* gemini = lapis::desktop::find_harness(QStringLiteral("gemini"));
+    require(gemini != nullptr && !gemini->offered && !gemini->command.isEmpty() &&
+                gemini->resumeOption.isEmpty() &&
+                gemini->modelArguments(QStringLiteral("gemini-x")).isEmpty(),
+            "retired Gemini restores by identity but offers no resume or model flag");
+
+    require(codex->modelArguments(QString()).isEmpty(),
+            "a default model starts without the model flag");
+}
+
 // Each CLI's own list, shaped as the installed CLIs gave them on September
 // 24: the default first, then the CLI's order or the most recently used.
 void reads_each_cli_list() {
@@ -240,6 +285,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         reads_each_cli_list();
+        shares_harness_identity_and_configuration();
         asks_each_installed_cli();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

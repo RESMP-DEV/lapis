@@ -80,6 +80,18 @@ struct TerminalHistory {
     bool primary_available{};
 };
 
+// OSC 8 destinations for contiguous viewport cells. Keep this separate from
+// text/style storage so ordinary screens do not allocate per-cell strings.
+struct TerminalHyperlink {
+    std::uint32_t first_cell{};
+    std::uint32_t cell_count{};
+    std::string uri;
+    bool operator==(const TerminalHyperlink&) const = default;
+};
+inline constexpr std::size_t max_hyperlink_uri_bytes = 4096;
+inline constexpr std::size_t max_hyperlink_spans = 1024;
+inline constexpr std::size_t max_hyperlink_bytes = 65536;
+
 struct TerminalSnapshot {
     std::uint64_t revision{};
     TerminalSize size;
@@ -98,6 +110,7 @@ struct TerminalSnapshot {
     std::vector<TerminalCell> cells; // Row-major; exactly columns * rows.
     std::u32string graphemes;
     TerminalHistory history;
+    std::vector<TerminalHyperlink> hyperlinks;
 
     [[nodiscard]] std::u32string_view text(std::size_t cell_index) const;
     // Resolve colors against this snapshot, then apply inverse. Bold alone does
