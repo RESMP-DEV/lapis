@@ -584,7 +584,10 @@ void Workspace::watch(SessionPreview* item) {
     connect(item, &SessionPreview::connectionChanged, this, [this, item] { finishClosing(item); });
     // The service reports why a session ended just after the state changes.
     connect(item, &SessionPreview::connectionChanged, this, [this, id = item->sessionId()] {
-        QTimer::singleShot(0, this, [this, id] { reconnectIfDropped(id); });
+        QTimer::singleShot(0, this, [this, id] {
+            finishReload(id);
+            reconnectIfDropped(id);
+        });
     });
     connect(item, &SessionPreview::attentionArrived, this, &Workspace::requestArrived);
     connect(item, &SessionPreview::attentionArrived, this,
@@ -1062,6 +1065,7 @@ bool Workspace::discardSession(const QString& id) {
         return false;
     }
     reconnects_.remove(id);
+    reloading_.remove(id);
     last_kind_.remove(item);
     rememberClosed(closed_agent, closed_title);
     changed();
@@ -1586,8 +1590,88 @@ bool Workspace::restartAgent(const QString& id) {
 // remoteLaunch) reconnect; a fresh start would lose the screen for nothing.
 // An agent that never stayed connected, such as one with a mistyped host,
 // stays ended.
+int Workspace::reloadAgent(const QString& id) {
+    const auto reloaded = reloadAgents({id});
+    if (reloaded == 0 && error_.isEmpty())
+        fail(QStringLiteral("This agent cannot reload now."));
+    return reloaded;
+}
+int Workspace::reloadCategory() {
+    QStringList ids;
+    for (const auto& item : sessions_)
+        if (agents_.value(item->sessionId()).category == active_category_)
+            ids << item->sessionId();
+    return reloadAgents(ids);
+}
+int Workspace::reloadAll() {
+    QStringList ids;
+    for (const auto& item : sessions_)
+        ids << item->sessionId();
+    return reloadAgents(ids);
+}
+int Workspace::reloadAgents(const QStringList& ids) {
+    if (!mutableRegistry())
+        return 0;
+    int reloaded = 0;
+    int kept = 0;
+    for (const auto& id : ids) {
+        auto* item = session(id);
+        const auto entry = agents_.constFind(id);
+        if (item == nullptr || entry == agents_.cend() || item->closing() ||
+            reloading_.contains(id))
+            continue;
+        if (const auto remote = remoteCommand(entry->launch);
+            remote && !remoteConversation().match(remote->second).hasMatch()) {
+            ++kept;
+            continue;
+        }
+        if (!serviceRunning(entry->endpoint)) {
+            reloaded += restartAgent(id) ? 1 : 0;
+            continue;
+        }
+        // Its CLI ends; finishReload starts it again once the session says so.
+        if (item->terminate()) {
+            reloading_.insert(id);
+            ++reloaded;
+        }
+    }
+    if (kept > 0)
+        fail(kept == 1 && ids.size() == 1
+                 ? QStringLiteral("This agent on another machine started before lapis could "
+                                  "name its conversation, so reloading it would start a new "
+                                  "one. Use /resume inside it, or start it again from the "
+                                  "new-agent form.")
+             : kept == 1
+                 ? QStringLiteral("An agent on another machine was left running: it started "
+                                  "before lapis could name its conversation.")
+                 : QStringLiteral("%1 agents on other machines were left running: they started "
+                                  "before lapis could name their conversations.")
+                       .arg(kept));
+    return reloaded;
+}
+void Workspace::finishReload(const QString& id, int waits) {
+    if (!reloading_.contains(id))
+        return;
+    auto* item = session(id);
+    const auto entry = agents_.constFind(id);
+    if (item == nullptr || entry == agents_.cend()) {
+        reloading_.remove(id);
+        return;
+    }
+    if (item->connectionState() != QLatin1String("ended"))
+        return;
+    // The session reports its end just before its service exits.
+    if (waits > 0 && serviceRunning(entry->endpoint)) {
+        QTimer::singleShot(100, this, [this, id, waits] { finishReload(id, waits - 1); });
+        return;
+    }
+    reloading_.remove(id);
+    restartAgent(id);
+}
 void Workspace::reconnectIfDropped(const QString& id) {
     using namespace std::chrono_literals;
+    if (reloading_.contains(id))
+        return;                 // ssh ends 255 when lapis ends it for a reload too
     constexpr auto held = 3min; // a reconnect that lasted this long worked
     constexpr auto give_up = 15min;
     constexpr std::array waits{2s, 5s, 10s, 20s, 30s};

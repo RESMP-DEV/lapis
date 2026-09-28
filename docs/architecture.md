@@ -2947,6 +2947,23 @@ icon, and the website SVG/PNG directly from that source. The iPhone export
 uses the tile bounds and background color for an opaque square, leaving corner
 masking to iOS. The phone's in-app LapisMark assets remain the stone alone.
 
+### Reload tab, category and window (September 28)
+
+A CLI rereads its settings (Claude Code's permissions, say) only when it
+starts, and Restart agent covered only an agent that had already ended.
+**Reload tab**, **Reload category** and **Reload window** in Commands end each
+agent's CLI through its session, as closing does, and once the session reports
+the end and its service has exited (the end arrives just before the service
+does, so the restart waits up to 3 s for it), start it again in its card
+through the restart path, which resumes the conversation. An ended agent
+restarts at once. A remote agent whose launch carries no conversation id is
+left running with a message, since a restart would begin a new conversation;
+the category and window reloads count the ones left. ssh reports the hangup
+lapis sends it as status 255, so a reloading agent is kept out of the
+reconnect path. `reloadStartsAgentsAgain` in the workspace suite drives a
+stand-in CLI that counts its starts through a tab, category and window
+reload, with a remote agent left running.
+
 ## Contracts to preserve
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal
