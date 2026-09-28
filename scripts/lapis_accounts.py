@@ -15,7 +15,7 @@ keeps a credential for it:
 
 Usage:
   lapis_accounts.py list
-  lapis_accounts.py homes
+  lapis_accounts.py homes [HOST ...]
   lapis_accounts.py add-claude NAME --email EMAIL [--to HOST ...]
   lapis_accounts.py add-codex NAME --email EMAIL [--on local|HOST ...]
 
@@ -158,9 +158,10 @@ def sign_ins(machine: str) -> dict:
         return {}
 
 
-def command_homes(config: dict) -> None:
-    """Record each machine's own sign-ins as home plans."""
-    for machine in machines(config):
+def command_homes(config: dict, hosts: list[str]) -> None:
+    """Record each machine's own sign-ins as home plans: this Mac and `hosts`,
+    else the usage machines."""
+    for machine in [LOCAL, *hosts] if hosts else machines(config):
         found = sign_ins(machine)
         for cli in ("claude", "codex"):
             email = found.get(cli, "")
@@ -321,7 +322,10 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("list")
-    commands.add_parser("homes")
+    homes = commands.add_parser("homes")
+    homes.add_argument(
+        "hosts", nargs="*", help="machines besides this Mac (default: usage machines)"
+    )
     claude = commands.add_parser("add-claude")
     claude.add_argument("name")
     claude.add_argument("--email", required=True)
@@ -339,15 +343,16 @@ def main(argv: list[str]) -> int:
         config = load_config()
         if getattr(arguments, "name", "") and not NAME.match(arguments.name):
             raise Failure("a plan name is letters, digits, '.', '_' or '-', at most 64")
-        for host in (getattr(arguments, "to", None) or []) + (
+        named = (getattr(arguments, "to", None) or []) + (
             getattr(arguments, "on", None) or []
-        ):
+        )
+        for host in named + (getattr(arguments, "hosts", None) or []):
             if host != LOCAL and not HOST.match(host):
                 raise Failure(f"not a host name: {host}")
         if arguments.command == "list":
             command_list(config)
         elif arguments.command == "homes":
-            command_homes(config)
+            command_homes(config, arguments.hosts)
         elif arguments.command == "add-claude":
             hosts = arguments.to if arguments.to is not None else machines(config)[1:]
             command_add_claude(config, arguments.name, arguments.email, hosts)
