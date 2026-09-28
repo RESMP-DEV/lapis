@@ -41,6 +41,13 @@ namespace {
 
 QColor color(std::uint32_t rgb) { return QColor::fromRgb(rgb | 0xff000000U); }
 
+bool valid_file_url_path(const QUrl& url) {
+    QStringDecoder decoder(QStringDecoder::Utf8, QStringConverter::Flag::Stateless);
+    const QString decoded =
+        decoder(QByteArray::fromPercentEncoding(url.path(QUrl::FullyEncoded).toUtf8()));
+    return !decoder.hasError() && !decoded.contains(u'\0');
+}
+
 struct SurfaceLayout {
     qreal scale{};
     qreal first_row{};
@@ -1097,7 +1104,7 @@ QString TerminalSurface::linkTarget(const TerminalLink& link) const {
     if (link.text.startsWith(QLatin1String("file:"), Qt::CaseInsensitive)) {
         const QUrl uri(link.text, QUrl::StrictMode);
         const auto host = uri.host();
-        if (!uri.isValid() || !uri.isLocalFile() ||
+        if (!uri.isValid() || !uri.isLocalFile() || !valid_file_url_path(uri) ||
             (!host.isEmpty() &&
              host.compare(QLatin1String("localhost"), Qt::CaseInsensitive) != 0 &&
              host.compare(QSysInfo::machineHostName(), Qt::CaseInsensitive) != 0))
@@ -1434,10 +1441,7 @@ QString TerminalSurface::localFilePath(const QString& url) const {
         !parsed.path().startsWith(u'/') || parsed.port() != -1 || !parsed.userName().isEmpty() ||
         !parsed.password().isEmpty() || parsed.hasQuery() || parsed.hasFragment())
         return {};
-    QStringDecoder decoder(QStringDecoder::Utf8, QStringConverter::Flag::Stateless);
-    const QString decoded =
-        decoder(QByteArray::fromPercentEncoding(parsed.path(QUrl::FullyEncoded).toUtf8()));
-    if (decoder.hasError() || decoded.contains(u'\0'))
+    if (!valid_file_url_path(parsed))
         return {};
     const QString path = parsed.toLocalFile();
     return path.isEmpty() || path.contains(u'\0') ? QString() : path;
