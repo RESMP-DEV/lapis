@@ -626,6 +626,11 @@ Mac ICNS, iPhone PNG and website SVG/PNGs, run
 (`brew install librsvg`; exercised with librsvg 2.63.2). This build tool adds no
 application runtime dependency. The command renders every Mac size from vectors
 and writes source/output hashes to `build/release/icon/receipt.json`.
+The command stages all outputs before replacing any asset and publishes the
+receipt last. A handled publication failure restores previous bytes and metadata
+and removes newly created outputs. If restoration itself fails, the error names
+the retained recovery copy. Replacements are atomic per file; abrupt process
+death or power loss can leave a mixed set.
 Preserve the SVG's `tile-edge`, `tile-face`, `cabochon` and gradient IDs: the
 iPhone export uses the tile bounds and background color for an opaque square,
 leaving corner masking to iOS. The Mac and website retain the SVG's existing

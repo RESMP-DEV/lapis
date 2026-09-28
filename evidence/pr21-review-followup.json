@@ -1,0 +1,78 @@
+{
+  "schema": "lapis.pr-review-resolution/1",
+  "source_revision": "72e399b77e7505ce81653e9d441d0dc4d020c815",
+  "source_sha256": {
+    "scripts/package_macos.py": "df710449734d3b12532e8af601969dbf09015ff74455e39de958dc3dd7e16e39",
+    "scripts/tests/test_package_macos.py": "cda1ea2e731f00c13eec1706c1c37d4d56de714a23f298cba0887bbd95eb03b1"
+  },
+  "findings": [
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6mZFaC",
+      "disposition": "fixed",
+      "detail": "Stage same-directory replacement and backup files, publish with atomic per-file replacement, restore earlier outputs on handled failure, and publish the receipt last. Failed restoration retains the recovery copy and reports its path."
+    }
+  ],
+  "validation": [
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "passed": true,
+      "log": "build/pr21-quality.log"
+    },
+    {
+      "command": "python3 -m unittest -v scripts.tests.test_package_macos",
+      "passed": true,
+      "cases": [
+        "renderer/iconutil/SVG/render failure",
+        "late staging-copy failure",
+        "replacement failure after creating a new asset",
+        "receipt replacement failure",
+        "rollback failure retains old bytes"
+      ]
+    },
+    {
+      "command": "Current publication test with package_macos.py from 72e399b, restored afterward",
+      "expected_failure": true,
+      "diagnostic": "Late copy failure leaves rendered Mac icon instead of previous Mac icon",
+      "log": "build/icon-publication-control.log"
+    },
+    {
+      "command": "python3 scripts/package_macos.py icon",
+      "passed": true,
+      "all_generated_assets_byte_identical_to_base": true,
+      "receipt": {
+        "source": "assets/lapis.svg",
+        "source_sha256": "a896cc7f84892e0b16727feccd65897cd1cf0cc1e47dea72985e4b3119f820d8",
+        "renderer": "rsvg-convert version 2.63.2",
+        "outputs": {
+          "apps/desktop/macos/lapis.icns": "6fc962d04fd6f175b50d27de017350b5f64cc72c047d44c5a6085303f6679f2a",
+          "apps/ios/Lapis/Assets.xcassets/AppIcon.appiconset/icon.png": "e70e88d4e31767026e48bf65b7608e79a79cfbb7bf13d1c7fc2e3744765e1b0b",
+          "site/icon.png": "41cbfa3a3314336a0d43704a8b59bbccc7cd6fc403c2bef23cfdbc9f545aacb0",
+          "site/favicon.png": "b6f90c8e5e46958e8f34b75e531d3939caace07d4b4e4d1dd2a276aab1e74756",
+          "site/icon.svg": "a896cc7f84892e0b16727feccd65897cd1cf0cc1e47dea72985e4b3119f820d8"
+        }
+      }
+    },
+    {
+      "check": "AST comparison of all existing functions/classes except command_icon",
+      "passed": true,
+      "detail": "App build, signing and verification functions are unchanged."
+    },
+    {
+      "command": "python3 scripts/package_macos.py app",
+      "passed": false,
+      "classification": "unavailable",
+      "reason": "Pinned release Qt build missing."
+    },
+    {
+      "command": "python3 scripts/package_macos.py verify",
+      "passed": false,
+      "classification": "unavailable",
+      "reason": "No packaged application exists in this checkout."
+    }
+  ],
+  "limits": [
+    "Atomic replacement is per file; abrupt process death or power loss can leave a mixed set.",
+    "A restoration I/O error retains the backup and reports incomplete rollback.",
+    "Full app packaging, signing and notarization were not qualified in this checkout."
+  ]
+}

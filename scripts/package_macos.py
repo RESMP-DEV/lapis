@@ -112,6 +112,106 @@ class PackageError(RuntimeError):
     """A step that cannot continue; the message says what to fix."""
 
 
+class IconPublication:
+    """Stage icon replacements and restore the previous set on failure.
+
+    Each file is replaced atomically within its destination directory. The
+    set as a whole is not power-loss atomic; a crash during publication can
+    still leave a mixture of old and new files.
+    """
+
+    def __init__(self):
+        self._entries = []
+
+    def stage(self, source, target):
+        """Copy a complete replacement, and the old file if there is one."""
+        staged = self._temporary(target, ".lapis-new-")
+        try:
+            shutil.copy2(source, staged)
+        except BaseException:
+            _unlink(staged)
+            raise
+
+        backup = None
+        try:
+            if target.exists():
+                backup = self._temporary(target, ".lapis-old-")
+                shutil.copy2(target, backup)
+        except BaseException:
+            _unlink(staged)
+            _unlink(backup)
+            raise
+        self._entries.append(
+            {
+                "target": target,
+                "staged": staged,
+                "backup": backup,
+                "existed": backup is not None,
+            }
+        )
+
+    def commit(self, announce):
+        """Replace every staged target, restoring the old set on failure."""
+        published = []
+        try:
+            for entry in self._entries:
+                os.replace(entry["staged"], entry["target"])
+                entry["staged"] = None
+                published.append(entry)
+                announce(entry["target"])
+        except BaseException as error:
+            self._rollback(published, error)
+            raise
+        # Backups are needed until every target and the receipt are replaced.
+        for entry in self._entries:
+            _unlink(entry["staged"])
+            _unlink(entry["backup"])
+            entry["backup"] = None
+
+    def _temporary(self, target, prefix):
+        descriptor, name = tempfile.mkstemp(prefix=prefix, dir=target.parent)
+        os.close(descriptor)
+        return Path(name)
+
+    def abort(self, cause):
+        """Discard staging after a failure before publication completed."""
+        self._rollback([], cause)
+
+    def _rollback(self, published, cause):
+        failures = []
+        for entry in reversed(published):
+            try:
+                if entry["backup"] is not None:
+                    os.replace(entry["backup"], entry["target"])
+                    entry["backup"] = None
+                elif not entry["existed"]:
+                    entry["target"].unlink(missing_ok=True)
+            except OSError as error:
+                failures.append(
+                    f"{entry['target']}: {error}; recovery copy: {entry['backup']}"
+                )
+
+        for entry in self._entries:
+            # A backup that could not be restored is the recovery copy. Keep
+            # it and name it in the error instead of deleting the old asset.
+            paths = [entry["staged"]]
+            if entry not in published or entry["backup"] is None:
+                paths.append(entry["backup"])
+            for path in paths:
+                try:
+                    _unlink(path)
+                except OSError as error:
+                    failures.append(f"temporary file {path}: {error}")
+        if failures:
+            detail = "; ".join(failures)
+            raise PackageError(f"Icon publication rollback failed: {detail}") from cause
+
+
+def _unlink(path):
+    if path is not None:
+        path.unlink(missing_ok=True)
+
+
 def run(command, **kwargs):
     print("$ " + " ".join(str(part) for part in command), flush=True)
     return subprocess.run([str(part) for part in command], check=True, **kwargs)
@@ -324,25 +424,35 @@ def command_icon(_arguments):
             stage / "favicon.png": ROOT / "site/favicon.png",
             stage / "icon.svg": ROOT / "site/icon.svg",
         }
-        # Finish all rendering before replacing checked-in assets.
-        for source, target in outputs.items():
-            shutil.copy2(source, target)
-            print(f"Wrote {target.relative_to(ROOT)}", flush=True)
-        receipt.write_text(
+        # Hash staged bytes and publish the receipt last. Each replacement is
+        # atomic; handled publication failures restore the previous asset set.
+        staged_receipt = stage / "receipt.json"
+        staged_receipt.write_text(
             json.dumps(
                 {
                     "source": str(ICON_SOURCE.relative_to(ROOT)),
                     "source_sha256": sha256(ICON_SOURCE),
                     "renderer": capture([renderer, "--version"]).splitlines()[0],
                     "outputs": {
-                        str(target.relative_to(ROOT)): sha256(target)
-                        for target in outputs.values()
+                        str(target.relative_to(ROOT)): sha256(source)
+                        for source, target in outputs.items()
                     },
                 },
                 indent=2,
             )
             + "\n",
             encoding="utf-8",
+        )
+        publication = IconPublication()
+        try:
+            for source, target in outputs.items():
+                publication.stage(source, target)
+            publication.stage(staged_receipt, receipt)
+        except BaseException as error:
+            publication.abort(error)
+            raise
+        publication.commit(
+            lambda target: print(f"Wrote {target.relative_to(ROOT)}", flush=True)
         )
 
 
