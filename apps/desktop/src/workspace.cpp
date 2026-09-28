@@ -208,11 +208,29 @@ constexpr std::string_view kPreviewPalette =
     "\x1b]4;3;rgb:df/bb/7b\x1b\\\x1b]4;5;rgb:ba/a4/e8\x1b\\"
     "\x1b]4;8;rgb:75/83/98\x1b\\";
 
+// A remote Claude Code agent's conversation, `s=<id>` in the command ssh runs.
+const QRegularExpression& remoteConversation() {
+    static const QRegularExpression marker(QStringLiteral(
+        R"( && s=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) && )"));
+    return marker;
+}
+QString newConversation() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
+// A remote agent's machine and the command ssh runs there:
+// `ssh [-o option]... -t <machine> <command>`.
+std::optional<std::pair<QString, QString>> remoteCommand(const session::LaunchSpec& launch) {
+    if (QFileInfo(launch.program).fileName() != QStringLiteral("ssh"))
+        return std::nullopt;
+    const auto at = launch.arguments.indexOf(QStringLiteral("-t"));
+    if (at < 0 || at + 3 != launch.arguments.size())
+        return std::nullopt;
+    return std::pair{launch.arguments.at(at + 1), launch.arguments.at(at + 2)};
+}
 // An agent on another machine: ssh runs the CLI in an interactive login shell
-// there, so its PATH matches that machine's terminal. Returns why not, or
-// empty with `launch` set.
-QString remoteLaunch(const AgentRequest& request, const QString& command,
-                     const QStringList& arguments, std::optional<session::LaunchSpec>& launch) {
+// there, so its PATH matches that machine's terminal. Keepalives end a
+// connection whose network went away within a minute, so it can reconnect.
+// Returns why not, or empty with `launch` set.
+QString remoteLaunch(const AgentRequest& request, const QString& command, QStringList arguments,
+                     std::optional<session::LaunchSpec>& launch) {
     const auto ssh = QStandardPaths::findExecutable(QStringLiteral("ssh"));
     if (ssh.isEmpty())
         return QStringLiteral("ssh is not available on this Mac.");
@@ -220,16 +238,46 @@ QString remoteLaunch(const AgentRequest& request, const QString& command,
         return QStringLiteral("Unknown machine name.");
     if (request.program.contains(QChar::Null) || request.program.contains(QLatin1Char('\n')))
         return QStringLiteral("Invalid program path.");
+    // Claude Code keeps one conversation id for the agent's life: the first
+    // launch names it with --session-id and every later one (a restart, or a
+    // reconnect after the connection dropped) resumes it. A copy still
+    // running there on the dropped connection is stopped first, so the
+    // conversation never has two writers. The id is written as $s, so no
+    // command line but the CLI's own holds it next to the option.
+    const bool claude = request.harness == QLatin1String("claude");
+    QString conversation;
+    if (claude && request.resume.isEmpty())
+        conversation = newConversation();
+    else if (claude &&
+             QUuid::fromString(request.resume).toString(QUuid::WithoutBraces) == request.resume) {
+        conversation = request.resume;
+        arguments.removeLast(); // agentLaunch's resume pair; $o and $s say it here
+        arguments.removeLast();
+    }
     QStringList words{shellWord(request.program.isEmpty() ? command : request.program)};
     for (const auto& argument : arguments)
         words << shellWord(argument);
-    const auto line = QStringLiteral(R"(cd %1 && exec "${SHELL:-/bin/sh}" -lic %2)")
-                          .arg(remoteFolder(request.directory), shellWord(words.join(' ')));
-    launch = session::validate_launch({ssh,
-                                       {QStringLiteral("-t"), request.machine, line},
-                                       QDir::homePath(),
-                                       {100, 30},
-                                       session::AgentMode::terminal});
+    const auto folder = remoteFolder(request.directory);
+    const auto line =
+        conversation.isEmpty()
+            ? QStringLiteral(R"(cd %1 && exec "${SHELL:-/bin/sh}" -lic %2)")
+                  .arg(folder, shellWord(words.join(' ')))
+            : QStringLiteral(
+                  R"(cd %1 && s=%2 && p="[-]-(resume|session-id) $s" && o=--session-id && { )"
+                  R"(pkill -HUP -f "$p"; n=0; )"
+                  R"(while [ $n -lt 20 ] && pgrep -f "$p" >/dev/null; do sleep 0.25; n=$((n+1)); done; )"
+                  R"(pgrep -f "$p" >/dev/null && pkill -TERM -f "$p" && sleep 1; )"
+                  R"(find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects" -maxdepth 2 -name "$s.jsonl" 2>/dev/null )"
+                  R"(| grep -q . && o=--resume; )"
+                  R"(exec "${SHELL:-/bin/sh}" -lic %3"$o $s"; })")
+                  .arg(folder, conversation, shellWord(words.join(' ') + QLatin1Char(' ')));
+    launch = session::validate_launch(
+        {ssh,
+         {QStringLiteral("-o"), QStringLiteral("ServerAliveInterval=15"), QStringLiteral("-o"),
+          QStringLiteral("ServerAliveCountMax=4"), QStringLiteral("-t"), request.machine, line},
+         QDir::homePath(),
+         {100, 30},
+         session::AgentMode::terminal});
     return {};
 }
 constexpr qsizetype max_saved_arguments = 64;
@@ -534,6 +582,10 @@ void Workspace::clearError() {
 }
 void Workspace::watch(SessionPreview* item) {
     connect(item, &SessionPreview::connectionChanged, this, [this, item] { finishClosing(item); });
+    // The service reports why a session ended just after the state changes.
+    connect(item, &SessionPreview::connectionChanged, this, [this, id = item->sessionId()] {
+        QTimer::singleShot(0, this, [this, id] { reconnectIfDropped(id); });
+    });
     connect(item, &SessionPreview::attentionArrived, this, &Workspace::requestArrived);
     connect(item, &SessionPreview::attentionArrived, this,
             [this, item] { emit agentNeedsYou(item); });
@@ -972,6 +1024,7 @@ bool Workspace::discardSession(const QString& id) {
     const auto* item = session(id);
     if (!item)
         return false;
+    reconnects_.remove(id);
     const auto item_category = agents_.value(id).category;
     const auto closed_agent = agents_.value(id);
     const auto closed_title = item->title();
@@ -1129,11 +1182,10 @@ QVariantMap Workspace::agentPlace(const QString& id) const {
     const auto& launch = entry->launch;
     QString machine;
     QString place = displayPath(launch.directory);
-    // Remote agents are `ssh -t <host> 'cd <folder> && exec ...'`.
-    if (QFileInfo(launch.program).fileName() == QStringLiteral("ssh") &&
-        launch.arguments.size() >= 3 && launch.arguments[0] == QStringLiteral("-t")) {
-        machine = launch.arguments[1];
-        const auto& command = launch.arguments[2];
+    // Remote agents are `ssh [-o option]... -t <host> 'cd <folder> && ...'`.
+    if (const auto remote = remoteCommand(launch)) {
+        machine = remote->first;
+        const auto& command = remote->second;
         const auto end = command.indexOf(QStringLiteral(" && "));
         place = machine + QLatin1Char(':') +
                 (command.startsWith(QStringLiteral("cd ")) && end > 3 ? command.mid(3, end - 3)
@@ -1526,6 +1578,65 @@ bool Workspace::restartAgent(const QString& id) {
     }
     item->startLive(entry->endpoint, entry->launch, session::wire::AttachMode::create);
     return true;
+}
+// An ssh process exiting 255 is treated as a possible dropped connection;
+// a remote command exiting 255 is indistinguishable and follows the same
+// bounded retry path. Retry after increasing waits, resuming the conversation.
+// Only launches that resume (see
+// remoteLaunch) reconnect; a fresh start would lose the screen for nothing.
+// An agent that never stayed connected, such as one with a mistyped host,
+// stays ended.
+void Workspace::reconnectIfDropped(const QString& id) {
+    using namespace std::chrono_literals;
+    constexpr auto held = 3min; // a reconnect that lasted this long worked
+    constexpr auto give_up = 15min;
+    constexpr std::array waits{2s, 5s, 10s, 20s, 30s};
+    auto* item = session(id);
+    const auto entry = agents_.constFind(id);
+    if (item == nullptr || entry == agents_.cend())
+        return;
+    const auto remote = remoteCommand(entry->launch);
+    if (!remote || !remoteConversation().match(remote->second).hasMatch())
+        return;
+    auto& attempts = reconnects_[id];
+    if (item->connectionState() == QLatin1String("ready")) {
+        if (!attempts.ready.isValid())
+            attempts.ready.start();
+        return;
+    }
+    if (item->connectionState() != QLatin1String("ended") || item->closing() ||
+        item->activity() != QLatin1String("Process exited (255)"))
+        return;
+    const std::chrono::milliseconds lasted{attempts.ready.isValid() ? attempts.ready.elapsed() : 0};
+    attempts.ready.invalidate();
+    if (!attempts.since.isValid() || lasted >= held) {
+        if (lasted < reconnect_first_hold_) // it never worked: a wrong host, say
+            return;
+        attempts.since.start();
+        attempts.count = 0;
+    } else if (std::chrono::milliseconds{attempts.since.elapsed()} >= give_up) {
+        attempts.since.invalidate();
+        item->setActivity(
+            QStringLiteral("Could not reconnect to %1. Restart the agent to try again.")
+                .arg(remote->first));
+        return;
+    }
+    const std::chrono::milliseconds wait =
+        reconnect_wait_.value_or(waits.at(std::min<std::size_t>(attempts.count, waits.size() - 1)));
+    ++attempts.count;
+    const auto generation = ++attempts.generation;
+    item->setActivity(QStringLiteral("Connection to %1 lost. Reconnecting in %2 s.")
+                          .arg(remote->first)
+                          .arg(std::chrono::ceil<std::chrono::seconds>(wait).count()));
+    QTimer::singleShot(wait, this, [this, id, generation] {
+        auto* again = session(id);
+        const auto entry = agents_.constFind(id);
+        if (again == nullptr || entry == agents_.cend() ||
+            reconnects_.value(id).generation != generation || again->closing() ||
+            again->connectionState() != QLatin1String("ended") || serviceRunning(entry->endpoint))
+            return;
+        restartAgent(id);
+    });
 }
 bool Workspace::serviceRunning(const QString& endpoint) {
     if (!QFileInfo::exists(endpoint))
@@ -2234,6 +2345,11 @@ QString Workspace::splitAgent(const QString& edge) {
         launch.arguments.remove(entry->managed_resume_index, 2);
     else if (launch.arguments.size() == 2 && launch.arguments.front() == QStringLiteral("resume"))
         launch.arguments.clear();
+    else if (const auto conversation = remoteConversation().match(
+                 launch.arguments.isEmpty() ? QString() : launch.arguments.constLast());
+             conversation.hasMatch())
+        launch.arguments.last().replace(conversation.capturedStart(1),
+                                        conversation.capturedLength(1), newConversation());
     const bool remote = QFileInfo(launch.program).fileName() == QStringLiteral("ssh");
     AgentRequest request{.category = entry->category,
                          .directory = launch.directory,

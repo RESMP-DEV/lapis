@@ -22,6 +22,7 @@
 #include <QLockFile>
 #include <QPointer>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QScopeGuard>
 #include <QTemporaryDir>
@@ -1442,6 +1443,129 @@ QByteArray installStandInGrok(const QDir& root) {
     const auto path = qgetenv("PATH");
     qputenv("PATH", QFile::encodeName(root.filePath(QStringLiteral("bin"))) + ':' + path);
     return path;
+}
+
+// A Claude Code agent on another machine keeps one conversation: its first
+// launch names it, and a reconnect after the connection dropped, a restart
+// and nothing else resume it. A stand-in ssh records what it was given, per
+// host: devbox drops the first connection (ssh exits 255), then the second
+// ends by itself; typo never connects.
+void remoteClaudeReconnectsToItsConversation() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-reconnect-XXXXXX"));
+    require(directory.isValid(), "reconnect directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    QFile ssh(root.filePath(QStringLiteral("bin/ssh")));
+    require(ssh.open(QIODevice::WriteOnly), "write the stand-in ssh");
+    ssh.write(R"(#!/bin/sh
+d=$(dirname "$0"); host=$6
+n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1)); echo $n > "$d/$host.count"
+printf '%s\n' "$@" > "$d/$host.call$n"
+case "$host:$n" in typo:*) exit 255;; devbox:1) sleep 1; exit 255;; devbox:2) sleep 1; exit 1;; esac
+echo connected
+exec sleep 600
+)");
+    ssh.close();
+    require(ssh.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+            "make it executable");
+    QFile config(root.filePath(QStringLiteral("ssh_config")));
+    require(config.open(QIODevice::WriteOnly), "write an ssh config");
+    config.write("Host devbox typo\n");
+    config.close();
+    const auto calls = [&root](const QString& host) {
+        QFile count(root.filePath(QStringLiteral("bin/%1.count").arg(host)));
+        return count.open(QIODevice::ReadOnly) ? count.readAll().trimmed().toInt() : 0;
+    };
+    const auto call = [&root](const QString& host, int number) {
+        QFile file(root.filePath(QStringLiteral("bin/%1.call%2").arg(host).arg(number)));
+        return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+    };
+    const auto conversation = [](const QString& arguments) {
+        static const QRegularExpression id(QStringLiteral(R"( && s=([0-9a-f-]{36}) && )"));
+        return id.match(arguments).captured(1);
+    };
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        workspace.setSshConfigForTesting(config.fileName());
+        workspace.setReconnectTimingForTesting(
+            {.first_hold = std::chrono::milliseconds(300), .wait = std::chrono::milliseconds(100)});
+        require(workspace.createAgent(QStringLiteral("~/dev/far"), QStringLiteral("far"),
+                                      QStringLiteral("claude"), {}, {}, QStringLiteral("devbox")),
+                "a Claude Code agent on another machine");
+        auto* far = workspace.focusedSession();
+        require(far != nullptr, "the new agent is shown");
+        const auto id = far->sessionId();
+        require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 1; }, 10000), "ssh starts");
+        const auto first = call(QStringLiteral("devbox"), 1);
+        require(first.startsWith(QStringLiteral("-o\nServerAliveInterval=15\n-o\n"
+                                                "ServerAliveCountMax=4\n-t\ndevbox\n")) &&
+                    first.contains(QStringLiteral("cd ~/dev/far && s=")) &&
+                    !conversation(first).isEmpty() &&
+                    first.contains(QStringLiteral(R"(-lic 'claude '"$o $s")")),
+                "ssh keeps the connection alive and names the conversation");
+        require(workspace.agentPlace(id).value(QStringLiteral("place")) ==
+                    QStringLiteral("devbox:~/dev/far"),
+                "the agent's place is still its machine and folder");
+        require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 2; }, 10000) &&
+                    call(QStringLiteral("devbox"), 2) == first,
+                "a dropped connection reconnects to the same conversation");
+        require(waitFor(
+                    [&] {
+                        return far->connectionState() == QStringLiteral("ended") &&
+                               far->activity() == QStringLiteral("Process exited (1)");
+                    },
+                    10000),
+                "the reconnected agent ends by itself");
+        QElapsedTimer settle;
+        settle.start();
+        waitFor([&] { return settle.elapsed() > 800; }, 2000);
+        require(calls(QStringLiteral("devbox")) == 2, "an agent that ended itself stays ended");
+        require(workspace.restartAgent(id) &&
+                    waitFor([&] { return calls(QStringLiteral("devbox")) >= 3; }, 10000) &&
+                    call(QStringLiteral("devbox"), 3) == first,
+                "a restart resumes the same conversation");
+        require(
+            waitFor(
+                [far] { return screenText(far->snapshot()).contains(QStringLiteral("connected")); },
+                10000),
+            "the restarted agent is connected");
+        workspace.selectSession(id);
+        const auto split = workspace.splitAgent(QStringLiteral("right"));
+        require(!split.isEmpty() &&
+                    waitFor([&] { return calls(QStringLiteral("devbox")) >= 4; }, 10000),
+                "a split starts the same CLI beside it");
+        const auto fourth = call(QStringLiteral("devbox"), 4);
+        require(!conversation(fourth).isEmpty() && conversation(fourth) != conversation(first),
+                "as a new conversation of its own");
+        require(workspace.createAgent(QStringLiteral("~"), QStringLiteral("typo"),
+                                      QStringLiteral("claude"), {}, {}, QStringLiteral("typo")),
+                "an agent on a machine that never answers");
+        lapis::desktop::SessionPreview* typo = nullptr;
+        for (const auto& listed : workspace.sessions())
+            if (auto* item = listed.value<lapis::desktop::SessionPreview*>();
+                item != nullptr && item->title() == QStringLiteral("typo"))
+                typo = item;
+        require(typo != nullptr, "the agent is listed");
+        // It ends before or just after the window attaches, depending on timing.
+        require(waitFor(
+                    [typo] {
+                        return typo->connectionState() == QStringLiteral("ended") ||
+                               typo->connectionState() == QStringLiteral("disconnected");
+                    },
+                    10000),
+                "its connection fails");
+        settle.restart();
+        waitFor([&] { return settle.elapsed() > 800; }, 2000);
+        require(calls(QStringLiteral("typo")) == 1, "a connection that never worked stays ended");
+        // The unreachable one is abandoned; the others end.
+        for (const auto& closing : {id, split, typo->sessionId()})
+            require(workspace.closeSession(closing, true), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in agents close");
+    }
+    qputenv("PATH", path);
 }
 
 // A full-screen program that reports the mouse, as Claude Code's full-screen
@@ -3774,6 +3898,7 @@ int main(int argc, char** argv) {
         harnessesUpdateBeforeNewAgents();
         windowWaitsForTheRestoreHelper();
         phoneStartsAnAgentInItsCategory();
+        remoteClaudeReconnectsToItsConversation();
         resumingAConversationStartsItsCli();
         terminalsRunPlainShells();
         wheelReachesAFullScreenProgram();
