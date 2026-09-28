@@ -44,6 +44,37 @@ Determine status from code and tests, update that table as components land, and
 treat saved receipts as dated observations. Keep milestone acceptance in the
 architecture document instead of creating another status or roadmap file.
 
+## Contributor workflow
+
+<contributor_workflow>
+
+Use the shared [work record and review checkpoints](CONTRIBUTING.md#work-records-and-review-checkpoints)
+for substantial implementation, maintenance and delegated work. Keep one current
+record in the task context or ignored `build/<task>/work.md`; update it as findings
+change. Incoming agents continue that record and verify its baseline before editing.
+
+1. Establish the objective, exclusions, checkout/HEAD, dirty work, and relevant
+   open PR heads or overlapping files. Preserve work already in progress.
+2. Assign temporary write scopes and one build owner per checkout/preset. Agree
+   on the data owner, identity/lifetime and compatibility contract before dependent
+   edits. Contributors continue to share feature ownership.
+3. Classify findings as defects, contract gaps, acceptance gaps or preferences.
+   Choose a bounded batch with an observable finish line and the smallest relevant
+   checks. Verify documented commands against the current CLI before using them.
+4. Review the combined diff against the
+   [quality review checkpoints](CONTRIBUTING.md#quality-review-checkpoints).
+   Inspect worker changes and receipts; a completed worker or green provider status
+   alone is not verification. Apply the existing required-check and reuse rules.
+5. Hand off the actual source state, changed contracts, checks/results, evidence,
+   unresolved findings and next action. Keep implementation and qualification
+   status distinct. Update canonical documents when their contracts change.
+
+These are manual contributor/reviewer obligations. `just quality` enforces its
+documented mechanical checks; it does not prove architectural compliance or native
+platform qualification.
+
+</contributor_workflow>
+
 ## Architecture boundaries
 
 - Keep process/session ownership, terminal state, agent protocols, attention
@@ -188,8 +219,8 @@ regular progress updates, diagnose overruns, bound retries and preserve a handof
 | Verification and profiling | `tools/`, `scripts/` | Behavioral cases, repeatable workloads, and measured results |
 | Integration | Root build files and shared `docs/` | Compatible interfaces, assembled application, and milestone acceptance |
 
-Before work begins, specify the objective, owner, allowed files, dependencies,
-shared interface version, and acceptance commands. Start with independent
+Before work begins, complete the shared
+[work record](CONTRIBUTING.md#work-records-and-review-checkpoints). Start with independent
 investigation where interfaces are unsettled, then agree on the smallest common
 contract before parallel implementation. Coordinate shared-file edits explicitly.
 

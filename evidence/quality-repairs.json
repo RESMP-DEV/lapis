@@ -1,0 +1,189 @@
+{
+  "recorded_on": "2026-09-25",
+  "baseline_revision": "bad6e1576b0bee6b418a452fc0aeadd255162a0e",
+  "branch": "fix/quality-correctness",
+  "source_dirty": true,
+  "scope": "First bounded quality repair batch; preserves existing UI and service ownership. No new milestone.",
+  "completed": [
+    {
+      "finding": "Q01",
+      "change": "One generation owns stream, input and history tasks. Close, reopen and stream retirement cancel owned work and reject stale completions, including stale loading-state cleanup."
+    },
+    {
+      "finding": "Q02",
+      "change": "Persist managed resume arguments and provenance before starting a reopened agent. Failed save retains the closed plan, existing session and selection for retry. Broad registry transaction extraction remains planned."
+    },
+    {
+      "finding": "Q07",
+      "change": "Replace signed byte-size shifts and signed quadrant masks with equivalent arithmetic and unsigned masks."
+    },
+    {
+      "finding": "Q12",
+      "change": "Ruff covers apps/scripts/tools; C++ startup, format and version-probe paths produce fresh truthful receipts; CONTRIBUTING matches all 29 registered CTest suites."
+    },
+    {
+      "finding": "Q14",
+      "change": "UI preview runner reuses canonical process-group escalation and original-error preservation."
+    }
+  ],
+  "verification": [
+    {
+      "command": "just quality",
+      "result": "passed",
+      "python_tests": 172,
+      "scope": "All first-party Python lint/format and discovered unit tests. Final probe and cleanup regressions included.",
+      "receipt": "build/quality-repairs-20260925/quality-receipt.json"
+    },
+    {
+      "command": "just check",
+      "result": "passed",
+      "checks": 14,
+      "scope": "Positive end-to-end run of the modified C++ runner, headless configuration.",
+      "receipt": "build/quality-repairs-20260925/positive-runner-receipt.json"
+    },
+    {
+      "command": "just verify-tools",
+      "result": "passed",
+      "checks": 12,
+      "scope": "Known compiler, format, static analyzer, ASan, UBSan and TSan faults detected.",
+      "receipt": "build/quality-repairs-20260925/verify-tools-receipt.json"
+    },
+    {
+      "command": "cmake --build build/desktop --parallel 6 --target lapis_desktop lapis_workspace_tests lapis_harness_models_tests lapis_usage_tests lapis_cell_shapes_tests",
+      "result": "passed",
+      "scope": "Assembled desktop and affected native targets; workspace test fixture corrected in focused rebuilds."
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop -R '^(workspace|harness-models|usage|cell-shapes)$' --output-on-failure --no-tests=error",
+      "result": "passed after fixture corrections",
+      "scope": "Four affected suites; reuse first three passing suites and final workspace run.",
+      "logs": [
+        "build/quality-repairs-20260925/native-tests.log",
+        "build/quality-repairs-20260925/workspace-ready-retest.log"
+      ]
+    },
+    {
+      "command": "python3 build/quality-repairs-20260925/audit_checks.py",
+      "result": "passed",
+      "translation_units": 75,
+      "checks": 77,
+      "scope": "Full first-party native format, Cppcheck and clang-tidy.",
+      "receipt": "build/quality-repairs-20260925/static/receipt.json"
+    },
+    {
+      "command": "ctest --test-dir build/desktop-asan -R '^(workspace|harness-models|usage|cell-shapes)$' --output-on-failure --no-tests=error",
+      "result": "passed",
+      "suites": 4,
+      "receipt": "build/quality-repairs-20260925/quality-asan.json"
+    },
+    {
+      "command": "ctest --test-dir build/desktop-tsan -R '^(workspace|harness-models|usage|cell-shapes)$' --output-on-failure --no-tests=error",
+      "result": "partial; two suites passed, two reported queued-publication races",
+      "passed_suites": [
+        "workspace",
+        "cell-shapes"
+      ],
+      "reported_suites": [
+        "harness-models",
+        "usage"
+      ],
+      "receipt": "build/quality-repairs-20260925/quality-tsan.json"
+    },
+    {
+      "command": "python3 tools/qa/run_history_lifecycle_probe.py --output build/quality-repairs-20260925/history-final.json",
+      "result": "passed",
+      "scope": "Real Foundation models, controlled old/new HTTP history and SSE attachments, prefetch, paging, empty retry, loading-state ownership.",
+      "receipt": "build/quality-repairs-20260925/history-final.json"
+    },
+    {
+      "command": "uv run --no-project python scripts/check_ios_remote.py --only testTakenElsewhereThenReopened --only testScrollingBackLoadsHistory",
+      "result": "passed",
+      "tests": 2,
+      "scope": "iOS 26.4.1 Simulator, headless. Mac desktop cursor/focus unused. Isolated login shell reused from earlier qualification.",
+      "receipt": "build/quality-repairs-20260925/ios-summary.json"
+    },
+    {
+      "command": "uv run --no-project python scripts/check_restore.py",
+      "result": "passed",
+      "scope": "Isolated login shell; two simulated power losses, second restore through launchd, observer-verified Codex/Claude context, four advisory agents restart fresh, already-running services retained.",
+      "log": "build/quality-repairs-20260925/restore.log"
+    },
+    {
+      "result": "expected failures detected",
+      "scope": "The old UI cleanup helper fails the TERM-resistant child regression. Removing only the older-history defer generation guard in an ignored Swift copy fails with old completion cleared replacement loading state.",
+      "receipts": [
+        "build/quality-repairs-20260925/cleanup-negative-control.json",
+        "build/quality-repairs-20260925/history-negative-control.json"
+      ]
+    }
+  ],
+  "tsan_triage": {
+    "classification": "Matched uninstrumented-Qt queued-publication visibility limitation; no additional unsafe product mutator identified by source review. Not a TSan clearance for these suites.",
+    "qt_version": "6.11.2",
+    "product_reports": {
+      "harness-models": 21,
+      "usage": 19
+    },
+    "control_reports": 23,
+    "control": "A minimal valid moved QHash/vector handoff through Qt::QueuedConnection delivers its data and reproduces the same race families with the same compiler, Qt and TSan.",
+    "evidence": "build/quality-repairs-20260925/tsan-triage/",
+    "next": "Repeat the matched control and both suites with a TSan-instrumented Qt Core build. No suppressions or product changes added to hide reports."
+  },
+  "review": {
+    "model": "zai,glm-5.3-flashx",
+    "implementation_workers": 3,
+    "independent_review": "No actionable findings in C++/Python repair diff; parent additionally corrected fixture synchronization and removed an implementation-mirroring assertion.",
+    "receipts": [
+      "history.txt.status.json",
+      "history-runtime.txt.status.json",
+      "workspace.txt.status.json",
+      "tooling.txt.status.json",
+      "review.txt.status.json",
+      "tsan-triage.txt.status.json"
+    ],
+    "receipt_directory": "build/quality-repairs-20260925/"
+  },
+  "fixture_corrections": [
+    "Workspace stand-in explicitly declares its harness, uses per-PID argument receipts and awaits readiness before close.",
+    "Cleanup test waits for the child to install its SIGTERM handler.",
+    "History peer uses the same release event at producer and controller, fails on barrier timeout, and acknowledges distinct frame revisions. Parent results supersede earlier worker runtime repetitions."
+  ],
+  "remaining": [
+    "Q08 paste/IME ownership",
+    "Q09 pending history takeover",
+    "Q06 attention bound compatibility",
+    "Q03 typed adapter status",
+    "Q04 shared harness/configuration contract",
+    "Q05 LiveConnection seams",
+    "Q11 direct build dependencies",
+    "Q02 wider registry transactions",
+    "Q13 shared test peer",
+    "Q10 measured snapshot-copy costs",
+    "TSan qualification with instrumented Qt Core"
+  ],
+  "source_sha256": {
+    "apps/desktop/src/cell_shapes.cpp": "43792589e73db0221bf5295b94851bbb31e17f775761050f44c93e315ac63cf7",
+    "apps/desktop/src/harness_models.cpp": "dcf6d0bb4b2c9331ad67810dac0fbfebb53b5190d72da33358f859a6a9359028",
+    "apps/desktop/src/usage.cpp": "37ff2e24739084a4113a26e7b17b76370007da710843e3902d8485ebe321a454",
+    "apps/desktop/src/usage_limits.cpp": "d7f0ed21dbbfeaac728f5e0be12041f69d3c92336844e1da21d2c84e8b7a21f1",
+    "apps/desktop/src/workspace.cpp": "1003001098d12c1cb1e76a1910ab40bc1aebd8fb1a4272dcc957094842b8487c",
+    "apps/desktop/src/workspace.hpp": "e00e4914ecb00a53cd41e8954da1e5a4bde39cd8f9634ca3ab458b7ebaff815d",
+    "apps/desktop/tests/workspace_test.cpp": "d87030eaee748ac948c58b1bfcd5f6f9351a380f202b364997c4c36192f0c20d",
+    "apps/ios/Lapis/Models.swift": "497a6e4956b1ba420a669390be15ae4a221c27f2adcd5d90c9f0e402d8e1aec5",
+    "scripts/check_cpp.py": "06f7fcd6dc0af71e3a75f1cf7cd216329416d5b929d971390076e248cc9a33bc",
+    "scripts/check_quality.py": "03db7949ad2cea5423595c7e21f1d6e7fe4b6452dac234c8fdadd3c7bf916f38",
+    "scripts/check_ui_preview.py": "6c6742cde762b92422a9e051af87b7d15d90ac93ff1895b8294dfc0543022471",
+    "scripts/tests/test_check_cpp.py": "58ecbd89da8542ef92156bf0052305cebe6eb0b9c2f468aa7da7d10d1112c415",
+    "scripts/tests/test_check_quality.py": "60a5a008bc741dac4e4304214b58b01d1e5275ef303de9263ec929b447f946d0",
+    "scripts/tests/test_check_ui_preview.py": "d864c04e252df2a3a46c0b2a8272e7661396a63843c130d01583f26554c89a62",
+    "tools/qa/history_lifecycle_probe.swift": "ad1b4c29a115ff073441bbfae7ac4d814156547dd3b3ce697354256186cf0f73",
+    "tools/qa/run_history_lifecycle_probe.py": "189b8e6738305f9662b1019fbc3132103095c71eb0efa2a4b21f5c215a2f7919"
+  },
+  "limits": [
+    "This is local implementation and qualification, not a release or a merged PR.",
+    "No new macOS foreground input, rendering or Linux qualification; affected changes do not alter native input or rendering behavior.",
+    "Unchanged Codex/Claude live adapter coverage is reused; focused restore covers real CLIs against fake models."
+  ],
+  "durable_check_records": "evidence/quality-repairs-checks.json",
+  "local_artifact_policy": "Paths under build are optional local diagnostics, not required handoff artifacts. Durable sanitized check records and original artifact hashes are preserved in durable_check_records."
+}

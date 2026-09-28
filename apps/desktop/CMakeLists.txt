@@ -56,8 +56,9 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/count_tokens.
 file(READ src/count_tokens.py LAPIS_COUNT_TOKENS_SCRIPT)
 configure_file(src/count_tokens.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/count_tokens.hpp" @ONLY)
 target_include_directories(lapis_desktop_view PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options
-    PUBLIC lapis_terminal lapis_local_protocol Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network)
+target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options lapis_session_platform
+    PUBLIC lapis_terminal lapis_attention lapis_session_launch lapis_local_protocol
+        Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network)
 if(LAPIS_PACKAGE)
     # The downloadable app finds everything inside its bundle and keeps its
     # data in ~/.lapis; no path on the build machine is compiled in.

@@ -200,6 +200,38 @@ void composition(lapis::desktop::TerminalSurface& surface, QStringView preedit,
     event.setCommitString(commit, replace, replace == 0 ? 0 : 1);
     QCoreApplication::sendEvent(&surface, &event);
 }
+void local_file_url_contract(lapis::desktop::TerminalSurface& surface) {
+    struct Case {
+        QString url;
+        QString expected;
+        const char* message{};
+    };
+    QString raw_nul = QStringLiteral("file:///tmp/before");
+    raw_nul.append(QChar(u'\0'));
+    raw_nul.append(QStringLiteral("after"));
+    const std::array cases{
+        Case{QStringLiteral("file://server/share/file"), QStringLiteral("//server/share/file"),
+             "UNC file URL lost its network path"},
+        Case{QStringLiteral("file:///local/file"), QStringLiteral("/local/file"),
+             "Ordinary file URL did not become its local path"},
+        Case{QStringLiteral("file:///drop%20o%27clock%2F%E7%95%8C"),
+             QStringLiteral("/drop o'clock/界"),
+             "Encoded spaces, apostrophes, slashes or Unicode were not decoded"},
+        Case{QStringLiteral("file:///%2"), {}, "A malformed percent escape was accepted as a path"},
+        Case{QStringLiteral("https://example.invalid/file"),
+             {},
+             "A non-file URL was accepted as a local path"},
+        Case{QStringLiteral("file:///invalid%FF"),
+             {},
+             "Invalid encoded UTF-8 was accepted as a different filename"},
+        Case{QStringLiteral("file:///before%00after"),
+             {},
+             "A percent-encoded NUL was accepted as a path"},
+        Case{raw_nul, {}, "A raw NUL was accepted in a file URL"},
+    };
+    for (const auto& tested : cases)
+        require(surface.localFilePath(tested.url) == tested.expected, tested.message);
+}
 void input_contract(bool background) {
     Fixture f;
     QQuickWindow window;
@@ -227,6 +259,7 @@ void input_contract(bool background) {
         return window.isActive() && surface.hasActiveFocus();
     });
     static_cast<void>(text_frames(peer));
+    local_file_url_contract(surface);
     require(surface.inputMethodQuery(Qt::ImEnabled).toBool(), "Ready terminal disabled IME");
     // Composition stays on; predictions, completion and corrections, which
     // the platform would type into the program, are declined.
@@ -338,6 +371,44 @@ void input_contract(bool background) {
     }
     composition(surface, {}, QStringLiteral("late-after-paste"));
     require(text_frames(peer).isEmpty(), "Pre-paste composition committed late");
+    {
+        composition(surface, QStringLiteral("before-drop"));
+        bool paste_claimed = false;
+        bool paste_released = false;
+        const QMetaObject::Connection paste_ownership_connection = QObject::connect(
+            &surface, &lapis::desktop::TerminalSurface::inputOwnershipChanged, [&] {
+                if (surface.pasting())
+                    paste_claimed = true;
+                else
+                    paste_released = true;
+            });
+        require(surface.pasteText(QStringLiteral("dropped界 ")),
+                "Programmatic file-drop paste was rejected");
+        require(text_frames(peer, QStringLiteral("dropped界 ").toUtf8().size()) ==
+                    QStringLiteral("dropped界 ").toUtf8(),
+                "File-drop paste was split or changed");
+        require(paste_claimed && paste_released, "File-drop paste bypassed paste ownership");
+        require(!surface.composing() && !surface.pasting(),
+                "File-drop paste retained stale input ownership");
+        composition(surface, {}, QStringLiteral("late-after-drop"));
+        require(text_frames(peer).isEmpty(), "File-drop composition committed late");
+        QObject::disconnect(paste_ownership_connection);
+    }
+    {
+        SessionPreview replacement(QStringLiteral("replacement"), QStringLiteral("/tmp"), {},
+                                   QColor(Qt::white), "");
+        const auto rebind = QObject::connect(
+            &surface, &lapis::desktop::TerminalSurface::inputOwnershipChanged, [&] {
+                if (surface.pasting())
+                    surface.setDocument(&replacement);
+            });
+        require(!surface.pasteText(QStringLiteral("wrong-destination")),
+                "Paste accepted a destination replaced during ownership notification");
+        require(text_frames(peer).isEmpty(), "Rebound paste reached the old terminal");
+        require(!surface.pasting(), "Rejected paste retained ownership");
+        QObject::disconnect(rebind);
+        surface.setDocument(&f.document);
+    }
     composition(surface, QStringLiteral("before-history"));
     f.document.olderHistory();
     composition(surface, {}, QStringLiteral("history-leak"));

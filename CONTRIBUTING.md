@@ -36,9 +36,6 @@ For subsequent edits, select checks using the [matrix](#checks) and
 python3 scripts/lapis.py doctor    # report which dependencies are ready
 python3 scripts/lapis.py quality  # repository/Python baseline, no GUI
 python3 scripts/lapis.py check
-python3 scripts/lapis.py build
-python3 scripts/lapis.py ui-check
-python3 scripts/lapis.py cli-check
 ```
 
 `scripts/lapis.py` resolves the build environment itself, so no `LAPIS_*`
@@ -50,8 +47,12 @@ The underlying scripts still accept the documented variables directly when a
 specific prefix or display is required.
 
 Use `python3 scripts/lapis.py ui-review` for routine background UI reviews after
-the dependencies are ready. The baseline desktop/native steps above require a
-logged-in graphical session and the exact dependencies below. Run GUI checks serially, including across worktrees, so windows do not steal
+the dependencies are ready. The full desktop gate (`python3 scripts/lapis.py build`)
+includes GUI tests and requires a logged-in graphical session. Schedule it and
+the `ui-check` and `cli-check` capture gates under
+[test host selection](AGENTS.md#test-host-selection), reusing existing session
+authorization. Use focused targets and background cases for ordinary iteration.
+Run GUI checks serially, including across worktrees, so windows do not steal
 focus from another test. The baseline is not a substitute for the scope-specific
 sanitizer, tooling or dependency checks in the [required matrix](#checks).
 For the deferred Linux port, record a headless baseline and its platform limits; do not claim desktop
@@ -69,17 +70,8 @@ edits to root CMake files, shared headers, architecture and status docs. Tempora
 worker scopes prevent collisions; separate worktrees are useful when independent
 changes need isolated builds.
 
-Before a worker writes, record a short brief with these fields (in the task or PR,
-not another project roadmap):
-
-```text
-Objective and exclusions:
-Committed baseline and working directory:
-Temporary write allowlist; shared-file integration owner:
-Dependencies and shared interface/version:
-Acceptance commands; build directory/owner; GUI exclusivity:
-Handoff: changed files, contract effects, commands/results, evidence, open issues
-```
+Before a worker writes, use the [shared work record](#work-records-and-review-checkpoints)
+as its brief. Keep the contract and acceptance criteria with the assignment.
 
 Review the diff and completion receipt before integration; a worker's completed
 turn is not proof that its assignment or tests finished. Reuse the same scoped
@@ -106,6 +98,58 @@ scheduling checks that already passed on unchanged assembled source.
 Individual branches passing tests do not establish integration acceptance. Use
 one build owner per checkout/preset; shared `build/reports/<mode>/` receipts are
 overwritten on rerun, so preserve relevant logs before another run.
+
+### Work records and review checkpoints
+
+For substantial work, keep one compact record in the task context or ignored
+`build/<task>/work.md`. A small edit can use the same fields in a short handoff.
+This is execution state; README still owns product status, architecture owns the
+plan/contracts, and this guide owns procedure. Avoid another tracked roadmap.
+
+```xml
+<work_record>
+  <objective>Requested outcome, current milestone or maintenance batch, exclusions.</objective>
+  <baseline>Checkout, branch, HEAD, dirty work to preserve, relevant PR head and overlap.</baseline>
+  <scope>Temporary write allowlist, collaborators, shared-file and build owner.</scope>
+  <contracts>State/resource owner, session or connection identity, interfaces and compatibility.</contracts>
+  <checks>Supported commands and cases, platform, expected observations, build directory, reusable evidence.</checks>
+  <validation>Fresh or reused result; command, source SHA/dirty state, scope, platform/tool versions, outcome and receipt.</validation>
+  <findings>Kind, concrete trigger, affected contract, disposition, evidence and next action.</findings>
+  <handoff>Changed files, tested source state, outcomes, limits and the next unfinished item.</handoff>
+</work_record>
+```
+
+At each integration checkpoint, update rather than duplicate the record. Classify
+findings as **defect**, **contract gap**, **acceptance gap** or **preference**, and
+record whether each is open, fixed and verified, deferred with a reason, or
+rejected with evidence. A source fix with missing required acceptance remains an
+acceptance gap. Transfer these dispositions into the PR/handoff; preserve concise
+sanitized evidence in `evidence/` and detailed logs under `build/`.
+For reused results, preserve their original revision and explain why their tested
+inputs still match; link the receipt instead of copying its full contents.
+
+### Quality review checkpoints
+
+Reviewers apply these checks to the affected boundaries. These are explicit manual
+review rules, supported by behavior tests where useful; no automated architecture
+gate is implied.
+
+| Boundary | Review question and expected evidence |
+| --- | --- |
+| Module and state ownership | Does the existing owner still make the decision? Declare direct build dependencies, keep adapters independent, and give an extraction a concrete consumer. Avoid parallel registries, provider strings in shared policy, and duplicate sources of derived state. |
+| Async work and persistence | Capture session/host/generation identity before suspension; validate it before mutation, persistence, deferred cleanup and follow-up work. Check A-to-B-to-A changes and unchanged-identity updates. Cache keys must distinguish complete owners; private task handles stay private. |
+| Resources and failure paths | Bound active work, queued work and retained state separately. Check acquisition/start failure as well as normal completion. Preserve the original failure and release only owned resources. Exercise successful cached decisions as well as refusal/retry paths. |
+| Test value and isolation | State the observable behavior each new case adds. Reuse shared fixtures without deleting distinct layer contracts. Await a trigger and completion for stale-response assertions; use a removed-fix control when a race test's sensitivity is uncertain. Give concurrent probes private build/runtime artifacts and clean them on setup failure. |
+| Evidence and integration | Bind results to tested inputs and scope. Reject empty success, stale passing receipts and unreachable assertions. Read review-service output: a green check can accompany a skipped review. Retain unresolved native-platform and sanitizer limitations, and reconcile overlapping PR/local changes before integration. |
+
+When creating or changing a verification runner, invalidate the previous output
+receipt before attempting checks. Setup, compilation and execution failures must
+leave a failing result or no current receipt, never an earlier pass.
+
+If a rule would only be checked by asserting that its wording appears in this
+file, use the manual review checkpoint instead. Mechanical standards belong in
+the existing formatter, analyzer or quality runner; new tests should detect a
+behavioral failure or recovery gap.
 
 ## Code standards
 
@@ -667,7 +711,7 @@ Run from the repository root:
 
 | Command | What it checks |
 | --- | --- |
-| `just quality` | Repository contracts, diff whitespace, Python lint/format and unit tests; no GUI |
+| `just quality` | Repository contracts, diff whitespace, Python lint/format across `apps`, `scripts` and `tools`, and unit tests; no GUI |
 | `just check` | Compiler warnings as errors, CTest, format, clang-tidy, and Cppcheck |
 | `just asan` | CTest with AddressSanitizer and UndefinedBehaviorSanitizer |
 | `just tsan` | CTest with ThreadSanitizer in a separate build |
@@ -709,6 +753,38 @@ build/run, for example `scripts/check_ios_remote.py --only testRotationWhileComp
 --only testSendScreenToMac`. Apply the result-reuse rules below to unchanged
 adapter coverage. Simulator cleanup shuts down only the device that this run
 booted.
+
+For `AgentSession` or `WorkspaceModel` lifecycle changes, start with the smaller Foundation
+check before simulator integration:
+
+```sh
+python3 tools/qa/run_history_lifecycle_probe.py \
+  --output build/qa/history-lifecycle/receipt.json
+```
+
+It compiles the production Swift models on macOS and uses a disposable loopback
+HTTP/SSE peer to control old responses, replacement attachments, prefetch,
+paging, in-flight input and A-to-B-to-A gateway changes. Preferences and disk
+caches are injected into the fixture and remain isolated from the user's state.
+It exercises model ownership without a simulator or desktop input. Then
+select `testTakenElsewhereThenReopened` and `testScrollingBackLoadsHistory` in the
+simulator runner to verify the affected app integration. Reuse unchanged adapter
+checks according to the selection rules below.
+
+The CLI launch runner also supports focused cases without starting an installed
+agent or desktop window unless explicitly selected and enabled:
+
+```sh
+python3 scripts/check_cli_launch.py --list-cases
+python3 scripts/check_cli_launch.py --case identity-boundaries \
+  --case synchronization-boundaries --output build/qa/cli-ownership.json
+```
+
+Listing is inert and needs no build. Repeat `--case` to choose a subset; duplicate
+selections run once. Unknown cases and cases missing their required `--desktop`
+or `--codex` flag fail before execution and invalidate stale output receipts.
+With no selection, the existing full eligible case set runs. Receipts record
+the actual cases executed; a subset is not the full CLI gate.
 
 ### Claude Code hook qualification
 
@@ -806,6 +882,19 @@ require the affected checks again. Required CI and repository rules still apply.
 The commands themselves execute their checks; this procedure does not add an
 automatic cache or silently skip a requested run.
 
+For iPhone model lifecycle edits, the fast local check is
+`python3 tools/qa/run_history_lifecycle_probe.py`. It compiles the production
+Foundation models and checks controlled stale responses, reconnects and cache
+ownership without a simulator. The `--negative-control workspace` and
+`--negative-control terminals` variants remove one ownership guard from a
+temporary source copy; each must exit 1 with its matching stale-response
+diagnostic and record `control_verified: true`. The receipt keeps `passed: false`
+for these controls, including when the expected failure was observed. A setup
+failure, unrelated diagnostic or unexpected fixture route does not verify a
+control. Use these controls when changing the regression itself, rather than
+rerunning them for unrelated edits. This probe does not replace the iOS
+integration row at handoff.
+
 Without `just`, use `python3 scripts/check_cpp.py dev`, replacing `dev` with
 `asan`, `tsan`, `profile`, `desktop`, or `format` as appropriate. The detector check is
 `python3 scripts/verify_cpp_tools.py`.
@@ -813,7 +902,10 @@ Without `just`, use `python3 scripts/check_cpp.py dev`, replacing `dev` with
 Builds use Ninja and ccache when available. Analysis runs in parallel, up to
 eight workers by default; use `--jobs N` on `check_cpp.py` to adjust it. Each
 invocation records diagnostics, tool versions, exit codes, and durations under
-`build/reports/<mode>/`. Static analysis runs even when compilation is cached. Desktop analysis uses the
+`build/reports/<mode>/`. The C++ runner invalidates the previous receipt before
+starting checks and records toolchain/version failures as failures. Format mode
+writes its own receipt; it does not establish compilation or behavior coverage.
+Static analysis runs even when compilation is cached. Desktop analysis uses the
 Qt Cppcheck library and excludes generated MOC/resource files from source analysis;
 the compiler still builds those files with project warnings enabled.
 
@@ -853,6 +945,13 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `keymap` | Desktop-enabled | Configuration defaults, appearance choices, persistence and invalid input |
 | `workspace` | Desktop-enabled | Category registry (private atomic writes, rollback on failure), agent create/close/reopen, per-category selection, unseen marks, status sources and parent-session marker removal |
 | `window-state` | Desktop-enabled | Machine-local window geometry, off-screen restore, isolated modes, unsafe paths, legacy layout values and modal focus |
+| `agent-search` | Desktop-enabled | Agent matching, ranking and query handling |
+| `app-environment` | Desktop-enabled | Application launch environment and executable discovery |
+| `terminal-find` | Desktop-enabled | Terminal text matching and row/column results |
+| `tile-layout` | Desktop-enabled | Tile placement, navigation and layout bounds |
+| `cell-shapes` | Desktop-enabled | Block, box and quadrant geometry |
+| `harness-models` | Desktop-enabled | Model discovery, parsing, defaults and result bounds |
+| `usage` | Desktop-enabled | Usage parsing, aggregation and provider state |
 | `ui-preview` | Desktop-enabled | Qt reload, screen selection, passive attention, modal response ownership, draft/IME preservation, input and render lifecycle |
 | `appearance-input` | Desktop-enabled, native GUI | Configured settings shortcut, modal focus, all theme/layout/density controls, persistence and shortcut reload |
 | `history-store` | Desktop-enabled | Styled page round trips, per-session/global quotas, corruption, interrupted-write cleanup and file-size write failure recovery |
@@ -1093,6 +1192,14 @@ requires the native desktop. Run the background mode while the desktop is in use
 reserve short exclusive windows for the native checks below. Do not replace a
 failed native result with a background pass or relabel it as native acceptance.
 
+For a separate background `window-state` run, give Qt an explicit virtual screen.
+Its default offscreen screen can be smaller than the saved-window fixture. A JSON
+file containing `{"screens":[{"name":"qualification","x":0,"y":0,"width":1920,"height":1080}]}`
+can be selected with `QT_QPA_PLATFORM=offscreen:configfile=<absolute-json-path>`
+when running `ctest --test-dir build/desktop -R '^window-state$'
+--output-on-failure --no-tests=error`. This verifies geometry against that virtual
+screen; it does not qualify native window-manager placement.
+
 Build the current desktop first. Run these checks serially with other GUI work:
 
 ```sh
@@ -1244,7 +1351,7 @@ python3 scripts/check_cli_launch.py --build-dir build/desktop-asan \
 Repeat those configure/build/test/harness commands with preset `tsan` and all
 `desktop-asan` paths changed to `desktop-tsan`. Do not combine instrumentation or
 use `ctest --preset asan` for the custom directory: that preset targets
-`build/asan`. Each desktop-enabled directory must list all twenty-two suites above.
+`build/asan`. Each desktop-enabled directory must list all registered suites above.
 Use the same LLVM installation for normal and instrumented builds. Ccache is
 optional (`-DCMAKE_CXX_COMPILER_LAUNCHER=...`); raw CMake does not discover it.
 Reduce `--parallel` for host resource limits. The CLI command above runs service

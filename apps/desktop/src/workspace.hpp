@@ -540,8 +540,11 @@ class Workspace final : public QObject {
     // The launch for a new agent, or nullopt with workspaceError().
     std::optional<session::LaunchSpec> agentLaunch(const AgentRequest& request);
     QString insertCategory(const QString& name, bool select);
-    // Starts an agent from a finished launch; the rest of startAgent.
-    QString launchAgent(const AgentRequest& request, const session::LaunchSpec& launch);
+    // Starts an agent from a finished launch; the rest of startAgent. A
+    // managed resume plan is committed in the same registry save as the
+    // launch, before the process starts.
+    QString launchAgent(const AgentRequest& request, const session::LaunchSpec& launch,
+                        int managed_resume_index = -1, const QString& managed_resume_identity = {});
     Category* category(const QString& id);
     [[nodiscard]] const Category* activeCategory() const;
     // After an agent leaves a category: off its stage, and one tile is no split.

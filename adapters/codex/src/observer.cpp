@@ -81,6 +81,8 @@ void parse_approval(Request& result, const QJsonObject& params) {
                 result.core.choices.end())
             result.core.choices.push_back(value);
     }
+    if (result.core.choices.empty())
+        result.core.reason = "Respond in terminal";
 }
 void parse_questions(Request& result, const QJsonObject& params) {
     result.core.reason = "User input";

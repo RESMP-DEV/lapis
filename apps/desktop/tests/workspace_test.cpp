@@ -2827,6 +2827,143 @@ void requireProcessArguments(const QJsonArray& arguments, const QString& directo
             "the restarted process received the saved resume arguments");
 }
 
+// A reopen's resume arguments and managed provenance must commit together
+// before a process exists. A failed transaction also keeps the closed plan
+// retryable instead of losing it behind a launch that never happened.
+void reopenFailurePreservesTheRetryableManagedPlan() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-reopen-save-XXXXXX"));
+    require(directory.isValid(), "reopen save-failure directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const auto script = QDir(canonical).filePath(QStringLiteral("agent.sh"));
+    writeExecutable(script,
+                    QByteArrayLiteral("#!/usr/bin/env bash\n"
+                                      "printf '%s\\n' \"$@\" > \"$(dirname \"$0\")/args.$$.txt\"\n"
+                                      "read -r -t 60 line\n"));
+    const QString retained_id = QStringLiteral("ef715fac-a03a-45d4-8466-b0f2740c6b7b");
+    const QString managed_id = uuid();
+    auto retained = agentRecord(canonical, retained_id, "general");
+    retained.insert(QStringLiteral("program"), script);
+    retained.insert(QStringLiteral("harness"), QStringLiteral("kimi"));
+    auto managed = agentRecord(canonical, managed_id, "closed");
+    managed.insert(QStringLiteral("program"), script);
+    managed.insert(QStringLiteral("harness"), QStringLiteral("kimi"));
+    managed.insert(QStringLiteral("arguments"), QJsonArray{QStringLiteral("--user")});
+    WorkspaceOptions options;
+    options.restoreAgents = true;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{
+            {"version", 2},
+            {"activeCategory", "closed"},
+            {"categories",
+             QJsonArray{
+                 QJsonObject{{"id", "general"}, {"name", "General"}, {"selected", retained_id}},
+                 QJsonObject{{"id", "closed"}, {"name", "Closed"}, {"selected", managed_id}}}},
+            {"agents", QJsonArray{retained, managed}}});
+    writeObservedResume(QDir(canonical).filePath(managed_id + QStringLiteral(".sock")),
+                        {QStringLiteral("kimi"), QStringLiteral("m-1")});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "load reopen save-failure fixture");
+    auto* retained_item = workspace.session(retained_id);
+    auto* managed_item = workspace.session(managed_id);
+    require(waitFor(
+                [retained_item, managed_item] {
+                    return retained_item && managed_item && retained_item->inputReady() &&
+                           managed_item->inputReady();
+                },
+                10000),
+            "the reopen fixture starts");
+    const auto saved_agent = [&](const QString& id) {
+        for (const auto& value : QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                     .object()
+                                     .value(QStringLiteral("agents"))
+                                     .toArray())
+            if (value.toObject().value(QStringLiteral("id")).toString() == id)
+                return value.toObject();
+        throw std::runtime_error("reopen fixture agent is missing");
+    };
+    const QJsonArray expected_arguments{QStringLiteral("--user"), QStringLiteral("--session"),
+                                        QStringLiteral("m-1")};
+    const auto initial = saved_agent(managed_id);
+    require(initial.value(QStringLiteral("arguments")).toArray() == expected_arguments,
+            "restore planning preserves user arguments around the managed pair");
+    const auto initial_provenance = initial.value(QStringLiteral("managedResume")).toObject();
+    require(initial_provenance.value(QStringLiteral("index")).toInt(-1) == 1 &&
+                initial_provenance.value(QStringLiteral("identity")).toString() ==
+                    QStringLiteral("m-1"),
+            "the restored managed plan has provenance");
+    requireProcessArguments(expected_arguments, canonical);
+    for (const auto& name : QDir(canonical).entryList({QStringLiteral("args.*.txt")}, QDir::Files))
+        require(QFile::remove(QDir(canonical).filePath(name)), "remove startup argv receipts");
+
+    require(workspace.closeSession(managed_id) &&
+                waitFor([&workspace] { return workspace.sessions().size() == 1; }, 10000),
+            "close the managed reopen fixture");
+    require(workspace.canReopenAgent(), "the closed managed plan is retryable");
+    const auto previous_focus = workspace.focusedSession();
+    const auto previous_category = workspace.activeCategoryId();
+    const auto held_registry = QDir(canonical).filePath(QStringLiteral("registry-held"));
+    require(QFile::rename(options.storagePath, held_registry), "move complete registry bytes");
+    const auto complete_registry = readRegistry(held_registry);
+    require(
+        QDir().mkpath(options.storagePath, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+        "replace the registry path with a directory");
+    workspace.clearError();
+    require(!workspace.reopenAgent(), "a failed reopen save does not report success");
+    require(!workspace.workspaceError().isEmpty(), "a failed reopen names its save failure");
+    require(workspace.canReopenAgent(), "a failed reopen remains retryable");
+    require(workspace.sessions().size() == 1 && workspace.session(retained_id) == retained_item &&
+                workspace.focusedSession() == previous_focus &&
+                workspace.activeCategoryId() == previous_category,
+            "a failed reopen preserves the existing session and selection");
+    require(QDir(canonical).entryList({QStringLiteral("args.*.txt")}, QDir::Files).isEmpty(),
+            "a failed reopen starts no agent process");
+    require(readRegistry(held_registry) == complete_registry,
+            "a failed reopen leaves complete registry bytes unchanged");
+
+    require(QDir(options.storagePath).removeRecursively(), "remove the save-failure directory");
+    require(QFile::rename(held_registry, options.storagePath), "restore complete registry bytes");
+    QJsonObject first_published_record;
+    QObject::connect(&workspace, &Workspace::sessionsChanged, &workspace, [&] {
+        if (first_published_record.isEmpty() && workspace.sessions().size() == 2)
+            first_published_record = saved_agent(workspace.focusedSession()->sessionId());
+    });
+    require(workspace.reopenAgent() && workspace.sessions().size() == 2,
+            "a retryable reopen commits and starts");
+    auto* reopened = workspace.focusedSession();
+    require(reopened != nullptr && reopened->title() == managed_id &&
+                workspace.activeCategoryId() == QStringLiteral("closed"),
+            "a retried reopen restores its category and selection");
+    const auto root = QJsonDocument::fromJson(readRegistry(options.storagePath)).object();
+    const auto agents = root.value(QStringLiteral("agents")).toArray();
+    require(agents.size() == 2 &&
+                agents.first().toObject().value(QStringLiteral("id")).toString() == retained_id &&
+                agents.last().toObject().value(QStringLiteral("id")).toString() ==
+                    reopened->sessionId(),
+            "a retried reopen appends without changing existing registry order");
+    const auto reopened_record = agents.last().toObject();
+    require(reopened_record.value(QStringLiteral("arguments")).toArray() == expected_arguments,
+            "one save persists the full managed resume arguments");
+    const auto provenance = reopened_record.value(QStringLiteral("managedResume")).toObject();
+    require(first_published_record.value(QStringLiteral("managedResume")).toObject() ==
+                initial_provenance,
+            "the first published reopen already has durable managed provenance");
+    require(provenance.value(QStringLiteral("index")).toInt(-1) == 1 &&
+                provenance.value(QStringLiteral("identity")).toString() == QStringLiteral("m-1"),
+            "one save persists managed provenance with the launch");
+    requireProcessArguments(expected_arguments, canonical);
+    require(waitFor([reopened] { return reopened->inputReady(); }, 10000),
+            "the reopened process completes attachment before closing");
+
+    require(workspace.closeSession(reopened->sessionId()), "close the retried agent");
+    require(waitFor([&workspace] { return workspace.sessions().size() == 1; }, 10000),
+            "the retried agent ends");
+    require(workspace.closeSession(retained_id), "close the retained fixture agent");
+    require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+            "reopen save-failure agents close");
+}
+
 // A launch already at the registry's durable argument cap must not receive an
 // uncounted resume pair that makes the next startup reject the whole workspace.
 void savedArgumentCapKeepsRegistryLoadable() {
@@ -3562,6 +3699,7 @@ int main(int argc, char** argv) {
         agentsStartWithoutParentSessionMarkers();
         restartRefusesClosingAgent();
         agentsRestoreAfterServiceLoss();
+        reopenFailurePreservesTheRetryableManagedPlan();
         updaterLifecycle();
         updaterOutputIsDrainedWithABoundedTail();
         failedUpdaterStartClearsTheQueue();

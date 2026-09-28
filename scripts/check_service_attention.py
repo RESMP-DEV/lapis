@@ -25,6 +25,7 @@ from check_cli_launch import (
     TEXT,
     VERSION,
     CheckError,
+    FrameDeadline,
     Service,
     decode_snapshot,
     require,
@@ -143,11 +144,7 @@ class View:
         while self.running:
             try:
                 kind, data = await asyncio.to_thread(self.client.receive, 0.2)
-            except socket.timeout:
-                continue
-            except CheckError as error:
-                if str(error) != "Frame deadline expired":
-                    raise
+            except (socket.timeout, FrameDeadline):
                 continue
             if kind == ATTENTION_SNAPSHOT:
                 value = snapshot(data)

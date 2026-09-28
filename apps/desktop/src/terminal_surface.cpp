@@ -19,6 +19,7 @@
 #include <QSGGeometryNode>
 #include <QSGSimpleRectNode>
 #include <QSGTextNode>
+#include <QStringDecoder>
 #include <QStringList>
 #include <QTextCharFormat>
 #include <QTextLayout>
@@ -1382,15 +1383,46 @@ std::optional<TerminalMatch> terminal_find(const session::TerminalSnapshot& snap
 }
 
 bool TerminalSurface::pasteText(const QString& text) {
-    if (!document_ || text.isEmpty() || !interactive_ || !document_->live())
+    if (!document_ || text.isEmpty() || !interactive_ || !document_->live() || pasting_)
         return false;
     if (document_->historyActive())
         document_->returnToLive();
     if (!acceptsTerminalInput())
         return false;
+    const auto owner = document_;
+    pasting_ = true;
+    emit inputOwnershipChanged();
+    const auto release_paste = qScopeGuard([this] {
+        pasting_ = false;
+        emit inputOwnershipChanged();
+    });
+    ++ime_epoch_;
+    resetInputContext();
+    // Resetting the input context can re-enter input handling. Keep the paste
+    // bound to its captured document and send only when that destination still
+    // owns the keyboard after the reset.
+    if (document_ != owner || !acceptsTerminalInput())
+        return false;
     clearSelection();
     document_->sendText(text.toUtf8(), true);
     return true;
+}
+
+QString TerminalSurface::localFilePath(const QString& url) const {
+    if (url.contains(u'\0'))
+        return {};
+    const QUrl parsed(url, QUrl::StrictMode);
+    if (!parsed.isValid() || parsed.scheme() != QLatin1String("file") ||
+        !parsed.path().startsWith(u'/') || parsed.port() != -1 || !parsed.userName().isEmpty() ||
+        !parsed.password().isEmpty() || parsed.hasQuery() || parsed.hasFragment())
+        return {};
+    QStringDecoder decoder(QStringDecoder::Utf8, QStringConverter::Flag::Stateless);
+    const QString decoded =
+        decoder(QByteArray::fromPercentEncoding(parsed.path(QUrl::FullyEncoded).toUtf8()));
+    if (decoder.hasError() || decoded.contains(u'\0'))
+        return {};
+    const QString path = parsed.toLocalFile();
+    return path.isEmpty() || path.contains(u'\0') ? QString() : path;
 }
 
 bool TerminalSurface::findText(const QString& text, bool backwards) {
@@ -1597,18 +1629,8 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
     if (composition_state_ == CompositionState::stale)
         composition_state_ = CompositionState::idle;
     if (event->matches(QKeySequence::Paste)) {
-        pasting_ = true;
-        emit inputOwnershipChanged();
-        const auto release_paste = qScopeGuard([this] {
-            pasting_ = false;
-            emit inputOwnershipChanged();
-        });
-        const auto owner = document_;
         const QString text = QGuiApplication::clipboard()->text();
-        ++ime_epoch_;
-        resetInputContext();
-        if (document_ == owner && acceptsTerminalInput())
-            document_->sendText(text.toUtf8(), true);
+        static_cast<void>(pasteText(text));
         event->accept();
         return;
     }

@@ -256,14 +256,14 @@ class LauncherTests(unittest.TestCase):
         output = self.temporary_root / "cli-receipt.json"
         observed = []
 
-        def exercise(_build, runtime, *_options):
+        def exercise(_build, runtime, *_options, **_selection):
             observed.append(runtime)
             self.assertNotEqual(runtime, self.runtime)
             self.assertEqual(stat.S_IMODE(runtime.stat().st_mode), 0o700)
             # Exercise the OS path limit, including a backend socket suffix.
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
                 listener.bind(str(runtime / "codex-arguments-12.sock.codex"))
-            return [{"name": "isolated fixture", "passed": True}]
+            return [{"name": "isolated fixture", "case": "fixture", "passed": True}]
 
         with (
             patch.object(lapis, "RUNTIME_DIR", self.runtime),

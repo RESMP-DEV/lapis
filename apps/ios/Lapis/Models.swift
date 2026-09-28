@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Observation
 
 @MainActor
@@ -7,7 +8,13 @@ final class WorkspaceModel {
     static let hostKey = "gatewayHost"
 
     var host: String {
-        didSet { UserDefaults.standard.set(host, forKey: WorkspaceModel.hostKey) }
+        didSet {
+            preferences.set(host, forKey: WorkspaceModel.hostKey)
+            guard host != oldValue else { return }
+            hostGeneration += 1
+            invalidateHostState()
+            restoreHostState()
+        }
     }
     var listing: WorkspaceListing?
     var error: String?
@@ -32,27 +39,64 @@ final class WorkspaceModel {
     private var settingsRequest = 0
     // Full-settings replies are versioned, and writes reach the Mac in order.
     private var settingsWrite: Task<MacSettings, Error>?
+    // One identity for work that began on one Mac. A URL is not enough: an
+    // old answer can return after Settings goes back to the original host.
+    private var hostGeneration = 0
 
-    init() {
-        let saved = UserDefaults.standard.string(forKey: WorkspaceModel.hostKey)
+    private let preferences: UserDefaults
+    private let cache: DiskCache
+
+    init(preferences: UserDefaults = .standard, cache: DiskCache = DiskCache()) {
+        self.preferences = preferences
+        self.cache = cache
+        let saved = preferences.string(forKey: WorkspaceModel.hostKey)
         let bundled = Bundle.main.object(forInfoDictionaryKey: "LapisDefaultHost") as? String
         host = saved ?? bundled ?? ""
-        if UserDefaults.standard.bool(forKey: "resetCache") { DiskCache.clear() }
-        // The last known state shows at once; it is refreshed right after.
-        listing = DiskCache.load(WorkspaceListing.self, cacheName("listing"))
-        harnesses = DiskCache.load([Harness].self, cacheName("harnesses"))
-        defaults = DiskCache.load(AgentDefaults.self, cacheName("defaults"))
-        machines = DiskCache.load([Machine].self, cacheName("machines")) ?? []
+        if preferences.bool(forKey: "resetCache") { cache.clear() }
+        hostGeneration = 1
+        restoreHostState()
+    }
+
+    private func invalidateHostState() {
+        listing = nil
+        error = nil
+        harnesses = nil
+        defaults = nil
+        machines = []
+        terminals = []
+        catalogs.removeAll()
+        catalogErrors.removeAll()
+        notice = nil
+        fetched.removeAll()
+        catalogLoads.removeAll()
+        prefetching = false
+        settingsRequest += 1
+        macSettings = nil
+        settingsError = nil
+        ScreenCache.shared.clearAll()
+    }
+
+    // The last known state for the new Mac shows at once; it is refreshed
+    // right after. Parsing folders stays off the main actor.
+    private func restoreHostState() {
+        let generation = hostGeneration
+        let responseHost = host
+        listing = cache.load(WorkspaceListing.self, cacheName("listing", for: responseHost))
+        harnesses = cache.load([Harness].self, cacheName("harnesses", for: responseHost))
+        defaults = cache.load(AgentDefaults.self, cacheName("defaults", for: responseHost))
+        machines = cache.load([Machine].self, cacheName("machines", for: responseHost)) ?? []
         let names = [""] + machines.map(\.name)
         let folders = names.compactMap { name in
-            DiskCache.load(FolderPayload.self, cacheName("folders-" + name)).map { (name, $0) }
+            cache.load(FolderPayload.self, cacheName("folders-" + name, for: responseHost))
+                .map { (name, $0) }
         }
         Task { [weak self] in
             let built = await Task.detached {
                 folders.map { FolderCatalog(machine: $0.0, payload: $0.1) }
             }.value
-            for catalog in built where self?.catalogs[catalog.machine] == nil {
-                self?.catalogs[catalog.machine] = catalog
+            guard let self, self.hostGeneration == generation else { return }
+            for catalog in built where self.catalogs[catalog.machine] == nil {
+                self.catalogs[catalog.machine] = catalog
             }
         }
     }
@@ -60,29 +104,40 @@ final class WorkspaceModel {
     var gateway: Gateway? { try? Gateway(host: host) }
 
     // Cached files belong to the Mac they came from.
-    private func cacheName(_ name: String) -> String {
-        String(host.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "_" }) + "-" + name
+    private func cacheName(_ name: String, for responseHost: String) -> String {
+        let digest = SHA256.hash(data: Data(responseHost.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined() + "-" + name
     }
 
     func refresh() async {
+        let generation = hostGeneration
+        let responseHost = host
         guard let gateway else {
-            error = GatewayError.invalidHost.localizedDescription
+            if hostGeneration == generation {
+                error = GatewayError.invalidHost.localizedDescription
+            }
             return
         }
         do {
             let current = try await gateway.agents()
+            guard hostGeneration == generation else { return }
             listing = current
             error = nil
             // A failed refresh is not evidence that existing terminals closed.
             // An older Mac starts with the empty list until it supports this.
-            if let currentTerminals = try? await gateway.terminals() {
+            let currentTerminals = try? await gateway.terminals()
+            // The optional terminal capability is independent of ownership:
+            // an old answer still cannot save, refresh, or publish terminals.
+            guard hostGeneration == generation else { return }
+            if let currentTerminals {
                 terminals = currentTerminals
             }
-            DiskCache.save(current, cacheName("listing"))
+            cache.save(current, cacheName("listing", for: responseHost))
             Task { await prefetch() }
         } catch is CancellationError {
         } catch let failure as URLError where failure.code == .cancelled {
         } catch {
+            guard hostGeneration == generation else { return }
             self.error = describe(error)
         }
     }
@@ -96,52 +151,81 @@ final class WorkspaceModel {
     // agent's screen, so opening one shows it at once.
     func prefetch() async {
         guard let gateway, !prefetching else { return }
+        let generation = hostGeneration
+        let responseHost = host
         prefetching = true
-        defer { prefetching = false }
+        defer {
+            // A host change already let the replacement prefetch begin.
+            if hostGeneration == generation { prefetching = false }
+        }
         // The Mac's config applies live, so its defaults are asked for often.
-        if due("harnesses", 60), let answer = try? await gateway.harnesses() {
+        if due("harnesses", 60),
+           let answer = try? await gateway.harnesses(), hostGeneration == generation {
             harnesses = answer.harnesses
             defaults = answer.defaults
             fetched["harnesses"] = Date()
-            DiskCache.save(answer.harnesses, cacheName("harnesses"))
-            if let found = answer.defaults { DiskCache.save(found, cacheName("defaults")) }
+            cache.save(answer.harnesses, cacheName("harnesses", for: responseHost))
+            if let found = answer.defaults {
+                cache.save(found, cacheName("defaults", for: responseHost))
+            }
         }
-        if due("machines", 120), let list = try? await gateway.machines() {
-            machines = list
-            fetched["machines"] = Date()
-            DiskCache.save(list, cacheName("machines"))
+        if hostGeneration == generation, due("machines", 120) {
+            let list = try? await gateway.machines()
+            // A failed machines answer says nothing about the local catalog
+            // or running screens; cancellation or a host change ends this
+            // prefetch.
+            guard hostGeneration == generation, !Task.isCancelled else { return }
+            if let list {
+                machines = list
+                fetched["machines"] = Date()
+                cache.save(list, cacheName("machines", for: responseHost))
+            }
         }
+        guard hostGeneration == generation else { return }
         await loadCatalog("", olderThan: 300)
-        for machine in machines.filter(\.available).prefix(3) {
+        for machine in machines.filter(\.available).prefix(3)
+        where hostGeneration == generation {
             await loadCatalog(machine.name, olderThan: 600)
         }
+        guard hostGeneration == generation else { return }
         await prefetchScreens()
     }
 
     // A machine's folders; only a changed index is downloaded again.
     func loadCatalog(_ machine: String, olderThan age: TimeInterval = 0) async {
         let key = "folders-" + machine
+        let generation = hostGeneration
+        let responseHost = host
         guard let gateway, !catalogLoads.contains(machine), due(key, age) else { return }
         catalogLoads.insert(machine)
-        defer { catalogLoads.remove(machine) }
+        defer {
+            // A host change already let the replacement load begin.
+            if hostGeneration == generation { catalogLoads.remove(machine) }
+        }
         do {
             let payload = try await gateway.folders(machine: machine, have: catalogs[machine]?.version)
+            guard hostGeneration == generation else { return }
             fetched[key] = Date()
             catalogErrors[machine] = nil
             if payload.unchanged == true { return }
             let catalog = await Task.detached { FolderCatalog(machine: machine, payload: payload) }.value
+            guard hostGeneration == generation else { return }
             catalogs[machine] = catalog
-            DiskCache.save(payload, cacheName(key))
+            cache.save(payload, cacheName(key, for: responseHost))
         } catch {
+            guard hostGeneration == generation else { return }
             catalogErrors[machine] = describe(error)
         }
     }
 
     private func prefetchScreens() async {
         guard let gateway else { return }
+        let generation = hostGeneration
         let running = (listing?.categories.flatMap(\.agents) ?? []).filter(\.running)
         for agent in running.prefix(8) where ScreenCache.shared.age(agent.id) > 20 {
-            if let frame = try? await gateway.screen(agent: agent.id) {
+            guard hostGeneration == generation else { return }
+            let frame = try? await gateway.screen(agent: agent.id)
+            if let frame, hostGeneration == generation {
                 ScreenCache.shared.store(agent.id, frame)
             }
         }
@@ -162,31 +246,35 @@ final class ScreenCache {
     }
 
     func store(_ agent: String, _ frame: ScreenFrame) { frames[agent] = (frame, Date()) }
+
+    func clearAll() { frames.removeAll() }
 }
 
 // Small JSON files in Application Support, so a cold launch shows the last
 // known list and folder indexes without waiting for the Mac.
-enum DiskCache {
-    static let folder: URL = {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("cache", isDirectory: true)
-        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        return base
-    }()
+struct DiskCache {
+    let folder: URL
 
-    static func load<T: Decodable>(_ type: T.Type, _ name: String) -> T? {
+    init(folder: URL? = nil) {
+        self.folder = folder ?? FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        )[0].appendingPathComponent("cache", isDirectory: true)
+        try? FileManager.default.createDirectory(at: self.folder, withIntermediateDirectories: true)
+    }
+
+    func load<T: Decodable>(_ type: T.Type, _ name: String) -> T? {
         guard let data = try? Data(contentsOf: folder.appendingPathComponent(name + ".json")) else {
             return nil
         }
         return try? JSONDecoder().decode(T.self, from: data)
     }
 
-    static func save<T: Encodable>(_ value: T, _ name: String) {
+    func save<T: Encodable>(_ value: T, _ name: String) {
         guard let data = try? JSONEncoder().encode(value) else { return }
         try? data.write(to: folder.appendingPathComponent(name + ".json"), options: .atomic)
     }
 
-    static func clear() {
+    func clear() {
         try? FileManager.default.removeItem(at: folder)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     }
@@ -196,15 +284,22 @@ extension WorkspaceModel {
     // Starts an agent through the Mac's lapis and waits until it runs; a CLI
     // may update itself first, for up to two minutes.
     func start(_ new: NewAgent, progress: @MainActor (String) -> Void) async throws -> Agent {
+        let generation = hostGeneration
         guard let gateway else { throw GatewayError.invalidHost }
         let started = try await gateway.start(new)
+        guard hostGeneration == generation else { throw GatewayError.invalidHost }
         progress(started.updating ? "Updating the CLI first…" : "Starting…")
         // The folder now has one more agent; rank it again.
-        Task { await loadCatalog(new.machine ?? "") }
+        Task { [weak self] in
+            guard let self, self.hostGeneration == generation else { return }
+            await self.loadCatalog(new.machine ?? "")
+        }
         let deadline = Date().addingTimeInterval(150)
         while Date() < deadline {
             try Task.checkCancellation()
+            guard hostGeneration == generation else { throw GatewayError.invalidHost }
             let current = try await gateway.agents()
+            guard hostGeneration == generation else { throw GatewayError.invalidHost }
             listing = current
             if let agent = current.categories.flatMap(\.agents).first(where: { $0.id == started.id }),
                agent.running {
@@ -219,21 +314,28 @@ extension WorkspaceModel {
 extension WorkspaceModel {
     // A new category on the Mac, listed at once.
     func createCategory(named name: String) async throws -> String {
+        let generation = hostGeneration
         guard let gateway else { throw GatewayError.invalidHost }
         let id = try await gateway.createCategory(named: name)
+        guard hostGeneration == generation else { throw GatewayError.invalidHost }
         await refresh()
+        guard hostGeneration == generation else { throw GatewayError.invalidHost }
         return id
     }
 
     // The machine's terminal, started on the Mac when it has none, once its
     // shell runs.
     func openTerminal(machine: String) async throws -> Agent {
+        let generation = hostGeneration
         guard let gateway else { throw GatewayError.invalidHost }
         let id = try await gateway.openTerminal(machine: machine)
+        guard hostGeneration == generation else { throw GatewayError.invalidHost }
         let deadline = Date().addingTimeInterval(20)
         while Date() < deadline {
             try Task.checkCancellation()
-            terminals = try await gateway.terminals()
+            let currentTerminals = try await gateway.terminals()
+            guard hostGeneration == generation else { throw GatewayError.invalidHost }
+            terminals = currentTerminals
             if let terminal = terminals.first(where: { $0.id == id }), terminal.running {
                 return terminal.asAgent
             }
@@ -244,13 +346,16 @@ extension WorkspaceModel {
 
     // Ends a terminal's shell on the Mac.
     func closeTerminal(_ terminal: TerminalInfo) async {
+        let generation = hostGeneration
         guard let gateway else { return }
         do {
             try await gateway.close(agent: terminal.id)
+            guard hostGeneration == generation else { return }
             // The Mac may keep the record until its shell-exit watcher fires.
             // Leave it visible until a refresh confirms the close.
             await refresh()
         } catch {
+            guard hostGeneration == generation else { return }
             self.error = describe(error)
         }
     }
@@ -273,9 +378,11 @@ extension WorkspaceModel {
 
     // Keep the row until the Mac accepts the close, then refresh its state.
     func close(_ agent: Agent) async {
+        let generation = hostGeneration
         guard let gateway else { return }
         do {
             try await gateway.close(agent: agent.id)
+            guard hostGeneration == generation else { return }
             arrange { categories in
                 for index in categories.indices {
                     categories[index] = categories[index].with(categories[index].agents.filter { $0.id != agent.id })
@@ -283,6 +390,7 @@ extension WorkspaceModel {
             }
             await refresh()
         } catch {
+            guard hostGeneration == generation else { return }
             notice = describe(error)
         }
     }
@@ -300,12 +408,15 @@ extension WorkspaceModel {
     }
 
     private func change(_ action: (Gateway) async throws -> Void) async {
+        let generation = hostGeneration
         guard let gateway else { return }
         do {
             try await action(gateway)
         } catch {
+            guard hostGeneration == generation else { return }
             notice = describe(error)
         }
+        guard hostGeneration == generation else { return }
         await refresh()
     }
 
@@ -355,9 +466,11 @@ extension WorkspaceModel {
     // Starts a stopped agent again on the Mac, resuming its conversation where
     // its CLI can; true once it runs.
     func restart(_ agent: Agent) async -> Bool {
+        let generation = hostGeneration
         guard !Task.isCancelled, let gateway else { return false }
         do {
             try await gateway.restart(agent: agent.id)
+            guard hostGeneration == generation else { return false }
         } catch {
             guard !Task.isCancelled, !(error is CancellationError),
                   (error as? URLError)?.code != .cancelled else { return false }
@@ -368,10 +481,10 @@ extension WorkspaceModel {
         var sawListing = false
         var listingFailure: String?
         while Date() < deadline {
-            guard !Task.isCancelled else { return false }
+            guard !Task.isCancelled, hostGeneration == generation else { return false }
             do {
                 let current = try await gateway.agents()
-                guard !Task.isCancelled else { return false }
+                guard !Task.isCancelled, hostGeneration == generation else { return false }
                 listing = current
                 sawListing = true
                 if current.categories.flatMap(\.agents).contains(where: { $0.id == agent.id && $0.running }) {
@@ -390,6 +503,7 @@ extension WorkspaceModel {
                 } catch {
                     return false
                 }
+                guard hostGeneration == generation else { return false }
                 continue
             }
             do {
@@ -397,8 +511,9 @@ extension WorkspaceModel {
             } catch {
                 return false
             }
+            guard hostGeneration == generation else { return false }
         }
-        guard !Task.isCancelled else { return false }
+        guard !Task.isCancelled, hostGeneration == generation else { return false }
         notice = sawListing
             ? "The agent has not started yet. It is in the list on the Mac."
             : (listingFailure ?? "The agent has not started yet. It is in the list on the Mac.")
@@ -416,6 +531,7 @@ extension WorkspaceModel {
         }
         do {
             if let write = settingsWrite { _ = await write.result }
+            guard request == settingsRequest else { return }
             let settings = try await gateway.settings()
             guard request == settingsRequest else { return }
             macSettings = settings
@@ -439,6 +555,7 @@ extension WorkspaceModel {
         let previous = settingsWrite
         let write = Task {
             if let previous { _ = await previous.result }
+            guard request == settingsRequest else { throw CancellationError() }
             return try await gateway.change(settings: changes)
         }
         settingsWrite = write
@@ -505,11 +622,14 @@ final class AgentSession {
     private var pendingJumpFraction: Double?
     private var lastEmptyCheck = Date.distantPast
     private var newerTask: Task<Void, Never>?
+    private var historyTask: Task<Void, Never>?
+    // One identity for the attachment that owns stream, input and history work.
+    private var connectionGeneration = UUID()
     private(set) var lastFrameJSON: Data?
     private var task: Task<Void, Never>?
     private var inputTask: Task<Void, Never>?
+    var inputPending: Bool { inputTask != nil }
     private var inputQueue: [Input] = []
-    private var inputEpoch = UUID()
     private(set) var size: (columns: Int, rows: Int)?
 
     private var historyPrefetched = false
@@ -530,17 +650,19 @@ final class AgentSession {
         }
         close()
         size = (columns, rows)
+        let generation = connectionGeneration
         state = .connecting
         history = []
         historyEnd = false
         gapAfter = false
         jumpedTo = nil
         pendingJumpFraction = nil
+        lastEmptyCheck = .distantPast
         let events = gateway.stream(agent: agent.id, columns: columns, rows: rows)
         task = Task { [weak self] in
             do {
                 for try await event in events {
-                    guard !Task.isCancelled, let self else { return }
+                    guard !Task.isCancelled, let self, self.connectionGeneration == generation else { return }
                     switch event {
                     case let .attached(attached):
                         self.shared = attached.shared
@@ -556,26 +678,31 @@ final class AgentSession {
                             self.send(Input(resize: [size.columns, size.rows]))
                         }
                         ScreenCache.shared.store(self.agent.id, frame)
-                        self.followNewHistory()
+                        self.followNewHistory(generation: generation)
                         // The newest archived page, before the first scroll up asks.
                         if !self.historyPrefetched {
                             self.historyPrefetched = true
-                            Task { await self.loadOlder() }
+                            self.historyTask = Task { [weak self] in
+                                await self?.loadOlder(generation: generation)
+                            }
                         }
                     case let .status(status):
                         self.state = .closed(AgentSession.explain(status), reopen: status.state == "disconnected")
+                        self.retireConnection()
                         return
                     }
                 }
                 // Cancellation can end AsyncThrowingStream normally. An old
                 // stream must not close the connection started by a new open().
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, self?.connectionGeneration == generation else { return }
                 self?.closedByGateway()
+                self?.retireConnection()
             } catch is CancellationError {
             } catch let failure as URLError where failure.code == .cancelled {
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, self?.connectionGeneration == generation else { return }
                 self?.state = .closed(describe(error), reopen: true)
+                self?.retireConnection()
             }
         }
     }
@@ -589,10 +716,26 @@ final class AgentSession {
     func close() {
         task?.cancel()
         task = nil
-        inputEpoch = UUID()
+        retireConnection()
+    }
+
+    private func retireConnection() {
+        connectionGeneration = UUID()
+        retireHistory()
         inputTask?.cancel()
         inputTask = nil
         inputQueue.removeAll()
+    }
+
+    // A status or transport end retires work owned by that attachment even
+    // though its stream task is the caller and cannot pass through close().
+    private func retireHistory() {
+        historyTask?.cancel()
+        historyTask = nil
+        newerTask?.cancel()
+        newerTask = nil
+        historyPrefetched = false
+        loadingHistory = false
     }
 
     static func explain(_ status: StreamStatus) -> String {
@@ -620,18 +763,18 @@ final class AgentSession {
         inputQueue.append(input)
         guard inputTask == nil else { return }
         let id = agent.id
-        let epoch = inputEpoch
+        let generation = connectionGeneration
         inputTask = Task { [weak self] in
             defer {
-                if self?.inputEpoch == epoch { self?.inputTask = nil }
+                if self?.connectionGeneration == generation { self?.inputTask = nil }
             }
-            while !Task.isCancelled, let self, self.inputEpoch == epoch, !self.inputQueue.isEmpty {
+            while !Task.isCancelled, let self, self.connectionGeneration == generation, !self.inputQueue.isEmpty {
                 let next = self.inputQueue.removeFirst()
                 do {
                     // A compound paste and Enter completes before the next key.
                     try await gateway.send(next, to: id)
                 } catch {
-                    guard !Task.isCancelled, self.inputEpoch == epoch else { return }
+                    guard !Task.isCancelled, self.connectionGeneration == generation else { return }
                     self.inputQueue.removeAll()
                     self.notice = describe(error)
                     return
@@ -643,32 +786,48 @@ final class AgentSession {
     // Loads the page before the oldest one shown; the gateway archives what
     // scrolled off the top of the agent's terminal.
     func loadOlder() async {
-        guard self.gateway != nil, isLive, !historyEnd, !loadingHistory else { return }
+        await loadOlder(generation: connectionGeneration)
+    }
+
+    private func loadOlder(generation: UUID) async {
+        guard connectionGeneration == generation, self.gateway != nil, isLive,
+              !historyEnd, !loadingHistory else { return }
         loadingHistory = true
-        await performLoadOlder()
-        loadingHistory = false
-        await runPendingJump()
+        defer {
+            // A replacement already cleared this flag for the new attachment.
+            if connectionGeneration == generation { loadingHistory = false }
+        }
+        await performLoadOlder(generation: generation)
+        guard connectionGeneration == generation else { return }
+        await runPendingJump(generation: generation)
     }
 
     // While history is shown, pages archived since it loaded are appended so
     // it stays contiguous with the live screen (after a jump, only on asking).
-    private func followNewHistory() {
-        guard !history.isEmpty, !gapAfter, newerTask == nil else { return }
+    private func followNewHistory(generation: UUID) {
+        guard connectionGeneration == generation, !history.isEmpty, !gapAfter,
+              newerTask == nil else { return }
         newerTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))
-            await self?.loadNewer()
-            self?.newerTask = nil
+            guard let self, self.connectionGeneration == generation, !Task.isCancelled else { return }
+            await self.loadNewer(generation: generation)
+            guard self.connectionGeneration == generation else { return }
+            self.newerTask = nil
         }
     }
 
-    private func loadNewer() async {
+    private func loadNewer(generation: UUID) async {
         // A jump can land between scheduling this delayed load and its first
         // await. Intentionally skipped pages stay skipped until closeGap.
-        guard self.gateway != nil, isLive, let newest = history.last?.page, !loadingHistory, !gapAfter else { return }
+        guard connectionGeneration == generation, self.gateway != nil, isLive,
+              let newest = history.last?.page, !loadingHistory, !gapAfter else { return }
         loadingHistory = true
-        await performLoadNewer(after: newest)
-        loadingHistory = false
-        await runPendingJump()
+        defer {
+            if connectionGeneration == generation { loadingHistory = false }
+        }
+        await performLoadNewer(after: newest, generation: generation)
+        guard connectionGeneration == generation else { return }
+        await runPendingJump(generation: generation)
     }
 
     // Every kept row, as the last page said; the scrubber's scale.
@@ -682,40 +841,49 @@ final class AgentSession {
     // alone: older pages load above it as before, and the newer ones between
     // it and the live screen when asked (closeGap).
     func jump(to fraction: Double) async {
-        guard self.gateway != nil, isLive, scrubbable, historyTotal > 0 else { return }
+        let generation = connectionGeneration
+        guard self.gateway != nil, connectionGeneration == generation, isLive,
+              scrubbable, historyTotal > 0 else { return }
         guard !loadingHistory else {
             pendingJumpFraction = fraction
             return
         }
         loadingHistory = true
-        await performJump(to: fraction)
+        await performJump(to: fraction, generation: generation)
+        guard connectionGeneration == generation else { return }
         loadingHistory = false
-        await runPendingJump()
+        await runPendingJump(generation: generation)
     }
 
     // Loads the pages skipped between a jumped-to page and the live screen,
     // a screenful of them at a time.
     func closeGap() async {
-        guard self.gateway != nil, isLive, gapAfter, let newest = history.last?.page, !loadingHistory else { return }
+        let generation = connectionGeneration
+        guard self.gateway != nil, connectionGeneration == generation, isLive,
+              gapAfter, let newest = history.last?.page, !loadingHistory else { return }
         loadingHistory = true
-        await performCloseGap(after: newest)
+        await performCloseGap(after: newest, generation: generation)
+        guard connectionGeneration == generation else { return }
         loadingHistory = false
-        await runPendingJump()
+        await runPendingJump(generation: generation)
     }
 
-    private func runPendingJump() async {
-        guard let fraction = pendingJumpFraction else { return }
+    private func runPendingJump(generation: UUID) async {
+        guard connectionGeneration == generation, let fraction = pendingJumpFraction else { return }
         pendingJumpFraction = nil
         await jump(to: fraction)
     }
 
-    private func performLoadOlder() async {
+    private func performLoadOlder(generation: UUID) async {
         guard let gateway else { return }
         // While nothing is archived, ask at most once a second, but always
         // ask again after the latest output (callers repeat on new output).
         if history.isEmpty {
             let wait = 1 - Date().timeIntervalSince(lastEmptyCheck)
-            if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+            if wait > 0 {
+                guard connectionGeneration == generation, !Task.isCancelled else { return }
+                try? await Task.sleep(for: .seconds(wait))
+            }
         }
         // Pages can hold only a few rows; gather more than a screen per load
         // so the loaded rows move the top out of view until the next scroll.
@@ -723,12 +891,15 @@ final class AgentSession {
         var gathered = 0
         var attempts = 0
         while gathered < 80 && attempts < 40 {
+            guard connectionGeneration == generation, !Task.isCancelled else { return }
             attempts += 1
             guard let reply = try? await gateway.history(agent: agent.id, before: before) else { return }
+            guard connectionGeneration == generation, !Task.isCancelled else { return }
             if reply.busy {
                 try? await Task.sleep(for: .milliseconds(300))
                 continue
             }
+            guard connectionGeneration == generation, !Task.isCancelled else { return }
             if let lines = reply.lines, let columns = reply.columns, reply.page != 0 {
                 history.insert(HistoryChunk(page: reply.page, columns: columns, lines: lines,
                                              offset: reply.place?.offset), at: 0)
@@ -737,6 +908,7 @@ final class AgentSession {
                 before = reply.page
                 continue
             }
+            guard connectionGeneration == generation else { return }
             if history.isEmpty {
                 lastEmptyCheck = Date()
             } else {
@@ -746,13 +918,15 @@ final class AgentSession {
         }
     }
 
-    private func performLoadNewer(after newest: UInt64) async {
+    private func performLoadNewer(after newest: UInt64, generation: UUID) async {
         guard let gateway else { return }
         var after = newest
         for _ in 0..<20 {
+            guard connectionGeneration == generation, !Task.isCancelled else { return }
             guard let reply = try? await gateway.history(agent: agent.id, after: after),
                   !reply.busy, reply.page != 0, let lines = reply.lines, let columns = reply.columns
             else { return }
+            guard connectionGeneration == generation, !Task.isCancelled else { return }
             history.append(HistoryChunk(page: reply.page, columns: columns, lines: lines,
                                         offset: reply.place?.offset))
             note(reply.place)
@@ -760,11 +934,12 @@ final class AgentSession {
         }
     }
 
-    private func performJump(to fraction: Double) async {
+    private func performJump(to fraction: Double, generation: UUID) async {
         guard let gateway else { return }
         let row = Int((min(max(fraction, 0), 1) * Double(historyTotal - 1)).rounded())
         guard let reply = try? await gateway.history(agent: agent.id, at: row),
               reply.page != 0, let lines = reply.lines, let columns = reply.columns else { return }
+        guard connectionGeneration == generation, !Task.isCancelled else { return }
         note(reply.place)
         let chunk = HistoryChunk(page: reply.page, columns: columns, lines: lines,
                                  offset: reply.place?.offset)
@@ -775,12 +950,14 @@ final class AgentSession {
         jumpedTo = chunk.cacheID
     }
 
-    private func performCloseGap(after newest: UInt64) async {
+    private func performCloseGap(after newest: UInt64, generation: UUID) async {
         guard let gateway else { return }
         var after = newest
         for _ in 0..<8 {
+            guard connectionGeneration == generation, !Task.isCancelled else { return }
             guard let reply = try? await gateway.history(agent: agent.id, after: after),
                   !reply.busy else { return }
+            guard connectionGeneration == generation, !Task.isCancelled else { return }
             guard reply.page != 0, let lines = reply.lines, let columns = reply.columns else {
                 gapAfter = false
                 return
