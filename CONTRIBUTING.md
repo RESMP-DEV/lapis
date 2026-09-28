@@ -701,6 +701,12 @@ and the hardened runtime. `notarize` needs a notarytool keychain profile, made
 once with `xcrun notarytool store-credentials NAME`, and staples the app and
 then the DMG.
 
+For local packaging qualification without a Developer ID identity, use
+`LAPIS_SIGN_IDENTITY=- python3 scripts/package_macos.py app`, then
+`python3 scripts/package_macos.py verify`. This produces an ad hoc signed bundle
+under `build/release/stage/`; it does not establish distribution signing or
+notarization. Record the signing mode with the result.
+
 `verify` fails the release when a binary is not arm64-only, needs a macOS newer
 than 14, links anything outside the bundle or the system, or holds the build
 machine's user name, host name or Homebrew path (add more with
