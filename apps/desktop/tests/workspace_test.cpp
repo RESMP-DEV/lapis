@@ -1585,9 +1585,10 @@ exec sleep 600
         require(typo != nullptr, "the agent is listed");
         // It ends before or just after the window attaches, depending on timing.
         require(waitFor(
-                    [typo] {
-                        return typo->connectionState() == QStringLiteral("ended") ||
-                               typo->connectionState() == QStringLiteral("disconnected");
+                    [&] {
+                        return calls(QStringLiteral("typo")) >= 1 &&
+                               (typo->connectionState() == QStringLiteral("ended") ||
+                                typo->connectionState() == QStringLiteral("disconnected"));
                     },
                     10000),
                 "its connection fails");
