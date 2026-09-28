@@ -57,5 +57,166 @@
   "limits": [
     "Foundation model and controlled HTTP/SSE evidence; simulator integration is checked on the stacked PR24 checkout.",
     "The local M3 attempt was incomplete and is not a completed review approval."
+  ],
+  "followups": [
+    {
+      "base_revision": "4457be0f0e9ae9f8bfbc9ebdf1810adb4e80bf35",
+      "source_revision": "ddfb62ae5a4573addd4ac0ab29f0705fe1896e28",
+      "source_sha256": {
+        "CONTRIBUTING.md": "f0040eace244ec8ee37397692e38a0c3ab99520b9fa96f56ef6978e06e8f60cf",
+        "apps/desktop/qml/Main.qml": "7f782aa8c7e2dbb81f89d931ef5e44d8a828b663711c038d3acc0f923274586a",
+        "apps/desktop/src/terminal_surface.cpp": "630ba62a6cb43e80b3a8b001a26b0234c75ce5352250ce80c9569afe21a1f70f",
+        "apps/desktop/src/terminal_surface.hpp": "35ed10a04b0bf97d7858206794874abbc8aa759b6e8432f5ba795a802db41b63",
+        "apps/desktop/tests/terminal_input_test.cpp": "071f2b88efab601a45b8df4b194ef0669aae10a2117b3b1a7b8f5c64de749ced",
+        "docs/architecture.md": "ce8dd5cce3cc8399fc1d2d707b5cd2474339e40c2c959d681abfa899f4bed5fb",
+        "scripts/check_cpp.py": "ee88d446f49302fbda2d21a7d02b35813d391678624a4f62d3b20a0d7b8d61e1",
+        "scripts/tests/test_check_cpp.py": "625694f51d40222f8aefbae6c9d09f49dbce99cd4ddf9dd4b747410c4a48d88b",
+        "scripts/tests/test_history_lifecycle_probe.py": "d82b95a09afb9c8323bbdc75e4cd790a82148ad6537c5a47edc0dc17bc6891d3",
+        "tools/qa/history_lifecycle_probe.swift": "8c8371b5a04ba4b359125874f61d2f89cb8ed67b52d82370833089b24260a08a",
+        "tools/qa/run_history_lifecycle_probe.py": "7b7cead2573ff8fc2a6305183fe358d27c46100e49ee4de40d3843273bc42b36"
+      },
+      "findings": [
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6mg48z",
+          "disposition": "fixed",
+          "detail": "Native QUrl conversion preserves a dropped file URL authority before shell quoting; malformed paths and invalid UTF-8 are rejected."
+        },
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6mg486",
+          "disposition": "fixed",
+          "detail": "Receipt description now distinguishes separate workspace and terminal host-change cases and stale history/input responses."
+        },
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6mg488",
+          "disposition": "fixed",
+          "detail": "Malformed compilation database shapes produce recorded analysis-setup errors rather than KeyError/TypeError tracebacks."
+        },
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6mg49B",
+          "disposition": "fixed",
+          "detail": "The probe awaits actual catalog/screen cache state after unstructured prefetch."
+        },
+        {
+          "thread_id": "PRRT_kwDOUfkyeM6mg49C",
+          "disposition": "fixed",
+          "detail": "Negative controls record matching diagnostics separately from fixed-code qualification; unexpected outcomes cannot verify a control."
+        }
+      ],
+      "validation": [
+        {
+          "command": "python3 scripts/lapis.py quality",
+          "passed": true,
+          "scope": "PR22 checkout and assembled PR24 checkout",
+          "logs": [
+            "build/round2-quality.log",
+            "build/pr-review-round/round2-quality.log"
+          ]
+        },
+        {
+          "command": "Foundation lifecycle probe with first screen response delayed 300 ms",
+          "original_probe_revision": "4457be0",
+          "original_exit_code": 1,
+          "original_diagnostic": "running screen did not prefetch after machines failure",
+          "fixed_passed": true,
+          "fixed_observed": {
+            "staleOlderRejected": true,
+            "staleNewerRejected": true,
+            "workspaceAtoBtoARejected": true,
+            "workspaceTerminalsAtoBtoARejected": true,
+            "independentPrefetchAfterMachinesFailure": true,
+            "staleInputRejected": true,
+            "attachmentRevisions": [
+              1,
+              2,
+              4
+            ],
+            "replacementPrefetchRequests": 2,
+            "pagingRequests": 4,
+            "emptyRetryRequests": 3
+          }
+        },
+        {
+          "command": "python3 tools/qa/run_history_lifecycle_probe.py --negative-control VARIANT --output PATH",
+          "controls": [
+            {
+              "variant": "negative-control-workspace",
+              "passed": false,
+              "exit_code": 1,
+              "expected_control_diagnostic": "old-host listing survived an A-to-B-to-A host change",
+              "control_diagnostic_observed": true,
+              "control_verified": true
+            },
+            {
+              "variant": "negative-control-terminals",
+              "passed": false,
+              "exit_code": 1,
+              "expected_control_diagnostic": "old-host refresh wrote cache after a terminal-owned await",
+              "control_diagnostic_observed": true,
+              "control_verified": true
+            }
+          ]
+        },
+        {
+          "command": "QML quoteDroppedPaths integration case with original Main.qml",
+          "original_revision": "7b361ae",
+          "expected_failure": true,
+          "diagnostic": "network-file authority absent from shell-quoted path"
+        },
+        {
+          "command": "python3 scripts/lapis.py ui-review --jobs 3",
+          "passed": true,
+          "integration_revision": "26682ad1f596b0a442bbe1ee37716bfa81fec1f4",
+          "scope": "three background Qt/software cases; uses existing verified Ghostty prefix from CMake cache"
+        },
+        {
+          "command": "Affected terminal-input target in desktop, ASan/UBSan and TSan presets",
+          "checks": [
+            {
+              "preset": "desktop",
+              "command": [
+                "build/desktop/apps/desktop/lapis_terminal_input_tests",
+                "--background"
+              ],
+              "exit_code": 0,
+              "log": "build/pr-review-round/round2-desktop-final.log"
+            },
+            {
+              "preset": "asan",
+              "command": [
+                "build/asan/apps/desktop/lapis_terminal_input_tests",
+                "--background"
+              ],
+              "exit_code": 0,
+              "log": "build/pr-review-round/round2-asan-final.log"
+            },
+            {
+              "preset": "tsan",
+              "command": [
+                "build/tsan/apps/desktop/lapis_terminal_input_tests",
+                "--background"
+              ],
+              "exit_code": 0,
+              "log": "build/pr-review-round/round2-tsan-final.log"
+            }
+          ]
+        },
+        {
+          "command": "python3 scripts/verify_cpp_tools.py",
+          "passed": true,
+          "scope": "deliberately faulty detector fixtures"
+        },
+        {
+          "command": "Actual check_cpp._analysis_tasks with current desktop compile database; execute affected format/tidy/cppcheck tasks",
+          "passed": true,
+          "scope": "three changed C++ translation units and terminal surface header"
+        }
+      ],
+      "limits": [
+        "Desktop changes were compiled and exercised after integration with PR24, not in a second duplicate desktop build under PR22.",
+        "No native Finder drop, macOS IME, external app launch or GPU qualification was repeated.",
+        "Production iOS models are unchanged from the prior follow-up, so the previously passing two Simulator cases are reused rather than rerun.",
+        "Initial ui-review setup needed the already verified Ghostty prefix exported from the current CMake cache."
+      ]
+    }
   ]
 }
