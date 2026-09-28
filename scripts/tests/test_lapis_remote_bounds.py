@@ -169,9 +169,10 @@ class RemoteFolderBoundsTests(unittest.TestCase):
             first,
             "the replacement should refresh while the old report serves",
         )
+        completion = self.folders.builds[machine]
         self.release[machine].set()
         replacement[0].join(5)
-        self.assertTrue(self.folders.builds[machine].wait(5))
+        self.assertTrue(completion.wait(5))
         self.assertEqual(
             self.folders.current(machine, timeout=5)[0]["version"],
             "report-stable-2",
