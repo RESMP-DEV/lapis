@@ -330,6 +330,11 @@ An agent that has ended or cannot be reached keeps its last screen, with a bar
 on the stage giving the reason and the key that closes it. **Restart agent**
 in Commands starts it again in the same card, resuming its conversation the
 same way.
+**Reload tab**, **Reload category** and **Reload window** in Commands do that
+for running agents too: each CLI ends and starts again in its card, resuming
+its conversation, so it rereads settings such as Claude Code's permissions. An
+agent on another machine that started before lapis named its conversation is
+left running, since reloading it would start a new one.
 
 A new agent's CLI updates itself first (`claude update`, `omp update`, `grok
 update`, `kimi upgrade`, `opencode upgrade`, `agy update`), at most every 30

@@ -1628,6 +1628,71 @@ exec sleep 600
     qputenv("PATH", path);
 }
 
+// Reload ends an agent's CLI and starts it again in its tab, for one tab, the
+// category or every agent; an agent on another machine whose conversation
+// lapis cannot name is left running. The stand-in CLI counts its starts.
+void reloadStartsAgentsAgain() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-reload-XXXXXX"));
+    require(directory.isValid(), "reload directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    writeExecutable(root.filePath(QStringLiteral("bin/grok")),
+                    "#!/bin/sh\necho start >> \"$(dirname \"$0\")/starts\"\n"
+                    "echo \"grok ready\"\nexec sleep 600\n");
+    writeExecutable(root.filePath(QStringLiteral("bin/ssh")), "#!/bin/sh\nexec sleep 600\n");
+    QFile config(root.filePath(QStringLiteral("ssh_config")));
+    require(config.open(QIODevice::WriteOnly), "write an ssh config");
+    config.write("Host devbox\n");
+    config.close();
+    const auto starts = [&root] {
+        QFile file(root.filePath(QStringLiteral("bin/starts")));
+        return file.open(QIODevice::ReadOnly) ? file.readAll().count('\n') : 0;
+    };
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        workspace.setSshConfigForTesting(config.fileName());
+        const auto ready = [&workspace](const QString& id) {
+            const auto* item = workspace.session(id);
+            return item != nullptr && item->inputReady();
+        };
+        const auto project = root.filePath(QStringLiteral("project"));
+        require(workspace.createAgent(project, QStringLiteral("one"), QStringLiteral("grok")),
+                "a first agent");
+        const auto one = workspace.focusedSession()->sessionId();
+        require(workspace.createAgent(project, QStringLiteral("two"), QStringLiteral("grok")),
+                "a second agent");
+        const auto two = workspace.focusedSession()->sessionId();
+        require(waitFor([&] { return starts() == 2 && ready(one) && ready(two); }, 10000),
+                "both run");
+        require(workspace.reloadAgent(one) == 1 &&
+                    waitFor([&] { return starts() == 3 && ready(one); }, 10000),
+                "reloading a tab starts its CLI again");
+        require(ready(two), "the other agent keeps running");
+        require(workspace.reloadCategory() == 2 &&
+                    waitFor([&] { return starts() == 5 && ready(one) && ready(two); }, 10000),
+                "reloading the category starts both again");
+        require(workspace.createAgent(QStringLiteral("~/far"), QStringLiteral("far"),
+                                      QStringLiteral("grok"), {}, {}, QStringLiteral("devbox")),
+                "an agent on another machine");
+        const auto far = workspace.focusedSession()->sessionId();
+        require(waitFor([&] { return ready(far); }, 10000), "it runs");
+        require(workspace.reloadAgent(far) == 0 &&
+                    workspace.workspaceError().contains(QStringLiteral("/resume")) && ready(far),
+                "an agent whose conversation lapis cannot name is left running");
+        workspace.clearError();
+        require(workspace.reloadAll() == 2 &&
+                    waitFor([&] { return starts() == 7 && ready(one) && ready(two); }, 10000),
+                "reloading the window starts the rest again");
+        for (const auto& closing : {one, two, far})
+            require(workspace.closeSession(closing, true), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in agents close");
+    }
+    qputenv("PATH", path);
+}
+
 // A full-screen program that reports the mouse, as Claude Code's full-screen
 // mode does, gets the wheel as mouse wheel events at the cell under it. The
 // stand-in takes the alternate screen, reads what the wheel sends, and prints
@@ -4057,6 +4122,7 @@ int main(int argc, char** argv) {
         windowWaitsForTheRestoreHelper();
         phoneStartsAnAgentInItsCategory();
         remoteClaudeReconnectsToItsConversation();
+        reloadStartsAgentsAgain();
         resumingAConversationStartsItsCli();
         terminalsRunPlainShells();
         wheelReachesAFullScreenProgram();
