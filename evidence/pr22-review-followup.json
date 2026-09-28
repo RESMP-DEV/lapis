@@ -1,0 +1,61 @@
+{
+  "schema": "lapis.pr-review-resolution/1",
+  "source_revision": "455a99ba9c077f6015f1c9fa45ec937b2db51a87",
+  "source_sha256": {
+    "apps/ios/Lapis/Models.swift": "27c2a956ead8e9003b7fc2058826303057a4852c17f1c52fcc7144fa82a3aa01",
+    "scripts/tests/test_lapis_remote_bounds.py": "1302dad5e0d821627635544c3330b5bb4baf74c29c2d109d07370c539ac0d056",
+    "tools/qa/history_lifecycle_probe.swift": "2ec7b84237aca5adcf36094a06203bbe72f48f546331413baa3dd7a85eb3b967",
+    "tools/qa/run_history_lifecycle_probe.py": "b1c998fd89e667f3ced0de73411f5af7d4e6adb8a08b9851d85b3388405930e4"
+  },
+  "findings": [
+    {
+      "review": "Incomplete local MiniMax M3 attempt on PR22",
+      "disposition": "fixed",
+      "detail": "A machines RPC error no longer cancels independent local catalog and screen prefetch; host changes and cancellation still retire the refresh."
+    },
+    {
+      "review": "Incomplete local MiniMax M3 attempt on PR22",
+      "disposition": "fixed",
+      "detail": "The folder-cache test retains its completion event before the worker can remove the map entry."
+    }
+  ],
+  "validation": [
+    {
+      "command": "python3 tools/qa/run_history_lifecycle_probe.py --output build/qa/history-lifecycle/receipt.json",
+      "passed": true,
+      "observed": {
+        "staleOlderRejected": true,
+        "staleNewerRejected": true,
+        "workspaceAtoBtoARejected": true,
+        "workspaceTerminalsAtoBtoARejected": true,
+        "independentPrefetchAfterMachinesFailure": true,
+        "staleInputRejected": true,
+        "attachmentRevisions": [
+          1,
+          2,
+          4
+        ],
+        "replacementPrefetchRequests": 2,
+        "pagingRequests": 4,
+        "emptyRetryRequests": 3
+      }
+    },
+    {
+      "command": "Same current probe with Models.swift from 455a99b, restored afterward",
+      "expected_failure": true,
+      "exit_code": 1,
+      "diagnostic": "history-lifecycle-probe: timeout waiting machine-failure \\Counts.folders >= 1",
+      "machines_requests": 1,
+      "folder_requests": 0
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "passed": true,
+      "log": "build/pr22-quality.log"
+    }
+  ],
+  "limits": [
+    "Foundation model and controlled HTTP/SSE evidence; simulator integration is checked on the stacked PR24 checkout.",
+    "The local M3 attempt was incomplete and is not a completed review approval."
+  ]
+}

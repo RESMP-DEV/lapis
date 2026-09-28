@@ -15,6 +15,8 @@ struct HistoryLifecycleProbe {
         let streams: Int
         let history: Int
         let frames: Int
+        let machines: Int
+        let folders: Int
         let revisions: [Int]
         let input: Int?
         let terminals: Int?
@@ -189,6 +191,27 @@ struct HistoryLifecycleProbe {
     }
 
     @MainActor
+    static func independentPrefetchAfterMachinesFailure(
+        _ host: String, cache: DiskCache, preferences: UserDefaults
+    ) async throws {
+        try await waitControl(host, "workspace-active/machine-failure")
+        let isolated = DiskCache(folder: cache.folder.appendingPathComponent("machine-failure"))
+        let model = WorkspaceModel(preferences: preferences, cache: isolated)
+        model.host = host
+        let refresh = Task.detached { await model.refresh() }
+        defer { refresh.cancel() }
+        try await waitCounts(host, "machine-failure", \.machines, atLeast: 1)
+        try await waitCounts(host, "machine-failure", \.folders, atLeast: 1)
+        try await waitCounts(host, "machine-failure", \.frames, atLeast: 1)
+        await refresh.value
+        try require(model.catalogs[""]?.version == "machine-failure",
+                    "local catalog did not refresh after machines failure")
+        try require(ScreenCache.shared.frame("machine-failure")?.revision == 1,
+                    "running screen did not prefetch after machines failure")
+        try await waitControl(host, "workspace-active/base")
+    }
+
+    @MainActor
     static func staleInputAcrossAttachment(_ host: String) async throws {
         let input = try session("input", host: host)
         try await openAttachment(input, host: host, key: "input", revision: 1)
@@ -247,6 +270,9 @@ struct HistoryLifecycleProbe {
         // moved to another host and back to the original spelling.
         let workspaceRejected = try await workspaceAtoBtoA(host, cache: cache, preferences: preferences)
         try await workspaceTerminalsAtoBtoA(host, cache: cache, preferences: preferences)
+        try await independentPrefetchAfterMachinesFailure(
+            host, cache: cache, preferences: preferences
+        )
 
         // The existing input retirement contract, with both requests held so
         // the old completion cannot race the replacement sender.
@@ -360,6 +386,7 @@ struct HistoryLifecycleProbe {
         "staleNewerRejected":\(staleNewerRejected), \
         "workspaceAtoBtoARejected":\(workspaceRejected), \
         "workspaceTerminalsAtoBtoARejected":true, \
+        "independentPrefetchAfterMachinesFailure":true, \
         "staleInputRejected":\(try await counts(host, "input").input == 3), \
         "attachmentRevisions":\(staleCounts.revisions), \
         "replacementPrefetchRequests":\(prefetchCounts.history), \

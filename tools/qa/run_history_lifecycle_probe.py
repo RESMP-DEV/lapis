@@ -115,6 +115,8 @@ class LifecycleServer:
                 },
             ).copy()
             values["revisions"] = values.get("revisions", []).copy()
+            values.setdefault("machines", 0)
+            values.setdefault("folders", 0)
             return values
 
     def increment(self, key: str, counter: str) -> int:
@@ -149,7 +151,38 @@ class LifecycleServer:
 
     @staticmethod
     def listing(workspace: str) -> dict:
-        return {"categories": [], "activeCategory": workspace}
+        if workspace != "machine-failure":
+            return {"categories": [], "activeCategory": workspace}
+        agents = [
+            {
+                "id": "machine-failure",
+                "title": "screen prefetch",
+                "harness": "fixture",
+                "directory": "",
+                "running": True,
+                "onPhone": False,
+                "machine": None,
+                "place": "this Mac",
+            }
+        ]
+        return {
+            "categories": [{"id": workspace, "name": workspace, "agents": agents}],
+            "activeCategory": workspace,
+        }
+
+    @staticmethod
+    def screen(revision: int) -> dict:
+        return {
+            "revision": revision,
+            "columns": 80,
+            "rows": 24,
+            "cursor": {"x": 0, "y": 0, "visible": True},
+            "alternateScreen": False,
+            "applicationCursor": False,
+            "foreground": "#ffffff",
+            "background": "#000000",
+            "lines": [],
+        }
 
     def advance_stream(self, key: str) -> tuple[int, int]:
         with self.lock:
@@ -171,17 +204,7 @@ class LifecycleServer:
             return stream, revision
 
     def frame(self, revision: int) -> bytes:
-        value = {
-            "revision": revision,
-            "columns": 80,
-            "rows": 24,
-            "cursor": {"x": 0, "y": 0, "visible": True},
-            "alternateScreen": False,
-            "applicationCursor": False,
-            "foreground": "#ffffff",
-            "background": "#000000",
-            "lines": [],
-        }
+        value = self.screen(revision)
         return f"event: frame\ndata: {json.dumps(value)}\n\n".encode()
 
     def handler(self) -> type[BaseHTTPRequestHandler]:
@@ -309,6 +332,10 @@ class LifecycleServer:
                         return
                     if parts[1] == "machines":
                         workspace = server.active_workspace_name()
+                        if workspace == "machine-failure":
+                            server.increment(workspace, "machines")
+                            self.send_error(500)
+                            return
                         self.answer(
                             {
                                 "machines": [
@@ -332,6 +359,7 @@ class LifecycleServer:
                             server.event("terminals", "terminals-done", call).set()
                         return
                 if len(parts) == 2 and parts[:2] == ["api", "folders"]:
+                    server.increment(server.active_workspace_name(), "folders")
                     self.answer(
                         {"version": server.active_workspace_name(), "unchanged": False}
                     )
@@ -356,6 +384,14 @@ class LifecycleServer:
                         self.answer(response)
                     finally:
                         server.event(key, "history-done", call).set()
+                    return
+                if (
+                    len(parts) == 4
+                    and parts[:2] == ["api", "agents"]
+                    and parts[3] == "screen"
+                ):
+                    server.increment(parts[2], "frames")
+                    self.answer(server.screen(1))
                     return
                 if (
                     len(parts) == 4
@@ -407,7 +443,15 @@ class LifecycleServer:
     def fixture_state(self) -> dict:
         state = {
             key: self.counts_for(key)
-            for key in ("stale", "prefetch", "paging", "retry", "input", "terminals")
+            for key in (
+                "stale",
+                "prefetch",
+                "paging",
+                "retry",
+                "input",
+                "terminals",
+                "machine-failure",
+            )
         }
         with self.lock:
             state["workspace"] = {

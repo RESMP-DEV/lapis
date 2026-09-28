@@ -171,10 +171,15 @@ final class WorkspaceModel {
         }
         if hostGeneration == generation, due("machines", 120) {
             let list = try? await gateway.machines()
-            guard hostGeneration == generation, let list else { return }
-            machines = list
-            fetched["machines"] = Date()
-            cache.save(list, cacheName("machines", for: responseHost))
+            // A failed machines answer says nothing about the local catalog
+            // or running screens; cancellation or a host change ends this
+            // prefetch.
+            guard hostGeneration == generation, !Task.isCancelled else { return }
+            if let list {
+                machines = list
+                fetched["machines"] = Date()
+                cache.save(list, cacheName("machines", for: responseHost))
+            }
         }
         guard hostGeneration == generation else { return }
         await loadCatalog("", olderThan: 300)
