@@ -2947,6 +2947,45 @@ icon, and the website SVG/PNG directly from that source. The iPhone export
 uses the tile bounds and background color for an opaque square, leaving corner
 masking to iOS. The phone's in-app LapisMark assets remain the stone alone.
 
+### Garbled prompts and full-screen CLIs (September 28)
+
+A new Claude Code agent sometimes showed its input box torn: the placeholder
+line kept, typed text written over the bottom border, pieces of the border
+below. Two causes combined.
+
+- Claude Code turns its full-screen renderer off for good on a machine after
+  full-screen launches end before it calls them healthy ("fullscreen disabled:
+  turned off on this machine after repeated failed starts"); lapis's closes,
+  restarts and reboots end CLIs that way. The user's Mac had
+  `fullscreenAutoDisabled` with two strikes in `~/.claude.json` although its
+  settings said `"tui": "fullscreen"`, so every local Claude drew with the
+  classic main-screen renderer.
+- lapis started every CLI at 100 by 30 and resized it once the window
+  attached, or when the agent first reached the stage. The classic renderer
+  redraws in place by counting rows up from the cursor; lapis's terminal
+  reflows lines on a resize, so after one the count lands on the wrong rows.
+  Recorded against Claude Code 2.1.283 in a pseudo-terminal: without the
+  full-screen renderer it redrew after a resize with no erase; with
+  `CLAUDE_CODE_NO_FLICKER=1` it entered the alternate screen, turned on mouse
+  reporting and erased and repainted the whole screen on the resize.
+
+lapis now sets `CLAUDE_CODE_NO_FLICKER=1` in its own environment after taking
+the login shell's (a value the user set is kept), so every local Claude
+agent, and a `claude` typed in the side terminal, draws full screen; a remote
+Claude agent's command exports it unless that machine's login shell sets it.
+Grok gets `--fullscreen`, which overrides a minimal `screen_mode` in its
+config. Codex's TUI uses the alternate screen unless given `--no-alt-screen`,
+which lapis never passes, and OpenCode is always full screen. Kimi, OMP and
+Antigravity have no full-screen mode, so for them and every other CLI the
+stage's terminal grid is the launch size: a new agent, a restart and a start
+after a CLI update begin at the size the stage shows, with no resize after
+their first frame. The session service took no size, so its CLI always began
+at 100 by 30; it now takes `--size COLUMNSxROWS`, which the desktop passes
+when the launch has a size other than that default. The size is not part of
+the launch fingerprint, so reattaching is unchanged. An agent restored at login without a window still starts
+at 100 by 30. `agentsStartAtTheStageSize` in the workspace suite checks a
+stand-in CLI reads the stage's grid from its terminal at start.
+
 ## Contracts to preserve
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal

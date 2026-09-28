@@ -3274,8 +3274,14 @@ ApplicationWindow {
                     interactive: visible && window.visible && !window.inputBlocked && document !== null
                                  && (preview.active || document.inputReady || document.historyActive)
                     focus: visible && window.visible && !window.inputBlocked && !window.sideTerminalOpen
-                    Component.onCompleted: if (focus)
-                                               forceActiveFocus()
+                    // New and restarted agents start at this grid, not resized
+                    // just after they drew.
+                    onGridSizeChanged: workspace.setLaunchSize(gridSize)
+                    Component.onCompleted: {
+                        workspace.setLaunchSize(gridSize)
+                        if (focus)
+                            forceActiveFocus()
+                    }
 
                     // While history shows, a wide translucent bar down the right
                     // edge. The whole strip answers the pointer: a press on the

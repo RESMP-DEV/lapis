@@ -583,6 +583,13 @@ int main(int argc, char** argv) {
         return 2;
     // Before any agent, session service or CLI probe inherits the environment.
     lapis::desktop::adopt_login_environment();
+    // Agents draw full screen on the alternate screen, which a resize cannot
+    // tear; the classic renderer redraws in place and garbles when lapis
+    // resizes a terminal it drew in. Claude Code turns full screen off for
+    // good after launches that end early, as lapis's closes and restarts do;
+    // this variable overrides that. A value the user set is kept.
+    if (!qEnvironmentVariableIsSet("CLAUDE_CODE_NO_FLICKER"))
+        qputenv("CLAUDE_CODE_NO_FLICKER", "1");
     if (qEnvironmentVariableIsEmpty("QT_VULKAN_LIB"))
         qputenv("QT_VULKAN_LIB", QFile::encodeName(lapis::desktop::vulkan_library()));
     QQuickStyle::setStyle(QStringLiteral("Basic"));

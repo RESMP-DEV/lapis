@@ -392,6 +392,10 @@ class Workspace final : public QObject {
     // config's hosts, as the side terminal offers them.
     Q_INVOKABLE [[nodiscard]] QStringList sshMachines() const;
     void setSshConfigForTesting(const QString& path) { ssh_config_ = path; }
+    // The stage's terminal grid (columns by rows). A CLI starts at this size
+    // rather than being resized just after it drew, which the classic
+    // renderers of Claude Code and others cannot redraw from.
+    Q_INVOKABLE void setLaunchSize(QSize size);
     // Tests reconnect in milliseconds: a first connection counts once it held
     // `first_hold`, and each wait before reconnecting is `wait`.
     struct ReconnectTiming {
@@ -624,6 +628,9 @@ class Workspace final : public QObject {
         int generation{};
     };
     QHash<QString, Reconnect> reconnects_;
+    std::optional<session::TerminalSize> launch_size_;
+    // `launch` at the stage's size, when the window has told it.
+    [[nodiscard]] session::LaunchSpec sized(session::LaunchSpec launch) const;
     std::chrono::milliseconds reconnect_first_hold_{std::chrono::seconds(20)};
     std::optional<std::chrono::milliseconds> reconnect_wait_;
     void reconnectIfDropped(const QString& id);

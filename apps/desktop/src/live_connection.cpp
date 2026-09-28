@@ -365,6 +365,12 @@ LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
     handshake_.setSingleShot(true);
     handshake_.setInterval(launch.agent == session::AgentMode::codex ? codex_sync_timeout_ms
                                                                      : terminal_sync_timeout_ms);
+    // A size other than the default is the view's, so the CLI starts in it.
+    if (launch.size != session::LaunchSpec{}.size)
+        service_arguments_ =
+            QStringList{QStringLiteral("--size"),
+                        QStringLiteral("%1x%2").arg(launch.size.columns).arg(launch.size.rows)} +
+            service_arguments_;
     if (launch.agent == session::AgentMode::codex)
         service_arguments_.prepend(QStringLiteral("--codex"));
     else if (launch.agent == session::AgentMode::claude)

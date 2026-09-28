@@ -257,6 +257,11 @@ QString remoteLaunch(const AgentRequest& request, const QString& command, QStrin
     QStringList words{shellWord(request.program.isEmpty() ? command : request.program)};
     for (const auto& argument : arguments)
         words << shellWord(argument);
+    // Its full-screen renderer, as for an agent here (see main), unless that
+    // machine's login shell chose otherwise.
+    if (claude)
+        words.prepend(
+            QStringLiteral(R"(export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-1}";)"));
     const auto folder = remoteFolder(request.directory);
     const auto line =
         conversation.isEmpty()
@@ -1320,7 +1325,7 @@ QString Workspace::launchAgent(const AgentRequest& request, const session::Launc
         watch(sessions_.back().get());
         // Only this Mac's CLIs are updated first.
         if (!request.machine.isEmpty() || !deferForUpdate(id))
-            sessions_.back()->startLive(endpoint, launch, session::wire::AttachMode::create);
+            sessions_.back()->startLive(endpoint, sized(launch), session::wire::AttachMode::create);
         changed();
         return id;
     } catch (const std::exception& error) {
@@ -1576,8 +1581,21 @@ bool Workspace::restartAgent(const QString& id) {
         emit errorChanged();
         return false;
     }
-    item->startLive(entry->endpoint, entry->launch, session::wire::AttachMode::create);
+    item->startLive(entry->endpoint, sized(entry->launch), session::wire::AttachMode::create);
     return true;
+}
+void Workspace::setLaunchSize(QSize size) {
+    if (size.width() <= 0 || size.height() <= 0 || size.width() > 0xffff ||
+        size.height() > 0xffff ||
+        qint64{size.width()} * size.height() > qint64{session::wire::max_cells})
+        return;
+    launch_size_ = session::TerminalSize{static_cast<std::uint16_t>(size.width()),
+                                         static_cast<std::uint16_t>(size.height())};
+}
+session::LaunchSpec Workspace::sized(session::LaunchSpec launch) const {
+    if (launch_size_)
+        launch.size = *launch_size_;
+    return launch;
 }
 // An ssh process exiting 255 is treated as a possible dropped connection;
 // a remote command exiting 255 is indistinguishable and follows the same
@@ -2036,7 +2054,7 @@ void Workspace::finishUpdate(const QString& harness, QProcess* process, const QS
         item->setUpdating({});
         if (item->live())
             continue;
-        item->startLive(entry->endpoint, entry->launch, session::wire::AttachMode::create);
+        item->startLive(entry->endpoint, sized(entry->launch), session::wire::AttachMode::create);
     }
 }
 
