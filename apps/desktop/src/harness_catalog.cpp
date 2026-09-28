@@ -21,6 +21,9 @@ QString harnessExecutable(const HarnessDescriptor& harness) {
 QStringList HarnessDescriptor::defaultArguments() const {
     if (id == QLatin1String("codex"))
         return {QStringLiteral("-c"), QStringLiteral("check_for_update_on_startup=false")};
+    // Full screen, as lapis's resizes need; see CLAUDE_CODE_NO_FLICKER in main.
+    if (id == QLatin1String("grok"))
+        return {QStringLiteral("--fullscreen")};
     return {};
 }
 

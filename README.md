@@ -479,6 +479,12 @@ Scrolling over a full-screen program, such as Claude Code with
 `"tui": "fullscreen"`, scrolls the program itself on both devices, as the
 wheel does in other terminals; on the phone a vertical drag turns the wheel.
 An agent started before this version scrolls that way once it restarts.
+lapis runs Claude Code and Grok full screen (Claude Code through
+`CLAUDE_CODE_NO_FLICKER=1`, also over ssh, and Grok with `--fullscreen`); Codex
+and OpenCode are full screen already. A full-screen program repaints when its
+terminal is resized, where a CLI's classic renderer can leave a torn prompt.
+Set `CLAUDE_CODE_NO_FLICKER=0` in your login shell to keep Claude Code's
+classic renderer. Every CLI starts at the stage's size.
 
 Holding an agent also offers **Move to** another category, **Move earlier** and
 **Move later**, **Restart** once it has stopped, and **Close**. Each category's

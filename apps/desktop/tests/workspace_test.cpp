@@ -1527,7 +1527,8 @@ exec sleep 600
                                                 "-o\nServerAliveCountMax=4\n-t\ndevbox\n")) &&
                     first.contains(QStringLiteral("cd ~/dev/far && s=")) &&
                     !conversation(first).isEmpty() &&
-                    first.contains(QStringLiteral(R"(-lic 'claude '"$o $s")")),
+                    first.contains(QStringLiteral(
+                        R"(-lic 'export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-1}"; claude '"$o $s")")),
                 "ssh has its own connection, kept alive, and names the conversation");
         require(workspace.agentPlace(id).value(QStringLiteral("place")) ==
                     QStringLiteral("devbox:~/dev/far"),
@@ -1689,6 +1690,39 @@ void reloadStartsAgentsAgain() {
             require(workspace.closeSession(closing, true), "close the stand-in agents");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "the stand-in agents close");
+    }
+    qputenv("PATH", path);
+}
+
+// A CLI starts at the stage's grid rather than being resized just after it
+// drew, which the classic renderers cannot redraw from.
+void agentsStartAtTheStageSize() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-size-XXXXXX"));
+    require(directory.isValid(), "size directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    writeExecutable(root.filePath(QStringLiteral("bin/grok")),
+                    "#!/bin/sh\necho \"size $(stty size)\"\nexec sleep 600\n");
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        workspace.setLaunchSize(QSize(91, 27));
+        require(workspace.createAgent(root.filePath(QStringLiteral("project")),
+                                      QStringLiteral("sized"), QStringLiteral("grok")),
+                "an agent");
+        auto* item = workspace.focusedSession();
+        require(
+            item != nullptr &&
+                waitFor(
+                    [item] {
+                        return screenText(item->snapshot()).contains(QStringLiteral("size 27 91"));
+                    },
+                    10000),
+            "its CLI starts at the stage's grid");
+        require(workspace.closeSession(item->sessionId(), true), "close it");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "it closes");
     }
     qputenv("PATH", path);
 }
@@ -2089,24 +2123,26 @@ void resumingAConversationStartsItsCli() {
                                       QStringLiteral("conv-123")),
                 "a past conversation resumes, named after its folder");
         auto* agent = workspace.focusedSession();
-        require(agent != nullptr && waitFor(
-                                        [agent] {
-                                            return screenText(agent->snapshot())
-                                                .contains(QStringLiteral("grok args: -r conv-123"));
-                                        },
-                                        10000),
+        require(agent != nullptr &&
+                    waitFor(
+                        [agent] {
+                            return screenText(agent->snapshot())
+                                .contains(QStringLiteral("grok args: --fullscreen -r conv-123"));
+                        },
+                        10000),
                 "the CLI starts with its resume option");
         lapis::desktop::WorkspaceControl control(workspace, false);
         auto request = createRequest(workspace.activeCategoryId(), QStringLiteral("grok"), project);
         request.insert(QStringLiteral("resume"), QStringLiteral("conv-456"));
         const auto started = askWorkspace(workspace.storagePath(), request);
         auto* phone = workspace.session(started.value(QStringLiteral("id")).toString());
-        require(phone != nullptr && waitFor(
-                                        [phone] {
-                                            return screenText(phone->snapshot())
-                                                .contains(QStringLiteral("grok args: -r conv-456"));
-                                        },
-                                        10000),
+        require(phone != nullptr &&
+                    waitFor(
+                        [phone] {
+                            return screenText(phone->snapshot())
+                                .contains(QStringLiteral("grok args: --fullscreen -r conv-456"));
+                        },
+                        10000),
                 "the phone resumes a conversation too");
         QFile saved(workspace.storagePath());
         require(saved.open(QIODevice::ReadOnly), "read the registry");
@@ -2553,7 +2589,7 @@ void phoneStartsAnAgentInItsCategory() {
                     return text.contains(QStringLiteral("[-t]")) &&
                            text.contains(QStringLiteral("[devbox]")) &&
                            text.contains(QStringLiteral(
-                               R"([cd ~/'dev/some project' && exec "${SHELL:-/bin/sh}" -lic /opt/grok/bin/grok])"));
+                               R"([cd ~/'dev/some project' && exec "${SHELL:-/bin/sh}" -lic '/opt/grok/bin/grok --fullscreen'])"));
                 },
                 10000) &&
                 waitFor([far] { return far->inputReady(); }, 10000),
@@ -4123,6 +4159,7 @@ int main(int argc, char** argv) {
         phoneStartsAnAgentInItsCategory();
         remoteClaudeReconnectsToItsConversation();
         reloadStartsAgentsAgain();
+        agentsStartAtTheStageSize();
         resumingAConversationStartsItsCli();
         terminalsRunPlainShells();
         wheelReachesAFullScreenProgram();
