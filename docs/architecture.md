@@ -1978,9 +1978,9 @@ A prototype, deliberately simpler than the SSH design first proposed:
   at least three times in zsh or bash history, ordered reachable first, then
   by use; reachability is a TCP connection to the host or its first jump
   host, never a login, so a hardware key is never asked for a touch. The
-  desktop starts a remote agent as `ssh -o ServerAliveInterval=15 -o
-  ServerAliveCountMax=4 -t <host> 'cd <folder> && exec "${SHELL:-/bin/sh}"
-  -lic <cli>'` with each word quoted, in terminal mode, and never updates a
+  desktop starts a remote agent as `ssh -o ControlPath=none -o
+  ServerAliveInterval=15 -o ServerAliveCountMax=4 -t <host> 'cd <folder> &&
+  exec "${SHELL:-/bin/sh}" -lic <cli>'` with each word quoted, in terminal mode, and never updates a
   remote CLI first. A remote Claude Code agent's command also carries its
   conversation id (`s=<uuid>`); see Reconnect after a dropped connection. The phone keeps the list, CLIs,
   machines and indexes on disk per Mac, refreshes them in the background,
@@ -2305,8 +2305,15 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   255 follows this same bounded reconnect path. This is an advisory signal of
   a dropped connection, not proof. Other exit statuses and a connection that
   never held (a mistyped host, a refused login) stay ended. Keepalives end a
-  connection whose network went away within about a
-  minute instead of leaving a frozen tab. A split copies the launch with a new
+  connection whose network went away within about a minute instead of leaving
+  a frozen tab. Every agent's ssh, and the side terminal's, also runs with
+  `-o ControlPath=none`: with the user's ControlMaster, sessions to one machine
+  shared the connection the first ssh opened, and ending that ssh (closing its
+  tab, or a restart) ended every other session to the machine, lapis's and the
+  user's own. Reproduced with two ssh sessions on their own pseudo-terminals:
+  closing the first as the session service does ended the second within 4 s.
+  A saved launch gains any of these options it lacks when it starts again. A
+  split copies the launch with a new
   id. Agents started before this, and other CLIs, whose conversation lapis
   cannot name over ssh, are not reconnected: a fresh start would clear the
   screen for nothing. `/clear` or `/resume` inside the agent moves to a

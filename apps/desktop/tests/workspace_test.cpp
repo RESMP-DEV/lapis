@@ -1449,7 +1449,9 @@ QByteArray installStandInGrok(const QDir& root) {
 // launch names it, and a reconnect after the connection dropped, a restart
 // and nothing else resume it. A stand-in ssh records what it was given, per
 // host: devbox drops the first connection (ssh exits 255), then the second
-// ends by itself; typo exits immediately and never holds a connection.
+// ends by itself; typo exits immediately and never holds a connection. An
+// agent saved before lapis gave each ssh its own connection (older) gains that
+// and the keepalives on restore.
 void remoteClaudeReconnectsToItsConversation() {
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-reconnect-XXXXXX"));
     require(directory.isValid(), "reconnect directory");
@@ -1458,7 +1460,7 @@ void remoteClaudeReconnectsToItsConversation() {
     QFile ssh(root.filePath(QStringLiteral("bin/ssh")));
     require(ssh.open(QIODevice::WriteOnly), "write the stand-in ssh");
     ssh.write(R"(#!/bin/sh
-d=$(dirname "$0"); host=$6
+d=$(dirname "$0"); host=$(printf '%s\n' "$@" | sed -n '/^-t$/{n;p;q;}')
 n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1)); echo $n > "$d/$host.count"
 printf '%s\n' "$@" > "$d/$host.call$n"
 case "$host:$n" in typo:*) exit 255;; devbox:1) sleep 1; exit 255;; devbox:2) sleep 1; exit 1;; esac
@@ -1486,8 +1488,30 @@ exec sleep 600
     };
     WorkspaceOptions options;
     options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    options.restoreAgents = true;
+    const auto older_id = QStringLiteral("5a1d0000-0000-4000-8000-000000000001");
+    auto older = agentRecord(root.path(), older_id, "general");
+    older.insert(QStringLiteral("title"), QStringLiteral("older"));
+    older.insert(QStringLiteral("program"), root.filePath(QStringLiteral("bin/ssh")));
+    older.insert(QStringLiteral("directory"), QDir::homePath());
+    older.insert(QStringLiteral("harness"), QStringLiteral("claude"));
+    older.insert(QStringLiteral("arguments"),
+                 QJsonArray{"-t", "older", R"(cd ~ && exec "${SHELL:-/bin/sh}" -lic claude)"});
+    writeRegistry(options.storagePath,
+                  QJsonObject{{"version", 2},
+                              {"activeCategory", "general"},
+                              {"categories", QJsonArray{QJsonObject{{"id", "general"},
+                                                                    {"name", "General"},
+                                                                    {"selected", older_id}}}},
+                              {"agents", QJsonArray{older}}});
     {
         Workspace workspace(WorkspaceMode::live, options);
+        require(waitFor([&] { return calls(QStringLiteral("older")) >= 1; }, 10000) &&
+                    call(QStringLiteral("older"), 1)
+                        .startsWith(QStringLiteral("-o\nControlPath=none\n-o\n"
+                                                   "ServerAliveInterval=15\n-o\n"
+                                                   "ServerAliveCountMax=4\n-t\nolder\n")),
+                "an agent saved before gets its own connection and keepalives");
         workspace.setSshConfigForTesting(config.fileName());
         workspace.setReconnectTimingForTesting({.first_hold = std::chrono::milliseconds(300),
                                                 .wait = std::chrono::milliseconds(2000)});
@@ -1499,12 +1523,12 @@ exec sleep 600
         const auto id = far->sessionId();
         require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 1; }, 10000), "ssh starts");
         const auto first = call(QStringLiteral("devbox"), 1);
-        require(first.startsWith(QStringLiteral("-o\nServerAliveInterval=15\n-o\n"
-                                                "ServerAliveCountMax=4\n-t\ndevbox\n")) &&
+        require(first.startsWith(QStringLiteral("-o\nControlPath=none\n-o\nServerAliveInterval=15\n"
+                                                "-o\nServerAliveCountMax=4\n-t\ndevbox\n")) &&
                     first.contains(QStringLiteral("cd ~/dev/far && s=")) &&
                     !conversation(first).isEmpty() &&
                     first.contains(QStringLiteral(R"(-lic 'claude '"$o $s")")),
-                "ssh keeps the connection alive and names the conversation");
+                "ssh has its own connection, kept alive, and names the conversation");
         require(workspace.agentPlace(id).value(QStringLiteral("place")) ==
                     QStringLiteral("devbox:~/dev/far"),
                 "the agent's place is still its machine and folder");
@@ -1596,7 +1620,7 @@ exec sleep 600
         waitFor([&] { return settle.elapsed() >= 300; }, 1000);
         require(calls(QStringLiteral("typo")) == 1, "a connection that never worked stays ended");
         // The unreachable one is abandoned; the others end.
-        for (const auto& closing : {id, split, typo->sessionId()})
+        for (const auto& closing : {older_id, id, split, typo->sessionId()})
             require(workspace.closeSession(closing, true), "close the stand-in agents");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "the stand-in agents close");

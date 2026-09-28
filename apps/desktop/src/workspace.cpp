@@ -225,10 +225,19 @@ std::optional<std::pair<QString, QString>> remoteCommand(const session::LaunchSp
         return std::nullopt;
     return std::pair{launch.arguments.at(at + 1), launch.arguments.at(at + 2)};
 }
+// Options every agent's ssh starts with. Its own connection: one shared
+// through the user's ControlMaster ends with the ssh that opened it, so
+// closing one agent ended every other session to that machine. Keepalives end
+// a connection whose network went away within a minute, so it can reconnect.
+const QStringList& remoteOptions() {
+    static const QStringList options{QStringLiteral("-o"), QStringLiteral("ControlPath=none"),
+                                     QStringLiteral("-o"), QStringLiteral("ServerAliveInterval=15"),
+                                     QStringLiteral("-o"), QStringLiteral("ServerAliveCountMax=4")};
+    return options;
+}
 // An agent on another machine: ssh runs the CLI in an interactive login shell
-// there, so its PATH matches that machine's terminal. Keepalives end a
-// connection whose network went away within a minute, so it can reconnect.
-// Returns why not, or empty with `launch` set.
+// there, so its PATH matches that machine's terminal. Returns why not, or
+// empty with `launch` set.
 QString remoteLaunch(const AgentRequest& request, const QString& command, QStringList arguments,
                      std::optional<session::LaunchSpec>& launch) {
     const auto ssh = QStandardPaths::findExecutable(QStringLiteral("ssh"));
@@ -273,14 +282,22 @@ QString remoteLaunch(const AgentRequest& request, const QString& command, QStrin
                   .arg(folder, conversation, shellWord(words.join(' ') + QLatin1Char(' ')));
     launch = session::validate_launch(
         {ssh,
-         {QStringLiteral("-o"), QStringLiteral("ServerAliveInterval=15"), QStringLiteral("-o"),
-          QStringLiteral("ServerAliveCountMax=4"), QStringLiteral("-t"), request.machine, line},
+         remoteOptions() + QStringList{QStringLiteral("-t"), request.machine, line},
          QDir::homePath(),
          {100, 30},
          session::AgentMode::terminal});
     return {};
 }
 constexpr qsizetype max_saved_arguments = 64;
+// A remote agent saved before remoteOptions() gains the ones it lacks.
+void addRemoteOptions(session::LaunchSpec& launch) {
+    if (!remoteCommand(launch))
+        return;
+    for (qsizetype at = remoteOptions().size() - 2; at >= 0; at -= 2)
+        if (!launch.arguments.contains(remoteOptions().at(at + 1)) &&
+            launch.arguments.size() + 2 <= max_saved_arguments)
+            launch.arguments = remoteOptions().mid(at, 2) + launch.arguments;
+}
 constexpr qint64 updater_output_tail_bytes = 8192;
 } // namespace
 
@@ -1676,6 +1693,7 @@ auto Workspace::restoredLaunch(const Agent& agent, QString* diagnostic)
         harness && QFileInfo(launch.program).fileName() == harness->command &&
         !QFileInfo(launch.program).isExecutable())
         launch.program = harness_program(harness->id);
+    addRemoteOptions(launch);
     if (launch.program.isEmpty() || !QFileInfo(launch.directory).isDir())
         return std::nullopt;
     const auto option = resumeOption(agent.harness);
