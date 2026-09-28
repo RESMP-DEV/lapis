@@ -162,6 +162,31 @@ void kept_rows_the_screen_shows_again_belong_to_it() {
     require(blank.archived() == 2, "a blank row on both sides is not taken for a repeat");
 }
 
+void pages_without_seam_evidence_stay_unsettled() {
+    // Rows 0 and 1 are known, but every plausible overlap starts at rows 4
+    // and 5. The distant page cannot settle a seam it never reached.
+    HistoryStrip distant(rows_of(10, {"h4", "h5", "s0", "s1"}), 6);
+    distant.addPage(rows_of(10, {"d0", "d1"}, 0));
+    distant.moveTo(5);
+    require(distant.missing() == 5, "a page away from the seam still requests its missing row");
+    distant.moveTo(6);
+    distant.addPage(rows_of(10, {"h2", "h3", "h4", "h5"}, 2));
+    require(distant.archived() == 4 && distant.top() == 4 &&
+                view_rows(distant) == Rows({"h4", "h5", "s0", "s1"}),
+            "a later seam page still removes rows shown by the screen");
+
+    // The blank row matches, but the other half of this possible overlap is
+    // missing; together they are not evidence that two rows repeat.
+    HistoryStrip partial(rows_of(10, {"h1", "", "s0"}), 3);
+    partial.addPage(rows_of(10, {""}, 2));
+    require(partial.archived() == 3 && partial.top() == 3,
+            "a blank row beside a missing row does not settle the seam");
+    partial.addPage(rows_of(10, {"h0", "h1"}, 0));
+    require(partial.archived() == 1 && partial.top() == 1 && !partial.missing() &&
+                view_rows(partial) == Rows({"h1", "", "s0"}),
+            "a later page can prove a partial blank-and-missing overlap");
+}
+
 void far_pages_are_forgotten() {
     HistoryStrip strip(rows_of(4, {"s0", "s1", "s2", "s3"}), 120);
     strip.moveTo(0);
@@ -181,6 +206,7 @@ int main() {
         pages_of_another_width_and_color_fit_the_screen();
         pages_that_do_not_say_where_they_sit_go_on_top();
         kept_rows_the_screen_shows_again_belong_to_it();
+        pages_without_seam_evidence_stay_unsettled();
         far_pages_are_forgotten();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

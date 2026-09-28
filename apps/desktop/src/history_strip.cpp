@@ -114,6 +114,9 @@ void HistoryStrip::settleSeam() {
     // known rows first, and fetch earlier rows only for a plausible overlap.
     seam_missing_.reset();
     const auto most = std::min<std::uint64_t>(archived_, rows() > 0 ? rows() - 1 : 0);
+    bool established = false;
+    bool unavailable = false;
+    bool comparable = false;
     for (auto overlap = most; overlap > 0; --overlap) {
         bool same = true;
         bool shown = false;
@@ -123,10 +126,12 @@ void HistoryStrip::settleSeam() {
             std::uint64_t first{};
             const auto* page = holding(kept, &first);
             if (!page) {
+                unavailable = true;
                 if (!missing)
                     missing = kept;
                 continue;
             }
+            comparable = comparable || !blank_row(screen_, row);
             same = same_row(*page, kept - first, screen_, row);
             shown = shown || !blank_row(screen_, row);
         }
@@ -139,9 +144,12 @@ void HistoryStrip::settleSeam() {
         const auto distance = archived_ - top_;
         archived_ -= overlap;
         top_ = distance < archived_ ? archived_ - distance : 0;
+        established = true;
         break;
     }
-    seam_settled_ = true;
+    // Rows no page holds, and blank rows alone, prove nothing about the seam.
+    // Leave it open until a page offers comparable nonblank evidence.
+    seam_settled_ = established || (!unavailable && comparable);
 }
 
 void HistoryStrip::prependPage(session::TerminalSnapshot page) {

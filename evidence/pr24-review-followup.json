@@ -1,0 +1,190 @@
+{
+  "passed": true,
+  "source_revision": "353e062e571930fcea2db4d61b6093dd7d8c5844",
+  "control_expected_failure": [
+    {
+      "name": "control-build",
+      "command": [
+        "cmake",
+        "--build",
+        "--preset",
+        "desktop",
+        "--parallel",
+        "4",
+        "--target",
+        "lapis_history_strip_tests"
+      ],
+      "exit_code": 0,
+      "log": "build/pr-review-round/history-checks/control-build.log"
+    },
+    {
+      "name": "control-ctest",
+      "command": [
+        "ctest",
+        "--preset",
+        "desktop",
+        "--no-tests=error",
+        "--output-on-failure",
+        "-R",
+        "^history-strip$"
+      ],
+      "exit_code": 8,
+      "log": "build/pr-review-round/history-checks/control-ctest.log"
+    }
+  ],
+  "checks": [
+    {
+      "name": "desktop-build",
+      "command": [
+        "cmake",
+        "--build",
+        "--preset",
+        "desktop",
+        "--parallel",
+        "4",
+        "--target",
+        "lapis_history_strip_tests"
+      ],
+      "exit_code": 0,
+      "log": "build/pr-review-round/history-checks/desktop-build.log"
+    },
+    {
+      "name": "desktop-ctest",
+      "command": [
+        "ctest",
+        "--preset",
+        "desktop",
+        "--no-tests=error",
+        "--output-on-failure",
+        "-R",
+        "^history-strip$"
+      ],
+      "exit_code": 0,
+      "log": "build/pr-review-round/history-checks/desktop-ctest.log"
+    },
+    {
+      "name": "asan-build",
+      "command": [
+        "cmake",
+        "--build",
+        "--preset",
+        "asan",
+        "--parallel",
+        "4",
+        "--target",
+        "lapis_history_strip_tests"
+      ],
+      "exit_code": 0,
+      "log": "build/pr-review-round/history-checks/asan-build.log"
+    },
+    {
+      "name": "asan-ctest",
+      "command": [
+        "ctest",
+        "--preset",
+        "asan",
+        "--no-tests=error",
+        "--output-on-failure",
+        "-R",
+        "^history-strip$"
+      ],
+      "exit_code": 0,
+      "log": "build/pr-review-round/history-checks/asan-ctest.log"
+    },
+    {
+      "name": "tsan-build",
+      "command": [
+        "cmake",
+        "--build",
+        "--preset",
+        "tsan",
+        "--parallel",
+        "4",
+        "--target",
+        "lapis_history_strip_tests"
+      ],
+      "exit_code": 0,
+      "log": "build/pr-review-round/history-checks/tsan-build.log"
+    },
+    {
+      "name": "tsan-ctest",
+      "command": [
+        "ctest",
+        "--preset",
+        "tsan",
+        "--no-tests=error",
+        "--output-on-failure",
+        "-R",
+        "^history-strip$"
+      ],
+      "exit_code": 0,
+      "log": "build/pr-review-round/history-checks/tsan-ctest.log"
+    }
+  ],
+  "source_sha256": {
+    "apps/desktop/src/history_strip.cpp": "415f7a8bd8dd67b52c7fa77a96f2b0b7fb562fc9a8a1138b67d072d02359711e",
+    "apps/desktop/tests/history_strip_test.cpp": "38ec11c301c81c4b67afa4993b643bc8bcea50293e9b44fe4a1458750a8b26e8"
+  },
+  "schema": "lapis.pr-review-resolution/1",
+  "findings": [
+    {
+      "thread_id": "PRRT_kwDOUfkyeM6mZ89w",
+      "disposition": "fixed",
+      "detail": "Missing or blank-only history pages leave the screen/history overlap unsettled until evidence arrives."
+    }
+  ],
+  "static_checks": [
+    {
+      "name": "format",
+      "exit_code": 0,
+      "command": [
+        "/opt/homebrew/opt/llvm/bin/clang-format",
+        "--dry-run",
+        "--Werror",
+        "apps/desktop/src/history_strip.cpp",
+        "apps/desktop/tests/history_strip_test.cpp"
+      ]
+    },
+    {
+      "name": "tidy-0",
+      "exit_code": 0,
+      "command": [
+        "/opt/homebrew/opt/llvm/bin/clang-tidy",
+        "-p",
+        "build/desktop",
+        "apps/desktop/src/history_strip.cpp"
+      ]
+    },
+    {
+      "name": "tidy-1",
+      "exit_code": 0,
+      "command": [
+        "/opt/homebrew/opt/llvm/bin/clang-tidy",
+        "-p",
+        "build/desktop",
+        "apps/desktop/tests/history_strip_test.cpp"
+      ]
+    },
+    {
+      "name": "cppcheck",
+      "exit_code": 0,
+      "command": [
+        "cppcheck",
+        "--project=build/pr-review-round/history-checks/compile_commands.json",
+        "--library=qt",
+        "-DQ_MOC_INCLUDE(x)=",
+        "--enable=warning,performance,portability",
+        "--error-exitcode=1",
+        "--inline-suppr"
+      ]
+    }
+  ],
+  "background_ui": {
+    "command": "cmake --build --preset desktop --parallel 4 --target lapis_ui_preview_tests && build/desktop/apps/desktop/lapis_ui_preview_tests --background --history-only",
+    "passed": true,
+    "log": "build/pr-review-round/history-checks/ui-history.log"
+  },
+  "limits": [
+    "Offscreen Qt/software evidence; native input and GPU qualification were not repeated."
+  ]
+}
