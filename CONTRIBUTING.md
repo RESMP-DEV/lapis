@@ -896,7 +896,10 @@ Foundation models and checks controlled stale responses, reconnects and cache
 ownership without a simulator. The `--negative-control workspace` and
 `--negative-control terminals` variants remove one ownership guard from a
 temporary source copy; each must exit 1 with its matching stale-response
-diagnostic. Use these controls when changing the regression itself, rather than
+diagnostic and record `control_verified: true`. The receipt keeps `passed: false`
+for these controls, including when the expected failure was observed. A setup
+failure, unrelated diagnostic or unexpected fixture route does not verify a
+control. Use these controls when changing the regression itself, rather than
 rerunning them for unrelated edits. This probe does not replace the iOS
 integration row at handoff.
 

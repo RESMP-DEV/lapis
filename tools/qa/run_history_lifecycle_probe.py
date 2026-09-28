@@ -29,6 +29,10 @@ SWIFT_SOURCES = (
     ROOT / "apps/ios/Lapis/FolderSearch.swift",
 )
 PROBE_SOURCE = ROOT / "tools/qa/history_lifecycle_probe.swift"
+NEGATIVE_CONTROL_DIAGNOSTICS = {
+    "workspace": "old-host listing survived an A-to-B-to-A host change",
+    "terminals": "old-host refresh wrote cache after a terminal-owned await",
+}
 
 
 class DefaultsIsolation:
@@ -485,6 +489,29 @@ def compile_probe(output: Path, model_source: Path | None = None) -> None:
     subprocess.run(command, check=True, cwd=ROOT, capture_output=True, text=True)
 
 
+def control_evidence(
+    return_code: int,
+    stderr: str,
+    unexpected_routes: list[str],
+    expected_diagnostic: str | None,
+) -> dict[str, object]:
+    """Separate a demonstrated control failure from probe qualification."""
+    expected_line = f"history-lifecycle-probe: {expected_diagnostic}"
+    observed = expected_diagnostic is not None and any(
+        line == expected_line for line in stderr.splitlines()
+    )
+    return {
+        "expected_control_diagnostic": expected_diagnostic,
+        "control_diagnostic_observed": observed,
+        "control_verified": (
+            expected_diagnostic is not None
+            and return_code != 0
+            and observed
+            and not unexpected_routes
+        ),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -519,6 +546,8 @@ def main() -> int:
             for path in (*SWIFT_SOURCES, PROBE_SOURCE)
         },
     }
+    expected_control = NEGATIVE_CONTROL_DIAGNOSTICS.get(args.negative_control)
+    receipt.update(control_evidence(0, "", [], expected_control))
     server = None
     try:
         with tempfile.TemporaryDirectory(prefix="run-", dir=build) as directory:
@@ -572,7 +601,19 @@ def main() -> int:
                 )
                 fixture_state = server.fixture_state()
                 unexpected = fixture_state.get("unexpected_routes", [])
-                passed = result.returncode == 0 and not unexpected
+                passed = (
+                    result.returncode == 0
+                    and not unexpected
+                    and not args.negative_control
+                )
+                receipt.update(
+                    control_evidence(
+                        result.returncode,
+                        result.stderr,
+                        unexpected,
+                        expected_control,
+                    )
+                )
                 receipt.update(
                     {
                         "command": [
@@ -592,6 +633,10 @@ def main() -> int:
                 )
                 if unexpected:
                     receipt["error"] = "fixture received unexpected routes"
+                elif args.negative_control and not receipt["control_verified"]:
+                    receipt["error"] = (
+                        "negative control did not produce its expected diagnostic"
+                    )
             finally:
                 server.stop()
                 server = None

@@ -1426,6 +1426,23 @@ bool TerminalSurface::pasteText(const QString& text) {
     return true;
 }
 
+QString TerminalSurface::localFilePath(const QString& url) const {
+    if (url.contains(u'\0'))
+        return {};
+    const QUrl parsed(url, QUrl::StrictMode);
+    if (!parsed.isValid() || parsed.scheme() != QLatin1String("file") ||
+        !parsed.path().startsWith(u'/') || parsed.port() != -1 || !parsed.userName().isEmpty() ||
+        !parsed.password().isEmpty() || parsed.hasQuery() || parsed.hasFragment())
+        return {};
+    QStringDecoder decoder(QStringDecoder::Utf8, QStringConverter::Flag::Stateless);
+    const QString decoded =
+        decoder(QByteArray::fromPercentEncoding(parsed.path(QUrl::FullyEncoded).toUtf8()));
+    if (decoder.hasError() || decoded.contains(u'\0'))
+        return {};
+    const QString path = parsed.toLocalFile();
+    return path.isEmpty() || path.contains(u'\0') ? QString() : path;
+}
+
 bool TerminalSurface::findText(const QString& text, bool backwards) {
     if (!document_)
         return false;

@@ -208,6 +208,158 @@ class ReceiptFreshnessTests(unittest.TestCase):
     def read_receipt(self, mode):
         return json.loads((self.logs / mode / "receipt.json").read_text())
 
+    def test_malformed_database_replaces_success_with_analysis_setup_failure(self):
+        tools = {
+            "clang++": "/llvm/clang++",
+            "clang-format": "/llvm/clang-format",
+            "clang-tidy": "/llvm/clang-tidy",
+            "cppcheck": "/tools/cppcheck",
+            "cmake": "/bin/cmake",
+            "ctest": "/bin/ctest",
+        }
+        fixtures = [
+            ("invalid-json", "{not-json"),
+            ("top-level-shape", '{"entries": []}'),
+            ("entry-shape", '["not-an-object"]'),
+            ("missing-file", '[{"command": "clang++"}]'),
+            ("empty-file", '[{"file": ""}]'),
+        ]
+        expected_diagnostics = {
+            "invalid-json": "Expecting property name enclosed in double quotes",
+            "top-level-shape": "top level must be a JSON list; got dict",
+            "entry-shape": "entry 0 must be an object; got str",
+            "missing-file": 'string "file"; got None',
+            "empty-file": "string \"file\"; got ''",
+        }
+        for label, database_text in fixtures:
+            with self.subTest(failure=label):
+                database = self.root / "build" / "dev" / "compile_commands.json"
+                database.parent.mkdir(parents=True, exist_ok=True)
+                database.write_text(database_text)
+                receipt = self.logs / "dev" / "receipt.json"
+                receipt.parent.mkdir(parents=True, exist_ok=True)
+                receipt.write_text('{"passed": true, "checks": []}\n')
+
+                with (
+                    patch.object(check_cpp, "toolchain", return_value=tools),
+                    patch.object(
+                        check_cpp,
+                        "run",
+                        return_value={"check": "fixture", "passed": True},
+                    ),
+                    patch.object(
+                        check_cpp, "_probe_version", return_value=("Fixture 1.0", None)
+                    ),
+                ):
+                    exit_code = self.invoke("dev")
+
+                self.assertEqual(exit_code, 1)
+                result = self.read_receipt("dev")
+                self.assertFalse(result["passed"])
+                failures = [
+                    check
+                    for check in result["checks"]
+                    if check["check"] == "analysis-setup"
+                ]
+                self.assertEqual(len(failures), 1)
+                self.assertFalse(failures[0]["passed"])
+                self.assertIn(expected_diagnostics[label], failures[0]["diagnostic"])
+
+    def test_valid_database_schedules_the_intended_analyzers(self):
+        tools = {
+            "clang++": "/llvm/clang++",
+            "clang-format": "/llvm/clang-format",
+            "clang-tidy": "/llvm/clang-tidy",
+            "cppcheck": "/tools/cppcheck",
+            "cmake": "/bin/cmake",
+            "ctest": "/bin/ctest",
+        }
+        database = self.root / "build" / "dev" / "compile_commands.json"
+        database.parent.mkdir(parents=True)
+        (self.logs / "dev").mkdir(parents=True)
+        database.write_text(
+            json.dumps(
+                [
+                    {"file": str(self.root / "apps/desktop/example.cpp")},
+                    {"file": str(self.root / "build/generated/moc_example.cpp")},
+                ]
+            )
+        )
+        listing = subprocess.CompletedProcess(
+            ["git"], 0, "apps/desktop/example.cpp\0apps/desktop/example.h\0", ""
+        )
+
+        with (
+            patch.object(check_cpp, "toolchain", return_value=tools),
+            patch.object(
+                check_cpp,
+                "run",
+                side_effect=lambda label, *_: {
+                    "check": label,
+                    "passed": True,
+                },
+            ) as runs,
+            patch.object(check_cpp.subprocess, "run", return_value=listing) as git_run,
+            patch.object(
+                check_cpp, "_probe_version", return_value=("Fixture 1.0", None)
+            ),
+        ):
+            exit_code = self.invoke("dev")
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(self.read_receipt("dev")["passed"])
+        commands = {call.args[0]: call.args[1] for call in runs.call_args_list}
+        self.assertEqual(
+            set(commands),
+            {
+                "configure",
+                "build",
+                "ctest",
+                "clang-format",
+                "cppcheck",
+                "clang-tidy-0",
+            },
+        )
+        source = str(self.root / "apps/desktop/example.cpp")
+        format_command = commands["clang-format"]
+        self.assertEqual(
+            format_command,
+            [
+                tools["clang-format"],
+                "--dry-run",
+                "--Werror",
+                "apps/desktop/example.cpp",
+                "apps/desktop/example.h",
+            ],
+        )
+        cppcheck_command = commands["cppcheck"]
+        self.assertEqual(cppcheck_command[0], tools["cppcheck"])
+        self.assertIn(
+            f"--project={self.logs / 'dev' / 'compile_commands.json'}",
+            cppcheck_command,
+        )
+        tidy_command = commands["clang-tidy-0"]
+        self.assertEqual(
+            tidy_command,
+            [
+                tools["clang-tidy"],
+                "-p",
+                self.root / "build" / "dev",
+                source,
+            ],
+        )
+        analysis_database = json.loads(
+            (self.logs / "dev" / "compile_commands.json").read_text()
+        )
+        self.assertEqual(
+            [entry["file"] for entry in analysis_database],
+            [source],
+        )
+        git_calls = [
+            call for call in git_run.call_args_list if call.args[0][0] == "git"
+        ]
+        self.assertEqual(len(git_calls), 1)
+
 
 class VersionProbeTests(unittest.TestCase):
     def setUp(self):
