@@ -222,7 +222,9 @@ creates an agent (its tab defaults to the project path) and Command-N creates a
 category. The new-agent form's Machine row offers this Mac and the hosts in your
 ssh config (left and right arrows while up and down choose the CLI); on another
 machine the agent runs over ssh in that machine's `newAgent` folder, else its
-home, in its login shell; the **+** under the last category does the same. Command-comma
+home, in its login shell; the **+** under the last category does the same. When
+such a Claude Code agent's connection drops (the Mac changed networks or slept),
+lapis reconnects it and it resumes its conversation. Command-comma
 opens Appearance, and Command-R reloads configuration. Command-K finds an agent
 as you type: by the letters of its name, folder, category, CLI or machine, or by
 text on its screen, and Return shows it. Command-O resumes a past conversation:
