@@ -549,6 +549,8 @@ void check_terminal_font_controls(QQuickWindow& window, lapis::desktop::KeyMap& 
     CHECK(QMetaObject::invokeMethod(fontSizeField, "selectAll"));
     QKeyEvent erase(QEvent::KeyPress, Qt::Key_Backspace, Qt::NoModifier);
     QCoreApplication::sendEvent(&window, &erase);
+    QKeyEvent eraseRelease(QEvent::KeyRelease, Qt::Key_Backspace, Qt::NoModifier);
+    QCoreApplication::sendEvent(&window, &eraseRelease);
     CHECK(fontSizeField->property("text").toString().isEmpty());
     terminal.forceActiveFocus();
     pump(30);
@@ -2427,6 +2429,16 @@ int run_history_ui_tests() {
     QVariant folder;
     CHECK(QMetaObject::invokeMethod(window, "focusedFolder", Q_RETURN_ARG(QVariant, folder)));
     CHECK(folder.toString() == root.filePath(QStringLiteral("project")));
+    // Exercise QML-to-C++ URL conversion and shell quoting together. No file
+    // access or OS drop is needed to preserve the network authority.
+    const QVariant dropUrls = QVariantList{
+        QStringLiteral("file://server/share/a%20b%27c"), QStringLiteral("file:///local/%E7%95%8C"),
+        QStringLiteral("https://example.com/file"), QStringLiteral("file:///invalid%ZZ")};
+    QVariant droppedPaths;
+    CHECK(QMetaObject::invokeMethod(window, "quoteDroppedPaths",
+                                    Q_RETURN_ARG(QVariant, droppedPaths),
+                                    Q_ARG(QVariant, dropUrls)));
+    CHECK(droppedPaths.toString() == QStringLiteral("'//server/share/a b'\\''c' '/local/界' "));
     const auto settled = [agent] {
         return agent->historyActive() && !agent->historyRequestPending();
     };
