@@ -1,5 +1,7 @@
 # lapis
 
+<img src="assets/lapis.svg" width="80" height="80" alt="lapis gold-star Cabochon icon">
+
 Repository: [RESMP-DEV/lapis](https://github.com/RESMP-DEV/lapis).
 
 lapis is a desktop workspace for live CLI agents. Categories contain ordered

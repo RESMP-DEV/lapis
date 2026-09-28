@@ -665,6 +665,23 @@ reproducible symptom; a screenshot alone does not establish an application defec
 Apple silicon Mac with Xcode, Homebrew's `vulkan-headers` and `molten-vk`, and a
 bootstrapped Ghostty build. Everything goes under ignored `build/release/`.
 
+The canonical app icon is [assets/lapis.svg](assets/lapis.svg): the gold-star
+Cabochon with a solid blue face and raised rim. To regenerate its checked-in
+Mac ICNS, iPhone PNG and website SVG/PNGs, run
+`python3 scripts/package_macos.py icon` on macOS with `rsvg-convert` installed
+(`brew install librsvg`; exercised with librsvg 2.63.2). This build tool adds no
+application runtime dependency. The command renders every Mac size from vectors
+and writes source/output hashes to `build/release/icon/receipt.json`.
+The command stages all outputs before replacing any asset and publishes the
+receipt last. A handled publication failure restores previous bytes and metadata
+and removes newly created outputs. If restoration itself fails, the error names
+the retained recovery copy. Replacements are atomic per file; abrupt process
+death or power loss can leave a mixed set.
+Preserve the SVG's `tile-edge`, `tile-face`, `cabochon` and gradient IDs: the
+iPhone export uses the tile bounds and background color for an opaque square,
+leaving corner masking to iOS. The Mac and website retain the SVG's existing
+margin and rim, without an additional crop or mask.
+
 ```sh
 uv run --no-project python scripts/package_macos.py qt       # once: Qt from pinned source
 uv run --no-project python scripts/package_macos.py app      # build, bundle, sign
@@ -683,6 +700,12 @@ the keychain's one Developer ID Application identity (or `LAPIS_SIGN_IDENTITY`)
 and the hardened runtime. `notarize` needs a notarytool keychain profile, made
 once with `xcrun notarytool store-credentials NAME`, and staples the app and
 then the DMG.
+
+For local packaging qualification without a Developer ID identity, use
+`LAPIS_SIGN_IDENTITY=- python3 scripts/package_macos.py app`, then
+`python3 scripts/package_macos.py verify`. This produces an ad hoc signed bundle
+under `build/release/stage/`; it does not establish distribution signing or
+notarization. Record the signing mode with the result.
 
 `verify` fails the release when a binary is not arm64-only, needs a macOS newer
 than 14, links anything outside the bundle or the system, or holds the build
