@@ -2929,6 +2929,20 @@ must be closed before publishing binaries; the Mac app's are collected above. Th
 of a local milestone passing. Keep current implementation status in the README;
 the tables here define work order and acceptance only.
 
+### The gold star cabochon icon (September 27)
+
+The first icon drew a brilliant-cut gem: a transparent stone's cut, colored
+blue, which read as a sapphire. Lapis lazuli is an opaque rock and is cut as a
+cabochon, tablet or bead. The icon is now a tall cabochon of solid lapis blue
+(#293D9B) with a raised rim and a gold (#E5BF67) six-ray star on #1C2234,
+from a simplified Cabochon study that dropped the stone texture so it reads at
+16 px. Its source is `apps/desktop/macos/icon.svg`, one full-bleed square: the
+phone's `icon.png` is rendered from it, and `package_macos.py icon` makes the
+Mac icon from that PNG whole, at Apple's 824-point body, and the download
+page's icon and favicon from the Mac icon. The Mac no longer enlarges the art
+1.3 times, so both apps show the same icon. The phone's in-app mark is the
+stone alone.
+
 ## Contracts to preserve
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal
