@@ -2583,10 +2583,10 @@ results visible while preserving the current ownership semantics.
 
 The September 27 [consolidation receipt](../evidence/local-consolidation.json)
 binds these repairs to the current workspace and phone controls from PRs 18–19.
-It also checks host changes while both the agent-list and terminal-list requests
-are outstanding: a stale response cannot publish state, write a cache, or start
-follow-up work. The earlier receipts remain dated evidence for their original
-source, not qualification of the assembled revision.
+It records separate A-to-B-to-A host-change cases for workspace and terminal
+listings, along with rejection of stale older-history, newer-history and input
+responses. The earlier receipts remain dated evidence for their original source,
+not qualification of the assembled revision.
 
 ### Pseudo-production direction and integration spread (September 27)
 

@@ -89,6 +89,9 @@ class TerminalSurface : public QQuickItem {
     // Text as if pasted (bracketed when the agent asked for it): what files
     // dropped on the terminal become.
     Q_INVOKABLE bool pasteText(const QString& text);
+    // A valid file URL as QUrl's local or UNC path; empty for other schemes,
+    // malformed URLs and NUL bytes. Callers still quote the result for a shell.
+    Q_INVOKABLE QString localFilePath(const QString& url) const;
     // Selects the next match on the page shown (older first when
     // `backwards`), starting from the current selection; false when there is
     // none left on this page.

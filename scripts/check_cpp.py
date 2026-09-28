@@ -309,6 +309,23 @@ def _run_gate(tools, arguments, log_dir):
 def _analysis_tasks(tools, arguments, log_dir):
     database = ROOT / "build" / arguments.mode / "compile_commands.json"
     entries = json.loads(database.read_text())
+    if not isinstance(entries, list):
+        raise ValueError(
+            "Compilation database top level must be a JSON list; "
+            f"got {type(entries).__name__}"
+        )
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"Compilation database entry {index} must be an object; "
+                f"got {type(entry).__name__}"
+            )
+        source = entry.get("file")
+        if not isinstance(source, str) or not source.strip():
+            raise ValueError(
+                f"Compilation database entry {index} must have a nonempty "
+                f'string "file"; got {source!r}'
+            )
     # Qt-generated MOC/RCC files are compiler-checked, not hand-maintained
     # source. Analyze first-party translation units with their real flags.
     entries = [

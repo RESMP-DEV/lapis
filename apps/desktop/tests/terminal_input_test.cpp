@@ -200,6 +200,38 @@ void composition(lapis::desktop::TerminalSurface& surface, QStringView preedit,
     event.setCommitString(commit, replace, replace == 0 ? 0 : 1);
     QCoreApplication::sendEvent(&surface, &event);
 }
+void local_file_url_contract(lapis::desktop::TerminalSurface& surface) {
+    struct Case {
+        QString url;
+        QString expected;
+        const char* message;
+    };
+    QString raw_nul = QStringLiteral("file:///tmp/before");
+    raw_nul.append(QChar(u'\0'));
+    raw_nul.append(QStringLiteral("after"));
+    const std::array cases{
+        Case{QStringLiteral("file://server/share/file"), QStringLiteral("//server/share/file"),
+             "UNC file URL lost its network path"},
+        Case{QStringLiteral("file:///local/file"), QStringLiteral("/local/file"),
+             "Ordinary file URL did not become its local path"},
+        Case{QStringLiteral("file:///drop%20o%27clock%2F%E7%95%8C"),
+             QStringLiteral("/drop o'clock/界"),
+             "Encoded spaces, apostrophes, slashes or Unicode were not decoded"},
+        Case{QStringLiteral("file:///%2"), {}, "A malformed percent escape was accepted as a path"},
+        Case{QStringLiteral("https://example.invalid/file"),
+             {},
+             "A non-file URL was accepted as a local path"},
+        Case{QStringLiteral("file:///invalid%FF"),
+             {},
+             "Invalid encoded UTF-8 was accepted as a different filename"},
+        Case{QStringLiteral("file:///before%00after"),
+             {},
+             "A percent-encoded NUL was accepted as a path"},
+        Case{raw_nul, {}, "A raw NUL was accepted in a file URL"},
+    };
+    for (const auto& tested : cases)
+        require(surface.localFilePath(tested.url) == tested.expected, tested.message);
+}
 void input_contract(bool background) {
     Fixture f;
     QQuickWindow window;
@@ -227,6 +259,7 @@ void input_contract(bool background) {
         return window.isActive() && surface.hasActiveFocus();
     });
     static_cast<void>(text_frames(peer));
+    local_file_url_contract(surface);
     require(surface.inputMethodQuery(Qt::ImEnabled).toBool(), "Ready terminal disabled IME");
     // Composition stays on; predictions, completion and corrections, which
     // the platform would type into the program, are declined.

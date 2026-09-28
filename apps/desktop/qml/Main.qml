@@ -1001,15 +1001,10 @@ ApplicationWindow {
     function quoteDroppedPaths(urls) {
         const quoted = []
         for (const url of urls) {
-            const text = url.toString()
-            if (!text.startsWith("file://"))
+            const path = liveTerminal.localFilePath(url.toString())
+            if (path.length === 0)
                 continue
-            try {
-                const path = decodeURIComponent(text.slice(7))
-                quoted.push("'" + path.replace(/'/g, "'\\''") + "'")
-            } catch (_) {
-                // A malformed URI cannot become a shell path.
-            }
+            quoted.push("'" + path.replace(/'/g, "'\\''") + "'")
         }
         return quoted.length > 0 ? quoted.join(" ") + " " : ""
     }

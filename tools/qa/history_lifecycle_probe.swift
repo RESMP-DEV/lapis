@@ -204,10 +204,10 @@ struct HistoryLifecycleProbe {
         try await waitCounts(host, "machine-failure", \.folders, atLeast: 1)
         try await waitCounts(host, "machine-failure", \.frames, atLeast: 1)
         await refresh.value
-        try require(model.catalogs[""]?.version == "machine-failure",
-                    "local catalog did not refresh after machines failure")
-        try require(ScreenCache.shared.frame("machine-failure")?.revision == 1,
-                    "running screen did not prefetch after machines failure")
+        try await waitModel("catalog and cached screen after machines failure") {
+            model.catalogs[""]?.version == "machine-failure"
+                && ScreenCache.shared.frame("machine-failure")?.revision == 1
+        }
         try await waitControl(host, "workspace-active/base")
     }
 
