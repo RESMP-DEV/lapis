@@ -2525,6 +2525,18 @@ must be closed before publishing binaries; the Mac app's are collected above. Th
 of a local milestone passing. Keep current implementation status in the README;
 the tables here define work order and acceptance only.
 
+### The gold star cabochon icon (September 27)
+
+The icon is a tall cabochon of solid lapis blue (#293D9B) with a raised rim
+and a gold (#E5BF67) six-ray star on #1C2234. Its simplified shape remains
+readable at 16 px. [assets/lapis.svg](../assets/lapis.svg) is the single SVG
+source for the app and website icons.
+
+`package_macos.py icon` renders the Mac ICNS at every scale, the iPhone app
+icon, and the website SVG/PNG directly from that source. The iPhone export
+uses the tile bounds and background color for an opaque square, leaving corner
+masking to iOS. The phone's in-app LapisMark assets remain the stone alone.
+
 ## Contracts to preserve
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal
