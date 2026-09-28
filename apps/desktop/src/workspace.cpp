@@ -1024,7 +1024,6 @@ bool Workspace::discardSession(const QString& id) {
     const auto* item = session(id);
     if (!item)
         return false;
-    reconnects_.remove(id);
     const auto item_category = agents_.value(id).category;
     const auto closed_agent = agents_.value(id);
     const auto closed_title = item->title();
@@ -1062,6 +1061,7 @@ bool Workspace::discardSession(const QString& id) {
         emit errorChanged();
         return false;
     }
+    reconnects_.remove(id);
     last_kind_.remove(item);
     rememberClosed(closed_agent, closed_title);
     changed();
@@ -1670,8 +1670,11 @@ void Workspace::applyStartupDefaults(const Agent& agent, ResumeLaunch& plan) {
 auto Workspace::restoredLaunch(const Agent& agent, QString* diagnostic)
     -> std::optional<ResumeLaunch> {
     auto launch = agent.launch;
+    // Relocate a CLI whose recorded binary disappeared; never turn a saved
+    // transport such as ssh into the harness program while keeping its argv.
     if (const auto* harness = find_harness(agent.harness);
-        harness && !QFileInfo(launch.program).isExecutable())
+        harness && QFileInfo(launch.program).fileName() == harness->command &&
+        !QFileInfo(launch.program).isExecutable())
         launch.program = harness_program(harness->id);
     if (launch.program.isEmpty() || !QFileInfo(launch.directory).isDir())
         return std::nullopt;
