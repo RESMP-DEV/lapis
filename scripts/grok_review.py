@@ -739,6 +739,8 @@ def install(repository, publish):
                     str(Path(__file__).resolve()),
                     "--repo",
                     repository,
+                    "--model",
+                    MODEL,
                     "watch",
                 ]
                 + (["--post"] if publish else []),
@@ -791,8 +793,14 @@ def status(repository):
 
 
 def main():
+    global MODEL
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", default=REPOSITORY)
+    parser.add_argument(
+        "--model",
+        default=MODEL,
+        help="the Grok model; a team without grok-4.7 can use grok-4.7-build-fast",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     one = commands.add_parser("review", help="review one PR's head")
     one.add_argument("number", type=int)
@@ -804,6 +812,7 @@ def main():
     commands.add_parser("uninstall")
     commands.add_parser("status")
     arguments = parser.parse_args()
+    MODEL = arguments.model
     try:
         repository_state(arguments.repo)  # validate before any external command
         if arguments.command == "review":

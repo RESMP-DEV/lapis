@@ -292,6 +292,9 @@ The September 29 live probe of Grok Build 1.0.41 rejected the previous
 `grok-4.7-build-fast` pin as unknown. Its catalog advertises `grok-4.7`; a request
 for that model reached an account usage limit. The pin follows the catalog,
 without automatic fallback, but a completed live review remains unqualified.
+Which models a Grok account may use differs by team: on another team the same
+build refused `grok-4.7` (404) and completed a review with `grok-4.7-build-fast`.
+The global `--model` option picks one, and `install` keeps it for the watcher.
 
 Keep the PR description current as scope changes. Use `Change`, `Validation` and
 `Risks and follow-up`; a small change needs only a sentence or two plus its checks.
