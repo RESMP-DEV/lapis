@@ -80,8 +80,8 @@ void settingsReadFromTheConfig() {
     const auto defaults = lapis::desktop::parse_next_prompt(QJsonValue());
     require(defaults == NextPromptSettings{} && !defaults.automatic &&
                 defaults.model == QLatin1String("claude-opus-5-5") &&
-                defaults.minConfidence == 0.5 && defaults.maxPerHour == 60,
-            "off by default, Opus, even odds, sixty an hour");
+                defaults.minConfidence == 0.4 && defaults.maxPerHour == 60,
+            "off by default, Opus, 0.4, sixty an hour");
     const auto set = lapis::desktop::parse_next_prompt(
         QJsonDocument::fromJson(R"({"auto": true, "model": "claude-sonnet-5", "effort": "low",
                                     "minConfidence": 7, "maxPerHour": -3})")

@@ -3240,6 +3240,17 @@ logs every guess to measure that threshold.
   threshold. Those logs are the data for a small model of one's own, trained on
   acceptance as Cursor's is.
 
+`scripts/next_prompt_eval.py replay` then repeated the test on 60 prompts typed
+since September 1, half on the Mac and half on the Linux test host, across
+Claude Code and Codex: one of three guesses was sendable for 10% and had the
+right intent for 42%; 44% of the 9 prompts of four words or fewer were
+sendable, against 4% of the 51 longer ones, and none of the 22 questions or 11
+new tasks. Opus 5.5's stated probabilities for its first guess clustered at 0.3
+to 0.4 (one reached 0.5). At a 0.4 threshold 27% of turns got an offer and a
+quarter of those were sendable, Cursor's break-even for showing a suggestion,
+with the right intent for 44%; at 0.5 almost nothing is offered. The default is
+0.4; the log will show whether that holds with lapis's state in the prompt.
+
 It is off by default: each prediction is a model call on the person's plan.
 Claude Code 2.1.285 has its own prompt suggestions (on unless
 `promptSuggestionEnabled` is false; they back off after 20 unused); lapis's

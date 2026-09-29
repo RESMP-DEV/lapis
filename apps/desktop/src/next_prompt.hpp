@@ -21,13 +21,13 @@ struct TerminalSnapshot;
 namespace lapis::desktop {
 
 // {"nextPrompt": {"auto": true, "model": "claude-opus-5-5", "effort": "",
-// "minConfidence": 0.5, "maxPerHour": 60}}. Off unless asked for: each
+// "minConfidence": 0.4, "maxPerHour": 60}}. Off unless asked for: each
 // prediction is a model call on the Claude Code plan this Mac is signed in to.
 struct NextPromptSettings {
     bool automatic{false};
     QString model{QStringLiteral("claude-opus-5-5")};
     QString effort; // empty: the CLI's own
-    double minConfidence{0.5};
+    double minConfidence{0.4};
     int maxPerHour{60};
     bool operator==(const NextPromptSettings&) const = default;
 };

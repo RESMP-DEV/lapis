@@ -322,7 +322,7 @@ Claude Code or Codex agent finishes a turn, lapis reads its conversation where
 it runs (over ssh for another machine) and asks a model on this Mac, through
 the Claude Code CLI and the plan it is signed in to (never an API key), with
 your `~/.claude/CLAUDE.md`, the agent's screen, every other agent's state and
-your latest prompts elsewhere. A guess at least `minConfidence` likely (0.5)
+your latest prompts elsewhere. A guess at least `minConfidence` likely (0.4)
 shows dim after the agent's cursor: Tab types it, Command-Return types and
 sends it, and any other key withdraws it. Nothing is sent without one of those
 keys. `model` (`claude-opus-5-5`), `effort` and `maxPerHour` (60) are the other

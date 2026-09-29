@@ -724,9 +724,6 @@ void command_links_open() {
             "A valid encoded replacement-character filename did not open");
     require(text_frames(peer).isEmpty(), "Command-click sent input to the agent");
 }
-// Dragging selects screen text and double-clicking selects a word. The copy
-// chord copies without sending input, typing clears the selection, and the
-// wheel asks for older history on the normal screen.
 // A next prompt offered at the cursor: drawn there, typed by Tab, typed and
 // submitted by Command-Return, and withdrawn by any other key the agent gets.
 void suggestions() {
@@ -820,6 +817,9 @@ void suggestions() {
             "Typing past a suggestion did not withdraw it");
 }
 
+// Dragging selects screen text and double-clicking selects a word. The copy
+// chord copies without sending input, typing clears the selection, and the
+// wheel asks for older history on the normal screen.
 void selection_and_scroll() {
     Fixture f;
     QQuickWindow window;
