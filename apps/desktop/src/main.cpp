@@ -401,10 +401,27 @@ void route_terminal_keys(lapis::desktop::UiPreview& view, const lapis::desktop::
         return QMetaObject::invokeMethod(window, shifted ? "chooseTerminal" : "toggleTerminal");
     });
 }
+// Command-Option-L from any app: lapis comes forward on the agent that most
+// recently needed you.
+void route_latest_attention(lapis::desktop::UiPreview& view, lapis::desktop::Workspace& workspace) {
+    const bool taken = lapis::desktop::platform::on_latest_attention_key([&view, &workspace] {
+        if (auto* window = view.window()) {
+            window->show();
+            window->raise();
+            window->requestActivate();
+        }
+        workspace.latestAttention();
+    });
+    if (!taken)
+        qWarning() << "Command-Option-L is held by another app; Command-L still works in lapis";
+}
 // A monitor must never outlive this scope. Clear it in reverse construction
 // order, including when load or exec unwinds after an exception.
 struct TerminalKeyMonitorGuard {
-    ~TerminalKeyMonitorGuard() { lapis::desktop::platform::on_terminal_keys({}); }
+    ~TerminalKeyMonitorGuard() {
+        lapis::desktop::platform::on_terminal_keys({});
+        lapis::desktop::platform::on_latest_attention_key({});
+    }
 };
 void register_qml_types() {
     using namespace lapis::desktop;
@@ -433,9 +450,15 @@ QString usage_program(const QString& id) {
 // the order the config names.
 void follow_usage_setting(lapis::desktop::Usage& usage, const lapis::desktop::KeyMap& keymap) {
     const auto show = [&usage, &keymap] {
-        usage.setMachines(keymap.usageMachines());
+        // Plans lapis hands out need their home machines' limits, even with
+        // the dashboard hidden.
+        auto machines = keymap.usageMachines();
+        for (const auto& account : keymap.accounts().accounts)
+            if (account.hasHome && !account.home.isEmpty() && !machines.contains(account.home))
+                machines << account.home;
+        usage.setMachines(machines);
         usage.setMeterOrder(keymap.usageMeter());
-        usage.setActive(keymap.showUsage());
+        usage.setActive(keymap.showUsage() || !keymap.accounts().accounts.empty());
     };
     show();
     QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &usage, show);
@@ -526,7 +549,7 @@ void wire_window(QQuickWindow& window, lapis::desktop::UiPreview& view,
     });
     if (!workspace.previewMode()) {
         // The Dock badge counts agents waiting on you in any category, so it
-        // shows from another app; a new request bounces the icon once.
+        // shows from another app.
 #ifdef Q_OS_MACOS
         // Linux badges need an installed desktop file; the Dock needs nothing.
         const auto badge = [&workspace] { qGuiApp->setBadgeNumber(workspace.attentionAgents()); };
@@ -535,11 +558,6 @@ void wire_window(QQuickWindow& window, lapis::desktop::UiPreview& view,
         QObject::connect(qApp, &QCoreApplication::aboutToQuit, &window,
                          [] { qGuiApp->setBadgeNumber(0); });
 #endif
-        QObject::connect(&workspace, &lapis::desktop::Workspace::requestArrived, &window,
-                         [&window] {
-                             if (!window.isActive())
-                                 window.alert(1000);
-                         });
     }
     if (parser.isSet(QStringLiteral("capture")))
         capture_window(window, workspace, view,
@@ -583,6 +601,13 @@ int main(int argc, char** argv) {
         return 2;
     // Before any agent, session service or CLI probe inherits the environment.
     lapis::desktop::adopt_login_environment();
+    // Agents draw full screen on the alternate screen, which a resize cannot
+    // tear; the classic renderer redraws in place and garbles when lapis
+    // resizes a terminal it drew in. Claude Code turns full screen off for
+    // good after launches that end early, as lapis's closes and restarts do;
+    // this variable overrides that. A value the user set is kept.
+    if (!qEnvironmentVariableIsSet("CLAUDE_CODE_NO_FLICKER"))
+        qputenv("CLAUDE_CODE_NO_FLICKER", "1");
     if (qEnvironmentVariableIsEmpty("QT_VULKAN_LIB"))
         qputenv("QT_VULKAN_LIB", QFile::encodeName(lapis::desktop::vulkan_library()));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
@@ -590,15 +615,18 @@ int main(int argc, char** argv) {
     try {
         using namespace lapis::desktop;
         const bool isolated = parser.isSet(QStringLiteral("ui-preview"));
-        const auto options = workspace_options(parser, isolated);
-        Workspace workspace(isolated ? WorkspaceMode::preview : WorkspaceMode::live, options);
         // The config file applies live: a change from the window or an agent
-        // reaches new agents at once, with or without a window.
+        // reaches new agents at once, with or without a window. Its plans are
+        // known before restored agents start.
         KeyMap keymap;
         keymap.load();
+        auto options = workspace_options(parser, isolated);
+        options.accounts = keymap.accounts();
+        Workspace workspace(isolated ? WorkspaceMode::preview : WorkspaceMode::live, options);
         const auto configure = [&] {
             workspace.setHarnessArguments(keymap.harnessArguments());
             workspace.setAgentDefaults(keymap.agentDefaults());
+            workspace.setAccounts(keymap.accounts());
         };
         configure();
         QObject::connect(&keymap, &KeyMap::changed, &workspace, configure);
@@ -636,8 +664,13 @@ int main(int argc, char** argv) {
         // in the real workspace. Each CLI keeps its transcripts where its own
         // home variable says.
         std::optional<Usage> usage;
-        if (!isolated)
+        if (!isolated) {
             follow_usage_setting(usage.emplace(&usage_program, transcript_roots()), keymap);
+            // Plan loads decide which plan each Claude Code and Codex session uses.
+            QObject::connect(&*usage, &Usage::changed, &workspace, [&workspace, &usage] {
+                workspace.setAccountLoads(usage->accountLoads());
+            });
+        }
         const auto conversations = conversation_index(workspace);
         if (!isolated) {
             follow_conversation_titles(workspace, *conversations);
@@ -673,6 +706,8 @@ int main(int argc, char** argv) {
             return 1;
         shown = view.window();
         route_terminal_keys(view, keymap);
+        if (!isolated && !workspace.previewMode() && !parser.isSet(QStringLiteral("capture")))
+            route_latest_attention(view, workspace);
         view.window()->requestActivate();
         qInfo() << "UI preview:" << isolated
                 << "system reduced motion:" << view.systemReducedMotion();

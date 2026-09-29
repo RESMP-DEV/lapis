@@ -1272,8 +1272,9 @@ void reveal_card(QQuickWindow& window, const lapis::desktop::Workspace& workspac
     pump(30);
 }
 
-// Keyboard focus, activity, pending requests and lost connections stay visually
-// distinct, and each status class has a non-color shape cue on its tab.
+// Keyboard focus, activity and lost connections stay visually distinct, and each
+// status class has a non-color shape cue on its tab. An agent waiting on an
+// answer looks like a finished turn: it pinged as one.
 void check_status_semantics(QQuickWindow& window, lapis::desktop::Workspace& workspace) {
     const QStringList kinds{QStringLiteral("working"),    QStringLiteral("waiting"),
                             QStringLiteral("idle"),       QStringLiteral("finished"),
@@ -1286,17 +1287,18 @@ void check_status_semantics(QQuickWindow& window, lapis::desktop::Workspace& wor
         colors.insert(kind, call_window(window, "statusColor", kind).value<QColor>());
     }
     const QSet<QString> classes{
-        shapes.value(QStringLiteral("working")), shapes.value(QStringLiteral("waiting")),
-        shapes.value(QStringLiteral("idle")),    shapes.value(QStringLiteral("disconnected")),
-        shapes.value(QStringLiteral("ended")),   shapes.value(QStringLiteral("unknown"))};
-    CHECK(classes.size() == 6);
+        shapes.value(QStringLiteral("working")), shapes.value(QStringLiteral("idle")),
+        shapes.value(QStringLiteral("disconnected")), shapes.value(QStringLiteral("ended")),
+        shapes.value(QStringLiteral("unknown"))};
+    CHECK(classes.size() == 5);
     CHECK(shapes.value(QStringLiteral("idle")) == shapes.value(QStringLiteral("finished")));
+    CHECK(shapes.value(QStringLiteral("waiting")) == shapes.value(QStringLiteral("finished")));
     CHECK(shapes.value(QStringLiteral("connecting")) == shapes.value(QStringLiteral("unknown")));
     const auto focus = window.property("focusedBorderColor").value<QColor>();
     const auto attention = window.property("attentionColor").value<QColor>();
     CHECK(focus.isValid() && attention.isValid());
     CHECK(colors.value(QStringLiteral("working")) != focus);
-    CHECK(colors.value(QStringLiteral("waiting")) == attention);
+    CHECK(colors.value(QStringLiteral("waiting")) == colors.value(QStringLiteral("finished")));
     for (const auto& kind : {QStringLiteral("disconnected"), QStringLiteral("ended")}) {
         CHECK(colors.value(kind) != attention);
         CHECK(colors.value(kind) != focus);
@@ -1326,7 +1328,7 @@ void check_status_semantics(QQuickWindow& window, lapis::desktop::Workspace& wor
     }
     CHECK(find_visual(window.contentItem(), QStringLiteral("statusMark_agent"))
               ->property("shape")
-              .toString() == QStringLiteral("diamond"));
+              .toString() == QStringLiteral("ring"));
 }
 
 void check_category_alignment(QQuickWindow& window) {
@@ -2201,7 +2203,7 @@ int run_strip_ui_tests() {
     CHECK(QQmlProperty::read(cue, QStringLiteral("border.color")).value<QColor>() ==
           window->property("textColor").value<QColor>());
     CHECK(!item(QStringLiteral("unseenCue_renderer"))->isVisible());
-    // A pending request pulses in the attention color.
+    // A pending request pulses in ink, as a finished turn does.
     {
         namespace wire = lapis::session::wire;
         wire::AttentionSnapshot request;
@@ -2213,7 +2215,7 @@ int run_strip_ui_tests() {
     pump(30);
     CHECK(
         QQmlProperty::read(item(QStringLiteral("unseenCue_agent")), QStringLiteral("border.color"))
-            .value<QColor>() == window->property("attentionColor").value<QColor>());
+            .value<QColor>() == window->property("textColor").value<QColor>());
     capture("unseen");
     const QPointer<QQuickItem> replaced_cue = item(QStringLiteral("unseenCue_agent"));
     CHECK(replaced_cue != nullptr);

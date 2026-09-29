@@ -1453,6 +1453,55 @@ void clear_parent_session_markers() {
         qunsetenv(name);
 }
 } // namespace
+// The terminal the CLI starts in, COLUMNSxROWS, as the view that will show
+// it: no resize just after its first frame.
+TerminalSize parse_size(const QString& text) {
+    const auto parts = text.split(QLatin1Char('x'));
+    bool columns_ok = false;
+    bool rows_ok = false;
+    const auto columns = parts.value(0).toUShort(&columns_ok);
+    const auto rows = parts.value(1).toUShort(&rows_ok);
+    if (parts.size() != 2 || !columns_ok || !rows_ok)
+        throw std::invalid_argument("Expected --size COLUMNSxROWS");
+    return {columns, rows};
+}
+
+// The options before SOCKET; `socket` is left at the first other argument.
+struct ServiceOptions {
+    QByteArray session_id;
+    AgentMode agent{AgentMode::terminal};
+    std::optional<TerminalSize> size;
+    qsizetype socket{1};
+};
+ServiceOptions parse_options(const QStringList& arguments) {
+    ServiceOptions options;
+    const auto value = [&arguments, &options](const char* usage) {
+        if (options.socket + 1 >= arguments.size())
+            throw std::invalid_argument(usage);
+        return arguments.at(++options.socket);
+    };
+    for (; options.socket < arguments.size(); ++options.socket) {
+        const auto& option = arguments.at(options.socket);
+        if (option == QStringLiteral("--session-id")) {
+            if (!options.session_id.isEmpty())
+                throw std::invalid_argument("Expected one --session-id HEX32");
+            options.session_id = parse_session_id(value("Expected one --session-id HEX32"));
+        } else if (option == QStringLiteral("--codex") || option == QStringLiteral("--claude")) {
+            if (options.agent != AgentMode::terminal)
+                throw std::invalid_argument("Expected one agent mode");
+            options.agent =
+                option == QStringLiteral("--codex") ? AgentMode::codex : AgentMode::claude;
+        } else if (option == QStringLiteral("--size")) {
+            if (options.size)
+                throw std::invalid_argument("Expected one --size COLUMNSxROWS");
+            options.size = parse_size(value("Expected one --size COLUMNSxROWS"));
+        } else {
+            break;
+        }
+    }
+    return options;
+}
+
 int main(int argc, char** argv) {
     // Before any agent or Codex backend inherits the environment.
     clear_parent_session_markers();
@@ -1467,38 +1516,22 @@ int main(int argc, char** argv) {
         return lapis::claude::run_hook_relay(arguments.at(2), arguments.at(3));
     }
     try {
-        QByteArray session_id;
-        auto agent = AgentMode::terminal;
-        qsizetype socket_index = 1;
-        while (socket_index < arguments.size()) {
-            const auto& option = arguments.at(socket_index);
-            if (option == QStringLiteral("--session-id")) {
-                if (!session_id.isEmpty() || socket_index + 1 >= arguments.size())
-                    throw std::invalid_argument("Expected one --session-id HEX32");
-                session_id = parse_session_id(arguments.at(++socket_index));
-            } else if (option == QStringLiteral("--codex") ||
-                       option == QStringLiteral("--claude")) {
-                if (agent != AgentMode::terminal)
-                    throw std::invalid_argument("Expected one agent mode");
-                agent = option == QStringLiteral("--codex") ? AgentMode::codex : AgentMode::claude;
-            } else {
-                break;
-            }
-            ++socket_index;
-        }
+        auto options = parse_options(arguments);
+        const auto socket_index = options.socket;
         if (arguments.size() - socket_index < 3)
             throw std::invalid_argument(
                 "Usage: lapis_session_service [--session-id HEX32] [--codex | --claude] "
-                "SOCKET DIRECTORY PROGRAM [ARG ...]");
-        if (session_id.isEmpty())
-            session_id = wire::new_id();
+                "[--size COLUMNSxROWS] SOCKET DIRECTORY PROGRAM [ARG ...]");
+        if (options.session_id.isEmpty())
+            options.session_id = wire::new_id();
         const auto program_index = socket_index + 2;
         const auto launch = validate_launch({.program = arguments.at(program_index),
                                              .arguments = arguments.mid(program_index + 1),
                                              .directory = arguments.at(socket_index + 1),
-                                             .agent = agent});
-        SessionService service(posix::prepare_endpoint(arguments.at(socket_index)), session_id,
-                               launch);
+                                             .size = options.size.value_or(TerminalSize{100, 30}),
+                                             .agent = options.agent});
+        SessionService service(posix::prepare_endpoint(arguments.at(socket_index)),
+                               options.session_id, launch);
         return app.exec();
     } catch (const std::exception& error) {
         qCritical().noquote() << error.what();

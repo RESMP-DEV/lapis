@@ -13,7 +13,7 @@ struct SettingsView: View {
             Form {
                 Group {
                     Section {
-                        TextField("your-mac.your-tailnet.ts.net", text: $host)
+                        TextField("Tailscale name or ZeroTier address", text: $host)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .keyboardType(.URL)
@@ -22,8 +22,9 @@ struct SettingsView: View {
                         Text("Mac")
                     } footer: {
                         Text("""
-                            lapis reaches the gateway on your Mac over Tailscale. This iPhone must be \
-                            signed in to Tailscale with the same account as the Mac; nothing else is \
+                            lapis reaches the gateway on your Mac over Tailscale or ZeroTier. \
+                            The iPhone must be signed in to Tailscale with the same account \
+                            as the Mac, or on the Mac's ZeroTier network; nothing else is \
                             needed to sign in.
                             """)
                     }

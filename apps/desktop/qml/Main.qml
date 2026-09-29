@@ -422,6 +422,7 @@ ApplicationWindow {
         add("toggleSidebar", sidebarExpanded ? qsTr("Hide sidebar") : qsTr("Show sidebar"), "toggleSidebar", true, "", () => window.toggleSidebar())
         add("togglePreviews", previewsEnabled ? qsTr("Hide agent previews") : qsTr("Show agent previews"), "togglePreviews", true, "", () => window.togglePreviews())
         add("nextAttention", qsTr("Go to agent that needs you"), "nextAttention", workspace.attentionAgents > 0, qsTr("No agent is waiting"), () => workspace.nextAttention())
+        add("latestAttention", qsTr("Go to the latest agent that needs you"), "latestAttention", workspace.attentionAgents > 0, qsTr("No agent is waiting"), () => workspace.latestAttention())
         add("nextWindow", qsTr("Next agent in category"), "nextWindow", workspace.categorySessions.length > 1, qsTr("This category needs another agent"), () => workspace.nextSession())
         add("previousWindow", qsTr("Previous agent in category"), "previousWindow", workspace.categorySessions.length > 1, qsTr("This category needs another agent"), () => workspace.nextSession(-1))
         add("closeAgent", qsTr("Close agent"), "closeAgent", hasAgent, needAgent, () => window.closeFocusedAgent())
@@ -447,6 +448,18 @@ ApplicationWindow {
         add("zoomTile", window.tileZoomed ? qsTr("Show all tiles") : qsTr("Fill the stage with this tile"), "zoomTile", tiled, qsTr("No tiles on the stage"), () => { window.tileZoomed = !window.tileZoomed })
         const stopped = hasAgent && agent.live && (agent.connectionState === "ended" || agent.connectionState === "disconnected")
         add("restartAgent", qsTr("Restart agent"), "", stopped, qsTr("Only an ended or unreachable agent restarts"), () => workspace.restartAgent(agent.sessionId))
+        // A CLI rereads its settings only when it starts: these end it and
+        // start it again, resuming its conversation.
+        add("reloadTab", qsTr("Reload tab"), "", hasAgent && agent.live, needAgent, () => workspace.reloadAgent(agent.sessionId))
+        add("reloadCategory", qsTr("Reload category"), "", workspace.categorySessions.length > 0, qsTr("This category has no agents"), () => workspace.reloadCategory())
+        add("reloadWindow", qsTr("Reload window"), "", workspace.sessions.length > 0, qsTr("No agents are open"), () => workspace.reloadAll())
+        // Claude Code and Codex plans (accounts in lapis.json): which one this
+        // agent runs on, and a move to the one with the most room.
+        const plan = hasAgent ? workspace.agentAccount(agent.sessionId) : ""
+        add("switchPlan", plan.length > 0 ? qsTr("Switch plan (on %1)").arg(plan) : qsTr("Switch plan"), "", hasAgent && workspace.canSwitchAccount(agent.sessionId), qsTr("No other Claude Code or Codex plan has room for this agent"), () => workspace.switchAccount(agent.sessionId))
+        // A running CLI keeps the version it started with.
+        add("updateTab", qsTr("Update this tab's CLI and reload it"), "", hasAgent && agent.live && workspace.canUpdateAgent(agent.sessionId), hasAgent ? qsTr("lapis cannot update this agent's CLI") : needAgent, () => workspace.updateAndReloadAgent(agent.sessionId))
+        add("updateClaude", qsTr("Update Claude Code and reload its tabs"), "", workspace.sessions.some(session => session.harnessId === "claude"), qsTr("No Claude Code agent is open"), () => workspace.updateClaudeAndReload())
         add("nextCategory", qsTr("Next category"), "nextCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory())
         add("previousCategory", qsTr("Previous category"), "previousCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory(-1))
         for (let i = 0; i < Math.min(9, workspace.categories.length); ++i) {
@@ -484,14 +497,13 @@ ApplicationWindow {
     }
 
     // Every status class has its own shape so no state depends on color alone:
-    // dot working, diamond pending request, ring ready, square lost connection,
-    // dash ended, hollow box opening or unknown.
+    // dot working, ring ready (an agent waiting on an answer reads as ready: it
+    // pinged as a finished turn does), square lost connection, dash ended,
+    // hollow box opening or unknown.
     function statusShape(kind) {
         if (kind === "working")
             return "dot"
-        if (kind === "waiting")
-            return "diamond"
-        if (kind === "idle" || kind === "finished")
+        if (kind === "idle" || kind === "finished" || kind === "waiting")
             return "ring"
         if (kind === "disconnected")
             return "square"
@@ -502,11 +514,9 @@ ApplicationWindow {
     function statusColor(kind) {
         if (kind === "working")
             return activityColor
-        if (kind === "waiting")
-            return attentionColor
         if (kind === "disconnected")
             return faultColor
-        if (kind === "idle" || kind === "finished")
+        if (kind === "idle" || kind === "finished" || kind === "waiting")
             return textColor
         return mutedTextColor
     }
@@ -518,7 +528,7 @@ ApplicationWindow {
         let total = 0
         for (const category of workspace.categories) {
             if (category.id !== workspace.activeCategoryId)
-                total += category.attentionCount
+                total += category.unseenCount
         }
         return total
     }
@@ -1305,6 +1315,14 @@ ApplicationWindow {
         onActivated: workspace.nextAttention()
     }
     Shortcut {
+        objectName: "latestAttentionShortcut"
+        sequences: window.bindings("latestAttention")
+        context: Qt.WindowShortcut
+        enabled: window.shortcutsArmed
+        autoRepeat: false
+        onActivated: workspace.latestAttention()
+    }
+    Shortcut {
         objectName: "nextCategoryShortcut"
         sequences: window.bindings("nextCategory")
         context: Qt.WindowShortcut
@@ -1477,17 +1495,6 @@ ApplicationWindow {
     }
 
     // Pending requests for the selected agent stay one click away.
-    component RequestsButton: CommandButton {
-        text: {
-            const session = workspace.focusedSession
-            return session && session.attentionCount > 0 ? qsTr("Requests · %1").arg(session.attentionCount) : ""
-        }
-        visible: text.length > 0
-        enabled: visible && window.interactionArmed
-        selected: true
-        frameColor: window.attentionColor
-        onClicked: window.openAttentionDialog()
-    }
     component CommandsButton: CommandButton {
         text: qsTr("Commands")
         hint: window.shortcutText("openCommands")
@@ -1670,9 +1677,7 @@ ApplicationWindow {
         fontSizeDefault: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeDefault : 14
         motionDuration: window.motionDuration
         motionEnabled: window.motionEnabled
-        alertSound: (typeof keymap !== "undefined" && keymap !== null) ? keymap.alertSound : true
         finishSound: (typeof keymap !== "undefined" && keymap !== null) ? keymap.finishSound : true
-        alertRepeat: (typeof keymap !== "undefined" && keymap !== null) ? keymap.alertRepeat : 3
         keepAwake: (typeof keymap !== "undefined" && keymap !== null) ? keymap.keepAwake : true
         showUsage: (typeof keymap !== "undefined" && keymap !== null) ? keymap.showUsage : true
         notify: (typeof keymap !== "undefined" && keymap !== null) ? keymap.notify : true
@@ -1684,9 +1689,7 @@ ApplicationWindow {
         onNotifyChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setNotify(on) }
         onLaunchAtLoginChosen: function(on) { if (window.desktopAvailable) desktop.setLaunchAtLogin(on) }
         onCheckUpdates: if (window.desktopAvailable) desktop.checkForUpdates()
-        onAlertSoundChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setAlertSound(on) }
         onFinishSoundChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setFinishSound(on) }
-        onAlertRepeatChosen: function(times) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setAlertRepeat(times) }
         onKeepAwakeChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setKeepAwake(on) }
         onShowUsageChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setShowUsage(on) }
         onChimePlayed: function(needsYou) { if (typeof alerts !== "undefined" && alerts !== null) alerts.preview(needsYou) }
@@ -2580,8 +2583,8 @@ ApplicationWindow {
                         hoverEnabled: true
                         enabled: window.interactionArmed
                         onClicked: workspace.selectCategory(modelData.id)
-                        Accessible.name: modelData.attentionCount > 0 ?
-                                             qsTr("%1, %2 requests").arg(modelData.name).arg(modelData.attentionCount) :
+                        Accessible.name: modelData.unseenCount > 0 ?
+                                             qsTr("%1, %2 waiting").arg(modelData.name).arg(modelData.unseenCount) :
                                              modelData.name
                         ToolTip.visible: hovered && recall.length > 0
                         ToolTip.delay: 600
@@ -2637,10 +2640,6 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
                                     verticalAlignment: Text.AlignVCenter
-                                }
-                                CountBadge {
-                                    count: categoryButton.modelData.attentionCount
-                                    Layout.alignment: Qt.AlignVCenter
                                 }
                                 // An agent here finished or needs you and has not been
                                 // looked at; it pulses with the agent's card.
@@ -2870,10 +2869,6 @@ ApplicationWindow {
                         }
                     }
                 }
-                RequestsButton {
-                    objectName: categoryRail.visible ? "reviewAttention" : "railRequests"
-                    Layout.fillWidth: true
-                }
                 CommandsButton {
                     objectName: categoryRail.visible ? "commandsButton" : "railCommands"
                     Layout.fillWidth: true
@@ -2950,7 +2945,7 @@ ApplicationWindow {
                                 Layout.alignment: Qt.AlignVCenter
                                 HoverHandler { id: elsewhereHover }
                                 ToolTip.visible: elsewhereHover.hovered
-                                ToolTip.text: qsTr("%n request(s) in other categories", "", count)
+                                ToolTip.text: qsTr("%n agent(s) waiting in other categories", "", count)
                             }
                         }
                     }
@@ -2994,7 +2989,7 @@ ApplicationWindow {
                                 Layout.minimumWidth: 0
                             }
                             CountBadge {
-                                count: categoryOption.modelData.attentionCount
+                                count: categoryOption.modelData.unseenCount
                             }
                         }
                         background: Rectangle {
@@ -3018,9 +3013,6 @@ ApplicationWindow {
                         if (categorySelector.popup.height > limit)
                             categorySelector.popup.height = limit
                     }
-                }
-                RequestsButton {
-                    objectName: categoryBar.visible ? "reviewAttention" : "barRequests"
                 }
                 CommandsButton {
                     objectName: categoryBar.visible ? "commandsButton" : "barCommands"
@@ -3274,8 +3266,14 @@ ApplicationWindow {
                     interactive: visible && window.visible && !window.inputBlocked && document !== null
                                  && (preview.active || document.inputReady || document.historyActive)
                     focus: visible && window.visible && !window.inputBlocked && !window.sideTerminalOpen
-                    Component.onCompleted: if (focus)
-                                               forceActiveFocus()
+                    // New and restarted agents start at this grid, not resized
+                    // just after they drew.
+                    onGridSizeChanged: workspace.setLaunchSize(gridSize)
+                    Component.onCompleted: {
+                        workspace.setLaunchSize(gridSize)
+                        if (focus)
+                            forceActiveFocus()
+                    }
 
                     // While history shows, a wide translucent bar down the right
                     // edge. The whole strip answers the pointer: a press on the
@@ -4006,8 +4004,7 @@ ApplicationWindow {
                         }
                     }
                     // Finished or needs you, and not looked at yet: a slow, quiet
-                    // pulse of the card edge until the agent is selected. Pending
-                    // requests use the attention color; a finished turn uses ink.
+                    // pulse of the card edge in ink until the agent is selected.
                     Rectangle {
                         id: unseenCue
                         objectName: "unseenCue_" + agentTab.modelData.sessionId
@@ -4016,8 +4013,7 @@ ApplicationWindow {
                         color: "transparent"
                         radius: window.chromeRadius
                         border.width: 2
-                        border.color: agentTab.modelData.attentionPending || agentTab.modelData.statusKind === "waiting" ?
-                                          window.attentionColor : window.textColor
+                        border.color: window.textColor
                         opacity: 0.85
                         SequentialAnimation on opacity {
                             running: unseenCue.visible && window.motionEnabled

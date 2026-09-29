@@ -31,6 +31,12 @@ bool start_service_detached(const ServiceLaunchRequest& launch) {
     service.setArguments(launch.arguments);
     service.setStandardOutputFile(launch.log, QIODevice::Append);
     service.setStandardErrorFile(launch.log, QIODevice::Append);
+    if (!launch.environment.isEmpty()) {
+        auto environment = QProcessEnvironment::systemEnvironment();
+        for (auto it = launch.environment.cbegin(); it != launch.environment.cend(); ++it)
+            environment.insert(it.key(), it.value());
+        service.setProcessEnvironment(environment);
+    }
     return service.startDetached();
 }
 } // namespace
@@ -198,11 +204,14 @@ void SessionPreview::failHistoryRequest(const QString& message) {
     if (!strip_)
         strip_screen_.reset();
     history_message_ = message;
-    // With nothing kept yet, the live screen stays.
+    // With nothing kept yet, the live screen stays, at the size asked for
+    // while the request was out.
     history_active_ = strip_.has_value();
     if (strip_) {
         snapshot_ = strip_->view();
         emit snapshotChanged();
+    } else if (live_) {
+        live_->sendWantedSize();
     }
     emit historyChanged();
     emit connectionChanged();
@@ -210,6 +219,8 @@ void SessionPreview::failHistoryRequest(const QString& message) {
 void SessionPreview::cancelHistoryRequests() {
     history_request_pending_ = false;
     strip_extending_ = false;
+    if (!history_active_ && live_)
+        live_->sendWantedSize();
     emit historyChanged();
     emit connectionChanged();
 }
@@ -365,6 +376,12 @@ LiveConnection::LiveConnection(SessionPreview& document, QString endpoint,
     handshake_.setSingleShot(true);
     handshake_.setInterval(launch.agent == session::AgentMode::codex ? codex_sync_timeout_ms
                                                                      : terminal_sync_timeout_ms);
+    // A size other than the default is the view's, so the CLI starts in it.
+    if (launch.size != session::LaunchSpec{}.size)
+        service_arguments_ =
+            QStringList{QStringLiteral("--size"),
+                        QStringLiteral("%1x%2").arg(launch.size.columns).arg(launch.size.rows)} +
+            service_arguments_;
     if (launch.agent == session::AgentMode::codex)
         service_arguments_.prepend(QStringLiteral("--codex"));
     else if (launch.agent == session::AgentMode::claude)
@@ -404,6 +421,7 @@ void LiveConnection::begin(wire::AttachMode mode) {
     capability_retry_ = false;
     attempts_ = 0;
     last_sequence_ = 0;
+    resize_sent_after_sequence_ = 0;
     shown_size_ = {};
     pending_resize_.reset();
     claimed_over_.reset();
@@ -434,7 +452,8 @@ void LiveConnection::begin(wire::AttachMode mode) {
                             QString::fromLatin1(request_.expected.session_id.toHex())} +
                 service_arguments_;
             const ServiceLaunchRequest launch_request{session_service_program(), arguments,
-                                                      endpoint_ + QStringLiteral(".log")};
+                                                      endpoint_ + QStringLiteral(".log"),
+                                                      document_.serviceEnvironment()};
             if (!(launcher_ ? launcher_(launch_request) : start_service_detached(launch_request)))
                 throw std::runtime_error("Could not start session service");
         }
@@ -553,8 +572,17 @@ bool LiveConnection::send(wire::Kind kind, const QByteArray& payload) {
 }
 void LiveConnection::resize(session::TerminalSize size) {
     wanted_size_requested_ = true;
-    if (size == wanted_size_)
+    // Asked again for the size it wants: sent only when the terminal has
+    // another. An unconfirmed resize can be superseded by another view;
+    // allow one explicit re-ask after each newly received snapshot. Progress
+    // is not acknowledgement: pending history still needs a matching size.
+    if (size == wanted_size_ &&
+        (!ready_ || size == shown_size_ ||
+         (pending_resize_ == size && last_sequence_ == resize_sent_after_sequence_)))
         return;
+    // Taking it back from another size is that size's claim.
+    if (size == wanted_size_)
+        claimed_over_ = shown_size_;
     wanted_size_ = size;
     if (!ready_)
         return;
@@ -565,8 +593,10 @@ void LiveConnection::sendResize(session::TerminalSize size) {
     QByteArray bytes;
     QDataStream out(&bytes, QIODevice::WriteOnly);
     out << quint16(size.columns) << quint16(size.rows);
-    if (send(wire::Kind::resize, bytes))
+    if (send(wire::Kind::resize, bytes)) {
+        resize_sent_after_sequence_ = last_sequence_;
         pending_resize_ = size != shown_size_ ? std::optional(size) : std::nullopt;
+    }
 }
 
 void LiveConnection::claimSize() {
@@ -582,7 +612,17 @@ void LiveConnection::setWantedSize(session::TerminalSize size) {
     wanted_size_ = size;
 }
 
+void LiveConnection::sendWantedSize() {
+    if (ready_ && wanted_size_requested_ && wanted_size_ != shown_size_ &&
+        (pending_resize_ != wanted_size_ || last_sequence_ != resize_sent_after_sequence_))
+        sendResize(wanted_size_);
+}
+
 void LiveConnection::applyWantedSize() {
+    // Canceling a failed history request may already have queued this size.
+    // Returning to live shares that send until another snapshot arrives.
+    if (pending_resize_ == wanted_size_ && resize_sent_after_sequence_ == last_sequence_)
+        return;
     const auto wanted = wanted_size_;
     wanted_size_ = {1, 1};
     resize(wanted);

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cleartext HTTP is permitted because every request targets the
+     user-configured lapis gateway on the Mac (apps/remote/lapis_remote.py)
+     over the owner's Tailscale or ZeroTier overlay; the gateway refuses
+     browsers, so this is never a general web endpoint. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

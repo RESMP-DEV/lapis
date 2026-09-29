@@ -4,6 +4,7 @@
 #include "launch_spec.hpp"
 #include "session_descriptor.hpp"
 #include "terminals.hpp"
+#include "transport/local_protocol.hpp"
 #include "workspace.hpp"
 #include "workspace_control.hpp"
 
@@ -632,8 +633,8 @@ void writeExecutable(const QString& path, const QByteArray& body) {
 void unseenFollowsTurnsAndSelection() {
     Workspace workspace(WorkspaceMode::preview);
     require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
-    int arrivals = 0;
-    QObject::connect(&workspace, &Workspace::requestArrived, [&arrivals] { ++arrivals; });
+    int pings = 0;
+    QObject::connect(&workspace, &Workspace::turnFinished, [&pings] { ++pings; });
     const int waiting_before = workspace.attentionAgents();
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
@@ -663,15 +664,45 @@ void unseenFollowsTurnsAndSelection() {
     state.activity = lapis::session::attention::Activity::idle;
     checks->applyAttention(state);
     require(!checks->unseen(), "an agent that was not working has nothing new");
+    const int pings_before = pings;
     state.requests.emplace_back();
     checks->applyAttention(state);
     require(checks->unseen(), "a new request marks its agent");
-    require(arrivals == 1, "a new request is announced once");
+    require(pings == pings_before + 1, "a new request pings once, as a finished turn does");
     require(count("general") == 1, "one unseen agent after the earlier one was selected");
-    // Jumping to the waiting agent goes to the request first and clears it as seen.
+    // Jumping to the waiting agent clears it as seen.
     require(workspace.nextAttention() && workspace.focusedSession() == checks,
             "the next waiting agent is selected");
     require(!checks->unseen(), "jumping to an agent is looking at it");
+    require(workspace.attentionAgents() == waiting_before,
+            "a request already looked at no longer counts, though it is still pending");
+    require(!workspace.nextAttention(), "nor does it draw the jump again");
+}
+
+// Command-L goes to the agent that most recently began to need you, then the
+// one before it.
+void latestAttentionGoesToTheNewest() {
+    Workspace workspace(WorkspaceMode::preview);
+    require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
+    lapis::session::wire::AttentionSnapshot state;
+    state.available = state.connected = state.ready = true;
+    const auto finish = [&](const char* id) {
+        auto* item = workspace.session(QString::fromLatin1(id));
+        state.activity = lapis::session::attention::Activity::working;
+        item->applyAttention(state);
+        state.activity = lapis::session::attention::Activity::turn_completed;
+        item->applyAttention(state);
+        require(item->unseen(), "a finished turn out of view is marked");
+        QThread::msleep(5); // a later need has a later time
+        return item;
+    };
+    auto* first = finish("agent");
+    auto* second = finish("checks");
+    require(workspace.latestAttention() && workspace.focusedSession() == second,
+            "the newest need is selected first");
+    require(workspace.latestAttention() && workspace.focusedSession() == first,
+            "then the one before it");
+    require(!workspace.latestAttention(), "and nothing once all were looked at");
 }
 
 // Claude agents run under the service's Claude Code adapter and read their
@@ -1594,12 +1625,14 @@ exec sleep 600
         const auto id = far->sessionId();
         require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 1; }, 10000), "ssh starts");
         const auto first = call(QStringLiteral("devbox"), 1);
-        require(first.startsWith(QStringLiteral("-o\nControlPath=none\n-o\nServerAliveInterval=15\n"
-                                                "-o\nServerAliveCountMax=4\n-t\ndevbox\n")) &&
-                    first.contains(QStringLiteral("cd ~/dev/far && s=")) &&
-                    !conversation(first).isEmpty() &&
-                    first.contains(QStringLiteral(R"(-lic 'claude '"$o $s")")),
-                "ssh has its own connection, kept alive, and names the conversation");
+        require(
+            first.startsWith(QStringLiteral("-o\nControlPath=none\n-o\nServerAliveInterval=15\n"
+                                            "-o\nServerAliveCountMax=4\n-t\ndevbox\n")) &&
+                first.contains(QStringLiteral("cd ~/dev/far && s=")) &&
+                !conversation(first).isEmpty() &&
+                first.contains(QStringLiteral(
+                    R"(-lic 'export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-1}"; claude '"$o $s")")),
+            "ssh has its own connection, kept alive, and names the conversation");
         require(workspace.agentPlace(id).value(QStringLiteral("place")) ==
                     QStringLiteral("devbox:~/dev/far"),
                 "the agent's place is still its machine and folder");
@@ -1701,6 +1734,622 @@ exec sleep 600
                 "the stand-in agents close");
     }
     qputenv("PATH", path);
+}
+
+// Reload ends an agent's CLI and starts it again in its tab, for one tab, the
+// category or every agent; an agent on another machine whose conversation
+// lapis cannot name is left running. The stand-in CLI counts its starts.
+void reloadStartsAgentsAgain() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-reload-XXXXXX"));
+    require(directory.isValid(), "reload directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    writeExecutable(root.filePath(QStringLiteral("bin/grok")),
+                    "#!/bin/sh\necho start >> \"$(dirname \"$0\")/starts\"\n"
+                    "echo \"grok ready\"\nexec sleep 600\n");
+    writeExecutable(root.filePath(QStringLiteral("bin/ssh")), "#!/bin/sh\nexec sleep 600\n");
+    QFile config(root.filePath(QStringLiteral("ssh_config")));
+    require(config.open(QIODevice::WriteOnly), "write an ssh config");
+    config.write("Host devbox\n");
+    config.close();
+    const auto starts = [&root] {
+        QFile file(root.filePath(QStringLiteral("bin/starts")));
+        return file.open(QIODevice::ReadOnly) ? file.readAll().count('\n') : 0;
+    };
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        workspace.setSshConfigForTesting(config.fileName());
+        const auto ready = [&workspace](const QString& id) {
+            const auto* item = workspace.session(id);
+            return item != nullptr && item->inputReady();
+        };
+        const auto project = root.filePath(QStringLiteral("project"));
+        require(workspace.createAgent(project, QStringLiteral("one"), QStringLiteral("grok")),
+                "a first agent");
+        const auto one = workspace.focusedSession()->sessionId();
+        require(workspace.createAgent(project, QStringLiteral("two"), QStringLiteral("grok")),
+                "a second agent");
+        const auto two = workspace.focusedSession()->sessionId();
+        require(waitFor([&] { return starts() == 2 && ready(one) && ready(two); }, 10000),
+                "both run");
+        require(workspace.reloadAgent(one) == 1 &&
+                    waitFor([&] { return starts() == 3 && ready(one); }, 10000),
+                "reloading a tab starts its CLI again");
+        require(ready(two), "the other agent keeps running");
+        require(workspace.reloadCategory() == 2 &&
+                    waitFor([&] { return starts() == 5 && ready(one) && ready(two); }, 10000),
+                "reloading the category starts both again");
+        require(workspace.createAgent(QStringLiteral("~/far"), QStringLiteral("far"),
+                                      QStringLiteral("grok"), {}, {}, QStringLiteral("devbox")),
+                "an agent on another machine");
+        const auto far = workspace.focusedSession()->sessionId();
+        require(waitFor([&] { return ready(far); }, 10000), "it runs");
+        require(workspace.reloadAgent(far) == 0 &&
+                    workspace.workspaceError().contains(QStringLiteral("/resume")) && ready(far),
+                "an agent whose conversation lapis cannot name is left running");
+        workspace.clearError();
+        require(workspace.reloadAll() == 2 &&
+                    waitFor([&] { return starts() == 7 && ready(one) && ready(two); }, 10000),
+                "reloading the window starts the rest again");
+        for (const auto& closing : {one, two, far})
+            require(workspace.closeSession(closing, true), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in agents close");
+    }
+    qputenv("PATH", path);
+}
+
+// A CLI starts at the stage's grid rather than being resized just after it
+// drew, which the classic renderers cannot redraw from.
+void agentsStartAtTheStageSize() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-size-XXXXXX"));
+    require(directory.isValid(), "size directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    writeExecutable(root.filePath(QStringLiteral("bin/grok")),
+                    "#!/bin/sh\necho \"size $(stty size)\"\nexec sleep 600\n");
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        workspace.setLaunchSize(QSize(91, 27));
+        require(workspace.createAgent(root.filePath(QStringLiteral("project")),
+                                      QStringLiteral("sized"), QStringLiteral("grok")),
+                "an agent");
+        auto* item = workspace.focusedSession();
+        require(
+            item != nullptr &&
+                waitFor(
+                    [item] {
+                        return screenText(item->snapshot()).contains(QStringLiteral("size 27 91"));
+                    },
+                    10000),
+            "its CLI starts at the stage's grid");
+        require(workspace.closeSession(item->sessionId(), true), "close it");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "it closes");
+    }
+    qputenv("PATH", path);
+}
+
+// Claude Code plans: a session takes its machine's own sign-in, a new one
+// takes a plan with room when that is full, a remote session moves once its
+// plan fills and its output is quiet, reading the kept token on that machine,
+// and a switch can be asked for. Stand-ins say which plan they run on.
+void plansFollowTheirLoad() {
+    using lapis::desktop::account_home_name;
+    using lapis::desktop::account_load_key;
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-plans-XXXXXX"));
+    require(directory.isValid(), "plans directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    writeExecutable(root.filePath(QStringLiteral("bin/claude")),
+                    "#!/bin/sh\necho \"plan ${CLAUDE_CODE_OAUTH_TOKEN:-own}\"\nexec sleep 600\n");
+    writeExecutable(root.filePath(QStringLiteral("bin/ssh")), R"(#!/bin/sh
+d=$(dirname "$0"); host=$(printf '%s\n' "$@" | sed -n '/^-t$/{n;p;q;}')
+n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1))
+printf '%s\n' "$@" > "$d/$host.call$n"
+echo $n > "$d/$host.count"
+for i in 1 2 3 4 5 6 7 8; do echo "connected $i"; sleep 0.05; done
+exec sleep 600
+)");
+    QFile config(root.filePath(QStringLiteral("ssh_config")));
+    require(config.open(QIODevice::WriteOnly), "write an ssh config");
+    config.write("Host devbox\n");
+    config.close();
+    require(root.mkpath(QStringLiteral("accounts/claude")), "a credentials folder");
+    QFile token(root.filePath(QStringLiteral("accounts/claude/spare.token")));
+    require(token.open(QIODevice::WriteOnly), "write a token");
+    token.write("token-for-spare\n");
+    token.close();
+    const auto calls = [&root](const QString& host) {
+        QFile count(root.filePath(QStringLiteral("bin/%1.count").arg(host)));
+        return count.open(QIODevice::ReadOnly) ? count.readAll().trimmed().toInt() : 0;
+    };
+    const auto call = [&root](const QString& host, int number) {
+        QFile file(root.filePath(QStringLiteral("bin/%1.call%2").arg(host).arg(number)));
+        return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+    };
+    const auto shows = [](lapis::desktop::SessionPreview* item, const char* text) {
+        return waitFor(
+            [item, text] {
+                return screenText(item->snapshot()).contains(QString::fromLatin1(text));
+            },
+            10000);
+    };
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    options.accounts = lapis::desktop::parse_accounts(QJsonDocument::fromJson(R"({"claude": [
+            {"name": "mine", "email": "me@example.com", "home": "local"},
+            {"name": "dev", "email": "dev@example.com", "home": "devbox"},
+            {"name": "spare", "email": "spare@example.com", "machines": ["local", "devbox"]}]})")
+                                                          .object());
+    const auto claude = QStringLiteral("claude");
+    const auto mine_full = std::pair{account_load_key(claude, QStringLiteral("me@example.com")),
+                                     lapis::desktop::AccountLoad{97, 40}};
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        workspace.setSshConfigForTesting(config.fileName());
+        workspace.setAccountsRootForTesting(root.filePath(QStringLiteral("accounts")));
+        const auto project = root.filePath(QStringLiteral("project"));
+        require(workspace.createAgent(project, QStringLiteral("here"), claude), "a Claude agent");
+        auto* here = workspace.focusedSession();
+        require(here != nullptr && shows(here, "plan own") &&
+                    workspace.agentAccount(here->sessionId()) == QStringLiteral("mine"),
+                "it runs on this Mac's own sign-in");
+        require(workspace.createAgent(QStringLiteral("~/far"), QStringLiteral("far"), claude, {},
+                                      {}, QStringLiteral("devbox")),
+                "a Claude agent on another machine");
+        auto* far = workspace.focusedSession();
+        require(far != nullptr, "remote agent exists");
+        far->setOutputTimingForTesting({.settle_ms = 0, .burst_ms = 1500, .quiet_ms = 100});
+        const auto far_id = far->sessionId();
+        require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 1; }, 10000) &&
+                    !call(QStringLiteral("devbox"), 1).contains(QStringLiteral("{ a=")) &&
+                    workspace.agentAccount(far_id) == QStringLiteral("dev"),
+                "it runs on that machine's own sign-in");
+
+        require(QFile::rename(token.fileName(), token.fileName() + ".saved"), "hide kept token");
+        require(!workspace.switchAccount(here->sessionId()) && !here->closing() &&
+                    here->inputReady() &&
+                    workspace.agentAccount(here->sessionId()) == QStringLiteral("mine") &&
+                    workspace.workspaceError().contains(QStringLiteral("no usable token")),
+                "failed account preparation leaves the running agent on its original plan");
+        require(QFile::rename(token.fileName() + ".saved", token.fileName()), "restore kept token");
+        workspace.setAccountLoads({mine_full});
+        require(workspace.createAgent(project, QStringLiteral("next"), claude),
+                "another Claude agent");
+        auto* next = workspace.focusedSession();
+        require(next != nullptr && shows(next, "plan token-for-spare") &&
+                    workspace.agentAccount(next->sessionId()) == QStringLiteral("spare"),
+                "a new session takes the plan with room, its token in the environment");
+
+        require(waitFor([&] { return far->inputReady(); }, 10000), "remote input is ready");
+        // Drive the output estimate explicitly: instrumented transports may
+        // coalesce the stand-in's startup frames into fewer than three updates.
+        const auto output = far->snapshot();
+        for (int frame = 0; frame < 3; ++frame)
+            far->applySnapshot(output);
+        require(waitFor([&] { return far->statusLabel() == QStringLiteral("Quiet"); }, 10000),
+                "the remote stand-in becomes output-quiet without an observer");
+        const QHash<QString, lapis::desktop::AccountLoad> full = {
+            mine_full,
+            {account_load_key(claude, account_home_name(QStringLiteral("devbox"))), {99, 99}}};
+        workspace.setAccountLoads(full);
+        require(!far->closing() && workspace.agentAccount(far_id) == QStringLiteral("dev"),
+                "output quiet is not permission to interrupt a remote turn");
+        // Synthetic observer snapshots exercise the account policy; they do not
+        // claim that the SSH transport supplies an observer.
+        lapis::session::wire::AttentionSnapshot observed;
+        observed.available = true;
+        observed.connected = true;
+        observed.ready = true;
+        for (const auto activity : {lapis::session::attention::Activity::unknown,
+                                    lapis::session::attention::Activity::working}) {
+            observed.activity = activity;
+            far->applyAttention(observed);
+            workspace.setAccountLoads(full);
+            require(!far->closing() && workspace.agentAccount(far_id) == QStringLiteral("dev"),
+                    "unknown and working observers retain the running plan");
+        }
+        observed.activity = lapis::session::attention::Activity::idle;
+        observed.ready = false;
+        far->applyAttention(observed);
+        workspace.setAccountLoads(full);
+        require(!far->closing(), "an unreconciled idle observation cannot switch plans");
+        observed.ready = true;
+        far->applyAttention(observed);
+        workspace.setAccountLoads(full);
+        require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 2; }, 10000),
+                "a reconciled idle observation permits switching a full plan");
+        const auto first = call(QStringLiteral("devbox"), 1);
+        const auto second = call(QStringLiteral("devbox"), 2);
+        static const QRegularExpression conversation(
+            QStringLiteral(R"( && s=([0-9a-f-]{36}) && )"));
+        require(second.contains(
+                    QStringLiteral(R"({ a=spare; t="$HOME/.lapis/accounts/claude/$a.token"; )")) &&
+                    !second.contains(QStringLiteral("token-for-spare")) &&
+                    conversation.match(second).captured(1) ==
+                        conversation.match(first).captured(1) &&
+                    workspace.agentAccount(far_id) == QStringLiteral("spare"),
+                "it reads the kept token there and resumes the same conversation");
+
+        workspace.setAccountLoads({});
+        require(
+            workspace.canSwitchAccount(next->sessionId()) &&
+                workspace.switchAccount(next->sessionId()) &&
+                waitFor(
+                    [&] {
+                        return workspace.agentAccount(next->sessionId()) ==
+                                   QStringLiteral("mine") &&
+                               screenText(next->snapshot()).contains(QStringLiteral("plan own"));
+                    },
+                    10000),
+            "a switch asked for moves the agent to the next plan with room");
+        for (const auto& closing : {here->sessionId(), far_id, next->sessionId()})
+            require(workspace.closeSession(closing, true), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in agents close");
+    }
+    qputenv("PATH", path);
+}
+
+void incompleteCodexHomeNeverStartsAnAgent() {
+    UpdaterFixture fixture("#!/bin/sh\necho started > \"${0%/*}/started\"\nexec sleep 600\n",
+                           QStringLiteral("codex"));
+    fixture.options.updateHarnesses = false;
+    fixture.options.accounts = lapis::desktop::parse_accounts(QJsonDocument::fromJson(R"({
+        "codex": [{"name":"mine", "email":"mine@example.com", "home":"local"},
+                  {"name":"spare", "machines":["local"]}]
+    })")
+                                                                  .object());
+    require(fixture.root.mkpath("accounts/codex/spare"), "create kept account home");
+    QFile auth(fixture.root.filePath("accounts/codex/spare/auth.json"));
+    require(auth.open(QIODevice::WriteOnly), "write fixture credential");
+    auth.write("fixture credential");
+    auth.close();
+    const ScopedCodexHome shared(QFile::encodeName(fixture.root.filePath("missing-shared-home")));
+    Workspace workspace(WorkspaceMode::live, fixture.options);
+    workspace.setAccountsRootForTesting(fixture.root.filePath("accounts"));
+    workspace.setAccountLoads({{lapis::desktop::account_load_key(
+                                    QStringLiteral("codex"), QStringLiteral("mine@example.com")),
+                                {99, 99}}});
+    require(!workspace.createAgent(fixture.root.filePath("project"), QStringLiteral("blocked"),
+                                   QStringLiteral("codex")) &&
+                workspace.sessions().isEmpty() &&
+                workspace.workspaceError().contains(QStringLiteral("Cannot prepare Codex plan")),
+            "a failed shared-home preparation refuses activation with its cause");
+    require(!QFileInfo::exists(fixture.root.filePath("bin/started")) &&
+                auth.open(QIODevice::ReadOnly) && auth.readAll() == "fixture credential",
+            "failed activation starts no child and preserves the kept credential");
+}
+
+// An attached peer can lose the terminate handshake, report replacement, or
+// report ended while its endpoint still answers. None may wedge future reloads.
+void reloadFailureRemainsRetryable(lapis::session::wire::StatusCode outcome) {
+    namespace wire = lapis::session::wire;
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-reload-failure-XXXXXX"));
+    require(directory.isValid(), "reload failure directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto id = uuid();
+    auto record = agentRecord(root.path(), id, "general");
+    record.insert(QStringLiteral("harness"), QStringLiteral("grok"));
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    writeRegistry(options.storagePath,
+                  {{"version", 2},
+                   {"activeCategory", "general"},
+                   {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                   {"agents", QJsonArray{record}}});
+    QLocalServer listener;
+    listener.setSocketOptions(QLocalServer::UserAccessOption);
+    require(listener.listen(record.value(QStringLiteral("endpoint")).toString()),
+            "reload peer listens");
+    const wire::SessionIdentity identity{wire::new_id(), wire::new_id()};
+    const auto launch = lapis::session::validate_launch(
+        {.program = QStringLiteral("/usr/bin/true"), .arguments = {}, .directory = root.path()});
+    lapis::session::write_descriptor(record.value(QStringLiteral("endpoint")).toString(),
+                                     lapis::session::launch_fingerprint(launch), identity);
+    lapis::session::Terminal terminal({10, 5});
+    int terminations = 0;
+    QObject::connect(&listener, &QLocalServer::newConnection, &listener, [&] {
+        while (listener.hasPendingConnections()) {
+            auto* socket = listener.nextPendingConnection();
+            QObject::connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+            QObject::connect(
+                socket, &QLocalSocket::readyRead, socket,
+                [&, socket, buffer = QByteArray{}]() mutable {
+                    buffer += socket->readAll();
+                    wire::Frame frame;
+                    while (wire::take_frame(buffer, frame)) {
+                        if (frame.kind == wire::Kind::attach) {
+                            socket->write(wire::frame(wire::Kind::hello,
+                                                      wire::encode_hello({{identity, 1}, 123})));
+                            socket->write(
+                                wire::frame(wire::Kind::snapshot,
+                                            wire::encode_snapshot_message(
+                                                {{identity, 1}, 1, terminal.snapshot()})));
+                        } else if (frame.kind == wire::Kind::terminate) {
+                            ++terminations;
+                            if (outcome == wire::StatusCode::rejected) {
+                                socket->abort();
+                            } else {
+                                socket->write(
+                                    wire::frame(wire::Kind::status,
+                                                wire::encode_status({outcome, "fixture end"})));
+                                socket->flush();
+                            }
+                        }
+                    }
+                });
+        }
+    });
+    Workspace workspace(WorkspaceMode::live, options);
+    auto* item = workspace.session(id);
+    require(item != nullptr, "reload fixture loads");
+    require(!workspace.restartAgent(QStringLiteral("missing")), "seed an unrelated error");
+    require(workspace.reloadAgent(id) == 0 &&
+                workspace.workspaceError().contains(QStringLiteral("Could not request a reload")),
+            "unsynchronized reload replaces stale feedback with its own failure");
+    require(waitFor([&] { return item->inputReady(); }, 3000), "reload peer attaches");
+    require(workspace.reloadAgent(id) == 1, "terminate is accepted");
+    const auto diagnostic = outcome == wire::StatusCode::ended
+                                ? QStringLiteral("did not stop in time")
+                                : QStringLiteral("lost its session connection");
+    require(waitFor([&] { return workspace.workspaceError().contains(diagnostic); }, 6000),
+            "failed reload reports the actual recovery boundary");
+    require(terminations == 1, "one terminate was sent");
+    item->reconnect();
+    require(waitFor([&] { return item->inputReady(); }, 3000), "the same peer reconnects");
+    require(workspace.reloadAgent(id) == 1,
+            "a failed reload no longer prevents a later explicit retry");
+    require(waitFor([&] { return terminations == 2; }, 3000), "retry reaches the peer");
+}
+
+void reloadFailuresRemainRetryable() {
+    namespace wire = lapis::session::wire;
+    for (const auto outcome :
+         {wire::StatusCode::rejected, wire::StatusCode::replaced, wire::StatusCode::ended})
+        reloadFailureRemainsRetryable(outcome);
+}
+
+void batchReloadRetainsEarlierFailures() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-reload-batch-XXXXXX"));
+    require(directory.isValid(), "batch reload directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto broken_id = uuid();
+    const auto working_id = uuid();
+    auto broken = agentRecord(root.path(), broken_id, "general");
+    broken.insert(QStringLiteral("harness"), QStringLiteral("grok"));
+    broken.insert(QStringLiteral("directory"), root.filePath(QStringLiteral("missing")));
+    auto working = agentRecord(root.path(), working_id, "general");
+    working.insert(QStringLiteral("harness"), QStringLiteral("grok"));
+    working.insert(QStringLiteral("program"), QStringLiteral("/bin/cat"));
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    writeRegistry(options.storagePath,
+                  {{"version", 2},
+                   {"activeCategory", "general"},
+                   {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                   {"agents", QJsonArray{broken, working}}});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.reloadAll() == 1 &&
+                workspace.workspaceError().contains(QStringLiteral("program or folder")),
+            "a later successful restart cannot erase the earlier failure");
+    auto* running = workspace.session(working_id);
+    require(waitFor([&] { return running->inputReady(); }, 10000), "the valid peer starts");
+    require(workspace.closeSession(working_id) &&
+                waitFor([&] { return workspace.session(working_id) == nullptr; }, 10000),
+            "batch fixture closes its child");
+}
+
+// Updating a tab's CLI runs the CLI's update where the agent runs, once for
+// every agent that asks meanwhile, then reloads them; a failed update leaves
+// them running. On another machine it goes through ssh without a terminal.
+void updateReloadsAgentsAfterTheirCli() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-update-reload-XXXXXX"));
+    require(directory.isValid(), "update directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    writeExecutable(root.filePath(QStringLiteral("bin/grok")),
+                    "#!/bin/sh\nbin=\"$(dirname \"$0\")\"\n"
+                    "if [ \"$1\" = update ]; then\n"
+                    "  echo update >> \"$bin/updates\"\n"
+                    "  while [ -f \"$bin/hold-update\" ]; do sleep 0.05; done\n"
+                    "  if [ -f \"$bin/fail-update\" ]; then echo 'no network'; exit 3; fi\n"
+                    "  exit 0\n"
+                    "fi\n"
+                    "echo start >> \"$bin/starts\"\necho \"grok ready\"\nexec sleep 600\n");
+    writeExecutable(root.filePath(QStringLiteral("bin/ssh")),
+                    "#!/bin/sh\nfor a; do if [ \"$a\" = -T ]; then\n"
+                    "  printf '%s\\n' \"$*\" >> \"$(dirname \"$0\")/remote-updates\"; exit 0\n"
+                    "fi; done\nexec sleep 600\n");
+    QFile config(root.filePath(QStringLiteral("ssh_config")));
+    require(config.open(QIODevice::WriteOnly), "write an ssh config");
+    config.write("Host devbox\n");
+    config.close();
+    const auto lines = [&root](const QString& name) {
+        QFile file(root.filePath(QStringLiteral("bin/") + name));
+        return file.open(QIODevice::ReadOnly) ? file.readAll().count('\n') : 0;
+    };
+    const auto flag = [&root](const QString& name, bool on) {
+        QFile file(root.filePath(QStringLiteral("bin/") + name));
+        require(on ? file.open(QIODevice::WriteOnly) : !file.exists() || file.remove(),
+                "set a stand-in flag");
+    };
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        workspace.setSshConfigForTesting(config.fileName());
+        const auto ready = [&workspace](const QString& id) {
+            const auto* item = workspace.session(id);
+            return item != nullptr && item->inputReady();
+        };
+        const auto label = [&workspace](const QString& id) {
+            const auto* item = workspace.session(id);
+            require(item != nullptr, "updated session retains its identity");
+            return item->statusLabel();
+        };
+        const auto project = root.filePath(QStringLiteral("project"));
+        require(workspace.createAgent(project, QStringLiteral("one"), QStringLiteral("grok")),
+                "a first agent");
+        const auto one = workspace.focusedSession()->sessionId();
+        require(workspace.createAgent(project, QStringLiteral("two"), QStringLiteral("grok")),
+                "a second agent");
+        const auto two = workspace.focusedSession()->sessionId();
+        require(waitFor([&] { return lines("starts") == 2 && ready(one) && ready(two); }, 10000),
+                "both run");
+        require(workspace.canUpdateAgent(one), "Grok has an update command");
+
+        flag(QStringLiteral("hold-update"), true);
+        require(workspace.updateAndReloadAgent(one) == 1 &&
+                    workspace.updateAndReloadAgent(two) == 1 &&
+                    waitFor([&] { return lines("updates") == 1; }, 10000),
+                "both tabs wait on one update");
+        require(workspace.updateAndReloadAgent(one) == 1 && workspace.workspaceError().isEmpty(),
+                "repeated update enrollment is accepted without a false error");
+        require(label(one) == QStringLiteral("Updating Grok…") &&
+                    label(two) == QStringLiteral("Updating Grok…") && ready(one),
+                "they say so and keep running meanwhile");
+        flag(QStringLiteral("hold-update"), false);
+        require(waitFor([&] { return lines("starts") == 4 && ready(one) && ready(two); }, 10000),
+                "both reload once it finishes");
+        require(lines("updates") == 1 && label(one) != QStringLiteral("Updating Grok…"),
+                "after a single update");
+
+        flag(QStringLiteral("fail-update"), true);
+        require(workspace.updateAndReloadAgent(one) == 1 &&
+                    waitFor(
+                        [&] {
+                            return workspace.workspaceError().contains(
+                                       QStringLiteral("did not update")) &&
+                                   workspace.workspaceError().contains(
+                                       QStringLiteral("no network"));
+                        },
+                        10000),
+                "a failed update says why");
+        require(lines("starts") == 4 && ready(one) &&
+                    label(one) != QStringLiteral("Updating Grok…"),
+                "and leaves the agent running");
+        flag(QStringLiteral("fail-update"), false);
+        workspace.clearError();
+
+        require(workspace.createAgent(QStringLiteral("~/far"), QStringLiteral("far"),
+                                      QStringLiteral("grok"), {}, {}, QStringLiteral("devbox")),
+                "an agent on another machine");
+        const auto far = workspace.focusedSession()->sessionId();
+        require(waitFor([&] { return ready(far); }, 10000), "it runs");
+        require(workspace.updateAndReloadAgent(far) == 1 &&
+                    waitFor([&] { return lines("remote-updates") == 1; }, 10000),
+                "its update goes to its machine");
+        QFile remote(root.filePath(QStringLiteral("bin/remote-updates")));
+        require(remote.open(QIODevice::ReadOnly), "read the remote update");
+        const auto sent = QString::fromUtf8(remote.readAll());
+        require(sent.contains(QStringLiteral("BatchMode=yes")) &&
+                    sent.contains(QStringLiteral("ControlPath=none")) &&
+                    sent.contains(QStringLiteral("-- devbox")) &&
+                    sent.contains(QStringLiteral("-lic 'grok update'")),
+                "through its own ssh connection, in a login shell, without prompts");
+        require(
+            waitFor([&] { return workspace.workspaceError().contains(QStringLiteral("/resume")); },
+                    10000) &&
+                ready(far),
+            "an agent whose conversation lapis cannot name is updated but left running");
+        workspace.clearError();
+        require(workspace.updateClaudeAndReload() == 0 &&
+                    workspace.workspaceError().contains(QStringLiteral("No Claude Code agent")),
+                "updating Claude Code needs a Claude Code agent");
+        for (const auto& closing : {one, two, far})
+            require(workspace.closeSession(closing, true), "close the stand-in agents");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the stand-in agents close");
+    }
+    qputenv("PATH", path);
+}
+
+// Manual and startup consumers share one installer, whichever arrives first.
+void startupAndManualUpdatesShareOneInstaller() {
+    for (const bool manual_first : {false, true}) {
+        for (const bool failed : {false, true}) {
+            UpdaterFixture fixture(R"(#!/usr/bin/env bash
+bin="${0%/*}"
+if [ "$1" = update ]; then
+    echo update >> "$bin/updates"
+    while [ -f "$bin/hold" ]; do sleep 0.05; done
+    [ -f "$bin/fail" ] && exit 3
+    exit 0
+fi
+echo start >> "$bin/starts"
+echo ready
+exec sleep 600
+)");
+            fixture.options.updateHarnesses = !manual_first;
+            const auto flag = [&](const char* name) {
+                QFile file(fixture.root.filePath(QStringLiteral("bin/") + QLatin1String(name)));
+                require(file.open(QIODevice::WriteOnly), "create updater flag");
+            };
+            flag("hold");
+            if (failed)
+                flag("fail");
+            Workspace workspace(WorkspaceMode::live, fixture.options);
+            fixture.create(workspace);
+            auto* one = workspace.focusedSession();
+            const auto first_id = one->sessionId();
+            if (manual_first)
+                require(waitFor([&] { return one->inputReady(); }, 10000),
+                        "first agent is running");
+            require(workspace.updateAndReloadAgent(first_id) == 1 &&
+                        workspace.updateAndReloadAgent(first_id) == 1,
+                    "manual request joins either kind of update idempotently");
+            fixture.create(workspace);
+            auto* two = workspace.focusedSession();
+            const auto second_id = two->sessionId();
+            require(waitFor([&] { return QFileInfo::exists(fixture.root.filePath("bin/updates")); },
+                            10000),
+                    "the one installer started");
+            require(fixture.read("bin/updates") == "update\n" && !two->live() &&
+                        (!manual_first || one->inputReady()),
+                    "startup waits while an existing agent keeps running");
+            require(QFile::remove(fixture.root.filePath("bin/hold")), "release installer");
+            const int expected_starts = manual_first && !failed ? 3 : 2;
+            require(waitFor(
+                        [&] {
+                            return one->inputReady() && two->inputReady() &&
+                                   QFileInfo::exists(fixture.root.filePath("bin/starts")) &&
+                                   fixture.read("bin/starts").count('\n') == expected_starts &&
+                                   one->statusLabel() != QStringLiteral("Updating Grok…");
+                        },
+                        10000),
+                    "each consumer starts or reloads once according to the result");
+            require(fixture.read("bin/updates") == "update\n", "both paths used one installer");
+            require(failed ? workspace.workspaceError().contains(QStringLiteral("did not update"))
+                           : workspace.workspaceError().isEmpty(),
+                    "manual callers see the updater outcome");
+            for (const auto& id : {first_id, second_id})
+                require(workspace.closeSession(id, true), "close shared updater consumer");
+            require(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000),
+                    "consumers close");
+        }
+    }
+}
+
+void skippedClaudeUpdateReportsTheCurrentOperation() {
+    UpdaterFixture fixture("#!/usr/bin/env bash\necho ready\nexec sleep 600\n", "claude");
+    fixture.options.updateHarnesses = false;
+    Workspace workspace(WorkspaceMode::live, fixture.options);
+    fixture.create(workspace);
+    auto* item = workspace.focusedSession();
+    require(waitFor([&] { return item->inputReady(); }, 10000), "Claude stand-in is ready");
+    require(workspace.closeSession(item->sessionId()), "Claude begins closing");
+    require(!workspace.restartAgent(QStringLiteral("missing")), "set an earlier unrelated error");
+    require(workspace.updateClaudeAndReload() == 0 &&
+                workspace.workspaceError().contains(QStringLiteral("cannot update now")),
+            "all-skipped Claude update reports its own reason");
+    require(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000),
+            "Claude stand-in closes");
 }
 
 // A full-screen program that reports the mouse, as Claude Code's full-screen
@@ -2099,24 +2748,26 @@ void resumingAConversationStartsItsCli() {
                                       QStringLiteral("conv-123")),
                 "a past conversation resumes, named after its folder");
         auto* agent = workspace.focusedSession();
-        require(agent != nullptr && waitFor(
-                                        [agent] {
-                                            return screenText(agent->snapshot())
-                                                .contains(QStringLiteral("grok args: -r conv-123"));
-                                        },
-                                        10000),
+        require(agent != nullptr &&
+                    waitFor(
+                        [agent] {
+                            return screenText(agent->snapshot())
+                                .contains(QStringLiteral("grok args: --fullscreen -r conv-123"));
+                        },
+                        10000),
                 "the CLI starts with its resume option");
         lapis::desktop::WorkspaceControl control(workspace, false);
         auto request = createRequest(workspace.activeCategoryId(), QStringLiteral("grok"), project);
         request.insert(QStringLiteral("resume"), QStringLiteral("conv-456"));
         const auto started = askWorkspace(workspace.storagePath(), request);
         auto* phone = workspace.session(started.value(QStringLiteral("id")).toString());
-        require(phone != nullptr && waitFor(
-                                        [phone] {
-                                            return screenText(phone->snapshot())
-                                                .contains(QStringLiteral("grok args: -r conv-456"));
-                                        },
-                                        10000),
+        require(phone != nullptr &&
+                    waitFor(
+                        [phone] {
+                            return screenText(phone->snapshot())
+                                .contains(QStringLiteral("grok args: --fullscreen -r conv-456"));
+                        },
+                        10000),
                 "the phone resumes a conversation too");
         QFile saved(workspace.storagePath());
         require(saved.open(QIODevice::ReadOnly), "read the registry");
@@ -2563,7 +3214,7 @@ void phoneStartsAnAgentInItsCategory() {
                     return text.contains(QStringLiteral("[-t]")) &&
                            text.contains(QStringLiteral("[devbox]")) &&
                            text.contains(QStringLiteral(
-                               R"([cd ~/'dev/some project' && exec "${SHELL:-/bin/sh}" -lic /opt/grok/bin/grok])"));
+                               R"([cd ~/'dev/some project' && exec "${SHELL:-/bin/sh}" -lic '/opt/grok/bin/grok --fullscreen'])"));
                 },
                 10000) &&
                 waitFor([far] { return far->inputReady(); }, 10000),
@@ -3832,6 +4483,85 @@ void codexResumeArguments() {
     }
 }
 
+void savedGrokDefaultsPreserveLaunchOwnership() {
+    struct Case {
+        QString program;
+        QStringList arguments;
+        bool add_fullscreen{};
+        bool live{};
+        bool managed{};
+    };
+    QStringList full;
+    for (int index = 0; index < 64; ++index)
+        full << QStringLiteral("literal");
+    const std::vector<Case> cases{
+        {"grok", {}, true},
+        {"grok", {"--model", "chosen", "-r", "conversation"}, true, false, true},
+        {"grok", {"--fullscreen", "--model", "chosen"}},
+        {"grok", {"--fullscreen=false"}},
+        {"grok", {"--no-fullscreen"}},
+        {"grok", {"--", "--fullscreen"}, true},
+        {"grok", full},
+        {"grok", {}, false, true},
+        // SSH policy has its own migration cases; this case checks that the
+        // remote command itself never receives the local fullscreen default.
+        {"ssh",
+         {"-o", "ControlPath=none", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4",
+          "-t", "fixture", "exec grok"}},
+        {"custom-agent", {"--custom"}},
+    };
+    for (const auto& variant : cases) {
+        QTemporaryDir directory(QStringLiteral("/tmp/lapis-grok-defaults-XXXXXX"));
+        require(directory.isValid(), "Grok defaults directory");
+        const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+        const auto id = uuid();
+        auto record = agentRecord(root.path(), id, "general");
+        const auto program = root.filePath(variant.program);
+        writeExecutable(program, "#!/usr/bin/env bash\nexit 0\n");
+        record.insert(QStringLiteral("program"), program);
+        record.insert(QStringLiteral("harness"), QStringLiteral("grok"));
+        record.insert(QStringLiteral("arguments"), QJsonArray::fromStringList(variant.arguments));
+        if (variant.managed)
+            record.insert(QStringLiteral("managedResume"),
+                          QJsonObject{{"index", 2}, {"identity", "conversation"}});
+        WorkspaceOptions options;
+        options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+        options.restoreAgents = true;
+        writeRegistry(
+            options.storagePath,
+            {{"version", 2},
+             {"activeCategory", "general"},
+             {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+             {"agents", QJsonArray{record}}});
+        QLocalServer listener;
+        if (variant.live)
+            require(listener.listen(record.value(QStringLiteral("endpoint")).toString()),
+                    "existing service endpoint listens");
+        auto expected = variant.arguments;
+        if (variant.add_fullscreen)
+            expected.prepend(QStringLiteral("--fullscreen"));
+        // Without processing events, restore plans and persists the launch but
+        // never starts the disposable executable. Repeat to check idempotence.
+        for (int pass = 0; pass < 2; ++pass) {
+            Workspace workspace(WorkspaceMode::live, options);
+            require(workspace.workspaceError().isEmpty(), "restore saved Grok launch");
+            const auto saved = QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                   .object()[QStringLiteral("agents")]
+                                   .toArray()
+                                   .first()
+                                   .toObject();
+            require(saved[QStringLiteral("arguments")].toArray() ==
+                        QJsonArray::fromStringList(expected),
+                    "startup migration preserves explicit argv and live/transport ownership");
+            if (variant.managed)
+                require(saved[QStringLiteral("managedResume")]
+                                .toObject()[QStringLiteral("index")]
+                                .toInt(-1) == 3,
+                        "the owned resume pair shifts exactly once with the default");
+        }
+    }
+}
+
 struct PrintedCheckpointFixture {
     QTemporaryDir directory{QStringLiteral("/tmp/lapis-cp-XXXXXX")};
     QString canonical = QFileInfo(directory.path()).canonicalFilePath();
@@ -4087,11 +4817,35 @@ int main(int argc, char** argv) {
     try {
         if (argc > 1) {
             require(argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--case") &&
-                        QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options"),
-                    "Usage: lapis_workspace_tests [--case remote-options]");
-            remoteOptionsRespectTheArgumentLimit();
-            remoteClaudeReconnectsToItsConversation();
-            std::cout << "remote options and reconnect passed\n";
+                        (QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("accounts") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("startup-defaults") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater")),
+                    "Usage: lapis_workspace_tests [--case "
+                    "remote-options|accounts|reload|updater|startup-defaults]");
+            const auto selected = QString::fromLocal8Bit(argv[2]);
+            if (selected == QStringLiteral("accounts")) {
+                incompleteCodexHomeNeverStartsAnAgent();
+                plansFollowTheirLoad();
+            } else if (selected == QStringLiteral("remote-options")) {
+                remoteOptionsRespectTheArgumentLimit();
+                remoteClaudeReconnectsToItsConversation();
+            } else if (selected == QStringLiteral("startup-defaults")) {
+                savedGrokDefaultsPreserveLaunchOwnership();
+            } else if (selected == QStringLiteral("updater")) {
+                updaterLifecycle();
+                updaterOutputIsDrainedWithABoundedTail();
+                failedUpdaterStartClearsTheQueue();
+                updateReloadsAgentsAfterTheirCli();
+                startupAndManualUpdatesShareOneInstaller();
+                skippedClaudeUpdateReportsTheCurrentOperation();
+            } else {
+                reloadStartsAgentsAgain();
+                reloadFailuresRemainRetryable();
+                batchReloadRetainsEarlierFailures();
+            }
+            std::cout << "selected workspace cases passed\n";
             return 0;
         }
         categoriesAndIdentity();
@@ -4107,6 +4861,7 @@ int main(int argc, char** argv) {
         malformedAgentRegistry();
         unknownRegistryVersionsAreRejected();
         unseenFollowsTurnsAndSelection();
+        latestAttentionGoesToTheNewest();
         claudeAgentsUseServiceAdapter();
         agentArgumentsPersist();
         directTileSelectionNormalizesAStaleTarget();
@@ -4127,6 +4882,7 @@ int main(int argc, char** argv) {
         const bool had_codex_home = qEnvironmentVariableIsSet("CODEX_HOME");
         const auto original_codex_home = qgetenv("CODEX_HOME");
         codexResumeArguments();
+        savedGrokDefaultsPreserveLaunchOwnership();
         codexConversationRecoveredWithoutRecord();
         require(qEnvironmentVariableIsSet("CODEX_HOME") == had_codex_home &&
                     qgetenv("CODEX_HOME") == original_codex_home,
@@ -4142,6 +4898,15 @@ int main(int argc, char** argv) {
         phoneStartsAnAgentInItsCategory();
         remoteOptionsRespectTheArgumentLimit();
         remoteClaudeReconnectsToItsConversation();
+        reloadStartsAgentsAgain();
+        incompleteCodexHomeNeverStartsAnAgent();
+        plansFollowTheirLoad();
+        agentsStartAtTheStageSize();
+        reloadFailuresRemainRetryable();
+        batchReloadRetainsEarlierFailures();
+        updateReloadsAgentsAfterTheirCli();
+        startupAndManualUpdatesShareOneInstaller();
+        skippedClaudeUpdateReportsTheCurrentOperation();
         resumingAConversationStartsItsCli();
         terminalsRunPlainShells();
         wheelReachesAFullScreenProgram();

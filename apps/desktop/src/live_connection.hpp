@@ -2,6 +2,7 @@
 #define LAPIS_DESKTOP_LIVE_CONNECTION_HPP
 #include "transport/local_protocol.hpp"
 #include <QFutureWatcher>
+#include <QHash>
 #include <QLocalSocket>
 #include <QObject>
 #include <QSet>
@@ -24,6 +25,9 @@ struct ServiceLaunchRequest {
     QString program;
     QStringList arguments;
     QString log;
+    // Added to this process's environment for the service and its CLI; never
+    // written anywhere (it can hold a credential).
+    QHash<QString, QString> environment{};
 };
 using ServiceLauncher = std::function<bool(const ServiceLaunchRequest&)>;
 
@@ -42,6 +46,9 @@ class LiveConnection final : public QObject {
     void claimSize();
     void setWantedSize(session::TerminalSize size);
     void applyWantedSize();
+    // Sends the wanted size when the terminal has another; a new snapshot
+    // permits one retry, while requests without snapshot progress coalesce.
+    void sendWantedSize();
     void requestHistory(session::wire::HistoryDirection direction, quint64 reference);
     void cancelHistoryRequest();
 
@@ -80,6 +87,7 @@ class LiveConnection final : public QObject {
     session::wire::AttachRequest request_;
     std::optional<session::wire::Attachment> attachment_;
     quint64 last_sequence_{};
+    quint64 resize_sent_after_sequence_{};
     quint64 next_history_request_id_{1};
     bool history_request_ids_exhausted_{};
     std::optional<quint64> outstanding_history_request_;

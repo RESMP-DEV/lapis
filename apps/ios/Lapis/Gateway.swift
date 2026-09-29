@@ -1,12 +1,15 @@
 import Foundation
 
 // The lapis gateway on the Mac (apps/remote/lapis_remote.py), reached over
-// Tailscale. It admits only the Mac owner's iOS devices, so there is nothing
-// to sign in to here.
+// Tailscale or ZeroTier: a tailnet name or the Mac's ZeroTier address, always
+// plain HTTP inside the encrypted overlay. It admits only the Mac owner's
+// devices, so there is nothing to sign in to here.
 
 struct WorkspaceListing: Codable {
     let categories: [AgentCategory]
     let activeCategory: String
+    // The Mac's registry as this listing read it; older gateways send none.
+    var version: String? = nil
 }
 
 struct AgentCategory: Codable, Identifiable {
@@ -275,7 +278,7 @@ enum GatewayError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidHost: "Set the Mac's Tailscale name in Settings."
+        case .invalidHost: "Set the Mac's Tailscale name or ZeroTier address in Settings."
         case let .unsupportedScheme(scheme): "Unsupported gateway URL scheme: \(scheme). Use http or https."
         case let .refused(code, message): message.isEmpty ? "The Mac answered \(code)." : message
         case .unreadable: "The Mac's answer could not be read."
@@ -339,8 +342,11 @@ struct Gateway {
         }
     }
 
-    func agents() async throws -> WorkspaceListing {
-        let (data, response) = try await Gateway.requests.data(for: request("api/agents"))
+    // With the version the phone has, the gateway answers once the Mac's
+    // registry changes, or after at most eight seconds.
+    func agents(after version: String? = nil) async throws -> WorkspaceListing {
+        let query = version.map { [URLQueryItem(name: "after", value: $0)] } ?? []
+        let (data, response) = try await Gateway.requests.data(for: request("api/agents", query: query))
         try Gateway.check(response, data)
         return try JSONDecoder().decode(WorkspaceListing.self, from: data)
     }

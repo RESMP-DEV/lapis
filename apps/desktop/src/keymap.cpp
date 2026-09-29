@@ -464,6 +464,9 @@ void KeyMap::apply_defaults() {
         {QStringLiteral("newCategory"), {modifier + QStringLiteral("N")}},
         {QStringLiteral("searchAgents"), {modifier + QStringLiteral("K")}},
         {QStringLiteral("nextAttention"), {modifier + QStringLiteral("J")}},
+        // The agent that most recently needed you; Command-Option-L does it
+        // from any app on the Mac.
+        {QStringLiteral("latestAttention"), {modifier + QStringLiteral("L")}},
         {QStringLiteral("toggleSidebar"), {modifier + QStringLiteral("B")}},
         // Tiles: split with a new agent like the selected one, as iTerm2's
         // Command-D does, and move between tiles.
@@ -635,6 +638,7 @@ bool KeyMap::load() {
     load_alerts(root);
     load_usage(root);
     load_agent_defaults(root.value(QStringLiteral("newAgent")));
+    accounts_ = parse_accounts(root.value(QStringLiteral("accounts")));
 
     known_contents_ = contents;
     loaded_ = true;

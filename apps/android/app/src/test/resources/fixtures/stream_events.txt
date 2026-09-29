@@ -1,0 +1,15 @@
+: ping
+
+event: attached
+data: {"shared": true}
+
+event: frame
+data: {"revision": 1, "columns": 4, "rows": 1, "cursor": {"x": 0, "y": 0, "visible": false}, "alternateScreen": false, "applicationCursor": false, "foreground": "#ffffff", "background": "#000000", "lines": [[["hi", null, null, 0]]]}
+
+event: unknown-thing
+data: {"anything": true}
+
+: ping
+
+event: status
+data: {"state": "replaced", "message": ""}

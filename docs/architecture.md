@@ -1714,14 +1714,25 @@ Decisions from these runs:
   normal screen and sends arrow keys on the alternate screen.
 - Endpoint permission errors name the directory and the `chmod 700` fix; existing
   directories are still never chmodded.
-- The Dock badge (`QGuiApplication::setBadgeNumber`) counts agents that finished
-  unseen or have an actionable request, across categories. A new request while
-  the window is inactive calls `QWindow::alert(1000)`: one bounce, not a
-  persistent alert; finished turns only update the badge.
+- The Dock badge (`QGuiApplication::setBadgeNumber`) counts unseen agents across
+  categories. Since September 28 a request is presented as a finished turn: its
+  arrival emits `turnFinished` (one finish chime, the same background
+  notification) and marks the agent unseen, and nothing else shows it: no
+  Requests button, request counts, attention color, repeating needs-you chime or
+  Dock bounce. Hook-reported requests that were answered in the terminal were not
+  always retired, and a request badge that outlived its request was worse than
+  none. Adapters still observe and retire requests, and Commands' Review requests
+  still answers a Codex request through its adapter. The needs-you chime
+  settings (`alertSound`, `alertRepeat`) and `Alerts::needsYou` are unused and
+  due for removal with the phone's matching settings.
 - `nextAttention` (Command-J) is the manual half of the attention queue: it walks
-  categories and strips from the selected agent, taking pending requests before
-  unseen finished turns. Pinning, snoozing, aging and the opt-in carousel remain
-  unported from the flat supervisor.
+  categories and strips from the selected agent to the next unseen one.
+  `latestAttention` (Command-L) takes the unseen agent whose mark is newest
+  (`SessionPreview::neededAtMs`, set when it becomes unseen); on the Mac a
+  Carbon hot key makes Command-Option-L do it from any app, raising the window.
+  A global Command-L was rejected because it would take the key from every other
+  app (a browser's address bar). Pinning, snoozing, aging and the opt-in
+  carousel remain unported from the flat supervisor.
 - `harnessArguments` in `lapis.json` is explicit user configuration for new
   agents (shell aliases do not reach lapis launches). The registry saves each
   agent's full argument list, since arguments are part of the launch
@@ -1907,7 +1918,14 @@ A prototype, deliberately simpler than the SSH design first proposed:
   shown on the stage, or the pointer moving over it. It resends its size once
   per size shown, and ignores hover events repeated at a resting pointer, which
   Qt Quick sends as the scene changes, so a busy agent under an idle cursor
-  cannot take the size from the phone. A service started before joining existed
+  cannot take the size from the phone. A separate explicit layout request or
+  return from history may retry an unconfirmed size once after each received
+  snapshot; repeated requests without new progress remain coalesced. Snapshot
+  progress alone never acknowledges a resize or releases deferred history: a
+  matching size is still required. A history request that fails or is canceled
+  without displaying a page releases the size requested while it was pending.
+  Returning to live coalesces a size already queued by that recovery path.
+  A service started before joining existed
   rejects the mode; the gateway then takes the agent over in discover mode (the
   desktop card reads replaced until Reconnect agent) and tells the phone.
   Screens go out as server-sent events of styled runs (text,
@@ -1919,15 +1937,21 @@ A prototype, deliberately simpler than the SSH design first proposed:
   A size changed during connection is sent once after the first frame. Cancelled
   streams cannot mutate or close a replacement connection. Deferred history
   belongs to the requesting attachment and survives another attachment leaving.
-- Admission replaces keys or pairing: the gateway binds only the Mac's
-  Tailscale address and serves a request only when `tailscale whois` gives the
-  Mac owner's login on an iOS device, or the Mac itself. The Mac's tailnet is
+- Admission replaces keys or pairing: the gateway serves a request only when
+  `tailscale whois` gives the Mac owner's login on an iOS or Android device,
+  the peer lies inside a managed route of one of the Mac's joined private
+  ZeroTier networks (membership is the trust; the list is cached for 30
+  seconds, so admission runs no subprocess per peer), or the peer is the Mac
+  itself. It binds the Mac's Tailscale address, or all interfaces when
+  ZeroTier serves the Mac, because per-peer admission and the Host check, not
+  the bind address, are the boundary. The Mac's tailnet is
   shared with other people and tagged servers; of its 64 peers on
   September 23 none was admitted, only the Mac itself. Requests with an Origin header,
   without `X-Lapis-Client`, or with an unknown Host are refused, so a web page
-  on the phone cannot drive an agent. Plain HTTP relies on WireGuard; the app's
+  on the phone cannot drive an agent. Plain HTTP relies on WireGuard or
+  ZeroTier's own encrypted links; the app's
   transport exception is limited to `ts.net` names and local addresses.
-  This assumes active Tailscale on both devices and a trusted configured gateway;
+  This assumes an active overlay on both devices and a trusted configured gateway;
   ATS exceptions do not authenticate an arbitrary LAN endpoint. Explicit HTTPS
   URLs retain TLS, and schemes other than HTTP/HTTPS are rejected.
 - `apps/ios` is a SwiftUI app (iOS 17+) with categories and agents, an agent
@@ -2958,6 +2982,212 @@ source for the app and website icons.
 icon, and the website SVG/PNG directly from that source. The iPhone export
 uses the tile bounds and background color for an opaque square, leaving corner
 masking to iOS. The phone's in-app LapisMark assets remain the stone alone.
+
+### The phone follows the Mac's category order (September 28)
+
+The phone showed the gateway's list in the registry's order, which is the
+Mac's, but without the Mac's numbers, and it asked again only every eight
+seconds. Each category header on the phone, and each row of its Arrange
+categories sheet, now carries its position (1 to the last) as the Mac's
+sidebar does for Command-1 to Command-9. The agent list gains a `version`,
+read from the registry file (inode, modification time and size) before the
+registry itself, so it can only be older than what is sent. A request carrying
+`after=<version>` waits up to eight seconds for the file to change and then
+answers either way; the phone asks with the version it has, so a change on the
+Mac (moving, adding or renaming a category, moving an agent) reaches it within
+about a quarter second, and running state still refreshes every eight seconds.
+The first request when the list appears (or the app returns to the front) is
+answered at once, so it opens with current running state.
+A gateway that sends no version is asked every eight seconds as before, and an
+older phone that sends no `after` is answered at once. `ListingTests` in
+`scripts/tests/test_lapis_remote.py` checks the order, the wait, the answer to
+a replaced registry and the immediate answer to a stale version.
+### Reload tab, category and window (September 28)
+
+A CLI rereads its settings (Claude Code's permissions, say) only when it
+starts, and Restart agent covered only an agent that had already ended.
+**Reload tab**, **Reload category** and **Reload window** in Commands end each
+agent's CLI through its session, as closing does, and once the session reports
+the end and its service has exited (the end arrives just before the service
+does, so the restart waits up to 3 s for it), start it again in its card
+through the restart path, which resumes the conversation. An ended agent
+restarts at once. A remote agent whose launch carries no conversation id is
+left running with a message, since a restart would begin a new conversation;
+the category and window reloads count the ones left. ssh reports the hangup
+lapis sends it as status 255, so a reloading agent is kept out of the
+reconnect path. `reloadStartsAgentsAgain` in the workspace suite drives a
+stand-in CLI that counts its starts through a tab, category and window
+reload, with a remote agent left running.
+
+If the attachment disconnects or is replaced before reporting the end, the
+pending reload is retired and the tab reports that it needs reconnection.
+A service still running after the shutdown wait reports a timeout rather
+than attempting a restart. Neither failure blocks a later explicit retry.
+Batch reloads retain their failures even when another agent restarts and saves
+successfully; a new reload reports its own result instead of an earlier error.
+The workspace suite exercises these failure paths with a local protocol peer
+and a mixed-success batch. `lapis_workspace_tests --case reload` selects the
+reload cases for focused iteration and sanitizer runs; invoking the executable
+without arguments still runs the full workspace suite.
+
+### Garbled prompts and full-screen CLIs (September 28)
+
+A new Claude Code agent sometimes showed its input box torn: the placeholder
+line kept, typed text written over the bottom border, pieces of the border
+below. Two causes combined.
+
+- Claude Code turns its full-screen renderer off for good on a machine after
+  full-screen launches end before it calls them healthy ("fullscreen disabled:
+  turned off on this machine after repeated failed starts"); lapis's closes,
+  restarts and reboots end CLIs that way. The user's Mac had
+  `fullscreenAutoDisabled` with two strikes in `~/.claude.json` although its
+  settings said `"tui": "fullscreen"`, so every local Claude drew with the
+  classic main-screen renderer.
+- lapis started every CLI at 100 by 30 and resized it once the window
+  attached, or when the agent first reached the stage. The classic renderer
+  redraws in place by counting rows up from the cursor; lapis's terminal
+  reflows lines on a resize, so after one the count lands on the wrong rows.
+  Recorded against Claude Code 2.1.283 in a pseudo-terminal: without the
+  full-screen renderer it redrew after a resize with no erase; with
+  `CLAUDE_CODE_NO_FLICKER=1` it entered the alternate screen, turned on mouse
+  reporting and erased and repainted the whole screen on the resize.
+
+lapis now sets `CLAUDE_CODE_NO_FLICKER=1` in its own environment after taking
+the login shell's (a value the user set is kept), so every local Claude
+agent, and a `claude` typed in the side terminal, draws full screen; a remote
+Claude agent's command exports it unless that machine's login shell sets it.
+Grok gets `--fullscreen`, which overrides a minimal `screen_mode` in its
+config. Codex's TUI uses the alternate screen unless given `--no-alt-screen`,
+which lapis never passes, and OpenCode is always full screen. Kimi, OMP and
+Antigravity have no full-screen mode, so for them and every other CLI the
+stage's terminal grid is the launch size: a new agent, a restart and a start
+after a CLI update begin at the size the stage shows, with no resize after
+their first frame. The session service took no size, so its CLI always began
+at 100 by 30; it now takes `--size COLUMNSxROWS`, which the desktop passes
+when the launch has a size other than that default. The size is not part of
+the launch fingerprint, so reattaching is unchanged. An agent restored at login without a window still starts
+at 100 by 30. `agentsStartAtTheStageSize` in the workspace suite checks a
+stand-in CLI reads the stage's grid from its terminal at start.
+
+Saved local Grok launches gain the fullscreen default when their old service
+is gone, preserving explicit screen flags and shifting an owned resume pair
+with the inserted argument. Reattaching a live service keeps its original
+launch fingerprint. Full argument lists, custom executables and saved remote
+shell wrappers remain unchanged; recreate a remote tab to adopt the new Grok
+default or Claude environment export. The workspace restore-planning cases
+cover these boundaries without starting an agent; select them with
+`lapis_workspace_tests --case startup-defaults`.
+
+### Plans shared across machines (September 28)
+
+OMP keeps several OAuth logins per provider and, because it makes each API
+call itself, picks one per request: sessions stay on one account while it has
+room, accounts whose five hour window is 85% spent rank behind cool ones, and
+a usage-limit error rotates to a sibling. Claude Code and Codex make their own
+calls with their own sign-in, so lapis chooses a plan per session instead.
+OMP's `auth-gateway` could route requests per account, but it translates each
+request through OMP's own model layer, which would lose Claude Code's and
+Codex's own features; and `codex login --with-access-token` does not take
+OMP's ChatGPT access tokens (it expects an agent identity token), so Codex
+plans need their own login.
+
+- **Credentials.** A Claude Code plan is carried by a setup token
+  (`claude setup-token`, a year, subscription inference) passed as
+  `CLAUDE_CODE_OAUTH_TOKEN`; everything else stays in `~/.claude`, so a
+  session resumes the same conversation on another plan. A Codex plan is a
+  home `~/.lapis/accounts/codex/NAME` with its own `auth.json` from
+  `codex login` there and links to every other entry of `~/.codex`, so
+  sessions resume across plans and each login refreshes itself on one
+  machine. Local activation validates the kept credentials and every shared-home
+  link before starting or stopping an agent; a preparation failure retains the
+  current plan and reports the failed entry. Tokens are kept 0600 under `~/.lapis/accounts`, never on a command
+  line or in the workspace file: a local session's service gets the variable
+  in its environment, and a remote session's command gains a preamble that
+  reads the file on that machine (missing, the machine's own sign-in is used).
+- **Loads.** From the usage probes lapis already runs: each machine's own
+  sign-ins, known by the machine (a plan's `home`), and OMP's accounts by
+  email. Usage keeps polling while plans are configured, dashboard or not.
+- **Choice.** `AccountPool` keeps a session on its plan while that is below
+  `switchAt` (95%); a new session takes its machine's own sign-in while that
+  is; otherwise the usable plan with the most room, cool five hour windows
+  first, measured before unmeasured, then least used. With every plan full a
+  session stays where it is. The choice is made at every start (new agent,
+  restart, reload, restore at login, start after a CLI update) and saved as
+  the agent's `account`.
+- **Moving.** When a session's plan passes the switch point and another has
+  room, lapis reloads it once it is between turns (idle or turn finished
+  with a ready, connected observer); the restart chooses the plan and
+  resumes the conversation. A remote agent that cannot name its conversation
+  (Codex over ssh, or a Claude agent started before its launch carried an id)
+  keeps its plan. Output silence and unavailable status never authorize an
+  automatic switch. **Switch plan** moves one by hand.
+
+The `accounts` test covers parsing and the ranking;
+`plansFollowTheirLoad` checks a local session's token in its environment, a
+new session taking a plan with room, a remote session moving once its plan
+fills after authoritative idle (but not output quiet or unknown status), with its command reading the kept token there and the same
+conversation, and a switch asked for. `scripts/tests/test_lapis_accounts.py`
+covers the helper's config merge, token masking and real stand-in exec failures.
+Missing executables and unsuccessful setup-token exits retain their actual cause.
+### Update a CLI, then reload (September 28)
+
+A running agent keeps the CLI version it started with, and the start-time
+update runs only for new agents, at most every 30 minutes. **Update this tab's
+CLI and reload it** and **Update Claude Code and reload its tabs** run the
+catalog's update command where each agent runs: the agent's own program on
+this Mac, or ssh with the agent's own options plus `BatchMode=yes`,
+`ConnectTimeout=10`, `ControlPath=none` and `-T`, running
+`exec "${SHELL:-/bin/sh}" -lic '<cli> <update>'` on the other machine. One
+update per CLI and machine serves every agent that asks while it runs; the
+agents read "Updating <CLI>…" and keep working. The update shares the
+start-time updater's process group, bounded output tail, timeout and
+`harness-updates.log`. When it exits 0, its agents go through the reload path
+(a remote agent without a conversation id is still left running). Any other
+outcome leaves them running and reports the outcome and the output's tail.
+Startup and manual requests share that same in-flight owner. New agents wait
+for its result in either request order; a failed update still permits their
+first start, while existing agents are not reloaded. Repeated enrollment is
+accepted, and an all-skipped batch reports why it could not run. The focused
+`lapis_workspace_tests --case updater` selection includes both request orders,
+success and failure, idempotence, skipped requests and process-group cleanup.
+
+`updateReloadsAgentsAfterTheirCli` in the workspace suite drives a stand-in CLI
+through a shared update, a failed one, and a remote one through a stand-in ssh.
+
+### macOS 27 ends a quitting app's background processes (September 28)
+
+Installing a build at 11:32 am on September 28 restarted all 23 agents instead
+of reattaching them. The Mac had moved to macOS 27.0 the evening before. When
+a foreground app dies with processes still in its coalition, loginwindow asks
+Background Task Management (BTM) whether the app may run in the background;
+when BTM cannot answer, it force-quits them ("applicationDeath: app ... was
+foreground, and still has subordinate processes, but BTM couldn't answer
+whether it's allowed in the background, so scheduling its subordinates'
+termination"). Session services started from the window, and their agents,
+are in the window's coalition. The install removed `/Applications/lapis.app`
+immediately after ending the window. BTM identifies the app from its bundle,
+so it failed with error -98 ("failed to construct identifier") 74 ms after
+the window died, and 1.1 s later every service and agent was gone. None
+logged an exit.
+
+A windowless test app reproduced it on macOS 27.0 (26A428). With the bundle
+moved away before the app was killed, BTM failed the same way and all three
+children died: one started as Qt's `startDetached` does (fork, `setsid`,
+fork), one with `posix_spawn` and `POSIX_SPAWN_SETSID`, and one that also
+disclaimed responsibility (`responsibility_spawnattrs_setdisclaim`). With the
+bundle intact, BTM added an allowed "background tasks" item for the app (and
+notified the user), and all three survived. So a new session or disclaimed
+responsibility does not take a service out of the window's coalition. Only a
+process launchd starts has its own coalition.
+
+Until services are started outside the window's coalition (by a launchd agent
+lapis registers, say), GUI restart survival on macOS 27 depends on BTM allowing
+lapis in the background: the user can turn that off in Login Items &
+Extensions, and an installer or updater that replaces the bundle before BTM
+has answered for it loses every agent. An install waits for the old window to
+exit and a few seconds more before touching the bundle. Sparkle replaces the
+bundle only after the app has exited, so it can race BTM the first time lapis
+quits on a Mac with no BTM entry for it yet; that is not yet measured.
 
 ## Contracts to preserve
 

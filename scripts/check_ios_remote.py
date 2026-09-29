@@ -16,9 +16,13 @@ and exports the screenshots to build/ios/screens/.
 
 The app and its UI tests are compiled directly (swiftc, actool, codesign) and
 run with `xcodebuild test-without-building`, not through Xcode's build
-service, which is faster and does not depend on the generated project.
+service, which is faster and does not depend on the generated project. The
+app-hosted LapisTests bundle (ATS reachability) runs in its own xcodebuild
+invocation after the UI tests; --unit runs only it and skips the desktop
+fixture.
 
     uv run --no-project python scripts/check_ios_remote.py [--codex] [--claude]
+    uv run --no-project python scripts/check_ios_remote.py --unit
 """
 
 import argparse
@@ -44,6 +48,7 @@ DESKTOP = (
 )
 APP_SOURCES = ROOT / "apps" / "ios" / "Lapis"
 TEST_SOURCES = ROOT / "apps" / "ios" / "LapisUITests"
+UNIT_SOURCES = ROOT / "apps" / "ios" / "LapisTests"
 BUILD = ROOT / "build" / "ios"
 PRODUCTS = BUILD / "sim"
 DEVICE = "iPhone 17 Pro"
@@ -273,18 +278,12 @@ def build_app(sdk):
     return app
 
 
-def build_ui_tests(sdk, platform):
-    """XCTRunner hosting LapisUITests.xctest, as Xcode assembles it."""
-    developer = Path(platform) / "Developer"
-    runner = PRODUCTS / "LapisUITests-Runner.app"
-    shutil.rmtree(runner, ignore_errors=True)
-    shutil.copytree(
-        developer / "Library/Xcode/Agents/XCTRunner.app", runner, symlinks=True
-    )
-    frameworks = runner / "Frameworks"
-    frameworks.mkdir()
-    # Package XCTest's runtime dependencies, not every Swift Testing overlay.
-    # Some SDK overlays share bundle identifiers and cannot coexist in an app.
+def bundle_xctest_frameworks(developer, frameworks):
+    """Copy XCTest's runtime dependencies into an app's Frameworks directory.
+
+    Not every Swift Testing overlay: some SDK overlays share bundle
+    identifiers and cannot coexist in an app.
+    """
     for name in ("XCTest", "XCUIAutomation", "Testing", "_Testing_Foundation"):
         framework = developer / "Library/Frameworks" / f"{name}.framework"
         shutil.copytree(framework, frameworks / framework.name, symlinks=True)
@@ -302,6 +301,19 @@ def build_ui_tests(sdk, platform):
         )
     for name in ("libXCTestSwiftSupport.dylib", "lib_TestingInterop.dylib"):
         shutil.copy2(developer / "usr/lib" / name, frameworks / name)
+
+
+def build_ui_tests(sdk, platform):
+    """XCTRunner hosting LapisUITests.xctest, as Xcode assembles it."""
+    developer = Path(platform) / "Developer"
+    runner = PRODUCTS / "LapisUITests-Runner.app"
+    shutil.rmtree(runner, ignore_errors=True)
+    shutil.copytree(
+        developer / "Library/Xcode/Agents/XCTRunner.app", runner, symlinks=True
+    )
+    frameworks = runner / "Frameworks"
+    frameworks.mkdir()
+    bundle_xctest_frameworks(developer, frameworks)
     # The template's executable and identity are placeholders Xcode fills in.
     (runner / "XCTRunner").rename(runner / "LapisUITests-Runner")
     info = plistlib.loads((runner / "Info.plist").read_bytes())
@@ -371,6 +383,78 @@ def build_ui_tests(sdk, platform):
     return runner
 
 
+def build_unit_tests(sdk, platform, runner, app):
+    """LapisTests.xctest beside LapisUITests.xctest in the runner.
+
+    In Xcode the bundle is hosted by the Lapis app (project.yml TEST_HOST).
+    This check runs it in the runner instead, with the runner's Info.plist
+    NSAppTransportSecurity replaced by the app's exact dict, because
+    testmanagerd cannot host an ad-hoc app here: it never attaches to inject
+    XCTest ("test runner hung before establishing connection"), and embedding
+    get-task-allow to permit the attach is itself rejected ("Code has
+    restricted entitlements, but the validation of its code signature
+    failed"). Hosting in the app changes nothing about the ATS answer: the
+    same keys govern the same URLSession calls.
+    """
+    developer = Path(platform) / "Developer"
+    bundle = runner / "PlugIns" / "LapisTests.xctest"
+    bundle.mkdir(parents=True)
+    tool(
+        "xcrun",
+        "swiftc",
+        "-target",
+        TARGET,
+        "-sdk",
+        sdk,
+        "-emit-library",
+        "-Xlinker",
+        "-bundle",
+        "-module-name",
+        "LapisTests",
+        "-Onone",
+        "-g",
+        "-F",
+        str(developer / "Library/Frameworks"),
+        "-I",
+        str(developer / "usr/lib"),
+        "-L",
+        str(developer / "usr/lib"),
+        "-framework",
+        "XCTest",
+        "-Xlinker",
+        "-rpath",
+        "-Xlinker",
+        "@executable_path/Frameworks",
+        *sorted(str(path) for path in UNIT_SOURCES.glob("*.swift")),
+        "-o",
+        str(bundle / "LapisTests"),
+    )
+    (bundle / "Info.plist").write_bytes(
+        plistlib.dumps(
+            {
+                "CFBundleExecutable": "LapisTests",
+                "CFBundleIdentifier": "dev.lapis.remote.unittests",
+                "CFBundleName": "LapisTests",
+                "CFBundlePackageType": "BNDL",
+                "CFBundleShortVersionString": "1.0",
+                "CFBundleVersion": "1",
+                "CFBundleSupportedPlatforms": ["iPhoneSimulator"],
+                "MinimumOSVersion": "17.0",
+            }
+        )
+    )
+    # Mirror the app's ATS keys onto the runner so the test's requests are
+    # governed by exactly what the app ships.
+    info = plistlib.loads((runner / "Info.plist").read_bytes())
+    app_info = plistlib.loads((app / "Info.plist").read_bytes())
+    info["NSAppTransportSecurity"] = app_info["NSAppTransportSecurity"]
+    (runner / "Info.plist").write_bytes(plistlib.dumps(info))
+    sign(bundle)
+    # The runner was signed before the bundle and plist moved in.
+    sign(runner)
+    return bundle
+
+
 def write_xctestrun(environment):
     path = PRODUCTS / "Lapis.xctestrun"
     path.write_bytes(
@@ -400,10 +484,115 @@ def write_xctestrun(environment):
     return path
 
 
+def write_unit_xctestrun():
+    """The LapisTests bundle alone, for its own xcodebuild invocation.
+
+    Sharing one runner session with the UI tests perturbs them: the unit
+    session pre-launches the target app without the UI tests' launch
+    arguments, and the UI suite then fails on stale screens.
+    """
+    path = PRODUCTS / "LapisUnit.xctestrun"
+    path.write_bytes(
+        plistlib.dumps(
+            {
+                "LapisTests": {
+                    "TestBundlePath": "__TESTHOST__/PlugIns/LapisTests.xctest",
+                    "TestHostPath": "__TESTROOT__/LapisUITests-Runner.app",
+                    "TestHostBundleIdentifier": RUNNER_ID,
+                    "UITargetAppPath": "__TESTROOT__/Lapis.app",
+                    "UITargetAppBundleIdentifier": APP_ID,
+                    "IsUITestBundle": True,
+                    "IsXCTRunnerHostedTestBundle": True,
+                    "DependentProductPaths": [
+                        "__TESTROOT__/Lapis.app",
+                        "__TESTROOT__/LapisUITests-Runner.app",
+                    ],
+                    "EnvironmentVariables": {},
+                    "TestingEnvironmentVariables": {},
+                },
+                "__xctestrun_metadata__": {"FormatVersion": 1},
+            }
+        )
+    )
+    return path
+
+
+def run_xcodebuild(xctestrun, udid, results, only, log_name):
+    """One test-without-building invocation; print its Test Case lines."""
+    command = [
+        "xcodebuild",
+        "test-without-building",
+        "-xctestrun",
+        str(xctestrun),
+        "-destination",
+        f"id={udid}",
+        "-resultBundlePath",
+        str(results),
+        "-collect-test-diagnostics",
+        "never",
+    ]
+    for method in only or []:
+        command += ["-only-testing", method]
+    with (BUILD / log_name).open("wb") as log:
+        outcome = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+        )
+    summary = [
+        line
+        for line in (BUILD / log_name).read_text(errors="replace").splitlines()
+        if "Test Case" in line or "error:" in line or "** TEST" in line
+    ]
+    print("\n".join(summary[-40:]))
+    return outcome.returncode
+
+
 def simulator(command, check=True):
     return subprocess.run(
         ["xcrun", "simctl", *command], capture_output=True, text=True, check=check
     )
+
+
+def run_unit(sdk, platform, args):
+    """The app-hosted LapisTests bundle alone. Its ATS question needs only
+    the app's Info.plist keys and a stub the test serves itself, not the
+    desktop fixture."""
+    app = build_app(sdk)
+    build_ui_tests(sdk, platform)
+    build_unit_tests(sdk, platform, PRODUCTS / "LapisUITests-Runner.app", app)
+    state = simulator(["list", "devices", "available", "-j"]).stdout
+    devices = [
+        device
+        for runtime_devices in json.loads(state)["devices"].values()
+        for device in runtime_devices
+        if device["name"] == DEVICE
+    ]
+    if not devices:
+        raise SystemExit(f"no {DEVICE} simulator")
+    device = devices[0]
+    booted_here = False
+    if device["state"] != "Booted":
+        simulator(["boot", device["udid"]])
+        booted_here = True
+    simulator(["bootstatus", device["udid"], "-b"])
+    try:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        results = BUILD / "results" / (stamp + "-unit.xcresult")
+        results.parent.mkdir(parents=True, exist_ok=True)
+        outcome = run_xcodebuild(
+            write_unit_xctestrun(),
+            device["udid"],
+            results,
+            [f"LapisTests/ATSTests/{method}" for method in args.only or []],
+            "test-unit.log",
+        )
+        print(f"results {results}")
+        return outcome
+    finally:
+        if booted_here:
+            simulator(["shutdown", device["udid"]], check=False)
 
 
 def main():
@@ -415,15 +604,23 @@ def main():
         "--claude", action="store_true", help="also run a real Claude Code agent"
     )
     parser.add_argument(
-        "--only", action="append", help="UI test method; repeat to select several"
+        "--only", action="append", help="test method; repeat to select several"
+    )
+    parser.add_argument(
+        "--unit",
+        action="store_true",
+        help="run only the app-hosted LapisTests bundle; no desktop fixture",
     )
     args = parser.parse_args()
-    if not SERVICE.exists() or not DESKTOP.exists():
+    if not args.unit and (not SERVICE.exists() or not DESKTOP.exists()):
         raise SystemExit("missing the desktop build; build the desktop first")
     sdk = tool("xcrun", "--sdk", "iphonesimulator", "--show-sdk-path")
     platform = tool("xcrun", "--sdk", "iphonesimulator", "--show-sdk-platform-path")
-    build_app(sdk)
+    if args.unit:
+        return run_unit(sdk, platform, args)
+    app = build_app(sdk)
     build_ui_tests(sdk, platform)
+    build_unit_tests(sdk, platform, PRODUCTS / "LapisUITests-Runner.app", app)
 
     # Resolved: the lapis host writes endpoints under the real /private/tmp.
     runtime = Path(tempfile.mkdtemp(prefix="lapis-ios-", dir="/tmp")).resolve()
@@ -725,20 +922,6 @@ def main():
                 "LAPIS_FOLDER_FIXTURE": "1",
             }
         )
-        command = [
-            "xcodebuild",
-            "test-without-building",
-            "-xctestrun",
-            str(xctestrun),
-            "-destination",
-            f"id={device['udid']}",
-            "-resultBundlePath",
-            str(results),
-            "-collect-test-diagnostics",
-            "never",
-        ]
-        for method in args.only or []:
-            command += ["-only-testing", f"LapisUITests/LapisUITests/{method}"]
 
         # The agent the phone starts is closed from the phone later in the same
         # test, so its launch is caught while it exists.
@@ -764,13 +947,13 @@ def main():
 
         watcher = threading.Thread(target=watch, daemon=True)
         watcher.start()
-        with (BUILD / "test.log").open("wb") as log:
-            outcome = subprocess.run(
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=log,
-            )
+        outcome = run_xcodebuild(
+            xctestrun,
+            device["udid"],
+            results,
+            [f"LapisUITests/LapisUITests/{method}" for method in args.only or []],
+            "test.log",
+        )
         watching.set()
         watcher.join()
         screens = BUILD / "screens" / stamp
@@ -788,12 +971,13 @@ def main():
             ],
             capture_output=True,
         )
-        summary = [
-            line
-            for line in (BUILD / "test.log").read_text(errors="replace").splitlines()
-            if "Test Case" in line or "error:" in line or "** TEST" in line
-        ]
-        print("\n".join(summary[-40:]))
+        # The unit bundle runs after, in its own invocation on the same
+        # device: its stub needs nothing from the fixture, and a shared
+        # runner session with the UI tests changes their behavior.
+        unit_results = BUILD / "results" / (stamp + "-unit.xcresult")
+        unit_outcome = run_xcodebuild(
+            write_unit_xctestrun(), device["udid"], unit_results, [], "test-unit.log"
+        )
         mac.stop()
         synced = not args.only or "testSyncedWithTheMac" in args.only
         print(
@@ -801,7 +985,7 @@ def main():
         )
         captures = sorted((runtime / "phone-captures").glob("*.png"))
         print(f"phone captures saved: {len(captures)}")
-        print(f"results {results}\nscreens {screens}")
+        print(f"results {results}\nunit results {unit_results}\nscreens {screens}")
         if mac.closed or (synced and not mac.saw_phone):
             return 1
         if (not args.only or "testSendScreenToMac" in args.only) and not captures:
@@ -830,7 +1014,7 @@ def main():
             print(f"Mac: lapis.json after the phone: usage {usage}, chimes {repeat}")
             if usage is not False or repeat != 4:
                 return 1
-        return outcome.returncode
+        return outcome or unit_outcome
     finally:
         run.stop()
         # Agents the host started run in their own sessions. Match the exact

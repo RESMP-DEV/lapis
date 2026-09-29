@@ -1,6 +1,7 @@
 #ifndef LAPIS_DESKTOP_WORKSPACE_HPP
 #define LAPIS_DESKTOP_WORKSPACE_HPP
 
+#include "accounts.hpp"
 #include "harness_catalog.hpp"
 #include "harness_models.hpp"
 #include "history_strip.hpp"
@@ -23,12 +24,15 @@
 #include <QObject>
 #include <QPointer>
 #include <QSet>
+#include <QSize>
 #include <QString>
 #include <QTimer>
 #include <QVariantList>
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <set>
@@ -86,6 +90,15 @@ class SessionPreview final : public QObject {
     ~SessionPreview() override;
     void startLive(const QString& endpoint, const session::LaunchSpec& launch,
                    session::wire::AttachMode mode = session::wire::AttachMode::reconnect);
+    // What a session service this card starts adds to its environment: the
+    // plan's credential, when lapis chose one. Kept in memory only.
+    void setServiceEnvironment(QHash<QString, QString> environment) {
+        service_environment_ = std::move(environment);
+    }
+    [[nodiscard]] const QHash<QString, QString>& serviceEnvironment() const {
+        return service_environment_;
+    }
+    // When its screen last changed, in milliseconds since the epoch; 0 never.
     Q_INVOKABLE void reconnect();
     Q_INVOKABLE void discoverSession();
     Q_INVOKABLE void startNewSession();
@@ -109,6 +122,8 @@ class SessionPreview final : public QObject {
     [[nodiscard]] bool updating() const { return !updating_.isEmpty(); }
     [[nodiscard]] bool unseen() const { return unseen_; }
     void setUnseen(bool unseen);
+    // When it last began to need you (ms since the epoch); 0 before that.
+    [[nodiscard]] qint64 neededAtMs() const { return needed_at_ms_; }
     // Where activity comes from: a service-side observer (the Codex app-server,
     // Claude Code's hook relay) or, for other CLIs, an output-timing estimate.
     enum class StatusSource : std::uint8_t { observer, output };
@@ -233,6 +248,7 @@ class SessionPreview final : public QObject {
     bool closing_{};
     QString updating_;
     bool unseen_{};
+    qint64 needed_at_ms_{};
     StatusSource status_source_{StatusSource::observer};
     // Output estimate: several frames close together read as activity, and a
     // few quiet seconds after that as a pause. Neither implies a finished task.
@@ -274,6 +290,7 @@ class SessionPreview final : public QObject {
     QString directory_;
     QString link_folder_;
     QString activity_;
+    QHash<QString, QString> service_environment_;
     QColor accent_;
     // Caches of what the service sent: decoding a waiting screen fills them,
     // so reading the screen is const.
@@ -332,6 +349,8 @@ struct WorkspaceOptions {
     // workspace to a window that opens (the login helper and the windowless
     // host that serves the phone).
     bool headless{};
+    // The config's plans, known before restored agents start (see setAccounts).
+    AccountsConfig accounts{};
 };
 
 class Workspace final : public QObject {
@@ -392,6 +411,10 @@ class Workspace final : public QObject {
     // config's hosts, as the side terminal offers them.
     Q_INVOKABLE [[nodiscard]] QStringList sshMachines() const;
     void setSshConfigForTesting(const QString& path) { ssh_config_ = path; }
+    // The stage's terminal grid (columns by rows). A CLI starts at this size
+    // rather than being resized just after it drew, which the classic
+    // renderers of Claude Code and others cannot redraw from.
+    Q_INVOKABLE void setLaunchSize(QSize size);
     // Tests reconnect in milliseconds: a first connection counts once it held
     // `first_hold`, and each wait before reconnecting is `wait`.
     struct ReconnectTiming {
@@ -426,6 +449,37 @@ class Workspace final : public QObject {
     // be running without one.
     Q_INVOKABLE bool closeSession(const QString& id, bool abandon = false);
     Q_INVOKABLE bool restartAgent(const QString& id);
+    // The plans lapis may give Claude Code and Codex sessions, and how full
+    // each is. A session whose plan passes the switch point starts again on
+    // the one with the most room once it is between turns, resuming its
+    // conversation (see AccountPool).
+    void setAccounts(AccountsConfig accounts);
+    void setAccountLoads(QHash<QString, AccountLoad> loads);
+    // The plan an agent runs on; empty for its machine's own sign-in.
+    Q_INVOKABLE [[nodiscard]] QString agentAccount(const QString& id) const;
+    Q_INVOKABLE [[nodiscard]] bool canSwitchAccount(const QString& id) const;
+    // Starts the agent again on the plan with the most room besides its own.
+    Q_INVOKABLE bool switchAccount(const QString& id);
+    // Tests: where this Mac keeps the credentials lapis hands out.
+    void setAccountsRootForTesting(const QString& root) { accounts_root_ = root; }
+    // Ends an agent's CLI and starts it again in its tab, resuming its
+    // conversation as a restart does: a CLI rereads its settings (Claude
+    // Code's permissions, say) only when it starts. An ended agent starts at
+    // once. An agent on another machine whose conversation lapis cannot name
+    // is left alone, since it would start a new one. Returns how many reload.
+    Q_INVOKABLE int reloadAgent(const QString& id);
+    // Every agent in the category shown, or in every category.
+    Q_INVOKABLE int reloadCategory();
+    Q_INVOKABLE int reloadAll();
+    // Updates the agent's CLI where it runs, with the CLI's own update
+    // command, then reloads it so it runs the new version. One update per
+    // CLI and machine serves every agent that asks; one that fails leaves
+    // its agents running. Returns how many agents wait for an update.
+    Q_INVOKABLE int updateAndReloadAgent(const QString& id);
+    // The same for every Claude Code agent, on each machine that has one.
+    Q_INVOKABLE int updateClaudeAndReload();
+    // Whether the agent's CLI has an update command lapis can run.
+    Q_INVOKABLE [[nodiscard]] bool canUpdateAgent(const QString& id) const;
     Q_INVOKABLE bool moveSession(const QString& id, const QString& categoryId);
     // A name someone chose; it stays until they choose another.
     Q_INVOKABLE bool renameSession(const QString& id, const QString& title);
@@ -443,9 +497,12 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool placeCategory(const QString& id, int index);
     Q_INVOKABLE bool removeSession(const QString& id);
     Q_INVOKABLE void nextSession(int delta = 1);
-    // Selects the next agent, in any category, with a pending request, or else
-    // one that finished while unseen; false when none is waiting.
+    // Selects the next agent, in any category, that finished a turn or asked
+    // for something while unseen; false when none is waiting.
     Q_INVOKABLE bool nextAttention();
+    // Selects the agent that most recently began to need you; again, the one
+    // before it. False when none is waiting.
+    Q_INVOKABLE bool latestAttention();
     [[nodiscard]] QVariantList sessions() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;
@@ -475,9 +532,8 @@ class Workspace final : public QObject {
     }
   signals:
     void focusChanged();
-    // An agent received a new request.
-    void requestArrived();
-    // An agent has a new request for you (alerts chime for these).
+    // An agent has a new request for you. Requests ping as finished turns do
+    // (turnFinished); nothing emits this now.
     void agentNeedsYou(lapis::desktop::SessionPreview* item);
     // A Codex or Claude turn ended; terminal agents' output pauses do not count.
     void turnFinished(lapis::desktop::SessionPreview* item);
@@ -500,15 +556,31 @@ class Workspace final : public QObject {
     bool update_harnesses_{};
     bool headless_{};
     QHash<QString, qint64> harness_checked_ms_;
-    QHash<QString, QPointer<QProcess>> harness_updates_;
-    QHash<QString, QStringList> starts_after_update_;
     QHash<QProcess*, QByteArray> updater_output_;
     QHash<QProcess*, bool> updater_stopping_;
     qint64 update_timeout_ms_{qint64{2} * 60 * 1000};
+    // An update process, not yet started: its whole group stops at the
+    // timeout, and `finished` runs once it has, with how it ended.
+    QProcess* newUpdater(const QString& program, const QStringList& arguments,
+                         const std::function<void(QProcess*, const QString&, bool)>& finished);
     // True when the agent waits for its CLI's update and starts after it.
     bool deferForUpdate(const QString& id);
+    // One updater per CLI and machine (empty means local), with separate
+    // consumers for first starts and successful-update reloads.
+    struct CliUpdate {
+        QString harness;
+        QString machine;
+        QPointer<QProcess> process;
+        QStringList agents;
+        QStringList starts;
+        bool manual{};
+    };
+    QHash<QString, CliUpdate> cli_updates_;
+    int updateAndReload(const QStringList& ids);
+    void finishCliUpdate(const QString& key, QProcess* process, const QString& outcome,
+                         bool succeeded);
     void drainUpdater(QProcess* process);
-    void finishUpdate(const QString& harness, QProcess* process, const QString& outcome);
+    void startUpdatedAgents(const QStringList& ids);
     void logUpdate(const QString& line) const;
     QString update_log_directory_;
     // Records conversations for agents whose services do not.
@@ -536,6 +608,9 @@ class Workspace final : public QObject {
         // user-authored launch. Existing unmarked records stay user-owned.
         int managed_resume_index{-1};
         QString managed_resume_identity{};
+        // The Claude Code or Codex plan it runs on (an AccountPool name);
+        // empty for its machine's own sign-in.
+        QString account{};
     };
     std::vector<Category> categories_;
     QMap<QString, Agent> agents_;
@@ -625,6 +700,31 @@ class Workspace final : public QObject {
         int generation{};
     };
     QHash<QString, Reconnect> reconnects_;
+    AccountPool accounts_;
+    QString accounts_root_;
+    // Agents whose plan filled, moving at their next pause.
+    QSet<QString> switching_;
+    [[nodiscard]] QString accountsRoot() const;
+    [[nodiscard]] static QString accountCli(const QString& harness);
+    [[nodiscard]] static QString agentMachine(const Agent& agent);
+    // Chooses the agent's plan and writes it where its start reads it: a
+    // remote command's preamble, or the card's service environment.
+    [[nodiscard]] bool applyAccount(Agent& agent, SessionPreview& item);
+    void balanceAccounts();
+    void switchWhenIdle();
+    // Agents asked to end so they can start again.
+    QSet<QString> reloading_;
+    enum class ReloadOutcome : std::uint8_t { requested, kept, failed };
+    struct ReloadResult {
+        ReloadOutcome outcome{};
+        QString diagnostic;
+    };
+    ReloadResult requestReload(const QString& id);
+    int reloadAgents(const QStringList& ids);
+    void finishReload(const QString& id, int waits = 30);
+    std::optional<session::TerminalSize> launch_size_;
+    // `launch` at the stage's size, when the window has told it.
+    [[nodiscard]] session::LaunchSpec sized(session::LaunchSpec launch) const;
     std::chrono::milliseconds reconnect_first_hold_{std::chrono::seconds(20)};
     std::optional<std::chrono::milliseconds> reconnect_wait_;
     void reconnectIfDropped(const QString& id);
