@@ -12,7 +12,10 @@ import kotlin.test.assertEquals
 class DescribeTest {
     @Test
     fun gatewayErrorsCarryTheirOwnCopy() {
-        assertEquals("Set the Mac's Tailscale name in Settings.", describe(GatewayError.InvalidHost))
+        assertEquals(
+            "Set the Mac's Tailscale name or ZeroTier address in Settings.",
+            describe(GatewayError.InvalidHost),
+        )
         assertEquals(
             "Unsupported gateway URL scheme: ftp. Use http or https.",
             describe(GatewayError.UnsupportedScheme("ftp")),
@@ -24,7 +27,8 @@ class DescribeTest {
 
     @Test
     fun quietMacGetsTheActionableLine() {
-        val expected = "The Mac did not answer. Check that Tailscale is on here and the Mac is awake."
+        val expected =
+            "The Mac did not answer. Check that Tailscale or ZeroTier is on here and the Mac is awake."
         assertEquals(expected, describe(ConnectException("refused")))
         assertEquals(expected, describe(UnknownHostException("no dns")))
         assertEquals(expected, describe(SocketTimeoutException("timed out")))

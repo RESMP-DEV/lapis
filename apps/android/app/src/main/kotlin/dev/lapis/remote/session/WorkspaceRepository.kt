@@ -98,8 +98,9 @@ class WorkspaceRepository(
             val cached = decodeCachedListing(value)
             if (generation.get() == current) {
                 // The last known state of this Mac shows at once; it is
-                // refreshed right after.
-                _listing.value = cached
+                // refreshed right after. Only an empty slot takes the cache,
+                // so a network answer that already landed stays on top.
+                _listing.compareAndSet(null, cached)
             }
         }
     }

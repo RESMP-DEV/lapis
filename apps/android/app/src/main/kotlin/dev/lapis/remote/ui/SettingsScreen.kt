@@ -51,11 +51,11 @@ fun SettingsScreen(
     onDone: (String) -> Unit,
     onCancel: () -> Unit,
 ) {
-    var host by rememberSaveable { mutableStateOf("") }
+    // Seeded from the current host and keyed to it: recreation (rotation)
+    // keeps the user's edits, and a genuinely new host reseeds the field.
+    var host by rememberSaveable(currentHost) { mutableStateOf(currentHost) }
     var checking by rememberSaveable { mutableStateOf(false) }
     var result by rememberSaveable { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(currentHost) { host = currentHost }
 
     LaunchedEffect(checking) {
         if (!checking) return@LaunchedEffect
@@ -116,7 +116,7 @@ fun SettingsScreen(
                 value = host,
                 onValueChange = { host = it },
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("your-mac.your-tailnet.ts.net") },
+                placeholder = { Text("Tailscale name or ZeroTier address") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Uri,
@@ -130,9 +130,9 @@ fun SettingsScreen(
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                "lapis reaches the gateway on your Mac over Tailscale. This device must be " +
-                    "signed in to Tailscale with the same account as the Mac; nothing else is " +
-                    "needed to sign in.",
+                "lapis reaches the gateway on your Mac over Tailscale or ZeroTier. This " +
+                    "device must be on the same tailnet, or on the Mac's ZeroTier network; " +
+                    "nothing else is needed to sign in.",
                 color = LapisColors.quiet,
                 style = TextStyle(fontSize = 12.5.sp),
             )

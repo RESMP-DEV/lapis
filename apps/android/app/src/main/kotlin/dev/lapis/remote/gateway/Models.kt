@@ -2,6 +2,7 @@ package dev.lapis.remote.gateway
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -180,22 +181,31 @@ object RunSerializer : kotlinx.serialization.KSerializer<Run> {
     override val descriptor =
         kotlinx.serialization.json.JsonArray.serializer().descriptor
 
-    private fun JsonElement?.optionalString(): String? =
-        this?.takeIf { it !is JsonNull }?.jsonPrimitive?.content
+    // A malformed run raises SerializationException, which LapisGateway.decode
+    // maps to GatewayError.Unreadable; anything else would escape as a crash.
+    private fun JsonElement?.optionalString(): String? = when (this) {
+        null, is JsonNull -> null
+        is JsonPrimitive -> content
+        else -> throw SerializationException("run: expected a string value")
+    }
 
-    private fun JsonElement?.optionalInt(): Int? =
-        this?.takeIf { it !is JsonNull }?.jsonPrimitive?.content?.toIntOrNull()
+    private fun JsonElement?.optionalInt(): Int? = when (this) {
+        null, is JsonNull -> null
+        is JsonPrimitive -> content.toIntOrNull()
+            ?: throw SerializationException("run: expected an integer, got \"$content\"")
+        else -> throw SerializationException("run: expected an integer value")
+    }
 
     override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): Run {
         val values = JsonArray.serializer().deserialize(decoder)
         fun at(index: Int): JsonElement? = values.getOrNull(index)
         return Run(
             text = at(0).optionalString()
-                ?: throw IllegalArgumentException("run: missing text"),
+                ?: throw SerializationException("run: missing text"),
             foreground = at(1).optionalString(),
             background = at(2).optionalString(),
             flags = at(3).optionalInt()
-                ?: throw IllegalArgumentException("run: missing flags"),
+                ?: throw SerializationException("run: missing flags"),
             column = at(4).optionalInt(),
             width = at(5).optionalInt(),
         )

@@ -6,7 +6,7 @@ package dev.lapis.remote.gateway
  */
 sealed class GatewayError(message: String) : Exception(message) {
     /** The host field is empty or does not name a host. */
-    data object InvalidHost : GatewayError("Set the Mac's Tailscale name in Settings.")
+    data object InvalidHost : GatewayError("Set the Mac's Tailscale name or ZeroTier address in Settings.")
 
     /** The URL scheme is not http/https; [scheme] is the original spelling. */
     data class UnsupportedScheme(val scheme: String) :

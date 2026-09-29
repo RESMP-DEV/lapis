@@ -3,6 +3,7 @@ package dev.lapis.remote.gateway
 import java.net.URLEncoder
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
@@ -232,6 +233,9 @@ class LapisGateway(
      * bytes to surface the gateway's refusal, then fails the flow.
      */
     fun stream(agent: String, columns: Int, rows: Int): Flow<StreamEvent> = flow {
+        // Every blocking step hops to ioContext, but emissions stay on the
+        // collecting coroutine (the flow invariant); the collector's thread
+        // never blocks on the stream body.
         val opened = withContext(ioContext) {
             transport.open(
                 request(
@@ -242,10 +246,13 @@ class LapisGateway(
         }
         try {
             if (opened.code != 200) {
-                val body = StringBuilder()
-                for (line in opened.lines) {
-                    body.appendLine(line)
-                    if (body.length > 4096) break
+                val body = withContext(ioContext) {
+                    val text = StringBuilder()
+                    for (line in opened.lines) {
+                        text.appendLine(line)
+                        if (text.length > 4096) break
+                    }
+                    text
                 }
                 val message = runCatching {
                     gatewayJson.decodeFromString<Map<String, String>>(body.toString())
@@ -253,11 +260,17 @@ class LapisGateway(
                 throw GatewayError.Refused(opened.code, message)
             }
             val parser = SseEventParser(gatewayJson)
-            for (line in opened.lines) {
+            val lines = opened.lines.iterator()
+            while (true) {
+                val line = withContext(ioContext) {
+                    if (lines.hasNext()) lines.next() else null
+                } ?: break
                 parser.feed(line)?.let { emit(it) }
             }
         } finally {
-            withContext(ioContext) { opened.closeStream() }
+            // Cancellation must not strand the connection: the close runs on
+            // ioContext under a NonCancellable job.
+            withContext(ioContext + NonCancellable) { opened.closeStream() }
         }
     }
 }

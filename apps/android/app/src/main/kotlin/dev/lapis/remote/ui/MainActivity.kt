@@ -12,7 +12,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import dev.lapis.remote.platform.DataStoreSettings
 import dev.lapis.remote.session.DiskCache
 import dev.lapis.remote.session.RepositoryFactory
@@ -53,15 +56,22 @@ private fun LapisApp(repository: WorkspaceRepository) {
 
     var showSettings by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
 
     // Restore the persisted host, then keep the list current while the app is
     // in the foreground, mirroring the iOS refresh loop (foreground only; no
     // background network by design).
     LaunchedEffect(repository) {
         repository.restore()
-        while (isActive) {
-            repository.refresh()
-            delay(8_000)
+    }
+    LaunchedEffect(repository) {
+        // Polling only while the app is started: a backgrounded activity
+        // stops refreshing (foreground-only network, as iOS behaves).
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (isActive) {
+                repository.refresh()
+                delay(8_000)
+            }
         }
     }
 

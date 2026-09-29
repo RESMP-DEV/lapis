@@ -191,12 +191,12 @@ class WorkspaceRepositoryTest {
 
         repo.setHost("")
         repo.refresh()
-        assertEquals("Set the Mac's Tailscale name in Settings.", repo.error.value)
+        assertEquals("Set the Mac's Tailscale name or ZeroTier address in Settings.", repo.error.value)
         assertNull(repo.listing.value)
 
         repo.setHost("ftp://mac")
         repo.refresh()
-        assertEquals("Set the Mac's Tailscale name in Settings.", repo.error.value)
+        assertEquals("Set the Mac's Tailscale name or ZeroTier address in Settings.", repo.error.value)
         assertEquals("ftp://mac", repo.host.value, "the invalid text is kept; the gateway simply fails to build")
     }
 

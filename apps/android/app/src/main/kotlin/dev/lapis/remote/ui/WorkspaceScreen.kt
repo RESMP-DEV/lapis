@@ -154,7 +154,7 @@ private fun ConnectToMac(onOpenSettings: () -> Unit) {
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            "Enter the Mac's Tailscale name in Settings.",
+            "Enter the Mac's Tailscale name or ZeroTier address in Settings.",
             color = LapisColors.quiet,
             style = TextStyle(fontSize = 14.sp),
         )

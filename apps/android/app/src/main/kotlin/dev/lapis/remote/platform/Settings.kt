@@ -42,6 +42,6 @@ class DataStoreSettings(context: Context) : KeyValueStore {
 fun describe(error: Throwable): String = when (error) {
     is GatewayError -> error.message ?: error.toString()
     is SSLException -> error.message ?: "The secure connection to the Mac failed."
-    is IOException -> "The Mac did not answer. Check that Tailscale is on here and the Mac is awake."
+    is IOException -> "The Mac did not answer. Check that Tailscale or ZeroTier is on here and the Mac is awake."
     else -> error.message ?: error.toString()
 }
