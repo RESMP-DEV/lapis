@@ -300,6 +300,22 @@ minutes, without a prompt, a hook or a saved session; another machine's CLIs
 are asked over ssh, and its transcripts are counted there by its own python3.
 There are no prices.
 
+Claude Code and Codex sessions can share several plans. List them under
+`accounts` in `~/.lapis/lapis.json`: each plan's name, its email, its `home`
+(the machine that signs in as it, `local` for this Mac) and the `machines`
+where lapis keeps a credential for it. A session takes its machine's own
+sign-in; when that plan is at `switchAt` percent (95 by default) a new session
+takes the plan with the most room that its machine can use, as OMP ranks its
+accounts. A running session moves only when a ready observer reports idle or a
+finished turn, restarting on the other plan and resuming its conversation. Output
+silence alone never triggers a switch. **Switch plan** in Commands moves an agent
+by hand. `scripts/lapis_accounts.py` fills the section: `homes` records each
+machine's own sign-ins, `add-claude NAME --email E` runs `claude setup-token`
+and keeps the token (0600) on this Mac and the usage machines, and `add-codex
+NAME --email E --on local devbox` signs Codex in to a home kept for that plan,
+which shares its sessions and settings with `~/.codex`. Credentials never
+appear on a command line: a remote session reads its plan's credential there.
+
 On the Mac, closing the window (its close button, Command-Shift-W, or Command-W
 with no agent left) only hides it:
 lapis keeps running, with alerts and the phone, and its Dock icon brings the
@@ -498,6 +514,12 @@ Scrolling over a full-screen program, such as Claude Code with
 `"tui": "fullscreen"`, scrolls the program itself on both devices, as the
 wheel does in other terminals; on the phone a vertical drag turns the wheel.
 An agent started before this version scrolls that way once it restarts.
+lapis runs Claude Code and Grok full screen (Claude Code through
+`CLAUDE_CODE_NO_FLICKER=1`, also over ssh, and Grok with `--fullscreen`); Codex
+and OpenCode are full screen already. A full-screen program repaints when its
+terminal is resized, where a CLI's classic renderer can leave a torn prompt.
+Set `CLAUDE_CODE_NO_FLICKER=0` in your login shell to keep Claude Code's
+classic renderer. Every CLI starts at the stage's size.
 
 Holding an agent also offers **Move to** another category, **Move earlier** and
 **Move later**, **Restart** once it has stopped, and **Close**. Each category's

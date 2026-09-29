@@ -816,6 +816,36 @@ QVariantMap Usage::providerEntry(const Machine& machine, const QString& id,
     return entry;
 }
 
+QHash<QString, AccountLoad> Usage::accountLoads() const {
+    QHash<QString, AccountLoad> loads;
+    const auto add = [&loads](const PlanLimits& limits, const QString& name) {
+        if (name.isEmpty() || limits.windows.empty() ||
+            (limits.provider != QLatin1String("claude") &&
+             limits.provider != QLatin1String("codex")))
+            return;
+        AccountLoad load;
+        for (const auto& window : limits.windows) {
+            load.used = std::max(load.used, window.percent);
+            if (window.minutes > 0 && window.minutes <= 5 * 60)
+                load.shortWindow = std::max(load.shortWindow, window.percent);
+        }
+        if (limits.note == QLatin1String("Limit reached"))
+            load.used = std::max(load.used, 100.0);
+        auto& kept = loads[account_load_key(limits.provider, name)];
+        kept.used = std::max(kept.used, load.used);
+        kept.shortWindow = std::max(kept.shortWindow, load.shortWindow);
+    };
+    for (const auto& machine : machines_) {
+        // A machine's own sign-in is also known by the machine.
+        for (const auto& login : machine.logins) {
+            add(login, login.account);
+            add(login, account_home_name(machine.host));
+        }
+        for (const auto& account : machine.accounts)
+            add(account, account.account);
+    }
+    return loads;
+}
 QVariantList Usage::machines() const {
 #ifdef Q_OS_MACOS
     const auto here = QStringLiteral("This Mac");

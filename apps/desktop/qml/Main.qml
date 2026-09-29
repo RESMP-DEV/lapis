@@ -453,6 +453,10 @@ ApplicationWindow {
         add("reloadTab", qsTr("Reload tab"), "", hasAgent && agent.live, needAgent, () => workspace.reloadAgent(agent.sessionId))
         add("reloadCategory", qsTr("Reload category"), "", workspace.categorySessions.length > 0, qsTr("This category has no agents"), () => workspace.reloadCategory())
         add("reloadWindow", qsTr("Reload window"), "", workspace.sessions.length > 0, qsTr("No agents are open"), () => workspace.reloadAll())
+        // Claude Code and Codex plans (accounts in lapis.json): which one this
+        // agent runs on, and a move to the one with the most room.
+        const plan = hasAgent ? workspace.agentAccount(agent.sessionId) : ""
+        add("switchPlan", plan.length > 0 ? qsTr("Switch plan (on %1)").arg(plan) : qsTr("Switch plan"), "", hasAgent && workspace.canSwitchAccount(agent.sessionId), qsTr("No other Claude Code or Codex plan has room for this agent"), () => workspace.switchAccount(agent.sessionId))
         // A running CLI keeps the version it started with.
         add("updateTab", qsTr("Update this tab's CLI and reload it"), "", hasAgent && agent.live && workspace.canUpdateAgent(agent.sessionId), hasAgent ? qsTr("lapis cannot update this agent's CLI") : needAgent, () => workspace.updateAndReloadAgent(agent.sessionId))
         add("updateClaude", qsTr("Update Claude Code and reload its tabs"), "", workspace.sessions.some(session => session.harnessId === "claude"), qsTr("No Claude Code agent is open"), () => workspace.updateClaudeAndReload())
@@ -3262,8 +3266,14 @@ ApplicationWindow {
                     interactive: visible && window.visible && !window.inputBlocked && document !== null
                                  && (preview.active || document.inputReady || document.historyActive)
                     focus: visible && window.visible && !window.inputBlocked && !window.sideTerminalOpen
-                    Component.onCompleted: if (focus)
-                                               forceActiveFocus()
+                    // New and restarted agents start at this grid, not resized
+                    // just after they drew.
+                    onGridSizeChanged: workspace.setLaunchSize(gridSize)
+                    Component.onCompleted: {
+                        workspace.setLaunchSize(gridSize)
+                        if (focus)
+                            forceActiveFocus()
+                    }
 
                     // While history shows, a wide translucent bar down the right
                     // edge. The whole strip answers the pointer: a press on the

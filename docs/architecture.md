@@ -2002,10 +2002,15 @@ A prototype, deliberately simpler than the SSH design first proposed:
   at least three times in zsh or bash history, ordered reachable first, then
   by use; reachability is a TCP connection to the host or its first jump
   host, never a login, so a hardware key is never asked for a touch. The
-  desktop starts a remote agent as `ssh -o ServerAliveInterval=15 -o
-  ServerAliveCountMax=4 -t <host> 'cd <folder> && exec "${SHELL:-/bin/sh}"
-  -lic <cli>'` with each word quoted, in terminal mode, and never updates a
-  remote CLI first. A remote Claude Code agent's command also carries its
+  desktop starts a remote agent as `ssh -o ControlPath=none -o
+  ServerAliveInterval=15 -o ServerAliveCountMax=4 -t <host> 'cd <folder> &&
+  exec "${SHELL:-/bin/sh}" -lic <cli>'` with each word quoted, in terminal mode, and never updates a
+  remote CLI first. Saved SSH launches acquire all missing connection options together.
+  If they cannot fit under the 64-argument registry limit, restore preserves
+  the saved command and tab and reports that the remote tab must be recreated;
+  it never starts a partially migrated command. Live reattachment preserves
+  the original fingerprint. `lapis_workspace_tests --case remote-options`
+  exercises the boundary and the existing reconnect stand-in. A remote Claude Code agent's command also carries its
   conversation id (`s=<uuid>`); see Reconnect after a dropped connection. The phone keeps the list, CLIs,
   machines and indexes on disk per Mac, refreshes them in the background,
   and searches an index in memory, narrowing each keystroke from the last
@@ -2329,8 +2334,15 @@ open from the side (on the iPhone too, picking the machine), all by keyboard.
   255 follows this same bounded reconnect path. This is an advisory signal of
   a dropped connection, not proof. Other exit statuses and a connection that
   never held (a mistyped host, a refused login) stay ended. Keepalives end a
-  connection whose network went away within about a
-  minute instead of leaving a frozen tab. A split copies the launch with a new
+  connection whose network went away within about a minute instead of leaving
+  a frozen tab. Every agent's ssh, and the side terminal's, also runs with
+  `-o ControlPath=none`: with the user's ControlMaster, sessions to one machine
+  shared the connection the first ssh opened, and ending that ssh (closing its
+  tab, or a restart) ended every other session to the machine, lapis's and the
+  user's own. Reproduced with two ssh sessions on their own pseudo-terminals:
+  closing the first as the session service does ended the second within 4 s.
+  A saved launch gains any of these options it lacks when it starts again. A
+  split copies the launch with a new
   id. Agents started before this, and other CLIs, whose conversation lapis
   cannot name over ssh, are not reconnected: a fresh start would clear the
   screen for nothing. `/clear` or `/resume` inside the agent moves to a
@@ -3018,6 +3030,105 @@ and a mixed-success batch. `lapis_workspace_tests --case reload` selects the
 reload cases for focused iteration and sanitizer runs; invoking the executable
 without arguments still runs the full workspace suite.
 
+### Garbled prompts and full-screen CLIs (September 28)
+
+A new Claude Code agent sometimes showed its input box torn: the placeholder
+line kept, typed text written over the bottom border, pieces of the border
+below. Two causes combined.
+
+- Claude Code turns its full-screen renderer off for good on a machine after
+  full-screen launches end before it calls them healthy ("fullscreen disabled:
+  turned off on this machine after repeated failed starts"); lapis's closes,
+  restarts and reboots end CLIs that way. The user's Mac had
+  `fullscreenAutoDisabled` with two strikes in `~/.claude.json` although its
+  settings said `"tui": "fullscreen"`, so every local Claude drew with the
+  classic main-screen renderer.
+- lapis started every CLI at 100 by 30 and resized it once the window
+  attached, or when the agent first reached the stage. The classic renderer
+  redraws in place by counting rows up from the cursor; lapis's terminal
+  reflows lines on a resize, so after one the count lands on the wrong rows.
+  Recorded against Claude Code 2.1.283 in a pseudo-terminal: without the
+  full-screen renderer it redrew after a resize with no erase; with
+  `CLAUDE_CODE_NO_FLICKER=1` it entered the alternate screen, turned on mouse
+  reporting and erased and repainted the whole screen on the resize.
+
+lapis now sets `CLAUDE_CODE_NO_FLICKER=1` in its own environment after taking
+the login shell's (a value the user set is kept), so every local Claude
+agent, and a `claude` typed in the side terminal, draws full screen; a remote
+Claude agent's command exports it unless that machine's login shell sets it.
+Grok gets `--fullscreen`, which overrides a minimal `screen_mode` in its
+config. Codex's TUI uses the alternate screen unless given `--no-alt-screen`,
+which lapis never passes, and OpenCode is always full screen. Kimi, OMP and
+Antigravity have no full-screen mode, so for them and every other CLI the
+stage's terminal grid is the launch size: a new agent, a restart and a start
+after a CLI update begin at the size the stage shows, with no resize after
+their first frame. The session service took no size, so its CLI always began
+at 100 by 30; it now takes `--size COLUMNSxROWS`, which the desktop passes
+when the launch has a size other than that default. The size is not part of
+the launch fingerprint, so reattaching is unchanged. An agent restored at login without a window still starts
+at 100 by 30. `agentsStartAtTheStageSize` in the workspace suite checks a
+stand-in CLI reads the stage's grid from its terminal at start.
+
+Saved local Grok launches gain the fullscreen default when their old service
+is gone, preserving explicit screen flags and shifting an owned resume pair
+with the inserted argument. Reattaching a live service keeps its original
+launch fingerprint. Full argument lists, custom executables and saved remote
+shell wrappers remain unchanged; recreate a remote tab to adopt the new Grok
+default or Claude environment export. The workspace restore-planning cases
+cover these boundaries without starting an agent; select them with
+`lapis_workspace_tests --case startup-defaults`.
+
+### Plans shared across machines (September 28)
+
+OMP keeps several OAuth logins per provider and, because it makes each API
+call itself, picks one per request: sessions stay on one account while it has
+room, accounts whose five hour window is 85% spent rank behind cool ones, and
+a usage-limit error rotates to a sibling. Claude Code and Codex make their own
+calls with their own sign-in, so lapis chooses a plan per session instead.
+OMP's `auth-gateway` could route requests per account, but it translates each
+request through OMP's own model layer, which would lose Claude Code's and
+Codex's own features; and `codex login --with-access-token` does not take
+OMP's ChatGPT access tokens (it expects an agent identity token), so Codex
+plans need their own login.
+
+- **Credentials.** A Claude Code plan is carried by a setup token
+  (`claude setup-token`, a year, subscription inference) passed as
+  `CLAUDE_CODE_OAUTH_TOKEN`; everything else stays in `~/.claude`, so a
+  session resumes the same conversation on another plan. A Codex plan is a
+  home `~/.lapis/accounts/codex/NAME` with its own `auth.json` from
+  `codex login` there and links to every other entry of `~/.codex`, so
+  sessions resume across plans and each login refreshes itself on one
+  machine. Local activation validates the kept credentials and every shared-home
+  link before starting or stopping an agent; a preparation failure retains the
+  current plan and reports the failed entry. Tokens are kept 0600 under `~/.lapis/accounts`, never on a command
+  line or in the workspace file: a local session's service gets the variable
+  in its environment, and a remote session's command gains a preamble that
+  reads the file on that machine (missing, the machine's own sign-in is used).
+- **Loads.** From the usage probes lapis already runs: each machine's own
+  sign-ins, known by the machine (a plan's `home`), and OMP's accounts by
+  email. Usage keeps polling while plans are configured, dashboard or not.
+- **Choice.** `AccountPool` keeps a session on its plan while that is below
+  `switchAt` (95%); a new session takes its machine's own sign-in while that
+  is; otherwise the usable plan with the most room, cool five hour windows
+  first, measured before unmeasured, then least used. With every plan full a
+  session stays where it is. The choice is made at every start (new agent,
+  restart, reload, restore at login, start after a CLI update) and saved as
+  the agent's `account`.
+- **Moving.** When a session's plan passes the switch point and another has
+  room, lapis reloads it once it is between turns (idle or turn finished
+  with a ready, connected observer); the restart chooses the plan and
+  resumes the conversation. A remote agent that cannot name its conversation
+  (Codex over ssh, or a Claude agent started before its launch carried an id)
+  keeps its plan. Output silence and unavailable status never authorize an
+  automatic switch. **Switch plan** moves one by hand.
+
+The `accounts` test covers parsing and the ranking;
+`plansFollowTheirLoad` checks a local session's token in its environment, a
+new session taking a plan with room, a remote session moving once its plan
+fills after authoritative idle (but not output quiet or unknown status), with its command reading the kept token there and the same
+conversation, and a switch asked for. `scripts/tests/test_lapis_accounts.py`
+covers the helper's config merge, token masking and real stand-in exec failures.
+Missing executables and unsuccessful setup-token exits retain their actual cause.
 ### Update a CLI, then reload (September 28)
 
 A running agent keeps the CLI version it started with, and the start-time

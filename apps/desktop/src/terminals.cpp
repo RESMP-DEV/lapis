@@ -195,14 +195,19 @@ bool Terminals::closed(const Entry& entry) const {
 }
 
 session::LaunchSpec Terminals::launchFor(const QString& machine) const {
-    // This Mac: the login shell at home. A host: ssh gives its own login shell.
+    // This Mac: the login shell at home. A host: ssh gives its own login shell,
+    // over its own connection: one shared through the user's ControlMaster
+    // ends with the ssh that opened it, taking every other session with it.
+    // Plain shells inherit the user's keepalive policy; managed agents add
+    // their own timeout so the workspace can detect a drop and resume them.
     if (machine.isEmpty())
         return session::validate_launch({.program = shell_,
                                          .arguments = {QStringLiteral("-l"), QStringLiteral("-i")},
                                          .directory = QDir::homePath()});
     return session::validate_launch(
         {.program = QStandardPaths::findExecutable(QStringLiteral("ssh")),
-         .arguments = {QStringLiteral("-t"), QStringLiteral("--"), machine},
+         .arguments = {QStringLiteral("-o"), QStringLiteral("ControlPath=none"),
+                       QStringLiteral("-t"), QStringLiteral("--"), machine},
          .directory = QDir::homePath()});
 }
 

@@ -1,6 +1,7 @@
 #ifndef LAPIS_DESKTOP_KEYMAP_HPP
 #define LAPIS_DESKTOP_KEYMAP_HPP
 
+#include "accounts.hpp"
 #include <QFileSystemWatcher>
 #include <QHash>
 #include <QJsonValue>
@@ -229,6 +230,8 @@ class KeyMap final : public QObject {
     [[nodiscard]] const QStringList& usageMeter() const { return usage_meter_; }
     [[nodiscard]] const QStringList& usageMachines() const { return usage_machines_; }
     [[nodiscard]] const AgentDefaults& agentDefaults() const { return agent_defaults_; }
+    // The Claude Code and Codex plans lapis may give sessions ("accounts").
+    [[nodiscard]] const AccountsConfig& accounts() const { return accounts_; }
     [[nodiscard]] static int terminalFontSizeMinimum() { return kTerminalFontSizeMinimum; }
     [[nodiscard]] static int terminalFontSizeMaximum() { return kTerminalFontSizeMaximum; }
     [[nodiscard]] static int terminalFontSizeDefault() { return kTerminalFontSizeDefault; }
@@ -278,6 +281,7 @@ class KeyMap final : public QObject {
     QStringList usage_meter_;
     QStringList usage_machines_;
     AgentDefaults agent_defaults_;
+    AccountsConfig accounts_;
     QFileSystemWatcher watcher_;
     QTimer settle_;
     QByteArray known_contents_;

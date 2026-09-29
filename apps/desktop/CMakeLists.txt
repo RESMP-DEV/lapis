@@ -24,6 +24,7 @@ add_library(lapis_desktop_view STATIC
     src/agent_search.cpp src/agent_search.hpp
     src/conversation_index.cpp src/conversation_index.hpp
     src/terminals.cpp src/terminals.hpp
+    src/accounts.cpp src/accounts.hpp
     src/usage.cpp src/usage.hpp
     src/usage_limits.cpp src/usage_limits.hpp
     src/harness_models.cpp src/harness_models.hpp
@@ -124,6 +125,10 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_terminal_find_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME terminal-find COMMAND lapis_terminal_find_tests)
     set_tests_properties(terminal-find PROPERTIES TIMEOUT 20)
+    add_executable(lapis_accounts_tests tests/accounts_test.cpp)
+    target_link_libraries(lapis_accounts_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME accounts COMMAND lapis_accounts_tests)
+    set_tests_properties(accounts PROPERTIES TIMEOUT 20)
     add_executable(lapis_history_strip_tests tests/history_strip_test.cpp)
     target_link_libraries(lapis_history_strip_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME history-strip COMMAND lapis_history_strip_tests)
