@@ -107,8 +107,16 @@ class OkHttpTransport : GatewayTransport {
                 while (true) {
                     val line = try {
                         source.readUtf8LineStrict(maxLine.toLong())
-                    } catch (_: java.io.EOFException) {
-                        break // the stream ended cleanly at a line boundary
+                    } catch (end: java.io.EOFException) {
+                        // okio raises EOFException both for a stream that
+                        // ended at a line boundary (nothing buffered) and for
+                        // a line that outgrew the limit (bytes still buffered);
+                        // only the first is a clean end, the second is a
+                        // protocol violation and must not look like one.
+                        if (source.exhausted()) break else throw java.io.IOException(
+                            "streamed line exceeded $maxLine bytes",
+                            end,
+                        )
                     }
                     yield(line)
                 }
