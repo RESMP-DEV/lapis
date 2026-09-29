@@ -4,6 +4,7 @@
 #include "launch_spec.hpp"
 #include "session_descriptor.hpp"
 #include "terminals.hpp"
+#include "transport/local_protocol.hpp"
 #include "workspace.hpp"
 #include "workspace_control.hpp"
 
@@ -1788,6 +1789,125 @@ void updateReloadsAgentsAfterTheirCli() {
                 "the stand-in agents close");
     }
     qputenv("PATH", path);
+}
+
+// An attached peer can lose the terminate handshake, report replacement, or
+// report ended while its endpoint still answers. None may wedge future reloads.
+void reloadFailureRemainsRetryable(lapis::session::wire::StatusCode outcome) {
+    namespace wire = lapis::session::wire;
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-reload-failure-XXXXXX"));
+    require(directory.isValid(), "reload failure directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto id = uuid();
+    auto record = agentRecord(root.path(), id, "general");
+    record.insert(QStringLiteral("harness"), QStringLiteral("grok"));
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    writeRegistry(options.storagePath,
+                  {{"version", 2},
+                   {"activeCategory", "general"},
+                   {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                   {"agents", QJsonArray{record}}});
+    QLocalServer listener;
+    listener.setSocketOptions(QLocalServer::UserAccessOption);
+    require(listener.listen(record.value(QStringLiteral("endpoint")).toString()),
+            "reload peer listens");
+    const wire::SessionIdentity identity{wire::new_id(), wire::new_id()};
+    const auto launch = lapis::session::validate_launch(
+        {.program = QStringLiteral("/usr/bin/true"), .arguments = {}, .directory = root.path()});
+    lapis::session::write_descriptor(record.value(QStringLiteral("endpoint")).toString(),
+                                     lapis::session::launch_fingerprint(launch), identity);
+    lapis::session::Terminal terminal({10, 5});
+    int terminations = 0;
+    QObject::connect(&listener, &QLocalServer::newConnection, &listener, [&] {
+        while (listener.hasPendingConnections()) {
+            auto* socket = listener.nextPendingConnection();
+            QObject::connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+            QObject::connect(
+                socket, &QLocalSocket::readyRead, socket,
+                [&, socket, buffer = QByteArray{}]() mutable {
+                    buffer += socket->readAll();
+                    wire::Frame frame;
+                    while (wire::take_frame(buffer, frame)) {
+                        if (frame.kind == wire::Kind::attach) {
+                            socket->write(wire::frame(wire::Kind::hello,
+                                                      wire::encode_hello({{identity, 1}, 123})));
+                            socket->write(
+                                wire::frame(wire::Kind::snapshot,
+                                            wire::encode_snapshot_message(
+                                                {{identity, 1}, 1, terminal.snapshot()})));
+                        } else if (frame.kind == wire::Kind::terminate) {
+                            ++terminations;
+                            if (outcome == wire::StatusCode::rejected) {
+                                socket->abort();
+                            } else {
+                                socket->write(
+                                    wire::frame(wire::Kind::status,
+                                                wire::encode_status({outcome, "fixture end"})));
+                                socket->flush();
+                            }
+                        }
+                    }
+                });
+        }
+    });
+    Workspace workspace(WorkspaceMode::live, options);
+    auto* item = workspace.session(id);
+    require(item != nullptr, "reload fixture loads");
+    require(!workspace.restartAgent(QStringLiteral("missing")), "seed an unrelated error");
+    require(workspace.reloadAgent(id) == 0 &&
+                workspace.workspaceError().contains(QStringLiteral("Could not request a reload")),
+            "unsynchronized reload replaces stale feedback with its own failure");
+    require(waitFor([&] { return item->inputReady(); }, 3000), "reload peer attaches");
+    require(workspace.reloadAgent(id) == 1, "terminate is accepted");
+    const auto diagnostic = outcome == wire::StatusCode::ended
+                                ? QStringLiteral("did not stop in time")
+                                : QStringLiteral("lost its session connection");
+    require(waitFor([&] { return workspace.workspaceError().contains(diagnostic); }, 6000),
+            "failed reload reports the actual recovery boundary");
+    require(terminations == 1, "one terminate was sent");
+    item->reconnect();
+    require(waitFor([&] { return item->inputReady(); }, 3000), "the same peer reconnects");
+    require(workspace.reloadAgent(id) == 1,
+            "a failed reload no longer prevents a later explicit retry");
+    require(waitFor([&] { return terminations == 2; }, 3000), "retry reaches the peer");
+}
+
+void reloadFailuresRemainRetryable() {
+    namespace wire = lapis::session::wire;
+    for (const auto outcome :
+         {wire::StatusCode::rejected, wire::StatusCode::replaced, wire::StatusCode::ended})
+        reloadFailureRemainsRetryable(outcome);
+}
+
+void batchReloadRetainsEarlierFailures() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-reload-batch-XXXXXX"));
+    require(directory.isValid(), "batch reload directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto broken_id = uuid();
+    const auto working_id = uuid();
+    auto broken = agentRecord(root.path(), broken_id, "general");
+    broken.insert(QStringLiteral("harness"), QStringLiteral("grok"));
+    broken.insert(QStringLiteral("directory"), root.filePath(QStringLiteral("missing")));
+    auto working = agentRecord(root.path(), working_id, "general");
+    working.insert(QStringLiteral("harness"), QStringLiteral("grok"));
+    working.insert(QStringLiteral("program"), QStringLiteral("/bin/cat"));
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    writeRegistry(options.storagePath,
+                  {{"version", 2},
+                   {"activeCategory", "general"},
+                   {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                   {"agents", QJsonArray{broken, working}}});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.reloadAll() == 1 &&
+                workspace.workspaceError().contains(QStringLiteral("program or folder")),
+            "a later successful restart cannot erase the earlier failure");
+    auto* running = workspace.session(working_id);
+    require(waitFor([&] { return running->inputReady(); }, 10000), "the valid peer starts");
+    require(workspace.closeSession(working_id) &&
+                waitFor([&] { return workspace.session(working_id) == nullptr; }, 10000),
+            "batch fixture closes its child");
 }
 
 // A full-screen program that reports the mouse, as Claude Code's full-screen
@@ -4172,6 +4292,16 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("lapis"));
     try {
+        if (argc > 1) {
+            require(argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--case") &&
+                        QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload"),
+                    "Usage: lapis_workspace_tests [--case reload]");
+            reloadStartsAgentsAgain();
+            reloadFailuresRemainRetryable();
+            batchReloadRetainsEarlierFailures();
+            std::cout << "reload lifecycle and failure recovery passed\n";
+            return 0;
+        }
         categoriesAndIdentity();
         projectPaths();
         explicitAgentIdentity();
@@ -4220,6 +4350,8 @@ int main(int argc, char** argv) {
         phoneStartsAnAgentInItsCategory();
         remoteClaudeReconnectsToItsConversation();
         reloadStartsAgentsAgain();
+        reloadFailuresRemainRetryable();
+        batchReloadRetainsEarlierFailures();
         updateReloadsAgentsAfterTheirCli();
         resumingAConversationStartsItsCli();
         terminalsRunPlainShells();

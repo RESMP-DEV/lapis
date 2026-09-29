@@ -1593,12 +1593,7 @@ bool Workspace::restartAgent(const QString& id) {
 // remoteLaunch) reconnect; a fresh start would lose the screen for nothing.
 // An agent that never stayed connected, such as one with a mistyped host,
 // stays ended.
-int Workspace::reloadAgent(const QString& id) {
-    const auto reloaded = reloadAgents({id});
-    if (reloaded == 0 && error_.isEmpty())
-        fail(QStringLiteral("This agent cannot reload now."));
-    return reloaded;
-}
+int Workspace::reloadAgent(const QString& id) { return reloadAgents({id}); }
 int Workspace::reloadCategory() {
     QStringList ids;
     for (const auto& item : sessions_)
@@ -1612,44 +1607,77 @@ int Workspace::reloadAll() {
         ids << item->sessionId();
     return reloadAgents(ids);
 }
+Workspace::ReloadResult Workspace::requestReload(const QString& id) {
+    auto* item = session(id);
+    const auto entry = agents_.constFind(id);
+    if (item == nullptr || entry == agents_.cend())
+        return {ReloadOutcome::failed, QStringLiteral("Unknown agent.")};
+    if (item->closing() || reloading_.contains(id))
+        return {ReloadOutcome::failed,
+                QStringLiteral("%1 is already closing or reloading.").arg(item->title())};
+    if (const auto remote = remoteCommand(entry->launch);
+        remote && !remoteConversation().match(remote->second).hasMatch())
+        return {ReloadOutcome::kept, {}};
+    if (!serviceRunning(entry->endpoint))
+        return restartAgent(id) ? ReloadResult{ReloadOutcome::requested, {}}
+                                : ReloadResult{ReloadOutcome::failed, error_};
+    if (!item->terminate())
+        return {ReloadOutcome::failed,
+                QStringLiteral("Could not request a reload for %1. Reconnect its "
+                               "session, then try again.")
+                    .arg(item->title())};
+    // Its CLI ends; finishReload starts it again once the session says so.
+    reloading_.insert(id);
+    return {ReloadOutcome::requested, {}};
+}
 int Workspace::reloadAgents(const QStringList& ids) {
     if (!mutableRegistry())
         return 0;
+    if (!error_.isEmpty())
+        clearError();
     int reloaded = 0;
     int kept = 0;
+    int failed = 0;
+    QString first_failure;
     for (const auto& id : ids) {
-        auto* item = session(id);
-        const auto entry = agents_.constFind(id);
-        if (item == nullptr || entry == agents_.cend() || item->closing() ||
-            reloading_.contains(id))
-            continue;
-        if (const auto remote = remoteCommand(entry->launch);
-            remote && !remoteConversation().match(remote->second).hasMatch()) {
-            ++kept;
-            continue;
-        }
-        if (!serviceRunning(entry->endpoint)) {
-            reloaded += restartAgent(id) ? 1 : 0;
-            continue;
-        }
-        // Its CLI ends; finishReload starts it again once the session says so.
-        if (item->terminate()) {
-            reloading_.insert(id);
+        const auto result = requestReload(id);
+        switch (result.outcome) {
+        case ReloadOutcome::requested:
             ++reloaded;
+            break;
+        case ReloadOutcome::kept:
+            ++kept;
+            break;
+        case ReloadOutcome::failed:
+            ++failed;
+            if (first_failure.isEmpty())
+                first_failure = result.diagnostic;
+            break;
         }
     }
+    QStringList diagnostics;
     if (kept > 0)
-        fail(kept == 1 && ids.size() == 1
-                 ? QStringLiteral("This agent on another machine started before lapis could "
-                                  "name its conversation, so reloading it would start a new "
-                                  "one. Use /resume inside it, or start it again from the "
-                                  "new-agent form.")
-             : kept == 1
-                 ? QStringLiteral("An agent on another machine was left running: it started "
-                                  "before lapis could name its conversation.")
-                 : QStringLiteral("%1 agents on other machines were left running: they started "
-                                  "before lapis could name their conversations.")
-                       .arg(kept));
+        diagnostics
+            << (kept == 1 && ids.size() == 1
+                    ? QStringLiteral("This agent on another machine started before lapis could "
+                                     "name its conversation, so reloading it would start a new "
+                                     "one. Use /resume inside it, or start it again from the "
+                                     "new-agent form.")
+                : kept == 1
+                    ? QStringLiteral("An agent on another machine was left running: it started "
+                                     "before lapis could name its conversation.")
+                    : QStringLiteral("%1 agents on other machines were left running: they started "
+                                     "before lapis could name their conversations.")
+                          .arg(kept));
+    // A successful restart saves the registry and clears error_. Retain batch
+    // failures separately so later successes cannot erase their diagnostics.
+    if (failed > 0)
+        diagnostics << (failed == 1 ? first_failure
+                                    : QStringLiteral("%1 agents could not reload. %2")
+                                          .arg(failed)
+                                          .arg(first_failure));
+    if (!diagnostics.isEmpty())
+        fail(diagnostics.join(QLatin1Char('\n')));
     return reloaded;
 }
 void Workspace::finishReload(const QString& id, int waits) {
@@ -1661,11 +1689,26 @@ void Workspace::finishReload(const QString& id, int waits) {
         reloading_.remove(id);
         return;
     }
-    if (item->connectionState() != QLatin1String("ended"))
+    const auto state = item->connectionState();
+    if (state == QLatin1String("disconnected") || state == QLatin1String("replaced")) {
+        reloading_.remove(id);
+        fail(QStringLiteral("Reload stopped because %1 lost its session connection. "
+                            "Reconnect the tab, then try again.")
+                 .arg(item->title()));
+        return;
+    }
+    if (state != QLatin1String("ended"))
         return;
     // The session reports its end just before its service exits.
-    if (waits > 0 && serviceRunning(entry->endpoint)) {
-        QTimer::singleShot(100, this, [this, id, waits] { finishReload(id, waits - 1); });
+    if (serviceRunning(entry->endpoint)) {
+        if (waits > 0) {
+            QTimer::singleShot(100, this, [this, id, waits] { finishReload(id, waits - 1); });
+        } else {
+            reloading_.remove(id);
+            fail(QStringLiteral("%1's session service did not stop in time for reload. "
+                                "Try again after it exits.")
+                     .arg(item->title()));
+        }
         return;
     }
     reloading_.remove(id);

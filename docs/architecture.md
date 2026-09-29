@@ -2964,6 +2964,17 @@ reconnect path. `reloadStartsAgentsAgain` in the workspace suite drives a
 stand-in CLI that counts its starts through a tab, category and window
 reload, with a remote agent left running.
 
+If the attachment disconnects or is replaced before reporting the end, the
+pending reload is retired and the tab reports that it needs reconnection.
+A service still running after the shutdown wait reports a timeout rather
+than attempting a restart. Neither failure blocks a later explicit retry.
+Batch reloads retain their failures even when another agent restarts and saves
+successfully; a new reload reports its own result instead of an earlier error.
+The workspace suite exercises these failure paths with a local protocol peer
+and a mixed-success batch. `lapis_workspace_tests --case reload` selects the
+reload cases for focused iteration and sanitizer runs; invoking the executable
+without arguments still runs the full workspace suite.
+
 ### Update a CLI, then reload (September 28)
 
 A running agent keeps the CLI version it started with, and the start-time

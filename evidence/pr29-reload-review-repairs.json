@@ -1,0 +1,74 @@
+{
+  "scope": "PR29 reload review repair; background workspace lifecycle coverage",
+  "base_revision": "1984a77c5f71a58e156465547ca333b72d183975",
+  "source_sha256": {
+    "apps/desktop/src/workspace.cpp": "79038ab02d8b53f441a68cc295bcac9d62f7caf9f059f80f15c4c6f6bb8f16f6",
+    "apps/desktop/src/workspace.hpp": "34acb6a0d63b80c6c51ff635d81cfc16843baddbac55d870c69f745ffc97ea51",
+    "apps/desktop/tests/workspace_test.cpp": "fa23ffd314d133f0b064abc52dba9b5217a45a94c9a9fc585be260badd52bde8",
+    "docs/architecture.md": "6eedebba592faa8622191086a6293d0dd6c9d32fec1129b23fc9ee9331f29c06"
+  },
+  "changes": [
+    "Report operation-scoped reload failures, including failures before a terminate request is queued.",
+    "Retire pending reloads after attachment disconnect/replacement or service-stop timeout; permit a later explicit retry.",
+    "Preserve earlier batch failures when later restarts save successfully.",
+    "Add disposable-peer failure regressions and a focused --case reload selector."
+  ],
+  "checks": [
+    {
+      "command": "cmake --build build/desktop --target lapis_workspace_tests -j4",
+      "exit_code": 0
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop -R '^workspace$' --no-tests=error --output-on-failure",
+      "exit_code": 0,
+      "result": "1/1 suite passed; 40.99 seconds"
+    },
+    {
+      "command": "cmake --build build/tsan --target lapis_workspace_tests -j4",
+      "exit_code": 0,
+      "configuration": "desktop enabled; thread sanitizer"
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen build/tsan/apps/desktop/lapis_workspace_tests --case reload",
+      "exit_code": 0,
+      "result": "reload lifecycle and failure recovery passed; no reported race"
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_workspace_tests --case invalid",
+      "exit_code": 1,
+      "expected": true,
+      "result": "usage diagnostic; no test executed"
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "reuse": "Passed before the final C++ selector and documentation changes; Python/configuration inputs unchanged."
+    },
+    {
+      "command": "clang-tidy -p build/desktop apps/desktop/src/workspace.cpp apps/desktop/tests/workspace_test.cpp",
+      "exit_code": 0,
+      "result": "Changed implementation and test translation units checked; test unit rechecked after selector addition."
+    },
+    {
+      "command": "clang-format --dry-run --Werror apps/desktop/src/workspace.cpp apps/desktop/src/workspace.hpp apps/desktop/tests/workspace_test.cpp",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "retained_failed_attempts": [
+    {
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/tsan -R '^workspace$' --no-tests=error --output-on-failure",
+      "exit_code": 8,
+      "result": "Existing full-suite 120-second timeout before reload cases; superseded only for affected reload coverage by focused run. Owned surviving fixture services were stopped."
+    }
+  ],
+  "limitations": [
+    "This is local repair validation, not complete PR or stack qualification.",
+    "Full desktop gate, unaffected CLI/live-adapter coverage and combined dependent PR integration remain to be reconciled before publishing or merging.",
+    "No GUI focus, live account, real agent CLI, SSH connection or updater was exercised.",
+    "Vendor Qt and Ghostty remain uninstrumented."
+  ]
+}
