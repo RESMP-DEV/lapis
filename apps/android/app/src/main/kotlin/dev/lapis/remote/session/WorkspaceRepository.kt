@@ -7,6 +7,7 @@ import dev.lapis.remote.gateway.OkHttpTransport
 import dev.lapis.remote.gateway.WorkspaceListing
 import dev.lapis.remote.gateway.gatewayJson
 import dev.lapis.remote.platform.describe
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -133,7 +134,15 @@ class WorkspaceRepository(
         _refreshing.value = true
         try {
             val outcome = withContext(io) {
-                runCatching { gateway.agents() }
+                // Cancellation must propagate, not surface as an error the
+                // way runCatching would (iOS ignores CancellationError too).
+                try {
+                    Result.success(gateway.agents())
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    Result.failure(failure)
+                }
             }
             if (generation.get() != current) return
             outcome

@@ -1,6 +1,5 @@
 package dev.lapis.remote.ui
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -36,7 +35,6 @@ object LapisColors {
 fun LapisTheme(content: @Composable () -> Unit) {
     // The command room is dark regardless of the system setting, as the iOS
     // app pins .preferredColorScheme(.dark).
-    isSystemInDarkTheme()
     val scheme = darkColorScheme(
         primary = LapisColors.accent,
         background = LapisColors.background,

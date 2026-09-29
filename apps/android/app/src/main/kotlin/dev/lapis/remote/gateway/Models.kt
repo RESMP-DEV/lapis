@@ -221,8 +221,10 @@ object RunSerializer : kotlinx.serialization.KSerializer<Run> {
             value.background?.let { add(JsonPrimitive(it)) } ?: add(JsonNull)
             add(JsonPrimitive(value.flags))
             if (value.column != null || value.width != null) {
-                value.column?.let { add(JsonPrimitive(it)) }
-                value.width?.let { add(JsonPrimitive(it)) }
+                // Positions are fixed: an absent end keeps its JsonNull slot
+                // so a width-only run cannot land in the column position.
+                value.column?.let { add(JsonPrimitive(it)) } ?: add(JsonNull)
+                value.width?.let { add(JsonPrimitive(it)) } ?: add(JsonNull)
             }
         }
         JsonArray.serializer().serialize(encoder, JsonArray(elements))

@@ -27,7 +27,9 @@ class DiskCache(private val dir: File) {
     fun save(name: String, content: String) {
         dir.mkdirs()
         val target = File(dir, "$name.json")
-        val temporary = File(dir, "$name.json.tmp")
+        // A unique temporary path: two concurrent saves of one name never
+        // interleave writes before the move replaces the target.
+        val temporary = File.createTempFile(name, ".tmp", dir)
         temporary.writeText(content)
         runCatching {
             Files.move(
@@ -39,7 +41,11 @@ class DiskCache(private val dir: File) {
         }.onFailure {
             // Some filesystems refuse ATOMIC_MOVE; a plain move is still atomic
             // enough against readers, and correctness beats the fast path.
-            Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            // Both moves failing is a broken cache directory, not a crash for
+            // the caller: the old file stays and the next save retries.
+            runCatching {
+                Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
         }
     }
 

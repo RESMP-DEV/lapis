@@ -127,6 +127,17 @@ class ModelsTest {
     }
 
     @Test
+    fun widthWithoutColumnRoundTripsInItsOwnPosition() {
+        // A width-only run keeps fixed positions on the wire: the column
+        // slot holds null, so width cannot land where column is read.
+        val run = Run(text = "ab", foreground = null, background = null, flags = 0, column = null, width = 2)
+        val encoded = gatewayJson.encodeToString(Run.serializer(), run)
+        assertEquals("[\"ab\",null,null,0,null,2]", encoded)
+        val back = gatewayJson.decodeFromString(Run.serializer(), encoded)
+        assertEquals(run, back)
+    }
+
+    @Test
     fun decodesHistoryPage() {
         val page = gatewayJson.decodeFromString(
             HistoryPage.serializer(),

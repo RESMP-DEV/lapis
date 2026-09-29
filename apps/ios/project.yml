@@ -79,5 +79,6 @@ schemes:
       targets:
         Lapis: all
         LapisUITests: [test]
+        LapisTests: [test]
     test:
       targets: [LapisUITests, LapisTests]

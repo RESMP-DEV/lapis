@@ -7,9 +7,10 @@
 
 [versions]
 # AGP 9.4.1 is the current stable line; the 2026 androidx stable set
-# (compose 1.12, core-ktx 1.19) requires AGP 9.1+ and compileSdk 37.
-# The standalone Kotlin Android plugin (the spec pins Kotlin explicitly in
-# this catalog) runs with it through android.newDsl=false in gradle.properties.
+# (compose 1.12, core-ktx 1.19) requires AGP 9.1+ and compileSdk 37. AGP 9
+# compiles Kotlin itself and refuses the standalone Kotlin Android plugin,
+# so only the compiler plugins (compose, serialization) are applied below;
+# android.newDsl is not used.
 agp = "9.4.1"
 kotlin = "2.3.21"
 coreKtx = "1.19.1"
