@@ -236,6 +236,10 @@ def main() -> int:
     env = java_environment()
     if env is None:
         return SKIP_EXIT if not os.environ.get("JAVA_HOME") else 1
+    # SDK discovery also supports the default location and local.properties;
+    # pass the selected SDK to Gradle when the caller exported neither variable.
+    env["ANDROID_HOME"] = str(sdk.resolve())
+    env["ANDROID_SDK_ROOT"] = str(sdk.resolve())
 
     BUILD.mkdir(parents=True, exist_ok=True)
     print(f"Android SDK: {sdk}")
