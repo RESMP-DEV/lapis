@@ -1,0 +1,67 @@
+{
+  "pr": 31,
+  "original_head": "873dfc750169a4045d48c210e8c34442525bc407",
+  "integrated_review_heads": {
+    "28": "3cf06aa",
+    "29": "be86532",
+    "30": "9e28543"
+  },
+  "contracts": [
+    "Local account activation validates credentials and shared Codex links before changing the active plan or stopping a running agent. Failed restore plans retain their original metadata and diagnostics.",
+    "Automatic switching requires a ready connected observer reporting idle or turn completed. Unknown state, reconciling state and output silence do not authorize interruption.",
+    "setup-token exec failures use a close-on-exec error channel and retain their actual cause; PTY descriptors and child status are collected."
+  ],
+  "source_sha256": {
+    "README.md": "d34a18c7ec49ba3726aa76bea5e5beb61e6b43c0d610162ed2c372f7ac93bd2a",
+    "apps/desktop/src/accounts.cpp": "df28c193d9691140782148de062f8ac57b0ac34a983a27394b83efc7fa031bcf",
+    "apps/desktop/src/accounts.hpp": "f007585dc094246c0ad7efad449b62a33d636d0fb3c5c607ef6da0934061629b",
+    "apps/desktop/src/terminals.cpp": "88d08dada816a201cad3215d8b4d59739e38e084e2a4cfba5a5ef4c71b612cbf",
+    "apps/desktop/src/workspace.cpp": "47937f148bae808e31001f04a9c54a30cb293013d0b1cb6904d6b159de641575",
+    "apps/desktop/src/workspace.hpp": "a8d0f7193f66e1de687ee3c5f8e2acb39776f1ed7c2bf76c8165214842f9d62e",
+    "apps/desktop/tests/accounts_test.cpp": "b10717c70d7177bb2467e88598bc41dc143387b7ab571b01ca1739afbf65c669",
+    "apps/desktop/tests/terminal_render_test.cpp": "2df3d4d87784551bc392e6266a10403361c8683142b502c8dd00c7bec828b9d7",
+    "apps/desktop/tests/workspace_test.cpp": "312adb75ad41b1cc64609bb983d29135e942ad7bfcad5890b449e63d05334fdc",
+    "docs/architecture.md": "43134fcae52154493e99958cdc353a07c39d93ec7edd8e80cee3958d2ec2685c",
+    "evidence/pr28-review-repairs.json": "f2a42f6e1171cf221597dedfec93bd10165dd5dffe2a622dda486b096fd47c1a",
+    "evidence/pr29-reload-review-repairs.json": "4077682476b357230bb86033a872ed59e65f9b0e14f91ea00fe1f72d7dbf5e35",
+    "evidence/pr30-fullscreen-review-repairs.json": "7983557400994d74300a8339baa91ca59068268d6fae5a1267fcd009e4f87746",
+    "scripts/check_restore.py": "503d60543e4df2825106515446084819136459da07c8ce1008002faf03d10ffd",
+    "scripts/lapis_accounts.py": "ed2fd5c98cfe72a819f61163111f0941cecd86d344b6b377d8f244bf643769a8",
+    "scripts/tests/test_lapis_accounts.py": "c507b724937b8bcef9c6e6014cc523f91b1161f94a0db2796edfe4367702a3b7"
+  },
+  "validation": [
+    {
+      "command": "python3 scripts/lapis.py build --jobs 4",
+      "result": "Desktop enabled, 32/33 suites initially passed. All static checks passed except one unnecessary-copy warning in the intentional rollback snapshot, repaired with move restoration and rechecked."
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R ^(workspace|accounts)$ --no-tests=error --output-on-failure -j 1",
+      "result": "Both passed on the final integrated source; workspace 41.70 seconds. The integration-only Grok fixture now starts with complete SSH policy, keeping its assertion scoped to fullscreen migration. Together with initial passes, all 33 suites covered."
+    },
+    {
+      "command": "lapis_workspace_tests --case accounts, normal and desktop ASan/UBSan and TSan",
+      "result": "Passed. Missing shared-home activation, failed plan change preserving a live agent, unknown/working/unreconciled/quiet refusal and authoritative-idle switching covered. TSan used synthetic output updates because transport coalescing is not the account-policy behavior under test; its result predates only the equivalent rollback-copy-to-move adjustment and unrelated fullscreen fixture update. Final ASan run uses final source."
+    },
+    {
+      "command": "python3 scripts/lapis.py quality; python3 scripts/lapis.py ui-review",
+      "result": "Quality and three background UI/input groups passed. Python helper tests exercise missing executable, invalid interpreter and unsuccessful child exit with disposable stand-ins."
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --case literal-resize-exit --case detach --case failures",
+      "result": "All three selected cases passed."
+    },
+    {
+      "command": "Isolated current-service invalid --size probes",
+      "result": "0x0, 0x100 and 100x0 exit 1 with Invalid initial terminal size before endpoint or child creation."
+    },
+    {
+      "command": "Isolated SIGN_INS and quoted shell substitution counterexamples",
+      "result": "Base64url payload lengths with remainders 0, 2 and 3 decode successfully. Quotes, backticks and command-substitution text in fixture token content remain literal data."
+    }
+  ],
+  "limitations": [
+    "All credentials, agents, installers and hosts are fixture data. No actual account login, package update or remote SSH session was used.",
+    "The first normal compiler change reset CMake cache variables and disabled desktop. Its four-test result was rejected as desktop evidence; the preset was reapplied and the actual 33-suite desktop gate was run.",
+    "Failed original logs are retained. Remaining task-owned fixture processes were explicitly stopped after validation; unrelated user processes and dirty work were preserved."
+  ]
+}

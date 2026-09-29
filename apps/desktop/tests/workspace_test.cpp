@@ -1894,6 +1894,12 @@ exec sleep 600
                     workspace.agentAccount(next->sessionId()) == QStringLiteral("spare"),
                 "a new session takes the plan with room, its token in the environment");
 
+        require(waitFor([&] { return far->inputReady(); }, 10000), "remote input is ready");
+        // Drive the output estimate explicitly: instrumented transports may
+        // coalesce the stand-in's startup frames into fewer than three updates.
+        const auto output = far->snapshot();
+        for (int frame = 0; frame < 3; ++frame)
+            far->applySnapshot(output);
         require(waitFor([&] { return far->statusLabel() == QStringLiteral("Quiet"); }, 10000),
                 "the remote stand-in becomes output-quiet without an observer");
         const QHash<QString, lapis::desktop::AccountLoad> full = {
@@ -4258,7 +4264,11 @@ void savedGrokDefaultsPreserveLaunchOwnership() {
         {"grok", {"--", "--fullscreen"}, true},
         {"grok", full},
         {"grok", {}, false, true},
-        {"ssh", {"-t", "fixture", "exec grok"}},
+        // SSH policy has its own migration cases; this case checks that the
+        // remote command itself never receives the local fullscreen default.
+        {"ssh",
+         {"-o", "ControlPath=none", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4",
+          "-t", "fixture", "exec grok"}},
         {"custom-agent", {"--custom"}},
     };
     for (const auto& variant : cases) {
@@ -4572,7 +4582,8 @@ int main(int argc, char** argv) {
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("accounts") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("startup-defaults") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload")),
-                    "Usage: lapis_workspace_tests [--case remote-options|accounts|reload|startup-defaults]");
+                    "Usage: lapis_workspace_tests [--case "
+                    "remote-options|accounts|reload|startup-defaults]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("accounts")) {
                 incompleteCodexHomeNeverStartsAnAgent();

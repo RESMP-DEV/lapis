@@ -1889,13 +1889,13 @@ bool Workspace::switchAccount(const QString& id) {
     const auto entry = agents_.find(id);
     if (entry == agents_.end() || !canSwitchAccount(id))
         return fail(QStringLiteral("No other Claude Code or Codex plan has room on this machine."));
-    const auto previous = *entry;
+    auto previous = *entry;
     entry->account =
         accounts_.alternative(accountCli(entry->harness), agentMachine(*entry), agentAccount(id));
     auto* item = session(id);
     if (item != nullptr && applyAccount(*entry, *item) && reloadAgent(id) > 0)
         return true;
-    *entry = previous;
+    *entry = std::move(previous);
     return false;
 }
 // A session whose plan passed the switch point moves once there is a plan

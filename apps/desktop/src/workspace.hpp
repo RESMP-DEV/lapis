@@ -685,7 +685,7 @@ class Workspace final : public QObject {
     QSet<QString> reloading_;
     enum class ReloadOutcome : std::uint8_t { requested, kept, failed };
     struct ReloadResult {
-        ReloadOutcome outcome;
+        ReloadOutcome outcome{};
         QString diagnostic;
     };
     ReloadResult requestReload(const QString& id);
