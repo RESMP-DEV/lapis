@@ -30,22 +30,32 @@ class DiskCache(private val dir: File) {
         // A unique temporary path: two concurrent saves of one name never
         // interleave writes before the move replaces the target.
         val temporary = File.createTempFile(name, ".tmp", dir)
-        temporary.writeText(content)
-        runCatching {
-            Files.move(
-                temporary.toPath(),
-                target.toPath(),
-                StandardCopyOption.REPLACE_EXISTING,
-                StandardCopyOption.ATOMIC_MOVE,
-            )
-        }.onFailure {
-            // Some filesystems refuse ATOMIC_MOVE; a plain move is still atomic
-            // enough against readers, and correctness beats the fast path.
-            // Both moves failing is a broken cache directory, not a crash for
-            // the caller: the old file stays and the next save retries.
+        try {
+            temporary.writeText(content)
             runCatching {
-                Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                Files.move(
+                    temporary.toPath(),
+                    target.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE,
+                )
+            }.onFailure {
+                // Some filesystems refuse ATOMIC_MOVE; a plain move is still atomic
+                // enough against readers, and correctness beats the fast path.
+                // Both moves failing is a broken cache directory, not a crash for
+                // the caller: the old file stays and the next save retries.
+                runCatching {
+                    Files.move(
+                        temporary.toPath(),
+                        target.toPath(),
+                        StandardCopyOption.REPLACE_EXISTING,
+                    )
+                }
             }
+        } finally {
+            // A successful move already consumed the temporary file; a failed
+            // save leaves nothing behind to accumulate.
+            temporary.delete()
         }
     }
 

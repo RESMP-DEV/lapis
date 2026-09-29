@@ -97,10 +97,19 @@ class OkHttpTransport : GatewayTransport {
         val call = streams.newCall(request.build(streams))
         val response = call.execute()
         val source = response.body.source()
+        // One SSE line carries a whole serialized screen frame; the gateway
+        // caps a frame at 8 MiB (MAX_FRAME in lapis_remote.py), so a line is
+        // bounded at that plus envelope slack. Without the bound, a peer
+        // could exhaust memory with one unbounded line.
+        val maxLine = 8 * 1024 * 1024 + 4096
         val sequence = sequence {
             try {
                 while (true) {
-                    val line = source.readUtf8Line() ?: break
+                    val line = try {
+                        source.readUtf8LineStrict(maxLine.toLong())
+                    } catch (_: java.io.EOFException) {
+                        break // the stream ended cleanly at a line boundary
+                    }
                     yield(line)
                 }
             } finally {

@@ -60,13 +60,10 @@ private fun LapisApp(repository: WorkspaceRepository) {
 
     // Restore the persisted host, then keep the list current while the app is
     // in the foreground, mirroring the iOS refresh loop (foreground only; no
-    // background network by design).
+    // background network by design). One effect, so the first poll always
+    // uses the restored host; polling runs only while the app is started.
     LaunchedEffect(repository) {
         repository.restore()
-    }
-    LaunchedEffect(repository) {
-        // Polling only while the app is started: a backgrounded activity
-        // stops refreshing (foreground-only network, as iOS behaves).
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
                 repository.refresh()
