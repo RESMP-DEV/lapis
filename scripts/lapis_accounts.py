@@ -16,8 +16,13 @@ keeps a credential for it:
 Usage:
   lapis_accounts.py list
   lapis_accounts.py homes [HOST ...]
+  lapis_accounts.py sign-in [--to HOST ...]
   lapis_accounts.py add-claude NAME --email EMAIL [--to HOST ...]
   lapis_accounts.py add-codex NAME --email EMAIL [--on local|HOST ...]
+
+`sign-in` goes through every listed Claude Code plan that has no token on this
+Mac yet, asking before each: one browser approval per plan, and the token is
+kept on every machine the plans name.
 
 Credentials never appear on a command line or in this script's output.
 """
@@ -338,6 +343,42 @@ def command_add_codex(config: dict, name: str, email: str, where: list[str]) -> 
     )
 
 
+def plan_machines(config: dict) -> list[str]:
+    """The machines besides this Mac that the usage dashboard asks or a plan
+    names as its home or keeps a credential on."""
+    hosts = machines(config)[1:]
+    for cli in ("claude", "codex"):
+        for plan in config.get("accounts", {}).get(cli, []):
+            for host in [plan.get("home"), *plan.get("machines", [])]:
+                if (
+                    isinstance(host, str)
+                    and host != LOCAL
+                    and HOST.match(host)
+                    and host not in hosts
+                ):
+                    hosts.append(host)
+    return hosts
+
+
+def command_sign_in(config: dict, hosts: list[str], ask=input) -> None:
+    waiting = [
+        plan
+        for plan in config.get("accounts", {}).get("claude", [])
+        if not (ACCOUNTS / "claude" / f"{plan.get('name')}.token").exists()
+    ]
+    if not waiting:
+        print("Every Claude Code plan already has a token on this Mac.")
+        return
+    for plan in waiting:
+        name, email = plan.get("name", ""), plan.get("email", "")
+        if not NAME.match(name):
+            print(f"skipping a plan with an unusable name: {name!r}")
+            continue
+        if ask(f"Sign in {name} ({email}) now? [Y/n] ").strip().lower() in ("n", "no"):
+            continue
+        command_add_claude(config, name, email, hosts)
+
+
 def command_list(config: dict) -> None:
     section = config.get("accounts", {})
     print(f"Switch point: {section.get('switchAt', 95)}%")
@@ -357,6 +398,12 @@ def main(argv: list[str]) -> int:
     homes = commands.add_parser("homes")
     homes.add_argument(
         "hosts", nargs="*", help="machines besides this Mac (default: usage machines)"
+    )
+    sign_in = commands.add_parser("sign-in")
+    sign_in.add_argument(
+        "--to",
+        nargs="*",
+        help="hosts to keep the tokens on (default: every plan's machines)",
     )
     claude = commands.add_parser("add-claude")
     claude.add_argument("name")
@@ -385,6 +432,9 @@ def main(argv: list[str]) -> int:
             command_list(config)
         elif arguments.command == "homes":
             command_homes(config, arguments.hosts)
+        elif arguments.command == "sign-in":
+            hosts = arguments.to if arguments.to is not None else plan_machines(config)
+            command_sign_in(config, hosts)
         elif arguments.command == "add-claude":
             hosts = arguments.to if arguments.to is not None else machines(config)[1:]
             command_add_claude(config, arguments.name, arguments.email, hosts)

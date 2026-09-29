@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location(
     "lapis_accounts", Path(__file__).resolve().parents[1] / "lapis_accounts.py"
@@ -51,6 +52,47 @@ class PlanTest(unittest.TestCase):
             saved = accounts.load_config(path)
             self.assertEqual(saved["theme"], "night")
             self.assertEqual(saved["accounts"]["codex"][0]["machines"], ["local"])
+
+
+class SignInTest(unittest.TestCase):
+    def test_every_plan_without_a_token_is_offered_in_turn(self):
+        config = {
+            "usage": {"machines": ["devbox"]},
+            "accounts": {
+                "claude": [
+                    {"name": "first", "email": "a@example.com", "home": "local"},
+                    {"name": "second", "email": "b@example.com", "home": "gpubox"},
+                    {"name": "third", "email": "c@example.com", "home": "gpubox"},
+                ],
+                "codex": [
+                    {"name": "x", "email": "x@example.com", "machines": ["spare"]}
+                ],
+            },
+        }
+        self.assertEqual(accounts.plan_machines(config), ["devbox", "gpubox", "spare"])
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "claude").mkdir()
+            (root / "claude" / "first.token").write_text("kept\n")
+            added, asked = [], []
+
+            def ask(prompt):
+                asked.append(prompt)
+                return "n" if "second" in prompt else ""
+
+            with (
+                patch.object(accounts, "ACCOUNTS", root),
+                patch.object(
+                    accounts,
+                    "command_add_claude",
+                    lambda config, name, email, hosts: added.append(
+                        (name, email, hosts)
+                    ),
+                ),
+            ):
+                accounts.command_sign_in(config, ["gpubox"], ask)
+        self.assertEqual(len(asked), 2)  # first already has a token
+        self.assertEqual(added, [("third", "c@example.com", ["gpubox"])])
 
 
 class TokenTest(unittest.TestCase):
