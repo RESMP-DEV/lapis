@@ -29,6 +29,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <set>
@@ -426,6 +427,15 @@ class Workspace final : public QObject {
     // be running without one.
     Q_INVOKABLE bool closeSession(const QString& id, bool abandon = false);
     Q_INVOKABLE bool restartAgent(const QString& id);
+    // Ends an agent's CLI and starts it again in its tab, resuming its
+    // conversation as a restart does: a CLI rereads its settings (Claude
+    // Code's permissions, say) only when it starts. An ended agent starts at
+    // once. An agent on another machine whose conversation lapis cannot name
+    // is left alone, since it would start a new one. Returns how many reload.
+    Q_INVOKABLE int reloadAgent(const QString& id);
+    // Every agent in the category shown, or in every category.
+    Q_INVOKABLE int reloadCategory();
+    Q_INVOKABLE int reloadAll();
     Q_INVOKABLE bool moveSession(const QString& id, const QString& categoryId);
     // A name someone chose; it stays until they choose another.
     Q_INVOKABLE bool renameSession(const QString& id, const QString& title);
@@ -624,6 +634,16 @@ class Workspace final : public QObject {
         int generation{};
     };
     QHash<QString, Reconnect> reconnects_;
+    // Agents asked to end so they can start again.
+    QSet<QString> reloading_;
+    enum class ReloadOutcome : std::uint8_t { requested, kept, failed };
+    struct ReloadResult {
+        ReloadOutcome outcome;
+        QString diagnostic;
+    };
+    ReloadResult requestReload(const QString& id);
+    int reloadAgents(const QStringList& ids);
+    void finishReload(const QString& id, int waits = 30);
     std::chrono::milliseconds reconnect_first_hold_{std::chrono::seconds(20)};
     std::optional<std::chrono::milliseconds> reconnect_wait_;
     void reconnectIfDropped(const QString& id);

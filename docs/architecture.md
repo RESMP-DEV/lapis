@@ -2947,6 +2947,34 @@ icon, and the website SVG/PNG directly from that source. The iPhone export
 uses the tile bounds and background color for an opaque square, leaving corner
 masking to iOS. The phone's in-app LapisMark assets remain the stone alone.
 
+### Reload tab, category and window (September 28)
+
+A CLI rereads its settings (Claude Code's permissions, say) only when it
+starts, and Restart agent covered only an agent that had already ended.
+**Reload tab**, **Reload category** and **Reload window** in Commands end each
+agent's CLI through its session, as closing does, and once the session reports
+the end and its service has exited (the end arrives just before the service
+does, so the restart waits up to 3 s for it), start it again in its card
+through the restart path, which resumes the conversation. An ended agent
+restarts at once. A remote agent whose launch carries no conversation id is
+left running with a message, since a restart would begin a new conversation;
+the category and window reloads count the ones left. ssh reports the hangup
+lapis sends it as status 255, so a reloading agent is kept out of the
+reconnect path. `reloadStartsAgentsAgain` in the workspace suite drives a
+stand-in CLI that counts its starts through a tab, category and window
+reload, with a remote agent left running.
+
+If the attachment disconnects or is replaced before reporting the end, the
+pending reload is retired and the tab reports that it needs reconnection.
+A service still running after the shutdown wait reports a timeout rather
+than attempting a restart. Neither failure blocks a later explicit retry.
+Batch reloads retain their failures even when another agent restarts and saves
+successfully; a new reload reports its own result instead of an earlier error.
+The workspace suite exercises these failure paths with a local protocol peer
+and a mixed-success batch. `lapis_workspace_tests --case reload` selects the
+reload cases for focused iteration and sanitizer runs; invoking the executable
+without arguments still runs the full workspace suite.
+
 ## Contracts to preserve
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal
