@@ -2,6 +2,10 @@
   "schema_version": 1,
   "date_utc": "2026-09-28",
   "purpose": "Qualification of combined PR20-24 source and icon integration before main merges",
+  "supersession": {
+    "date_utc": "2026-09-29",
+    "note": "The icon inputs and outputs recorded below predate the v7 silk icon adoption branch (PR #41): assets/lapis.svg, the Mac ICNS, the iOS app icon, both LapisMark rasters and the site icons all changed after this qualification. The rows are retained as the historical record of what PR20-24 actually qualified against at merge time. The current icon receipt is evidence/silk-icon.json; merge qualification of PR #41 runs against those hashes with fresh review state."
+  },
   "sources": {
     "workspace": "deec65a14c635a0784e22f67a112ff6cf1bc7187",
     "combined_package": "3610b964ae6f85920148c65b83cdb19463bb206e",

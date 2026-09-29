@@ -2142,8 +2142,11 @@ A release is `lapis.app` in a signed DMG, built by `scripts/package_macos.py`
   derives the Mac ICNS, iPhone asset, in-app mark and website icons from it.
   The Mac keeps the approved framing; the iPhone uses the same stone relative
   to an opaque tile, with corners supplied by iOS, and its toolbar mark is the
-  stone alone on transparency. The Contour treatment (a rim shading weighted
-  off-center) remains a design-study alternative.
+  stone alone on transparency. The unpicked study variant is Contour: the same
+  artwork with the `shade` rim vignette painted on. Its signature is exactly
+  that painted `shade` reference, so the canonical silk SVG keeps the gradient
+  defined but unreferenced; the def is the template's variant switch, not dead
+  weight.
 - **Qt built for lapis.** The official Qt 6.11.2 macOS binaries are built without
   Vulkan (`QT_FEATURE_vulkan` is off), and Homebrew's Qt requires macOS 26 and
   brings glib, ICU, OpenSSL and a dozen other libraries. The release builds
