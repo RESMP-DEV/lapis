@@ -8,6 +8,8 @@ import Foundation
 struct WorkspaceListing: Codable {
     let categories: [AgentCategory]
     let activeCategory: String
+    // The Mac's registry as this listing read it; older gateways send none.
+    var version: String? = nil
 }
 
 struct AgentCategory: Codable, Identifiable {
@@ -340,8 +342,11 @@ struct Gateway {
         }
     }
 
-    func agents() async throws -> WorkspaceListing {
-        let (data, response) = try await Gateway.requests.data(for: request("api/agents"))
+    // With the version the phone has, the gateway answers once the Mac's
+    // registry changes, or after at most eight seconds.
+    func agents(after version: String? = nil) async throws -> WorkspaceListing {
+        let query = version.map { [URLQueryItem(name: "after", value: $0)] } ?? []
+        let (data, response) = try await Gateway.requests.data(for: request("api/agents", query: query))
         try Gateway.check(response, data)
         return try JSONDecoder().decode(WorkspaceListing.self, from: data)
     }

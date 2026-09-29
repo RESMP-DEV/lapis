@@ -24,12 +24,16 @@ struct CategoriesView: View {
                         .foregroundStyle(.red)
                         .accessibilityIdentifier("workspaceError")
                 }
-                ForEach(shown) { category in
+                ForEach(Array(shown.enumerated()), id: \.element.id) { offset, category in
                     Button {
                         name = category.name
                         renaming = category
                     } label: {
                         HStack {
+                            Text("\(offset + 1)")
+                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(Theme.quiet)
+                                .frame(minWidth: 20, alignment: .leading)
                             Text(category.name)
                                 .foregroundStyle(.white)
                             Spacer()
