@@ -29,6 +29,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <set>
@@ -635,6 +636,12 @@ class Workspace final : public QObject {
     QHash<QString, Reconnect> reconnects_;
     // Agents asked to end so they can start again.
     QSet<QString> reloading_;
+    enum class ReloadOutcome : std::uint8_t { requested, kept, failed };
+    struct ReloadResult {
+        ReloadOutcome outcome;
+        QString diagnostic;
+    };
+    ReloadResult requestReload(const QString& id);
     int reloadAgents(const QStringList& ids);
     void finishReload(const QString& id, int waits = 30);
     std::chrono::milliseconds reconnect_first_hold_{std::chrono::seconds(20)};
