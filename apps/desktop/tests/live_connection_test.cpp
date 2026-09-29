@@ -362,9 +362,20 @@ void stale_reconnect_and_history_errors() {
     require(control.attachment == wire::Attachment{f.identity, 2} &&
                 control.payload == QByteArray::fromHex("00080004"),
             "A no-page reply restored the wrong size or attachment");
-    f.terminal.resize({8, 4});
+    // More foreign output can arrive before that resize confirms. Returning
+    // to live must release the wanted size once, even though canceling the
+    // old history request also visits the recovery path.
     next.send(wire::Kind::snapshot,
               wire::encode_snapshot_message({{f.identity, 2}, 3, f.terminal.snapshot()}));
+    settle();
+    f.document.returnToLive();
+    require(next.read().kind == wire::Kind::resize, "Returning to live did not retry the size");
+    settle();
+    require(next.bytes.isEmpty() && next.socket->bytesAvailable() == 0,
+            "Returning to live after no-page failure sent duplicate resizes");
+    f.terminal.resize({8, 4});
+    next.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 2}, 4, f.terminal.snapshot()}));
 
     f.document.olderHistory();
     const auto malformed = f.historyRequest(next);

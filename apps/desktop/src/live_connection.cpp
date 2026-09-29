@@ -606,6 +606,10 @@ void LiveConnection::sendWantedSize() {
 }
 
 void LiveConnection::applyWantedSize() {
+    // Canceling a failed history request may already have queued this size.
+    // Returning to live shares that send until another snapshot arrives.
+    if (pending_resize_ == wanted_size_ && resize_sent_after_sequence_ == last_sequence_)
+        return;
     const auto wanted = wanted_size_;
     wanted_size_ = {1, 1};
     resize(wanted);

@@ -63,5 +63,29 @@
     ],
     "reuse": "Only one C++ test case and its comment changed. Production, dependencies, Python and UI are unchanged from the reviewed head; prior normal/sanitizer/background/CLI coverage remains scoped to that head. No broad test suite or native UI replay was added.",
     "retained_failed_attempt": "The first test draft reused a handshake helper for an ordinary snapshot; replacing it with the existing direct snapshot-send pattern fixed the fixture-only deadline failure."
+  },
+  "merge_followup": {
+    "reviewed_head": "8392cefeaa790f00c09278ac3b32aaa74bd7b5df",
+    "changes": [
+      "Coalesce return-to-live with an identical pending size already sent since the latest snapshot.",
+      "Extend the no-page case with a newer foreign snapshot and assert exactly one resize across cancellation and return to live.",
+      "Correct the header and architecture contracts, recording history recovery separately from validation evidence."
+    ],
+    "validation": [
+      "New regression fails with the original duplicate-send behavior; removing only the coalescing guard reproduces the explicit duplicate-resize assertion. Restored source rebuilt and passed.",
+      "Focused live-connection CTest passed normally and with desktop ASan/UBSan and TSan.",
+      "clang-format, clang-tidy for affected translation units, and git diff --check passed."
+    ],
+    "triage": {
+      "passive_resize": "No snapshot or timer invokes resize. Surface calls follow changed geometry, interactive state, released hold or font settings. Hover claims remain separately coalesced per shown size. Clearing pending alone would also prematurely release history; it cannot prevent explicit layout claims.",
+      "fixture_counter": "The per-host test reconnects only after the prior process exits; that process publishes its argv and count before its sleep/exit. Other hosts use separate counters. No concurrent same-host allocation exists in this fixture."
+    },
+    "source_sha256": {
+      "apps/desktop/src/live_connection.cpp": "bc951093141e2f9c7d44b40ecaeea37f6a98e87c6408c543f553ef3c92e6133f",
+      "apps/desktop/src/live_connection.hpp": "6d2056cb4fdc6d68bb48f3031f372c3ca82b6705b62c7a32a39675c6f71e9496",
+      "apps/desktop/tests/live_connection_test.cpp": "f83a49f1b6f0b5c3f73f3db0e871cc380e63ec88fdfb498a93ec2c2798bc72f7",
+      "docs/architecture.md": "1da9a647af70d3d2b1fd86252991b2a31a26f8572784fe8289291644dd70806b"
+    },
+    "reuse": "Earlier desktop/static/background/CLI gates retain their source revisions and scope. The affected live-connection target and sanitizers were rebuilt; unchanged UI, adapters, workspace and service behavior reuse those earlier checks."
   }
 }

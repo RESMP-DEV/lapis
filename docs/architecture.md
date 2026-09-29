@@ -1911,8 +1911,10 @@ A prototype, deliberately simpler than the SSH design first proposed:
   return from history may retry an unconfirmed size once after each received
   snapshot; repeated requests without new progress remain coalesced. Snapshot
   progress alone never acknowledges a resize or releases deferred history: a
-  matching size is still required. The fake-peer live-connection suite covers
-  superseded sizes and newer frames already in flight before the resize. A service started before joining existed
+  matching size is still required. A history request that fails or is canceled
+  without displaying a page releases the size requested while it was pending.
+  Returning to live coalesces a size already queued by that recovery path.
+  A service started before joining existed
   rejects the mode; the gateway then takes the agent over in discover mode (the
   desktop card reads replaced until Reconnect agent) and tells the phone.
   Screens go out as server-sent events of styled runs (text,
