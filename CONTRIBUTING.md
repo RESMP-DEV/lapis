@@ -262,6 +262,20 @@ present prose-only rules as an automated gate.
    and human approvals. Report unavailable reviewers in the handoff. Templates
    standardize submissions; they do not enforce these gates in GitHub.
 
+### Grok review
+
+`scripts/grok_review.py` runs Grok Build (`grok-4.7-build-fast`, reasoning
+`xhigh`) as a read-only reviewer: in a clone of its own under
+`runtime/grok-review`, with its write tools removed, pushing and `gh` denied and
+without GitHub credentials. `review NUMBER` prints a review of the PR head;
+`--post` publishes it as a review comment, never an approval or change request,
+with findings on changed lines inline and the rest in the summary. `install`
+runs `watch` every five minutes as a LaunchAgent, reviewing each open, non-draft
+PR head once after it has stood ten minutes (saving reviews locally unless
+installed with `--post`); `status` lists what it reviewed and what failed. It uses
+the Grok account signed in on that machine, so its usage limit applies; a
+quota failure stops the round and each head is retried at most twice.
+
 Keep the PR description current as scope changes. Use `Change`, `Validation` and
 `Risks and follow-up`; a small change needs only a sentence or two plus its checks.
 For visual changes include useful screenshots/captures; for performance changes
