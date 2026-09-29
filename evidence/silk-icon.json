@@ -1,0 +1,59 @@
+{
+  "source": "assets/lapis.svg",
+  "source_sha256": "51423758f72ff8d254dcffca064d9f12104bcbb064bbff55ef401b94de7b340d",
+  "renderer": "rsvg-convert version 2.63.2",
+  "outputs": {
+    "apps/desktop/macos/lapis.icns": "f89ebe186dd127b958eeba35c3f5492f7d892546d63d3a7968297ef4499723d5",
+    "apps/ios/Lapis/Assets.xcassets/AppIcon.appiconset/icon.png": "3228401d52d08738d14dae72c50e33f38de9b2763ef28936eb37da1be5b6bf7c",
+    "apps/ios/Lapis/Assets.xcassets/LapisMark.imageset/mark@2x.png": "df5eb64a2ff9325d4f589460463ad428c469f20d51f12a4ae6e07614ed07750d",
+    "apps/ios/Lapis/Assets.xcassets/LapisMark.imageset/mark@3x.png": "add3031df1a5ce3fdd6c257e1c0075b621ca8e547a024e973a8b8b00e1d0b3b2",
+    "site/icon.png": "a123c503540bfb91dbbb022cea482979d93d747079b162516efce02515a967cc",
+    "site/favicon.png": "e876ab1cbcb62ebfa1d18f60862d3f696f06d8854979b5dbc7b4c112d0ed2c67",
+    "site/icon.svg": "51423758f72ff8d254dcffca064d9f12104bcbb064bbff55ef401b94de7b340d"
+  },
+  "scope": "Silk lapis Cabochon icon adoption on the v7 icon branch, including the toolbar-mark derivation; no release or installed-app replacement.",
+  "source_revision": "d874eacb5ec29c409772aa628630721f6bde4349",
+  "design_provenance": {
+    "study": "star study v7 (lapis-icons-star.html), silk variant",
+    "export": "~/Downloads/lapis-silk.svg, 2026-09-28 export batch",
+    "notes": "Canonical SVG adds only the tile-edge/tile-face/cabochon ids required by write_phone_icon plus a cabochon wrapper group; 256px renders are sha256-identical to the Downloads export. Regenerating the mark outputs leaves every other output hash unchanged (determinism rechecks 2026-09-28 and 2026-09-29).",
+    "mark_transform": "write_mark_icon parses assets/lapis.svg and requires the defs block (including a feGaussianBlur with stdDeviation), the cabochon wrapper group, and the stone group's ellipse geometry; star polygon points join the ellipse bounds so rays reaching past the stone are not clipped. The frame margin is 3x the widest blur stdDeviation (3x14=42px, exp(-4.5)~1% residual falloff), and the viewBox is padded square so the mark fills the 24pt toolbar frame symmetrically; current source yields viewBox 106.0 106.0 812.0 812.0."
+  },
+  "checks": {
+    "source_identity": {
+      "method": "rsvg-convert 256px renders of Downloads/lapis-silk.svg and assets/lapis.svg compared by sha256",
+      "identical": true
+    },
+    "icns_decoded_sizes": [
+      [16, 16], [32, 32], [128, 128], [256, 256], [512, 512],
+      [32, 32], [64, 64], [256, 256], [512, 512], [1024, 1024]
+    ],
+    "icns_decode_tool": "iconutil -c iconset",
+    "ios_png": {
+      "size": [1024, 1024],
+      "has_alpha": false,
+      "tool": "sips"
+    },
+    "mark_png": {
+      "sizes": [[48, 48], [72, 72]],
+      "format": "PNG RGBA",
+      "derivation": "write_mark_icon: defs + cabochon group over a square viewBox sized to the union of stone ellipse bounds and star polygon points (parsed per the SVG points grammar, comma pairs or flat coordinate lists) plus 3x the widest blur stdDeviation, one or two values per blur (viewBox 106.0 106.0 812.0 812.0)",
+      "probe": "sips -g pixelWidth -g pixelHeight -g hasAlpha on both PNGs (48/72 RGBA); Pillow RGBA scan (alpha>8) of the published 48px and 72px rasters: content fill 0.917 of height (0.708 width at 2x, 0.722 at 3x), content center exactly (0.500,0.500) at both sizes, corners (0,0,0,0), no content touching a canvas edge; renders of the same derived SVG at 48/72/96/128/192/256/384/512 all measure center (0.500,0.500) with symmetric bbox margins (7/7 and 2/2 px at 48, 10/10 and 3/3 px at 72); 512px render: max alpha on the top edge row 0, glow decays fully inside the frame",
+      "center_note": "Centers of 0.490/0.493/0.498 recorded in an earlier draft of this receipt were a measurement artifact, not artwork asymmetry: that probe averaged pixel indices ((left+right-1)/2) but normalized by the raster width, biasing every center by exactly -0.5/N (-0.0104 at 48px, -0.0069 at 72px, -0.0010 at 512px), reproducing the earlier numbers to the digit. With the continuous-coordinate formula ((left+right)/2 / width) the content is pixel-symmetric at every measured size, and the alpha>8 bbox is invariant across thresholds 2-32, so no quantization or threshold sensitivity is left unexplained.",
+      "tool": "sips and the Pillow RGBA scans above"
+    },
+    "favicon_png": {
+      "size": [32, 32],
+      "format": "PNG RGBA",
+      "tool": "file"
+    },
+    "bundle_icon_reference": "lapis (Info.plist.in ${MACOSX_BUNDLE_ICON_FILE}; CMake installs macos/lapis.icns into Resources; filename unchanged)",
+    "visual_review": [
+      "1024 site icon: tile, bevel, dome, six slim white rays reaching the stone edge along each ray direction, silk sheen band, no clipping or banding",
+      "iOS 1024 asset: flat #1C2234 background edge to edge, no tile edge remnants, stone/star/sheen present and centered",
+      "32px decode (upscaled): tile/stone/glow hierarchy legible; ray count and sheen degrade gracefully",
+      "16px decode (upscaled): dark rounded tile, blue stone, bright star center remain readable"
+    ],
+    "verification_method": "independent vision-model inspection of rendered outputs"
+  }
+}
