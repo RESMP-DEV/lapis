@@ -1445,6 +1445,74 @@ QByteArray installStandInGrok(const QDir& root) {
     return path;
 }
 
+// Restore planning must install the complete SSH policy or leave the saved
+// command intact. No event loop is pumped, so no executable is launched.
+void remoteOptionsRespectTheArgumentLimit() {
+    struct Case {
+        int count{};
+        QStringList options;
+        QStringList added;
+        bool rejected{};
+        bool live{};
+    };
+    const QStringList policy{"-o", "ControlPath=none",     "-o", "ServerAliveInterval=15",
+                             "-o", "ServerAliveCountMax=4"};
+    const std::vector<Case> cases{{58, {}, policy},
+                                  {60, {}, {}, true},
+                                  {62, {}, {}, true},
+                                  {64, policy, {}},
+                                  {62, policy.mid(2), policy.mid(0, 2)},
+                                  {58, {"-o", "ControlPath=shared"}, policy},
+                                  {62, {}, {}, false, true}};
+    for (const auto& variant : cases) {
+        QTemporaryDir directory(QStringLiteral("/tmp/lapis-remote-options-XXXXXX"));
+        require(directory.isValid(), "remote options directory");
+        const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+        const auto id = uuid();
+        auto record = agentRecord(root.path(), id, "general");
+        const auto program = root.filePath(QStringLiteral("ssh"));
+        writeExecutable(program, "#!/usr/bin/env bash\nexit 0\n");
+        auto arguments = variant.options;
+        while (arguments.size() < variant.count - 3)
+            arguments << QStringLiteral("-v");
+        arguments << QStringLiteral("-t") << QStringLiteral("fixture")
+                  << QStringLiteral("exec grok");
+        record.insert(QStringLiteral("program"), program);
+        record.insert(QStringLiteral("harness"), QStringLiteral("grok"));
+        record.insert(QStringLiteral("arguments"), QJsonArray::fromStringList(arguments));
+        WorkspaceOptions options;
+        options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+        options.restoreAgents = true;
+        writeRegistry(
+            options.storagePath,
+            {{"version", 2},
+             {"activeCategory", "general"},
+             {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+             {"agents", QJsonArray{record}}});
+        QLocalServer listener;
+        if (variant.live)
+            require(listener.listen(record.value(QStringLiteral("endpoint")).toString()),
+                    "the existing service stays listening");
+        const auto expected = variant.added + arguments;
+        for (int pass = 0; pass < 2; ++pass) {
+            Workspace workspace(WorkspaceMode::live, options);
+            require(workspace.sessions().size() == 1, "a rejected migration retains the tab");
+            require(variant.rejected
+                        ? workspace.workspaceError().contains(QStringLiteral("no room"))
+                        : workspace.workspaceError().isEmpty(),
+                    "an unrepresentable SSH migration has an explicit diagnostic");
+            const auto saved = QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                   .object()[QStringLiteral("agents")]
+                                   .toArray()
+                                   .first()
+                                   .toObject();
+            require(saved[QStringLiteral("arguments")].toArray() ==
+                        QJsonArray::fromStringList(expected),
+                    "restore is complete and idempotent, or leaves the original argv untouched");
+        }
+    }
+}
+
 // A Claude Code agent on another machine keeps one conversation: its first
 // launch names it, and a reconnect after the connection dropped, a restart
 // and nothing else resume it. A stand-in ssh records what it was given, per
@@ -1461,8 +1529,9 @@ void remoteClaudeReconnectsToItsConversation() {
     require(ssh.open(QIODevice::WriteOnly), "write the stand-in ssh");
     ssh.write(R"(#!/bin/sh
 d=$(dirname "$0"); host=$(printf '%s\n' "$@" | sed -n '/^-t$/{n;p;q;}')
-n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1)); echo $n > "$d/$host.count"
+n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1))
 printf '%s\n' "$@" > "$d/$host.call$n"
+echo $n > "$d/$host.count"
 case "$host:$n" in typo:*) exit 255;; devbox:1) sleep 1; exit 255;; devbox:2) sleep 1; exit 1;; esac
 echo connected
 exec sleep 600
@@ -1561,8 +1630,12 @@ exec sleep 600
         require(QDir(options.storagePath).removeRecursively() &&
                     QFile::rename(held_registry, options.storagePath),
                 "restore complete reconnect registry bytes");
-        require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 2; }, 10000) &&
-                    call(QStringLiteral("devbox"), 2) == first,
+        require(waitFor(
+                    [&] {
+                        return calls(QStringLiteral("devbox")) >= 2 &&
+                               call(QStringLiteral("devbox"), 2) == first;
+                    },
+                    10000),
                 "a dropped connection reconnects after a failed discard");
         workspace.setReconnectTimingForTesting(
             {.first_hold = std::chrono::milliseconds(300), .wait = std::chrono::milliseconds(100)});
@@ -4010,6 +4083,15 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("lapis"));
     try {
+        if (argc > 1) {
+            require(argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--case") &&
+                        QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options"),
+                    "Usage: lapis_workspace_tests [--case remote-options]");
+            remoteOptionsRespectTheArgumentLimit();
+            remoteClaudeReconnectsToItsConversation();
+            std::cout << "remote options and reconnect passed\n";
+            return 0;
+        }
         categoriesAndIdentity();
         projectPaths();
         explicitAgentIdentity();
@@ -4056,6 +4138,7 @@ int main(int argc, char** argv) {
         harnessesUpdateBeforeNewAgents();
         windowWaitsForTheRestoreHelper();
         phoneStartsAnAgentInItsCategory();
+        remoteOptionsRespectTheArgumentLimit();
         remoteClaudeReconnectsToItsConversation();
         resumingAConversationStartsItsCli();
         terminalsRunPlainShells();

@@ -293,10 +293,18 @@ constexpr qsizetype max_saved_arguments = 64;
 void addRemoteOptions(session::LaunchSpec& launch) {
     if (!remoteCommand(launch))
         return;
-    for (qsizetype at = remoteOptions().size() - 2; at >= 0; at -= 2)
-        if (!launch.arguments.contains(remoteOptions().at(at + 1)) &&
-            launch.arguments.size() + 2 <= max_saved_arguments)
-            launch.arguments = remoteOptions().mid(at, 2) + launch.arguments;
+    QStringList missing;
+    for (qsizetype at = 0; at < remoteOptions().size(); at += 2)
+        if (!launch.arguments.contains(remoteOptions().at(at + 1)))
+            missing += remoteOptions().mid(at, 2);
+    if (launch.arguments.size() + missing.size() > max_saved_arguments) {
+        const auto error =
+            QStringLiteral("Saved SSH arguments leave no room for lapis connection options. "
+                           "Recreate this remote tab.");
+        throw std::runtime_error(error.toStdString());
+    }
+    launch.arguments = missing + launch.arguments;
+    return;
 }
 constexpr qint64 updater_output_tail_bytes = 8192;
 } // namespace
@@ -1686,65 +1694,66 @@ void Workspace::applyStartupDefaults(const Agent& agent, ResumeLaunch& plan) {
 
 auto Workspace::restoredLaunch(const Agent& agent, QString* diagnostic)
     -> std::optional<ResumeLaunch> {
-    auto launch = agent.launch;
-    // Relocate a CLI whose recorded binary disappeared; never turn a saved
-    // transport such as ssh into the harness program while keeping its argv.
-    if (const auto* harness = find_harness(agent.harness);
-        harness && QFileInfo(launch.program).fileName() == harness->command &&
-        !QFileInfo(launch.program).isExecutable())
-        launch.program = harness_program(harness->id);
-    addRemoteOptions(launch);
-    if (launch.program.isEmpty() || !QFileInfo(launch.directory).isDir())
-        return std::nullopt;
-    const auto option = resumeOption(agent.harness);
-    ResumeLaunch plan{std::move(launch), agent.managed_resume_index, agent.managed_resume_identity};
-    const auto record = session::read_resume_record(agent.endpoint);
-    if (record && !resumable(*record, agent.harness)) {
-        // Retire only a proven lapis-owned pair. Explicit user arguments stay
-        // authoritative, including when old derived metadata no longer matches.
-        const auto index = plan.managed_resume_index;
-        if (managedResumeMatches(plan.launch.arguments, index, option,
-                                 plan.managed_resume_identity)) {
-            plan.launch.arguments.remove(index, 2);
-            plan.managed_resume_index = -1;
-            plan.managed_resume_identity.clear();
-        }
-        qWarning().noquote()
-            << "Automatic resume skipped: printed checkpoint cannot authorize resume for"
-            << agent.harness;
-    }
-    if (!option.isEmpty() && record && resumable(*record, agent.harness) &&
-        record->agent == agent.harness && conversationSaved(*record)) {
-        if (plan.managed_resume_index >= 0) {
-            // Replace only the pair whose provenance the registry recorded.
-            // A newer service checkpoint, including one after /clear, wins.
-            if (managedResumeMatches(plan.launch.arguments, plan.managed_resume_index, option,
-                                     plan.managed_resume_identity)) {
-                plan.launch.arguments[plan.managed_resume_index + 1] = record->session_id;
-                plan.managed_resume_identity = record->session_id;
-            }
-        } else if (std::none_of(plan.launch.arguments.cbegin(), plan.launch.arguments.cend(),
-                                [&option](const QString& argument) {
-                                    return argument == option ||
-                                           (option.startsWith(QLatin1Char('-')) &&
-                                            argument.startsWith(option + QLatin1Char('=')));
-                                })) {
-            // savedArguments() is the durable limit; an uncounted append must
-            // not turn a loadable registry into one the next startup rejects.
-            if (plan.launch.arguments.size() + 2 > max_saved_arguments) {
-                qWarning().noquote() << "Resume record not added: saved launch already has"
-                                     << plan.launch.arguments.size() << "arguments";
-            } else {
-                // No provenance means any matching argument is user-owned. Add a
-                // managed pair only when the user supplied no such option at all.
-                plan.managed_resume_index = static_cast<int>(plan.launch.arguments.size());
-                plan.managed_resume_identity = record->session_id;
-                plan.launch.arguments += QStringList{option, record->session_id};
-            }
-        }
-    }
-    applyStartupDefaults(agent, plan);
     try {
+        auto launch = agent.launch;
+        // Relocate a CLI whose recorded binary disappeared; never turn a saved
+        // transport such as ssh into the harness program while keeping its argv.
+        if (const auto* harness = find_harness(agent.harness);
+            harness && QFileInfo(launch.program).fileName() == harness->command &&
+            !QFileInfo(launch.program).isExecutable())
+            launch.program = harness_program(harness->id);
+        addRemoteOptions(launch);
+        if (launch.program.isEmpty() || !QFileInfo(launch.directory).isDir())
+            return std::nullopt;
+        const auto option = resumeOption(agent.harness);
+        ResumeLaunch plan{std::move(launch), agent.managed_resume_index,
+                          agent.managed_resume_identity};
+        const auto record = session::read_resume_record(agent.endpoint);
+        if (record && !resumable(*record, agent.harness)) {
+            // Retire only a proven lapis-owned pair. Explicit user arguments stay
+            // authoritative, including when old derived metadata no longer matches.
+            const auto index = plan.managed_resume_index;
+            if (managedResumeMatches(plan.launch.arguments, index, option,
+                                     plan.managed_resume_identity)) {
+                plan.launch.arguments.remove(index, 2);
+                plan.managed_resume_index = -1;
+                plan.managed_resume_identity.clear();
+            }
+            qWarning().noquote()
+                << "Automatic resume skipped: printed checkpoint cannot authorize resume for"
+                << agent.harness;
+        }
+        if (!option.isEmpty() && record && resumable(*record, agent.harness) &&
+            record->agent == agent.harness && conversationSaved(*record)) {
+            if (plan.managed_resume_index >= 0) {
+                // Replace only the pair whose provenance the registry recorded.
+                // A newer service checkpoint, including one after /clear, wins.
+                if (managedResumeMatches(plan.launch.arguments, plan.managed_resume_index, option,
+                                         plan.managed_resume_identity)) {
+                    plan.launch.arguments[plan.managed_resume_index + 1] = record->session_id;
+                    plan.managed_resume_identity = record->session_id;
+                }
+            } else if (std::none_of(plan.launch.arguments.cbegin(), plan.launch.arguments.cend(),
+                                    [&option](const QString& argument) {
+                                        return argument == option ||
+                                               (option.startsWith(QLatin1Char('-')) &&
+                                                argument.startsWith(option + QLatin1Char('=')));
+                                    })) {
+                // savedArguments() is the durable limit; an uncounted append must
+                // not turn a loadable registry into one the next startup rejects.
+                if (plan.launch.arguments.size() + 2 > max_saved_arguments) {
+                    qWarning().noquote() << "Resume record not added: saved launch already has"
+                                         << plan.launch.arguments.size() << "arguments";
+                } else {
+                    // No provenance means any matching argument is user-owned. Add a
+                    // managed pair only when the user supplied no such option at all.
+                    plan.managed_resume_index = static_cast<int>(plan.launch.arguments.size());
+                    plan.managed_resume_identity = record->session_id;
+                    plan.launch.arguments += QStringList{option, record->session_id};
+                }
+            }
+        }
+        applyStartupDefaults(agent, plan);
         plan.launch = session::validate_launch(plan.launch);
         return plan;
     } catch (const std::exception& error) {
@@ -1908,45 +1917,7 @@ void Workspace::restore() {
         if (std::none_of(categories_.begin(), categories_.end(),
                          [&](const auto& category) { return category.id == active_category_; }))
             active_category_ = categories_.front().id;
-        // Save the full restart plan before constructing create-mode connections.
-        // Existing-service reconnections keep their separate path below.
-        struct RestartPlan {
-            SessionPreview* document;
-            QString endpoint;
-            session::LaunchSpec launch;
-        };
-        std::vector<RestartPlan> restarting;
-        for (const auto& item : sessions_) {
-            watch(item.get());
-            const auto entry = agents_.find(item->sessionId());
-            if (entry == agents_.end())
-                throw std::runtime_error("Missing restored agent metadata");
-            auto& agent = entry.value();
-            // A card still in the workspace whose service is gone comes back,
-            // like a restored terminal tab; Command-W is what removes an agent.
-            if (restore_agents_ && !serviceRunning(agent.endpoint))
-                if (const auto launch = restoredLaunch(agent)) {
-                    agent.launch = launch->launch;
-                    agent.managed_resume_index = launch->managed_resume_index;
-                    agent.managed_resume_identity = launch->managed_resume_identity;
-                    restarting.push_back({item.get(), agent.endpoint, agent.launch});
-                    continue;
-                }
-            if (headless_)
-                continue; // running services are the window's to reattach
-            item->startLive(agent.endpoint, agent.launch, session::wire::AttachMode::reconnect);
-        }
-        // Restarted agents have new launch arguments, part of their fingerprint.
-        if (!restarting.empty() && !save())
-            throw std::runtime_error(error_.toStdString());
-        for (const auto& plan : restarting)
-            plan.document->startLive(plan.endpoint, plan.launch, session::wire::AttachMode::create);
-        if (restore_agents_ && !headless_) {
-            conversation_timer_.setInterval(60000);
-            connect(&conversation_timer_, &QTimer::timeout, this, &Workspace::recordConversations);
-            conversation_timer_.start();
-            recordConversations();
-        }
+        connectRestoredAgents();
     } catch (const std::exception& error) {
         sessions_.clear();
         agents_.clear();
@@ -1957,6 +1928,55 @@ void Workspace::restore() {
         fail(QStringLiteral("Cannot restore workspace: ") + QString::fromUtf8(error.what()));
     }
 }
+void Workspace::connectRestoredAgents() {
+    // Save the full restart plan before constructing create-mode connections.
+    // Existing-service reconnections keep their separate path below.
+    struct RestartPlan {
+        SessionPreview* document;
+        QString endpoint;
+        session::LaunchSpec launch;
+    };
+    std::vector<RestartPlan> restarting;
+    QStringList restart_failures;
+    for (const auto& item : sessions_) {
+        watch(item.get());
+        const auto entry = agents_.find(item->sessionId());
+        if (entry == agents_.end())
+            throw std::runtime_error("Missing restored agent metadata");
+        auto& agent = entry.value();
+        // A card still in the workspace whose service is gone comes back,
+        // like a restored terminal tab; Command-W is what removes an agent.
+        if (restore_agents_ && !serviceRunning(agent.endpoint)) {
+            QString diagnostic;
+            if (const auto launch = restoredLaunch(agent, &diagnostic)) {
+                agent.launch = launch->launch;
+                agent.managed_resume_index = launch->managed_resume_index;
+                agent.managed_resume_identity = launch->managed_resume_identity;
+                restarting.push_back({item.get(), agent.endpoint, agent.launch});
+                continue;
+            }
+            if (!diagnostic.isEmpty())
+                restart_failures << QStringLiteral("%1: %2").arg(item->title(), diagnostic);
+        }
+        if (headless_)
+            continue; // running services are the window's to reattach
+        item->startLive(agent.endpoint, agent.launch, session::wire::AttachMode::reconnect);
+    }
+    // Restarted agents have new launch arguments, part of their fingerprint.
+    if (!restarting.empty() && !save())
+        throw std::runtime_error(error_.toStdString());
+    if (!restart_failures.isEmpty())
+        fail(restart_failures.join(QLatin1Char('\n')));
+    for (const auto& plan : restarting)
+        plan.document->startLive(plan.endpoint, plan.launch, session::wire::AttachMode::create);
+    if (restore_agents_ && !headless_) {
+        conversation_timer_.setInterval(60000);
+        connect(&conversation_timer_, &QTimer::timeout, this, &Workspace::recordConversations);
+        conversation_timer_.start();
+        recordConversations();
+    }
+}
+
 void SessionPreview::setUpdating(const QString& label) {
     if (updating_ == label)
         return;

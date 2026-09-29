@@ -1981,7 +1981,12 @@ A prototype, deliberately simpler than the SSH design first proposed:
   desktop starts a remote agent as `ssh -o ControlPath=none -o
   ServerAliveInterval=15 -o ServerAliveCountMax=4 -t <host> 'cd <folder> &&
   exec "${SHELL:-/bin/sh}" -lic <cli>'` with each word quoted, in terminal mode, and never updates a
-  remote CLI first. A remote Claude Code agent's command also carries its
+  remote CLI first. Saved SSH launches acquire all missing connection options together.
+  If they cannot fit under the 64-argument registry limit, restore preserves
+  the saved command and tab and reports that the remote tab must be recreated;
+  it never starts a partially migrated command. Live reattachment preserves
+  the original fingerprint. `lapis_workspace_tests --case remote-options`
+  exercises the boundary and the existing reconnect stand-in. A remote Claude Code agent's command also carries its
   conversation id (`s=<uuid>`); see Reconnect after a dropped connection. The phone keeps the list, CLIs,
   machines and indexes on disk per Mac, refreshes them in the background,
   and searches an index in memory, narrowing each keystroke from the last
