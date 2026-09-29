@@ -409,6 +409,7 @@ void LiveConnection::begin(wire::AttachMode mode) {
     capability_retry_ = false;
     attempts_ = 0;
     last_sequence_ = 0;
+    resize_sent_after_sequence_ = 0;
     shown_size_ = {};
     pending_resize_.reset();
     claimed_over_.reset();
@@ -559,9 +560,12 @@ bool LiveConnection::send(wire::Kind kind, const QByteArray& payload) {
 void LiveConnection::resize(session::TerminalSize size) {
     wanted_size_requested_ = true;
     // Asked again for the size it wants: sent only when the terminal has
-    // another and none is on its way. A resize lost while history showed, or
-    // another device's since, would otherwise leave the stage scaling it.
-    if (size == wanted_size_ && (!ready_ || size == shown_size_ || pending_resize_ == size))
+    // another. An unconfirmed resize can be superseded by another view;
+    // allow one explicit re-ask after each newly received snapshot. Progress
+    // is not acknowledgement: pending history still needs a matching size.
+    if (size == wanted_size_ &&
+        (!ready_ || size == shown_size_ ||
+         (pending_resize_ == size && last_sequence_ == resize_sent_after_sequence_)))
         return;
     // Taking it back from another size is that size's claim.
     if (size == wanted_size_)
@@ -576,8 +580,10 @@ void LiveConnection::sendResize(session::TerminalSize size) {
     QByteArray bytes;
     QDataStream out(&bytes, QIODevice::WriteOnly);
     out << quint16(size.columns) << quint16(size.rows);
-    if (send(wire::Kind::resize, bytes))
+    if (send(wire::Kind::resize, bytes)) {
+        resize_sent_after_sequence_ = last_sequence_;
         pending_resize_ = size != shown_size_ ? std::optional(size) : std::nullopt;
+    }
 }
 
 void LiveConnection::claimSize() {
@@ -595,7 +601,7 @@ void LiveConnection::setWantedSize(session::TerminalSize size) {
 
 void LiveConnection::sendWantedSize() {
     if (ready_ && wanted_size_requested_ && wanted_size_ != shown_size_ &&
-        pending_resize_ != wanted_size_)
+        (pending_resize_ != wanted_size_ || last_sequence_ != resize_sent_after_sequence_))
         sendResize(wanted_size_);
 }
 

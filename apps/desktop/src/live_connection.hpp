@@ -82,6 +82,7 @@ class LiveConnection final : public QObject {
     session::wire::AttachRequest request_;
     std::optional<session::wire::Attachment> attachment_;
     quint64 last_sequence_{};
+    quint64 resize_sent_after_sequence_{};
     quint64 next_history_request_id_{1};
     bool history_request_ids_exhausted_{};
     std::optional<quint64> outstanding_history_request_;

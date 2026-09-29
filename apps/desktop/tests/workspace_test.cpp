@@ -1459,8 +1459,9 @@ void remoteClaudeReconnectsToItsConversation() {
     require(ssh.open(QIODevice::WriteOnly), "write the stand-in ssh");
     ssh.write(R"(#!/bin/sh
 d=$(dirname "$0"); host=$6
-n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1)); echo $n > "$d/$host.count"
+n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1))
 printf '%s\n' "$@" > "$d/$host.call$n"
+echo $n > "$d/$host.count"
 case "$host:$n" in typo:*) exit 255;; devbox:1) sleep 1; exit 255;; devbox:2) sleep 1; exit 1;; esac
 echo connected
 exec sleep 600

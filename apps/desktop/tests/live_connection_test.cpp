@@ -720,6 +720,60 @@ void asking_again_takes_the_size_back() {
     require(peer.read().kind == wire::Kind::resize, "The view did not take its size back");
 }
 
+// New snapshots permit an explicit retry; they do not acknowledge an earlier
+// resize. In particular an output frame can already be in flight when we ask.
+void superseded_resize_can_retry_without_releasing_history() {
+    Fixture f;
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    f.terminal.resize({5, 2});
+    f.terminal.feed("new output");
+    const auto in_flight =
+        wire::encode_snapshot_message({{f.identity, 1}, 2, f.terminal.snapshot()});
+    f.document.resizeTerminal({6, 3});
+    require(peer.read().kind == wire::Kind::resize, "Initial resize was not sent");
+    peer.send(wire::Kind::snapshot, in_flight);
+    settle();
+    require(peer.socket->bytesAvailable() == 0, "Snapshot progress resized a passive view");
+    f.document.resizeTerminal({6, 3});
+    require(peer.read().kind == wire::Kind::resize,
+            "An unconfirmed size could not be requested again");
+    for (int repeat = 0; repeat < 3; ++repeat)
+        f.document.resizeTerminal({6, 3});
+    settle();
+    require(peer.socket->bytesAvailable() == 0, "Repeated layout sent duplicate pending resizes");
+
+    f.document.scrollHistory(1);
+    require(f.document.historyRequestPending(), "History did not defer behind the retry");
+    f.terminal.feed("more output");
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 3, f.terminal.snapshot()}));
+    settle();
+    require(f.document.historyRequestPending() && peer.socket->bytesAvailable() == 0,
+            "A foreign-size snapshot was mistaken for resize acknowledgement");
+
+    // Leaving history uses sendWantedSize rather than a fresh layout request.
+    f.document.returnToLive();
+    require(peer.read().kind == wire::Kind::resize,
+            "Returning to live kept a superseded resize wedged");
+    f.document.scrollHistory(1);
+    settle();
+    require(peer.socket->bytesAvailable() == 0, "History escaped the new pending resize");
+    f.terminal.resize({6, 3});
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 4, f.terminal.snapshot()}));
+    const auto history = f.historyRequest(peer);
+    lapis::session::Terminal archive({6, 1});
+    archive.feed("older");
+    f.historyReply(peer, history.request_id, 1, archive.snapshot());
+    until([&] { return !f.document.historyRequestPending(); });
+    require(f.document.historyActive() && f.document.snapshot().size.rows == 3,
+            "History did not freeze the confirmed resized screen");
+}
+
 void capabilities_downgrade_without_losing_supported_links() {
     for (const bool supports_links : {true, false}) {
         Fixture f;
@@ -810,6 +864,7 @@ int main(int argc, char** argv) {
         legacy_server();
         history_waits_for_resize_and_cancels();
         asking_again_takes_the_size_back();
+        superseded_resize_can_retry_without_releasing_history();
         capabilities_downgrade_without_losing_supported_links();
         std::cout << "Identity, initial-screen gating, history paging/cancellation, explicit "
                      "reconnect/discovery, stale snapshot and legacy rejection passed\n";
