@@ -1,3 +1,4 @@
+#include "keymap.hpp"
 #include "terminal_surface.hpp"
 #include "workspace.hpp"
 
@@ -119,7 +120,7 @@ QImage render(TerminalSurface& surface, std::uint32_t expected_rgb, int minimum_
 
 QFont terminal_font() {
     QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    font.setPixelSize(16);
+    font.setPixelSize(lapis::desktop::kTerminalFontSizeDefault);
     font.setStyleHint(QFont::Monospace);
     return font;
 }
