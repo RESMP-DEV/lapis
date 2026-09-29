@@ -3150,6 +3150,25 @@ has answered for it loses every agent. An install waits for the old window to
 exit and a few seconds more before touching the bundle. Sparkle replaces the
 bundle only after the app has exited, so it can race BTM the first time lapis
 quits on a Mac with no BTM entry for it yet; that is not yet measured.
+### The phone follows the Mac's category order (September 28)
+
+The phone showed the gateway's list in the registry's order, which is the
+Mac's, but without the Mac's numbers, and it asked again only every eight
+seconds. Each category header on the phone, and each row of its Arrange
+categories sheet, now carries its position (1 to the last) as the Mac's
+sidebar does for Command-1 to Command-9. The agent list gains a `version`,
+read from the registry file (inode, modification time and size) before the
+registry itself, so it can only be older than what is sent. A request carrying
+`after=<version>` waits up to eight seconds for the file to change and then
+answers either way; the phone asks with the version it has, so a change on the
+Mac (moving, adding or renaming a category, moving an agent) reaches it within
+about a quarter second, and running state still refreshes every eight seconds.
+The first request when the list appears (or the app returns to the front) is
+answered at once, so it opens with current running state.
+A gateway that sends no version is asked every eight seconds as before, and an
+older phone that sends no `after` is answered at once. `ListingTests` in
+`scripts/tests/test_lapis_remote.py` checks the order, the wait, the answer to
+a replaced registry and the immediate answer to a stale version.
 
 ## Contracts to preserve
 

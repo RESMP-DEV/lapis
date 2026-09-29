@@ -466,7 +466,9 @@ installs the app with your development profile, set to reach this Mac by its
 Tailscale name. To work on it in Xcode, run `xcodegen` in `apps/ios`
 (`Config/Local.xcconfig`, not committed, holds your team and default host).
 
-The app lists each category's agents as cards with the harness mark and the
+The app lists the categories in the Mac's order, numbered as the Mac numbers
+them, and follows the Mac at once when a category is moved, added or renamed
+there. It lists each category's agents as cards with the harness mark and the
 folder in path form (`~/dev/infinity`; an agent reached over ssh shows its host
 first, `devbox:~/lapis`). Opening an agent shows its screen at phone width, with
 a key bar (esc, ^C, arrows, enter, backspace, tab, ^U, ^D) and a message field
