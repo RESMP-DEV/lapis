@@ -57,10 +57,25 @@
     {
       "command": "Isolated SIGN_INS and quoted shell substitution counterexamples",
       "result": "Base64url payload lengths with remainders 0, 2 and 3 decode successfully. Quotes, backticks and command-substitution text in fixture token content remain literal data."
+    },
+    {
+      "command": "python3 scripts/check_restore.py --help",
+      "invocation_note": "The current runner ignores argv and executed its documented full restore qualification; no second run was made.",
+      "result": "Passed both simulated power-loss cycles, including launchd. All six conversations resumed with managed provenance; Codex and Claude preserved real native context against loopback fake models. Invoking the helper with all agents alive preserved their processes.",
+      "tools": {
+        "codex": {
+          "version": "codex-cli 0.0.0",
+          "resolved_binary_sha256": "e1e083ab281668d370b5aa4d21a2803158723380ef1a04be80ffa459e700d407"
+        },
+        "claude": {
+          "version": "2.1.284 (Claude Code)",
+          "resolved_binary_sha256": "50a14c2f50f56668380fdda490167f1d3630d5cc18fb8aed3073c2c7ea7314fe"
+        }
+      }
     }
   ],
   "limitations": [
-    "All credentials, agents, installers and hosts are fixture data. No actual account login, package update or remote SSH session was used.",
+    "Account-switch tests use fixture credentials, stand-ins and synthetic observation. Restore qualification additionally uses installed Codex and Claude CLI binaries with isolated homes and loopback fake models; no actual login, paid inference, package update or SSH session was used.",
     "The first normal compiler change reset CMake cache variables and disabled desktop. Its four-test result was rejected as desktop evidence; the preset was reapplied and the actual 33-suite desktop gate was run.",
     "Failed original logs are retained. Remaining task-owned fixture processes were explicitly stopped after validation; unrelated user processes and dirty work were preserved."
   ]
