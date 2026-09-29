@@ -5,13 +5,15 @@
     "apps/desktop/src/workspace.cpp": "79038ab02d8b53f441a68cc295bcac9d62f7caf9f059f80f15c4c6f6bb8f16f6",
     "apps/desktop/src/workspace.hpp": "34acb6a0d63b80c6c51ff635d81cfc16843baddbac55d870c69f745ffc97ea51",
     "apps/desktop/tests/workspace_test.cpp": "fa23ffd314d133f0b064abc52dba9b5217a45a94c9a9fc585be260badd52bde8",
-    "docs/architecture.md": "6eedebba592faa8622191086a6293d0dd6c9d32fec1129b23fc9ee9331f29c06"
+    "docs/architecture.md": "6eedebba592faa8622191086a6293d0dd6c9d32fec1129b23fc9ee9331f29c06",
+    "apps/desktop/tests/terminal_render_test.cpp": "2df3d4d87784551bc392e6266a10403361c8683142b502c8dd00c7bec828b9d7"
   },
   "changes": [
     "Report operation-scoped reload failures, including failures before a terminate request is queued.",
     "Retire pending reloads after attachment disconnect/replacement or service-stop timeout; permit a later explicit retry.",
     "Preserve earlier batch failures when later restarts save successfully.",
-    "Add disposable-peer failure regressions and a focused --case reload selector."
+    "Add disposable-peer failure regressions and a focused --case reload selector.",
+    "Use the shared terminal font default in renderer expectations; the previous 16-pixel expectation failed on the unchanged baseline after the product default became 14."
   ],
   "checks": [
     {
@@ -56,6 +58,46 @@
     {
       "command": "git diff --check",
       "exit_code": 0
+    },
+    {
+      "command": "python3 scripts/lapis.py build --jobs 4",
+      "result": "Compilation, formatting, clang-tidy and Cppcheck passed. Initial offscreen CTest passed 27/32; all five failed cases subsequently passed in the native checks below. This is aggregate coverage, not a single green full-gate invocation.",
+      "exit_code": 1
+    },
+    {
+      "command": "QT_QPA_PLATFORM=cocoa ctest --test-dir build/desktop -R '^(window-state|appearance-input|terminal-render)$' --no-tests=error --output-on-failure --parallel 1",
+      "exit_code": 8,
+      "result": "Window-state and appearance-input passed. Renderer failed before repairing the baseline font expectation."
+    },
+    {
+      "command": "QT_QPA_PLATFORM=cocoa ctest --test-dir build/desktop -R '^terminal-render$' --no-tests=error --output-on-failure",
+      "exit_code": 0,
+      "result": "Passed after font fixture repair, 1.26 seconds; CTest supplied the macOS renderer environment."
+    },
+    {
+      "command": "QT_QPA_PLATFORM=cocoa ctest --test-dir build/desktop -R '^(ui-preview|terminal-input)$' --no-tests=error --output-on-failure --parallel 1",
+      "exit_code": 0,
+      "result": "Both suites passed, 22.75 seconds."
+    },
+    {
+      "command": "python3 scripts/lapis.py ui-review",
+      "exit_code": 0,
+      "result": "Full UI, shortcuts and terminal-input background checks passed."
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --case invalid-resize-and-signal --case replacement-service --case literal-resize-exit --case detach --case failures",
+      "exit_code": 0,
+      "result": "All five selected service/CLI cases passed."
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen build/desktop-asan/apps/desktop/lapis_workspace_tests --case reload",
+      "exit_code": 0,
+      "result": "Desktop-enabled ASan/UBSan reload cases passed; no sanitizer finding."
+    },
+    {
+      "command": "clang-tidy -p build/desktop apps/desktop/tests/terminal_render_test.cpp",
+      "exit_code": 0,
+      "result": "Changed renderer test checked after fixture repair."
     }
   ],
   "retained_failed_attempts": [
@@ -66,9 +108,10 @@
     }
   ],
   "limitations": [
-    "This is local repair validation, not complete PR or stack qualification.",
-    "Full desktop gate, unaffected CLI/live-adapter coverage and combined dependent PR integration remain to be reconciled before publishing or merging.",
-    "No GUI focus, live account, real agent CLI, SSH connection or updater was exercised.",
-    "Vendor Qt and Ghostty remain uninstrumented."
+    "Aggregate local verification covers the changed reload behavior and all registered desktop suites; the initial failed gate receipt is retained.",
+    "No physical input or new native IME qualification; background checks establish logical Qt behavior only.",
+    "Real agent authentication, live provider usage, SSH connectivity and updater execution were not exercised.",
+    "Vendor Qt and Ghostty remain uninstrumented.",
+    "Dependent PR stack integration and newly arriving reviews remain separate work."
   ]
 }
