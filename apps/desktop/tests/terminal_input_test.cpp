@@ -727,6 +727,99 @@ void command_links_open() {
 // Dragging selects screen text and double-clicking selects a word. The copy
 // chord copies without sending input, typing clears the selection, and the
 // wheel asks for older history on the normal screen.
+// A next prompt offered at the cursor: drawn there, typed by Tab, typed and
+// submitted by Command-Return, and withdrawn by any other key the agent gets.
+void suggestions() {
+    Fixture f;
+    QQuickWindow window;
+    window.setGeometry(100, 100, 640, 360);
+    lapis::desktop::TerminalSurface surface(window.contentItem());
+    surface.setSize(QSizeF(640, 360));
+    surface.setHoldResize(true);
+    surface.setDocument(&f.document);
+    surface.setInteractive(true);
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    window.show();
+    until([&] { return window.isExposed(); });
+    lapis::desktop::test::activate_test_window(window);
+    until([&] { return window.isActive(); });
+    settle();
+    until([&] {
+        surface.forceActiveFocus();
+        return surface.hasActiveFocus();
+    });
+    static_cast<void>(text_frames(peer));
+    lapis::session::Terminal wide{{40, 4}};
+    wide.feed("> ");
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 2, wide.snapshot()}));
+    until([&] { return f.document.snapshot().size.columns == 40; });
+    settle();
+    std::vector<bool> used;
+    int dismissed = 0;
+    QObject::connect(&surface, &lapis::desktop::TerminalSurface::suggestionUsed,
+                     [&used](bool sent) { used.push_back(sent); });
+    QObject::connect(&surface, &lapis::desktop::TerminalSurface::suggestionDismissed,
+                     [&dismissed] { ++dismissed; });
+    const auto frames = [&peer](std::size_t count) {
+        std::vector<wire::Frame> found;
+        until([&] {
+            peer.bytes += peer.socket->readAll();
+            wire::Frame frame;
+            while (wire::take_frame(peer.bytes, frame))
+                if (frame.kind != wire::Kind::resize)
+                    found.push_back(frame);
+            return found.size() >= count;
+        });
+        return found;
+    };
+    const auto payload = [](const wire::Frame& frame) {
+        return wire::decode_control(frame.payload).payload;
+    };
+    const auto press = [&surface](int key, Qt::KeyboardModifiers modifiers, const QString& text) {
+        QKeyEvent event(QEvent::KeyPress, key, modifiers, text);
+        QCoreApplication::sendEvent(&surface, &event);
+    };
+
+    const auto plain = window.grabWindow();
+    surface.setSuggestion(QStringLiteral("go now"));
+    settle();
+    require(window.grabWindow() != plain, "The suggestion was not drawn");
+
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    auto typed = frames(1);
+    require(typed.size() == 1 && typed[0].kind == wire::Kind::paste &&
+                payload(typed[0]) == QByteArray("go now"),
+            "Tab did not type the suggestion as a paste");
+    require(used == std::vector<bool>{false} && surface.suggestion().isEmpty(),
+            "Tab did not use up the suggestion");
+
+    surface.setSuggestion(QStringLiteral("status?"));
+    press(Qt::Key_Return, Qt::MetaModifier, QStringLiteral("\r"));
+    typed = frames(2);
+    require(typed.size() == 2 && typed[0].kind == wire::Kind::paste &&
+                payload(typed[0]) == QByteArray("status?") && typed[1].kind == wire::Kind::key &&
+                static_cast<unsigned char>(payload(typed[1]).at(0)) ==
+                    static_cast<unsigned char>(lapis::session::TerminalKey::enter),
+            "Command-Return did not type and submit the suggestion");
+    require(used == std::vector<bool>{false, true}, "Command-Return was not reported as sent");
+
+    surface.setSuggestion(QStringLiteral("go"));
+    press(Qt::Key_C, Qt::MetaModifier, QStringLiteral("c"));
+    require(surface.suggestion() == QLatin1String("go") && dismissed == 0,
+            "A Command shortcut withdrew the suggestion");
+    press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    typed = frames(1);
+    require(typed.size() == 1 && payload(typed[0]) == QByteArray("x"),
+            "Typing past a suggestion did not reach the agent");
+    require(dismissed == 1 && surface.suggestion().isEmpty() && used.size() == 2,
+            "Typing past a suggestion did not withdraw it");
+}
+
 void selection_and_scroll() {
     Fixture f;
     QQuickWindow window;
@@ -929,6 +1022,7 @@ int main(int argc, char** argv) {
         require(background == (QGuiApplication::platformName() == QStringLiteral("offscreen")),
                 "Offscreen input tests require explicit --background mode");
         input_contract(background);
+        suggestions();
         selection_and_scroll();
         links_follow_wrapped_rows();
         command_links_open();
@@ -936,7 +1030,8 @@ int main(int argc, char** argv) {
         if (background)
             std::cout << "Background Qt/software mode; native macOS input and GPU not exercised\n";
         std::cout
-            << "Qt IME commit/cancel, replacement rejection, paste, selection/copy, wheel, links, "
+            << "Qt IME commit/cancel, replacement rejection, paste, suggestions, selection/copy, "
+               "wheel, links, "
                "history, focus, document, size claims "
                "and disconnect ownership passed\n";
     } catch (const std::exception& error) {

@@ -316,6 +316,23 @@ NAME --email E --on local devbox` signs Codex in to a home kept for that plan,
 which shares its sessions and settings with `~/.codex`. Credentials never
 appear on a command line: a remote session reads its plan's credential there.
 
+lapis can guess what you will type next, as Cursor's Tab guesses an edit. Turn
+it on with `"nextPrompt": {"auto": true}` in `~/.lapis/lapis.json`. When a
+Claude Code or Codex agent finishes a turn, lapis reads its conversation where
+it runs (over ssh for another machine) and asks a model on this Mac, through
+the Claude Code CLI and the plan it is signed in to (never an API key), with
+your `~/.claude/CLAUDE.md`, the agent's screen, every other agent's state and
+your latest prompts elsewhere. A guess at least `minConfidence` likely (0.5)
+shows dim after the agent's cursor: Tab types it, Command-Return types and
+sends it, and any other key withdraws it. Nothing is sent without one of those
+keys. `model` (`claude-opus-5-5`), `effort` and `maxPerHour` (60) are the other
+settings. Each call spends plan usage. Claude Code's own prompt suggestions may
+show beneath; set `promptSuggestionEnabled` to false in its settings to leave
+only lapis's. Every guess and what became of it is kept, owner-only, in
+`~/.lapis/next_prompt.jsonl`; `scripts/next_prompt_eval.py log --judge` compares
+them with what you typed, and `replay --machine HOST` measures the same
+prediction on past transcripts.
+
 On the Mac, closing the window (its close button, Command-Shift-W, or Command-W
 with no agent left) only hides it:
 lapis keeps running, with alerts and the phone, and its Dock icon brings the

@@ -137,6 +137,8 @@ constexpr auto kLinkKey = Qt::Key_Meta;
 constexpr auto kLinkModifier = Qt::ControlModifier;
 constexpr auto kLinkKey = Qt::Key_Control;
 #endif
+// A suggestion sent with Command-Return is submitted once its paste settled.
+constexpr int kSubmitAfterPasteMs = 150;
 
 void add_rectangle(QSGNode& node, const QRectF& bounds, const QColor& value) {
     auto rectangle = std::make_unique<QSGSimpleRectNode>(bounds, value);
@@ -416,6 +418,52 @@ void add_row(QSGNode& backgrounds, QSGTextNode& glyphs, const session::TerminalS
         add_shapes(backgrounds, drawn, ink);
 }
 
+QColor blend(const QColor& from, const QColor& to, qreal share) {
+    return QColor::fromRgbF(static_cast<float>(from.redF() * share + to.redF() * (1 - share)),
+                            static_cast<float>(from.greenF() * share + to.greenF() * (1 - share)),
+                            static_cast<float>(from.blueF() * share + to.blueF() * (1 - share)));
+}
+
+// An offered next prompt, dim just after the cursor, then the keys that take
+// it. It covers the rest of the row but its last two cells (a box's border),
+// so a CLI's own suggestion there does not show through.
+void add_suggestion(QSGNode& overlays, QQuickWindow& window,
+                    const session::TerminalSnapshot& snapshot, const QFont& font,
+                    const QString& suggestion, qreal cell_width, qreal row_height) {
+    const int first = snapshot.cursor.column + 1;
+    const int last = static_cast<int>(snapshot.size.columns) - 2;
+    if (!snapshot.cursor.in_viewport || snapshot.cursor.row >= snapshot.size.rows ||
+        last - first < 4)
+        return;
+    const QFontMetricsF metrics(font);
+    const qreal room = (last - first) * cell_width;
+    const QString keys = QStringLiteral("  ⇥ ⌘↩");
+    const qreal keys_width = room > 24 * cell_width ? metrics.horizontalAdvance(keys) : 0;
+    QString text = suggestion.trimmed().section(QLatin1Char('\n'), 0, 0);
+    if (text.size() < suggestion.trimmed().size())
+        text += QStringLiteral(" …");
+    text = metrics.elidedText(text, Qt::ElideRight, room - keys_width);
+    const QPointF origin(first * cell_width, snapshot.cursor.row * row_height);
+    const QColor background = color(snapshot.background_rgb);
+    const QColor foreground = color(snapshot.foreground_rgb);
+    add_rectangle(overlays, QRectF(origin, QSizeF(room, row_height)), background);
+    const auto write = [&](const QString& words, QPointF at, qreal share) {
+        auto node = std::unique_ptr<QSGTextNode>(window.createTextNode());
+        node->setColor(blend(foreground, background, share));
+        QTextLayout layout(words, font);
+        layout.beginLayout();
+        auto line = layout.createLine();
+        if (line.isValid())
+            line.setLineWidth(10000);
+        layout.endLayout();
+        node->addTextLayout(at, &layout);
+        overlays.appendChildNode(node.release());
+    };
+    write(text, origin, 0.5);
+    if (keys_width > 0)
+        write(keys, origin + QPointF(metrics.horizontalAdvance(text), 0), 0.3);
+}
+
 void add_cursor(QSGNode& overlays, QQuickWindow& window, const session::TerminalSnapshot& snapshot,
                 const QFont& font, qreal cell_width, qreal row_height) {
     if (!snapshot.cursor.visible || !snapshot.cursor.in_viewport ||
@@ -615,6 +663,7 @@ struct TerminalSurface::RenderState {
     qreal minimum_scale{};
     std::optional<std::pair<QPoint, QPoint>> selection;
     std::vector<TerminalMatch> link;
+    QString suggestion;
 };
 
 void TerminalSurface::publishFrame(bool snapshot_changed) {
@@ -622,6 +671,7 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
     // render thread gets owned immutable values through an explicit C++ handoff.
     auto frame = std::make_shared<RenderState>();
     frame->preedit = preedit_;
+    frame->suggestion = suggestion_;
     frame->viewport = size();
     frame->font_family = use_system_font_ ? QString() : resolved_font_family_;
     frame->font_pixel_size = font_pixel_size_;
@@ -882,6 +932,9 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
         root->overlays->removeChildNode(child);
         delete child;
     }
+    if (!frame->suggestion.isEmpty() && frame->preedit.isEmpty())
+        add_suggestion(*root->overlays, *window(), snapshot, font, frame->suggestion, cell_width,
+                       row_height);
     add_cursor(*root->overlays, *window(), snapshot, font, cell_width, row_height);
     if (frame->selection)
         add_selection(*root->overlays, snapshot, frame->selection->first, frame->selection->second,
@@ -1407,6 +1460,44 @@ std::optional<TerminalMatch> terminal_find(const session::TerminalSnapshot& snap
     return std::nullopt;
 }
 
+void TerminalSurface::setSuggestion(const QString& suggestion) {
+    if (suggestion_ == suggestion)
+        return;
+    suggestion_ = suggestion;
+    emit suggestionChanged();
+    publishFrame(false);
+}
+
+// Tab types the offered suggestion, and Command-Return also submits it once
+// the paste has settled, as the phone does. Any other key that reaches the
+// agent withdraws it; Command shortcuts do not.
+bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
+    if (suggestion_.isEmpty() || modifier_key(event.key()))
+        return false;
+    const auto modifiers = event.modifiers() & ~Qt::KeypadModifier;
+    const bool enter = event.key() == Qt::Key_Return || event.key() == Qt::Key_Enter;
+    const bool send = enter && modifiers == Qt::MetaModifier;
+    if (!send && !(event.key() == Qt::Key_Tab && modifiers == Qt::NoModifier)) {
+        if (!modifiers.testFlag(Qt::MetaModifier)) {
+            setSuggestion({});
+            emit suggestionDismissed();
+        }
+        return false;
+    }
+    if (!pasteText(suggestion_))
+        return true;
+    setSuggestion({});
+    if (send) {
+        const QPointer<SessionPreview> owner = document_;
+        QTimer::singleShot(kSubmitAfterPasteMs, this, [this, owner] {
+            if (owner && document_ == owner && acceptsTerminalInput())
+                document_->sendKey(session::TerminalKey::enter, {});
+        });
+    }
+    emit suggestionUsed(send);
+    return true;
+}
+
 bool TerminalSurface::pasteText(const QString& text) {
     if (!document_ || text.isEmpty() || !interactive_ || !document_->live() || pasting_)
         return false;
@@ -1709,6 +1800,10 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
             ++ime_epoch_;
             resetInputContext();
         }
+        event->accept();
+        return;
+    }
+    if (takeSuggestion(*event)) {
         event->accept();
         return;
     }

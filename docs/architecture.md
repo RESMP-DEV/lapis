@@ -3196,6 +3196,57 @@ exit and a few seconds more before touching the bundle. Sparkle replaces the
 bundle only after the app has exited, so it can race BTM the first time lapis
 quits on a Mac with no BTM entry for it yet; that is not yet measured.
 
+### Predicting the next prompt (September 29)
+
+The goal is Cursor's Tab for prompts: when an agent finishes a turn, the prompt
+the person will likely type is ready at its cursor. A pilot on 40 prompts one
+person typed to Claude Code in September (Opus 5.5 given only the conversation
+before each, and that person's standing instructions; a second Opus call
+grading) found one of three guesses sendable as-is for 7, and the right intent
+for 17. Short replies were the predictable part: 5 of 7 prompts of four words or
+fewer, and all 4 approvals, against 2 of 33 longer prompts. Most longer prompts
+carried something the conversation did not: another agent's state, where the
+person was, a pasted meeting, a new idea. The model also over-guessed approval
+(a one- or two-word first guess 12 times, right twice). So the design offers a
+guess only when the model gives it at least `minConfidence` probability, as
+Cursor's retrained Tab shows fewer suggestions to be accepted more often, and it
+logs every guess to measure that threshold.
+
+- **Where it runs.** `NextPrompt` follows `Workspace::turnFinished`, which covers
+  Codex and Claude turns and requests but not terminal agents' output pauses.
+  `next_prompt.py context` reads the conversation where the agent runs (the
+  CLI's transcript, by the conversation id lapis knows, else the newest
+  interactive one in its folder), sent over ssh with the helper on stdin for
+  another machine, as limit resets and token counts are. `predict` runs on the
+  Mac through `claude -p` with tools, settings and MCP off, no saved session,
+  and `ANTHROPIC_API_KEY` removed, so it spends the signed-in plan and cannot
+  read the future from disk.
+- **What it sees.** The conversation's newest 24,000 characters, the agent's
+  screen (permission dialogs and errors are not in transcripts), one line for
+  every agent (title, category, status, waiting), the person's newest prompts
+  on that machine in the last six hours, the time, and `~/.claude/CLAUDE.md` as
+  priors.
+- **How it is offered.** `TerminalSurface.suggestion` draws the guess dim after
+  the cursor, covering the rest of the row but its last two cells so a CLI's
+  own suggestion does not show through, and only while the agent is finished,
+  idle or waiting. Tab types it as a paste; Command-Return types it and sends
+  Return 150 ms later, as the phone does; any other key that reaches the agent
+  withdraws it. Surfacing never sends: the person's key does, keeping
+  "surfacing never approves" when agent output could steer a guess.
+- **What it keeps.** `~/.lapis/next_prompt.jsonl` (owner-only) records each
+  guess with its conversation and prompt number, and each use or dismissal.
+  `scripts/next_prompt_eval.py log` joins them with the prompt actually typed
+  next; `replay` repeats the pilot on any machine's transcripts and sweeps the
+  threshold. Those logs are the data for a small model of one's own, trained on
+  acceptance as Cursor's is.
+
+It is off by default: each prediction is a model call on the person's plan.
+Claude Code 2.1.285 has its own prompt suggestions (on unless
+`promptSuggestionEnabled` is false; they back off after 20 unused); lapis's
+guess covers them but does not turn them off. Past transcripts do not record
+lapis's state, so the replay cannot measure what the other agents' state adds;
+the log can.
+
 ## Contracts to preserve
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal

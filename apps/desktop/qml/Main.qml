@@ -3266,6 +3266,21 @@ ApplicationWindow {
                     interactive: visible && window.visible && !window.inputBlocked && document !== null
                                  && (preview.active || document.inputReady || document.historyActive)
                     focus: visible && window.visible && !window.inputBlocked && !window.sideTerminalOpen
+                    // The next prompt lapis predicted for the agent, while it
+                    // waits for you: Tab types it, Command-Return sends it.
+                    readonly property bool predicting: typeof nextPrompt !== "undefined" && nextPrompt !== null
+                                                       && document !== null
+                    suggestion: predicting && nextPrompt.revision >= 0 && !document.historyActive
+                                && ["finished", "idle", "waiting"].indexOf(document.statusKind) >= 0
+                                ? nextPrompt.suggestion(document.sessionId) : ""
+                    onSuggestionUsed: sent => {
+                        if (predicting)
+                            nextPrompt.used(document.sessionId, sent)
+                    }
+                    onSuggestionDismissed: {
+                        if (predicting)
+                            nextPrompt.dismiss(document.sessionId)
+                    }
                     // New and restarted agents start at this grid, not resized
                     // just after they drew.
                     onGridSizeChanged: workspace.setLaunchSize(gridSize)

@@ -89,6 +89,10 @@ class TerminalSurface : public QQuickItem {
     // (Control-Shift-C on Linux) and cleared by typing.
     Q_PROPERTY(QString selectedText READ selectedText NOTIFY selectionChanged)
     Q_PROPERTY(QString hoveredLink READ hoveredLink NOTIFY hoveredLinkChanged)
+    // A next prompt offered for the agent (see NextPrompt), dim after the
+    // cursor: Tab types it, Command-Return types and sends it, and any other
+    // key that reaches the agent withdraws it.
+    Q_PROPERTY(QString suggestion READ suggestion WRITE setSuggestion NOTIFY suggestionChanged)
   public:
     explicit TerminalSurface(QQuickItem* parent = nullptr);
     // Text as if pasted (bracketed when the agent asked for it): what files
@@ -117,6 +121,8 @@ class TerminalSurface : public QQuickItem {
     void setFrameInterval(int milliseconds);
     [[nodiscard]] bool composing() const { return !preedit_.isEmpty(); }
     [[nodiscard]] bool pasting() const { return pasting_; }
+    [[nodiscard]] const QString& suggestion() const { return suggestion_; }
+    void setSuggestion(const QString& suggestion);
     [[nodiscard]] QVariant inputMethodQuery(Qt::InputMethodQuery query) const override;
     [[nodiscard]] const QString& fontFamily() const { return font_family_; }
     void setFontFamily(const QString& family);
@@ -145,6 +151,12 @@ class TerminalSurface : public QQuickItem {
     void hoveredLinkChanged();
     // Command-click opened a URL or a file or folder's path.
     void linkOpened(const QString& target);
+    void suggestionChanged();
+    // The offered suggestion was typed into the agent, and `sent` when also
+    // submitted.
+    void suggestionUsed(bool sent);
+    // A key other than the ones that take it went to the agent.
+    void suggestionDismissed();
 
   protected:
     QSGNode* updatePaintNode(QSGNode* old_node, UpdatePaintNodeData* data) override;
@@ -235,6 +247,8 @@ class TerminalSurface : public QQuickItem {
     QElapsedTimer since_frame_; // since the last throttled frame
     bool pasting_{};
     QString preedit_;
+    QString suggestion_;
+    bool takeSuggestion(const QKeyEvent& event);
     quint64 ime_epoch_{};
     bool resetting_input_{};
     enum class CompositionState : std::uint8_t { idle, active, stale };

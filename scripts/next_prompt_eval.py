@@ -1,0 +1,341 @@
+#!/usr/bin/env python3
+"""How well lapis predicts the next prompt, from transcripts and from its log.
+
+`replay` samples prompts the person typed to Claude Code and Codex (on this Mac,
+and on any `--machine` over ssh), has the model predict each from only the
+conversation before it, and has a judge compare the guesses with what was
+actually typed. `log` does the same for lapis's own predictions
+(~/.lapis/next_prompt.jsonl): what was offered, used or dismissed, and how the
+offers compare with what came next. Both use the helper lapis runs,
+apps/desktop/src/next_prompt.py, so they measure what lapis does.
+
+Reports go to build/reports/next-prompt/ as numbers only; `--keep-text` adds the
+prompts, which never belong in the repository.
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+HELPER = ROOT / "apps" / "desktop" / "src" / "next_prompt.py"
+sys.path.insert(0, str(HELPER.parent))
+import next_prompt  # noqa: E402
+
+JUDGE = """You grade next-message predictions for a person supervising coding agents.
+For each item you get the end of the agent's latest reply, the message the person
+actually sent, and up to three predicted messages. Grade each prediction:
+2 = they could have sent it instead, with the same effect on the agent (wording
+    and minor details may differ);
+1 = right intent or action, but key specifics are missing or different, so they
+    would have to edit it;
+0 = a different intent.
+Also label the actual message with one category: approve (go/yes/continue/send),
+status (asks how it is going or to check), ship (install, merge, release, send a
+drafted thing), fix (reports a bug or asks for a fix), new (new task or
+feature), question (asks why/how/explain), correct (pushback or redirecting the
+agent), other. Return only JSON:
+{"grades": [{"id": 0, "scores": [2, 0, 1], "category": "approve"}]}"""
+THRESHOLDS = (0.0, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+
+
+def on_machine(machine, arguments):
+    """The helper's JSON answer, run here or on `machine` with itself on stdin."""
+    if not machine:
+        command = [sys.executable, str(HELPER), *arguments]
+        run = subprocess.run(command, capture_output=True, text=True, timeout=900)
+    else:
+        remote = "python3 - " + " ".join(
+            "'" + a.replace("'", "'\\''") + "'" for a in arguments
+        )
+        command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-T", "--"]
+        run = subprocess.run(
+            command + [machine, remote],
+            input=HELPER.read_text(),
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+    try:
+        return json.loads(run.stdout)
+    except ValueError:
+        return {"error": (run.stderr or "no answer").strip()[-300:]}
+
+
+def judge(items, model):
+    """Grades for [{id, last, actual, candidates}], eight to a call."""
+
+    def batch(chunk):
+        blocks = [
+            "## Item {}\nAgent's latest reply (end):\n{}\n\nActual message:\n{}\n\n"
+            "Predictions:\n{}".format(
+                item["id"],
+                item["last"][-1500:],
+                item["actual"][:2000],
+                "\n".join(
+                    "{}. {}".format(k + 1, c["text"][:1500])
+                    for k, c in enumerate(item["candidates"])
+                ),
+            )
+            for item in chunk
+        ]
+        text, _ = next_prompt.ask(JUDGE, "\n\n".join(blocks), model, timeout=600)
+        return json.loads(text[text.index("{") : text.rindex("}") + 1])["grades"]
+
+    chunks = [items[i : i + 8] for i in range(0, len(items), 8)]
+    with ThreadPoolExecutor(4) as pool:
+        return {g["id"]: g for chunk in pool.map(batch, chunks) for g in chunk}
+
+
+def summarize(rows):
+    """rows: {words, category, p (top guess), scores} -> the report's numbers."""
+    n = len(rows)
+    if not n:
+        return {"count": 0}
+
+    def rate(part, test):
+        return round(sum(1 for r in part if test(r)) / len(part), 3) if part else None
+
+    report = {
+        "count": n,
+        "top1_sendable": rate(rows, lambda r: r["scores"][:1] == [2]),
+        "top1_intent": rate(rows, lambda r: (r["scores"] or [0])[0] >= 1),
+        "top3_sendable": rate(rows, lambda r: 2 in r["scores"]),
+        "top3_intent": rate(rows, lambda r: max(r["scores"] or [0]) >= 1),
+        "by_length": {},
+        "by_category": {},
+        "by_confidence": [],
+    }
+    for label, test in (
+        ("up to 4 words", lambda w: w <= 4),
+        ("longer", lambda w: w > 4),
+    ):
+        part = [r for r in rows if test(r["words"])]
+        report["by_length"][label] = {
+            "count": len(part),
+            "top3_sendable": rate(part, lambda r: 2 in r["scores"]),
+        }
+    groups = defaultdict(list)
+    for r in rows:
+        groups[r["category"]].append(r)
+    for category, part in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        report["by_category"][category] = {
+            "count": len(part),
+            "top3_sendable": rate(part, lambda r: 2 in r["scores"]),
+            "top3_intent": rate(part, lambda r: max(r["scores"] or [0]) >= 1),
+        }
+    # Offered only at or above a threshold: how often, and how often right.
+    for threshold in THRESHOLDS:
+        shown = [r for r in rows if r["p"] >= threshold]
+        report["by_confidence"].append(
+            {
+                "min_confidence": threshold,
+                "shown": round(len(shown) / n, 3),
+                "sendable_when_shown": rate(shown, lambda r: r["scores"][:1] == [2]),
+                "intent_when_shown": rate(
+                    shown, lambda r: (r["scores"] or [0])[0] >= 1
+                ),
+            }
+        )
+    return report
+
+
+def replay(arguments):
+    items = []
+    for machine in [""] + (arguments.machine or []):
+        sample = on_machine(
+            machine,
+            [
+                "sample",
+                "--count",
+                str(arguments.count),
+                "--seed",
+                str(arguments.seed),
+                *(["--since", arguments.since] if arguments.since else []),
+                *(["--exclude", *arguments.exclude] if arguments.exclude else []),
+            ],
+        )
+        if "error" in sample:
+            print(
+                "{}: {}".format(machine or "this Mac", sample["error"]), file=sys.stderr
+            )
+            continue
+        for item in sample["items"]:
+            item["machine"] = machine
+            items.append(item)
+    for number, item in enumerate(items):
+        item["id"] = number
+
+    def guess(item):
+        when = item["time"]
+        try:
+            when = datetime.fromisoformat(when.replace("Z", "+00:00")).astimezone()
+            when = when.strftime("%a %-I:%M %p")
+        except ValueError:
+            pass
+        bundle = {
+            "agent": {"cli": item["cli"], "machine": item["machine"]},
+            "context": {"turns": item["turns"]},
+            "time": when,
+        }
+        return next_prompt.predict(bundle, arguments.model, arguments.effort)
+
+    with ThreadPoolExecutor(arguments.parallel) as pool:
+        guesses = list(pool.map(guess, items))
+    graded = []
+    for item, answer in zip(items, guesses):
+        if answer.get("candidates"):
+            agent_turns = [t for t in item["turns"] if t["role"] == "agent"]
+            graded.append(
+                {
+                    "id": item["id"],
+                    "last": agent_turns[-1]["text"] if agent_turns else "",
+                    "actual": item["actual"],
+                    "candidates": answer["candidates"],
+                    "ms": answer.get("ms", 0),
+                }
+            )
+    grades = judge(graded, arguments.judge_model)
+    rows = []
+    for g in graded:
+        grade = grades.get(g["id"], {"scores": [], "category": "other"})
+        row = {
+            "words": len(g["actual"].split()),
+            "category": grade.get("category", "other"),
+            "p": g["candidates"][0]["p"],
+            "scores": grade.get("scores", [])[: len(g["candidates"])],
+            "ms": g["ms"],
+        }
+        if arguments.keep_text:
+            row.update(actual=g["actual"], candidates=g["candidates"])
+        rows.append(row)
+    report = summarize(rows)
+    report["sampled"] = len(items)
+    report["predicted"] = len(graded)
+    report["model"] = arguments.model
+    if graded:
+        report["median_ms"] = sorted(g["ms"] for g in graded)[len(graded) // 2]
+    return report, rows
+
+
+def log(arguments):
+    events = []
+    path = Path(arguments.log).expanduser()
+    for line in path.read_text().splitlines() if path.exists() else []:
+        try:
+            events.append(json.loads(line))
+        except ValueError:
+            continue
+    predicted = [e for e in events if e.get("event") == "predicted"]
+    outcome = {}
+    for e in events:
+        if e.get("event") in ("used", "dismissed"):
+            outcome[(e.get("conversation"), e.get("turn"))] = (
+                "sent"
+                if e.get("sent")
+                else "typed"
+                if e["event"] == "used"
+                else "dismissed"
+            )
+    counts = Counter()
+    graded = []
+    for number, e in enumerate(predicted):
+        counts["predicted"] += 1
+        counts["shown"] += bool(e.get("shown"))
+        took = outcome.get((e.get("conversation"), e.get("turn")))
+        if took:
+            counts[took] += 1
+        if not arguments.judge or not e.get("candidates"):
+            continue
+        answer = on_machine(
+            e.get("machine", ""),
+            [
+                "actual",
+                "--cli",
+                e.get("cli", "claude"),
+                "--conversation",
+                e.get("conversation", ""),
+                "--turn",
+                str(e.get("turn", 0)),
+            ],
+        )
+        if answer.get("text"):
+            graded.append(
+                {
+                    "id": number,
+                    "last": "",
+                    "actual": answer["text"],
+                    "candidates": e["candidates"],
+                    "shown": bool(e.get("shown")),
+                }
+            )
+    report = {"events": dict(counts)}
+    if graded:
+        grades = judge(graded, arguments.judge_model)
+        rows = [
+            {
+                "words": len(g["actual"].split()),
+                "category": grades.get(g["id"], {}).get("category", "other"),
+                "p": g["candidates"][0]["p"],
+                "scores": grades.get(g["id"], {}).get("scores", []),
+            }
+            for g in graded
+        ]
+        report["graded"] = summarize(rows)
+        return report, rows
+    return report, []
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--json", action="store_true", help="print the report as JSON")
+    parser.add_argument("--judge-model", default="claude-opus-5-5")
+    parser.add_argument(
+        "--keep-text", action="store_true", help="save prompts in the report"
+    )
+    modes = parser.add_subparsers(dest="mode", required=True)
+    replay_mode = modes.add_parser("replay", help="predict sampled past prompts")
+    replay_mode.add_argument(
+        "--count", type=int, default=40, help="prompts per machine"
+    )
+    replay_mode.add_argument(
+        "--since", default="", help="ISO date of the oldest prompt"
+    )
+    replay_mode.add_argument("--seed", type=int, default=0)
+    replay_mode.add_argument(
+        "--machine", action="append", help="an ssh host to sample too"
+    )
+    replay_mode.add_argument(
+        "--exclude", nargs="*", help="conversation ids to leave out"
+    )
+    replay_mode.add_argument("--model", default="claude-opus-5-5")
+    replay_mode.add_argument("--effort", default="")
+    replay_mode.add_argument("--parallel", type=int, default=6)
+    log_mode = modes.add_parser(
+        "log", help="lapis's own predictions and what came of them"
+    )
+    log_mode.add_argument("--log", default="~/.lapis/next_prompt.jsonl")
+    log_mode.add_argument(
+        "--judge", action="store_true", help="grade offers against actuals"
+    )
+    arguments = parser.parse_args(argv)
+    report, rows = (replay if arguments.mode == "replay" else log)(arguments)
+    folder = ROOT / "build" / "reports" / "next-prompt"
+    folder.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+    receipt = folder / "{}-{}.json".format(arguments.mode, stamp)
+    receipt.write_text(json.dumps({"report": report, "rows": rows}, indent=2))
+    receipt.chmod(0o600)
+    print(json.dumps(report, indent=2))
+    if not arguments.json:
+        print("receipt:", receipt.relative_to(ROOT))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
