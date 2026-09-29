@@ -74,9 +74,9 @@ QString SessionPreview::statusLabel() const {
                                                  : QStringLiteral("Quiet");
     if (kind == QStringLiteral("working"))
         return QStringLiteral("Working");
-    if (kind == QStringLiteral("waiting"))
-        return QStringLiteral("Needs your response");
-    if (kind == QStringLiteral("finished"))
+    // An agent waiting on an answer reads as a finished turn: it is yours to
+    // look at, and it pinged as one.
+    if (kind == QStringLiteral("waiting") || kind == QStringLiteral("finished"))
         return QStringLiteral("Turn finished");
     if (kind == QStringLiteral("idle"))
         return QStringLiteral("Ready");

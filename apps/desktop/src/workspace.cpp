@@ -545,14 +545,19 @@ bool Workspace::nextAttention() {
     const auto current = std::find(order.begin(), order.end(), focused);
     const std::size_t start =
         current == order.end() ? order.size() : static_cast<std::size_t>(current - order.begin());
-    for (const bool requests : {true, false})
-        for (std::size_t step = 1; step <= order.size(); ++step) {
-            auto* candidate = order[(start + step) % order.size()];
-            if (candidate != focused &&
-                (requests ? candidate->attentionCount() > 0 : candidate->unseen()))
-                return selectSession(candidate->sessionId());
-        }
+    for (std::size_t step = 1; step <= order.size(); ++step) {
+        auto* candidate = order[(start + step) % order.size()];
+        if (candidate != focused && candidate->unseen())
+            return selectSession(candidate->sessionId());
+    }
     return false;
+}
+bool Workspace::latestAttention() {
+    const SessionPreview* latest = nullptr;
+    for (const auto& item : sessions_)
+        if (item->unseen() && (latest == nullptr || item->neededAtMs() > latest->neededAtMs()))
+            latest = item.get();
+    return latest != nullptr && selectSession(latest->sessionId());
 }
 bool SessionPreview::addPreviewRequest(const QString& id, const QString& reason) {
     if (id.isEmpty() || id.size() > 64 || reason.size() > 256 || requests_.contains(id) ||
@@ -653,9 +658,10 @@ void Workspace::watch(SessionPreview* item) {
             reconnectIfDropped(id);
         });
     });
-    connect(item, &SessionPreview::attentionArrived, this, &Workspace::requestArrived);
+    // A request pings as a finished turn does, and marks the agent the same way
+    // (below); lapis shows no separate request state.
     connect(item, &SessionPreview::attentionArrived, this,
-            [this, item] { emit agentNeedsYou(item); });
+            [this, item] { emit turnFinished(item); });
     last_kind_.insert(item, item->statusKind());
     connect(item, &SessionPreview::statusChanged, this, [this, item] { noteStatus(item); });
     connect(item, &SessionPreview::statusChanged, this, [this, id = item->sessionId()] {
@@ -683,7 +689,7 @@ void Workspace::watch(SessionPreview* item) {
 }
 int Workspace::attentionAgents() const {
     return static_cast<int>(std::count_if(sessions_.begin(), sessions_.end(), [](const auto& item) {
-        return item->unseen() || item->attentionCount() > 0;
+        return item->unseen();
     }));
 }
 QVariantList Workspace::categories() const {
@@ -2647,6 +2653,8 @@ void SessionPreview::setUnseen(bool unseen) {
     if (unseen_ == unseen)
         return;
     unseen_ = unseen;
+    if (unseen)
+        needed_at_ms_ = QDateTime::currentMSecsSinceEpoch();
     emit unseenChanged();
 }
 

@@ -401,10 +401,27 @@ void route_terminal_keys(lapis::desktop::UiPreview& view, const lapis::desktop::
         return QMetaObject::invokeMethod(window, shifted ? "chooseTerminal" : "toggleTerminal");
     });
 }
+// Command-Option-L from any app: lapis comes forward on the agent that most
+// recently needed you.
+void route_latest_attention(lapis::desktop::UiPreview& view, lapis::desktop::Workspace& workspace) {
+    const bool taken = lapis::desktop::platform::on_latest_attention_key([&view, &workspace] {
+        if (auto* window = view.window()) {
+            window->show();
+            window->raise();
+            window->requestActivate();
+        }
+        workspace.latestAttention();
+    });
+    if (!taken)
+        qWarning() << "Command-Option-L is held by another app; Command-L still works in lapis";
+}
 // A monitor must never outlive this scope. Clear it in reverse construction
 // order, including when load or exec unwinds after an exception.
 struct TerminalKeyMonitorGuard {
-    ~TerminalKeyMonitorGuard() { lapis::desktop::platform::on_terminal_keys({}); }
+    ~TerminalKeyMonitorGuard() {
+        lapis::desktop::platform::on_terminal_keys({});
+        lapis::desktop::platform::on_latest_attention_key({});
+    }
 };
 void register_qml_types() {
     using namespace lapis::desktop;
@@ -532,7 +549,7 @@ void wire_window(QQuickWindow& window, lapis::desktop::UiPreview& view,
     });
     if (!workspace.previewMode()) {
         // The Dock badge counts agents waiting on you in any category, so it
-        // shows from another app; a new request bounces the icon once.
+        // shows from another app.
 #ifdef Q_OS_MACOS
         // Linux badges need an installed desktop file; the Dock needs nothing.
         const auto badge = [&workspace] { qGuiApp->setBadgeNumber(workspace.attentionAgents()); };
@@ -541,11 +558,6 @@ void wire_window(QQuickWindow& window, lapis::desktop::UiPreview& view,
         QObject::connect(qApp, &QCoreApplication::aboutToQuit, &window,
                          [] { qGuiApp->setBadgeNumber(0); });
 #endif
-        QObject::connect(&workspace, &lapis::desktop::Workspace::requestArrived, &window,
-                         [&window] {
-                             if (!window.isActive())
-                                 window.alert(1000);
-                         });
     }
     if (parser.isSet(QStringLiteral("capture")))
         capture_window(window, workspace, view,
@@ -694,6 +706,8 @@ int main(int argc, char** argv) {
             return 1;
         shown = view.window();
         route_terminal_keys(view, keymap);
+        if (!isolated && !workspace.previewMode() && !parser.isSet(QStringLiteral("capture")))
+            route_latest_attention(view, workspace);
         view.window()->requestActivate();
         qInfo() << "UI preview:" << isolated
                 << "system reduced motion:" << view.systemReducedMotion();

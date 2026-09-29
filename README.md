@@ -37,8 +37,10 @@ neighboring card in view, like Neovim's `sidescrolloff`; the last card is
 **+** for a new agent. A card whose agent finished a turn or started needing a
 response while another was selected pulses until you select it, and its
 category shows a pulsing dot. The Dock badge counts agents in any category that
-finished unseen or wait on a request, and a new request bounces the Dock icon
-once while lapis is in the background. Codex reports working/finished through its
+need you and have not been looked at. A request (a permission prompt, a question)
+pings once and marks the agent exactly as a finished turn does; lapis shows no
+separate request state, and you answer it in the agent's terminal (Commands'
+**Review requests** still lists what a Codex agent is asking). Codex reports working/finished through its
 observer; Claude agents run under the session service's Claude Code hook
 adapter (`--claude`), which reports turns, permission prompts and input
 requests; other harnesses show an output estimate labelled
@@ -216,8 +218,10 @@ restarting it. Attention counts do not reorder categories or steal input.
 On macOS, Command-Shift-J/K (down and up the rail, from the home row),
 Command-Shift-up/down or Command-Option-left/right changes category;
 Command-Shift-[ and ] moves through the category's agents. Command-1 through 9
-selects one of the first nine categories. Command-J jumps to the next agent, in any category, with a
-pending request, or else one that finished while you were elsewhere.
+selects one of the first nine categories. Command-J jumps to the next agent, in any category, that
+finished or asked for something while you were elsewhere; Command-L jumps to the one that did so
+most recently, and again to the one before it. Command-Option-L does the same from any app,
+bringing lapis to the front.
 Command-W closes what is in front, as in a browser: the side terminal's panel
 (its shell keeps running), else the focused agent (a running agent is confirmed,
 then ended by its session service), and only when the category has no agent
