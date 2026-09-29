@@ -303,6 +303,11 @@ void input_modes() {
             "input modes were not exposed");
     require(terminal.encode_paste("echo hi") == "\x1b[200~echo hi\x1b[201~",
             "bracketed paste encoding mismatch");
+    // A view encodes with the mode from a snapshot, as the terminal does.
+    require(lapis::session::encode_paste("a\nb\x1b", snapshot.bracketed_paste) ==
+                    terminal.encode_paste("a\nb\x1b") &&
+                lapis::session::encode_paste("a\nb\x1b", false) == "a\rb ",
+            "terminal-free paste encoding differed from the terminal's");
     terminal.feed("\x1b[?1l\x1b[?2004l");
     require(terminal.encode_key(lapis::session::TerminalKey::up) == "\x1b[A" &&
                 terminal.encode_paste("echo hi") == "echo hi",

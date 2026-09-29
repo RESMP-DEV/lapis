@@ -1017,7 +1017,7 @@ class SessionService final : public QObject {
         const auto control = wire::decode_control(frame.payload);
         if (control.attachment != attachment_ || !ready_)
             throw std::runtime_error("Stale attachment or session is not ready for input");
-        if (control.payload.size() > qsizetype{64} * 1024)
+        if (control.payload.size() > wire::max_input_bytes)
             throw std::runtime_error("Input message too large");
         QByteArray bytes;
         switch (frame.kind) {
@@ -1335,7 +1335,7 @@ class SessionService final : public QObject {
         const auto control = wire::decode_control(frame.payload);
         if (control.attachment != view.attachment || !view.ready)
             throw std::runtime_error("Stale attachment or view is not ready for input");
-        if (control.payload.size() > qsizetype{64} * 1024)
+        if (control.payload.size() > wire::max_input_bytes)
             throw std::runtime_error("Input message too large");
         if (frame.kind == wire::Kind::resize) {
             view.wanted = decode_size(control.payload);

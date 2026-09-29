@@ -29,6 +29,7 @@
 #include <QThread>
 #include <QUrl>
 #include <QWheelEvent>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <functional>
@@ -727,6 +728,89 @@ void command_links_open() {
 // Dragging selects screen text and double-clicking selects a word. The copy
 // chord copies without sending input, typing clears the selection, and the
 // wheel asks for older history on the normal screen.
+// A paste longer than one input message arrives whole, as text the desktop
+// encoded in the newest screen's mode; one longer than the service can queue
+// is refused with a reason, and nothing is sent.
+void long_pastes() {
+    Fixture f;
+    QQuickWindow window;
+    window.setGeometry(100, 100, 640, 360);
+    lapis::desktop::TerminalSurface surface(window.contentItem());
+    surface.setSize(QSizeF(640, 360));
+    surface.setHoldResize(true);
+    surface.setDocument(&f.document);
+    surface.setInteractive(true);
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    window.show();
+    until([&] { return window.isExposed(); });
+    lapis::desktop::test::activate_test_window(window);
+    until([&] { return window.isActive(); });
+    settle();
+    until([&] {
+        surface.forceActiveFocus();
+        return surface.hasActiveFocus();
+    });
+    static_cast<void>(text_frames(peer));
+    QStringList refusals;
+    QObject::connect(&surface, &lapis::desktop::TerminalSurface::pasteRefused,
+                     [&refusals](const QString& reason) { refusals << reason; });
+    const auto message_kinds = [&peer](qsizetype bytes) {
+        QByteArray text;
+        std::vector<wire::Kind> kinds;
+        until([&] {
+            peer.bytes += peer.socket->readAll();
+            wire::Frame frame;
+            while (wire::take_frame(peer.bytes, frame)) {
+                kinds.push_back(frame.kind);
+                text += wire::decode_control(frame.payload).payload;
+            }
+            return text.size() >= bytes;
+        });
+        return std::pair{text, kinds};
+    };
+
+    QString transcript;
+    while (transcript.toUtf8().size() <= 3 * wire::max_input_bytes)
+        transcript += QStringLiteral("speaker 界: a line with an escape \x1b[31m in it\n");
+    const auto utf8 = transcript.toUtf8();
+    const auto plain = lapis::session::encode_paste(
+        std::string_view(utf8.constData(), static_cast<std::size_t>(utf8.size())), false);
+    require(surface.pasteText(transcript), "A long paste was refused");
+    const auto [sent, kinds] = message_kinds(static_cast<qsizetype>(plain.size()));
+    require(sent == QByteArray(plain.data(), static_cast<qsizetype>(plain.size())),
+            "A long paste was not sent whole with returns for newlines");
+    require(
+        kinds.size() == 4 &&
+            std::ranges::all_of(kinds, [](wire::Kind kind) { return kind == wire::Kind::text; }),
+        "A long paste was not sent as text in pieces");
+
+    f.terminal.feed("\x1b[?2004h");
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 2, f.terminal.snapshot()}));
+    until([&] { return f.document.snapshot().bracketed_paste; });
+    const auto bracketed = lapis::session::encode_paste(
+        std::string_view(utf8.constData(), static_cast<std::size_t>(utf8.size())), true);
+    require(bracketed.starts_with("\x1b[200~") && bracketed.ends_with("\x1b[201~"),
+            "The fixture paste was not bracketed");
+    require(surface.pasteText(transcript), "A long bracketed paste was refused");
+    require(message_kinds(static_cast<qsizetype>(bracketed.size())).first ==
+                QByteArray(bracketed.data(), static_cast<qsizetype>(bracketed.size())),
+            "A long paste was not bracketed once around the whole text");
+
+    const QString tooLong(static_cast<qsizetype>(wire::max_paste_bytes) + 1, QLatin1Char('x'));
+    require(!surface.pasteText(tooLong), "A paste longer than the service queues was accepted");
+    require(refusals.size() == 1 &&
+                refusals.front().startsWith(QStringLiteral("This paste is 961 KB; lapis pastes "
+                                                           "up to 960 KB at a time.")),
+            "A refused paste gave no reason");
+    require(text_frames(peer).isEmpty(), "A refused paste sent part of itself");
+    require(!surface.pasting(), "A refused paste kept input ownership");
+}
+
 void selection_and_scroll() {
     Fixture f;
     QQuickWindow window;
@@ -929,6 +1013,7 @@ int main(int argc, char** argv) {
         require(background == (QGuiApplication::platformName() == QStringLiteral("offscreen")),
                 "Offscreen input tests require explicit --background mode");
         input_contract(background);
+        long_pastes();
         selection_and_scroll();
         links_follow_wrapped_rows();
         command_links_open();
@@ -936,7 +1021,8 @@ int main(int argc, char** argv) {
         if (background)
             std::cout << "Background Qt/software mode; native macOS input and GPU not exercised\n";
         std::cout
-            << "Qt IME commit/cancel, replacement rejection, paste, selection/copy, wheel, links, "
+            << "Qt IME commit/cancel, replacement rejection, paste, long paste, selection/copy, "
+               "wheel, links, "
                "history, focus, document, size claims "
                "and disconnect ownership passed\n";
     } catch (const std::exception& error) {

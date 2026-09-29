@@ -3411,6 +3411,47 @@ ApplicationWindow {
                     }
                 }
 
+                // A paste lapis could not send says why, over the bottom of the
+                // terminal, for a few seconds.
+                Rectangle {
+                    id: pasteNote
+                    objectName: "pasteNote"
+                    property string reason: ""
+                    visible: reason.length > 0 && liveTerminal.visible
+                    z: 6
+                    width: Math.min(liveTerminal.width - 16, pasteNoteLabel.implicitWidth + 16)
+                    height: pasteNoteLabel.height + 12
+                    x: liveTerminal.x + (liveTerminal.width - width) / 2
+                    y: liveTerminal.y + liveTerminal.height - height - 8
+                    color: window.surfaceColor
+                    border.color: window.faultColor
+                    border.width: 1
+                    radius: window.chromeRadius
+                    PlainLabel {
+                        id: pasteNoteLabel
+                        anchors.centerIn: parent
+                        width: parent.width - 16
+                        text: pasteNote.reason
+                        color: window.textColor
+                        wrapMode: Text.WordWrap
+                    }
+                    Timer {
+                        id: pasteNoteTimer
+                        interval: 8000
+                        onTriggered: pasteNote.reason = ""
+                    }
+                    Connections {
+                        target: liveTerminal
+                        function onPasteRefused(reason) {
+                            pasteNote.reason = reason
+                            pasteNoteTimer.restart()
+                        }
+                        function onDocumentChanged() {
+                            pasteNote.reason = ""
+                        }
+                    }
+                }
+
                 // Dividers between tiles: drag to share the space differently.
                 Repeater {
                     model: stage.tiled && !stage.zoomed ? stage.dividerPaths : []

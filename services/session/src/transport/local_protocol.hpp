@@ -10,6 +10,12 @@ constexpr quint32 version = 6;
 constexpr qsizetype max_frame_bytes = qsizetype{8} * 1024 * 1024;
 constexpr quint32 max_cells = 32768;
 constexpr quint32 max_codepoints = 65536;
+// The payload of one text, paste or key message.
+constexpr qsizetype max_input_bytes = qsizetype{64} * 1024;
+// A longer paste goes as text in several messages, encoded by the view. The
+// service queues at most 1 MiB for the agent to read, and holds a paste whole
+// when the agent reads slowly, so a paste stays below that.
+constexpr qsizetype max_paste_bytes = qsizetype{960} * 1024;
 enum class Kind : quint8 {
     hello = 1,
     snapshot,

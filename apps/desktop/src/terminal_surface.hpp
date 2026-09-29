@@ -145,6 +145,9 @@ class TerminalSurface : public QQuickItem {
     void hoveredLinkChanged();
     // Command-click opened a URL or a file or folder's path.
     void linkOpened(const QString& target);
+    // A paste was too long to send, or did not reach the agent; `reason` says
+    // which, for the person who pasted.
+    void pasteRefused(const QString& reason);
 
   protected:
     QSGNode* updatePaintNode(QSGNode* old_node, UpdatePaintNodeData* data) override;

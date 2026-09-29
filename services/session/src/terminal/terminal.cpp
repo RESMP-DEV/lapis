@@ -515,6 +515,18 @@ std::string Terminal::encode_paste(std::string_view text) { return impl_->encode
 
 std::string Terminal::encode_wheel(WheelTurn turn) { return impl_->encode_wheel(turn); }
 
+std::string encode_paste(std::string_view text, bool bracketed) {
+    std::string mutable_text(text);
+    std::string output(text.size() + 12U, '\0');
+    std::size_t written{};
+    require_success(ghostty_paste_encode(mutable_text.data(), mutable_text.size(), bracketed,
+                                         output.data(), output.size(), &written));
+    if (written > output.size())
+        throw std::runtime_error("Ghostty paste exceeded buffer");
+    output.resize(written);
+    return output;
+}
+
 std::string Terminal::take_replies() {
     impl_->require_healthy();
     std::string result(impl_->replies.data(), impl_->reply_size);
@@ -585,16 +597,7 @@ std::string Terminal::Impl::encode_paste(std::string_view text) {
     if (text.size() > limits.max_input_bytes) {
         throw std::length_error("Terminal paste exceeds configured byte limit");
     }
-    std::string mutable_text(text);
-    std::string output(text.size() + 12U, '\0');
-    std::size_t written{};
-    require_success(ghostty_paste_encode(mutable_text.data(), mutable_text.size(),
-                                         mode(GHOSTTY_MODE_BRACKETED_PASTE), output.data(),
-                                         output.size(), &written));
-    if (written > output.size())
-        throw std::runtime_error("Ghostty paste exceeded buffer");
-    output.resize(written);
-    return output;
+    return lapis::session::encode_paste(text, mode(GHOSTTY_MODE_BRACKETED_PASTE));
 }
 
 std::string Terminal::Impl::encode_wheel(WheelTurn turn) {

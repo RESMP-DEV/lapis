@@ -192,6 +192,11 @@ class Terminal {
     std::unique_ptr<Impl> impl_;
 };
 
+// Terminal::encode_paste without a terminal, for a view that knows the mode
+// from a snapshot: unsafe control bytes become spaces, and the text is
+// bracketed when `bracketed`, else its newlines become carriage returns.
+[[nodiscard]] std::string encode_paste(std::string_view text, bool bracketed);
+
 } // namespace lapis::session
 
 #endif // LAPIS_SESSION_TERMINAL_HPP

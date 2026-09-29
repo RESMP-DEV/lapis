@@ -17,6 +17,8 @@
 #include <exception>
 #include <limits>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <utility>
 
 namespace lapis::desktop {
@@ -25,6 +27,10 @@ namespace {
 constexpr int codex_sync_timeout_ms = 15000;
 constexpr int terminal_sync_timeout_ms = 5000;
 constexpr int history_timeout_ms = 5000;
+// Input waiting for the socket, and what each message adds to it: a kind, a
+// length and the attachment.
+constexpr qint64 input_queue_bytes = qint64{1024} * 1024;
+constexpr qint64 message_overhead = 45;
 bool start_service_detached(const ServiceLaunchRequest& launch) {
     QProcess service;
     service.setProgram(launch.program);
@@ -287,11 +293,18 @@ void SessionPreview::setActivity(const QString& activity) {
     activity_ = activity;
     emit snapshotChanged();
 }
-void SessionPreview::sendText(const QByteArray& bytes, bool paste) {
-    if (history_active_ || history_request_pending_)
-        return;
-    if (live_)
-        live_->send(paste ? wire::Kind::paste : wire::Kind::text, bytes);
+bool SessionPreview::sendText(const QByteArray& bytes, bool paste) {
+    if (history_active_ || history_request_pending_ || !live_)
+        return false;
+    if (paste && bytes.size() > wire::max_input_bytes) {
+        // Longer than one paste message: encoded here, in the mode of the
+        // newest screen, with the encoder the service uses, and sent as text.
+        const auto encoded = session::encode_paste(
+            std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())),
+            snapshot().bracketed_paste);
+        return live_->sendText(QByteArray(encoded.data(), static_cast<qsizetype>(encoded.size())));
+    }
+    return live_->send(paste ? wire::Kind::paste : wire::Kind::text, bytes);
 }
 bool SessionPreview::terminate() {
     return live_ && input_ready_ && live_->send(wire::Kind::terminate, {});
@@ -553,8 +566,8 @@ bool LiveConnection::send(wire::Kind kind, const QByteArray& payload) {
         report(QStringLiteral("Input was not sent: session is not synchronized."));
         return false;
     }
-    if (payload.size() > qsizetype{64} * 1024 ||
-        socket_->bytesToWrite() + payload.size() + 45 > qint64{1024} * 1024) {
+    if (payload.size() > wire::max_input_bytes ||
+        socket_->bytesToWrite() + payload.size() + message_overhead > input_queue_bytes) {
         report(QStringLiteral("Input queue full; input was not sent"));
         return false;
     }
@@ -568,6 +581,23 @@ bool LiveConnection::send(wire::Kind kind, const QByteArray& payload) {
         fail(QString::fromUtf8(error.what()));
         return false;
     }
+    return true;
+}
+bool LiveConnection::sendText(const QByteArray& text) {
+    if (!ready_ || failed_ || !attachment_) {
+        report(QStringLiteral("Input was not sent: session is not synchronized."));
+        return false;
+    }
+    // All of it or none: a paste cut short would leave the agent inside it.
+    const qint64 messages = (text.size() + wire::max_input_bytes - 1) / wire::max_input_bytes;
+    if (socket_->bytesToWrite() + text.size() + messages * message_overhead > input_queue_bytes) {
+        report(QStringLiteral("Input queue full; input was not sent"));
+        return false;
+    }
+    for (qsizetype at = 0; at < text.size(); at += wire::max_input_bytes)
+        if (!send(wire::Kind::text,
+                  text.sliced(at, std::min(wire::max_input_bytes, text.size() - at))))
+            return false;
     return true;
 }
 void LiveConnection::resize(session::TerminalSize size) {

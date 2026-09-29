@@ -40,6 +40,9 @@ class LiveConnection final : public QObject {
     ~LiveConnection() override;
     void begin(session::wire::AttachMode mode);
     bool send(session::wire::Kind kind, const QByteArray& payload);
+    // Text longer than one message, in as many as it needs; all are queued or
+    // none is.
+    bool sendText(const QByteArray& text);
     void resize(session::TerminalSize size);
     // Takes the size back after another device (a joined phone) resized the
     // agent: sends this view's size again, once per size shown.

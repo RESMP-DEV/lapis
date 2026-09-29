@@ -418,7 +418,13 @@ qualification. A final output tail is bounded to 16 MiB after child exit.
 Snapshot-size limits detach the display with an explicit status while keeping the
 child alive; reattachment succeeds once its screen fits again. Socket ancestors
 must be trusted and not shared writable unless sticky, with an owner-only 0700
-immediate parent. Oversized paste remains an atomic rejection at 64 KiB.
+immediate parent. A paste message stays bounded at 64 KiB. A longer paste, up to
+960 KiB, is encoded by the desktop with the same Ghostty paste encoder, in the
+bracketed-paste mode of the newest screen, and sent as consecutive text messages,
+all queued or none; services already running need no change (September 29).
+The service queues at most 1 MiB of PTY input for a slow reader, which bounds the
+total. A longer paste is still an atomic rejection, now stated over the terminal
+instead of only in the agent menu.
 Cursor rendering honors block, bar, underline and hollow-block shapes and optional
 cursor color; a filled block redraws its covered grapheme for readability.
 See the [review repair receipt](../evidence/pr2-review.json) and
