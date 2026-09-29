@@ -1,0 +1,48 @@
+{
+  "source": "assets/lapis.svg",
+  "source_sha256": "51423758f72ff8d254dcffca064d9f12104bcbb064bbff55ef401b94de7b340d",
+  "renderer": "rsvg-convert version 2.63.2",
+  "outputs": {
+    "apps/desktop/macos/lapis.icns": "f89ebe186dd127b958eeba35c3f5492f7d892546d63d3a7968297ef4499723d5",
+    "apps/ios/Lapis/Assets.xcassets/AppIcon.appiconset/icon.png": "3228401d52d08738d14dae72c50e33f38de9b2763ef28936eb37da1be5b6bf7c",
+    "site/icon.png": "a123c503540bfb91dbbb022cea482979d93d747079b162516efce02515a967cc",
+    "site/favicon.png": "e876ab1cbcb62ebfa1d18f60862d3f696f06d8854979b5dbc7b4c112d0ed2c67",
+    "site/icon.svg": "51423758f72ff8d254dcffca064d9f12104bcbb064bbff55ef401b94de7b340d"
+  },
+  "scope": "Silk lapis Cabochon icon adoption into the fix/quality-correctness working tree; no release or installed-app replacement.",
+  "source_revision": "d874eacb5ec29c409772aa628630721f6bde4349",
+  "design_provenance": {
+    "study": "star study v7 (lapis-icons-star.html), silk variant",
+    "export": "~/Downloads/lapis-silk.svg, 2026-09-28 export batch",
+    "notes": "Canonical SVG adds only the tile-edge/tile-face/cabochon ids required by write_phone_icon plus a cabochon wrapper group; 256px renders are sha256-identical to the Downloads export."
+  },
+  "checks": {
+    "source_identity": {
+      "method": "rsvg-convert 256px renders of Downloads/lapis-silk.svg and assets/lapis.svg compared by sha256",
+      "identical": true
+    },
+    "icns_decoded_sizes": [
+      [16, 16], [32, 32], [128, 128], [256, 256], [512, 512],
+      [32, 32], [64, 64], [256, 256], [512, 512], [1024, 1024]
+    ],
+    "icns_decode_tool": "iconutil -c iconset",
+    "ios_png": {
+      "size": [1024, 1024],
+      "has_alpha": false,
+      "tool": "sips"
+    },
+    "favicon_png": {
+      "size": [32, 32],
+      "format": "PNG RGBA",
+      "tool": "file"
+    },
+    "bundle_icon_reference": "lapis (Info.plist.in ${MACOSX_BUNDLE_ICON_FILE}; CMake installs macos/lapis.icns into Resources; filename unchanged)",
+    "visual_review": [
+      "1024 site icon: tile, bevel, dome, six slim white rays reaching the stone edge along each ray direction, silk sheen band, no clipping or banding",
+      "iOS 1024 asset: flat #1C2234 background edge to edge, no tile edge remnants, stone/star/sheen present and centered",
+      "32px decode (upscaled): tile/stone/glow hierarchy legible; ray count and sheen degrade gracefully",
+      "16px decode (upscaled): dark rounded tile, blue stone, bright star center remain readable"
+    ],
+    "verification_method": "independent vision-model inspection of rendered outputs"
+  }
+}
