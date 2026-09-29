@@ -1,7 +1,7 @@
 {
   "date_utc": "2026-09-29",
   "pull_request": 38,
-  "baseline": "107139361648a12c53b500c9245a8b3e997be0ba",
+  "baseline": "838da671b1982b6e2714914405e9208eaed9190c",
   "scope": "Grok reviewer admission, observational tool selection, repository identity, settling and quota recovery",
   "changes": [
     "Allow only read, grep and glob tools; pass the diff from the parent and use an environment allowlist.",
@@ -12,7 +12,15 @@
     "Preserve NUL-separated filenames and Git diff header quoting, including spaces, tabs, newlines and Unicode.",
     "Pin each watcher review to its settled head before checkout; moved heads neither publish nor consume an attempt.",
     "Persist an account-wide quota deadline until the next local day, skip all repositories during that deadline, and keep non-quota per-head retries available.",
-    "Replace the rejected grok-4.7-build-fast model pin with live-catalog grok-4.7; no automatic model fallback."
+    "Replace the rejected grok-4.7-build-fast model pin with live-catalog grok-4.7; no automatic model fallback.",
+    "Preserve the contributor --model option and its LaunchAgent argument; test installation using stand-ins without launching a service.",
+    "Correct built-in IDs to read_file,grep,list_dir; explicitly remove search_tool/use_tool and deny MCPTool.",
+    "Bound helper subprocess groups to five minutes and their captured output; stop diff production once the 256 KiB limit is exceeded.",
+    "Validate structured result keys, types and enums before composing a review.",
+    "Treat credential and token-context errors as non-quota failures; only bounded account/rate-limit terms trigger the shared pause.",
+    "Only accept Git file headers before hunks and immediately after their old-file header.",
+    "Keep XML data escaping, omit unnecessary quote escaping, and require model quotes from actual source. Verified suggestions with C++ quotes and operators.",
+    "Only repost without inline comments after a definite HTTP 422 line/path/diff validation failure; transport and other HTTP errors remain failures."
   ],
   "findings": {
     "PRRT_kwDOUfkyeM6m9v9C": "Repository-specific state and real two-origin Git exercise.",
@@ -24,28 +32,20 @@
   },
   "validation": [
     {
-      "command": "uv run --no-project python -m unittest discover -s scripts/tests -p test_grok_review.py -v",
-      "result": "PASS: 16 tests, 1.760 seconds. Real local Git clones and a stand-in Grok process; no model-quality claim."
-    },
-    {
       "command": "uv run --no-project python scripts/lapis.py quality",
-      "result": "PASS: diff checks, Ruff format/lint and 240 Python tests, seven skips. 15.459 seconds for the Python suite."
+      "result": "PASS: Ruff format/lint, diff check and 247 Python tests including 23 Grok-reviewer cases; seven unrelated skips. Python suite 11.615 seconds."
     },
     {
-      "command": "uv run --no-project ruff check scripts/grok_review.py scripts/tests/test_grok_review.py",
-      "result": "PASS after final annotation/docstring-only cleanup; behavior evidence reused."
+      "command": "Standalone Grok reviewer suite before adding the final two cases",
+      "result": "21 tests passed in 0.667 seconds. The final source-quote and model-install cases also passed in the full quality run."
     },
     {
-      "command": "uv run --no-project ruff format --check scripts/grok_review.py scripts/tests/test_grok_review.py",
-      "result": "PASS after final annotation/docstring-only cleanup."
+      "command": "Installed grok --version and headless-mode tool documentation",
+      "result": "Local CLI 1.0.41. Confirmed internal read_file/grep/list_dir names and the explicit MCP-tool filtering contract. No new provider inference during the recorded account cooldown."
     },
     {
-      "command": "grok --version; grok --help; grok models",
-      "result": "Live CLI 1.0.41 (4220f3b224a6), flags present, catalog default/available model grok-4.7."
-    },
-    {
-      "command": "pull metadata and collaborator permission for this PR using gh",
-      "result": "PASS against the live API; no model call or public review was submitted."
+      "command": "Real subprocess and Git tests",
+      "result": "Stalled and over-limit children terminate and release the lock; stdin/stdout/stderr round-trip passed. Separate repository checkouts, unusual paths, moved heads and cooldown recovery remain covered."
     }
   ],
   "runtime_limits": [
@@ -53,10 +53,57 @@
     "One bounded request using catalog model grok-4.7 reached the free Grok Build usage limit; no reset timestamp supplied. No further inference attempts; retry no earlier than the next local day.",
     "No completed live review or live tool-execution qualification is claimed. The unit stand-in proves launcher arguments and filtering only.",
     "Repository writer admission and tool selection do not sandbox filesystem reads. The reviewer retains its file-based login and can still read the operator home directory.",
-    "No LaunchAgent was installed, reconfigured or restarted by this repair."
+    "No LaunchAgent was installed, reconfigured or restarted by this repair.",
+    "The five review findings from a separately run Grok Build 1.0.44 review are triaged as source feedback; they are not a runtime qualification of this local repaired launcher. No claim that a current live model turn was completed."
   ],
   "source_sha256": {
-    "scripts/grok_review.py": "281d07377eb007d784037e8a2252496054fcd57fbe00daf54dc57580cb37ebdb",
-    "scripts/tests/test_grok_review.py": "62e33088ebe79b90d0b137414f12342a175e724ba5ff3e2d6bab4b26a147ffda"
+    "scripts/grok_review.py": "75bacada5377e7ca9313f64494d93787a8589029f6ad2be32b551fda7c27fbd8",
+    "scripts/tests/test_grok_review.py": "a164bc25c116aa0c652c346d839f07961219a819cc11af302593f991394c4a11"
+  },
+  "previous_validation": {
+    "baseline": "107139361648a12c53b500c9245a8b3e997be0ba",
+    "source_sha256": {
+      "scripts/grok_review.py": "281d07377eb007d784037e8a2252496054fcd57fbe00daf54dc57580cb37ebdb",
+      "scripts/tests/test_grok_review.py": "62e33088ebe79b90d0b137414f12342a175e724ba5ff3e2d6bab4b26a147ffda"
+    },
+    "validation": [
+      {
+        "command": "uv run --no-project python -m unittest discover -s scripts/tests -p test_grok_review.py -v",
+        "result": "PASS: 16 tests, 1.760 seconds. Real local Git clones and a stand-in Grok process; no model-quality claim."
+      },
+      {
+        "command": "uv run --no-project python scripts/lapis.py quality",
+        "result": "PASS: diff checks, Ruff format/lint and 240 Python tests, seven skips. 15.459 seconds for the Python suite."
+      },
+      {
+        "command": "uv run --no-project ruff check scripts/grok_review.py scripts/tests/test_grok_review.py",
+        "result": "PASS after final annotation/docstring-only cleanup; behavior evidence reused."
+      },
+      {
+        "command": "uv run --no-project ruff format --check scripts/grok_review.py scripts/tests/test_grok_review.py",
+        "result": "PASS after final annotation/docstring-only cleanup."
+      },
+      {
+        "command": "grok --version; grok --help; grok models",
+        "result": "Live CLI 1.0.41 (4220f3b224a6), flags present, catalog default/available model grok-4.7."
+      },
+      {
+        "command": "pull metadata and collaborator permission for this PR using gh",
+        "result": "PASS against the live API; no model call or public review was submitted."
+      }
+    ]
+  },
+  "followup_findings": {
+    "timeouts": "fixed",
+    "xml_escaping": "Retained as a data boundary; unnecessary quote escaping removed and raw-source quoting documented/tested. Always-false claim is inapplicable.",
+    "schema_validation": "fixed",
+    "midnight_pause": "No change: next local day is the explicit shared policy for an unknown reset; this is at most one new failed quota attempt per local day, not hourly retries.",
+    "post_fallback": "fixed",
+    "stale_receipt": "Refreshed; prior source evidence retained with its original revision.",
+    "mcp_tools": "fixed",
+    "tool_ids": "fixed",
+    "credential_quota": "fixed",
+    "hunk_headers": "fixed",
+    "diff_buffer": "fixed"
   }
 }

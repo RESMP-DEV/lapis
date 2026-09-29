@@ -3,6 +3,7 @@ Grok run is judged, with a stand-in grok on PATH."""
 
 import json
 import os
+import plistlib
 import sys
 import tempfile
 import unittest
@@ -62,6 +63,10 @@ class LineTests(unittest.TestCase):
             grok_review.new_lines(DIFF),
             {"src/a.cpp": [(11, 13), (23, 23)], "docs/b.md": [(1, 2)]},
         )
+
+    def test_added_header_text_does_not_redirect_later_hunks(self):
+        diff = DIFF.replace("+two", "+two\n+++ b/forged.cpp\n+++ not-a-path")
+        self.assertEqual(grok_review.new_lines(diff), grok_review.new_lines(DIFF))
 
     def test_findings_anchor_only_to_changed_lines(self):
         ranges = grok_review.new_lines(DIFF)
@@ -128,6 +133,23 @@ class ComposeTests(unittest.TestCase):
 
     def test_a_path_outside_the_checkout_is_not_read(self):
         self.assertIsNone(grok_review.lines_at(self.worktree, "../../etc/hosts", 1, 1))
+
+    def test_cpp_quotes_from_source_keep_an_exact_suggestion(self):
+        text = 'std::vector<int> values; if (a && b) log("title");'
+        (self.worktree / "src/a.cpp").write_text(text)
+        review = {
+            "summary": "ok",
+            "verdict": "APPROVE-WITH-NITS",
+            "findings": [
+                finding(
+                    start=1, end=1, existing_code=text, suggestion_code="replacement"
+                )
+            ],
+        }
+        _, comments = grok_review.compose(
+            review, {"src/a.cpp": [(1, 1)]}, self.worktree, "footer"
+        )
+        self.assertIn("```suggestion", comments[0]["body"])
 
 
 class DueTests(unittest.TestCase):
@@ -280,7 +302,7 @@ class PostTests(unittest.TestCase):
             with (
                 self.subTest(now=now),
                 patch.object(grok_review, "pull", return_value=now),
-                patch.object(grok_review.subprocess, "run") as gh,
+                patch.object(grok_review, "run_process") as gh,
             ):
                 self.assertIsNone(grok_review.post("o/r", self.PR, "body", []))
                 gh.assert_not_called()
@@ -294,7 +316,10 @@ class PostTests(unittest.TestCase):
             ok = len(sent) > 1
             stdout = json.dumps({"html_url": "https://example/review"}) if ok else ""
             return grok_review.subprocess.CompletedProcess(
-                command, 0 if ok else 1, stdout, "" if ok else "422 line not in diff"
+                command,
+                0 if ok else 1,
+                stdout,
+                "" if ok else "HTTP 422 line not in diff",
             )
 
         comment = {
@@ -307,7 +332,7 @@ class PostTests(unittest.TestCase):
         with (
             patch.object(grok_review, "pull", return_value=now),
             patch.object(grok_review, "posted", return_value=False),
-            patch.object(grok_review.subprocess, "run", side_effect=gh),
+            patch.object(grok_review, "run_process", side_effect=gh),
         ):
             url = grok_review.post("o/r", self.PR, body, [comment])
         self.assertEqual(url, "https://example/review")
@@ -316,6 +341,63 @@ class PostTests(unittest.TestCase):
         self.assertEqual(second["comments"], [])
         self.assertIn("### Inline findings\n- `a.cpp:3-3`", second["body"])
         self.assertTrue(second["body"].endswith(grok_review.MARKER.format("abc")))
+
+    def test_uncertain_or_non_inline_failures_are_not_reposted(self):
+        now = {"state": "OPEN", **self.PR}
+        for error in (
+            "HTTP 403 forbidden",
+            "HTTP 503 unavailable",
+            "response lost",
+            "HTTP 422 body too long",
+        ):
+            with (
+                self.subTest(error=error),
+                patch.object(grok_review, "pull", return_value=now),
+                patch.object(grok_review, "posted", return_value=False),
+                patch.object(
+                    grok_review,
+                    "run_process",
+                    return_value=grok_review.subprocess.CompletedProcess(
+                        [], 1, "", error
+                    ),
+                ) as post,
+            ):
+                with self.assertRaisesRegex(grok_review.ReviewError, "posting failed"):
+                    grok_review.post(
+                        "o/r",
+                        self.PR,
+                        "body",
+                        [{"path": "a.cpp", "line": 1, "body": "x"}],
+                    )
+                self.assertEqual(post.call_count, 1)
+
+
+class CommandTests(unittest.TestCase):
+    def test_stalled_and_oversized_helpers_release_the_review_lock(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(grok_review, "STATE", Path(directory)),
+        ):
+            for script, message in (
+                ("import time; time.sleep(30)", "timeout"),
+                ("import os; os.write(1,b'x'*65536)", "output exceeds"),
+            ):
+                with self.subTest(message=message):
+                    with self.assertRaisesRegex(grok_review.ReviewError, message):
+                        with grok_review.exclusive():
+                            grok_review.run_process(
+                                [sys.executable, "-c", script],
+                                timeout=0.1,
+                                max_output=1024,
+                            )
+                    with grok_review.exclusive():
+                        pass
+            script = "import sys; data=sys.stdin.buffer.read(); sys.stdout.buffer.write(data); sys.stderr.write('diagnostic')"
+            result = grok_review.run_process(
+                [sys.executable, "-c", script], input="payload" * 10000
+            )
+            self.assertEqual(result.stdout, "payload" * 10000)
+            self.assertEqual(result.stderr, "diagnostic")
 
 
 class GrokRunTests(unittest.TestCase):
@@ -366,7 +448,13 @@ class GrokRunTests(unittest.TestCase):
         arguments = (self.root / "arguments").read_text().splitlines()
         self.assertEqual(arguments[arguments.index("--model") + 1], grok_review.MODEL)
         self.assertEqual(arguments[arguments.index("--reasoning-effort") + 1], "xhigh")
-        self.assertEqual(arguments[arguments.index("--tools") + 1], "read,grep,glob")
+        self.assertEqual(
+            arguments[arguments.index("--tools") + 1], "read_file,grep,list_dir"
+        )
+        self.assertEqual(
+            arguments[arguments.index("--disallowed-tools") + 1], "search_tool,use_tool"
+        )
+        self.assertEqual(arguments[arguments.index("--deny") + 1], "MCPTool")
         # The prompt file is the last option: grok takes the next word as the prompt.
         self.assertEqual(arguments[-2], "--prompt-file")
         json.loads(arguments[arguments.index("--json-schema") + 1])
@@ -395,6 +483,35 @@ class GrokRunTests(unittest.TestCase):
             grok_review.ask_grok(self.worktree, "brief")
         self.assertFalse(caught.exception.quota)
         self.assertIn("max_turns", str(caught.exception))
+
+    def test_authentication_and_request_errors_do_not_pause_the_account(self):
+        for message in (
+            "refresh your credentials",
+            "token limit exceeded",
+            "request 14293 failed",
+        ):
+            with self.subTest(message=message):
+                self.grok({"type": "error", "message": message}, 1)
+                with self.assertRaises(grok_review.ReviewError) as caught:
+                    grok_review.ask_grok(self.worktree, "brief")
+                self.assertFalse(caught.exception.quota)
+                self.assertEqual(grok_review.quota_deadline(), 0)
+
+    def test_malformed_structured_results_use_normal_error_handling(self):
+        good = {"summary": "ok", "verdict": "APPROVE", "findings": []}
+        bad = (
+            {},
+            {**good, "findings": [None]},
+            {**good, "verdict": 1},
+            {**good, "findings": [finding(start=True)]},
+        )
+        for result in bad:
+            with self.subTest(result=result):
+                self.grok({"stopReason": "end_turn", "structuredOutput": result})
+                with self.assertRaisesRegex(
+                    grok_review.ReviewError, "structured output"
+                ):
+                    grok_review.ask_grok(self.worktree, "brief")
 
     def test_quota_pauses_all_repositories_without_spending_pr_attempts(self):
         now = [datetime(2026, 1, 10, 12).timestamp()]
@@ -428,7 +545,16 @@ class GrokRunTests(unittest.TestCase):
             self.assertEqual(listing.call_count, 1)
             self.assertEqual(reviewing.call_count, 1)
             self.assertEqual(grok_review.quota_deadline(), deadline)
-            self.grok({"stopReason": "end_turn", "structuredOutput": {"findings": []}})
+            self.grok(
+                {
+                    "stopReason": "end_turn",
+                    "structuredOutput": {
+                        "summary": "ok",
+                        "verdict": "APPROVE",
+                        "findings": [],
+                    },
+                }
+            )
             now[0] = deadline
             grok_review.watch("fixture/first", False)
             self.assertEqual(
@@ -465,6 +591,37 @@ class GrokRunTests(unittest.TestCase):
 
 
 class AdmissionTests(unittest.TestCase):
+    def test_install_preserves_the_explicit_model_without_launching_services(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plist = Path(directory) / "review.plist"
+            with (
+                patch.object(grok_review, "PLIST", plist),
+                patch.object(grok_review, "MODEL", "fixture-default"),
+                patch.object(
+                    grok_review.shutil, "which", return_value="/usr/bin/fixture"
+                ),
+                patch.object(grok_review.subprocess, "run") as launch,
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "grok_review.py",
+                        "--repo",
+                        "fixture/repo",
+                        "--model",
+                        "fixture-model",
+                        "install",
+                    ],
+                ),
+            ):
+                grok_review.main()
+                arguments = plistlib.loads(plist.read_bytes())["ProgramArguments"]
+                self.assertEqual(
+                    arguments[2:],
+                    ["--repo", "fixture/repo", "--model", "fixture-model", "watch"],
+                )
+                self.assertEqual(launch.call_count, 2)
+
     def test_only_repository_writers_are_admitted(self):
         for permission in ("admin", "maintain", "write", "read", "triage", None):
             with self.subTest(permission=permission):

@@ -266,7 +266,7 @@ present prose-only rules as an automated gate.
 
 `scripts/grok_review.py` runs Grok Build (`grok-4.7`, reasoning
 `xhigh`) as a read-only reviewer: in a clone of its own under
-`runtime/grok-review`, with only read, grep and glob tools and a supplied diff.
+`runtime/grok-review`, with only read_file, grep and list_dir tools and a supplied diff.
 The child inherits an allowlisted environment and its file-based Grok login.
 The author must have repository write, maintain or admin access, rechecked
 before inference and posting; unknown permissions fail closed. This tool is for
@@ -280,7 +280,10 @@ PR head once after it has stood ten minutes (saving reviews locally unless
 installed with `--post`); `status` lists what it reviewed and what failed. It uses
 the Grok account signed in on that machine, so its usage limit applies; a
 quota failure pauses all repositories until the next local day when no reset
-time is supplied, without consuming a head's two non-quota attempts. Concurrent
+time is supplied, without consuming a head's two non-quota attempts. MCP discovery/invocation tools are removed and MCPTool permission is denied.
+Helper commands have a five-minute deadline and bounded output; over-limit diffs
+are stopped while reading, and uncertain POST failures are not reposted.
+Malformed model output enters normal failure handling. Concurrent
 invocations skip immediately instead of queuing behind a long review. Diffs over
 256 KiB fail explicitly instead of sending an unbounded model request.
 The optional global `--repo owner/name` selects separate clones, worktrees,
