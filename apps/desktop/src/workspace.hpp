@@ -109,6 +109,8 @@ class SessionPreview final : public QObject {
     [[nodiscard]] bool updating() const { return !updating_.isEmpty(); }
     [[nodiscard]] bool unseen() const { return unseen_; }
     void setUnseen(bool unseen);
+    // When it last began to need you (ms since the epoch); 0 before that.
+    [[nodiscard]] qint64 neededAtMs() const { return needed_at_ms_; }
     // Where activity comes from: a service-side observer (the Codex app-server,
     // Claude Code's hook relay) or, for other CLIs, an output-timing estimate.
     enum class StatusSource : std::uint8_t { observer, output };
@@ -233,6 +235,7 @@ class SessionPreview final : public QObject {
     bool closing_{};
     QString updating_;
     bool unseen_{};
+    qint64 needed_at_ms_{};
     StatusSource status_source_{StatusSource::observer};
     // Output estimate: several frames close together read as activity, and a
     // few quiet seconds after that as a pause. Neither implies a finished task.
@@ -443,9 +446,12 @@ class Workspace final : public QObject {
     Q_INVOKABLE bool placeCategory(const QString& id, int index);
     Q_INVOKABLE bool removeSession(const QString& id);
     Q_INVOKABLE void nextSession(int delta = 1);
-    // Selects the next agent, in any category, with a pending request, or else
-    // one that finished while unseen; false when none is waiting.
+    // Selects the next agent, in any category, that finished a turn or asked
+    // for something while unseen; false when none is waiting.
     Q_INVOKABLE bool nextAttention();
+    // Selects the agent that most recently began to need you; again, the one
+    // before it. False when none is waiting.
+    Q_INVOKABLE bool latestAttention();
     [[nodiscard]] QVariantList sessions() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;
@@ -475,9 +481,8 @@ class Workspace final : public QObject {
     }
   signals:
     void focusChanged();
-    // An agent received a new request.
-    void requestArrived();
-    // An agent has a new request for you (alerts chime for these).
+    // An agent has a new request for you. Requests ping as finished turns do
+    // (turnFinished); nothing emits this now.
     void agentNeedsYou(lapis::desktop::SessionPreview* item);
     // A Codex or Claude turn ended; terminal agents' output pauses do not count.
     void turnFinished(lapis::desktop::SessionPreview* item);

@@ -106,7 +106,9 @@ void exercise(const QJsonObject& config) {
     require(dialog && !dialog->property("visible").toBool(),
             "Request opened a dialog automatically");
     require(preview.assignTerminalFocus(), "Terminal did not retain focus");
-    click(*window, QStringLiteral("reviewAttention"));
+    // Requests show no button of their own; Commands' Review requests opens them.
+    require(QMetaObject::invokeMethod(window, "openAttentionDialog"),
+            "Could not open the requests from Commands");
     until([&] { return dialog->property("opened").toBool(); });
     require(!preview.assignTerminalFocus(), "Terminal took focus from response dialog");
     click(*window, QStringLiteral("request-0"));
