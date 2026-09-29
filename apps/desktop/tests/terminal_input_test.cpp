@@ -725,9 +725,6 @@ void command_links_open() {
             "A valid encoded replacement-character filename did not open");
     require(text_frames(peer).isEmpty(), "Command-click sent input to the agent");
 }
-// Dragging selects screen text and double-clicking selects a word. The copy
-// chord copies without sending input, typing clears the selection, and the
-// wheel asks for older history on the normal screen.
 // A paste longer than one input message arrives whole, as text the desktop
 // encoded in the newest screen's mode; one longer than the service can queue
 // is refused with a reason, and nothing is sent.
@@ -811,6 +808,9 @@ void long_pastes() {
     require(!surface.pasting(), "A refused paste kept input ownership");
 }
 
+// Dragging selects screen text and double-clicking selects a word. The copy
+// chord copies without sending input, typing clears the selection, and the
+// wheel asks for older history on the normal screen.
 void selection_and_scroll() {
     Fixture f;
     QQuickWindow window;
