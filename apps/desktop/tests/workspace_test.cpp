@@ -4238,6 +4238,81 @@ void codexResumeArguments() {
     }
 }
 
+void savedGrokDefaultsPreserveLaunchOwnership() {
+    struct Case {
+        QString program;
+        QStringList arguments;
+        bool add_fullscreen{};
+        bool live{};
+        bool managed{};
+    };
+    QStringList full;
+    for (int index = 0; index < 64; ++index)
+        full << QStringLiteral("literal");
+    const std::vector<Case> cases{
+        {"grok", {}, true},
+        {"grok", {"--model", "chosen", "-r", "conversation"}, true, false, true},
+        {"grok", {"--fullscreen", "--model", "chosen"}},
+        {"grok", {"--fullscreen=false"}},
+        {"grok", {"--no-fullscreen"}},
+        {"grok", {"--", "--fullscreen"}, true},
+        {"grok", full},
+        {"grok", {}, false, true},
+        {"ssh", {"-t", "fixture", "exec grok"}},
+        {"custom-agent", {"--custom"}},
+    };
+    for (const auto& variant : cases) {
+        QTemporaryDir directory(QStringLiteral("/tmp/lapis-grok-defaults-XXXXXX"));
+        require(directory.isValid(), "Grok defaults directory");
+        const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+        const auto id = uuid();
+        auto record = agentRecord(root.path(), id, "general");
+        const auto program = root.filePath(variant.program);
+        writeExecutable(program, "#!/usr/bin/env bash\nexit 0\n");
+        record.insert(QStringLiteral("program"), program);
+        record.insert(QStringLiteral("harness"), QStringLiteral("grok"));
+        record.insert(QStringLiteral("arguments"), QJsonArray::fromStringList(variant.arguments));
+        if (variant.managed)
+            record.insert(QStringLiteral("managedResume"),
+                          QJsonObject{{"index", 2}, {"identity", "conversation"}});
+        WorkspaceOptions options;
+        options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+        options.restoreAgents = true;
+        writeRegistry(
+            options.storagePath,
+            {{"version", 2},
+             {"activeCategory", "general"},
+             {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+             {"agents", QJsonArray{record}}});
+        QLocalServer listener;
+        if (variant.live)
+            require(listener.listen(record.value(QStringLiteral("endpoint")).toString()),
+                    "existing service endpoint listens");
+        auto expected = variant.arguments;
+        if (variant.add_fullscreen)
+            expected.prepend(QStringLiteral("--fullscreen"));
+        // Without processing events, restore plans and persists the launch but
+        // never starts the disposable executable. Repeat to check idempotence.
+        for (int pass = 0; pass < 2; ++pass) {
+            Workspace workspace(WorkspaceMode::live, options);
+            require(workspace.workspaceError().isEmpty(), "restore saved Grok launch");
+            const auto saved = QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                   .object()[QStringLiteral("agents")]
+                                   .toArray()
+                                   .first()
+                                   .toObject();
+            require(saved[QStringLiteral("arguments")].toArray() ==
+                        QJsonArray::fromStringList(expected),
+                    "startup migration preserves explicit argv and live/transport ownership");
+            if (variant.managed)
+                require(saved[QStringLiteral("managedResume")]
+                                .toObject()[QStringLiteral("index")]
+                                .toInt(-1) == 3,
+                        "the owned resume pair shifts exactly once with the default");
+        }
+    }
+}
+
 struct PrintedCheckpointFixture {
     QTemporaryDir directory{QStringLiteral("/tmp/lapis-cp-XXXXXX")};
     QString canonical = QFileInfo(directory.path()).canonicalFilePath();
@@ -4495,8 +4570,9 @@ int main(int argc, char** argv) {
             require(argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--case") &&
                         (QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("accounts") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("startup-defaults") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload")),
-                    "Usage: lapis_workspace_tests [--case remote-options|accounts|reload]");
+                    "Usage: lapis_workspace_tests [--case remote-options|accounts|reload|startup-defaults]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("accounts")) {
                 incompleteCodexHomeNeverStartsAnAgent();
@@ -4504,6 +4580,8 @@ int main(int argc, char** argv) {
             } else if (selected == QStringLiteral("remote-options")) {
                 remoteOptionsRespectTheArgumentLimit();
                 remoteClaudeReconnectsToItsConversation();
+            } else if (selected == QStringLiteral("startup-defaults")) {
+                savedGrokDefaultsPreserveLaunchOwnership();
             } else {
                 reloadStartsAgentsAgain();
                 reloadFailuresRemainRetryable();
@@ -4545,6 +4623,7 @@ int main(int argc, char** argv) {
         const bool had_codex_home = qEnvironmentVariableIsSet("CODEX_HOME");
         const auto original_codex_home = qgetenv("CODEX_HOME");
         codexResumeArguments();
+        savedGrokDefaultsPreserveLaunchOwnership();
         codexConversationRecoveredWithoutRecord();
         require(qEnvironmentVariableIsSet("CODEX_HOME") == had_codex_home &&
                     qgetenv("CODEX_HOME") == original_codex_home,

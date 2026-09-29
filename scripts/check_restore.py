@@ -53,6 +53,7 @@ RESUME_OPTIONS = {
 }
 STARTUP_ARGUMENTS = {
     "codex": ["-c", "check_for_update_on_startup=false"],
+    "grok": ["--fullscreen"],
 }
 LAUNCHD_KEPT = (
     "PATH",

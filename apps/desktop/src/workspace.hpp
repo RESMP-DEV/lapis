@@ -24,6 +24,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QSet>
+#include <QSize>
 #include <QString>
 #include <QTimer>
 #include <QVariantList>

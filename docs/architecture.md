@@ -3026,6 +3026,15 @@ the launch fingerprint, so reattaching is unchanged. An agent restored at login 
 at 100 by 30. `agentsStartAtTheStageSize` in the workspace suite checks a
 stand-in CLI reads the stage's grid from its terminal at start.
 
+Saved local Grok launches gain the fullscreen default when their old service
+is gone, preserving explicit screen flags and shifting an owned resume pair
+with the inserted argument. Reattaching a live service keeps its original
+launch fingerprint. Full argument lists, custom executables and saved remote
+shell wrappers remain unchanged; recreate a remote tab to adopt the new Grok
+default or Claude environment export. The workspace restore-planning cases
+cover these boundaries without starting an agent; select them with
+`lapis_workspace_tests --case startup-defaults`.
+
 ### Plans shared across machines (September 28)
 
 OMP keeps several OAuth logins per provider and, because it makes each API
