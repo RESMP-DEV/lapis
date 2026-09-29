@@ -1,0 +1,67 @@
+{
+  "pr": 32,
+  "baseline": "ba5d27545d7d807157931e4695d53480c6209427",
+  "contract": "A newly received snapshot permits one explicit retry of an unconfirmed resize. It does not acknowledge that resize or release deferred history; only a matching size does. Passive views do not issue resizes.",
+  "source_sha256": {
+    "apps/desktop/src/live_connection.cpp": "f62079d87e10f39f670c660cefe7b95dba6997d238524f7b98987ed86f45b3df",
+    "apps/desktop/src/live_connection.hpp": "77fdf9c8c961c71cb71a83e43124fb2ed712ca5eb5142ed84d440afef2f6dda0",
+    "apps/desktop/tests/live_connection_test.cpp": "722d7e9a457f274355d4205a583c00c3ec8b993f0ddb6cf9fc324ee6ca992ff9",
+    "apps/desktop/tests/workspace_test.cpp": "7b483336f1b4fd79d362665425b44ca2de3d8fbfd3903a1f5b417f7a6354d523",
+    "docs/architecture.md": "e4721fda8b88a25545af311ed3744c0a7d83f24dcbbee6d020726121b681d4ec"
+  },
+  "validation": [
+    {
+      "command": "ctest --test-dir build/desktop -R ^live-connection$ --no-tests=error --output-on-failure",
+      "result": "Passed, including the pre-request snapshot delivered after the resize, one retry per observed sequence, and deferred-history confirmation."
+    },
+    {
+      "command": "ctest in desktop-enabled ASan/UBSan and TSan builds, selected live-connection suite",
+      "result": "Both passed."
+    },
+    {
+      "command": "python3 scripts/lapis.py build --jobs 4",
+      "result": "All static checks passed. Initial 29/32 suites passed; the reconnect fixture publication race was repaired, and native focus cases were rerun serially."
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R ^(workspace|ui-preview|terminal-input)$ --no-tests=error --output-on-failure -j 1",
+      "result": "All three passed: workspace 36.31s, native UI 17.97s, native terminal input 4.82s. Together with initial passes, all 32 suites covered."
+    },
+    {
+      "command": "clang-tidy affected workspace test translation unit",
+      "result": "Passed after the fixture-only repair."
+    },
+    {
+      "command": "python3 scripts/lapis.py quality; python3 scripts/lapis.py ui-review",
+      "result": "Both passed, including three background UI/input groups."
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --case invalid-resize-and-signal --case synchronization-boundaries --case literal-resize-exit",
+      "result": "All three selected stand-in cases passed."
+    }
+  ],
+  "limitations": [
+    "No real remote device qualification; the resize race is exercised against an isolated protocol peer.",
+    "Initial failed native logs and missing-prefix setup attempt remain recorded locally."
+  ],
+  "review_followup": {
+    "reviewed_head": "dce45cae20f932e39b234f1a5a5e003ab40c9cad",
+    "finding": "CodeRabbit outside-diff comment requested direct no-page history failure coverage.",
+    "change": "Extended the existing reconnect/history-error scenario: defer an 8x4 resize during the first-page request, return no page, assert live input recovery plus the exact resize payload and current attachment, then acknowledge the resize before the existing malformed-reply case. Corrected the returnToLive comment.",
+    "validation": [
+      {
+        "command": "cmake --build build/desktop --target lapis_live_connection_tests --parallel 4; ctest --test-dir build/desktop -R ^live-connection$ --no-tests=error --output-on-failure",
+        "result": "Passed in 1.70 seconds on the final source."
+      },
+      {
+        "command": "Temporarily omit only failHistoryRequest calling sendWantedSize; rebuild and run the same suite; restore source and repeat",
+        "result": "Control failed waiting for the deferred resize (exit 8); restored production source passed (exit 0). Production files remain unchanged."
+      },
+      {
+        "command": "clang-tidy -p build/desktop apps/desktop/tests/live_connection_test.cpp; clang-format --dry-run --Werror apps/desktop/tests/live_connection_test.cpp; git diff --check",
+        "result": "Passed."
+      }
+    ],
+    "reuse": "Only one C++ test case and its comment changed. Production, dependencies, Python and UI are unchanged from the reviewed head; prior normal/sanitizer/background/CLI coverage remains scoped to that head. No broad test suite or native UI replay was added.",
+    "retained_failed_attempt": "The first test draft reused a handshake helper for an ordinary snapshot; replacing it with the existing direct snapshot-send pattern fixed the fixture-only deadline failure."
+  }
+}
