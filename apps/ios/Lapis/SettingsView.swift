@@ -23,8 +23,9 @@ struct SettingsView: View {
                     } footer: {
                         Text("""
                             lapis reaches the gateway on your Mac over Tailscale or ZeroTier. \
-                            The iPhone must be on the same tailnet, or on the Mac's ZeroTier \
-                            network; nothing else is needed to sign in.
+                            The iPhone must be signed in to Tailscale with the same account \
+                            as the Mac, or on the Mac's ZeroTier network; nothing else is \
+                            needed to sign in.
                             """)
                     }
                     Section {
