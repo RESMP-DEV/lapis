@@ -42,5 +42,20 @@
   "limitations": [
     "These are macOS stand-in and saved-registry checks; no real SSH host or authentication session was used.",
     "Original failed logs retained locally; no blanket claim that the initial full gate passed."
-  ]
+  ],
+  "merge_followup": {
+    "reviewed_head": "3cf06aa8af5e2a7ee5940f30a9edcbcc9ca2e4cb",
+    "finding": "Inkling: a bare SSH option value must not suppress insertion of its -o pair.",
+    "change": "Recognize adjacent key/value pairs only before the -t host/command suffix; tolerate preceding single-token flags. Extended the existing argument-limit matrix with bare-value and shifted-pair cases.",
+    "validation": [
+      "Original implementation fails the extended restore/idempotence assertion.",
+      "Rebuilt lapis_workspace_tests; remote-options cases pass normally and under desktop ASan/UBSan, including existing reconnect cases.",
+      "clang-format, clang-tidy for both affected translation units, and git diff --check pass."
+    ],
+    "source_sha256": {
+      "apps/desktop/src/workspace.cpp": "797c3baa58fb92d19ed2b331bc2f5a8178505d6621699a2a5c310483e2bf38ef",
+      "apps/desktop/tests/workspace_test.cpp": "21a3d9ec356ea04d0ea490f5d0826a053ec83d0bf0e049ef1ba497ce8a9f6f0a"
+    },
+    "reuse": "Previous desktop, CLI, native UI and quality checks retain their original revision and scope. Only SSH option recognition and its existing table changed; normal and sanitizer affected behavior was rebuilt and rerun."
+  }
 }

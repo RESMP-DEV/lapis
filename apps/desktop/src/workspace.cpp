@@ -294,9 +294,19 @@ void addRemoteOptions(session::LaunchSpec& launch) {
     if (!remoteCommand(launch))
         return;
     QStringList missing;
-    for (qsizetype at = 0; at < remoteOptions().size(); at += 2)
-        if (!launch.arguments.contains(remoteOptions().at(at + 1)))
+    const auto options_end = launch.arguments.indexOf(QStringLiteral("-t"));
+    for (qsizetype at = 0; at < remoteOptions().size(); at += 2) {
+        bool present = false;
+        for (qsizetype argument = 0; argument + 1 < options_end; ++argument) {
+            if (launch.arguments.at(argument) == remoteOptions().at(at) &&
+                launch.arguments.at(argument + 1) == remoteOptions().at(at + 1)) {
+                present = true;
+                break;
+            }
+        }
+        if (!present)
             missing += remoteOptions().mid(at, 2);
+    }
     if (launch.arguments.size() + missing.size() > max_saved_arguments) {
         const auto error =
             QStringLiteral("Saved SSH arguments leave no room for lapis connection options. "
