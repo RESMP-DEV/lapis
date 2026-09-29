@@ -2990,6 +2990,13 @@ start-time updater's process group, bounded output tail, timeout and
 `harness-updates.log`. When it exits 0, its agents go through the reload path
 (a remote agent without a conversation id is still left running). Any other
 outcome leaves them running and reports the outcome and the output's tail.
+Startup and manual requests share that same in-flight owner. New agents wait
+for its result in either request order; a failed update still permits their
+first start, while existing agents are not reloaded. Repeated enrollment is
+accepted, and an all-skipped batch reports why it could not run. The focused
+`lapis_workspace_tests --case updater` selection includes both request orders,
+success and failure, idempotence, skipped requests and process-group cleanup.
+
 `updateReloadsAgentsAfterTheirCli` in the workspace suite drives a stand-in CLI
 through a shared update, a failed one, and a remote one through a stand-in ssh.
 

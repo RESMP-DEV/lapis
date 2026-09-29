@@ -520,8 +520,6 @@ class Workspace final : public QObject {
     bool update_harnesses_{};
     bool headless_{};
     QHash<QString, qint64> harness_checked_ms_;
-    QHash<QString, QPointer<QProcess>> harness_updates_;
-    QHash<QString, QStringList> starts_after_update_;
     QHash<QProcess*, QByteArray> updater_output_;
     QHash<QProcess*, bool> updater_stopping_;
     qint64 update_timeout_ms_{qint64{2} * 60 * 1000};
@@ -531,20 +529,22 @@ class Workspace final : public QObject {
                          const std::function<void(QProcess*, const QString&, bool)>& finished);
     // True when the agent waits for its CLI's update and starts after it.
     bool deferForUpdate(const QString& id);
-    // An update someone asked for, on one machine ("" for this Mac), and the
-    // agents that reload after it; keyed by CLI and machine.
+    // One updater per CLI and machine (empty means local), with separate
+    // consumers for first starts and successful-update reloads.
     struct CliUpdate {
         QString harness;
         QString machine;
         QPointer<QProcess> process;
         QStringList agents;
+        QStringList starts;
+        bool manual{};
     };
     QHash<QString, CliUpdate> cli_updates_;
     int updateAndReload(const QStringList& ids);
     void finishCliUpdate(const QString& key, QProcess* process, const QString& outcome,
                          bool succeeded);
     void drainUpdater(QProcess* process);
-    void finishUpdate(const QString& harness, QProcess* process, const QString& outcome);
+    void startUpdatedAgents(const QStringList& ids);
     void logUpdate(const QString& line) const;
     QString update_log_directory_;
     // Records conversations for agents whose services do not.
@@ -664,7 +664,7 @@ class Workspace final : public QObject {
     QSet<QString> reloading_;
     enum class ReloadOutcome : std::uint8_t { requested, kept, failed };
     struct ReloadResult {
-        ReloadOutcome outcome;
+        ReloadOutcome outcome{};
         QString diagnostic;
     };
     ReloadResult requestReload(const QString& id);

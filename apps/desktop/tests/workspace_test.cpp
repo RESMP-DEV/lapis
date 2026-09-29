@@ -1460,8 +1460,9 @@ void remoteClaudeReconnectsToItsConversation() {
     require(ssh.open(QIODevice::WriteOnly), "write the stand-in ssh");
     ssh.write(R"(#!/bin/sh
 d=$(dirname "$0"); host=$6
-n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1)); echo $n > "$d/$host.count"
+n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1))
 printf '%s\n' "$@" > "$d/$host.call$n"
+echo $n > "$d/$host.count"
 case "$host:$n" in typo:*) exit 255;; devbox:1) sleep 1; exit 255;; devbox:2) sleep 1; exit 1;; esac
 echo connected
 exec sleep 600
@@ -1714,7 +1715,9 @@ void updateReloadsAgentsAfterTheirCli() {
             return item != nullptr && item->inputReady();
         };
         const auto label = [&workspace](const QString& id) {
-            return workspace.session(id)->statusLabel();
+            const auto* item = workspace.session(id);
+            require(item != nullptr, "updated session retains its identity");
+            return item->statusLabel();
         };
         const auto project = root.filePath(QStringLiteral("project"));
         require(workspace.createAgent(project, QStringLiteral("one"), QStringLiteral("grok")),
@@ -1732,6 +1735,8 @@ void updateReloadsAgentsAfterTheirCli() {
                     workspace.updateAndReloadAgent(two) == 1 &&
                     waitFor([&] { return lines("updates") == 1; }, 10000),
                 "both tabs wait on one update");
+        require(workspace.updateAndReloadAgent(one) == 1 && workspace.workspaceError().isEmpty(),
+                "repeated update enrollment is accepted without a false error");
         require(label(one) == QStringLiteral("Updating Grok…") &&
                     label(two) == QStringLiteral("Updating Grok…") && ready(one),
                 "they say so and keep running meanwhile");
@@ -1789,6 +1794,88 @@ void updateReloadsAgentsAfterTheirCli() {
                 "the stand-in agents close");
     }
     qputenv("PATH", path);
+}
+
+// Manual and startup consumers share one installer, whichever arrives first.
+void startupAndManualUpdatesShareOneInstaller() {
+    for (const bool manual_first : {false, true}) {
+        for (const bool failed : {false, true}) {
+            UpdaterFixture fixture(R"(#!/usr/bin/env bash
+bin="${0%/*}"
+if [ "$1" = update ]; then
+    echo update >> "$bin/updates"
+    while [ -f "$bin/hold" ]; do sleep 0.05; done
+    [ -f "$bin/fail" ] && exit 3
+    exit 0
+fi
+echo start >> "$bin/starts"
+echo ready
+exec sleep 600
+)");
+            fixture.options.updateHarnesses = !manual_first;
+            const auto flag = [&](const char* name) {
+                QFile file(fixture.root.filePath(QStringLiteral("bin/") + QLatin1String(name)));
+                require(file.open(QIODevice::WriteOnly), "create updater flag");
+            };
+            flag("hold");
+            if (failed)
+                flag("fail");
+            Workspace workspace(WorkspaceMode::live, fixture.options);
+            fixture.create(workspace);
+            auto* one = workspace.focusedSession();
+            const auto first_id = one->sessionId();
+            if (manual_first)
+                require(waitFor([&] { return one->inputReady(); }, 10000),
+                        "first agent is running");
+            require(workspace.updateAndReloadAgent(first_id) == 1 &&
+                        workspace.updateAndReloadAgent(first_id) == 1,
+                    "manual request joins either kind of update idempotently");
+            fixture.create(workspace);
+            auto* two = workspace.focusedSession();
+            const auto second_id = two->sessionId();
+            require(waitFor([&] { return QFileInfo::exists(fixture.root.filePath("bin/updates")); },
+                            10000),
+                    "the one installer started");
+            require(fixture.read("bin/updates") == "update\n" && !two->live() &&
+                        (!manual_first || one->inputReady()),
+                    "startup waits while an existing agent keeps running");
+            require(QFile::remove(fixture.root.filePath("bin/hold")), "release installer");
+            const int expected_starts = manual_first && !failed ? 3 : 2;
+            require(waitFor(
+                        [&] {
+                            return one->inputReady() && two->inputReady() &&
+                                   QFileInfo::exists(fixture.root.filePath("bin/starts")) &&
+                                   fixture.read("bin/starts").count('\n') == expected_starts &&
+                                   one->statusLabel() != QStringLiteral("Updating Grok…");
+                        },
+                        10000),
+                    "each consumer starts or reloads once according to the result");
+            require(fixture.read("bin/updates") == "update\n", "both paths used one installer");
+            require(failed ? workspace.workspaceError().contains(QStringLiteral("did not update"))
+                           : workspace.workspaceError().isEmpty(),
+                    "manual callers see the updater outcome");
+            for (const auto& id : {first_id, second_id})
+                require(workspace.closeSession(id, true), "close shared updater consumer");
+            require(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000),
+                    "consumers close");
+        }
+    }
+}
+
+void skippedClaudeUpdateReportsTheCurrentOperation() {
+    UpdaterFixture fixture("#!/usr/bin/env bash\necho ready\nexec sleep 600\n", "claude");
+    fixture.options.updateHarnesses = false;
+    Workspace workspace(WorkspaceMode::live, fixture.options);
+    fixture.create(workspace);
+    auto* item = workspace.focusedSession();
+    require(waitFor([&] { return item->inputReady(); }, 10000), "Claude stand-in is ready");
+    require(workspace.closeSession(item->sessionId()), "Claude begins closing");
+    require(!workspace.restartAgent(QStringLiteral("missing")), "set an earlier unrelated error");
+    require(workspace.updateClaudeAndReload() == 0 &&
+                workspace.workspaceError().contains(QStringLiteral("cannot update now")),
+            "all-skipped Claude update reports its own reason");
+    require(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000),
+            "Claude stand-in closes");
 }
 
 // An attached peer can lose the terminate handshake, report replacement, or
@@ -4293,13 +4380,24 @@ int main(int argc, char** argv) {
     QCoreApplication::setApplicationName(QStringLiteral("lapis"));
     try {
         if (argc > 1) {
-            require(argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--case") &&
-                        QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload"),
-                    "Usage: lapis_workspace_tests [--case reload]");
-            reloadStartsAgentsAgain();
-            reloadFailuresRemainRetryable();
-            batchReloadRetainsEarlierFailures();
-            std::cout << "reload lifecycle and failure recovery passed\n";
+            require(argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--case"),
+                    "Usage: lapis_workspace_tests [--case reload|updater]");
+            const auto selected = QString::fromLocal8Bit(argv[2]);
+            if (selected == QStringLiteral("reload")) {
+                reloadStartsAgentsAgain();
+                reloadFailuresRemainRetryable();
+                batchReloadRetainsEarlierFailures();
+            } else if (selected == QStringLiteral("updater")) {
+                updaterLifecycle();
+                updaterOutputIsDrainedWithABoundedTail();
+                failedUpdaterStartClearsTheQueue();
+                updateReloadsAgentsAfterTheirCli();
+                startupAndManualUpdatesShareOneInstaller();
+                skippedClaudeUpdateReportsTheCurrentOperation();
+            } else {
+                throw std::runtime_error("Usage: lapis_workspace_tests [--case reload|updater]");
+            }
+            std::cout << "selected workspace cases passed\n";
             return 0;
         }
         categoriesAndIdentity();
@@ -4353,6 +4451,8 @@ int main(int argc, char** argv) {
         reloadFailuresRemainRetryable();
         batchReloadRetainsEarlierFailures();
         updateReloadsAgentsAfterTheirCli();
+        startupAndManualUpdatesShareOneInstaller();
+        skippedClaudeUpdateReportsTheCurrentOperation();
         resumingAConversationStartsItsCli();
         terminalsRunPlainShells();
         wheelReachesAFullScreenProgram();
