@@ -518,27 +518,51 @@ def write_mark_icon(target):
         except (TypeError, ValueError):
             continue
         spans.append((cx - rx, cy - ry, cx + rx, cy + ry))
+    star = cabochon.find(f".//{{{namespace}}}g[@id='star']")
+    if star is not None:
+        for polygon in star.findall(f"{{{namespace}}}polygon"):
+            try:
+                points = [
+                    tuple(float(value) for value in pair.split(","))
+                    for pair in (polygon.get("points") or "").split()
+                ]
+            except ValueError:
+                continue
+            if points:
+                spans.append(
+                    (
+                        min(point[0] for point in points),
+                        min(point[1] for point in points),
+                        max(point[0] for point in points),
+                        max(point[1] for point in points),
+                    )
+                )
     if not spans:
-        raise PackageError("Icon SVG stone needs ellipse geometry")
-    left = min(span[0] for span in spans)
-    top = min(span[1] for span in spans)
-    right = max(span[2] for span in spans)
-    bottom = max(span[3] for span in spans)
-    margin = (bottom - top) * 0.12
+        raise PackageError("Icon SVG stone needs ellipse or star geometry")
+    blurs = [
+        float(blur.get("stdDeviation"))
+        for blur in definitions.iter(f"{{{namespace}}}feGaussianBlur")
+        if blur.get("stdDeviation") is not None
+    ]
+    if not blurs:
+        raise PackageError("Icon SVG defs need a feGaussianBlur stdDeviation")
+    # Three standard deviations of the widest blur covers the glow falloff.
+    margin = 3 * max(blurs)
+    left = min(span[0] for span in spans) - margin
+    top = min(span[1] for span in spans) - margin
+    right = max(span[2] for span in spans) + margin
+    bottom = max(span[3] for span in spans) + margin
+    # Square frame so the mark fills the toolbar's square point size; the
+    # narrower axis is padded symmetrically to keep the stone centered.
+    side = max(right - left, bottom - top)
+    left -= (side - (right - left)) / 2
+    top -= (side - (bottom - top)) / 2
     mark = ET.Element(
         f"{{{namespace}}}svg",
         {
             "width": "1024",
             "height": "1024",
-            "viewBox": " ".join(
-                str(round(value))
-                for value in (
-                    left - margin,
-                    top - margin,
-                    right - left + 2 * margin,
-                    bottom - top + 2 * margin,
-                )
-            ),
+            "viewBox": " ".join(f"{value:.1f}" for value in (left, top, side, side)),
         },
     )
     mark.append(definitions)
