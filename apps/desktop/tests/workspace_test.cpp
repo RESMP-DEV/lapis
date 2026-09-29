@@ -4571,6 +4571,17 @@ struct PrintedCheckpointFixture {
     WorkspaceOptions options;
     QString endpoint;
 
+    [[nodiscard]] bool waitForArguments(const QByteArray& expected) const {
+        // Service attachment can finish before the restarted child has
+        // published its argv. Match the child's receipt, not input readiness.
+        return waitFor(
+            [&] {
+                QFile file(argv_path);
+                return file.open(QIODevice::ReadOnly) && file.readAll() == expected;
+            },
+            10000);
+    }
+
     PrintedCheckpointFixture(const QString& harness, const QString& session_id,
                              const QJsonArray& arguments, bool legacy_record = false) {
         require(directory.isValid(), "checkpoint fixture directory");
@@ -4641,11 +4652,8 @@ void printedCheckpointsResumeButNeverOverrideTheObserver() {
     require(waitFor([&] { return workspace.restartAgent(id); }, 10000),
             "restart checkpoint fixture");
     require(waitFor([&] { return item->inputReady(); }, 10000), "checkpoint fixture restarts");
-    QFile argv_file(fixture.argv_path);
-    require(argv_file.open(QIODevice::ReadOnly) &&
-                argv_file.readAll() == QByteArray("--yolo\n--session\nforged-conversation\n"),
+    require(fixture.waitForArguments("--yolo\n--session\nforged-conversation\n"),
             "a printed checkpoint resumes a CLI lapis has no observer for");
-    argv_file.close();
     item->sendText("done\r");
     require(waitFor([&] { return item->connectionState() == QStringLiteral("ended"); }, 10000),
             "advisory recovery fixture exits");
@@ -4662,8 +4670,7 @@ void printedCheckpointsResumeButNeverOverrideTheObserver() {
     require(verified_record && verified_record->source == lapis::session::ResumeSource::observer &&
                 verified_record->session_id == QStringLiteral("verified-id"),
             "printed output cannot overwrite an observer checkpoint");
-    require(argv_file.open(QIODevice::ReadOnly) &&
-                argv_file.readAll() == QByteArray("--yolo\n--session\nverified-id\n"),
+    require(fixture.waitForArguments("--yolo\n--session\nverified-id\n"),
             "only the verified identity becomes a resume argument");
     require(workspace.closeSession(id) &&
                 waitFor([&] { return workspace.sessions().isEmpty(); }, 10000),
