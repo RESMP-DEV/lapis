@@ -25,9 +25,7 @@ Dialog {
     required property int fontSizeDefault
     required property int motionDuration
     required property bool motionEnabled
-    required property bool alertSound
     required property bool finishSound
-    required property int alertRepeat
     required property bool keepAwake
     required property bool showUsage
     // Notifications while lapis is in the background; the downloaded app's
@@ -43,9 +41,7 @@ Dialog {
     signal densityChosen(string name)
     signal fontFamilyChosen(string name)
     signal fontSizeChosen(int pixels)
-    signal alertSoundChosen(bool on)
     signal finishSoundChosen(bool on)
-    signal alertRepeatChosen(int times)
     signal keepAwakeChosen(bool on)
     signal showUsageChosen(bool on)
     signal notifyChosen(bool on)
@@ -651,41 +647,8 @@ Dialog {
                 }
 
                 SwitchRow {
-                    label: qsTr("Chime when an agent needs you")
-                    detail: qsTr("Two taps, then again every few seconds while the request waits and you are looking elsewhere.")
-                    on: settings.alertSound
-                    playable: true
-                    onToggled: function(on) { settings.alertSoundChosen(on) }
-                    onPlayed: settings.chimePlayed(true)
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    enabled: settings.alertSound
-                    PlainLabel {
-                        Layout.fillWidth: true
-                        text: settings.alertRepeat === 1 ? qsTr("Chime once") : qsTr("Chime up to %1 times").arg(settings.alertRepeat)
-                        color: settings.alertSound ? settings.paletteText : settings.paletteMuted
-                        font.pixelSize: Math.max(12, settings.uiFont - 1)
-                    }
-                    StepButton {
-                        objectName: "repeatDown"
-                        text: "−"
-                        enabled: settings.alertRepeat > 1
-                        onClicked: settings.alertRepeatChosen(settings.alertRepeat - 1)
-                    }
-                    StepButton {
-                        objectName: "repeatUp"
-                        text: "+"
-                        enabled: settings.alertRepeat < 10
-                        onClicked: settings.alertRepeatChosen(settings.alertRepeat + 1)
-                    }
-                }
-
-                SwitchRow {
                     label: qsTr("Chime when a turn finishes")
-                    detail: qsTr("Once, quietly, when a Codex or Claude turn ends out of view.")
+                    detail: qsTr("Once, quietly, when a Codex or Claude turn ends or an agent asks for something out of view.")
                     on: settings.finishSound
                     playable: true
                     onToggled: function(on) { settings.finishSoundChosen(on) }

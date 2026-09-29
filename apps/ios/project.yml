@@ -27,9 +27,10 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         LapisDefaultHost: $(LAPIS_DEFAULT_HOST)
-        NSLocalNetworkUsageDescription: lapis connects to the gateway on your Mac over Tailscale.
-        # Plain HTTP only to Tailscale names and local addresses; WireGuard
-        # encrypts the tailnet path.
+        NSLocalNetworkUsageDescription: lapis connects to the gateway on your Mac over Tailscale or ZeroTier.
+        # Plain HTTP only to Tailscale names, ZeroTier addresses and local
+        # addresses; WireGuard encrypts both overlay paths. NSAllowsLocalNetworking
+        # covers raw private IPs, proven by LapisTests' ATSTests.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
           NSExceptionDomains:
@@ -57,11 +58,27 @@ targets:
         SWIFT_VERSION: "5.0"
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
+  LapisTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [LapisTests]
+    dependencies:
+      - target: Lapis
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.lapis.remote.unittests
+        # Hosted in the app so the app's ATS keys govern the test's requests.
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Lapis.app/Lapis
+        BUNDLE_LOADER: $(TEST_HOST)
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   Lapis:
     build:
       targets:
         Lapis: all
         LapisUITests: [test]
+        LapisTests: [test]
     test:
-      targets: [LapisUITests]
+      targets: [LapisUITests, LapisTests]

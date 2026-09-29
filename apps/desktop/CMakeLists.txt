@@ -44,8 +44,8 @@ target_include_directories(lapis_desktop_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR
 if(APPLE)
     # Notifications, the login item, Command-` and (in the downloaded app) Sparkle.
     target_sources(lapis_desktop_view PRIVATE src/desktop_actions_mac.mm)
-    target_link_libraries(lapis_desktop_view PUBLIC "-framework AppKit" "-framework Foundation"
-        "-framework ServiceManagement" "-framework UserNotifications")
+    target_link_libraries(lapis_desktop_view PUBLIC "-framework AppKit" "-framework Carbon"
+        "-framework Foundation" "-framework ServiceManagement" "-framework UserNotifications")
     if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
         get_filename_component(sparkle_directory "${LAPIS_SPARKLE_FRAMEWORK}" DIRECTORY)
         target_compile_definitions(lapis_desktop_view PRIVATE LAPIS_SPARKLE)

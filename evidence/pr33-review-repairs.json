@@ -1,0 +1,42 @@
+{
+  "pr": 33,
+  "baseline": "d01fc5ed50cd89daed4a50588736f493bd4eb58c",
+  "contracts": [
+    "One installer per harness and machine serves startup and manual consumers. Repeated enrollment is accepted without creating another installer.",
+    "New sessions start once after completion, including update failure. Existing sessions reload only on successful manual update.",
+    "Skipped manual requests report the current operation, even if every requested agent was skipped.",
+    "Updater destruction retains QObject ownership and process-group cleanup; stopGroup does not invoke completion callbacks."
+  ],
+  "source_sha256": {
+    "apps/desktop/src/workspace.cpp": "65ff26688eb267490039916ce5168d64381138914f3376558e000e91cd17f0fa",
+    "apps/desktop/src/workspace.hpp": "9bba2e48179cc5fd6f022f1894551c8ded4a2119fcd3464b3623ca65de065947",
+    "apps/desktop/tests/workspace_test.cpp": "08fd2be0be94929b8e8d582379da5fb3473affa709c4be4fd26bb04c581a3455",
+    "docs/architecture.md": "7c2443cc7cf0d6063ecb1330671f31764b6f306e378f8592867e66937c216281"
+  },
+  "validation": [
+    {
+      "command": "lapis_workspace_tests --case updater in normal, desktop ASan/UBSan and desktop TSan builds",
+      "result": "Passed. Both startup/manual request orders, success/failure, repeated enrollment, all-skipped diagnostics, output bounds, startup failure and destruction cleanup exercised. Sanitizer coverage reused after an unrelated reconnect fixture publication repair and explicit default initialization of ReloadResult; updater execution is unchanged."
+    },
+    {
+      "command": "python3 scripts/lapis.py build --jobs 4",
+      "result": "Initial 29/32 suites passed. Static checks passed except a ReloadResult default initializer warning, now repaired and rechecked with configured Cppcheck."
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R ^(workspace|ui-preview|terminal-input)$ --no-tests=error --output-on-failure -j 1",
+      "result": "All three passed: workspace 42.57s, native UI 17.77s and native terminal input 4.81s. Initial reconnect fixture race fixed by publishing complete argv before readiness; native focus checks rerun serially. All 32 suites covered across these runs."
+    },
+    {
+      "command": "python3 scripts/lapis.py quality; python3 scripts/lapis.py ui-review",
+      "result": "Both passed; three background UI/input groups passed."
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --case literal-resize-exit --case detach --case failures",
+      "result": "All three stand-in cases passed."
+    }
+  ],
+  "limitations": [
+    "Uses disposable stand-in installers and agents; no actual package update, remote host, or authentication session was launched.",
+    "Failed initial runs and a Cppcheck invocation missing Qt configuration remain recorded locally; configured final checks passed."
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "harnesses": [
+    {
+      "id": "codex",
+      "name": "Codex",
+      "installed": true,
+      "models": [
+        {"id": "gpt-main", "name": "gpt-main", "default": true},
+        {"id": "gpt-mini", "name": "gpt-mini", "default": false}
+      ],
+      "modes": [
+        {"id": "default", "name": "Default"},
+        {"id": "full-access", "name": "Full access"}
+      ]
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "installed": false
+    }
+  ],
+  "defaults": {
+    "harness": "codex",
+    "folder": "~/dev",
+    "mode": "default",
+    "machines": {"devbox": "~/dev"}
+  }
+}

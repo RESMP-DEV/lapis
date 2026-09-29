@@ -1714,14 +1714,25 @@ Decisions from these runs:
   normal screen and sends arrow keys on the alternate screen.
 - Endpoint permission errors name the directory and the `chmod 700` fix; existing
   directories are still never chmodded.
-- The Dock badge (`QGuiApplication::setBadgeNumber`) counts agents that finished
-  unseen or have an actionable request, across categories. A new request while
-  the window is inactive calls `QWindow::alert(1000)`: one bounce, not a
-  persistent alert; finished turns only update the badge.
+- The Dock badge (`QGuiApplication::setBadgeNumber`) counts unseen agents across
+  categories. Since September 28 a request is presented as a finished turn: its
+  arrival emits `turnFinished` (one finish chime, the same background
+  notification) and marks the agent unseen, and nothing else shows it: no
+  Requests button, request counts, attention color, repeating needs-you chime or
+  Dock bounce. Hook-reported requests that were answered in the terminal were not
+  always retired, and a request badge that outlived its request was worse than
+  none. Adapters still observe and retire requests, and Commands' Review requests
+  still answers a Codex request through its adapter. The needs-you chime
+  settings (`alertSound`, `alertRepeat`) and `Alerts::needsYou` are unused and
+  due for removal with the phone's matching settings.
 - `nextAttention` (Command-J) is the manual half of the attention queue: it walks
-  categories and strips from the selected agent, taking pending requests before
-  unseen finished turns. Pinning, snoozing, aging and the opt-in carousel remain
-  unported from the flat supervisor.
+  categories and strips from the selected agent to the next unseen one.
+  `latestAttention` (Command-L) takes the unseen agent whose mark is newest
+  (`SessionPreview::neededAtMs`, set when it becomes unseen); on the Mac a
+  Carbon hot key makes Command-Option-L do it from any app, raising the window.
+  A global Command-L was rejected because it would take the key from every other
+  app (a browser's address bar). Pinning, snoozing, aging and the opt-in
+  carousel remain unported from the flat supervisor.
 - `harnessArguments` in `lapis.json` is explicit user configuration for new
   agents (shell aliases do not reach lapis launches). The registry saves each
   agent's full argument list, since arguments are part of the launch
@@ -1907,7 +1918,14 @@ A prototype, deliberately simpler than the SSH design first proposed:
   shown on the stage, or the pointer moving over it. It resends its size once
   per size shown, and ignores hover events repeated at a resting pointer, which
   Qt Quick sends as the scene changes, so a busy agent under an idle cursor
-  cannot take the size from the phone. A service started before joining existed
+  cannot take the size from the phone. A separate explicit layout request or
+  return from history may retry an unconfirmed size once after each received
+  snapshot; repeated requests without new progress remain coalesced. Snapshot
+  progress alone never acknowledges a resize or releases deferred history: a
+  matching size is still required. A history request that fails or is canceled
+  without displaying a page releases the size requested while it was pending.
+  Returning to live coalesces a size already queued by that recovery path.
+  A service started before joining existed
   rejects the mode; the gateway then takes the agent over in discover mode (the
   desktop card reads replaced until Reconnect agent) and tells the phone.
   Screens go out as server-sent events of styled runs (text,
@@ -1919,15 +1937,21 @@ A prototype, deliberately simpler than the SSH design first proposed:
   A size changed during connection is sent once after the first frame. Cancelled
   streams cannot mutate or close a replacement connection. Deferred history
   belongs to the requesting attachment and survives another attachment leaving.
-- Admission replaces keys or pairing: the gateway binds only the Mac's
-  Tailscale address and serves a request only when `tailscale whois` gives the
-  Mac owner's login on an iOS device, or the Mac itself. The Mac's tailnet is
+- Admission replaces keys or pairing: the gateway serves a request only when
+  `tailscale whois` gives the Mac owner's login on an iOS or Android device,
+  the peer lies inside a managed route of one of the Mac's joined private
+  ZeroTier networks (membership is the trust; the list is cached for 30
+  seconds, so admission runs no subprocess per peer), or the peer is the Mac
+  itself. It binds the Mac's Tailscale address, or all interfaces when
+  ZeroTier serves the Mac, because per-peer admission and the Host check, not
+  the bind address, are the boundary. The Mac's tailnet is
   shared with other people and tagged servers; of its 64 peers on
   September 23 none was admitted, only the Mac itself. Requests with an Origin header,
   without `X-Lapis-Client`, or with an unknown Host are refused, so a web page
-  on the phone cannot drive an agent. Plain HTTP relies on WireGuard; the app's
+  on the phone cannot drive an agent. Plain HTTP relies on WireGuard or
+  ZeroTier's own encrypted links; the app's
   transport exception is limited to `ts.net` names and local addresses.
-  This assumes active Tailscale on both devices and a trusted configured gateway;
+  This assumes an active overlay on both devices and a trusted configured gateway;
   ATS exceptions do not authenticate an arbitrary LAN endpoint. Explicit HTTPS
   URLs retain TLS, and schemes other than HTTP/HTTPS are rejected.
 - `apps/ios` is a SwiftUI app (iOS 17+) with categories and agents, an agent
@@ -3086,6 +3110,65 @@ fills after authoritative idle (but not output quiet or unknown status), with it
 conversation, and a switch asked for. `scripts/tests/test_lapis_accounts.py`
 covers the helper's config merge, token masking and real stand-in exec failures.
 Missing executables and unsuccessful setup-token exits retain their actual cause.
+### Update a CLI, then reload (September 28)
+
+A running agent keeps the CLI version it started with, and the start-time
+update runs only for new agents, at most every 30 minutes. **Update this tab's
+CLI and reload it** and **Update Claude Code and reload its tabs** run the
+catalog's update command where each agent runs: the agent's own program on
+this Mac, or ssh with the agent's own options plus `BatchMode=yes`,
+`ConnectTimeout=10`, `ControlPath=none` and `-T`, running
+`exec "${SHELL:-/bin/sh}" -lic '<cli> <update>'` on the other machine. One
+update per CLI and machine serves every agent that asks while it runs; the
+agents read "Updating <CLI>…" and keep working. The update shares the
+start-time updater's process group, bounded output tail, timeout and
+`harness-updates.log`. When it exits 0, its agents go through the reload path
+(a remote agent without a conversation id is still left running). Any other
+outcome leaves them running and reports the outcome and the output's tail.
+Startup and manual requests share that same in-flight owner. New agents wait
+for its result in either request order; a failed update still permits their
+first start, while existing agents are not reloaded. Repeated enrollment is
+accepted, and an all-skipped batch reports why it could not run. The focused
+`lapis_workspace_tests --case updater` selection includes both request orders,
+success and failure, idempotence, skipped requests and process-group cleanup.
+
+`updateReloadsAgentsAfterTheirCli` in the workspace suite drives a stand-in CLI
+through a shared update, a failed one, and a remote one through a stand-in ssh.
+
+### macOS 27 ends a quitting app's background processes (September 28)
+
+Installing a build at 11:32 am on September 28 restarted all 23 agents instead
+of reattaching them. The Mac had moved to macOS 27.0 the evening before. When
+a foreground app dies with processes still in its coalition, loginwindow asks
+Background Task Management (BTM) whether the app may run in the background;
+when BTM cannot answer, it force-quits them ("applicationDeath: app ... was
+foreground, and still has subordinate processes, but BTM couldn't answer
+whether it's allowed in the background, so scheduling its subordinates'
+termination"). Session services started from the window, and their agents,
+are in the window's coalition. The install removed `/Applications/lapis.app`
+immediately after ending the window. BTM identifies the app from its bundle,
+so it failed with error -98 ("failed to construct identifier") 74 ms after
+the window died, and 1.1 s later every service and agent was gone. None
+logged an exit.
+
+A windowless test app reproduced it on macOS 27.0 (26A428). With the bundle
+moved away before the app was killed, BTM failed the same way and all three
+children died: one started as Qt's `startDetached` does (fork, `setsid`,
+fork), one with `posix_spawn` and `POSIX_SPAWN_SETSID`, and one that also
+disclaimed responsibility (`responsibility_spawnattrs_setdisclaim`). With the
+bundle intact, BTM added an allowed "background tasks" item for the app (and
+notified the user), and all three survived. So a new session or disclaimed
+responsibility does not take a service out of the window's coalition. Only a
+process launchd starts has its own coalition.
+
+Until services are started outside the window's coalition (by a launchd agent
+lapis registers, say), GUI restart survival on macOS 27 depends on BTM allowing
+lapis in the background: the user can turn that off in Login Items &
+Extensions, and an installer or updater that replaces the bundle before BTM
+has answered for it loses every agent. An install waits for the old window to
+exit and a few seconds more before touching the bundle. Sparkle replaces the
+bundle only after the app has exited, so it can race BTM the first time lapis
+quits on a Mac with no BTM entry for it yet; that is not yet measured.
 
 ## Contracts to preserve
 

@@ -37,8 +37,10 @@ neighboring card in view, like Neovim's `sidescrolloff`; the last card is
 **+** for a new agent. A card whose agent finished a turn or started needing a
 response while another was selected pulses until you select it, and its
 category shows a pulsing dot. The Dock badge counts agents in any category that
-finished unseen or wait on a request, and a new request bounces the Dock icon
-once while lapis is in the background. Codex reports working/finished through its
+need you and have not been looked at. A request (a permission prompt, a question)
+pings once and marks the agent exactly as a finished turn does; lapis shows no
+separate request state, and you answer it in the agent's terminal (Commands'
+**Review requests** still lists what a Codex agent is asking). Codex reports working/finished through its
 observer; Claude agents run under the session service's Claude Code hook
 adapter (`--claude`), which reports turns, permission prompts and input
 requests; other harnesses show an output estimate labelled
@@ -62,14 +64,14 @@ acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
 | Component | Exercised | Remaining |
 | --- | --- | --- |
 | POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
-| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS; after two simulated power losses, the login helper resumes real Codex/Claude conversations and terminal-checkpoint stand-ins for four other CLIs with durable managed resume arguments ([check](scripts/check_restore.py)) | An actual reboot through the login helper, native resume qualification for the four stand-in CLIs, and later Linux qualification |
+| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS; after two simulated power losses, the login helper resumes real Codex/Claude conversations and terminal-checkpoint stand-ins for four other CLIs with durable managed resume arguments ([check](scripts/check_restore.py)) | An actual reboot through the login helper, native resume qualification for the four stand-in CLIs, and later Linux qualification; on macOS 27 services share the window's coalition, so surviving a window quit depends on macOS allowing lapis in the background |
 | Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect; stale sockets left by a simulated power loss are replaced | Qualification across an actual reboot |
 | Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging, Command-hover destinations and Command-click opening of visible/OSC 8 links and local files; 14-pixel default and direct size controls (macOS background Qt tests, with URL dispatch intercepted) | Cross-cell contextual shaping, rectangular/multi-click selection and accessibility; opening a file at its line in an editor; native Mac selection not yet exercised; Linux GUI port is deferred |
 | History and input lifecycle | Disk quotas, history scrolled by rows as one strip, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived rows keep their original width (cut or padded, not reflowed) |
 | UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; tiles on the stage (drag from the strip, dividers, keys, zoom), dragging cards to reorder and between categories with multi-select, find in the terminal and text size (Qt tests on the Linux test host); live request badges, explicit approval/answer dialog, stale-state gating and draft preservation; live config reload, alert chimes and their repeat rules, Command-K agent search, the usage meter and per-machine dashboard, the keyboard home list, Command-O resume and the side terminal with its machine picker (Qt tests on the Linux test host); usage answers from the installed Codex 0.156.1, Claude Code 2.1.282, Grok 1.0.41, Kimi Code 0.39.1 and OMP 18.2.9, here and on a Linux host over ssh | Automatic carousel and larger session-count qualification; the chimes and usage view have not been seen and heard on a Mac by a test |
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
 | Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect, `/clear` continuation and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
-| iPhone app (prototype) | Gateway on the Mac over Tailscale, admitting only the owner's iOS devices; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; the phone joins beside the desktop so both stay in sync (services started by this build); starting an agent in a category from the phone through the Mac's lapis; a terminal on the Mac from the phone, and the resume list; renaming, ordering and removing categories, moving and restarting agents, and the Mac's awake, alert and usage settings from the phone; UI tests in the iOS 26.5 Simulator against real services and the real windowless lapis host with a Mac-side client attached, fake agents, and real Codex and Claude Code on a fake model; installed and used on an iPhone 17 Pro | Agents started before sync are taken over instead; no structured requests or push notifications; starting agents needs a lapis window or the login helper running |
+| iPhone app (prototype) | Gateway on the Mac over Tailscale or ZeroTier, admitting the owner's iOS or Android devices or members of its private ZeroTier networks; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; the phone joins beside the desktop so both stay in sync (services started by this build); starting an agent in a category from the phone through the Mac's lapis; a terminal on the Mac from the phone, and the resume list; renaming, ordering and removing categories, moving and restarting agents, and the Mac's awake, alert and usage settings from the phone; UI tests in the iOS 26.5 Simulator against real services and the real windowless lapis host with a Mac-side client attached, fake agents, and real Codex and Claude Code on a fake model; installed and used on an iPhone 17 Pro | Agents started before sync are taken over instead; no structured requests or push notifications; starting agents needs a lapis window or the login helper running |
 | Mac app package | Qt 6.11.2 built with Vulkan (arm64, macOS 14 or later) with MoltenVK loaded directly; signed with the hardened runtime and notarized; Sparkle 2.10.0 updates signed with an EdDSA key and fed from the latest release; a login item for keeping agents running; release checks for architecture, minimum macOS, links outside the bundle, identifying strings, the update key, the bundled MoltenVK on an M4 Max, the windowless host and a launchd start taking the login shell's PATH; 0.1.0 opened and used with a live agent by a person | An update installed through Sparkle (the first comes with the release after 0.2.0); notifications, the login item and the Finder and editor actions not yet exercised by a check on a Mac; macOS 14 and 15 untested |
 | Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals; [installed binary qualification](evidence/codex-binary-update.json) | Broader binary and request-kind qualification |
 
@@ -216,8 +218,10 @@ restarting it. Attention counts do not reorder categories or steal input.
 On macOS, Command-Shift-J/K (down and up the rail, from the home row),
 Command-Shift-up/down or Command-Option-left/right changes category;
 Command-Shift-[ and ] moves through the category's agents. Command-1 through 9
-selects one of the first nine categories. Command-J jumps to the next agent, in any category, with a
-pending request, or else one that finished while you were elsewhere.
+selects one of the first nine categories. Command-J jumps to the next agent, in any category, that
+finished or asked for something while you were elsewhere; Command-L jumps to the one that did so
+most recently, and again to the one before it. Command-Option-L does the same from any app,
+bringing lapis to the front.
 Command-W closes what is in front, as in a browser: the side terminal's panel
 (its shell keeps running), else the focused agent (a running agent is confirmed,
 then ended by its session service), and only when the category has no agent
@@ -363,11 +367,23 @@ Explicit supported-CLI creation uses the same update queue; reconnect and
 discovery do not. Pass `--no-harness-updates` to keep a chosen CLI installation
 unchanged. Queued agents wait until the updater and its installer children have
 stopped; restarting a queued agent cannot bypass that wait.
+A running agent keeps the version it started with. **Update this tab's CLI and
+reload it** and **Update Claude Code and reload its tabs** in Commands run the
+update where each agent runs (over ssh, without a terminal or password prompt,
+for an agent on another machine), once per CLI and machine however many agents
+wait on it, then reload those agents. They read **Updating Claude…** meanwhile
+and keep working; an update that fails says why and leaves them running.
 
 Upgrading lapis does not disturb running agents: quit the old build and open
 the new one, and it reattaches to the same processes. Launch fingerprints,
 the service protocol, the workspace registry and resume records are kept
-compatible across builds, and a test pins the fingerprints.
+compatible across builds, and a test pins the fingerprints. On macOS 27 two
+conditions apply, because agents started from the window count as its
+background processes: lapis must be allowed under **Allow in the Background**
+(System Settings, General, Login Items & Extensions; macOS adds it on the
+first quit that leaves agents running), and the old `lapis.app` must stay in
+place until the old window has exited. Otherwise macOS ends every agent when
+the window quits.
 
 **Requests** appears when the selected agent needs a response. Open it, select a
 request, then explicitly approve, decline, cancel or send answers. Opening or
@@ -433,10 +449,11 @@ options literally and installs no attention hooks or approval settings.
 ## Use it from your iPhone
 
 The iPhone app (`apps/ios`) talks to a small gateway on the Mac
-(`apps/remote/lapis_remote.py`) over Tailscale. There is nothing to sign in to:
-the gateway listens only on the Mac's Tailscale address and serves a request
-only when `tailscale whois` names the Mac owner's login on an iOS device. The
-phone must be signed in to Tailscale with the same account as the Mac.
+(`apps/remote/lapis_remote.py`) over Tailscale or ZeroTier. There is nothing
+to sign in to: the gateway serves a request only when `tailscale whois` names
+the Mac owner's login on an iOS or Android device, or when the peer belongs
+to one of the Mac's private ZeroTier networks. The phone must be signed in to
+Tailscale with the same account as the Mac, or joined to its ZeroTier network.
 Keep Tailscale active on both devices when using HTTP; its WireGuard connection
 provides transport encryption. The configured gateway address is trusted input,
 and arbitrary LAN hosts are outside this transport contract. An explicit HTTPS
