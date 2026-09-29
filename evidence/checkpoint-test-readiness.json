@@ -1,0 +1,33 @@
+{
+  "base_revision": "fbd642f151e84f6f3db8aca17206f358fa15da87",
+  "scope": "Test-only checkpoint argument publication synchronization; no product behavior changes.",
+  "source_sha256": "48c8d68e3b95b67854911989d0f9e7788ee608547cddd8e8612c3174d1a2b078",
+  "validation": [
+    {
+      "command": "cmake --build build/desktop --target lapis_workspace_tests lapis_ui_preview_tests lapis_terminal_input_tests --parallel 4; ctest --test-dir build/desktop -R ^(workspace|ui-preview|terminal-input)$ --no-tests=error --output-on-failure -j 1",
+      "result": "workspace passed 41.67s; terminal-input passed 4.93s; native ui-preview timed out at 20s."
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_ui_preview_tests --background",
+      "result": "Passed offscreen/software; not native input or GPU acceptance."
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "result": "Passed."
+    },
+    {
+      "command": "Rebuild lapis_workspace_tests after nodiscard annotation; clang-tidy and clang-format the changed test translation unit; git diff --check",
+      "result": "Passed. The annotation does not change the previously exercised test behavior."
+    },
+    {
+      "command": "Desktop ASan/UBSan workspace updater case after the combined source rebuild",
+      "result": "Passed in isolation after the earlier concurrent run missed the fixture startup deadline."
+    }
+  ],
+  "retained_failures": [
+    "An earlier assembled revision passed 30/33 desktop suites and all static checks; workspace read argv before child publication, native UI/input checks failed under concurrency.",
+    "Earlier full TSan workspace exceeded its 120s harness limit; focused live-connection passed. This is not full TSan clearance.",
+    "Standalone native ui-preview later failed with a Metal display-lock timeout and missing runtime-warning observation. Native UI qualification remains open."
+  ],
+  "reuse": "This PR only changes waits in a C++ fixture. Earlier production/sanitizer receipts keep their own revisions and scopes. No release or full current-main qualification is claimed."
+}
