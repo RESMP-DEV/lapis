@@ -110,7 +110,7 @@ final class WorkspaceModel {
     }
 
     // Waiting, the gateway answers once the Mac's registry changes, or after
-    // eight seconds. Returns whether it did, so the caller need not pause.
+    // eight seconds. Returns whether the Mac answered.
     @discardableResult
     func refresh(waiting: Bool = false) async -> Bool {
         let generation = hostGeneration
@@ -138,7 +138,7 @@ final class WorkspaceModel {
             }
             cache.save(current, cacheName("listing", for: responseHost))
             Task { await prefetch() }
-            return after != nil
+            return true
         } catch is CancellationError {
         } catch let failure as URLError where failure.code == .cancelled {
         } catch {

@@ -2960,6 +2960,8 @@ registry itself, so it can only be older than what is sent. A request carrying
 answers either way; the phone asks with the version it has, so a change on the
 Mac (moving, adding or renaming a category, moving an agent) reaches it within
 about a quarter second, and running state still refreshes every eight seconds.
+The first request when the list appears (or the app returns to the front) is
+answered at once, so it opens with current running state.
 A gateway that sends no version is asked every eight seconds as before, and an
 older phone that sends no `after` is answered at once. `ListingTests` in
 `scripts/tests/test_lapis_remote.py` checks the order, the wait, the answer to

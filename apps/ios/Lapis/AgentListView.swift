@@ -149,9 +149,13 @@ struct AgentListView: View {
             // moved or renamed there), or every eight seconds. A Mac whose
             // gateway cannot wait is asked every eight seconds.
             guard scenePhase == .active else { return }
+            // The first request answers at once, so running state is current
+            // when the list appears; later ones wait for a change.
+            var waiting = false
             while !Task.isCancelled {
-                let waited = await model.refresh(waiting: true)
-                try? await Task.sleep(for: waited ? .milliseconds(300) : .seconds(8))
+                let answered = await model.refresh(waiting: waiting)
+                waiting = answered && model.listing?.version != nil
+                try? await Task.sleep(for: waiting ? .milliseconds(300) : .seconds(8))
             }
         }
     }
