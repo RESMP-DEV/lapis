@@ -1,0 +1,19 @@
+{
+  "categories": [
+    {
+      "id": "cat-only",
+      "name": "only",
+      "agents": [
+        {
+          "id": "b1f2c3d4-0000-4000-8000-000000000003",
+          "title": "grok scratch",
+          "harness": "grok",
+          "directory": "~/scratch",
+          "running": true,
+          "onPhone": false
+        }
+      ]
+    }
+  ],
+  "activeCategory": "cat-only"
+}

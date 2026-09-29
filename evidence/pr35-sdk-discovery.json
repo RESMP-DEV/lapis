@@ -1,0 +1,30 @@
+{
+  "scope": "PR35 review verification and Android SDK handoff repair",
+  "base_revision": "57d0aa272b381b3cebf77ab168e71531b1050df8",
+  "source_sha256": {
+    "scripts/check_android.py": "7c7bb0c98f6c28a3aa30b294e0f1ad0cc2df1bdd9af547f71a427db57b17e676"
+  },
+  "change": "Pass the discovered SDK to Gradle through ANDROID_HOME and ANDROID_SDK_ROOT, including a fresh checkout without local.properties.",
+  "checks": [
+    {
+      "command": "python3 scripts/check_android.py",
+      "exit_code": 0,
+      "result": "Fresh-checkout assembleDebug and testDebugUnitTest succeeded; 46 JVM tests, no failures, errors or skips."
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "Repository checks, Ruff and Python unit tests passed."
+    }
+  ],
+  "retained_failure": {
+    "command": "python3 scripts/check_android.py",
+    "exit_code": 1,
+    "result": "Before the repair, Gradle reported SDK location not found although the runner had discovered an installed SDK."
+  },
+  "limitations": [
+    "No Android device or emulator was launched.",
+    "Build and JVM evidence does not qualify overlay connectivity or Android UI behavior.",
+    "Existing contributor fixes at the base revision were reviewed and exercised by these checks; iOS runtime evidence remains the contributor receipt."
+  ]
+}

@@ -1919,15 +1919,21 @@ A prototype, deliberately simpler than the SSH design first proposed:
   A size changed during connection is sent once after the first frame. Cancelled
   streams cannot mutate or close a replacement connection. Deferred history
   belongs to the requesting attachment and survives another attachment leaving.
-- Admission replaces keys or pairing: the gateway binds only the Mac's
-  Tailscale address and serves a request only when `tailscale whois` gives the
-  Mac owner's login on an iOS device, or the Mac itself. The Mac's tailnet is
+- Admission replaces keys or pairing: the gateway serves a request only when
+  `tailscale whois` gives the Mac owner's login on an iOS or Android device,
+  the peer lies inside a managed route of one of the Mac's joined private
+  ZeroTier networks (membership is the trust; the list is cached for 30
+  seconds, so admission runs no subprocess per peer), or the peer is the Mac
+  itself. It binds the Mac's Tailscale address, or all interfaces when
+  ZeroTier serves the Mac, because per-peer admission and the Host check, not
+  the bind address, are the boundary. The Mac's tailnet is
   shared with other people and tagged servers; of its 64 peers on
   September 23 none was admitted, only the Mac itself. Requests with an Origin header,
   without `X-Lapis-Client`, or with an unknown Host are refused, so a web page
-  on the phone cannot drive an agent. Plain HTTP relies on WireGuard; the app's
+  on the phone cannot drive an agent. Plain HTTP relies on WireGuard or
+  ZeroTier's own encrypted links; the app's
   transport exception is limited to `ts.net` names and local addresses.
-  This assumes active Tailscale on both devices and a trusted configured gateway;
+  This assumes an active overlay on both devices and a trusted configured gateway;
   ATS exceptions do not authenticate an arbitrary LAN endpoint. Explicit HTTPS
   URLs retain TLS, and schemes other than HTTP/HTTPS are rejected.
 - `apps/ios` is a SwiftUI app (iOS 17+) with categories and agents, an agent

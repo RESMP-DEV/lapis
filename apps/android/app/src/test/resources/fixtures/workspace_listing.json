@@ -1,0 +1,36 @@
+{
+  "categories": [
+    {
+      "id": "cat-work",
+      "name": "work",
+      "agents": [
+        {
+          "id": "a1f2c3d4-0000-4000-8000-000000000001",
+          "title": "codex example",
+          "harness": "codex",
+          "directory": "~/dev/example",
+          "machine": "",
+          "place": "~/dev/example",
+          "running": true,
+          "onPhone": false
+        },
+        {
+          "id": "a1f2c3d4-0000-4000-8000-000000000002",
+          "title": "kimi notes",
+          "harness": "kimi",
+          "directory": "~/notes",
+          "machine": "devbox",
+          "place": "devbox:~/lapis-notes",
+          "running": false,
+          "onPhone": true
+        }
+      ]
+    },
+    {
+      "id": "cat-spare",
+      "name": "spare",
+      "agents": []
+    }
+  ],
+  "activeCategory": "cat-work"
+}
