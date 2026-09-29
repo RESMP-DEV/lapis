@@ -302,8 +302,9 @@ Claude Code and Codex sessions can share several plans. List them under
 where lapis keeps a credential for it. A session takes its machine's own
 sign-in; when that plan is at `switchAt` percent (95 by default) a new session
 takes the plan with the most room that its machine can use, as OMP ranks its
-accounts, and a running one moves at its next pause, restarting on the other
-plan and resuming its conversation. **Switch plan** in Commands moves an agent
+accounts. A running session moves only when a ready observer reports idle or a
+finished turn, restarting on the other plan and resuming its conversation. Output
+silence alone never triggers a switch. **Switch plan** in Commands moves an agent
 by hand. `scripts/lapis_accounts.py` fills the section: `homes` records each
 machine's own sign-ins, `add-claude NAME --email E` runs `claude setup-token`
 and keeps the token (0600) on this Mac and the usage machines, and `add-codex

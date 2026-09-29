@@ -1,6 +1,8 @@
 """Tests for scripts/lapis_accounts.py: config merging and token hiding."""
 
 import importlib.util
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -72,6 +74,40 @@ class TokenTest(unittest.TestCase):
         self.assertEqual(show, b"Paste the code > ")
         show, keep = accounts.masked_output(b"done. sk-an")
         self.assertEqual((show, keep), (b"done. ", b"sk-an"))
+
+
+class SetupFailureTest(unittest.TestCase):
+    def test_exec_and_child_failures_keep_their_cause(self):
+        code = (
+            "import importlib.util, sys; "
+            f"s=importlib.util.spec_from_file_location('a', {str(Path(accounts.__file__))!r}); "
+            "a=importlib.util.module_from_spec(s); s.loader.exec_module(a); "
+            "\ntry: a.read_setup_token()\n"
+            "except a.Failure as e: print(str(e), file=sys.stderr); sys.exit(1)\n"
+        )
+        cases = (
+            (None, "could not start claude setup-token"),
+            ("#!/missing-interpreter\n", "No such file or directory"),
+            ("#!/bin/sh\nexit 3\n", "exited with status 3"),
+        )
+        for script, diagnostic in cases:
+            with self.subTest(script=script), tempfile.TemporaryDirectory() as folder:
+                if script is not None:
+                    program = Path(folder) / "claude"
+                    program.write_text(script)
+                    program.chmod(0o700)
+                result = subprocess.run(
+                    [sys.executable, "-c", code],
+                    env={**os.environ, "PATH": folder},
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(diagnostic, result.stderr)
+                self.assertNotIn("Traceback", result.stdout + result.stderr)
+                self.assertNotIn("printed no token", result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

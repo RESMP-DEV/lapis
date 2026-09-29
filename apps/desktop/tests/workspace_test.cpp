@@ -1461,8 +1461,9 @@ void remoteClaudeReconnectsToItsConversation() {
     require(ssh.open(QIODevice::WriteOnly), "write the stand-in ssh");
     ssh.write(R"(#!/bin/sh
 d=$(dirname "$0"); host=$(printf '%s\n' "$@" | sed -n '/^-t$/{n;p;q;}')
-n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1)); echo $n > "$d/$host.count"
+n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1))
 printf '%s\n' "$@" > "$d/$host.call$n"
+echo $n > "$d/$host.count"
 case "$host:$n" in typo:*) exit 255;; devbox:1) sleep 1; exit 255;; devbox:2) sleep 1; exit 1;; esac
 echo connected
 exec sleep 600
@@ -1743,8 +1744,9 @@ void plansFollowTheirLoad() {
                     "#!/bin/sh\necho \"plan ${CLAUDE_CODE_OAUTH_TOKEN:-own}\"\nexec sleep 600\n");
     writeExecutable(root.filePath(QStringLiteral("bin/ssh")), R"(#!/bin/sh
 d=$(dirname "$0"); host=$(printf '%s\n' "$@" | sed -n '/^-t$/{n;p;q;}')
-n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1)); echo $n > "$d/$host.count"
+n=$(($(cat "$d/$host.count" 2>/dev/null || echo 0) + 1))
 printf '%s\n' "$@" > "$d/$host.call$n"
+echo $n > "$d/$host.count"
 for i in 1 2 3 4 5 6 7 8; do echo "connected $i"; sleep 0.05; done
 exec sleep 600
 )");
@@ -1796,12 +1798,21 @@ exec sleep 600
                                       {}, QStringLiteral("devbox")),
                 "a Claude agent on another machine");
         auto* far = workspace.focusedSession();
+        require(far != nullptr, "remote agent exists");
+        far->setOutputTimingForTesting({.settle_ms = 0, .burst_ms = 1500, .quiet_ms = 100});
         const auto far_id = far->sessionId();
         require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 1; }, 10000) &&
                     !call(QStringLiteral("devbox"), 1).contains(QStringLiteral("{ a=")) &&
                     workspace.agentAccount(far_id) == QStringLiteral("dev"),
                 "it runs on that machine's own sign-in");
 
+        require(QFile::rename(token.fileName(), token.fileName() + ".saved"), "hide kept token");
+        require(!workspace.switchAccount(here->sessionId()) && !here->closing() &&
+                    here->inputReady() &&
+                    workspace.agentAccount(here->sessionId()) == QStringLiteral("mine") &&
+                    workspace.workspaceError().contains(QStringLiteral("no usable token")),
+                "failed account preparation leaves the running agent on its original plan");
+        require(QFile::rename(token.fileName() + ".saved", token.fileName()), "restore kept token");
         workspace.setAccountLoads({mine_full});
         require(workspace.createAgent(project, QStringLiteral("next"), claude),
                 "another Claude agent");
@@ -1810,11 +1821,38 @@ exec sleep 600
                     workspace.agentAccount(next->sessionId()) == QStringLiteral("spare"),
                 "a new session takes the plan with room, its token in the environment");
 
-        workspace.setAccountLoads(
-            {mine_full,
-             {account_load_key(claude, account_home_name(QStringLiteral("devbox"))), {99, 99}}});
-        require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 2; }, 20000),
-                "a remote session moves once its plan fills and it is quiet");
+        require(waitFor([&] { return far->statusLabel() == QStringLiteral("Quiet"); }, 10000),
+                "the remote stand-in becomes output-quiet without an observer");
+        const QHash<QString, lapis::desktop::AccountLoad> full = {
+            mine_full,
+            {account_load_key(claude, account_home_name(QStringLiteral("devbox"))), {99, 99}}};
+        workspace.setAccountLoads(full);
+        require(!far->closing() && workspace.agentAccount(far_id) == QStringLiteral("dev"),
+                "output quiet is not permission to interrupt a remote turn");
+        // Synthetic observer snapshots exercise the account policy; they do not
+        // claim that the SSH transport supplies an observer.
+        lapis::session::wire::AttentionSnapshot observed;
+        observed.available = true;
+        observed.connected = true;
+        observed.ready = true;
+        for (const auto activity : {lapis::session::attention::Activity::unknown,
+                                    lapis::session::attention::Activity::working}) {
+            observed.activity = activity;
+            far->applyAttention(observed);
+            workspace.setAccountLoads(full);
+            require(!far->closing() && workspace.agentAccount(far_id) == QStringLiteral("dev"),
+                    "unknown and working observers retain the running plan");
+        }
+        observed.activity = lapis::session::attention::Activity::idle;
+        observed.ready = false;
+        far->applyAttention(observed);
+        workspace.setAccountLoads(full);
+        require(!far->closing(), "an unreconciled idle observation cannot switch plans");
+        observed.ready = true;
+        far->applyAttention(observed);
+        workspace.setAccountLoads(full);
+        require(waitFor([&] { return calls(QStringLiteral("devbox")) >= 2; }, 10000),
+                "a reconciled idle observation permits switching a full plan");
         const auto first = call(QStringLiteral("devbox"), 1);
         const auto second = call(QStringLiteral("devbox"), 2);
         static const QRegularExpression conversation(
@@ -1845,6 +1883,32 @@ exec sleep 600
                 "the stand-in agents close");
     }
     qputenv("PATH", path);
+}
+
+void incompleteCodexHomeNeverStartsAnAgent() {
+    UpdaterFixture fixture("#!/bin/sh\necho started > \"${0%/*}/started\"\nexec sleep 600\n",
+                           QStringLiteral("codex"));
+    fixture.options.updateHarnesses = false;
+    fixture.options.accounts = lapis::desktop::parse_accounts(QJsonDocument::fromJson(R"({
+        "codex": [{"name":"spare", "machines":["local"]}]
+    })")
+                                                                  .object());
+    require(fixture.root.mkpath("accounts/codex/spare"), "create kept account home");
+    QFile auth(fixture.root.filePath("accounts/codex/spare/auth.json"));
+    require(auth.open(QIODevice::WriteOnly), "write fixture credential");
+    auth.write("fixture credential");
+    auth.close();
+    const ScopedCodexHome shared(QFile::encodeName(fixture.root.filePath("missing-shared-home")));
+    Workspace workspace(WorkspaceMode::live, fixture.options);
+    workspace.setAccountsRootForTesting(fixture.root.filePath("accounts"));
+    require(!workspace.createAgent(fixture.root.filePath("project"), QStringLiteral("blocked"),
+                                   QStringLiteral("codex")) &&
+                workspace.sessions().isEmpty() &&
+                workspace.workspaceError().contains(QStringLiteral("Cannot prepare Codex plan")),
+            "a failed shared-home preparation refuses activation with its cause");
+    require(!QFileInfo::exists(fixture.root.filePath("bin/started")) &&
+                auth.open(QIODevice::ReadOnly) && auth.readAll() == "fixture credential",
+            "failed activation starts no child and preserves the kept credential");
 }
 
 // A full-screen program that reports the mouse, as Claude Code's full-screen
@@ -4242,6 +4306,14 @@ int main(int argc, char** argv) {
         discardOutsideActiveCategorySelectsNeighbor();
         failedWritesPreserveState();
         malformedAgentRegistry();
+        if (app.arguments().contains(QStringLiteral("--case")) &&
+            app.arguments().value(app.arguments().indexOf(QStringLiteral("--case")) + 1) ==
+                QStringLiteral("accounts")) {
+            incompleteCodexHomeNeverStartsAnAgent();
+            plansFollowTheirLoad();
+            std::cout << "account activation and idle policy passed\n";
+            return 0;
+        }
         unknownRegistryVersionsAreRejected();
         unseenFollowsTurnsAndSelection();
         claudeAgentsUseServiceAdapter();
@@ -4279,6 +4351,7 @@ int main(int argc, char** argv) {
         phoneStartsAnAgentInItsCategory();
         remoteClaudeReconnectsToItsConversation();
         reloadStartsAgentsAgain();
+        incompleteCodexHomeNeverStartsAnAgent();
         plansFollowTheirLoad();
         agentsStartAtTheStageSize();
         resumingAConversationStartsItsCli();

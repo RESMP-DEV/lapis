@@ -210,15 +210,40 @@ def read_setup_token() -> bytes:
     import termios
     import tty
 
-    pid, fd = pty.fork()
+    error_read, error_write = os.pipe()  # close-on-exec: EOF means exec succeeded
+    try:
+        pid, fd = pty.fork()
+    except OSError as error:
+        os.close(error_read)
+        os.close(error_write)
+        raise Failure(f"could not create setup-token terminal: {error}") from error
     if pid == 0:
-        # Wide enough that the token is never wrapped.
-        fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 400, 0, 0))
-        os.execvp("claude", ["claude", "setup-token"])
+        os.close(error_read)
+        try:
+            # Wide enough that the token is never wrapped.
+            fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 400, 0, 0))
+            os.execvp("claude", ["claude", "setup-token"])
+        except OSError as error:
+            try:
+                os.write(error_write, str(error).encode()[:4096])
+            finally:
+                os._exit(127)
+    os.close(error_write)
     seen = bytearray()
     pending = b""
-    saved = termios.tcgetattr(0) if os.isatty(0) else None
+    saved = None
+    status = 0
     try:
+        try:
+            launch_error = os.read(error_read, 4096)
+        finally:
+            os.close(error_read)
+        if launch_error:
+            raise Failure(
+                "could not start claude setup-token: "
+                + launch_error.decode(errors="replace")
+            )
+        saved = termios.tcgetattr(0) if os.isatty(0) else None
         if saved is not None:
             tty.setraw(0)
         while True:
@@ -236,10 +261,17 @@ def read_setup_token() -> bytes:
             if 0 in ready:
                 os.write(fd, os.read(0, 1024))
     finally:
-        if saved is not None:
-            termios.tcsetattr(0, termios.TCSAFLUSH, saved)
-        os.write(1, masked_output(pending + b"\n")[0])
-        os.waitpid(pid, 0)
+        try:
+            if saved is not None:
+                termios.tcsetattr(0, termios.TCSAFLUSH, saved)
+            os.write(1, masked_output(pending + b"\n")[0])
+        finally:
+            os.close(fd)
+            _, status = os.waitpid(pid, 0)
+    if status != 0:
+        raise Failure(
+            f"claude setup-token exited with status {os.waitstatus_to_exitcode(status)}"
+        )
     matches = SETUP_TOKEN.findall(bytes(seen))
     if not matches:
         raise Failure("claude setup-token printed no token")

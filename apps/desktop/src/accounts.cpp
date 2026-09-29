@@ -174,7 +174,11 @@ std::vector<const Account*> AccountPool::ranked(const QString& cli, const QStrin
 
 // The two folders are distinct in role and named at every call.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-void link_codex_home(const QString& shared, const QString& home) {
+QString link_codex_home(const QString& shared, const QString& home) {
+    if (!QFileInfo(shared).isDir() || !QFileInfo(shared).isReadable())
+        return QStringLiteral("The shared Codex home is not a readable directory.");
+    if (!QFileInfo(home).isDir())
+        return QStringLiteral("The selected Codex home is not a directory.");
     const QDir from(shared);
     const QDir to(home);
     for (const auto& entry : from.entryInfoList(QDir::AllEntries | QDir::Hidden | QDir::System |
@@ -183,8 +187,12 @@ void link_codex_home(const QString& shared, const QString& home) {
         const QFileInfo target(to.filePath(name));
         if (name == QLatin1String("auth.json") || target.exists() || target.isSymLink())
             continue;
-        QFile::link(entry.absoluteFilePath(), target.filePath());
+        QFile source(entry.absoluteFilePath());
+        if (!source.link(target.filePath()))
+            return QStringLiteral("Could not link Codex entry %1: %2")
+                .arg(name, source.errorString());
     }
+    return {};
 }
 
 } // namespace lapis::desktop

@@ -96,7 +96,6 @@ class SessionPreview final : public QObject {
         return service_environment_;
     }
     // When its screen last changed, in milliseconds since the epoch; 0 never.
-    [[nodiscard]] qint64 lastOutputMs() const { return last_output_ms_; }
     Q_INVOKABLE void reconnect();
     Q_INVOKABLE void discoverSession();
     Q_INVOKABLE void startNewSession();
@@ -286,7 +285,6 @@ class SessionPreview final : public QObject {
     QString link_folder_;
     QString activity_;
     QHash<QString, QString> service_environment_;
-    qint64 last_output_ms_{};
     QColor accent_;
     // Caches of what the service sent: decoding a waiting screen fills them,
     // so reading the screen is const.
@@ -672,14 +670,12 @@ class Workspace final : public QObject {
     QString accounts_root_;
     // Agents whose plan filled, moving at their next pause.
     QSet<QString> switching_;
-    bool switch_check_scheduled_{};
-    static constexpr qint64 kQuietBeforeSwitchMs = 10000;
     [[nodiscard]] QString accountsRoot() const;
     [[nodiscard]] static QString accountCli(const QString& harness);
     [[nodiscard]] static QString agentMachine(const Agent& agent);
     // Chooses the agent's plan and writes it where its start reads it: a
     // remote command's preamble, or the card's service environment.
-    void applyAccount(Agent& agent, SessionPreview& item);
+    [[nodiscard]] bool applyAccount(Agent& agent, SessionPreview& item);
     void balanceAccounts();
     void switchWhenIdle();
     // Agents asked to end so they can start again.

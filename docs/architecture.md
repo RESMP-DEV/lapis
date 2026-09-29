@@ -3030,7 +3030,9 @@ plans need their own login.
   home `~/.lapis/accounts/codex/NAME` with its own `auth.json` from
   `codex login` there and links to every other entry of `~/.codex`, so
   sessions resume across plans and each login refreshes itself on one
-  machine. Tokens are kept 0600 under `~/.lapis/accounts`, never on a command
+  machine. Local activation validates the kept credentials and every shared-home
+  link before starting or stopping an agent; a preparation failure retains the
+  current plan and reports the failed entry. Tokens are kept 0600 under `~/.lapis/accounts`, never on a command
   line or in the workspace file: a local session's service gets the variable
   in its environment, and a remote session's command gains a preamble that
   reads the file on that machine (missing, the machine's own sign-in is used).
@@ -3045,18 +3047,20 @@ plans need their own login.
   restart, reload, restore at login, start after a CLI update) and saved as
   the agent's `account`.
 - **Moving.** When a session's plan passes the switch point and another has
-  room, lapis reloads it once it is between turns (idle or turn finished, or
-  no status and no output for 10 s); the restart chooses the plan and
+  room, lapis reloads it once it is between turns (idle or turn finished
+  with a ready, connected observer); the restart chooses the plan and
   resumes the conversation. A remote agent that cannot name its conversation
   (Codex over ssh, or a Claude agent started before its launch carried an id)
-  keeps its plan. **Switch plan** moves one by hand.
+  keeps its plan. Output silence and unavailable status never authorize an
+  automatic switch. **Switch plan** moves one by hand.
 
 The `accounts` test covers parsing and the ranking;
 `plansFollowTheirLoad` checks a local session's token in its environment, a
 new session taking a plan with room, a remote session moving once its plan
-fills with its command reading the kept token there and the same
+fills after authoritative idle (but not output quiet or unknown status), with its command reading the kept token there and the same
 conversation, and a switch asked for. `scripts/tests/test_lapis_accounts.py`
-covers the helper's config merge and that a setup token is never shown.
+covers the helper's config merge, token masking and real stand-in exec failures.
+Missing executables and unsuccessful setup-token exits retain their actual cause.
 
 ## Contracts to preserve
 

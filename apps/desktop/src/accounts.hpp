@@ -33,7 +33,7 @@ struct AccountsConfig {
 [[nodiscard]] AccountsConfig parse_accounts(const QJsonValue& value);
 // Links every entry of the shared Codex home into an account's home, but its
 // auth.json, so sessions and settings stay shared across plans.
-void link_codex_home(const QString& shared, const QString& home);
+[[nodiscard]] QString link_codex_home(const QString& shared, const QString& home);
 
 // How full an account is, in percent used: its tightest window, and its
 // short (five hour) window; negative when no report has said.

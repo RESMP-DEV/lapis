@@ -97,14 +97,32 @@ void linksACodexHome() {
         require(file.open(QIODevice::WriteOnly), "write a file");
         file.write(name);
     }
-    lapis::desktop::link_codex_home(root.filePath(QStringLiteral("shared")),
-                                    root.filePath(QStringLiteral("home")));
+    require(lapis::desktop::link_codex_home(root.filePath(QStringLiteral("shared")),
+                                            root.filePath(QStringLiteral("home")))
+                .isEmpty(),
+            "the account home is prepared successfully");
     require(QFileInfo(root.filePath(QStringLiteral("home/sessions"))).isSymLink() &&
                 QFileInfo(root.filePath(QStringLiteral("home/.hidden"))).isSymLink(),
             "shared entries are linked in");
     require(!QFileInfo(root.filePath(QStringLiteral("home/auth.json"))).isSymLink() &&
                 !QFileInfo(root.filePath(QStringLiteral("home/config.toml"))).isSymLink(),
             "the plan's own login and anything already there stay");
+    require(
+        !lapis::desktop::link_codex_home(root.filePath("missing"), root.filePath("home")).isEmpty(),
+        "a missing shared home is an activation failure");
+    require(
+        !lapis::desktop::link_codex_home(root.filePath("shared"), root.filePath("home/auth.json"))
+             .isEmpty(),
+        "a non-directory account home is an activation failure");
+    require(root.mkpath("blocked"), "a read-only account home");
+    const auto blocked = root.filePath("blocked");
+    const auto permissions = QFileInfo(blocked).permissions();
+    require(QFile::setPermissions(blocked, QFile::ReadOwner | QFile::ExeOwner),
+            "make home unwritable");
+    const auto diagnostic = lapis::desktop::link_codex_home(root.filePath("shared"), blocked);
+    require(QFile::setPermissions(blocked, permissions), "restore home permissions");
+    require(diagnostic.contains("Could not link"),
+            "a failed link cannot report successful preparation");
 }
 } // namespace
 

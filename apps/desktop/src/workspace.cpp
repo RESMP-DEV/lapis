@@ -1366,7 +1366,8 @@ QString Workspace::launchAgent(const AgentRequest& request, const session::Launc
             }
         }
         item->setStatusSource(statusSource(agent));
-        applyAccount(agent, *item);
+        if (!applyAccount(agent, *item))
+            return {};
         const auto previous = checkpoint();
         agents_.insert(id, agent);
         sessions_.push_back(std::move(item));
@@ -1639,7 +1640,10 @@ bool Workspace::restartAgent(const QString& id) {
     entry->launch = launch->launch;
     entry->managed_resume_index = launch->managed_resume_index;
     entry->managed_resume_identity = launch->managed_resume_identity;
-    applyAccount(*entry, *item);
+    if (!applyAccount(*entry, *item)) {
+        rollback(previous);
+        return false;
+    }
     if (!save()) {
         rollback(previous);
         emit errorChanged();
@@ -1758,48 +1762,51 @@ QString Workspace::agentMachine(const Agent& agent) {
     const auto remote = remoteCommand(agent.launch);
     return remote ? remote->first : QString();
 }
-void Workspace::applyAccount(Agent& agent, SessionPreview& item) {
-    item.setServiceEnvironment({});
+bool Workspace::applyAccount(Agent& agent, SessionPreview& item) {
     const auto cli = accountCli(agent.harness);
-    if (cli.isEmpty() || !accounts_.configured(cli))
-        return;
+    if (cli.isEmpty() || !accounts_.configured(cli)) {
+        item.setServiceEnvironment({});
+        return true;
+    }
     const auto machine = agentMachine(agent);
-    agent.account = accounts_.choose(cli, machine, agent.account);
-    const auto* account = accounts_.find(cli, agent.account);
+    const auto chosen = accounts_.choose(cli, machine, agent.account);
+    const auto* account = accounts_.find(cli, chosen);
     // On its home machine a plan is the machine's own sign-in.
     const bool kept = account != nullptr && !(account->hasHome && account->home == machine);
     if (remoteCommand(agent.launch)) {
         auto& command = agent.launch.arguments.last();
         command = withRemoteAccount(command, kept ? account : nullptr);
-        return;
+        agent.account = chosen;
+        item.setServiceEnvironment({});
+        return true;
     }
-    if (!kept)
-        return;
     QHash<QString, QString> environment;
-    if (cli == QLatin1String("claude")) {
+    if (kept && cli == QLatin1String("claude")) {
         QFile token(
             QDir(accountsRoot()).filePath(QStringLiteral("claude/%1.token").arg(account->name)));
         const auto text = token.open(QIODevice::ReadOnly)
                               ? QString::fromUtf8(token.read(8192)).trimmed()
                               : QString();
         if (text.isEmpty() || text.contains(QLatin1Char('\n')) || text.contains(QChar::Null))
-            qWarning().noquote() << "Claude Code plan" << account->name
-                                 << "has no token on this Mac; using its own sign-in";
-        else
-            environment.insert(QStringLiteral("CLAUDE_CODE_OAUTH_TOKEN"), text);
-    } else {
+            return fail(QStringLiteral("Claude Code plan %1 has no usable token on this Mac.")
+                            .arg(account->name));
+        environment.insert(QStringLiteral("CLAUDE_CODE_OAUTH_TOKEN"), text);
+    } else if (kept) {
         const auto home = QDir(accountsRoot()).filePath(QStringLiteral("codex/") + account->name);
-        if (!QFileInfo::exists(QDir(home).filePath(QStringLiteral("auth.json")))) {
-            qWarning().noquote() << "Codex plan" << account->name
-                                 << "has no login on this Mac; using its own sign-in";
-        } else {
-            link_codex_home(
-                qEnvironmentVariable("CODEX_HOME", QDir::homePath() + QStringLiteral("/.codex")),
-                home);
-            environment.insert(QStringLiteral("CODEX_HOME"), home);
-        }
+        const QFileInfo auth(QDir(home).filePath(QStringLiteral("auth.json")));
+        if (!auth.isFile() || !auth.isReadable())
+            return fail(QStringLiteral("Codex plan %1 has no readable login on this Mac.")
+                            .arg(account->name));
+        const auto diagnostic = link_codex_home(
+            qEnvironmentVariable("CODEX_HOME", QDir::homePath() + QStringLiteral("/.codex")), home);
+        if (!diagnostic.isEmpty())
+            return fail(
+                QStringLiteral("Cannot prepare Codex plan %1: %2").arg(account->name, diagnostic));
+        environment.insert(QStringLiteral("CODEX_HOME"), home);
     }
+    agent.account = chosen;
     item.setServiceEnvironment(std::move(environment));
+    return true;
 }
 void Workspace::setAccounts(AccountsConfig accounts) {
     accounts_.setConfig(std::move(accounts));
@@ -1831,12 +1838,13 @@ bool Workspace::switchAccount(const QString& id) {
     const auto entry = agents_.find(id);
     if (entry == agents_.end() || !canSwitchAccount(id))
         return fail(QStringLiteral("No other Claude Code or Codex plan has room on this machine."));
-    const auto previous = entry->account;
+    const auto previous = *entry;
     entry->account =
         accounts_.alternative(accountCli(entry->harness), agentMachine(*entry), agentAccount(id));
-    if (reloadAgent(id) > 0)
+    auto* item = session(id);
+    if (item != nullptr && applyAccount(*entry, *item) && reloadAgent(id) > 0)
         return true;
-    entry->account = previous;
+    *entry = previous;
     return false;
 }
 // A session whose plan passed the switch point moves once there is a plan
@@ -1866,14 +1874,6 @@ void Workspace::balanceAccounts() {
     switchWhenIdle();
 }
 void Workspace::switchWhenIdle() {
-    // Look again while any wait, since a quiet agent's status need not change.
-    if (!switching_.isEmpty() && !switch_check_scheduled_) {
-        switch_check_scheduled_ = true;
-        QTimer::singleShot(kQuietBeforeSwitchMs / 2, this, [this] {
-            switch_check_scheduled_ = false;
-            switchWhenIdle();
-        });
-    }
     const auto waiting = switching_;
     for (const auto& id : waiting) {
         auto* item = session(id);
@@ -1881,13 +1881,17 @@ void Workspace::switchWhenIdle() {
             switching_.remove(id);
             continue;
         }
-        // Between turns, or with no status to go by, quiet for a while.
+        // Output silence cannot establish that a turn is safe to interrupt.
         const auto kind = item->statusKind();
-        const bool paused =
-            kind == QLatin1String("idle") || kind == QLatin1String("finished") ||
-            (kind == QLatin1String("unknown") &&
-             QDateTime::currentMSecsSinceEpoch() - item->lastOutputMs() >= kQuietBeforeSwitchMs);
+        const bool paused = item->attentionReady() && item->hasAttentionSource() &&
+                            (kind == QLatin1String("idle") || kind == QLatin1String("finished"));
         if (item->closing() || reloading_.contains(id) || !paused)
+            continue;
+        const auto entry = agents_.find(id);
+        if (entry == agents_.end())
+            continue;
+        auto prepared = *entry;
+        if (!applyAccount(prepared, *item))
             continue;
         switching_.remove(id);
         qInfo().noquote() << "Plan" << agentAccount(id) << "is full; moving" << item->title();
@@ -2220,10 +2224,14 @@ void Workspace::restore() {
             // like a restored terminal tab; Command-W is what removes an agent.
             if (restore_agents_ && !serviceRunning(agent.endpoint))
                 if (const auto launch = restoredLaunch(agent)) {
+                    const auto previous = agent;
                     agent.launch = launch->launch;
                     agent.managed_resume_index = launch->managed_resume_index;
                     agent.managed_resume_identity = launch->managed_resume_identity;
-                    applyAccount(agent, *item);
+                    if (!applyAccount(agent, *item)) {
+                        agent = previous;
+                        continue;
+                    }
                     restarting.push_back({item.get(), agent.endpoint, agent.launch});
                     continue;
                 }
@@ -2349,7 +2357,8 @@ void Workspace::finishUpdate(const QString& harness, QProcess* process, const QS
         item->setUpdating({});
         if (item->live())
             continue;
-        applyAccount(*entry, *item);
+        if (!applyAccount(*entry, *item))
+            continue;
         item->startLive(entry->endpoint, sized(entry->launch), session::wire::AttachMode::create);
     }
 }
@@ -2431,10 +2440,9 @@ void SessionPreview::setUnseen(bool unseen) {
 }
 
 void SessionPreview::noteOutput() {
-    last_output_ms_ = QDateTime::currentMSecsSinceEpoch();
     if (status_source_ != StatusSource::output)
         return;
-    const auto now = last_output_ms_;
+    const auto now = QDateTime::currentMSecsSinceEpoch();
     // Reattaching replays the screen; that is not the agent working.
     if (ready_since_ == 0 || now - ready_since_ < output_timing_.settle_ms)
         return;
