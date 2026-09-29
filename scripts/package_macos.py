@@ -521,29 +521,43 @@ def write_mark_icon(target):
     star = cabochon.find(f".//{{{namespace}}}g[@id='star']")
     if star is not None:
         for polygon in star.findall(f"{{{namespace}}}polygon"):
+            tokens = (polygon.get("points") or "").replace(",", " ").split()
             try:
-                points = [
-                    tuple(float(value) for value in pair.split(","))
-                    for pair in (polygon.get("points") or "").split()
-                ]
-            except ValueError:
-                continue
-            if points:
+                coordinates = [float(value) for value in tokens]
+            except ValueError as error:
+                raise PackageError(
+                    f"Icon SVG star polygon points are not numeric: {error}"
+                ) from error
+            if len(coordinates) % 2:
+                raise PackageError("Icon SVG star polygon points need x/y pairs")
+            if coordinates:
                 spans.append(
                     (
-                        min(point[0] for point in points),
-                        min(point[1] for point in points),
-                        max(point[0] for point in points),
-                        max(point[1] for point in points),
+                        min(coordinates[0::2]),
+                        min(coordinates[1::2]),
+                        max(coordinates[0::2]),
+                        max(coordinates[1::2]),
                     )
                 )
     if not spans:
         raise PackageError("Icon SVG stone needs ellipse or star geometry")
-    blurs = [
-        float(blur.get("stdDeviation"))
-        for blur in definitions.iter(f"{{{namespace}}}feGaussianBlur")
-        if blur.get("stdDeviation") is not None
-    ]
+    blurs = []
+    for blur in definitions.iter(f"{{{namespace}}}feGaussianBlur"):
+        tokens = (blur.get("stdDeviation") or "").replace(",", " ").split()
+        if not tokens:
+            continue
+        try:
+            deviations = [float(value) for value in tokens]
+        except ValueError as error:
+            raise PackageError(
+                f"Icon SVG feGaussianBlur stdDeviation is not numeric: {error}"
+            ) from error
+        if len(deviations) > 2:
+            raise PackageError(
+                "Icon SVG feGaussianBlur stdDeviation needs one or two numbers"
+            )
+        # The wider axis of a non-uniform blur governs the glow falloff.
+        blurs.append(max(deviations))
     if not blurs:
         raise PackageError("Icon SVG defs need a feGaussianBlur stdDeviation")
     # Three standard deviations of the widest blur covers the glow falloff.

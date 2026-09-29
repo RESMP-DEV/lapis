@@ -73,6 +73,54 @@ class WriteMarkIconTests(unittest.TestCase):
         )
         self.assertEqual(root.get("viewBox"), "270.0 170.0 660.0 660.0")
 
+    def test_flat_coordinate_polygon_points_match_pair_form(self):
+        flat = MARK_FIXTURE.replace(
+            'points="600,300 620,500 580,500"', 'points="600 300 620 500 580 500"'
+        )
+        self.assertEqual(self.write(flat).get("viewBox"), "370.0 270.0 460.0 460.0")
+
+    def test_two_value_std_deviation_uses_the_wider_axis(self):
+        non_uniform = MARK_FIXTURE.replace('stdDeviation="10"', 'stdDeviation="4 10"')
+        self.assertEqual(
+            self.write(non_uniform).get("viewBox"), "370.0 270.0 460.0 460.0"
+        )
+
+    def test_malformed_star_points_and_blurs_are_rejected(self):
+        cases = {
+            "odd point count": (
+                MARK_FIXTURE.replace(
+                    'points="600,300 620,500 580,500"',
+                    'points="600,300 620,500 580"',
+                ),
+                "x/y pairs",
+            ),
+            "non-numeric point": (
+                MARK_FIXTURE.replace(
+                    'points="600,300 620,500 580,500"',
+                    'points="600,300 620,abc 580,500"',
+                ),
+                "points are not numeric",
+            ),
+            "non-numeric deviation": (
+                MARK_FIXTURE.replace('stdDeviation="10"', 'stdDeviation="wide"'),
+                "stdDeviation is not numeric",
+            ),
+            "three-value deviation": (
+                MARK_FIXTURE.replace('stdDeviation="10"', 'stdDeviation="1 2 3"'),
+                "one or two numbers",
+            ),
+        }
+        for name, (svg, message) in cases.items():
+            with self.subTest(malformed=name):
+                temporary = tempfile.TemporaryDirectory()
+                self.addCleanup(temporary.cleanup)
+                source = Path(temporary.name) / "source.svg"
+                source.write_text(svg)
+                target = Path(temporary.name) / "mark.svg"
+                with patch.object(package, "ICON_SOURCE", source):
+                    with self.assertRaisesRegex(package.PackageError, message):
+                        package.write_mark_icon(target)
+
     def test_missing_parts_are_rejected(self):
         cases = {
             "cabochon": (
