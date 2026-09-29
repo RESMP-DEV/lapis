@@ -32,6 +32,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <set>
@@ -467,6 +468,15 @@ class Workspace final : public QObject {
     // Every agent in the category shown, or in every category.
     Q_INVOKABLE int reloadCategory();
     Q_INVOKABLE int reloadAll();
+    // Updates the agent's CLI where it runs, with the CLI's own update
+    // command, then reloads it so it runs the new version. One update per
+    // CLI and machine serves every agent that asks; one that fails leaves
+    // its agents running. Returns how many agents wait for an update.
+    Q_INVOKABLE int updateAndReloadAgent(const QString& id);
+    // The same for every Claude Code agent, on each machine that has one.
+    Q_INVOKABLE int updateClaudeAndReload();
+    // Whether the agent's CLI has an update command lapis can run.
+    Q_INVOKABLE [[nodiscard]] bool canUpdateAgent(const QString& id) const;
     Q_INVOKABLE bool moveSession(const QString& id, const QString& categoryId);
     // A name someone chose; it stays until they choose another.
     Q_INVOKABLE bool renameSession(const QString& id, const QString& title);
@@ -541,15 +551,31 @@ class Workspace final : public QObject {
     bool update_harnesses_{};
     bool headless_{};
     QHash<QString, qint64> harness_checked_ms_;
-    QHash<QString, QPointer<QProcess>> harness_updates_;
-    QHash<QString, QStringList> starts_after_update_;
     QHash<QProcess*, QByteArray> updater_output_;
     QHash<QProcess*, bool> updater_stopping_;
     qint64 update_timeout_ms_{qint64{2} * 60 * 1000};
+    // An update process, not yet started: its whole group stops at the
+    // timeout, and `finished` runs once it has, with how it ended.
+    QProcess* newUpdater(const QString& program, const QStringList& arguments,
+                         const std::function<void(QProcess*, const QString&, bool)>& finished);
     // True when the agent waits for its CLI's update and starts after it.
     bool deferForUpdate(const QString& id);
+    // One updater per CLI and machine (empty means local), with separate
+    // consumers for first starts and successful-update reloads.
+    struct CliUpdate {
+        QString harness;
+        QString machine;
+        QPointer<QProcess> process;
+        QStringList agents;
+        QStringList starts;
+        bool manual{};
+    };
+    QHash<QString, CliUpdate> cli_updates_;
+    int updateAndReload(const QStringList& ids);
+    void finishCliUpdate(const QString& key, QProcess* process, const QString& outcome,
+                         bool succeeded);
     void drainUpdater(QProcess* process);
-    void finishUpdate(const QString& harness, QProcess* process, const QString& outcome);
+    void startUpdatedAgents(const QStringList& ids);
     void logUpdate(const QString& line) const;
     QString update_log_directory_;
     // Records conversations for agents whose services do not.

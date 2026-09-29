@@ -3091,6 +3091,65 @@ fills after authoritative idle (but not output quiet or unknown status), with it
 conversation, and a switch asked for. `scripts/tests/test_lapis_accounts.py`
 covers the helper's config merge, token masking and real stand-in exec failures.
 Missing executables and unsuccessful setup-token exits retain their actual cause.
+### Update a CLI, then reload (September 28)
+
+A running agent keeps the CLI version it started with, and the start-time
+update runs only for new agents, at most every 30 minutes. **Update this tab's
+CLI and reload it** and **Update Claude Code and reload its tabs** run the
+catalog's update command where each agent runs: the agent's own program on
+this Mac, or ssh with the agent's own options plus `BatchMode=yes`,
+`ConnectTimeout=10`, `ControlPath=none` and `-T`, running
+`exec "${SHELL:-/bin/sh}" -lic '<cli> <update>'` on the other machine. One
+update per CLI and machine serves every agent that asks while it runs; the
+agents read "Updating <CLI>…" and keep working. The update shares the
+start-time updater's process group, bounded output tail, timeout and
+`harness-updates.log`. When it exits 0, its agents go through the reload path
+(a remote agent without a conversation id is still left running). Any other
+outcome leaves them running and reports the outcome and the output's tail.
+Startup and manual requests share that same in-flight owner. New agents wait
+for its result in either request order; a failed update still permits their
+first start, while existing agents are not reloaded. Repeated enrollment is
+accepted, and an all-skipped batch reports why it could not run. The focused
+`lapis_workspace_tests --case updater` selection includes both request orders,
+success and failure, idempotence, skipped requests and process-group cleanup.
+
+`updateReloadsAgentsAfterTheirCli` in the workspace suite drives a stand-in CLI
+through a shared update, a failed one, and a remote one through a stand-in ssh.
+
+### macOS 27 ends a quitting app's background processes (September 28)
+
+Installing a build at 11:32 am on September 28 restarted all 23 agents instead
+of reattaching them. The Mac had moved to macOS 27.0 the evening before. When
+a foreground app dies with processes still in its coalition, loginwindow asks
+Background Task Management (BTM) whether the app may run in the background;
+when BTM cannot answer, it force-quits them ("applicationDeath: app ... was
+foreground, and still has subordinate processes, but BTM couldn't answer
+whether it's allowed in the background, so scheduling its subordinates'
+termination"). Session services started from the window, and their agents,
+are in the window's coalition. The install removed `/Applications/lapis.app`
+immediately after ending the window. BTM identifies the app from its bundle,
+so it failed with error -98 ("failed to construct identifier") 74 ms after
+the window died, and 1.1 s later every service and agent was gone. None
+logged an exit.
+
+A windowless test app reproduced it on macOS 27.0 (26A428). With the bundle
+moved away before the app was killed, BTM failed the same way and all three
+children died: one started as Qt's `startDetached` does (fork, `setsid`,
+fork), one with `posix_spawn` and `POSIX_SPAWN_SETSID`, and one that also
+disclaimed responsibility (`responsibility_spawnattrs_setdisclaim`). With the
+bundle intact, BTM added an allowed "background tasks" item for the app (and
+notified the user), and all three survived. So a new session or disclaimed
+responsibility does not take a service out of the window's coalition. Only a
+process launchd starts has its own coalition.
+
+Until services are started outside the window's coalition (by a launchd agent
+lapis registers, say), GUI restart survival on macOS 27 depends on BTM allowing
+lapis in the background: the user can turn that off in Login Items &
+Extensions, and an installer or updater that replaces the bundle before BTM
+has answered for it loses every agent. An install waits for the old window to
+exit and a few seconds more before touching the bundle. Sparkle replaces the
+bundle only after the app has exited, so it can race BTM the first time lapis
+quits on a Mac with no BTM entry for it yet; that is not yet measured.
 
 ## Contracts to preserve
 
