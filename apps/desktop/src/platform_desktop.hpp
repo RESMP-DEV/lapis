@@ -22,6 +22,9 @@ void check_for_updates();
 // Command-` and Command-Shift-` reach the handler before AppKit can use them
 // to cycle windows; it returns true when it took the key.
 void on_terminal_keys(const std::function<bool(bool shifted)>& handler);
+// Command-Option-L from any app brings lapis to the front and runs the handler.
+// An empty handler releases the key; false when the key could not be taken.
+bool on_latest_attention_key(const std::function<void()>& handler);
 #else
 inline void post_notification(const QString&, const QString&, const QString&) {}
 inline void on_notification_opened(const std::function<void(const QString&)>&) {}
@@ -31,6 +34,7 @@ inline void start_updater() {}
 inline void check_for_updates() {}
 inline bool updater_available() { return false; }
 inline void on_terminal_keys(const std::function<bool(bool)>&) {}
+inline bool on_latest_attention_key(const std::function<void()>&) { return false; }
 #endif
 } // namespace lapis::desktop::platform
 #endif

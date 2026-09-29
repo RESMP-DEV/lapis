@@ -1714,14 +1714,25 @@ Decisions from these runs:
   normal screen and sends arrow keys on the alternate screen.
 - Endpoint permission errors name the directory and the `chmod 700` fix; existing
   directories are still never chmodded.
-- The Dock badge (`QGuiApplication::setBadgeNumber`) counts agents that finished
-  unseen or have an actionable request, across categories. A new request while
-  the window is inactive calls `QWindow::alert(1000)`: one bounce, not a
-  persistent alert; finished turns only update the badge.
+- The Dock badge (`QGuiApplication::setBadgeNumber`) counts unseen agents across
+  categories. Since September 28 a request is presented as a finished turn: its
+  arrival emits `turnFinished` (one finish chime, the same background
+  notification) and marks the agent unseen, and nothing else shows it: no
+  Requests button, request counts, attention color, repeating needs-you chime or
+  Dock bounce. Hook-reported requests that were answered in the terminal were not
+  always retired, and a request badge that outlived its request was worse than
+  none. Adapters still observe and retire requests, and Commands' Review requests
+  still answers a Codex request through its adapter. The needs-you chime
+  settings (`alertSound`, `alertRepeat`) and `Alerts::needsYou` are unused and
+  due for removal with the phone's matching settings.
 - `nextAttention` (Command-J) is the manual half of the attention queue: it walks
-  categories and strips from the selected agent, taking pending requests before
-  unseen finished turns. Pinning, snoozing, aging and the opt-in carousel remain
-  unported from the flat supervisor.
+  categories and strips from the selected agent to the next unseen one.
+  `latestAttention` (Command-L) takes the unseen agent whose mark is newest
+  (`SessionPreview::neededAtMs`, set when it becomes unseen); on the Mac a
+  Carbon hot key makes Command-Option-L do it from any app, raising the window.
+  A global Command-L was rejected because it would take the key from every other
+  app (a browser's address bar). Pinning, snoozing, aging and the opt-in
+  carousel remain unported from the flat supervisor.
 - `harnessArguments` in `lapis.json` is explicit user configuration for new
   agents (shell aliases do not reach lapis launches). The registry saves each
   agent's full argument list, since arguments are part of the launch
