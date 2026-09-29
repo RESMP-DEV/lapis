@@ -30,6 +30,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <set>
@@ -681,6 +682,12 @@ class Workspace final : public QObject {
     void switchWhenIdle();
     // Agents asked to end so they can start again.
     QSet<QString> reloading_;
+    enum class ReloadOutcome : std::uint8_t { requested, kept, failed };
+    struct ReloadResult {
+        ReloadOutcome outcome;
+        QString diagnostic;
+    };
+    ReloadResult requestReload(const QString& id);
     int reloadAgents(const QStringList& ids);
     void finishReload(const QString& id, int waits = 30);
     std::optional<session::TerminalSize> launch_size_;
