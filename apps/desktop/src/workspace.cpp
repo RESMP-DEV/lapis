@@ -288,9 +288,10 @@ Workspace::~Workspace() {
     // Destroying the desktop must not leave a half-finished installer or a
     // queued callback touching the dead Workspace. QProcess would kill only
     // its direct child; force-kill the updater's whole process group here.
-    const auto processes = harness_updates_.values();
-    harness_updates_.clear();
-    starts_after_update_.clear();
+    QList<QPointer<QProcess>> processes;
+    for (const auto& update : std::as_const(cli_updates_))
+        processes << update.process;
+    cli_updates_.clear();
     updater_output_.clear();
     updater_stopping_.clear();
     for (const auto& process : processes) {
@@ -481,14 +482,19 @@ bool Workspace::nextAttention() {
     const auto current = std::find(order.begin(), order.end(), focused);
     const std::size_t start =
         current == order.end() ? order.size() : static_cast<std::size_t>(current - order.begin());
-    for (const bool requests : {true, false})
-        for (std::size_t step = 1; step <= order.size(); ++step) {
-            auto* candidate = order[(start + step) % order.size()];
-            if (candidate != focused &&
-                (requests ? candidate->attentionCount() > 0 : candidate->unseen()))
-                return selectSession(candidate->sessionId());
-        }
+    for (std::size_t step = 1; step <= order.size(); ++step) {
+        auto* candidate = order[(start + step) % order.size()];
+        if (candidate != focused && candidate->unseen())
+            return selectSession(candidate->sessionId());
+    }
     return false;
+}
+bool Workspace::latestAttention() {
+    const SessionPreview* latest = nullptr;
+    for (const auto& item : sessions_)
+        if (item->unseen() && (latest == nullptr || item->neededAtMs() > latest->neededAtMs()))
+            latest = item.get();
+    return latest != nullptr && selectSession(latest->sessionId());
 }
 bool SessionPreview::addPreviewRequest(const QString& id, const QString& reason) {
     if (id.isEmpty() || id.size() > 64 || reason.size() > 256 || requests_.contains(id) ||
@@ -584,11 +590,15 @@ void Workspace::watch(SessionPreview* item) {
     connect(item, &SessionPreview::connectionChanged, this, [this, item] { finishClosing(item); });
     // The service reports why a session ended just after the state changes.
     connect(item, &SessionPreview::connectionChanged, this, [this, id = item->sessionId()] {
-        QTimer::singleShot(0, this, [this, id] { reconnectIfDropped(id); });
+        QTimer::singleShot(0, this, [this, id] {
+            finishReload(id);
+            reconnectIfDropped(id);
+        });
     });
-    connect(item, &SessionPreview::attentionArrived, this, &Workspace::requestArrived);
+    // A request pings as a finished turn does, and marks the agent the same way
+    // (below); lapis shows no separate request state.
     connect(item, &SessionPreview::attentionArrived, this,
-            [this, item] { emit agentNeedsYou(item); });
+            [this, item] { emit turnFinished(item); });
     last_kind_.insert(item, item->statusKind());
     connect(item, &SessionPreview::statusChanged, this, [this, item] { noteStatus(item); });
     connect(item, &SessionPreview::unseenChanged, this, [this] {
@@ -612,7 +622,7 @@ void Workspace::watch(SessionPreview* item) {
 }
 int Workspace::attentionAgents() const {
     return static_cast<int>(std::count_if(sessions_.begin(), sessions_.end(), [](const auto& item) {
-        return item->unseen() || item->attentionCount() > 0;
+        return item->unseen();
     }));
 }
 QVariantList Workspace::categories() const {
@@ -1062,6 +1072,7 @@ bool Workspace::discardSession(const QString& id) {
         return false;
     }
     reconnects_.remove(id);
+    reloading_.remove(id);
     last_kind_.remove(item);
     rememberClosed(closed_agent, closed_title);
     changed();
@@ -1559,7 +1570,7 @@ bool Workspace::restartAgent(const QString& id) {
         return fail(QStringLiteral("This agent is still closing."));
     if (serviceRunning(entry->endpoint))
         return fail(QStringLiteral("This agent is still running."));
-    if (starts_after_update_.value(entry->harness).contains(id))
+    if (cli_updates_.value(entry->harness + QLatin1Char('@')).starts.contains(id))
         return fail(QStringLiteral("This agent is already waiting for its CLI update."));
     QString diagnostic;
     const auto launch = restoredLaunch(*entry, &diagnostic);
@@ -1586,8 +1597,131 @@ bool Workspace::restartAgent(const QString& id) {
 // remoteLaunch) reconnect; a fresh start would lose the screen for nothing.
 // An agent that never stayed connected, such as one with a mistyped host,
 // stays ended.
+int Workspace::reloadAgent(const QString& id) { return reloadAgents({id}); }
+int Workspace::reloadCategory() {
+    QStringList ids;
+    for (const auto& item : sessions_)
+        if (agents_.value(item->sessionId()).category == active_category_)
+            ids << item->sessionId();
+    return reloadAgents(ids);
+}
+int Workspace::reloadAll() {
+    QStringList ids;
+    for (const auto& item : sessions_)
+        ids << item->sessionId();
+    return reloadAgents(ids);
+}
+Workspace::ReloadResult Workspace::requestReload(const QString& id) {
+    auto* item = session(id);
+    const auto entry = agents_.constFind(id);
+    if (item == nullptr || entry == agents_.cend())
+        return {ReloadOutcome::failed, QStringLiteral("Unknown agent.")};
+    if (item->closing() || reloading_.contains(id))
+        return {ReloadOutcome::failed,
+                QStringLiteral("%1 is already closing or reloading.").arg(item->title())};
+    if (const auto remote = remoteCommand(entry->launch);
+        remote && !remoteConversation().match(remote->second).hasMatch())
+        return {ReloadOutcome::kept, {}};
+    if (!serviceRunning(entry->endpoint))
+        return restartAgent(id) ? ReloadResult{ReloadOutcome::requested, {}}
+                                : ReloadResult{ReloadOutcome::failed, error_};
+    if (!item->terminate())
+        return {ReloadOutcome::failed,
+                QStringLiteral("Could not request a reload for %1. Reconnect its "
+                               "session, then try again.")
+                    .arg(item->title())};
+    // Its CLI ends; finishReload starts it again once the session says so.
+    reloading_.insert(id);
+    return {ReloadOutcome::requested, {}};
+}
+int Workspace::reloadAgents(const QStringList& ids) {
+    if (!mutableRegistry())
+        return 0;
+    if (!error_.isEmpty())
+        clearError();
+    int reloaded = 0;
+    int kept = 0;
+    int failed = 0;
+    QString first_failure;
+    for (const auto& id : ids) {
+        const auto result = requestReload(id);
+        switch (result.outcome) {
+        case ReloadOutcome::requested:
+            ++reloaded;
+            break;
+        case ReloadOutcome::kept:
+            ++kept;
+            break;
+        case ReloadOutcome::failed:
+            ++failed;
+            if (first_failure.isEmpty())
+                first_failure = result.diagnostic;
+            break;
+        }
+    }
+    QStringList diagnostics;
+    if (kept > 0)
+        diagnostics
+            << (kept == 1 && ids.size() == 1
+                    ? QStringLiteral("This agent on another machine started before lapis could "
+                                     "name its conversation, so reloading it would start a new "
+                                     "one. Use /resume inside it, or start it again from the "
+                                     "new-agent form.")
+                : kept == 1
+                    ? QStringLiteral("An agent on another machine was left running: it started "
+                                     "before lapis could name its conversation.")
+                    : QStringLiteral("%1 agents on other machines were left running: they started "
+                                     "before lapis could name their conversations.")
+                          .arg(kept));
+    // A successful restart saves the registry and clears error_. Retain batch
+    // failures separately so later successes cannot erase their diagnostics.
+    if (failed > 0)
+        diagnostics << (failed == 1 ? first_failure
+                                    : QStringLiteral("%1 agents could not reload. %2")
+                                          .arg(failed)
+                                          .arg(first_failure));
+    if (!diagnostics.isEmpty())
+        fail(diagnostics.join(QLatin1Char('\n')));
+    return reloaded;
+}
+void Workspace::finishReload(const QString& id, int waits) {
+    if (!reloading_.contains(id))
+        return;
+    auto* item = session(id);
+    const auto entry = agents_.constFind(id);
+    if (item == nullptr || entry == agents_.cend()) {
+        reloading_.remove(id);
+        return;
+    }
+    const auto state = item->connectionState();
+    if (state == QLatin1String("disconnected") || state == QLatin1String("replaced")) {
+        reloading_.remove(id);
+        fail(QStringLiteral("Reload stopped because %1 lost its session connection. "
+                            "Reconnect the tab, then try again.")
+                 .arg(item->title()));
+        return;
+    }
+    if (state != QLatin1String("ended"))
+        return;
+    // The session reports its end just before its service exits.
+    if (serviceRunning(entry->endpoint)) {
+        if (waits > 0) {
+            QTimer::singleShot(100, this, [this, id, waits] { finishReload(id, waits - 1); });
+        } else {
+            reloading_.remove(id);
+            fail(QStringLiteral("%1's session service did not stop in time for reload. "
+                                "Try again after it exits.")
+                     .arg(item->title()));
+        }
+        return;
+    }
+    reloading_.remove(id);
+    restartAgent(id);
+}
 void Workspace::reconnectIfDropped(const QString& id) {
     using namespace std::chrono_literals;
+    if (reloading_.contains(id))
+        return;                 // ssh ends 255 when lapis ends it for a reload too
     constexpr auto held = 3min; // a reconnect that lasted this long worked
     constexpr auto give_up = 15min;
     constexpr std::array waits{2s, 5s, 10s, 20s, 30s};
@@ -1951,58 +2085,197 @@ bool Workspace::deferForUpdate(const QString& id) {
     if (entry == agents_.constEnd())
         return false;
     const auto harness = entry->harness;
-    const auto program = entry->launch.program;
     const auto* selected = find_harness(harness);
-    if (!update_harnesses_ || !selected || selected->updateCommand.isEmpty())
+    if (!selected || selected->updateCommand.isEmpty())
         return false;
-    const bool running = harness_updates_.value(harness) != nullptr;
+    const auto key = harness + QLatin1Char('@');
+    const bool running = cli_updates_.contains(key);
     constexpr qint64 fresh_ms = qint64{30} * 60 * 1000;
     if (!running &&
-        QDateTime::currentMSecsSinceEpoch() - harness_checked_ms_.value(harness, 0) < fresh_ms)
+        (!update_harnesses_ ||
+         QDateTime::currentMSecsSinceEpoch() - harness_checked_ms_.value(harness, 0) < fresh_ms))
         return false;
-    auto& queued = starts_after_update_[harness];
-    if (!queued.contains(id))
-        queued.append(id);
+    auto& update = cli_updates_[key];
+    update.harness = harness;
+    if (!update.starts.contains(id))
+        update.starts.append(id);
+    update.agents.removeAll(id); // A first start must never also reload.
     if (auto* item = session(id))
         item->setUpdating(QStringLiteral("Updating %1…").arg(selected->label));
     if (running)
         return true;
+    update.process =
+        newUpdater(entry->launch.program, {selected->updateCommand},
+                   [this, key](QProcess* stopped, const QString& outcome, bool succeeded) {
+                       finishCliUpdate(key, stopped, outcome, succeeded);
+                   });
+    update.process->start();
+    return true;
+}
+
+QProcess*
+Workspace::newUpdater(const QString& program, const QStringList& arguments,
+                      const std::function<void(QProcess*, const QString&, bool)>& finished) {
     auto* process = new UpdaterProcess(this);
-    harness_updates_.insert(harness, process);
     process->setProgram(program);
-    process->setArguments({selected->updateCommand});
+    process->setArguments(arguments);
     process->setStandardInputFile(QProcess::nullDevice());
     process->setProcessChannelMode(QProcess::MergedChannels);
     updater_output_.insert(process, {});
     connect(process, &QProcess::readyRead, this, [this, process] { drainUpdater(process); });
     connect(process, &QProcess::finished, this,
-            [this, harness, process](int code, QProcess::ExitStatus status) {
+            [this, process, finished](int code, QProcess::ExitStatus status) {
                 const auto stopping = updater_stopping_.take(process);
                 const auto outcome = stopping ? QStringLiteral("stopped after timeout")
                                      : status == QProcess::NormalExit
                                          ? QStringLiteral("exit %1").arg(code)
                                          : QStringLiteral("crashed");
-                process->whenStopped(
-                    [this, harness, process, outcome] { finishUpdate(harness, process, outcome); });
+                const bool succeeded = !stopping && status == QProcess::NormalExit && code == 0;
+                process->whenStopped([process, finished, outcome, succeeded] {
+                    finished(process, outcome, succeeded);
+                });
             });
     connect(process, &QProcess::errorOccurred, this,
-            [this, harness, process](QProcess::ProcessError error) {
+            [process, finished](QProcess::ProcessError error) {
                 if (error == QProcess::FailedToStart)
-                    process->whenStopped([this, harness, process] {
-                        finishUpdate(harness, process, QStringLiteral("could not start"));
+                    process->whenStopped([process, finished] {
+                        finished(process, QStringLiteral("could not start"), false);
                     });
             });
-    // A stuck update must not keep the agent from starting.
+    // A stuck update must not keep its agents waiting.
     QTimer::singleShot(update_timeout_ms_, process, [this, process] {
         if (process->state() == QProcess::NotRunning)
             return;
         updater_stopping_.insert(process, true);
         process->stopGroup();
-        // Only finished() releases queued agents. Posting a signal is not a
+        // Only finished() releases waiting agents. Posting a signal is not a
         // process-exit acknowledgment; no fixed grace sleep substitutes for it.
     });
-    process->start();
-    return true;
+    return process;
+}
+
+bool Workspace::canUpdateAgent(const QString& id) const {
+    const auto entry = agents_.constFind(id);
+    const auto* cli = entry == agents_.cend() ? nullptr : find_harness(entry->harness);
+    return cli != nullptr && !cli->updateCommand.isEmpty();
+}
+int Workspace::updateAndReloadAgent(const QString& id) {
+    if (!canUpdateAgent(id)) {
+        fail(QStringLiteral("lapis has no update command for this agent's CLI."));
+        return 0;
+    }
+    return updateAndReload({id});
+}
+int Workspace::updateClaudeAndReload() {
+    QStringList ids;
+    for (const auto& item : sessions_)
+        if (agents_.value(item->sessionId()).harness == QLatin1String("claude"))
+            ids << item->sessionId();
+    if (ids.isEmpty()) {
+        fail(QStringLiteral("No Claude Code agent is open."));
+        return 0;
+    }
+    return updateAndReload(ids);
+}
+// On another machine the update goes through the agent's own ssh options, in
+// a login shell there so PATH finds the CLI, without a terminal or password
+// prompt, on a connection of its own.
+int Workspace::updateAndReload(const QStringList& ids) {
+    if (!mutableRegistry())
+        return 0;
+    clearError();
+    int waiting = 0;
+    int skipped = 0;
+    for (const auto& id : ids) {
+        auto* item = session(id);
+        const auto entry = agents_.constFind(id);
+        const auto* cli = entry == agents_.cend() ? nullptr : find_harness(entry->harness);
+        if (item == nullptr || cli == nullptr || cli->updateCommand.isEmpty() || item->closing() ||
+            reloading_.contains(id)) {
+            ++skipped;
+            continue;
+        }
+        const auto remote = remoteCommand(entry->launch);
+        const auto machine = remote ? remote->first : QString();
+        const auto key = entry->harness + QLatin1Char('@') + machine;
+        auto& update = cli_updates_[key];
+        update.manual = true;
+        if (!update.agents.contains(id) && !update.starts.contains(id))
+            update.agents << id;
+        item->setUpdating(QStringLiteral("Updating %1…").arg(cli->label));
+        ++waiting;
+        if (update.process)
+            continue;
+        update.harness = entry->harness;
+        update.machine = machine;
+        auto program = entry->launch.program;
+        QStringList arguments{cli->updateCommand};
+        if (remote) {
+            const auto options = entry->launch.arguments.mid(
+                0, entry->launch.arguments.indexOf(QStringLiteral("-t")));
+            arguments = QStringList{QStringLiteral("-o"), QStringLiteral("BatchMode=yes"),
+                                    QStringLiteral("-o"), QStringLiteral("ConnectTimeout=10"),
+                                    QStringLiteral("-o"), QStringLiteral("ControlPath=none")} +
+                        options +
+                        QStringList{QStringLiteral("-T"), QStringLiteral("--"), machine,
+                                    QStringLiteral(R"(exec "${SHELL:-/bin/sh}" -lic '%1 %2')")
+                                        .arg(cli->command, cli->updateCommand)};
+        } else if (QFileInfo(program).fileName() != cli->command ||
+                   !QFileInfo(program).isExecutable()) {
+            program = harness_program(entry->harness);
+        }
+        update.process =
+            newUpdater(program, arguments,
+                       [this, key](QProcess* stopped, const QString& outcome, bool succeeded) {
+                           finishCliUpdate(key, stopped, outcome, succeeded);
+                       });
+        update.process->start();
+    }
+    if (skipped > 0)
+        fail(QStringLiteral("%1 agent(s) cannot update now because they are unavailable, "
+                            "closing, reloading, or have no update command.")
+                 .arg(skipped));
+    return waiting;
+}
+void Workspace::finishCliUpdate(const QString& key, QProcess* process, const QString& outcome,
+                                bool succeeded) {
+    const auto found = cli_updates_.constFind(key);
+    if (found == cli_updates_.cend() || found->process != process)
+        return;
+    const auto update = cli_updates_.take(key);
+    drainUpdater(process);
+    const auto output = QString::fromUtf8(updater_output_.take(process)).simplified().right(600);
+    updater_stopping_.remove(process);
+    process->deleteLater();
+    const auto where = update.machine.isEmpty() ? QStringLiteral("this Mac") : update.machine;
+    logUpdate(update.machine.isEmpty()
+                  ? QStringLiteral("%1 %2 update: %3. %4")
+                        .arg(QDateTime::currentDateTime().toString(Qt::ISODate), update.harness,
+                             outcome, output)
+                  : QStringLiteral("%1 %2 update on %3: %4. %5")
+                        .arg(QDateTime::currentDateTime().toString(Qt::ISODate), update.harness,
+                             where, outcome, output));
+    if (update.machine.isEmpty() && (succeeded || !update.starts.isEmpty()))
+        harness_checked_ms_.insert(update.harness, QDateTime::currentMSecsSinceEpoch());
+    for (const auto& id : update.agents)
+        if (auto* item = session(id))
+            item->setUpdating({});
+    // Startup consumers may use the installed CLI even after an update fails.
+    // Already-running consumers keep their process when the update fails.
+    startUpdatedAgents(update.starts);
+    if (!update.manual)
+        return;
+    const auto* cli = find_harness(update.harness);
+    const auto label = cli != nullptr ? cli->label : update.harness;
+    if (!succeeded) {
+        fail(
+            QStringLiteral("%1 did not update on %2 (%3), so existing agents were not reloaded. %4")
+                .arg(label, where, outcome, output.right(300))
+                .trimmed());
+        return;
+    }
+    if (!update.agents.isEmpty())
+        reloadAgents(update.agents);
 }
 
 void Workspace::drainUpdater(QProcess* process) {
@@ -2015,26 +2288,14 @@ void Workspace::drainUpdater(QProcess* process) {
     }
 }
 
-void Workspace::finishUpdate(const QString& harness, QProcess* process, const QString& outcome) {
-    if (harness_updates_.value(harness) != process)
-        return;
-    harness_updates_.remove(harness);
-    harness_checked_ms_.insert(harness, QDateTime::currentMSecsSinceEpoch());
-    drainUpdater(process);
-    const auto retained = updater_output_.take(process);
-    updater_stopping_.remove(process);
-    const auto output = QString::fromUtf8(retained).simplified().right(600);
-    logUpdate(
-        QStringLiteral("%1 %2 update: %3. %4")
-            .arg(QDateTime::currentDateTime().toString(Qt::ISODate), harness, outcome, output));
-    process->deleteLater();
-    for (const auto& id : starts_after_update_.take(harness)) {
+void Workspace::startUpdatedAgents(const QStringList& ids) {
+    for (const auto& id : ids) {
         auto* item = session(id);
         const auto entry = agents_.constFind(id);
         if (!item || entry == agents_.constEnd())
             continue; // closed while waiting
         item->setUpdating({});
-        if (item->live())
+        if (item->live() || item->closing())
             continue;
         item->startLive(entry->endpoint, entry->launch, session::wire::AttachMode::create);
     }
@@ -2113,6 +2374,8 @@ void SessionPreview::setUnseen(bool unseen) {
     if (unseen_ == unseen)
         return;
     unseen_ = unseen;
+    if (unseen)
+        needed_at_ms_ = QDateTime::currentMSecsSinceEpoch();
     emit unseenChanged();
 }
 

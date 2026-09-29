@@ -584,7 +584,7 @@ func describe(_ error: Error) -> String {
         switch failure.code {
         case .cannotConnectToHost, .cannotFindHost, .timedOut, .networkConnectionLost,
              .notConnectedToInternet, .dnsLookupFailed:
-            return "The Mac did not answer. Check that Tailscale is on here and the Mac is awake."
+            return "The Mac did not answer. Check that Tailscale or ZeroTier is on here and the Mac is awake."
         default:
             return failure.localizedDescription
         }

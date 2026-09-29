@@ -75,7 +75,48 @@ UNUserNotificationCenter* notification_center() {
 SMAppService* login_item() API_AVAILABLE(macos(13.0)) {
     return [SMAppService agentServiceWithPlistName:@"dev.lapis.desktop.restore.plist"];
 }
+
+std::function<void()>& latest_attention_handler() {
+    static std::function<void()> handler;
+    return handler;
+}
+// A registered hot key reaches the app from whichever app is in front.
+OSStatus latest_attention_pressed(EventHandlerCallRef, EventRef, void*) {
+    if (const auto& handler = latest_attention_handler()) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        [NSApp activateIgnoringOtherApps:YES];
+#pragma clang diagnostic pop
+        handler();
+    }
+    return noErr;
+}
 } // namespace
+
+bool on_latest_attention_key(const std::function<void()>& handler) {
+    static EventHotKeyRef key = nullptr;
+    static EventHandlerRef dispatch = nullptr;
+    latest_attention_handler() = handler;
+    if (!handler) {
+        if (key != nullptr)
+            UnregisterEventHotKey(key);
+        key = nullptr;
+        return true;
+    }
+    if (key != nullptr)
+        return true;
+    if (dispatch == nullptr) {
+        const EventTypeSpec pressed{kEventClassKeyboard, kEventHotKeyPressed};
+        if (InstallEventHandler(GetApplicationEventTarget(),
+                                NewEventHandlerUPP(latest_attention_pressed), 1, &pressed, nullptr,
+                                &dispatch) != noErr)
+            return false;
+    }
+    constexpr OSType signature = 0x6C706973; // 'lpis'
+    const EventHotKeyID id{signature, 1};
+    return RegisterEventHotKey(kVK_ANSI_L, cmdKey | optionKey, id, GetApplicationEventTarget(), 0,
+                               &key) == noErr;
+}
 
 void post_notification(const QString& id, const QString& title, const QString& body) {
     UNUserNotificationCenter* center = notification_center();

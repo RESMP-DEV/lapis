@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve the lapis workspace's agents to the lapis iPhone app.
+"""Serve the lapis workspace's agents to the lapis iPhone or Android app.
 
 The gateway reads the desktop's workspace registry and attaches to an
 agent's session service only while the phone shows that agent. It joins the
@@ -12,11 +12,13 @@ in the chosen category. A service started before joining
 existed rejects it, and then the phone takes the agent from the desktop until
 Reconnect agent on the Mac. Agents keep running either way.
 
-It listens on this Mac's Tailscale address. A request is served only when
-`tailscale whois` names the same login as this Mac and the peer is an iOS
-device or this Mac itself (the simulator). Browsers are refused: requests
-that carry Origin, or lack the X-Lapis-Client header, are rejected, so a
-web page on the phone cannot drive an agent.
+It listens on this Mac's Tailscale address, or on all interfaces when a
+ZeroTier network serves the Mac. A request is served only when it comes
+from this Mac itself (the simulator), from an iOS or Android device of the
+same login over the tailnet (`tailscale whois` names both), or from a
+member of one of the Mac's joined private ZeroTier networks. Browsers are
+refused: requests that carry Origin, or lack the X-Lapis-Client header,
+are rejected, so a web page on the phone cannot drive an agent.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ import glob
 import gzip
 import hashlib
 import inspect
+import ipaddress
 import itertools
 import json
 import os
@@ -1679,7 +1682,7 @@ def status_message(data):
 
 
 class TailnetAuth:
-    """Admit only the Mac owner's iOS devices and this Mac itself."""
+    """Admit only the Mac owner's iOS or Android devices and this Mac itself."""
 
     MAX_WHOIS = 4
     MAX_CACHE = 256
@@ -1735,7 +1738,7 @@ class TailnetAuth:
             who = self.runner([self.tailscale, "whois", "--json", address])
             login = who["UserProfile"]["LoginName"]
             system = who["Node"]["Hostinfo"].get("OS", "")
-            verdict = login == self.owner and system == "iOS"
+            verdict = login == self.owner and system.lower() in ("ios", "android")
             ttl = self.ALLOWED_TTL if verdict else self.REJECTED_TTL
         except (
             subprocess.SubprocessError,
@@ -1781,6 +1784,136 @@ class TailnetAuth:
                 continue
             allowed.add(f"[{name}]:{port}" if ":" in name else f"{name}:{port}")
         return allowed
+
+
+# ZeroTier overlay ------------------------------------------------------------
+
+
+class ZeroTierAuth:
+    """Admit this Mac and members of its joined private ZeroTier networks.
+
+    ZeroTier has no whois, so membership of a private network is the trust:
+    the controller approved every peer, and the gateway cannot tell those
+    peers apart. Public networks, and networks that are not fully joined,
+    admit nobody.
+    """
+
+    REFRESH = 30.0
+    STALE = 300.0  # a silent CLI is trusted no longer than this
+
+    def __init__(self, cli="zerotier-cli", runner=None, clock=time.monotonic):
+        self.cli = cli
+        self.runner = runner or self._run
+        self.clock = clock
+        self.lock = threading.Lock()  # guards the fields below
+        self.fetch_lock = threading.Lock()  # one fetch at a time
+        self.networks = []
+        self.fresh = 0.0  # when the list in hand was actually fetched
+        self.built = None  # when a fetch last finished; None: never fetched
+
+    @staticmethod
+    def _run(command):
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=5, check=True
+        )
+        return json.loads(result.stdout)
+
+    def _trusted(self, now):
+        """The list in hand, or nothing once the CLI has been silent too long."""
+        return self.networks if now - self.fresh <= self.STALE else []
+
+    def current(self):
+        """(managed routes, own addresses) per joined private network, fetched
+        at most every 30 s by one thread at a time, so an older answer can
+        never overwrite a newer one; a CLI that falls silent is trusted for
+        STALE seconds and then admits nobody until it answers again."""
+        now = self.clock()
+        with self.lock:
+            if self.built is not None and now - self.built <= self.REFRESH:
+                return self._trusted(now)
+        with self.fetch_lock:
+            now = self.clock()
+            with self.lock:
+                if self.built is not None and now - self.built <= self.REFRESH:
+                    return self._trusted(now)
+            try:
+                listed = []
+                for network in self.runner([self.cli, "-j", "listnetworks"]):
+                    if (
+                        network.get("status") != "OK"
+                        or network.get("type") != "PRIVATE"
+                    ):
+                        continue
+                    routes, assigned = set(), []
+                    for route in network.get("routes") or []:
+                        try:
+                            target = ipaddress.ip_network(route["target"], strict=False)
+                        except (KeyError, TypeError, ValueError):
+                            continue
+                        if target.prefixlen == 0:
+                            continue  # a full-tunnel route is not overlay membership
+                        routes.add(target)
+                    for address in network.get("assignedAddresses") or []:
+                        try:
+                            assigned.append(ipaddress.ip_interface(address))
+                        except (TypeError, ValueError):
+                            continue
+                    listed.append((routes, assigned))
+            except (
+                subprocess.SubprocessError,
+                OSError,
+                ValueError,
+                TypeError,
+                AttributeError,
+            ):
+                with self.lock:
+                    self.built = now  # a silent CLI is retried at the same pace
+                return self._trusted(now)
+            with self.lock:
+                self.networks, self.fresh, self.built = listed, now, now
+            return listed
+
+    def allowed(self, address):
+        try:
+            peer = ipaddress.ip_address(address)
+        except ValueError:
+            return False
+        for routes, assigned in self.current():
+            if any(peer in net for net in routes) or any(
+                peer in net.network for net in assigned
+            ):
+                return True
+        return False
+
+    def hosts(self, port):
+        allowed = set()
+        for _, assigned in self.current():
+            for net in assigned:
+                name = str(net.ip)
+                allowed.add(f"[{name}]:{port}" if ":" in name else f"{name}:{port}")
+        return allowed
+
+
+class Admission:
+    """The Mac's overlays behind one object: either may admit a device."""
+
+    def __init__(self, tailnet=None, zerotier=None):
+        self.tailnet = tailnet
+        self.zerotier = zerotier
+        self.dns_name = tailnet.dns_name if tailnet else ""
+
+    def allowed(self, address):
+        return bool(
+            (self.tailnet and self.tailnet.allowed(address))
+            or (self.zerotier and self.zerotier.allowed(address))
+        )
+
+    def hosts(self, port):
+        hosts = set()
+        for overlay in (self.tailnet, self.zerotier):
+            if overlay is not None:
+                hosts |= overlay.hosts(port)
+        return hosts
 
 
 # HTTP -----------------------------------------------------------------------
@@ -2625,21 +2758,57 @@ def tailscale_address(tailscale):
     return result.stdout.split()[0]
 
 
+def build_admission(
+    tailscale="tailscale",
+    zerotier="zerotier-cli",
+    allow_local=False,
+    tailnet_runner=None,
+    zerotier_runner=None,
+):
+    """Whichever overlays answer, as (tailnet, zerotier); either may be None.
+
+    Tailscale may be absent or still starting after login; ZeroTier counts
+    only once it lists a joined private network. With neither, this is a
+    GatewayError. The runners exist for the tests.
+    """
+    tailnet = None
+    try:
+        tailnet = TailnetAuth(tailscale, allow_local, runner=tailnet_runner)
+    except (subprocess.SubprocessError, OSError, KeyError, ValueError, TypeError):
+        pass
+    zerotier_auth = ZeroTierAuth(zerotier, runner=zerotier_runner)
+    if not zerotier_auth.current():
+        zerotier_auth = None
+    if tailnet is None and zerotier_auth is None:
+        raise GatewayError(
+            "No overlay answered: sign in to Tailscale, or authorize this Mac "
+            "onto a private ZeroTier network"
+        )
+    return tailnet, zerotier_auth
+
+
 def serve(args):
+    tailnet, zerotier = build_admission(args.tailscale, args.zerotier, args.allow_local)
     while True:
         try:
-            auth = TailnetAuth(args.tailscale, args.allow_local)
-            bind = args.bind or tailscale_address(args.tailscale)
+            if args.bind:
+                bind = args.bind
+            elif zerotier is not None:
+                # Per-peer admission and the Host check, not the bind address,
+                # are the boundary, so ZeroTier peers may arrive anywhere.
+                bind = "0.0.0.0"
+            else:
+                bind = tailscale_address(args.tailscale)
             server = ThreadingHTTPServer((bind, args.port), Handler)
             break
         except (OSError, subprocess.SubprocessError, KeyError, ValueError) as error:
             # Tailscale may still be starting after login.
-            sys.stderr.write(f"waiting for Tailscale: {error}\n")
+            sys.stderr.write(f"waiting to serve: {error}\n")
             time.sleep(5)
     server.daemon_threads = True
     Handler.gateway = Gateway(
         args.registry,
-        auth,
+        Admission(tailnet, zerotier),
         args.port,
         folders=FolderIndex(
             args.registry,
@@ -2651,7 +2820,12 @@ def serve(args):
     )
     if sys.platform == "darwin":
         threading.Thread(target=KeepAwake(args.config).run, daemon=True).start()
-    sys.stderr.write(f"lapis remote on {bind}:{args.port} for {auth.dns_name}\n")
+    overlays = " and ".join(
+        name
+        for name, active in (("Tailscale", tailnet), ("ZeroTier", zerotier))
+        if active
+    )
+    sys.stderr.write(f"lapis remote on {bind}:{args.port} via {overlays}\n")
     server.serve_forever()
 
 
@@ -2663,9 +2837,14 @@ def main(argv=None):
     parser.add_argument(
         "--config", default=str(lapis_home() / "lapis.json"), help="lapis settings"
     )
-    parser.add_argument("--bind", help="address; defaults to this Mac's Tailscale IPv4")
+    parser.add_argument(
+        "--bind",
+        help="address; defaults to the Mac's Tailscale IPv4, or all interfaces "
+        "when ZeroTier serves the Mac",
+    )
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--tailscale", default="tailscale")
+    parser.add_argument("--zerotier", default="zerotier-cli")
     # Fixtures for the simulator check; the defaults are this user's own.
     parser.add_argument("--folders-home", help="folders the phone browses (tests)")
     parser.add_argument("--codex-home", help="Codex history to rank folders by (tests)")
@@ -2681,7 +2860,10 @@ def main(argv=None):
         action="store_true",
         help="also admit 127.0.0.1 without whois (tests only)",
     )
-    serve(parser.parse_args(argv))
+    try:
+        serve(parser.parse_args(argv))
+    except GatewayError as error:
+        raise SystemExit(f"lapis remote: {error}")
 
 
 if __name__ == "__main__":

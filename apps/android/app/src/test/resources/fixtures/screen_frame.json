@@ -1,0 +1,25 @@
+{
+  "revision": 42,
+  "columns": 80,
+  "rows": 24,
+  "cursor": {"x": 3, "y": 10, "visible": true},
+  "alternateScreen": true,
+  "applicationCursor": true,
+  "foreground": "#c7c7c7",
+  "background": "#101010",
+  "lines": [
+    [
+      ["full-width shade", null, "#101010", 0, 0, 80]
+    ],
+    [
+      ["plain ", null, null, 0, 0, 6],
+      ["bold italic faint strike underline cursor", null, null, 63, 6, 41]
+    ],
+    [
+      ["4-tuple run from an older gateway", null, null, 0]
+    ],
+    [
+      ["explicit nulls", null, null, 8, 0, 16]
+    ]
+  ]
+}
