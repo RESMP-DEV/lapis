@@ -1793,7 +1793,7 @@ class ZeroTierAuth:
         self.fetch_lock = threading.Lock()  # one fetch at a time
         self.networks = []
         self.fresh = 0.0  # when the list in hand was actually fetched
-        self.built = 0.0  # when a fetch last finished, success or not
+        self.built = None  # when a fetch last finished; None: never fetched
 
     @staticmethod
     def _run(command):
@@ -1813,12 +1813,12 @@ class ZeroTierAuth:
         STALE seconds and then admits nobody until it answers again."""
         now = self.clock()
         with self.lock:
-            if now - self.built <= self.REFRESH:
+            if self.built is not None and now - self.built <= self.REFRESH:
                 return self._trusted(now)
         with self.fetch_lock:
             now = self.clock()
             with self.lock:
-                if now - self.built <= self.REFRESH:
+                if self.built is not None and now - self.built <= self.REFRESH:
                     return self._trusted(now)
             try:
                 listed = []

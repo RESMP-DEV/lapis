@@ -495,6 +495,20 @@ class AdmissionTests(unittest.TestCase):
         self.assertFalse(auth.allowed("10.243.9.7"))
         self.assertEqual(auth.hosts(7349), set())
 
+    def test_the_first_question_fetches_even_near_a_zero_clock(self):
+        # time.monotonic() has no defined origin; right after a boot it can
+        # be small, and the cache must still fetch instead of answering the
+        # never-built state as an empty list.
+        calls = []
+
+        def runner(command):
+            calls.append(command)
+            return [ZT_NETWORK]
+
+        auth = remote.ZeroTierAuth(runner=runner, clock=lambda: 5.0)
+        self.assertTrue(auth.allowed("10.243.9.7"))
+        self.assertEqual(len(calls), 1)
+
     def test_a_fresh_list_then_silence_is_trusted_only_a_while(self):
         class Clock:  # a movable monotonic clock
             now = 1000.0
