@@ -1,0 +1,62 @@
+{
+  "date_utc": "2026-09-29",
+  "pull_request": 38,
+  "baseline": "107139361648a12c53b500c9245a8b3e997be0ba",
+  "scope": "Grok reviewer admission, observational tool selection, repository identity, settling and quota recovery",
+  "changes": [
+    "Allow only read, grep and glob tools; pass the diff from the parent and use an environment allowlist.",
+    "Require repository writer permission before inference and again before posting. This is a trusted-contributor tool, not filesystem isolation.",
+    "Use escaped XML prompt fields and reject diffs larger than 256 KiB.",
+    "Skip overlapping invocations with a nonblocking file lock.",
+    "Namespace clones, worktrees, saved reviews and watch state by repository; retain the legacy lapis state and preserve the selected repository in LaunchAgent arguments.",
+    "Preserve NUL-separated filenames and Git diff header quoting, including spaces, tabs, newlines and Unicode.",
+    "Pin each watcher review to its settled head before checkout; moved heads neither publish nor consume an attempt.",
+    "Persist an account-wide quota deadline until the next local day, skip all repositories during that deadline, and keep non-quota per-head retries available.",
+    "Replace the rejected grok-4.7-build-fast model pin with live-catalog grok-4.7; no automatic model fallback."
+  ],
+  "findings": {
+    "PRRT_kwDOUfkyeM6m9v9C": "Repository-specific state and real two-origin Git exercise.",
+    "PRRT_kwDOUfkyeM6m9v9K": "Shell tool removed; external-author admission fails closed. Residual home-directory read access documented.",
+    "PRRT_kwDOUfkyeM6m9v9Q": "NUL-delimited changed paths and decoded diff headers; full inline-comment path exercise.",
+    "PRRT_kwDOUfkyeM6m9v9V": "Expected head checked before checkout/inference; separate HeadMoved handling preserves retry budget.",
+    "PRRT_kwDOUfkyeM6m9v9Z": "Account quota deadline shared across repositories without per-PR failures; resumes at deadline.",
+    "kimi_review_body": "Environment allowlist, writer admission, observational tools and nonblocking lock address the body findings."
+  },
+  "validation": [
+    {
+      "command": "uv run --no-project python -m unittest discover -s scripts/tests -p test_grok_review.py -v",
+      "result": "PASS: 16 tests, 1.760 seconds. Real local Git clones and a stand-in Grok process; no model-quality claim."
+    },
+    {
+      "command": "uv run --no-project python scripts/lapis.py quality",
+      "result": "PASS: diff checks, Ruff format/lint and 240 Python tests, seven skips. 15.459 seconds for the Python suite."
+    },
+    {
+      "command": "uv run --no-project ruff check scripts/grok_review.py scripts/tests/test_grok_review.py",
+      "result": "PASS after final annotation/docstring-only cleanup; behavior evidence reused."
+    },
+    {
+      "command": "uv run --no-project ruff format --check scripts/grok_review.py scripts/tests/test_grok_review.py",
+      "result": "PASS after final annotation/docstring-only cleanup."
+    },
+    {
+      "command": "grok --version; grok --help; grok models",
+      "result": "Live CLI 1.0.41 (4220f3b224a6), flags present, catalog default/available model grok-4.7."
+    },
+    {
+      "command": "pull metadata and collaborator permission for this PR using gh",
+      "result": "PASS against the live API; no model call or public review was submitted."
+    }
+  ],
+  "runtime_limits": [
+    "Bounded live request using grok-4.7-build-fast was rejected as an unknown model ID.",
+    "One bounded request using catalog model grok-4.7 reached the free Grok Build usage limit; no reset timestamp supplied. No further inference attempts; retry no earlier than the next local day.",
+    "No completed live review or live tool-execution qualification is claimed. The unit stand-in proves launcher arguments and filtering only.",
+    "Repository writer admission and tool selection do not sandbox filesystem reads. The reviewer retains its file-based login and can still read the operator home directory.",
+    "No LaunchAgent was installed, reconfigured or restarted by this repair."
+  ],
+  "source_sha256": {
+    "scripts/grok_review.py": "281d07377eb007d784037e8a2252496054fcd57fbe00daf54dc57580cb37ebdb",
+    "scripts/tests/test_grok_review.py": "62e33088ebe79b90d0b137414f12342a175e724ba5ff3e2d6bab4b26a147ffda"
+  }
+}

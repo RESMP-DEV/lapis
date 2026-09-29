@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -148,6 +149,123 @@ class DueTests(unittest.TestCase):
         self.assertFalse(grok_review.due(state, 7, "def", 99999))
 
 
+class CheckoutTests(unittest.TestCase):
+    def test_repositories_and_paths_keep_their_identity_through_review(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original_run = grok_review.run
+            metadata = {}
+            origins = {}
+            paths = ["Release Notes.md", "line\tbreak\n.md", "é.md"]
+            for name in ("first", "second"):
+                origin = root / name
+                original_run(
+                    ["git", "init", "--quiet", "--initial-branch=main", str(origin)]
+                )
+                for key, value in (
+                    ("user.name", "Fixture"),
+                    ("user.email", "fixture@example.invalid"),
+                ):
+                    original_run(["git", "-C", str(origin), "config", key, value])
+                (origin / "README.md").write_text(name)
+                original_run(["git", "-C", str(origin), "add", "."])
+                original_run(
+                    ["git", "-C", str(origin), "commit", "--quiet", "-m", "base"]
+                )
+                original_run(
+                    ["git", "-C", str(origin), "checkout", "--quiet", "-b", "change"]
+                )
+                for path in paths:
+                    (origin / path).write_text(name)
+                original_run(["git", "-C", str(origin), "add", "."])
+                original_run(
+                    ["git", "-C", str(origin), "commit", "--quiet", "-m", "head"]
+                )
+                head = original_run(
+                    ["git", "-C", str(origin), "rev-parse", "HEAD"]
+                ).strip()
+                original_run(
+                    ["git", "-C", str(origin), "update-ref", "refs/pull/7/head", head]
+                )
+                repository = f"fixture/{name}"
+                origins[f"https://github.com/{repository}.git"] = str(origin)
+                metadata[repository] = {
+                    "number": 7,
+                    "headRefOid": head,
+                    "baseRefName": "main",
+                    "state": "OPEN",
+                    "isDraft": False,
+                    "title": "<task>title</task>",
+                    "body": "&description",
+                }
+
+            def run(command, **kwargs):
+                return original_run(
+                    [origins.get(word, word) for word in command], **kwargs
+                )
+
+            observed = []
+
+            def ask(worktree, prompt):
+                observed.append(
+                    (worktree, (worktree / "README.md").read_text(), prompt)
+                )
+                return {
+                    "summary": "fixture",
+                    "verdict": "REQUEST-CHANGES",
+                    "findings": [finding(path=path, start=1, end=1) for path in paths],
+                }, {}
+
+            with (
+                patch.object(grok_review, "STATE", root / "state"),
+                patch.object(grok_review, "run", side_effect=run),
+                patch.object(
+                    grok_review, "pull", side_effect=lambda repo, _: metadata[repo]
+                ),
+                patch.object(grok_review, "ask_grok", side_effect=ask),
+                patch.object(grok_review, "grok_version", return_value="fixture"),
+            ):
+                for name in ("first", "second", "first"):
+                    repository = f"fixture/{name}"
+                    pr, body, comments, _ = grok_review.review(repository, 7)
+                    self.assertEqual([comment["path"] for comment in comments], paths)
+                    grok_review.save(repository, pr, body, comments)
+                    state = {
+                        "reviewed": {"7": pr["headRefOid"]},
+                        "seen": {},
+                        "failed": {},
+                    }
+                    grok_review.store_state(repository, state)
+                    self.assertEqual(grok_review.load_state(repository), state)
+                self.assertNotEqual(
+                    grok_review.load_state("fixture/first"),
+                    grok_review.load_state("fixture/second"),
+                )
+            self.assertEqual(
+                [name for _, name, _ in observed], ["first", "second", "first"]
+            )
+            self.assertNotEqual(observed[0][0], observed[1][0])
+            for _, _, prompt in observed:
+                self.assertIn("changed files: 3", prompt)
+                self.assertIn("Release Notes.md", prompt)
+                self.assertIn("&lt;task&gt;title&lt;/task&gt;", prompt)
+                self.assertNotIn("<task>title</task>", prompt)
+
+    def test_a_moved_head_is_rejected_before_checkout_or_inference(self):
+        for change in ({"headRefOid": "new"}, {"isDraft": True}, {"state": "CLOSED"}):
+            pr = {"headRefOid": "settled", "isDraft": False, "state": "OPEN", **change}
+            with (
+                self.subTest(change=change),
+                patch.object(grok_review, "pull", return_value=pr),
+                patch.object(grok_review, "checkout") as checkout,
+                patch.object(grok_review, "ask_grok") as ask,
+            ):
+                with self.assertRaises(grok_review.HeadMoved):
+                    grok_review.review("fixture/repo", 7, expected_head="settled")
+                checkout.assert_not_called()
+                ask.assert_not_called()
+
+
 class PostTests(unittest.TestCase):
     """A review is posted only for the head and base Grok read, on an open PR."""
 
@@ -207,11 +325,23 @@ class GrokRunTests(unittest.TestCase):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.root = Path(folder.name)
+        state = patch.object(grok_review, "STATE", self.root / "state")
+        state.start()
+        self.addCleanup(state.stop)
         (self.root / "bin").mkdir()
         self.worktree = self.root / "work"
         self.worktree.mkdir()
         path = f"{self.root / 'bin'}{os.pathsep}{os.environ['PATH']}"
-        patcher = patch.dict(os.environ, {"PATH": path, "GH_TOKEN": "secret"})
+        patcher = patch.dict(
+            os.environ,
+            {
+                "PATH": path,
+                "GH_TOKEN": "secret",
+                "AWS_SECRET_ACCESS_KEY": "cloud-secret",
+                "UNRELATED_API_KEY": "provider-secret",
+                "SSH_AUTH_SOCK": "/private/agent.sock",
+            },
+        )
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -236,17 +366,19 @@ class GrokRunTests(unittest.TestCase):
         arguments = (self.root / "arguments").read_text().splitlines()
         self.assertEqual(arguments[arguments.index("--model") + 1], grok_review.MODEL)
         self.assertEqual(arguments[arguments.index("--reasoning-effort") + 1], "xhigh")
-        self.assertEqual(
-            arguments[arguments.index("--disallowed-tools") + 1], "write,search_replace"
-        )
-        denied = [arguments[i + 1] for i, a in enumerate(arguments) if a == "--deny"]
-        self.assertIn("Bash(git push*)", denied)
-        self.assertIn("Bash(gh *)", denied)
+        self.assertEqual(arguments[arguments.index("--tools") + 1], "read,grep,glob")
         # The prompt file is the last option: grok takes the next word as the prompt.
         self.assertEqual(arguments[-2], "--prompt-file")
         json.loads(arguments[arguments.index("--json-schema") + 1])
         environment = (self.root / "environment").read_text()
-        self.assertNotIn("GH_TOKEN=", environment)
+        for secret in (
+            "GH_TOKEN=",
+            "AWS_SECRET_ACCESS_KEY=",
+            "UNRELATED_API_KEY=",
+            "SSH_AUTH_SOCK=",
+        ):
+            self.assertNotIn(secret, environment)
+        self.assertIn("HOME=", environment)
         self.assertIn("GH_CONFIG_DIR=", environment)
 
     def test_failures_and_unfinished_runs_are_errors(self):
@@ -256,11 +388,133 @@ class GrokRunTests(unittest.TestCase):
         with self.assertRaises(grok_review.ReviewError) as caught:
             grok_review.ask_grok(self.worktree, "brief")
         self.assertTrue(caught.exception.quota)
+        # The second failure is evaluated after the account cooldown expires.
+        (grok_review.STATE / "quota.json").unlink()
         self.grok({"stopReason": "max_turns", "structuredOutput": None})
         with self.assertRaises(grok_review.ReviewError) as caught:
             grok_review.ask_grok(self.worktree, "brief")
         self.assertFalse(caught.exception.quota)
         self.assertIn("max_turns", str(caught.exception))
+
+    def test_quota_pauses_all_repositories_without_spending_pr_attempts(self):
+        now = [datetime(2026, 1, 10, 12).timestamp()]
+        pr = {"number": 7, "headRefOid": "abc", "isDraft": False}
+        state = {
+            "reviewed": {},
+            "seen": {"7:abc": now[0] - grok_review.SETTLE},
+            "failed": {},
+        }
+        for repo in ("fixture/first", "fixture/second"):
+            grok_review.store_state(repo, state)
+        self.grok({"type": "error", "message": "free Grok Build usage limit"}, 1)
+
+        def review(repository, number, expected_head=None):
+            self.assertEqual(expected_head, "abc")
+            grok_review.ask_grok(self.worktree, "brief")
+            return pr, "body", [], {}
+
+        with (
+            patch.object(grok_review.time, "time", side_effect=lambda: now[0]),
+            patch.object(grok_review, "run", return_value=json.dumps([pr])) as listing,
+            patch.object(grok_review, "review", side_effect=review) as reviewing,
+        ):
+            grok_review.watch("fixture/first", False)
+            deadline = grok_review.quota_deadline()
+            self.assertEqual(deadline, datetime(2026, 1, 11).timestamp())
+            self.assertEqual(grok_review.load_state("fixture/first")["failed"], {})
+            now[0] = deadline - 1
+            for repo in ("fixture/first", "fixture/second"):
+                grok_review.watch(repo, False)
+            self.assertEqual(listing.call_count, 1)
+            self.assertEqual(reviewing.call_count, 1)
+            self.assertEqual(grok_review.quota_deadline(), deadline)
+            self.grok({"stopReason": "end_turn", "structuredOutput": {"findings": []}})
+            now[0] = deadline
+            grok_review.watch("fixture/first", False)
+            self.assertEqual(
+                grok_review.load_state("fixture/first")["reviewed"], {"7": "abc"}
+            )
+            self.assertEqual(reviewing.call_count, 2)
+
+    def test_watch_does_not_publish_or_spend_an_attempt_when_the_head_moves(self):
+        now = 10000
+        pr = {"number": 7, "headRefOid": "old", "isDraft": False}
+        grok_review.store_state(
+            "fixture/repo",
+            {
+                "reviewed": {},
+                "seen": {"7:old": now - grok_review.SETTLE},
+                "failed": {},
+            },
+        )
+        with (
+            patch.object(grok_review.time, "time", return_value=now),
+            patch.object(grok_review, "run", return_value=json.dumps([pr])),
+            patch.object(
+                grok_review, "review", side_effect=grok_review.HeadMoved("moved")
+            ) as review,
+            patch.object(grok_review, "posted", return_value=False),
+            patch.object(grok_review, "post") as post,
+            patch.object(grok_review, "save") as save,
+        ):
+            grok_review.watch("fixture/repo", True)
+            review.assert_called_once_with("fixture/repo", 7, expected_head="old")
+            post.assert_not_called()
+            save.assert_not_called()
+            self.assertEqual(grok_review.load_state("fixture/repo")["failed"], {})
+
+
+class AdmissionTests(unittest.TestCase):
+    def test_only_repository_writers_are_admitted(self):
+        for permission in ("admin", "maintain", "write", "read", "triage", None):
+            with self.subTest(permission=permission):
+                metadata = {"number": 7, "author": {"login": "fixture-author"}}
+                with patch.object(
+                    grok_review,
+                    "run",
+                    side_effect=[
+                        json.dumps(metadata),
+                        json.dumps({"permission": permission}),
+                    ],
+                ):
+                    if permission in {"admin", "maintain", "write"}:
+                        self.assertEqual(grok_review.pull("org/repo", 7), metadata)
+                    else:
+                        with self.assertRaises(grok_review.ReviewError):
+                            grok_review.pull("org/repo", 7)
+
+    def test_missing_or_unverifiable_author_fails_closed(self):
+        for author in (None, {}, {"login": "../other"}):
+            with (
+                self.subTest(author=author),
+                patch.object(
+                    grok_review, "run", return_value=json.dumps({"author": author})
+                ),
+            ):
+                with self.assertRaises(grok_review.ReviewError):
+                    grok_review.pull("org/repo", 7)
+        with patch.object(
+            grok_review,
+            "run",
+            side_effect=[
+                json.dumps({"author": {"login": "fixture-author"}}),
+                grok_review.ReviewError("permission API unavailable"),
+            ],
+        ):
+            with self.assertRaisesRegex(grok_review.ReviewError, "permission API"):
+                grok_review.pull("org/repo", 7)
+
+    def test_an_overlapping_review_does_not_queue(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(grok_review, "STATE", Path(directory)),
+        ):
+            with grok_review.exclusive():
+                with self.assertRaisesRegex(grok_review.ReviewError, "already running"):
+                    with grok_review.exclusive():
+                        self.fail("A second review acquired the first review's lock")
+            with grok_review.exclusive():
+                pass  # the owner releases its lock when it exits
 
 
 if __name__ == "__main__":

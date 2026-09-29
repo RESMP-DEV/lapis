@@ -264,17 +264,34 @@ present prose-only rules as an automated gate.
 
 ### Grok review
 
-`scripts/grok_review.py` runs Grok Build (`grok-4.7-build-fast`, reasoning
+`scripts/grok_review.py` runs Grok Build (`grok-4.7`, reasoning
 `xhigh`) as a read-only reviewer: in a clone of its own under
-`runtime/grok-review`, with its write tools removed, pushing and `gh` denied and
-without GitHub credentials. `review NUMBER` prints a review of the PR head;
+`runtime/grok-review`, with only read, grep and glob tools and a supplied diff.
+The child inherits an allowlisted environment and its file-based Grok login.
+The author must have repository write, maintain or admin access, rechecked
+before inference and posting; unknown permissions fail closed. This tool is for
+trusted contributors: tool selection is not filesystem isolation, and the
+review process can still read the operator's home directory.
+`review NUMBER` prints a review of the PR head;
 `--post` publishes it as a review comment, never an approval or change request,
 with findings on changed lines inline and the rest in the summary. `install`
 runs `watch` every five minutes as a LaunchAgent, reviewing each open, non-draft
 PR head once after it has stood ten minutes (saving reviews locally unless
 installed with `--post`); `status` lists what it reviewed and what failed. It uses
 the Grok account signed in on that machine, so its usage limit applies; a
-quota failure stops the round and each head is retried at most twice.
+quota failure pauses all repositories until the next local day when no reset
+time is supplied, without consuming a head's two non-quota attempts. Concurrent
+invocations skip immediately instead of queuing behind a long review. Diffs over
+256 KiB fail explicitly instead of sending an unbounded model request.
+The optional global `--repo owner/name` selects separate clones, worktrees,
+saved reviews and retry state under `runtime/grok-review/repos`; an installed
+watcher keeps this selection. The original lapis state is retained and read
+on first use of its namespaced state. A moved head must settle before inference.
+
+The September 29 live probe of Grok Build 1.0.41 rejected the previous
+`grok-4.7-build-fast` pin as unknown. Its catalog advertises `grok-4.7`; a request
+for that model reached an account usage limit. The pin follows the catalog,
+without automatic fallback, but a completed live review remains unqualified.
 
 Keep the PR description current as scope changes. Use `Change`, `Validation` and
 `Risks and follow-up`; a small change needs only a sentence or two plus its checks.
