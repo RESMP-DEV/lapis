@@ -371,7 +371,7 @@ def command_qt(_arguments):
 
 
 def command_icon(_arguments):
-    """Generate Mac, iPhone and website icons from the canonical SVG."""
+    """Generate Mac, iPhone, in-app mark and website icons from the canonical SVG."""
     work = RELEASE / "icon"
     work.mkdir(parents=True, exist_ok=True)
     receipt = work / "receipt.json"
@@ -385,6 +385,8 @@ def command_icon(_arguments):
         stage = Path(temporary)
         phone_source = stage / "phone.svg"
         write_phone_icon(phone_source)
+        mark_source = stage / "mark.svg"
+        write_mark_icon(mark_source)
 
         def render(source, target, pixels):
             run(
@@ -414,12 +416,17 @@ def command_icon(_arguments):
             ["iconutil", "--convert", "icns", "--output", stage / "lapis.icns", iconset]
         )
         render(phone_source, stage / "phone.png", 1024)
+        mark_imageset = ROOT / "apps/ios/Lapis/Assets.xcassets/LapisMark.imageset"
+        render(mark_source, stage / "mark2x.png", 48)
+        render(mark_source, stage / "mark3x.png", 72)
         render(ICON_SOURCE, stage / "site.png", 1024)
         render(ICON_SOURCE, stage / "favicon.png", 32)
         shutil.copy2(ICON_SOURCE, stage / "icon.svg")
         outputs = {
             stage / "lapis.icns": MAC_ICON,
             stage / "phone.png": PHONE_ICON,
+            stage / "mark2x.png": mark_imageset / "mark@2x.png",
+            stage / "mark3x.png": mark_imageset / "mark@3x.png",
             stage / "site.png": ROOT / "site/icon.png",
             stage / "favicon.png": ROOT / "site/favicon.png",
             stage / "icon.svg": ROOT / "site/icon.svg",
@@ -486,6 +493,57 @@ def write_phone_icon(target):
     ET.SubElement(phone, f"{{{namespace}}}rect", {**geometry, "fill": fill})
     phone.append(stone)
     ET.ElementTree(phone).write(target, encoding="utf-8", xml_declaration=True)
+
+
+def write_mark_icon(target):
+    """Frame the stone alone on transparency for the phone's toolbar mark."""
+    namespace = "http://www.w3.org/2000/svg"
+    ET.register_namespace("", namespace)
+    try:
+        artwork = ET.parse(ICON_SOURCE).getroot()
+    except (OSError, ET.ParseError) as error:
+        raise PackageError(f"Cannot read the icon SVG: {error}") from error
+    cabochon = artwork.find(".//*[@id='cabochon']")
+    definitions = artwork.find(f"{{{namespace}}}defs")
+    if cabochon is None or definitions is None:
+        raise PackageError("Icon SVG needs cabochon and defs")
+    stone = cabochon.find(f".//{{{namespace}}}g[@id='stone']")
+    if stone is None:
+        raise PackageError("Icon SVG cabochon needs a stone group")
+    spans = []
+    for ellipse in stone.findall(f"{{{namespace}}}ellipse"):
+        try:
+            cx, cy = float(ellipse.get("cx")), float(ellipse.get("cy"))
+            rx, ry = float(ellipse.get("rx")), float(ellipse.get("ry"))
+        except (TypeError, ValueError):
+            continue
+        spans.append((cx - rx, cy - ry, cx + rx, cy + ry))
+    if not spans:
+        raise PackageError("Icon SVG stone needs ellipse geometry")
+    left = min(span[0] for span in spans)
+    top = min(span[1] for span in spans)
+    right = max(span[2] for span in spans)
+    bottom = max(span[3] for span in spans)
+    margin = (bottom - top) * 0.12
+    mark = ET.Element(
+        f"{{{namespace}}}svg",
+        {
+            "width": "1024",
+            "height": "1024",
+            "viewBox": " ".join(
+                str(round(value))
+                for value in (
+                    left - margin,
+                    top - margin,
+                    right - left + 2 * margin,
+                    bottom - top + 2 * margin,
+                )
+            ),
+        },
+    )
+    mark.append(definitions)
+    mark.append(cabochon)
+    ET.ElementTree(mark).write(target, encoding="utf-8", xml_declaration=True)
 
 
 KHRONOS = "https://raw.githubusercontent.com/KhronosGroup"

@@ -5,16 +5,18 @@
   "outputs": {
     "apps/desktop/macos/lapis.icns": "f89ebe186dd127b958eeba35c3f5492f7d892546d63d3a7968297ef4499723d5",
     "apps/ios/Lapis/Assets.xcassets/AppIcon.appiconset/icon.png": "3228401d52d08738d14dae72c50e33f38de9b2763ef28936eb37da1be5b6bf7c",
+    "apps/ios/Lapis/Assets.xcassets/LapisMark.imageset/mark@2x.png": "1517893b90689c06e7c42da08ec34bc6f31f98b86d9999f5a7125d757b53af4f",
+    "apps/ios/Lapis/Assets.xcassets/LapisMark.imageset/mark@3x.png": "9636119bdb4b83055a1a4bbf89c7658faa898c7a468bae297738ed2ac16ed0e5",
     "site/icon.png": "a123c503540bfb91dbbb022cea482979d93d747079b162516efce02515a967cc",
     "site/favicon.png": "e876ab1cbcb62ebfa1d18f60862d3f696f06d8854979b5dbc7b4c112d0ed2c67",
     "site/icon.svg": "51423758f72ff8d254dcffca064d9f12104bcbb064bbff55ef401b94de7b340d"
   },
-  "scope": "Silk lapis Cabochon icon adoption into the fix/quality-correctness working tree; no release or installed-app replacement.",
+  "scope": "Silk lapis Cabochon icon adoption on the v7 icon branch, including the toolbar-mark derivation; no release or installed-app replacement.",
   "source_revision": "d874eacb5ec29c409772aa628630721f6bde4349",
   "design_provenance": {
     "study": "star study v7 (lapis-icons-star.html), silk variant",
     "export": "~/Downloads/lapis-silk.svg, 2026-09-28 export batch",
-    "notes": "Canonical SVG adds only the tile-edge/tile-face/cabochon ids required by write_phone_icon plus a cabochon wrapper group; 256px renders are sha256-identical to the Downloads export."
+    "notes": "Canonical SVG adds only the tile-edge/tile-face/cabochon ids required by write_phone_icon plus a cabochon wrapper group; 256px renders are sha256-identical to the Downloads export. Regenerating the mark outputs leaves every other output hash unchanged (determinism recheck 2026-09-28)."
   },
   "checks": {
     "source_identity": {
@@ -30,6 +32,12 @@
       "size": [1024, 1024],
       "has_alpha": false,
       "tool": "sips"
+    },
+    "mark_png": {
+      "sizes": [[48, 48], [72, 72]],
+      "format": "PNG RGBA",
+      "tool": "file",
+      "derivation": "write_mark_icon: defs + cabochon group over a viewBox sized to the stone ellipse bounds plus 12% margin; 512px inspection render has the stone centered (0.500/0.500), transparent corners, white star at center"
     },
     "favicon_png": {
       "size": [32, 32],

@@ -86,9 +86,14 @@ class IconGenerationTests(unittest.TestCase):
                 new_icon = site / "icon.png"
                 favicon = site / "favicon.png"
                 site_svg = site / "icon.svg"
+                imageset = root / "apps/ios/Lapis/Assets.xcassets/LapisMark.imageset"
+                mark_2x = imageset / "mark@2x.png"
+                mark_3x = imageset / "mark@3x.png"
                 assets = {
                     mac: b"previous mac",
                     phone: b"previous phone",
+                    mark_2x: b"previous mark 2x",
+                    mark_3x: b"previous mark 3x",
                     favicon: b"previous favicon",
                     site_svg: b"previous site svg",
                 }
