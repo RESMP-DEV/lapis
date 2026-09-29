@@ -20,6 +20,78 @@ void rejects(Operation operation, std::source_location where = std::source_locat
     }
     require(rejected, where);
 }
+void hyperlink_messages() {
+    using namespace lapis::session;
+    Terminal terminal({12, 3});
+    terminal.feed("\x1b]8;;https://example.com/link\x1b\\label\x1b]8;;\x1b\\");
+    const auto snapshot = terminal.snapshot();
+    require(snapshot.hyperlinks.size() == 1);
+    const auto legacy = wire::encode_snapshot(snapshot, false);
+    const auto encoded = wire::encode_snapshot(snapshot);
+    require(encoded.startsWith(legacy) && encoded.size() > legacy.size());
+    require(wire::decode_snapshot(encoded).hyperlinks == snapshot.hyperlinks);
+    require(wire::decode_snapshot(legacy).hyperlinks.empty());
+    auto plain = snapshot;
+    plain.hyperlinks.clear();
+    require(wire::encode_snapshot(plain) == legacy);
+    // Truncation of an extension is rejected, while the complete legacy body
+    // is still readable. Malformed metadata never becomes a different target.
+    for (auto size = legacy.size() + 1; size < encoded.size(); ++size)
+        rejects([&] { static_cast<void>(wire::decode_snapshot(encoded.first(size))); });
+    for (const auto offset : {0, 4, 8, 12, 16}) {
+        auto malformed = encoded;
+        malformed[legacy.size() + offset] = static_cast<char>(0xff);
+        rejects([&] { static_cast<void>(wire::decode_snapshot(malformed)); });
+    }
+    for (const auto byte : {0xff, 0xc2}) {
+        auto invalid_utf8 = encoded;
+        invalid_utf8.back() = static_cast<char>(byte);
+        rejects([&] { static_cast<void>(wire::decode_snapshot(invalid_utf8)); });
+    }
+    rejects([&] { static_cast<void>(wire::decode_snapshot(encoded + 'x')); });
+    auto overlap = snapshot;
+    overlap.hyperlinks.push_back(overlap.hyperlinks.front());
+    rejects([&] { static_cast<void>(wire::encode_snapshot(overlap)); });
+    const wire::Attachment attachment{{wire::new_id(), wire::new_id()}, 1};
+    require(wire::decode_snapshot_message(
+                wire::encode_snapshot_message({attachment, 1, snapshot}, false))
+                .snapshot.hyperlinks.empty());
+    const wire::HistoryReply reply{attachment, 1, 1, {}, snapshot};
+    const auto linked_history = wire::decode_history_reply(wire::encode_history_reply(reply));
+    const auto legacy_history =
+        wire::decode_history_reply(wire::encode_history_reply(reply, false));
+    require(linked_history.snapshot.has_value() && legacy_history.snapshot.has_value());
+    if (linked_history.snapshot && legacy_history.snapshot) {
+        require(linked_history.snapshot->hyperlinks == snapshot.hyperlinks);
+        require(legacy_history.snapshot->hyperlinks.empty());
+    }
+    for (const auto mode : {wire::AttachMode::discover, wire::AttachMode::create,
+                            wire::AttachMode::reconnect, wire::AttachMode::join}) {
+        wire::AttachRequest request{
+            .mode = mode, .fingerprint = QByteArray(32, 'f'), .expected = {}};
+        if (mode == wire::AttachMode::create)
+            request.expected.session_id = attachment.identity.session_id;
+        if (mode == wire::AttachMode::reconnect)
+            request.expected = attachment.identity;
+        const auto old = wire::encode_attach(request);
+        request.hyperlinks = true;
+        request.attention_phase = true;
+        auto capable = wire::encode_attach(request);
+        require(old.size() == capable.size() && wire::decode_attach(capable).hyperlinks &&
+                wire::decode_attach(capable).attention_phase &&
+                !wire::decode_attach(old).hyperlinks && !wire::decode_attach(old).attention_phase);
+        auto links_only = capable;
+        links_only[36] = static_cast<char>(static_cast<unsigned char>(links_only[36]) & 0xbfU);
+        require(wire::decode_attach(links_only).hyperlinks &&
+                !wire::decode_attach(links_only).attention_phase);
+        require(static_cast<unsigned char>(capable[36]) ==
+                (static_cast<unsigned char>(old[36]) | 0xc0U));
+        capable[36] = static_cast<char>(static_cast<unsigned char>(capable[36]) & 0x3fU);
+        require(capable == old);
+        capable[36] = static_cast<char>(static_cast<unsigned char>(capable[36]) | 0x20U);
+        rejects([&] { static_cast<void>(wire::decode_attach(capable)); });
+    }
+}
 void identity_messages() {
     using namespace lapis::session;
     const QByteArray session = wire::new_id();
@@ -101,8 +173,12 @@ void history_messages() {
             decoded.direction == wire::HistoryDirection::newer);
     rejects([&] { static_cast<void>(wire::decode_history_request(bytes.chopped(1))); });
     rejects([&] { static_cast<void>(wire::decode_history_request(bytes + 'x')); });
+    // A row from the oldest kept row, zero included.
+    const auto at = wire::decode_history_request(
+        wire::encode_history_request({18, 0, wire::HistoryDirection::at}));
+    require(at.request_id == 18 && at.reference == 0 && at.direction == wire::HistoryDirection::at);
     auto malformed = bytes;
-    malformed[16] = 2;
+    malformed[16] = 3;
     rejects([&] { static_cast<void>(wire::decode_history_request(malformed)); });
     rejects([&] { static_cast<void>(wire::encode_history_request({0, 0})); });
     rejects([&] {
@@ -177,12 +253,48 @@ void envelope_messages() {
     require(wire::frame(wire::Kind::ready, wire::encode_ready({attachment, 1})).size() == 53);
 }
 } // namespace
+// Wheel input and the alternate-screen byte that says a service takes it;
+// readers from before wheel input still read that byte as true.
+void wheel_messages() {
+    using namespace lapis::session;
+    const auto encoded = wire::encode_wheel({-3, 7, 9});
+    const auto decoded = wire::decode_wheel(encoded);
+    require(encoded.size() == 6 && decoded.steps == -3 && decoded.column == 7 && decoded.row == 9);
+    rejects([&] { static_cast<void>(wire::decode_wheel(encoded.first(5))); });
+    rejects([&] { static_cast<void>(wire::decode_wheel(wire::encode_wheel({0, 1, 1}))); });
+    const wire::Attachment attachment{{wire::new_id(), wire::new_id()}, 1};
+    const auto packet = wire::frame(wire::Kind::wheel, wire::encode_control({attachment, encoded}));
+    QByteArray buffer = packet;
+    wire::Frame frame;
+    require(wire::take_frame(buffer, frame) && frame.kind == wire::Kind::wheel);
+    QByteArray unknown = packet;
+    unknown[4] = static_cast<char>(static_cast<quint8>(wire::Kind::wheel) + 1);
+    rejects([&] { static_cast<void>(wire::take_frame(unknown, frame)); });
+
+    Terminal terminal({20, 4});
+    const auto primary = wire::encode_snapshot(terminal.snapshot());
+    require(primary[21] == 0 && !wire::decode_snapshot(primary).accepts_wheel);
+    terminal.feed("\x1b[?1049h");
+    auto alternate = wire::encode_snapshot(terminal.snapshot());
+    const auto taken = wire::decode_snapshot(alternate);
+    require(alternate[21] == 3 && taken.alternate_screen && taken.accepts_wheel);
+    alternate[21] = 1; // a service from before wheel input
+    const auto older = wire::decode_snapshot(alternate);
+    require(older.alternate_screen && !older.accepts_wheel);
+    alternate[21] = 2; // malformed: wheel without a screen to receive it
+    rejects([&] { static_cast<void>(wire::decode_snapshot(alternate)); });
+    alternate[21] = 4;
+    rejects([&] { static_cast<void>(wire::decode_snapshot(alternate)); });
+}
+
 int main() {
     using namespace lapis::session;
     try {
         identity_messages();
+        hyperlink_messages();
         envelope_messages();
         history_messages();
+        wheel_messages();
         Terminal terminal({20, 4});
         terminal.feed("A界é\x1b[1;31mZ\x1b[0m\x1b[?2004h");
         const auto expected = terminal.snapshot();
@@ -246,7 +358,7 @@ int main() {
         auto terminate = QByteArray::fromHex("000000010f");
         require(wire::take_frame(terminate, frame) && frame.kind == wire::Kind::terminate &&
                 frame.payload.isEmpty());
-        for (const auto* hex : {"00000000", "00800001", "0000000100", "0000000110"}) {
+        for (const auto* hex : {"00000000", "00800001", "0000000100", "0000000111"}) {
             auto malformed = QByteArray::fromHex(hex);
             rejects([&] { static_cast<void>(wire::take_frame(malformed, frame)); });
         }

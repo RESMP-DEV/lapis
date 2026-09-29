@@ -10,9 +10,12 @@
 #include "launch_spec.hpp"
 
 namespace lapis::session {
-enum class ResumeSource : std::uint8_t { terminal, observer };
+// How a conversation's identity was learned: printed by the agent's session
+// hook (terminal), by lapis's own Codex or Claude observer, or before lapis
+// recorded which (legacy, a version 1 record). Printed output never replaces
+// an identity the observer learned.
+enum class ResumeSource : std::uint8_t { terminal, observer, legacy };
 
-// A terminal checkpoint is advisory; only an observer can authorize automatic resume.
 struct ResumeRecord {
     QString agent;      // CLI name, for example "claude"
     QString session_id; // the conversation its native resume option takes
@@ -26,6 +29,11 @@ struct ResumeRecord {
 // Checkpoints are untrusted terminal output. Tie their claimed agent to the
 // managed Codex/Claude integration or the terminal executable's harness name.
 [[nodiscard]] QString checkpoint_agent_for_launch(const LaunchSpec& launch);
+
+// Whether this harness has a lapis conversation observer. This is a resume
+// policy capability, so it remains true for an older service launched before
+// an observer was attached.
+[[nodiscard]] bool observer_backed_agent(const QString& agent);
 
 // Agent session hooks for terminal restore tools write
 // OSC 1337 SetUserVar=agent_checkpoint=<base64 JSON> to their terminal. This

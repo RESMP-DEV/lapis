@@ -46,7 +46,7 @@ ApplicationWindow {
     // One fixed-width family for the terminal and every machine readout (paths,
     // shortcut hints, states, counts). Human names and prose use the UI face.
     readonly property string monoFamily: liveTerminal.resolvedFontFamily
-    readonly property int terminalFontSize: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSize : 16
+    readonly property int terminalFontSize: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSize : 14
     // Composition and paste own the keyboard until they finish.
     readonly property bool terminalBusy: liveTerminal.composing || liveTerminal.pasting
 
@@ -80,6 +80,8 @@ ApplicationWindow {
     readonly property bool inputBlocked: transitionLock
             || commandsDialog.visible
             || searchDialog.visible
+            || resumeDialog.visible
+            || terminalPicker.visible
             || usageDialog.visible
             || settingsDialog.visible
             || attentionDialog.visible
@@ -146,18 +148,17 @@ ApplicationWindow {
             return [mod + "Q"]
         if (action === "closeAgent")
             return [mod + "W"]
+        if (action === "closeWindow")
+            return mac ? ["Meta+Shift+W"] : []
+        if (action === "minimizeWindow")
+            return mac ? ["Meta+M"] : []
         if (action === "nextCategory")
             return [mod + "Alt+Right", mod + (mac ? "Shift+Down" : "Down")]
         if (action === "previousCategory")
             return [mod + "Alt+Left", mod + (mac ? "Shift+Up" : "Up")]
-        if (action === "category1")
-            return [mod + "1"]
-        if (action === "category2")
-            return [mod + "2"]
-        if (action === "category3")
-            return [mod + "3"]
-        if (action === "category4")
-            return [mod + "4"]
+        const numbered = /^category([1-9])$/.exec(action)
+        if (numbered)
+            return [mod + numbered[1]]
         if (action === "openSettings")
             return preview.settingsShortcuts
         if (action === "toggleSidebar")
@@ -200,6 +201,12 @@ ApplicationWindow {
             return [mod + "F"]
         if (action === "reopenAgent")
             return [mac ? "Meta+Shift+T" : "Ctrl+Alt+Shift+T"]
+        if (action === "resumeConversation")
+            return [mod + "O"]
+        if (action === "toggleTerminal")
+            return mac ? ["Meta+`", "Ctrl+`"] : ["Ctrl+`"]
+        if (action === "chooseTerminal")
+            return mac ? ["Meta+Shift+`", "Meta+~"] : ["Ctrl+Shift+~", "Ctrl+~"]
         return []
     }
 
@@ -212,8 +219,19 @@ ApplicationWindow {
     function projectName(path) {
         return path.replace(/\/+$/, "").split("/").pop() || "/"
     }
+    function projectTitle(path) {
+        const name = projectName(path)
+        if (name.length <= 80)
+            return name
+        // Names use UTF-16 limits; keep both halves of an astral character.
+        let end = 79
+        if (name.charCodeAt(end - 1) >= 0xD800 && name.charCodeAt(end - 1) <= 0xDBFF
+                && name.charCodeAt(end) >= 0xDC00 && name.charCodeAt(end) <= 0xDFFF)
+            --end
+        return name.slice(0, end) + "…"
+    }
     function agentBaseTitle(session) {
-        return workspace.previewMode || session.title !== projectName(session.directory).slice(0, 80) ?
+        return workspace.previewMode || session.title !== projectTitle(session.directory) ?
                     session.title : workspace.displayPath(session.directory)
     }
     // Agents started in the same folder share a default title; number the
@@ -252,6 +270,124 @@ ApplicationWindow {
     function openSearchDialog() {
         if (!interactionArmed || dialogsVisible()) return
         searchDialog.open()
+    }
+    readonly property bool conversationsAvailable: typeof conversations !== "undefined" && conversations !== null
+    function openResumeDialog() {
+        if (!interactionArmed || dialogsVisible() || !conversationsAvailable) return
+        resumeDialog.open()
+    }
+    // The home list shown when nothing is open: actions, then recent
+    // conversations, then the other categories that have agents.
+    ListModel { id: homeModel }
+    Component.onCompleted: homeRebuild.restart()
+    property var homeRuns: []
+    function rebuildHome() {
+        if (workspace.focusedSession !== null && homeModel.count > 0)
+            return
+        const runs = []
+        homeModel.clear()
+        function add(group, kind, label, detail, hint, harness, run) {
+            homeModel.append({group: group, kind: kind, label: label, detail: detail, hint: hint, harness: harness})
+            runs.push(run)
+        }
+        add("", "action", qsTr("New agent"), "", shortcutText("newAgent"), "", () => window.openNewAgentDialog())
+        if (conversationsAvailable)
+            add("", "action", qsTr("Resume a conversation"), "", shortcutText("resumeConversation"), "", () => window.openResumeDialog())
+        if (terminalsAvailable)
+            add("", "action", qsTr("Terminal"), "", shortcutText("toggleTerminal").split(" / ")[0], "", () => window.toggleTerminal())
+        if (workspace.canReopenAgent)
+            add("", "action", qsTr("Reopen closed agent"), "", shortcutText("reopenAgent"), "", () => window.reopenAgent())
+        if (conversationsAvailable) {
+            for (const conversation of conversations.recent("", 5))
+                add(qsTr("Recent conversations"), "conversation", conversation.title,
+                    conversation.place + "  " + conversation.when, "", conversation.harness,
+                    () => window.resumeConversation(conversation))
+        }
+        for (const category of workspace.categories) {
+            if (category.id !== workspace.activeCategoryId && category.agentCount > 0)
+                add(qsTr("Categories"), "category", category.name,
+                    category.agentCount === 1 ? qsTr("1 agent") : qsTr("%1 agents").arg(category.agentCount),
+                    "", "", () => workspace.selectCategory(category.id))
+        }
+        homeRuns = runs
+        homeList.currentIndex = Math.min(Math.max(0, homeList.currentIndex), homeModel.count - 1)
+    }
+    function runHomeEntry(index) {
+        if (!interactionArmed || index < 0 || index >= homeRuns.length) return
+        homeRuns[index]()
+    }
+    Timer {
+        id: homeRebuild
+        interval: 0
+        onTriggered: window.rebuildHome()
+    }
+    Connections {
+        target: workspace
+        function onCategoriesChanged() { homeRebuild.restart() }
+        function onFocusChanged() { homeRebuild.restart() }
+        function onClosedChanged() { homeRebuild.restart() }
+        function onSessionsChanged() { homeRebuild.restart() }
+    }
+    Connections {
+        target: window.conversationsAvailable ? conversations : null
+        function onChanged() { homeRebuild.restart() }
+    }
+    // What gets the keyboard when no dialog does: the side terminal while it
+    // shows, else the selected agent's terminal, or the home list when
+    // nothing is open.
+    readonly property string focusTarget: sideTerminalOpen && terminalsAvailable && terminals.current !== null ?
+                                              "sideTerminalSurface" :
+                                          workspace.focusedSession === null ? "homeList" : "liveTerminal"
+    // Command-` (or Control-`): a plain shell on this Mac or an ssh host,
+    // beside the agents, for a quick command; never an agent. Command-~
+    // picks the machine.
+    readonly property bool terminalsAvailable: typeof terminals !== "undefined" && terminals !== null
+    property bool sideTerminalOpen: false
+    property string lastTerminalMachine: ""
+    function toggleTerminal() {
+        if (!terminalsAvailable || terminalBusy)
+            return
+        if (sideTerminalOpen) {
+            closeSideTerminal()
+            return
+        }
+        if (!inputBlocked)
+            openTerminalOn(lastTerminalMachine)
+    }
+    function openTerminalOn(machine) {
+        if (!terminalsAvailable)
+            return
+        const started = terminals.show(machine)
+        if (started)
+            lastTerminalMachine = machine
+        sideTerminalOpen = true
+        preview.deferTerminalFocus()
+    }
+    function closeSideTerminal() {
+        sideTerminalOpen = false
+        preview.deferTerminalFocus()
+    }
+    function chooseTerminal() {
+        if (!terminalsAvailable || terminalBusy || dialogsVisible())
+            return
+        terminalPicker.open()
+    }
+    // Typing exit closes the panel along with the shell.
+    Connections {
+        target: window.terminalsAvailable ? terminals : null
+        function onCurrentChanged() {
+            if (window.sideTerminalOpen && terminals.current === null && terminals.error.length === 0)
+                window.closeSideTerminal()
+        }
+    }
+    // A past conversation comes back as a new agent in this category, in its
+    // folder, with the approval mode last chosen for a new agent.
+    function resumeConversation(conversation) {
+        const defaults = workspace.agentDefaults()
+        const mode = window.lastMode.length > 0 ? window.lastMode :
+                     defaults.mode && defaults.mode.length > 0 ? defaults.mode : "full"
+        workspace.resumeAgent(conversation.directory, projectTitle(conversation.directory),
+                              conversation.harness, conversation.id, mode)
     }
     function openUsageDialog() {
         if (!interactionArmed || dialogsVisible() || !usageAvailable) return
@@ -293,6 +429,9 @@ ApplicationWindow {
         add("splitRight", qsTr("New agent here, tiled to the right"), "splitRight", liveAgent, needAgent, () => window.splitAgent("right"))
         add("splitDown", qsTr("New agent here, tiled below"), "splitDown", liveAgent, needAgent, () => window.splitAgent("bottom"))
         add("reopenAgent", qsTr("Reopen closed agent"), "reopenAgent", workspace.canReopenAgent, qsTr("No agent was closed since lapis opened"), () => window.reopenAgent())
+        add("resumeConversation", qsTr("Resume a conversation"), "resumeConversation", conversationsAvailable, qsTr("Not available here"), () => window.openResumeDialog())
+        add("toggleTerminal", sideTerminalOpen ? qsTr("Hide terminal") : qsTr("Terminal"), "toggleTerminal", terminalsAvailable, qsTr("Not available here"), () => window.toggleTerminal())
+        add("chooseTerminal", qsTr("Terminal on another machine"), "chooseTerminal", terminalsAvailable, qsTr("Not available here"), () => window.chooseTerminal())
         add("find", qsTr("Find in terminal"), "find", hasAgent, needAgent, () => findBar.open())
         add("textBigger", qsTr("Bigger text"), "textBigger", true, "", () => window.changeTextSize(1))
         add("textSmaller", qsTr("Smaller text"), "textSmaller", true, "", () => window.changeTextSize(-1))
@@ -310,7 +449,7 @@ ApplicationWindow {
         add("restartAgent", qsTr("Restart agent"), "", stopped, qsTr("Only an ended or unreachable agent restarts"), () => workspace.restartAgent(agent.sessionId))
         add("nextCategory", qsTr("Next category"), "nextCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory())
         add("previousCategory", qsTr("Previous category"), "previousCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory(-1))
-        for (let i = 0; i < Math.min(4, workspace.categories.length); ++i) {
+        for (let i = 0; i < Math.min(9, workspace.categories.length); ++i) {
             const category = workspace.categories[i]
             add("category" + (i + 1), qsTr("Switch category: %1").arg(category.name), "category" + (i + 1), true, "", () => workspace.selectCategory(category.id))
         }
@@ -332,6 +471,9 @@ ApplicationWindow {
         add("restart", qsTr("Start replacement agent session"), "", window.recoveryAvailable(), qsTr("Available for a disconnected agent"), () => agent.startNewSession())
         add("appearance", qsTr("Appearance"), "openSettings", true, "", () => window.openSettingsDialog())
         add("reloadConfig", qsTr("Reload configuration"), "reloadConfig", typeof keymap !== "undefined" && keymap !== null, qsTr("No configuration in this fixture"), () => keymap.reload())
+        const mac = Qt.platform.os === "osx"
+        add("closeWindow", qsTr("Close window (lapis keeps running)"), "closeWindow", mac, qsTr("Only on the Mac"), () => window.close())
+        add("minimizeWindow", qsTr("Minimize window"), "minimizeWindow", true, "", () => window.showMinimized())
         add("quit", qsTr("Quit lapis"), "quit", true, "", () => Qt.quit())
         return entries
     }
@@ -368,9 +510,9 @@ ApplicationWindow {
             return textColor
         return mutedTextColor
     }
-    // Mono recall number for categories reachable by a category1-4 shortcut.
+    // Mono recall number for categories reachable by a category1-9 shortcut.
     function categoryRecall(index) {
-        return index < 4 && bindings("category" + (index + 1)).length > 0 ? String(index + 1) : ""
+        return index < 9 && bindings("category" + (index + 1)).length > 0 ? String(index + 1) : ""
     }
     function categoryAttentionElsewhere() {
         let total = 0
@@ -430,7 +572,7 @@ ApplicationWindow {
     }
 
     function dialogsVisible() {
-        return commandsDialog.visible || searchDialog.visible || usageDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
+        return commandsDialog.visible || searchDialog.visible || resumeDialog.visible || terminalPicker.visible || usageDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
                 || closeAgentDialog.visible || categoryDialog.visible || renameAgentDialog.visible
     }
 
@@ -519,6 +661,8 @@ ApplicationWindow {
     // What the last new agent was started with, kept for the next one: the
     // CLI, the approval mode across CLIs, and each CLI's model.
     property string lastHarness: ""
+    // The machine the last new agent started on: "" for this Mac, else an ssh host.
+    property string lastMachine: ""
     property string lastMode: ""
     property var lastModels: ({})
     function openNewAgentDialog() {
@@ -528,6 +672,9 @@ ApplicationWindow {
             return
         agentDialog.localError = ""
         agentDialog.harnesses = workspace.availableHarnesses()
+        agentDialog.machines = [""].concat(workspace.sshMachines())
+        agentDialog.selectedMachine = agentDialog.machines.indexOf(window.lastMachine) >= 0 ? window.lastMachine : ""
+        agentDialog.folderMachine = ""
         agentDialog.phase = 0
         // The config's newAgent defaults: the CLI, then the folder to start in.
         const defaults = workspace.agentDefaults()
@@ -542,8 +689,25 @@ ApplicationWindow {
                                     defaults.mode && defaults.mode.length > 0 ? defaults.mode : "full"
         openFresh(agentDialog)
     }
-    // Command-W: close the focused agent. A running agent is confirmed first,
-    // the way iTerm2 asks before closing a session with a running job.
+    // Command-W, as in a browser: the side terminal's panel if it shows (its
+    // shell keeps running), else the focused agent, and only when the category
+    // has no agent left the window (on the Mac, where lapis keeps running).
+    function closeInFront() {
+        if (terminalBusy || inputBlocked)
+            return
+        if (sideTerminalOpen) {
+            closeSideTerminal()
+            return
+        }
+        if (workspace.focusedSession !== null) {
+            closeFocusedAgent()
+            return
+        }
+        if (Qt.platform.os === "osx")
+            window.close()
+    }
+    // Close the focused agent. A running agent is confirmed first, the way
+    // iTerm2 asks before closing a session with a running job.
     function closeFocusedAgent() {
         if (terminalBusy)
             return
@@ -587,7 +751,7 @@ ApplicationWindow {
 
     function commitNewAgent() {
         const folder = agentDirectoryField.text.trim()
-        const title = projectName(folder).slice(0, 80)
+        const title = projectTitle(folder)
         const folderIssue = directoryProblem(agentDirectoryField.text)
         if (folderIssue.length > 0) {
             agentDialog.localError = folderIssue
@@ -595,7 +759,7 @@ ApplicationWindow {
         }
         const model = agentDialog.chosenModel && !agentDialog.chosenModel.default ? agentDialog.chosenModel.id : ""
         if (!workspace.createAgent(agentDirectoryField.text.trim(), title, agentDialog.selectedHarness,
-                                   model, agentDialog.selectedMode)) {
+                                   model, agentDialog.selectedMode, agentDialog.selectedMachine, false)) {
             agentDialog.localError = workspace.workspaceError.length > 0 ? workspace.workspaceError :
                                                                           qsTr("Could not start %1.").arg(agentDialog.harnessName)
             return
@@ -834,17 +998,25 @@ ApplicationWindow {
         return place.machine && place.machine.length > 0 ? "" : session.directory
     }
     // Dropped files become their paths, quoted for a shell, as in Terminal.
-    function pastePaths(urls) {
+    function quoteDroppedPaths(urls) {
         const quoted = []
         for (const url of urls) {
-            const text = url.toString()
-            if (!text.startsWith("file://"))
+            const path = liveTerminal.localFilePath(url.toString())
+            if (path.length === 0)
                 continue
-            const path = decodeURIComponent(text.slice(7))
             quoted.push("'" + path.replace(/'/g, "'\\''") + "'")
         }
-        if (quoted.length > 0)
-            liveTerminal.pasteText(quoted.join(" ") + " ")
+        return quoted.length > 0 ? quoted.join(" ") + " " : ""
+    }
+    function pastePaths(text, destinationId) {
+        if (!window.interactionArmed || text.length === 0)
+            return false
+        const destination = workspace.focusedSession
+        if (!destination || liveTerminal.document !== destination)
+            return false
+        if (destination.sessionId !== destinationId)
+            return false
+        return liveTerminal.pasteText(text)
     }
     function untileFocused() {
         const session = workspace.focusedSession
@@ -911,6 +1083,25 @@ ApplicationWindow {
         onChosen: function(sessionId) { Qt.callLater(function() { workspace.selectSession(sessionId) }) }
         onClosed: preview.deferTerminalFocus()
     }
+    Resume {
+        id: resumeDialog
+        engine: window.conversationsAvailable ? conversations : null
+        surfaceColor: window.surfaceColor
+        textColor: window.textColor
+        mutedColor: window.mutedTextColor
+        accentColor: window.focusedBorderColor
+        selectionColor: window.focusedColor
+        hoverColor: window.hoveredCardColor
+        borderColor: window.borderColor
+        monoFamily: window.monoFamily
+        uiFont: window.chromeFont
+        readoutFont: window.readoutFont
+        chromeRadius: window.chromeRadius
+        motionDuration: window.motionDuration
+        motionEnabled: window.motionEnabled
+        onChosen: function(conversation) { Qt.callLater(function() { window.resumeConversation(conversation) }) }
+        onClosed: preview.deferTerminalFocus()
+    }
     Usage {
         id: usageDialog
         engine: window.usageAvailable ? usage : null
@@ -969,7 +1160,8 @@ ApplicationWindow {
 
     // Command-Left/Right stay with the terminal. These chords are the workspace
     // bindings from the keymap; they are off while a dialog, menu, or composition
-    // owns the keyboard. Closing the window does not hide it.
+    // owns the keyboard. On the Mac a closed window only hides: lapis keeps
+    // running and the Dock icon brings it back.
     Shortcut {
         sequences: window.bindings("quit")
         context: Qt.WindowShortcut
@@ -977,6 +1169,8 @@ ApplicationWindow {
         autoRepeat: false
         onActivated: Qt.quit()
     }
+    ActionShortcut { action: "closeWindow"; onActivated: window.close() }
+    ActionShortcut { action: "minimizeWindow"; onActivated: window.showMinimized() }
     Shortcut {
         // Unbound by default; kept for configurations that name it.
         sequences: window.bindings("detachWindow")
@@ -991,7 +1185,7 @@ ApplicationWindow {
         context: Qt.WindowShortcut
         enabled: window.shortcutsArmed
         autoRepeat: false
-        onActivated: window.closeFocusedAgent()
+        onActivated: window.closeInFront()
     }
     // Tiles, as in iTerm2: Command-D splits right with a new agent like this
     // one, Command-Shift-D below it; Command-Control-arrows move between tiles
@@ -1048,6 +1242,9 @@ ApplicationWindow {
     ActionShortcut { action: "textReset"; onActivated: window.changeTextSize(0) }
     ActionShortcut { action: "find"; onActivated: if (workspace.focusedSession !== null) findBar.open() }
     ActionShortcut { action: "reopenAgent"; onActivated: window.reopenAgent() }
+    ActionShortcut { action: "resumeConversation"; onActivated: window.openResumeDialog() }
+    ActionShortcut { action: "toggleTerminal"; onActivated: window.toggleTerminal() }
+    ActionShortcut { action: "chooseTerminal"; onActivated: window.chooseTerminal() }
     ActionShortcut { action: "splitRight"; onActivated: window.splitAgent("right") }
     ActionShortcut { action: "splitDown"; onActivated: window.splitAgent("bottom") }
     ActionShortcut { action: "tileLeft"; onActivated: window.focusTile("left") }
@@ -1140,6 +1337,31 @@ ApplicationWindow {
         objectName: "categoryShortcut4"
         targetIndex: 3
         action: "category4"
+    }
+    IndexShortcut {
+        objectName: "categoryShortcut5"
+        targetIndex: 4
+        action: "category5"
+    }
+    IndexShortcut {
+        objectName: "categoryShortcut6"
+        targetIndex: 5
+        action: "category6"
+    }
+    IndexShortcut {
+        objectName: "categoryShortcut7"
+        targetIndex: 6
+        action: "category7"
+    }
+    IndexShortcut {
+        objectName: "categoryShortcut8"
+        targetIndex: 7
+        action: "category8"
+    }
+    IndexShortcut {
+        objectName: "categoryShortcut9"
+        targetIndex: 8
+        action: "category9"
     }
     Shortcut {
         objectName: "nextSessionShortcut"
@@ -1443,9 +1665,9 @@ ApplicationWindow {
         fontFamily: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontFamily : ""
         resolvedFontFamily: window.monoFamily
         fontSize: liveTerminal.fontPixelSize
-        fontSizeMinimum: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeMinimum : 16
-        fontSizeMaximum: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeMaximum : 16
-        fontSizeDefault: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeDefault : 16
+        fontSizeMinimum: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeMinimum : 14
+        fontSizeMaximum: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeMaximum : 14
+        fontSizeDefault: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontSizeDefault : 14
         motionDuration: window.motionDuration
         motionEnabled: window.motionEnabled
         alertSound: (typeof keymap !== "undefined" && keymap !== null) ? keymap.alertSound : true
@@ -1457,6 +1679,8 @@ ApplicationWindow {
         loginAvailable: window.desktopAvailable && desktop.launchAtLoginAvailable
         launchAtLogin: window.desktopAvailable && desktop.launchAtLogin
         updatesAvailable: window.desktopAvailable && desktop.updatesAvailable
+        shortcutRows: window.commandEntries.filter(entry => entry.shortcut.length > 0)
+                                           .map(entry => ({label: entry.label, keys: entry.shortcut}))
         onNotifyChosen: function(on) { if (typeof keymap !== "undefined" && keymap !== null) keymap.setNotify(on) }
         onLaunchAtLoginChosen: function(on) { if (window.desktopAvailable) desktop.setLaunchAtLogin(on) }
         onCheckUpdates: if (window.desktopAvailable) desktop.checkForUpdates()
@@ -1498,6 +1722,32 @@ ApplicationWindow {
         property var harnesses: []
         readonly property var choices: harnesses
         property string selectedHarness: "claude"
+        // "" for this Mac, else an ssh host from the ssh config. Left and right
+        // change it while up and down choose the CLI.
+        property var machines: [""]
+        property string selectedMachine: ""
+        readonly property bool remote: selectedMachine.length > 0
+        // The machine whose folder the field holds.
+        property string folderMachine: ""
+        function chooseMachine(machine) {
+            selectedMachine = machine
+            window.lastMachine = machine
+        }
+        function stepMachine(delta) {
+            if (machines.length < 2) return
+            const at = Math.max(0, machines.indexOf(selectedMachine))
+            chooseMachine(machines[(at + delta + machines.length) % machines.length])
+        }
+        // The config's newAgent folder for that machine, else its home.
+        function machineFolder() {
+            const defaults = workspace.agentDefaults()
+            if (remote)
+                return (defaults.machines && defaults.machines[selectedMachine]) || "~"
+            const folder = defaults.folder === "~" ? workspace.homeDirectory :
+                           defaults.folder && defaults.folder.startsWith("~/") ? workspace.homeDirectory + defaults.folder.slice(1) :
+                           defaults.folder || ""
+            return (folder.length > 0 ? folder.replace(/\/+$/, "") : workspace.homeDirectory) + "/"
+        }
         // This agent's model (one the CLI lists) and approval mode. The mode
         // stays across CLIs; a CLI without it uses its nearest, less access
         // first, and the preference returns on a CLI that has it.
@@ -1534,15 +1784,22 @@ ApplicationWindow {
         }
         function chooseHarness(index) {
             const item = choices[index]
-            if (!item || !item.installed) return
+            // Another machine's CLIs are its own; this Mac cannot see them.
+            if (!item || (!item.installed && !remote)) return
             selectedHarness = item.id
             selectedModel = window.lastModels[item.id] || ""
             window.lastHarness = item.id
+            if (folderMachine !== selectedMachine) {
+                agentDirectoryField.text = machineFolder()
+                folderMachine = selectedMachine
+            }
             phase = 1
             Qt.callLater(function() {
                 agentDirectoryField.forceActiveFocus()
                 agentDirectoryField.cursorPosition = agentDirectoryField.text.length
-                folderSearch.restart()
+                folderResults.model = []
+                if (!agentDialog.remote)
+                    folderSearch.restart()
             })
         }
         onOpened: Qt.callLater(function() { harnessChoices.forceActiveFocus() })
@@ -1562,19 +1819,22 @@ ApplicationWindow {
         }
         property string folderParent: ""
         property string folderPrefix: ""
+        // The folders with the most recent and frequent agent work come
+        // first, then the rest by name with _folders last.
         function refreshFolders() {
             if (!folderResults) return
-            const entries = []
+            const names = []
             if (directoryModel.status === FolderListModel.Ready) {
-                for (let i = 0; i < Math.min(directoryModel.count, 4096) && entries.length < 100; ++i) {
+                for (let i = 0; i < Math.min(directoryModel.count, 4096); ++i) {
                     const name = directoryModel.get(i, "fileName")
                     const path = directoryModel.get(i, "filePath")
                     if (path.slice(0, path.lastIndexOf("/") + 1) === folderParent
                             && name.toLowerCase().startsWith(folderPrefix.toLowerCase()))
-                        entries.push({name: name, path: path + "/"})
+                        names.push(name)
                 }
             }
-            folderResults.model = entries
+            const ordered = window.conversationsAvailable ? conversations.orderFolders(folderParent, names) : names
+            folderResults.model = ordered.slice(0, 100).map(name => ({name: name, path: folderParent + name + "/"}))
             folderResults.currentIndex = -1
         }
         FolderListModel {
@@ -1593,7 +1853,7 @@ ApplicationWindow {
             id: folderSearch
             interval: 100
             onTriggered: {
-                if (!agentDialog.visible || agentDialog.phase !== 1) return
+                if (!agentDialog.visible || agentDialog.phase !== 1 || agentDialog.remote) return
                 let path = agentDirectoryField.text
                 if (path === "~" || path.startsWith("~/"))
                     path = workspace.homeDirectory + path.slice(1)
@@ -1615,6 +1875,36 @@ ApplicationWindow {
                 width: agentScroll.availableWidth
                 spacing: 8
 
+                RowLayout {
+                    objectName: "machineChoices"
+                    visible: agentDialog.phase === 0 && agentDialog.machines.length > 1
+                    Layout.fillWidth: true
+                    spacing: 6
+                    PlainLabel {
+                        text: qsTr("Machine")
+                        color: window.mutedTextColor
+                        Layout.preferredWidth: 60
+                    }
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 6
+                        Repeater {
+                            model: agentDialog.machines
+                            delegate: CommandButton {
+                                required property var modelData
+                                objectName: "machine_" + (modelData.length > 0 ? modelData : "mac")
+                                text: modelData.length > 0 ? modelData : qsTr("This Mac")
+                                selected: modelData === agentDialog.selectedMachine
+                                onClicked: agentDialog.chooseMachine(modelData)
+                            }
+                        }
+                    }
+                    PlainLabel {
+                        text: "\u2190 \u2192"
+                        color: window.mutedTextColor
+                        font.family: window.monoFamily
+                    }
+                }
                 PlainLabel {
                     visible: agentDialog.phase === 0
                     text: qsTr("Choose agent")
@@ -1632,6 +1922,8 @@ ApplicationWindow {
                     keyNavigationEnabled: true
                     Keys.onReturnPressed: agentDialog.chooseHarness(currentIndex)
                     Keys.onEnterPressed: agentDialog.chooseHarness(currentIndex)
+                    Keys.onLeftPressed: agentDialog.stepMachine(-1)
+                    Keys.onRightPressed: agentDialog.stepMachine(1)
                     onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
                     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
                     delegate: ItemDelegate {
@@ -1652,17 +1944,17 @@ ApplicationWindow {
                             spacing: 10
                             AgentMark {
                                 harnessId: harnessChoice.modelData.id
-                                ink: harnessChoice.modelData.installed ? window.textColor : window.mutedTextColor
+                                ink: harnessChoice.modelData.installed || agentDialog.remote ? window.textColor : window.mutedTextColor
                                 Layout.preferredWidth: 24
                                 Layout.preferredHeight: 24
                             }
                             PlainLabel {
                                 text: harnessChoice.modelData.name
-                                color: harnessChoice.modelData.installed ? window.textColor : window.mutedTextColor
+                                color: harnessChoice.modelData.installed || agentDialog.remote ? window.textColor : window.mutedTextColor
                                 Layout.fillWidth: true
                             }
                             PlainLabel {
-                                visible: !harnessChoice.modelData.installed
+                                visible: !harnessChoice.modelData.installed && !agentDialog.remote
                                 text: qsTr("Not installed")
                                 color: window.mutedTextColor
                             }
@@ -1678,6 +1970,13 @@ ApplicationWindow {
                     }
                     AgentMark { harnessId: agentDialog.selectedHarness; ink: window.textColor; Layout.preferredWidth: 24; Layout.preferredHeight: 24 }
                     PlainLabel { text: agentDialog.harnessName; color: window.textColor; font.pixelSize: window.chromeFont + 2 }
+                    PlainLabel {
+                        objectName: "agentMachine"
+                        visible: agentDialog.remote
+                        text: qsTr("on %1").arg(agentDialog.selectedMachine)
+                        color: window.mutedTextColor
+                        font.pixelSize: window.chromeFont + 2
+                    }
                 }
                 // Model and approval mode for this agent, as the CLI's own flags.
                 Flow {
@@ -1722,7 +2021,8 @@ ApplicationWindow {
                     FormField {
                         id: agentDirectoryField
                         objectName: "agentDirectoryField"
-                        placeholderText: workspace.homeDirectory + "/"
+                        placeholderText: agentDialog.remote ? qsTr("Folder on %1 (~ is its home)").arg(agentDialog.selectedMachine)
+                                                            : workspace.homeDirectory + "/"
                         font.family: window.monoFamily
                         Accessible.name: qsTr("Project folder")
                         maximumLength: 4096
@@ -1740,6 +2040,7 @@ ApplicationWindow {
                     }
                     CommandButton {
                         objectName: "browseProjectFolder"
+                        visible: !agentDialog.remote
                         text: "…"
                         Accessible.name: qsTr("Browse project folders")
                         onClicked: folderPicker.open()
@@ -1748,7 +2049,7 @@ ApplicationWindow {
                 ListView {
                     id: folderResults
                     objectName: "folderResults"
-                    visible: agentDialog.phase === 1
+                    visible: agentDialog.phase === 1 && !agentDialog.remote
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.min(5, count) * 34
                     clip: true
@@ -2759,76 +3060,6 @@ ApplicationWindow {
             }
 
             Rectangle {
-                id: historyBanner
-                objectName: "historyBar"
-                visible: workspace.focusedSession !== null && workspace.focusedSession.live
-                         && (workspace.focusedSession.historyActive || workspace.focusedSession.historyRequestPending)
-                Layout.fillWidth: true
-                Layout.preferredHeight: window.tabHeight + 8
-                color: window.surfaceColor
-                border.color: window.borderColor
-                border.width: 1
-                radius: window.chromeRadius
-
-                RowLayout {
-                    id: historyRow
-                    anchors.fill: parent
-                    anchors.margins: 6
-                    spacing: 6
-                    CommandButton {
-                        objectName: "historyOlder"
-                        text: qsTr("Older")
-                        enabled: {
-                            const session = workspace.focusedSession
-                            return !!session && session.live && !session.historyRequestPending
-                        }
-                        onClicked: {
-                            const session = workspace.focusedSession
-                            if (session)
-                                session.olderHistory()
-                        }
-                    }
-                    CommandButton {
-                        objectName: "historyNewer"
-                        text: qsTr("Newer")
-                        enabled: {
-                            const session = workspace.focusedSession
-                            return !!session && session.historyActive && !session.historyRequestPending
-                        }
-                        onClicked: {
-                            const session = workspace.focusedSession
-                            if (session)
-                                session.newerHistory()
-                        }
-                    }
-                    CommandButton {
-                        objectName: "historyLive"
-                        text: qsTr("Live")
-                        enabled: {
-                            const session = workspace.focusedSession
-                            return !!session && session.historyActive
-                        }
-                        onClicked: {
-                            const session = workspace.focusedSession
-                            if (session)
-                                session.returnToLive()
-                            preview.deferTerminalFocus()
-                        }
-                    }
-                    PlainLabel {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        color: window.mutedTextColor
-                        elide: Text.ElideRight
-                        text: !workspace.focusedSession ? "" :
-                              workspace.focusedSession.historyRequestPending ? qsTr("Loading history…") :
-                              qsTr("Read only") + (workspace.focusedSession.historyMessage.length > 0 ?
-                                  " · " + workspace.focusedSession.historyMessage : "")
-                    }
-                }
-            }
-
-            Rectangle {
                 id: stage
                 objectName: "focusedPane"
                 Layout.fillWidth: true
@@ -3023,6 +3254,9 @@ ApplicationWindow {
 
                 TerminalSurface {
                     id: liveTerminal
+                    ToolTip.visible: hoveredLink.length > 0
+                    ToolTip.text: hoveredLink
+                    ToolTip.delay: 250
                     objectName: "liveTerminal"
                     x: stage.tiled ? stage.focusedFrame.x + 4 : stage.inset
                     y: stage.tiled ? stage.focusedFrame.y + stage.headerHeight : stage.inset
@@ -3039,9 +3273,144 @@ ApplicationWindow {
                     // typing back to live; input reaches the agent only when live.
                     interactive: visible && window.visible && !window.inputBlocked && document !== null
                                  && (preview.active || document.inputReady || document.historyActive)
-                    focus: visible && window.visible && !window.inputBlocked
+                    focus: visible && window.visible && !window.inputBlocked && !window.sideTerminalOpen
                     Component.onCompleted: if (focus)
                                                forceActiveFocus()
+
+                    // While history shows, a wide translucent bar down the right
+                    // edge. The whole strip answers the pointer: a press on the
+                    // thumb drags it from where it was held, one elsewhere jumps
+                    // there, and letting go at the bottom is live again. It sits
+                    // inside the terminal, so the wheel over it still scrolls.
+                    Item {
+                        id: historyScrubber
+                        objectName: "historyScrubber"
+                        readonly property var session: liveTerminal.document
+                        readonly property real inset: 4
+                        readonly property real trackHeight: Math.max(1, height - 2 * inset)
+                        readonly property real thumbHeight:
+                            Math.min(trackHeight, Math.max(40, trackHeight * (session ? session.historySpan : 1)))
+                        readonly property real travel: Math.max(1, trackHeight - thumbHeight)
+                        readonly property bool engaged: scrubArea.containsMouse || scrubArea.pressed
+                        property real grab: 0
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        anchors.right: parent.right
+                        width: 36
+                        z: 5
+                        visible: session !== null && session.live && session.historyScrubbable
+                                 && (session.historyActive || session.historyRequestPending)
+                        // The thumb's top in the track while dragging, from the pointer.
+                        function dragged(mouseY) {
+                            return Math.max(0, Math.min(mouseY - inset - grab, travel))
+                        }
+                        Rectangle {
+                            objectName: "historyTrack"
+                            anchors.right: parent.right
+                            anchors.rightMargin: 4
+                            y: historyScrubber.inset
+                            height: historyScrubber.trackHeight
+                            width: historyScrubber.engaged ? 16 : 12
+                            radius: width / 2
+                            color: Qt.alpha(window.textColor, historyScrubber.engaged ? 0.14 : 0.07)
+                            Behavior on width {
+                                enabled: window.motionEnabled
+                                NumberAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                            }
+                            Behavior on color {
+                                enabled: window.motionEnabled
+                                ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                            }
+                            Rectangle {
+                                id: historyThumb
+                                objectName: "historyThumb"
+                                width: parent.width
+                                radius: width / 2
+                                height: historyScrubber.thumbHeight
+                                y: scrubArea.pressed ? historyScrubber.dragged(scrubArea.mouseY)
+                                                     : (historyScrubber.session ? historyScrubber.session.historyPosition : 1)
+                                                       * historyScrubber.travel
+                                color: Qt.alpha(window.focusedBorderColor,
+                                                scrubArea.pressed ? 0.9 : historyScrubber.engaged ? 0.7 : 0.45)
+                                Behavior on color {
+                                    enabled: window.motionEnabled
+                                    ColorAnimation { duration: window.motionDuration; easing.type: Easing.OutCubic }
+                                }
+                            }
+                        }
+                        MouseArea {
+                            id: scrubArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            preventStealing: true
+                            cursorShape: Qt.ArrowCursor
+                            function jump(mouseY) {
+                                const session = historyScrubber.session
+                                if (session)
+                                    session.historyAt(historyScrubber.dragged(mouseY) / historyScrubber.travel)
+                            }
+                            onPressed: function(mouse) {
+                                const top = historyScrubber.inset + historyThumb.y
+                                const onThumb = mouse.y >= top && mouse.y <= top + historyThumb.height
+                                historyScrubber.grab = onThumb ? mouse.y - top : historyThumb.height / 2
+                                jump(mouse.y)
+                            }
+                            onPositionChanged: function(mouse) { if (pressed) jump(mouse.y) }
+                            onReleased: function(mouse) {
+                                // The thumb at the bottom is the live screen.
+                                if (historyScrubber.dragged(mouse.y) >= historyScrubber.travel - 1
+                                        && historyScrubber.session) {
+                                    historyScrubber.session.returnToLive()
+                                    preview.deferTerminalFocus()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // While history shows, the way back to live floats over the
+                // terminal's corner rather than above it, so the terminal keeps
+                // its size; scrolling down to the newest row, or typing, also
+                // returns.
+                Rectangle {
+                    id: historyBanner
+                    objectName: "historyBar"
+                    readonly property var session: workspace.focusedSession
+                    readonly property string note: !session ? ""
+                                                   : session.historyRequestPending ? qsTr("Loading history…")
+                                                   : session.historyMessage
+                    visible: liveTerminal.visible && session !== null && session.live
+                             && (session.historyActive || session.historyRequestPending)
+                    z: 6
+                    x: liveTerminal.x + liveTerminal.width - width - historyScrubber.width - 6
+                    y: liveTerminal.y + liveTerminal.height - height - 8
+                    width: historyRow.implicitWidth + 12
+                    height: historyRow.implicitHeight + 8
+                    color: window.surfaceColor
+                    border.color: window.borderColor
+                    border.width: 1
+                    radius: window.chromeRadius
+                    Row {
+                        id: historyRow
+                        anchors.centerIn: parent
+                        spacing: 8
+                        PlainLabel {
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: text.length > 0
+                            text: historyBanner.note
+                            color: window.mutedTextColor
+                        }
+                        CommandButton {
+                            objectName: "historyLive"
+                            text: qsTr("Live")
+                            enabled: !!historyBanner.session && historyBanner.session.historyActive
+                            onClicked: {
+                                if (historyBanner.session)
+                                    historyBanner.session.returnToLive()
+                                preview.deferTerminalFocus()
+                            }
+                        }
+                    }
                 }
 
                 // Dividers between tiles: drag to share the space differently.
@@ -3136,27 +3505,117 @@ ApplicationWindow {
                     }
                 }
 
+                // Nothing on the stage: what to do next, recent conversations to
+                // resume and the categories that have agents, all by keyboard
+                // (up, down, Return) as well as by click.
                 ColumnLayout {
+                    id: homePanel
                     objectName: "emptyState"
                     visible: workspace.focusedSession === null
                     anchors.centerIn: parent
-                    width: Math.min(420, parent.width - 32)
-                    spacing: 14
+                    width: Math.min(560, parent.width - 32)
+                    spacing: 10
                     PlainLabel {
                         Layout.fillWidth: true
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
                         color: window.mutedTextColor
-                        text: qsTr("Start an agent in %1.").arg(window.activeCategoryName)
+                        text: qsTr("Nothing is open in %1.").arg(window.activeCategoryName)
                     }
-                    CommandButton {
-                        objectName: "emptyNewAgent"
-                        text: qsTr("New agent")
-                        hint: window.shortcutText("newAgent")
-                        selected: true
-                        Layout.alignment: Qt.AlignHCenter
-                        enabled: window.interactionArmed
-                        onClicked: window.openNewAgentDialog()
+                    ListView {
+                        id: homeList
+                        objectName: "homeList"
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.min(contentHeight, Math.max(120, stage.height - 120))
+                        model: homeModel
+                        clip: true
+                        interactive: contentHeight > height
+                        boundsBehavior: Flickable.StopAtBounds
+                        keyNavigationEnabled: true
+                        highlightMoveDuration: 0
+                        currentIndex: 0
+                        activeFocusOnTab: true
+                        section.property: "group"
+                        section.delegate: PlainLabel {
+                            required property string section
+                            visible: section.length > 0
+                            height: section.length > 0 ? 30 : 0
+                            width: homeList.width
+                            verticalAlignment: Text.AlignBottom
+                            bottomPadding: 4
+                            leftPadding: 10
+                            text: section
+                            color: window.mutedTextColor
+                            font.pixelSize: window.readoutFont
+                            font.letterSpacing: window.appearance && window.appearance.headingTracking !== undefined ? window.appearance.headingTracking : 1
+                            font.capitalization: Font.AllUppercase
+                        }
+                        Keys.onReturnPressed: window.runHomeEntry(currentIndex)
+                        Keys.onEnterPressed: window.runHomeEntry(currentIndex)
+                        onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
+                        delegate: ItemDelegate {
+                            id: homeRow
+                            required property int index
+                            required property string kind
+                            required property string label
+                            required property string detail
+                            required property string hint
+                            required property string harness
+                            readonly property bool current: index === homeList.currentIndex
+                            objectName: "home_" + kind + "_" + index
+                            width: homeList.width
+                            height: 38
+                            focusPolicy: Qt.NoFocus
+                            hoverEnabled: true
+                            enabled: window.interactionArmed
+                            Accessible.name: label + (detail.length > 0 ? ", " + detail : "")
+                            onClicked: { homeList.currentIndex = index; window.runHomeEntry(index) }
+                            background: Rectangle {
+                                radius: window.chromeRadius
+                                color: homeRow.current && homeList.activeFocus ? window.focusedColor :
+                                       homeRow.hovered ? window.hoveredCardColor : "transparent"
+                                Rectangle {
+                                    visible: homeRow.current && homeList.activeFocus
+                                    width: 2
+                                    height: parent.height
+                                    color: window.focusedBorderColor
+                                }
+                            }
+                            contentItem: RowLayout {
+                                spacing: 10
+                                AgentMark {
+                                    visible: homeRow.harness.length > 0
+                                    harnessId: homeRow.harness
+                                    ink: window.textColor
+                                    Layout.preferredWidth: 16
+                                    Layout.preferredHeight: 16
+                                }
+                                PlainText {
+                                    text: homeRow.label
+                                    color: window.textColor
+                                    font.pixelSize: window.chromeFont
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                }
+                                PlainText {
+                                    visible: text.length > 0
+                                    text: homeRow.detail
+                                    color: window.mutedTextColor
+                                    font.family: window.monoFamily
+                                    font.pixelSize: window.readoutFont
+                                    elide: Text.ElideMiddle
+                                    Layout.maximumWidth: homeList.width * 0.4
+                                }
+                                PlainText {
+                                    visible: text.length > 0
+                                    text: homeRow.hint
+                                    color: window.mutedTextColor
+                                    font.family: window.monoFamily
+                                    font.pixelSize: window.readoutFont
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -3224,19 +3683,27 @@ ApplicationWindow {
                     objectName: "fileDrop"
                     anchors.fill: parent
                     keys: ["text/uri-list"]
-                    enabled: workspace.focusedSession !== null
+                    enabled: workspace.focusedSession !== null && window.interactionArmed
                     onDropped: function(drop) {
                         if (!drop.hasUrls)
                             return
+                        const text = window.quoteDroppedPaths(drop.urls)
+                        if (text.length === 0)
+                            return
+                        let destinationId = workspace.focusedSession !== null ?
+                                                workspace.focusedSession.sessionId : ""
                         if (stage.tiled && !stage.zoomed)
                             for (const tile of stage.tiles) {
                                 const frame = stage.frameOf(tile)
                                 if (drop.x >= frame.x && drop.x <= frame.x + frame.width
                                         && drop.y >= frame.y && drop.y <= frame.y + frame.height)
-                                    workspace.selectSession(tile.sessionId)
+                                    destinationId = tile.sessionId
                             }
-                        const urls = drop.urls
-                        Qt.callLater(() => window.pastePaths(urls))
+                        if (destinationId.length === 0)
+                            return
+                        if (workspace.selectSession(destinationId)) {
+                            Qt.callLater(() => window.pastePaths(text, destinationId))
+                        }
                         drop.acceptProposedAction()
                     }
                 }
@@ -3321,8 +3788,8 @@ ApplicationWindow {
                             }
                             if (session.historyMessage.length > 0 || !session.historyActive)
                                 findBar.status = qsTr("No more matches")
-                            else
-                                findBar.search(older)
+                            else // a kept screen shows at once; step on from the event loop
+                                Qt.callLater(findBar.search, older)
                         }
                     }
                     RowLayout {
@@ -3667,6 +4134,153 @@ ApplicationWindow {
                         Accessible.name: qsTr("New agent")
                         enabled: window.interactionArmed
                         onClicked: window.openNewAgentDialog()
+                    }
+                }
+            }
+        }
+    }
+    // The side terminal: over the stage's right half, above the agents.
+    Rectangle {
+        id: sidePanel
+        objectName: "sideTerminal"
+        parent: stage
+        z: 60
+        visible: window.sideTerminalOpen
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        width: Math.round(Math.max(Math.min(360, parent.width), Math.min(parent.width * 0.5, 960)))
+        color: window.surfaceColor
+        border.width: 1
+        border.color: sideSurface.activeFocus ? window.focusedBorderColor : window.borderColor
+        radius: window.chromeRadius
+        // Only the shell: its own prompt says where it is, and the keys that
+        // opened it close it.
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 6
+            spacing: 0
+            TerminalSurface {
+                id: sideSurface
+                ToolTip.visible: hoveredLink.length > 0
+                ToolTip.text: hoveredLink
+                ToolTip.delay: 250
+                objectName: "sideTerminalSurface"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                document: window.terminalsAvailable ? terminals.current : null
+                fontFamily: (typeof keymap !== "undefined" && keymap !== null) ? keymap.terminalFontFamily : ""
+                fontPixelSize: window.terminalFontSize
+                visible: sidePanel.visible && document !== null
+                enabled: visible
+                interactive: visible && window.visible && !window.inputBlocked && document !== null && document.inputReady
+                focus: visible && window.visible && !window.inputBlocked
+            }
+            PlainLabel {
+                visible: !sideSurface.visible
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                wrapMode: Text.WordWrap
+                color: window.mutedTextColor
+                text: window.terminalsAvailable && terminals.error.length > 0 ? terminals.error : qsTr("Starting a shell…")
+            }
+        }
+    }
+
+    // Command-~: which machine the side terminal runs on. Up and down move,
+    // Return opens that machine's terminal (starting a shell there when it
+    // has none); a dot marks the machines with one running.
+    Dialog {
+        id: terminalPicker
+        objectName: "terminalPicker"
+        title: qsTr("Terminal on")
+        modal: true
+        focus: true
+        anchors.centerIn: parent
+        width: Math.min(420, window.width - 32)
+        padding: 12
+        font.pixelSize: window.chromeFont
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        property var machines: []
+        property string pending: ""
+        property bool chosen: false
+        background: Rectangle {
+            color: window.surfaceColor
+            border.color: window.focusedBorderColor
+            radius: window.chromeRadius
+        }
+        function choose(index) {
+            const machine = machines[index]
+            if (!machine)
+                return
+            pending = machine.id
+            chosen = true
+            close()
+        }
+        onOpened: {
+            chosen = false
+            machines = window.terminalsAvailable ? terminals.machines : []
+            machineList.currentIndex = Math.max(0, machines.findIndex(m => m.id === window.lastTerminalMachine))
+            machineList.forceActiveFocus()
+        }
+        onClosed: {
+            if (chosen)
+                Qt.callLater(function() { window.openTerminalOn(terminalPicker.pending) })
+            else
+                preview.deferTerminalFocus()
+        }
+        contentItem: ListView {
+            id: machineList
+            objectName: "terminalMachines"
+            implicitHeight: Math.min(8, count) * 36
+            clip: true
+            model: terminalPicker.machines
+            keyNavigationEnabled: true
+            highlightMoveDuration: 0
+            boundsBehavior: Flickable.StopAtBounds
+            Keys.onReturnPressed: terminalPicker.choose(currentIndex)
+            Keys.onEnterPressed: terminalPicker.choose(currentIndex)
+            onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            delegate: ItemDelegate {
+                id: machineRow
+                required property var modelData
+                required property int index
+                objectName: "terminalMachine_" + (modelData.id.length > 0 ? modelData.id : "mac")
+                width: machineList.width
+                height: 36
+                focusPolicy: Qt.NoFocus
+                hoverEnabled: true
+                Accessible.name: modelData.name + (modelData.open ? qsTr(", running") : "")
+                onClicked: terminalPicker.choose(index)
+                background: Rectangle {
+                    radius: window.chromeRadius
+                    color: machineRow.index === machineList.currentIndex ? window.focusedColor :
+                           machineRow.hovered ? window.hoveredCardColor : "transparent"
+                    Rectangle {
+                        visible: machineRow.index === machineList.currentIndex
+                        width: 2
+                        height: parent.height
+                        color: window.focusedBorderColor
+                    }
+                }
+                contentItem: RowLayout {
+                    spacing: 10
+                    PlainText {
+                        text: machineRow.modelData.name
+                        color: window.textColor
+                        font.pixelSize: window.chromeFont
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                    }
+                    Rectangle {
+                        visible: machineRow.modelData.open
+                        width: 6
+                        height: 6
+                        radius: 3
+                        color: window.plentyColor
                     }
                 }
             }

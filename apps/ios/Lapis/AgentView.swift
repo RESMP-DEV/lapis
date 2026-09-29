@@ -3,15 +3,27 @@ import UIKit
 
 struct AgentView: View {
     @State private var session: AgentSession
-    @State private var draft = ""
+    @Binding private var draft: String
     @State private var keyboardShown = false
     @State private var backgrounded = false
     @FocusState private var composing: Bool
     @AppStorage("terminalFontSize") private var fontSize = 12.0
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(WorkspaceModel.self) private var model
+    @State private var restarting = false
+    @State private var restartTask: Task<Void, Never>?
+    // Wheel notches this drag has sent a full-screen program.
+    @State private var wheelSent = 0
+    private let agent: Agent
+    // A swipe left (+1) or right (-1) over the screen moves to a neighbor.
+    private let onSwipe: ((Int) -> Void)?
 
-    init(agent: Agent, gateway: Gateway?) {
+    init(agent: Agent, gateway: Gateway?, draft: Binding<String>,
+         onSwipe: ((Int) -> Void)? = nil) {
         _session = State(initialValue: AgentSession(agent: agent, gateway: gateway))
+        _draft = draft
+        self.agent = agent
+        self.onSwipe = onSwipe
     }
 
     private var metrics: TerminalMetrics { TerminalMetrics(fontSize: fontSize) }
@@ -22,14 +34,31 @@ struct AgentView: View {
                 TerminalScreen(frame: session.frame, history: session.history,
                                historyEnd: session.historyEnd,
                                loadingHistory: session.loadingHistory,
-                               fitColumns: metrics.grid(for: proxy.size).columns, metrics: metrics) {
-                    await session.loadOlder()
+                               fitColumns: metrics.grid(for: proxy.size).columns, metrics: metrics,
+                               navigation: HistoryNavigation(
+                                   scrubbable: session.scrubbable, total: session.historyTotal,
+                                   jumpedTo: session.jumpedTo, gapAfter: session.gapAfter,
+                                   jump: { fraction in Task { await session.jump(to: fraction) } },
+                                   closeGap: { Task { await session.closeGap() } })) {
+                    // A full-screen program scrolls itself; the archive waits.
+                    if session.frame?.wheel != true { await session.loadOlder() }
                 }
                     .onAppear { fit(proxy.size) }
                     .onChange(of: proxy.size) { _, size in fit(size) }
                     .onChange(of: fontSize) { _, _ in fit(proxy.size, force: true) }
                     .onTapGesture { composing = true }
             }
+            // Only the screen: the key bar scrolls sideways itself.
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 24).onEnded { value in
+                    let (dx, dy) = (value.translation.width, value.translation.height)
+                    guard let onSwipe, abs(dx) > 70, abs(dx) > abs(dy) * 2 else { return }
+                    onSwipe(dx < 0 ? 1 : -1)
+                })
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 6, coordinateSpace: .named(TerminalScreen.contentSpace))
+                    .onChanged { value in turnWheel(value) }
+                    .onEnded { _ in wheelSent = 0 })
             banner
             // The Mac's terminal encodes named keys for the agent's current modes.
             KeyBar { input in session.send(input) }
@@ -57,7 +86,14 @@ struct AgentView: View {
                 .accessibilityIdentifier("viewMenu")
             }
         }
-        .onDisappear { session.close() }
+        .onDisappear {
+            restartTask?.cancel()
+            restartTask = nil
+            session.close()
+        }
+        .onChange(of: agent) { _, refreshed in
+            session.agent = refreshed
+        }
         .onChange(of: scenePhase) { _, phase in
             // Leave the agent while in the background; pick it up again on return.
             if phase == .background {
@@ -147,6 +183,33 @@ struct AgentView: View {
         }
     }
 
+    // A full-screen program scrolls itself (Claude Code's full-screen mode
+    // scrolls its transcript): a vertical drag turns the wheel on the Mac, a
+    // notch for every two rows dragged, down scrolling back as a finger does.
+    private func turnWheel(_ value: DragGesture.Value) {
+        guard let frame = session.frame, frame.wheel == true else { return }
+        let (dx, dy) = (value.translation.width, value.translation.height)
+        guard abs(dy) > abs(dx) else { return }
+        let notches = Int(dy / (metrics.lineHeight * 2))
+        guard notches != wheelSent else { return }
+        // The gesture was created in the terminal's scrolled content space, so
+        // its start location is already the terminal cell under the finger.
+        let column = Int((value.startLocation.x - 4) / metrics.cellWidth)
+        let row = Int(value.startLocation.y / metrics.lineHeight)
+        let maxColumn = max(frame.columns - 1, 0)
+        let maxRow = max(frame.rows - 1, 0)
+        session.send(.wheel(notches - wheelSent, column: min(max(column, 0), maxColumn),
+                            row: min(max(row, 0), maxRow)))
+        wheelSent = notches
+    }
+
+    // The Mac lists this agent as not running; a terminal only closes.
+    private var stopped: Bool {
+        guard !session.agent.id.hasPrefix("terminal-") else { return false }
+        let listed = model.listing?.categories.flatMap(\.agents).first { $0.id == session.agent.id }
+        return listed.map { !$0.running } ?? false
+    }
+
     @ViewBuilder private var banner: some View {
         switch session.state {
         case .connecting:
@@ -166,9 +229,37 @@ struct AgentView: View {
                     .multilineTextAlignment(.center)
                     .accessibilityIdentifier("closedReason")
                 if let size = session.size {
-                    Button("Open here again") { session.open(columns: size.columns, rows: size.rows) }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("reopen")
+                    HStack(spacing: 10) {
+                        Button("Open here again") { session.open(columns: size.columns, rows: size.rows) }
+                            .buttonStyle(.bordered)
+                            .accessibilityIdentifier("reopen")
+                        // A stopped agent starts again on the Mac, as Restart agent does there.
+                        if stopped {
+                            Button(restarting ? "Restarting…" : "Restart agent") {
+                                restartTask = Task {
+                                    restarting = true
+                                    let restarted = await model.restart(session.agent)
+                                    guard !Task.isCancelled else {
+                                        restarting = false
+                                        return
+                                    }
+                                    if restarted {
+                                        session.open(columns: size.columns, rows: size.rows)
+                                    } else {
+                                        // Shown here, over the agent.
+                                        session.notice = model.notice
+                                        if model.notice == session.notice {
+                                            model.notice = nil
+                                        }
+                                    }
+                                    restarting = false
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(restarting)
+                            .accessibilityIdentifier("restart")
+                        }
+                    }
                 }
             }
             .frame(maxWidth: .infinity)

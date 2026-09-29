@@ -1,0 +1,176 @@
+{
+  "schema": "lapis.review-repairs/1",
+  "recorded_at": "2026-09-27T05:48:39.756524+00:00",
+  "pull_request": 19,
+  "source_revision": "1ba1842cf56d61bc7584a83bc02ee3852e500294",
+  "reviewed_remote_head": "14ce1af4314ef525587938ea3f431f2618475b58",
+  "base_pr": 18,
+  "scope": "Grouped phone controls, history and terminal input repairs; retains newer contributor link-opening work and all PR18 integration fixes.",
+  "contracts": [
+    "Names use the desktop 80 UTF-16-unit bound; whole-grapheme phone clipping",
+    "Settings batches save once, roll back atomically and retain failure diagnostics; phone writes serialize and full replies are versioned",
+    "History reads coordinate with eviction; malformed correlated replies wake only their own waiter",
+    "Wheel capability remains alternate-only in v6; valid alternate bytes are 0,1,3; extreme wheel steps clamp before abs",
+    "Restart polling respects view cancellation; pending history scrub intent survives in-flight loads",
+    "Routine Qt tests use explicit background mode; their coverage is distinct from native GPU/input acceptance"
+  ],
+  "checks": [
+    {
+      "command": "python3 scripts/check_quality.py",
+      "passed": true,
+      "tests": 176,
+      "evidence": "build/reports/quality/receipt.json"
+    },
+    {
+      "command": "cmake --build build/desktop --parallel 5",
+      "passed": true
+    },
+    {
+      "command": "ctest --test-dir build/desktop -E '^(window-state|ui-preview|appearance-input|terminal-input|terminal-render)$' --output-on-failure --no-tests=error --parallel 4",
+      "passed": true,
+      "suites": 27,
+      "evidence": "build/reports/desktop-background/receipt.json"
+    },
+    {
+      "command": "lapis_terminal_input_tests --background; lapis_ui_preview_tests --background; lapis_ui_preview_tests --background --shortcuts-only",
+      "passed": true,
+      "ui_seconds": 17.701,
+      "evidence": "build/reports/desktop-background/receipt.json"
+    },
+    {
+      "command": "Focused history-store, local-protocol, live-connection, workspace, keymap and terminal-behavior suites in desktop-asan and desktop-tsan",
+      "passed": true,
+      "suites_per_mode": 6,
+      "asan_seconds": 33.83,
+      "tsan_seconds": 92.52
+    },
+    {
+      "command": "First-party Cppcheck/format and 27 clang-tidy units differing from the verified PR18 base",
+      "initial_result": "Three static failures (two test warnings, one aggregate-member warning) repaired. All four focused follow-up commands passed. Unchanged translation units reuse PR18 analysis.",
+      "evidence": [
+        "build/reports/desktop-analysis/receipt.json",
+        "build/reports/desktop-analysis-repairs/receipt.json"
+      ]
+    },
+    {
+      "command": "python3 scripts/check_history.py --disk-full",
+      "passed": true,
+      "scope": "Real ENOSPC, live input during failure and retry after freeing space; corruption and live recovery"
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py",
+      "passed": true,
+      "cases": 14,
+      "evidence": "build/cli-launch-check/receipt.json",
+      "scope": "Non-window service/attachment cases, including 13 Codex argument forms; no real model turn"
+    },
+    {
+      "command": "python3 scripts/check_ios_remote.py --codex --claude",
+      "initial_result": "22/23 passed in 464.85 seconds. Only Move earlier fixture failed: it assumed two agents, then a geometry-based neighbor lookup selected the wrong row. Recorded video confirmed correct product ordering.",
+      "result_bundle": "build/ios/results/20260926-223525.xcresult"
+    },
+    {
+      "command": "python3 scripts/check_ios_remote.py --codex --claude --only testMoveAgentsFromThePhone --only testRestartAStoppedAgent",
+      "result": "Final restart cancellation source compiled; restart case passed. The interim geometry-based movement assertion still failed.",
+      "result_bundle": "build/ios/results/20260926-224350.xcresult"
+    },
+    {
+      "command": "python3 scripts/check_ios_remote.py --codex --claude --only testMoveAgentsFromThePhone",
+      "passed": true,
+      "seconds": 23.085,
+      "result_bundle": "build/ios/results/20260926-224634.xcresult",
+      "scope": "Uses stable accessibility row identities/order; all 23 cases now covered across the original run and focused repairs."
+    }
+  ],
+  "review_probe": {
+    "tool": "Apple Swift 6.4",
+    "move_input": [
+      "A",
+      "B",
+      "C"
+    ],
+    "from_0_to_1": [
+      "A",
+      "B",
+      "C"
+    ],
+    "from_0_to_2": [
+      "B",
+      "A",
+      "C"
+    ],
+    "unicode": {
+      "U+23FA": {
+        "isEmoji": true,
+        "isEmojiPresentation": false
+      },
+      "U+23F8": {
+        "isEmoji": true,
+        "isEmojiPresentation": false
+      }
+    },
+    "conclusion": "Retain downward to-1 conversion and the original negated Emoji_Presentation predicate; the proposed bot reversals were false positives."
+  },
+  "limitations": [
+    "Background modes do not qualify native AppKit/IME/system clipboard or GPU presentation. PR19 does not claim a fresh native foreground qualification.",
+    "Vendor dependencies remain uninstrumented by sanitizers.",
+    "Linux UI remains deferred.",
+    "Optional external review services are reported separately from required gates; no merge or release is part of this receipt."
+  ],
+  "source_sha256": {
+    "CONTRIBUTING.md": "6560efd15ad58d72d2e5a4895085c70e239fc3f93a0598ec24f0e046f823df9b",
+    "README.md": "d2af615b08c2f985fc4630634655177e83b6998a6aaf3fe2031a1a56a2a3344e",
+    "apps/desktop/CMakeLists.txt": "e7aa3fb64f545450465bedfb88033c06f2940aa1b159380baf7eeab84a4b63cb",
+    "apps/desktop/qml/Main.qml": "a67ff9420ab697c4295b8194ef0a274ec609eb925feb01aedd438bbb8090f5d1",
+    "apps/desktop/src/cell_shapes.cpp": "40c3cb298414617fbf0b4a21f0c051a12de08928ef9ec5f6a60c410ac95d16bd",
+    "apps/desktop/src/conversation_index.cpp": "85a6f08f200fc9763f14fad6a7d7accf9b42ac6722d46f1cb284a2e9585ddbfb",
+    "apps/desktop/src/conversation_index.hpp": "fb78c2372d7a07c5c14fc02147c8237433c57d8100d271d4a4914417af66f5dc",
+    "apps/desktop/src/desktop_actions_mac.mm": "4573c2c5667409832def6ffe3540fdca1e8e10e75f6c6111e5a42e4cd2e5531b",
+    "apps/desktop/src/harness_models.cpp": "dcf6d0bb4b2c9331ad67810dac0fbfebb53b5190d72da33358f859a6a9359028",
+    "apps/desktop/src/keymap.cpp": "f101ce419a328df6181ffb43c0dbc3af150d55b596dfa20ef75b3beb826745bf",
+    "apps/desktop/src/keymap.hpp": "db6ec1d37f7bf99b33fdebf5f50bcc3b3bd65ee17a7360c2ebbeaaf0185a3d20",
+    "apps/desktop/src/live_connection.cpp": "5504bd552fcf87a94fe6812dabd38816deb6223da220d2e39c07036eef9a0273",
+    "apps/desktop/src/main.cpp": "6c2368dc6ba555ade56278616cce4085272472cddfa79bd502fc89173b004f6a",
+    "apps/desktop/src/terminals.cpp": "285cfe21f298214db582776fb16659b3bcc654f1525857877315581112b2a456",
+    "apps/desktop/src/terminals.hpp": "863e5ed2c7a4ceca4ba2ef202d31e6c12c973062f8d3b9c13cb8f4e9c174614c",
+    "apps/desktop/src/ui_preview.cpp": "53a2952e6f5830d32cf01d8d3a7cf1f7f3bb434de6d8f5f14141e91258b58270",
+    "apps/desktop/src/usage.cpp": "5c29518c2733102a994b0018f35730c4bd551c99ad6d83b776455d78c83f05c4",
+    "apps/desktop/src/usage_limits.cpp": "d7f0ed21dbbfeaac728f5e0be12041f69d3c92336844e1da21d2c84e8b7a21f1",
+    "apps/desktop/src/workspace.cpp": "a62dac3de56a7d348c798cf5100b1b3dd3ee26c7dca6dbaa01c94a189146c293",
+    "apps/desktop/src/workspace.hpp": "b1a640121a793c9eeef5b90fc5ed6fae87d72cafb2aebaa2196f74bacd7ea8ac",
+    "apps/desktop/src/workspace_control.cpp": "291e0f669c005c987b6633aeb329c2cdad9b0f6a6ca5e0fb303885173024046b",
+    "apps/desktop/tests/conversation_index_test.cpp": "bfe41a361768a7c13ed5568d2aee677b5a205fccb18b23d66865aa5c00cf816c",
+    "apps/desktop/tests/keymap_test.cpp": "1a01141e3a5c24f9e36e6774bfeb387e8487605eb392b17816500d374aa7addd",
+    "apps/desktop/tests/live_connection_test.cpp": "5db043627146d170c830dc2527cff3405bde4aa02ba25c81f353c0e8b11b6c23",
+    "apps/desktop/tests/terminal_keys_mac_test.mm": "2d959a5c21bcb2b965a811ebbce8932b0ca2c50e34b643e8404cdd28daadbd4f",
+    "apps/desktop/tests/ui_preview_test.cpp": "b8a03bfef7d64c63453a4f230f0d02b4a484815f166ee7ef3da537f08b0f0241",
+    "apps/desktop/tests/workspace_test.cpp": "85e5a386961039dfc8904489f276336a75603ac3368f507fe179587951a892fb",
+    "apps/ios/Lapis/AgentListView.swift": "c8a61712831dcf6bae3e0642e0b1e7b5207f54723c15d3969ec52a92f346c8c1",
+    "apps/ios/Lapis/AgentView.swift": "eda3a54e0a21c17eed68314285f8013747abcacd2a6740b9567d7ac1de5d823e",
+    "apps/ios/Lapis/CategoriesView.swift": "cb1c57f74b997c265860942f19f3226c0583c23390fabae55f8634f86f34c4af",
+    "apps/ios/Lapis/FolderSearch.swift": "fd266121609705f57c8e0b5bb4a1d992e0e4cb877f95c478ca97c05f10ad4f92",
+    "apps/ios/Lapis/Models.swift": "c9ece94562848007a34e6382b8984632f921c5d6e4558194d8f710f00c92fbf6",
+    "apps/ios/Lapis/TerminalScreen.swift": "4ec2ff5af17a2b7d61e495e9584372224cd187000d6a32c34e35cfc416dad909",
+    "apps/ios/Lapis/TerminalViews.swift": "8a5acb4dd238e30183f527d2d13f21e381451e5f64928d71f3adc2c7ebfa32fa",
+    "apps/ios/LapisUITests/LapisUITests.swift": "56bad752eb8c0b7f7502ab1e8bf26e1fbb920ef552a481215adf871753dac93d",
+    "apps/remote/lapis_remote.py": "5a90594ae1c98334872c5bcbfb243e6e03ce99816f44bb038d5d3044796a7a69",
+    "docs/architecture.md": "fafa2deb60c3ecd519f8e293b72441ebc246ba124d98f1e0344689ec0b8eb959",
+    "evidence/pr17-review.json": "7d269540bac8c14e1c6b0fc528367e87fa7d98c1b9f90a323e02c212ed8608ea",
+    "evidence/pr18-review-repairs.json": "0d0e91eb1a0815a73420cd356a2f45da8fdb0cbd7a8fe267e04e78cec54e3e7f",
+    "scripts/check_cli_launch.py": "00cdbeaea04e29c37bbb9325dd865423194dbd5275dbc38ec35439da3330d6c4",
+    "scripts/check_restore.py": "b5cd6fcdd32d83f9116581c15855aa05a630ef6366d3182b41d9bc5d38a4110d",
+    "scripts/tests/test_check_restore.py": "bcd4657e21cc1bc6381c5afced2d0c21a068f0f06fdc9600b6d5dc1b5c9c7502",
+    "scripts/tests/test_lapis.py": "89654b388fcdc64b5c24e92bf6254fc357a187bf4c5ce9d3a48a88791839631b",
+    "scripts/tests/test_lapis_remote.py": "d9e6c93e257de0a57086df5395d6656a7a60749f336cedfc6ec583e75ce8802b",
+    "services/session/src/agent_checkpoint.cpp": "41af86c3014198781066745d96c52c1cde60575547886d920f87c60ca6433d0f",
+    "services/session/src/agent_checkpoint.hpp": "b10c91b8f28ffa72ca90d0a074cd7fb40472573457a576ab665e3471fcb71a38",
+    "services/session/src/history_store.cpp": "ffd8cf77b6445d0a18e84d6414c8dae75222f644abf8d0c1170ae4502d2320a2",
+    "services/session/src/session_service.cpp": "65a5884cc03ae0f6dbff62fc1fb3c929004df20e38a845cefdb3b53f7ef133d0",
+    "services/session/src/terminal/terminal.cpp": "396cbb23a81ed6ec0ec95633ab0e922d174473ee5f3cad36e7a7f562596e36a4",
+    "services/session/src/transport/local_protocol.cpp": "35011d3ee9173ae75ec6e8e2b95b575a7353a6f084d926cbe5293064cf8f8b4a",
+    "services/session/tests/agent_checkpoint_test.cpp": "ecbaf802866a63e165ca09878a9fa2788e4791be6c4bc1bf652eec323ddc7ef0",
+    "services/session/tests/history_store_test.cpp": "e22cafa431026f6ecd5104ea41f56b303404c4727ce9b07cad8315a967d82c4c",
+    "services/session/tests/local_protocol_test.cpp": "d86d8d19c0420202205cade5907eebb006ca3752cec38e3ff2735790aea9844c",
+    "services/session/tests/terminal/terminal_test.cpp": "3c994452b6da9c18d6d3fac911230c58f6eabd41d5a90f7808c61b3d3421e2b0"
+  }
+}

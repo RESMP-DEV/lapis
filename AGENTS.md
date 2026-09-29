@@ -8,7 +8,9 @@ GPU-accelerated terminal stage shows the selected agent. A strip of throttled
 live previews under the stage is the category's navigation; previews never take
 input or resize a terminal. There is no tab row. Agents dragged from the strip
 onto the stage tile it, as iTerm2 splits a tab; each category keeps its tiles.
-Normal use has no shell sessions or sample cards. Codex is the first agent integration.
+Normal use has no sample cards; the only plain shells are the side terminal's
+(Command-`), one per machine for a quick command and never an agent. Codex is
+the first agent integration.
 Each additional CLI gets an independent, verified adapter.
 
 The project name is `lapis`, always lowercase and one word. The canonical GitHub
@@ -41,6 +43,37 @@ component or launch an unbounded set of agents.
 Determine status from code and tests, update that table as components land, and
 treat saved receipts as dated observations. Keep milestone acceptance in the
 architecture document instead of creating another status or roadmap file.
+
+## Contributor workflow
+
+<contributor_workflow>
+
+Use the shared [work record and review checkpoints](CONTRIBUTING.md#work-records-and-review-checkpoints)
+for substantial implementation, maintenance and delegated work. Keep one current
+record in the task context or ignored `build/<task>/work.md`; update it as findings
+change. Incoming agents continue that record and verify its baseline before editing.
+
+1. Establish the objective, exclusions, checkout/HEAD, dirty work, and relevant
+   open PR heads or overlapping files. Preserve work already in progress.
+2. Assign temporary write scopes and one build owner per checkout/preset. Agree
+   on the data owner, identity/lifetime and compatibility contract before dependent
+   edits. Contributors continue to share feature ownership.
+3. Classify findings as defects, contract gaps, acceptance gaps or preferences.
+   Choose a bounded batch with an observable finish line and the smallest relevant
+   checks. Verify documented commands against the current CLI before using them.
+4. Review the combined diff against the
+   [quality review checkpoints](CONTRIBUTING.md#quality-review-checkpoints).
+   Inspect worker changes and receipts; a completed worker or green provider status
+   alone is not verification. Apply the existing required-check and reuse rules.
+5. Hand off the actual source state, changed contracts, checks/results, evidence,
+   unresolved findings and next action. Keep implementation and qualification
+   status distinct. Update canonical documents when their contracts change.
+
+These are manual contributor/reviewer obligations. `just quality` enforces its
+documented mechanical checks; it does not prove architectural compliance or native
+platform qualification.
+
+</contributor_workflow>
 
 ## Architecture boundaries
 
@@ -115,25 +148,40 @@ Quality/maintenance tasks do not authorize feature wiring or resuming a tabled
 milestone. Review findings must distinguish defects from optional preferences;
 keep cleanup scoped and preserve other contributors' changes.
 
-Default test execution belongs on the Linux test host. Do not open test
-windows, post keyboard events, or change input sources on the user's Mac during
-ordinary development. A necessary macOS-specific acceptance pass must be explicitly
-scheduled with the user. Linux or headless results do not replace Apple-specific
-input/IME qualification. Until remote access and dependencies are verified,
-report testing as blocked rather than silently falling back to Mac GUI tests.
+## Test host selection
 
-The Linux test host's ssh name, route and checkout path are machine-local and
-are not recorded in this public repository; keep them in your own agent notes.
-Run `uv run --no-project python scripts/lapis.py linux-gui` in that checkout for the full
-software-rendered GUI check, or supply focused command arguments after `linux-gui`.
-The wrapper creates its own virtual display and window manager and does not use
-the shared physical GPU. Keep native GPU qualification separate.
+<test_host_selection>
 
-During edits in the configured Linux checkout, build the affected CMake target
-and run focused CTest cases with `--no-tests=error`. `lapis.py build` and bare
-`linux-gui` run the full validation gate, including all clang-tidy analyses;
-reserve those for integration checkpoints and handoff rather than every edit.
+macOS is the active target; Linux UI work is deferred. Use the current checkout
+for local builds, unit tests and background checks when it has the required
+capabilities. Never require a particular hostname, SSH alias, account or absolute
+checkout path. A remote machine is optional: use it only when selected by the
+operator or current session, and verify its checkout and dependencies first.
+An unavailable remote does not block suitable local checks.
 
+Use `python3 scripts/lapis.py ui-review` (or `just ui-review`) for routine UI
+reviews. It builds the required targets and runs workspace UI, shortcuts and
+terminal input with explicit offscreen/software modes, preserving the user's
+cursor, OS focus and system clipboard. It does not open the product application.
+Use `--json` for a machine-readable result; logs, software-rendered PNG captures
+and the receipt live under ignored `build/reports/ui-review/`. Inspect the saved
+captures for visual changes. This is the default review path during edits.
+
+Native desktop input, clipboard/input-source changes and foreground test windows
+require authorization for that interaction; reuse authorization already given in
+the session. Run those GUI checks serially. Background Qt/software results do not
+replace native macOS input/IME or GPU acceptance. Keep `lapis.py build`, native
+CTest entries and `lapis.py ui-check` for their documented integration and native
+qualification scope. Report the specific missing capability when a check cannot
+run; never substitute a background pass for failed native evidence.
+
+For other compiled checks, build the affected CMake target and run focused CTest
+expressions with `--no-tests=error`. Reserve the full static-analysis gate for
+integration and handoff. If Linux is explicitly selected, `lapis.py linux-gui`
+uses its own virtual display/window manager; keep that software-rendered evidence
+platform-scoped.
+
+</test_host_selection>
 
 ## Responsiveness and resource policy
 
@@ -171,8 +219,8 @@ regular progress updates, diagnose overruns, bound retries and preserve a handof
 | Verification and profiling | `tools/`, `scripts/` | Behavioral cases, repeatable workloads, and measured results |
 | Integration | Root build files and shared `docs/` | Compatible interfaces, assembled application, and milestone acceptance |
 
-Before work begins, specify the objective, owner, allowed files, dependencies,
-shared interface version, and acceptance commands. Start with independent
+Before work begins, complete the shared
+[work record](CONTRIBUTING.md#work-records-and-review-checkpoints). Start with independent
 investigation where interfaces are unsettled, then agree on the smallest common
 contract before parallel implementation. Coordinate shared-file edits explicitly.
 

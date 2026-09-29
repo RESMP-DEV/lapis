@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -50,6 +51,95 @@ void require_success(GhosttyResult result) {
 [[nodiscard]] std::uint32_t rgb_from(GhosttyColorRgb color) {
     return (std::uint32_t{color.r} << 16U) | (std::uint32_t{color.g} << 8U) |
            std::uint32_t{color.b};
+}
+
+[[nodiscard]] bool hyperlink_row_has_hint(GhosttyRow row) {
+    bool has_hyperlink = false;
+    require_success(ghostty_row_get(row, GHOSTTY_ROW_DATA_HYPERLINK, &has_hyperlink));
+    return has_hyperlink;
+}
+
+[[nodiscard]] bool cell_has_hyperlink(GhosttyCell cell) {
+    bool has_hyperlink = false;
+    require_success(ghostty_cell_get(cell, GHOSTTY_CELL_DATA_HAS_HYPERLINK, &has_hyperlink));
+    return has_hyperlink;
+}
+
+int utf8_tail_length(unsigned char lead) {
+    if (lead >= 0xc2U && lead <= 0xdfU)
+        return 1;
+    if (lead >= 0xe0U && lead <= 0xefU)
+        return 2;
+    return lead >= 0xf0U && lead <= 0xf4U ? 3 : 0;
+}
+
+// OSC payloads are arbitrary bytes. Invalid UTF-8 is not usable metadata and
+// must never turn ordinary terminal output into a transport failure.
+bool valid_uri_utf8(std::string_view text) {
+    std::size_t offset = 0;
+    while (offset < text.size()) {
+        const auto lead = static_cast<unsigned char>(text[offset++]);
+        if (lead < 0x80U)
+            continue;
+        const int count = utf8_tail_length(lead);
+        if (count == 0 || text.size() - offset < static_cast<std::size_t>(count))
+            return false;
+        const auto second = static_cast<unsigned char>(text[offset]);
+        if ((lead == 0xe0U && second < 0xa0U) || (lead == 0xedU && second >= 0xa0U) ||
+            (lead == 0xf0U && second < 0x90U) || (lead == 0xf4U && second >= 0x90U))
+            return false;
+        for (int index = 0; index < count; ++index)
+            if ((static_cast<unsigned char>(text[offset++]) & 0xc0U) != 0x80U)
+                return false;
+    }
+    return true;
+}
+
+// Empty means "no URI" or "outside the configured URI bound"; the caller
+// therefore omits the entire span instead of manufacturing a broken link.
+[[nodiscard]] std::string hyperlink_uri(GhosttyTerminal terminal, std::size_t index,
+                                        TerminalSize size) {
+    GhosttyPoint point{};
+    point.tag = GHOSTTY_POINT_TAG_VIEWPORT;
+    point.value.coordinate.x = static_cast<std::uint16_t>(index % size.columns);
+    point.value.coordinate.y = static_cast<std::uint32_t>(index / size.columns);
+    GhosttyGridRef ref{};
+    require_success(ghostty_terminal_grid_ref(terminal, point, &ref));
+
+    std::size_t uri_bytes = 0U;
+    const GhosttyResult sized = ghostty_grid_ref_hyperlink_uri(&ref, nullptr, 0U, &uri_bytes);
+    if (sized == GHOSTTY_SUCCESS)
+        return {};
+    if (sized != GHOSTTY_OUT_OF_SPACE)
+        fail(sized);
+    if (uri_bytes == 0U || uri_bytes > max_hyperlink_uri_bytes)
+        return {};
+
+    std::string uri(uri_bytes, '\0');
+    require_success(ghostty_grid_ref_hyperlink_uri(
+        &ref, reinterpret_cast<std::uint8_t*>(uri.data()), uri.size(), &uri_bytes));
+    if (uri_bytes != uri.size())
+        throw std::runtime_error("Ghostty hyperlink URI length changed during extraction");
+    return valid_uri_utf8(uri) ? uri : std::string();
+}
+
+void add_hyperlink(TerminalSnapshot& snapshot, std::size_t first_cell, std::string&& uri,
+                   std::size_t& hyperlink_bytes) {
+    if (uri.empty() || uri.size() > max_hyperlink_uri_bytes)
+        return;
+    if (!snapshot.hyperlinks.empty()) {
+        TerminalHyperlink& previous = snapshot.hyperlinks.back();
+        const std::size_t next_cell = std::size_t{previous.first_cell} + previous.cell_count;
+        if (next_cell == first_cell && previous.uri == uri) {
+            ++previous.cell_count;
+            return;
+        }
+    }
+    if (hyperlink_bytes > max_hyperlink_bytes - uri.size() ||
+        snapshot.hyperlinks.size() == max_hyperlink_spans)
+        return;
+    hyperlink_bytes += uri.size();
+    snapshot.hyperlinks.push_back({static_cast<std::uint32_t>(first_cell), 1U, std::move(uri)});
 }
 
 template <typename Container>
@@ -193,6 +283,8 @@ struct Terminal::Impl {
     OwnedHandle<GhosttyRenderStateRowCells, ghostty_render_state_row_cells_free> row_cells;
     OwnedHandle<GhosttyKeyEncoder, ghostty_key_encoder_free> encoder;
     OwnedHandle<GhosttyKeyEvent, ghostty_key_event_free> key;
+    OwnedHandle<GhosttyMouseEncoder, ghostty_mouse_encoder_free> mouse_encoder;
+    OwnedHandle<GhosttyMouseEvent, ghostty_mouse_event_free> mouse;
     std::vector<std::uint32_t> scratch;
 
     Impl(TerminalSize size, const TerminalLimits& input_limits)
@@ -214,6 +306,9 @@ struct Terminal::Impl {
         encoder =
             create_handle<GhosttyKeyEncoder, ghostty_key_encoder_free>(ghostty_key_encoder_new);
         key = create_handle<GhosttyKeyEvent, ghostty_key_event_free>(ghostty_key_event_new);
+        mouse_encoder = create_handle<GhosttyMouseEncoder, ghostty_mouse_encoder_free>(
+            ghostty_mouse_encoder_new);
+        mouse = create_handle<GhosttyMouseEvent, ghostty_mouse_event_free>(ghostty_mouse_event_new);
         require_success(ghostty_terminal_set(terminal.get(), GHOSTTY_TERMINAL_OPT_USERDATA, this));
         constexpr GhosttyTerminalWritePtyFn write = &Impl::write_pty;
         require_success(ghostty_terminal_set(terminal.get(), GHOSTTY_TERMINAL_OPT_WRITE_PTY,
@@ -364,9 +459,14 @@ struct Terminal::Impl {
     }
 
     [[nodiscard]] TerminalSnapshot make_snapshot();
-    [[nodiscard]] TerminalCell extract_cell(TerminalSnapshot& snapshot);
+    struct ExtractedCell {
+        TerminalCell cell;
+        GhosttyCell raw{};
+    };
+    [[nodiscard]] ExtractedCell extract_cell(TerminalSnapshot& snapshot);
     [[nodiscard]] std::string encode_key(TerminalKey key_value, KeyModifiers modifiers);
     [[nodiscard]] std::string encode_paste(std::string_view text);
+    [[nodiscard]] std::string encode_wheel(WheelTurn turn);
 };
 
 Terminal::Terminal(TerminalSize size, TerminalLimits limits)
@@ -412,6 +512,8 @@ std::string Terminal::encode_key(TerminalKey key, KeyModifiers modifiers) {
 }
 
 std::string Terminal::encode_paste(std::string_view text) { return impl_->encode_paste(text); }
+
+std::string Terminal::encode_wheel(WheelTurn turn) { return impl_->encode_wheel(turn); }
 
 std::string Terminal::take_replies() {
     impl_->require_healthy();
@@ -495,6 +597,55 @@ std::string Terminal::Impl::encode_paste(std::string_view text) {
     return output;
 }
 
+std::string Terminal::Impl::encode_wheel(WheelTurn turn) {
+    require_healthy();
+    const auto [steps, column, row] = turn;
+    // A fling is a few dozen notches at most; more is a runaway sender.
+    constexpr int max_notches = 64;
+    const int bounded = std::clamp(steps, -max_notches, max_notches);
+    const int notches = std::abs(bounded);
+    std::string output;
+    bool reporting = false;
+    terminal_get(GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING, reporting);
+    if (reporting && notches > 0) {
+        std::uint16_t columns = 0U;
+        std::uint16_t rows = 0U;
+        terminal_get(GHOSTTY_TERMINAL_DATA_COLS, columns);
+        terminal_get(GHOSTTY_TERMINAL_DATA_ROWS, rows);
+        // Positions are given in cells, so one cell is one pixel.
+        const GhosttyMouseEncoderSize size{
+            sizeof(GhosttyMouseEncoderSize), columns, rows, 1U, 1U, 0U, 0U, 0U, 0U};
+        ghostty_mouse_encoder_setopt_from_terminal(mouse_encoder.get(), terminal.get());
+        ghostty_mouse_encoder_setopt(mouse_encoder.get(), GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size);
+        ghostty_mouse_event_set_action(mouse.get(), GHOSTTY_MOUSE_ACTION_PRESS);
+        ghostty_mouse_event_set_button(mouse.get(), steps > 0 ? GHOSTTY_MOUSE_BUTTON_FOUR
+                                                              : GHOSTTY_MOUSE_BUTTON_FIVE);
+        ghostty_mouse_event_set_mods(mouse.get(), 0U);
+        ghostty_mouse_event_set_position(
+            mouse.get(),
+            {static_cast<float>(std::min<int>(column, std::max(columns - 1, 0))) + 0.5F,
+             static_cast<float>(std::min<int>(row, std::max(rows - 1, 0))) + 0.5F});
+        std::array<char, 64> event{};
+        for (int notch = 0; notch < notches; ++notch) {
+            std::size_t written = 0U;
+            require_success(ghostty_mouse_encoder_encode(mouse_encoder.get(), mouse.get(),
+                                                         event.data(), event.size(), &written));
+            if (written > event.size())
+                throw std::runtime_error("Ghostty mouse encoding exceeded buffer");
+            output.append(event.data(), written);
+        }
+        return output;
+    }
+    GhosttyTerminalScreen screen{};
+    terminal_get(GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, screen);
+    if (screen != GHOSTTY_TERMINAL_SCREEN_ALTERNATE)
+        return output;
+    const auto arrow = encode_key(steps > 0 ? TerminalKey::up : TerminalKey::down, {});
+    for (int line = 0; line < notches * 3; ++line)
+        output += arrow;
+    return output;
+}
+
 TerminalSnapshot Terminal::snapshot() { return impl_->make_snapshot(); }
 
 TerminalSnapshot Terminal::Impl::make_snapshot() {
@@ -547,17 +698,27 @@ TerminalSnapshot Terminal::Impl::make_snapshot() {
     snapshot.history = {scrollbar.total, scrollbar.offset, scrollbar.len,
                         !snapshot.alternate_screen};
 
+    std::size_t hyperlink_bytes = 0U;
     auto row_handle = row_iterator.get();
     require_success(ghostty_render_state_get(render.get(), GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR,
                                              static_cast<void*>(&row_handle)));
     while (ghostty_render_state_row_iterator_next(row_iterator.get())) {
         auto cell_handle = row_cells.get();
         row_get(GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, static_cast<void*>(&cell_handle));
+        GhosttyRow raw_row{};
+        row_get(GHOSTTY_RENDER_STATE_ROW_DATA_RAW, &raw_row);
+        const bool row_has_hyperlink = hyperlink_row_has_hint(raw_row);
         while (ghostty_render_state_row_cells_next(row_cells.get())) {
             if (snapshot.cells.size() == expected_cells) {
                 throw std::runtime_error("Ghostty returned more cells than viewport dimensions");
             }
-            snapshot.cells.push_back(extract_cell(snapshot));
+            const ExtractedCell extracted = extract_cell(snapshot);
+            if (row_has_hyperlink && cell_has_hyperlink(extracted.raw)) {
+                add_hyperlink(snapshot, snapshot.cells.size(),
+                              hyperlink_uri(terminal.get(), snapshot.cells.size(), snapshot.size),
+                              hyperlink_bytes);
+            }
+            snapshot.cells.push_back(extracted.cell);
         }
     }
     if (snapshot.cells.size() != expected_cells) {
@@ -567,8 +728,9 @@ TerminalSnapshot Terminal::Impl::make_snapshot() {
     return snapshot;
 }
 
-TerminalCell Terminal::Impl::extract_cell(TerminalSnapshot& snapshot) {
-    TerminalCell cell;
+Terminal::Impl::ExtractedCell Terminal::Impl::extract_cell(TerminalSnapshot& snapshot) {
+    ExtractedCell extracted;
+    TerminalCell& cell = extracted.cell;
     std::uint32_t graphemes_length = 0U;
     cells_get(GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &graphemes_length);
     if (graphemes_length != 0U) {
@@ -616,7 +778,8 @@ TerminalCell Terminal::Impl::extract_cell(TerminalSnapshot& snapshot) {
         require_success(ghostty_cell_get(raw, GHOSTTY_CELL_DATA_COLOR_RGB, &background));
         cell.style.background = {ColorKind::rgb, rgb_from(background)};
     }
-    return cell;
+    extracted.raw = raw;
+    return extracted;
 }
 
 } // namespace lapis::session

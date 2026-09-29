@@ -9,7 +9,8 @@ if(BUILD_TESTING)
     set_tests_properties(attention-state PROPERTIES TIMEOUT 10)
 endif()
 
-# Internal POSIX resource ownership. Engine and desktop code must not include it.
+# Shared POSIX lifetime primitives; PTY ownership remains in the service.
+# Desktop helper processes may reuse the process-group guard without owning PTYs.
 add_library(lapis_session_platform STATIC
     src/platform/posix/unique_fd.cpp src/platform/posix/process_group_guard.cpp)
 target_link_libraries(lapis_session_platform PRIVATE lapis_project_options)
@@ -45,15 +46,19 @@ if(LAPIS_BUILD_DESKTOP)
     target_link_libraries(lapis_session_launch PRIVATE lapis_project_options PUBLIC lapis_terminal Qt6::Core)
     add_library(lapis_local_protocol STATIC src/transport/local_protocol.cpp src/transport/attention_protocol.cpp src/session_descriptor.cpp src/agent_checkpoint.cpp)
     target_include_directories(lapis_local_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(lapis_local_protocol PRIVATE lapis_project_options lapis_session_platform PUBLIC lapis_terminal lapis_attention lapis_session_launch Qt6::Core)
+    target_link_libraries(lapis_local_protocol
+        PRIVATE lapis_project_options lapis_session_platform lapis_session_launch
+        PUBLIC lapis_terminal lapis_attention Qt6::Core)
     add_library(lapis_pty_process STATIC src/platform/posix/pty_process.cpp src/platform/posix/pty_process.hpp)
     target_link_libraries(lapis_pty_process PRIVATE lapis_project_options PUBLIC lapis_session_platform lapis_terminal lapis_session_launch Qt6::Core)
     add_library(lapis_history STATIC src/history_store.cpp src/history_worker.cpp)
-    target_link_libraries(lapis_history PRIVATE lapis_project_options lapis_session_platform PUBLIC lapis_local_protocol Qt6::Core)
+    target_link_libraries(lapis_history PRIVATE lapis_project_options lapis_session_platform
+        PUBLIC lapis_local_protocol lapis_terminal Qt6::Core)
     target_include_directories(lapis_history PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
     add_executable(lapis_session_service src/session_service.cpp)
-    target_link_libraries(lapis_session_service PRIVATE lapis_project_options lapis_pty_process lapis_history Qt6::Network)
-    target_compile_definitions(lapis_session_service PRIVATE LAPIS_DEFAULT_HISTORY_ROOT="${PROJECT_SOURCE_DIR}/runtime/history")
+    target_link_libraries(lapis_session_service PRIVATE lapis_project_options
+        lapis_session_platform lapis_session_launch lapis_terminal lapis_attention
+        lapis_local_protocol lapis_pty_process lapis_history Qt6::Core Qt6::Network)
     if(BUILD_TESTING)
         add_executable(lapis_history_store_tests tests/history_store_test.cpp)
         target_link_libraries(lapis_history_store_tests PRIVATE lapis_project_options lapis_history)

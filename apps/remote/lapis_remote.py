@@ -60,6 +60,16 @@ GATEWAY_VERSION = 1
 WIRE_VERSION = 6
 HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
 HISTORY_REQUEST, HISTORY_PAGE = 10, 11
+# A turn of the wheel for a full-screen program (added within v6). Only a
+# service whose snapshots set ACCEPTS_WHEEL in the alternate-screen byte takes
+# it; one from before drops the connection on it.
+WHEEL = 16
+ALTERNATE_OFFSET, ACCEPTS_WHEEL = 21, 2
+# History direction `at` (added within v6): the page holding a row. A page's
+# history fields (total, first row, rows) say where it sits; services before
+# it send only the page itself, and reject `at`.
+HISTORY_AT = 2
+HISTORY_FIELDS_OFFSET = 37
 STATUS_NAMES = {1: "rejected", 2: "ended", 3: "replaced", 4: "overloaded"}
 # Attach modes: discover takes the agent from its current client; join (added
 # within v6) shows it beside the desktop. Services started before join reject it.
@@ -182,6 +192,50 @@ def load_workspace(path):
     }
 
 
+def load_terminals(registry):
+    """The desktop's quick-command terminals (terminals.json beside the
+    workspace): plain shells, one per machine, reached like agents. Only this
+    folder's own endpoints are reachable."""
+    folder = Path(registry).absolute().parent
+    try:
+        data = json.loads((folder / "terminals.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    terminals = []
+    for entry in data.get("terminals", []) if isinstance(data, dict) else []:
+        if not isinstance(entry, dict):
+            continue
+        identifier = str(entry.get("id", ""))
+        endpoint = Path(str(entry.get("endpoint", "")))
+        if (
+            not identifier.startswith("terminal-")
+            or endpoint.name != identifier + ".sock"
+            or endpoint.parent.resolve() != folder.resolve()
+        ):
+            continue
+        machine = str(entry.get("machine", ""))
+        terminals.append(
+            {
+                "id": identifier,
+                "title": machine or "This Mac",
+                "category": "",
+                "harness": "shell",
+                "machine": machine,
+                "directory": str(entry.get("directory", "")),
+                "program": str(entry.get("program", "")),
+                "arguments": [str(item) for item in entry.get("arguments", [])],
+                "mode": "",
+                "endpoint": str(endpoint),
+            }
+        )
+    return terminals
+
+
+def position(value):
+    """A JSON index: a whole number of at least zero, and not true or false."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
 def desktop_request(registry, request, timeout=15.0):
     """One request to the lapis process that owns the workspace (a window, or
     the windowless host): a JSON line out, a JSON line back."""
@@ -298,6 +352,22 @@ def first_json_line(path, limit=1 << 20):
         return json.loads(stream.readline(limit))
 
 
+def bounded_lines(stream, lines=None, byte_limit=None):
+    """Read at most line/byte bounds without trusting the file to stay still."""
+    while lines is None or lines > 0:
+        size = min(byte_limit if byte_limit is not None else 1 << 20, 1 << 20)
+        if size <= 0:
+            return
+        line = stream.readline(size)
+        if not line:
+            return
+        if byte_limit is not None:
+            byte_limit -= len(line)
+        if lines is not None:
+            lines -= 1
+        yield line
+
+
 def codex_cwd(path):
     """The folder of a Codex rollout's interactive main thread, else None."""
     try:
@@ -334,27 +404,280 @@ def claude_cwd(session):
     return cwd if entry == "cli" and isinstance(cwd, str) else None
 
 
+def utf16_length(value):
+    """The string length Qt reports: UTF-16 units, not Unicode points."""
+    return len(value.encode("utf-16-le")) // 2
+
+
+def plain_title(text, limit=140):
+    """A normalized title, keeping user names that resemble CLI wrappers."""
+    text = " ".join(str(text or "").split())
+    if not text or any(0xD800 <= ord(character) <= 0xDFFF for character in text):
+        return ""
+    if utf16_length(text) <= limit:
+        return text
+    retained = []
+    units = 0
+    for character in text:
+        width = 2 if ord(character) > 0xFFFF else 1
+        if units + width > limit - 1:
+            break
+        retained.append(character)
+        units += width
+    return "".join(retained) + "\u2026"
+
+
+def typed_title(text):
+    """One line of what someone typed; the CLIs' own wrappers are not."""
+    text = str(text or "").strip()
+    if not text or text[0] in "<#" or text.startswith("Caveat:"):
+        return ""
+    return plain_title(text)
+
+
+def valid_name(value, limit=80):
+    """The desktop's printable, nonempty, length-bounded name contract."""
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and value.isprintable()
+        and utf16_length(value) <= limit
+    )
+
+
+def claude_title(session):
+    """Claude Code's newest title for a session, else its first typed message."""
+    first = title = ""
+    try:
+        with open(session, "rb") as stream:
+            size = os.fstat(stream.fileno()).st_size
+            # Small sessions fit inside the tail window, so one bounded pass
+            # is enough; larger sessions deliberately scan only head and tail.
+            whole_file = size <= (128 << 10)
+            lines = bounded_lines(
+                stream,
+                lines=None if whole_file else 300,
+                byte_limit=min(size, 128 << 10),
+            )
+            for line in lines:
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                if record.get("type") == "ai-title":
+                    title = typed_title(record.get("aiTitle")) or title
+                elif (
+                    record.get("type") == "user"
+                    and not first
+                    and not record.get("isMeta")
+                ):
+                    message = record.get("message")
+                    content = (
+                        message.get("content") if isinstance(message, dict) else None
+                    )
+                    if isinstance(content, list):
+                        content = next(
+                            (
+                                part.get("text")
+                                for part in content
+                                if isinstance(part, dict) and part.get("type") == "text"
+                            ),
+                            "",
+                        )
+                    first = typed_title(content)
+            if whole_file:
+                return title or first
+            stream.seek(max(0, size - (128 << 10)))
+            for line in stream.read(128 << 10).split(b"\n"):
+                if b'"ai-title"' in line:
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(record, dict) and record.get("type") == "ai-title":
+                        title = typed_title(record.get("aiTitle")) or title
+    except OSError:
+        return ""
+    return title or first
+
+
+def codex_title(path):
+    """A Codex rollout's first typed message (its thread name is applied later)."""
+    try:
+        with open(path, "rb") as stream:
+            for line in bounded_lines(stream, lines=200, byte_limit=1 << 20):
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                title = codex_user_title(record)
+                if title:
+                    return title
+    except OSError:
+        pass
+    return ""
+
+
+def codex_user_title(record):
+    """The typed title in one Codex response record, else empty."""
+    if not isinstance(record, dict):
+        return ""
+    payload = record.get("payload")
+    if (
+        record.get("type") != "response_item"
+        or not isinstance(payload, dict)
+        or payload.get("type") != "message"
+        or payload.get("role") != "user"
+    ):
+        return ""
+    content = payload.get("content")
+    if not isinstance(content, list):
+        return ""
+    for part in content:
+        if isinstance(part, dict):
+            title = typed_title(part.get("text"))
+            if title:
+                return title
+    return ""
+
+
+def codex_thread_names(codex_home):
+    names = {}
+    try:
+        with open(Path(codex_home) / "session_index.jsonl", "rb") as stream:
+            for line in stream:
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if (
+                    isinstance(record, dict)
+                    and record.get("id")
+                    and record.get("thread_name")
+                ):
+                    names[str(record["id"])] = plain_title(record["thread_name"])
+    except OSError:
+        pass
+    return names
+
+
 class AgentHistory:
-    """How many agents were started in each folder: Codex rollouts (interactive
-    main threads), interactive Claude Code sessions and the workspace's
-    current agents. What a file says is remembered, so later passes read only
-    new files. The root folder is never a project."""
+    """How many agents were started in each folder and how recently: Codex
+    rollouts (interactive main threads), interactive Claude Code sessions and
+    the workspace's current agents. Each conversation also adds to its
+    folder's heat, halving every two weeks, so recent and frequent work both
+    count. What a file says is remembered by its size and time, so later
+    passes read only new or changed files. The root folder is never a
+    project."""
+
+    HALF_LIFE_DAYS = 14
 
     def __init__(self, codex_home, claude_home):
         self.codex_home = Path(codex_home)
         self.claude_home = Path(claude_home)
         self.codex = {}
         self.claude = {}
+        self.codex_names = {}
+        self.codex_names_mark = None
+        self.heat = collections.Counter()
+        self.conversations = []
 
     def counts(self, registry):
         counts = collections.Counter()
+        heat = collections.Counter()
+        conversations = []
+        now = time.time()
+
+        def note(cwd, when, conversation):
+            counts[cwd] += 1
+            heat[cwd] += 0.5 ** (max(0.0, now - when) / 86400 / self.HALF_LIFE_DAYS)
+            conversations.append(dict(conversation, directory=cwd, modified=when))
+
+        def remembered(cache, path, read):
+            try:
+                stat = path.stat()
+            except OSError:
+                return None, 0
+            mark = (stat.st_size, stat.st_mtime)
+            cached = cache.get(str(path))
+            entry = (
+                cached
+                if cached is not None and cached[0] == mark
+                else (mark, read(path))
+            )
+            return entry, stat.st_mtime
+
+        def read_rollout(path):
+            identifier = cwd = ""
+            title = ""
+            try:
+                with open(path, "rb") as stream:
+                    for number, line in enumerate(
+                        bounded_lines(stream, lines=200, byte_limit=1 << 20)
+                    ):
+                        try:
+                            record = json.loads(line)
+                        except ValueError:
+                            continue
+                        if number == 0:
+                            payload = (
+                                record.get("payload", {})
+                                if isinstance(record, dict)
+                                else {}
+                            )
+                            if not isinstance(payload, dict):
+                                return None
+                            source = payload.get("source")
+                            if (
+                                isinstance(source, dict)
+                                or payload.get("parent_thread_id")
+                                or source == "exec"
+                            ):
+                                return None
+                            first_cwd = payload.get("cwd")
+                            if not isinstance(first_cwd, str) or not first_cwd:
+                                return None
+                            # A rollout without an id still counts for its
+                            # folder; it only cannot be resumed, so the list
+                            # leaves it out.
+                            identifier = str(payload.get("id") or "")
+                            cwd = first_cwd
+                            continue
+                        title = codex_user_title(record)
+                        if title:
+                            break
+            except OSError:
+                return None
+            if not cwd:
+                return None
+            return {
+                "harness": "codex",
+                "id": identifier,
+                "cwd": cwd,
+                "title": title,
+            }
+
+        def read_session(path):
+            cwd = claude_cwd(path)
+            if not cwd:
+                return None
+            return {
+                "harness": "claude",
+                "id": path.stem,
+                "cwd": cwd,
+                "title": claude_title(path),
+            }
+
         seen = {}
         for rollout in (self.codex_home / "sessions").glob("*/*/*/rollout-*.jsonl"):
-            key = str(rollout)
-            cwd = self.codex[key] if key in self.codex else codex_cwd(rollout)
-            seen[key] = cwd
-            if cwd:
-                counts[cwd] += 1
+            entry, when = remembered(self.codex, rollout, read_rollout)
+            if entry is None:
+                continue
+            seen[str(rollout)] = entry
+            if entry[1]:
+                note(entry[1]["cwd"], when, entry[1])
         self.codex = seen
         projects = self.claude_home / "projects"
         seen = {}
@@ -364,20 +687,47 @@ class AgentHistory:
             except OSError:
                 continue
             for session in sessions:
-                key = str(session)
-                cwd = self.claude[key] if key in self.claude else claude_cwd(session)
-                seen[key] = cwd
-                if cwd:
-                    counts[cwd] += 1
+                entry, when = remembered(self.claude, session, read_session)
+                if entry is None:
+                    continue
+                seen[str(session)] = entry
+                if entry[1]:
+                    note(entry[1]["cwd"], when, entry[1])
         self.claude = seen
         if registry is not None:
             try:
                 for agent in load_workspace(registry)["agents"]:
                     if agent["directory"] and not remote_machine(agent):
                         counts[agent["directory"]] += 1
+                        heat[agent["directory"]] += 1
             except (OSError, ValueError, GatewayError):
                 pass
         counts.pop("/", None)
+        heat.pop("/", None)
+        names_path = self.codex_home / "session_index.jsonl"
+        try:
+            names_stat = names_path.stat()
+            names_mark = (names_stat.st_size, names_stat.st_mtime)
+        except OSError:
+            names_mark = None
+            names = {}
+            self.codex_names = names
+            self.codex_names_mark = names_mark
+        else:
+            if names_mark != self.codex_names_mark:
+                names = codex_thread_names(self.codex_home)
+                self.codex_names = names
+                self.codex_names_mark = names_mark
+            else:
+                names = self.codex_names
+        conversations = [item for item in conversations if item["id"]]
+        for conversation in conversations:
+            if conversation["harness"] == "codex" and names.get(conversation["id"]):
+                conversation["title"] = names[conversation["id"]]
+            conversation.pop("cwd", None)
+        conversations.sort(key=lambda item: item["modified"], reverse=True)
+        self.heat = heat
+        self.conversations = conversations
         return counts
 
 
@@ -502,7 +852,18 @@ def folder_report(home, history, registry=None, harnesses=False):
             break
         if os.path.isdir(path):
             frequent.append({"path": phone_path(path, home), "count": count})
-    report = {"home": home, "folders": scan_folders(home), "frequent": frequent}
+    # Folder heat, for the phone to put the most active folders first.
+    activity = {
+        phone_path(path, home): round(score, 4)
+        for path, score in history.heat.items()
+        if score >= 0.001 and os.path.isdir(path)
+    }
+    report = {
+        "home": home,
+        "folders": scan_folders(home),
+        "frequent": frequent,
+        "activity": activity,
+    }
     if harnesses:
         report["harnesses"] = harness_paths()
     return report
@@ -513,7 +874,7 @@ def folder_report(home, history, registry=None, harnesses=False):
 REMOTE_MARKER = "LAPIS-FOLDERS "
 REMOTE_SCRIPT = "\n".join(
     [
-        "import collections, itertools, json, os, re, shutil",
+        "import collections, itertools, json, os, re, shutil, time",
         "from pathlib import Path",
         f"NO_DESCENT = {sorted(NO_DESCENT)!r}",
         f"PACKAGES = {PACKAGES!r}",
@@ -528,8 +889,16 @@ REMOTE_SCRIPT = "\n".join(
         for item in (
             scan_folders,
             first_json_line,
+            bounded_lines,
             codex_cwd,
             claude_cwd,
+            utf16_length,
+            plain_title,
+            typed_title,
+            claude_title,
+            codex_user_title,
+            codex_title,
+            codex_thread_names,
             AgentHistory,
             harness_paths,
             phone_path,
@@ -735,16 +1104,23 @@ class RemoteFolders:
     and again when older than ten minutes; the last one is served meanwhile."""
 
     STALE = 600
+    MAX_REPORTS = 32
+    MAX_ERRORS = 32
+    MAX_ACTIVE_BUILDS = 4
+    ERROR_RETRY = 60.0
+    TOO_MANY_MESSAGE = "Too many remote machines are loading; try again"
 
     def __init__(self):
         self.lock = threading.Lock()
-        self.reports = {}  # machine -> (payload, compressed, built)
-        self.building = set()
-        self.errors = {}
+        self.reports = collections.OrderedDict()
+        self.errors = collections.OrderedDict()
+        self.clock = time.monotonic
+        self.builds = {}
 
     def build(self, machine):
         try:
             report = remote_folder_report(machine)
+            require(isinstance(report, dict), "Remote folder report must be an object")
             version = hashlib.sha256(
                 json.dumps(report, sort_keys=True).encode()
             ).hexdigest()[:16]
@@ -753,31 +1129,68 @@ class RemoteFolders:
                 json.dumps(payload, separators=(",", ":")).encode()
             )
             with self.lock:
-                self.reports[machine] = (payload, compressed, time.monotonic())
+                self.reports[machine] = (payload, compressed, self.clock())
+                self.reports.move_to_end(machine)
+                while len(self.reports) > self.MAX_REPORTS:
+                    self.reports.popitem(last=False)
                 self.errors.pop(machine, None)
         except (OSError, ValueError, subprocess.SubprocessError, GatewayError) as error:
             with self.lock:
-                self.errors[machine] = str(error)
+                self.errors[machine] = (str(error), self.clock() + self.ERROR_RETRY)
+                self.errors.move_to_end(machine)
+                while len(self.errors) > self.MAX_ERRORS:
+                    self.errors.popitem(last=False)
         finally:
             with self.lock:
-                self.building.discard(machine)
+                self.builds.pop(machine, None).set()
 
     def current(self, machine, timeout=30.0):
         with self.lock:
             report = self.reports.get(machine)
-            stale = report is None or time.monotonic() - report[2] > self.STALE
-            start = stale and machine not in self.building
-            if start:
-                self.building.add(machine)
-        if start:
-            thread = threading.Thread(target=self.build, args=(machine,), daemon=True)
-            thread.start()
-            if report is None:
-                thread.join(timeout)
+            if report is not None:
+                self.reports.move_to_end(machine)
+            now = self.clock()
+            stale = report is None or now - report[2] > self.STALE
+            failure = self.errors.get(machine)
+            if failure is not None:
+                self.errors.move_to_end(machine)
+            retry_ready = failure is None or now >= failure[1]
+            build = self.builds.get(machine)
+            waited = build is not None and report is None
+            if build is None and stale and retry_ready:
+                if len(self.builds) >= self.MAX_ACTIVE_BUILDS:
+                    if report is None:
+                        return None, failure[0] if failure else self.TOO_MANY_MESSAGE
+                else:
+                    event = threading.Event()
+                    self.builds[machine] = event
+                    try:
+                        threading.Thread(
+                            target=self.build,
+                            args=(machine,),
+                            name=f"lapis-remote-folders-{machine}",
+                            daemon=True,
+                        ).start()
+                    except RuntimeError as error:
+                        # No worker owns cleanup if the OS cannot start it.
+                        self.builds.pop(machine)
+                        self.errors[machine] = (str(error), now + self.ERROR_RETRY)
+                        self.errors.move_to_end(machine)
+                        while len(self.errors) > self.MAX_ERRORS:
+                            self.errors.popitem(last=False)
+                        event.set()
+                    build, waited = event, report is None
+            elif build is None and stale and report is None:
+                return None, failure[0]
+        if waited:
+            # State is never locked while an ssh subprocess runs or while waiting.
+            build.wait(timeout)
         with self.lock:
             report = self.reports.get(machine)
             return (
-                (report[0], report[1]) if report else (None, self.errors.get(machine))
+                (report[0], report[1])
+                if report
+                else (None, self.errors.get(machine, (self.TOO_MANY_MESSAGE, 0))[0])
             )
 
     def program(self, machine, harness):
@@ -914,7 +1327,8 @@ def render_snapshot(payload, show_cursor=True):
     require(len(payload) >= POOL_OFFSET + 4, "Truncated snapshot")
     revision, columns, rows, cursor_x, cursor_y = struct.unpack_from(">QHHHH", payload)
     in_viewport, visible = payload[16], payload[17]
-    alternate, application_cursor = payload[21], payload[23]
+    alternate, application_cursor = payload[ALTERNATE_OFFSET], payload[23]
+    require(alternate in (0, 1, 3), "Invalid alternate-screen flags")
     default_fg, default_bg = struct.unpack_from(">II", payload, 24)
     palette = struct.unpack_from(">256I", payload, PALETTE_OFFSET)
     count = struct.unpack_from(">I", payload, POOL_OFFSET)[0]
@@ -982,10 +1396,46 @@ def render_snapshot(payload, show_cursor=True):
         "rows": rows,
         "cursor": {"x": cursor_x, "y": cursor_y, "visible": cursor is not None},
         "alternateScreen": bool(alternate),
+        # The phone sends the wheel to the program instead of paging history.
+        "wheel": bool(alternate & ACCEPTS_WHEEL),
         "applicationCursor": bool(application_cursor),
         "foreground": hex_color(default_fg),
         "background": hex_color(default_bg),
         "lines": lines,
+    }
+
+
+def page_place(payload):
+    """Where an archived page sits: every kept row, its first row among them
+    (0 the oldest), its own rows, and whether its service can jump."""
+    require(len(payload) >= HISTORY_FIELDS_OFFSET + 24, "Truncated history place")
+    total, offset, rows = struct.unpack_from(">QQQ", payload, HISTORY_FIELDS_OFFSET)
+    require(offset <= total and rows <= total - offset, "Invalid history place")
+    return {
+        "total": total,
+        "offset": offset,
+        "rows": rows,
+        "scrubbable": offset > 0 or total > rows,
+    }
+
+
+def decode_history_reply(data, attachment):
+    """Validate a history reply before it can reach a waiter or the stream."""
+    require(
+        len(data) >= 60 and data[:ATTACHMENT_BYTES] == attachment, "Bad history reply"
+    )
+    request_id, page_id = struct.unpack_from(">QQ", data, ATTACHMENT_BYTES)
+    length = struct.unpack_from(">I", data, 56)[0]
+    require(length <= len(data) - 60, "Truncated history message")
+    message = data[60 : 60 + length].decode("utf-8", "replace")
+    snapshot = data[60 + length :]
+    if snapshot:
+        require(len(snapshot) >= POOL_OFFSET + 4, "Truncated history snapshot")
+        page_place(snapshot)
+    return request_id, {
+        "page": page_id,
+        "message": message,
+        "snapshot": snapshot or None,
     }
 
 
@@ -1018,6 +1468,12 @@ class WireSession:
         self.sequence = 0
         self.first = None
         self.closed = False
+        # Whether the latest screen is a full-screen program whose service
+        # takes wheel input.
+        self.wheel_accepted = False
+        # Whether its service placed a page among the kept rows (history
+        # requests `at` a row).
+        self.scrubbable = False
         # Set when another phone view is taking this agent, so its "replaced"
         # status is not reported as the Mac taking it back.
         self.superseded = False
@@ -1025,6 +1481,12 @@ class WireSession:
         self.history_waiters = {}
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.socket.settimeout(timeout)
+        # A whole screen in one read: macOS local sockets default to 8 KB.
+        for option in (socket.SO_RCVBUF, socket.SO_SNDBUF):
+            try:
+                self.socket.setsockopt(socket.SOL_SOCKET, option, 1 << 20)
+            except OSError:
+                pass
         try:
             self.socket.connect(agent["endpoint"])
             launch = fingerprint(
@@ -1068,8 +1530,14 @@ class WireSession:
         sequence = struct.unpack_from(">Q", data, ATTACHMENT_BYTES)[0]
         if sequence <= self.sequence:
             return None
+        body = data[SNAPSHOT_HEADER:]
+        require(len(body) > ALTERNATE_OFFSET, "Truncated snapshot")
+        require(body[ALTERNATE_OFFSET] in (0, 1, 3), "Invalid alternate-screen flags")
         self.sequence = sequence
-        return data[SNAPSHOT_HEADER:]
+        self.wheel_accepted = (
+            len(body) > ALTERNATE_OFFSET and body[ALTERNATE_OFFSET] & ACCEPTS_WHEEL != 0
+        )
+        return body
 
     def receive(self, timeout):
         """One frame, or None when nothing arrives within the timeout."""
@@ -1109,43 +1577,57 @@ class WireSession:
         require(name in KEYS, "Unknown key")
         self.send(KEY, bytes([KEYS[name], modifiers & 0x0F]))
 
-    def request_history(self, reference=0, timeout=10.0, newer=False):
-        """The archived page before `reference` (0: the newest page), or after it.
+    def wheel(self, steps, column, row):
+        """A turn of the wheel over a cell: positive steps scroll back."""
+        require(self.wheel_accepted, "This screen does not take the wheel")
+        require(steps != 0 and -64 <= steps <= 64, "Invalid wheel steps")
+        require(0 <= column <= 0xFFFF and 0 <= row <= 0xFFFF, "Invalid wheel cell")
+        self.send(WHEEL, struct.pack(">hHH", steps, column, row))
+
+    def request_history(self, reference=0, timeout=10.0, newer=False, at=False):
+        """The archived page before `reference` (0: the newest page), after it,
+        or with `at`, the page holding row `reference` (0: the oldest kept row).
 
         The stream's reader thread delivers the reply (deliver_history).
         """
+        require(not at or self.scrubbable, "This agent's service cannot jump")
         request_id = next(self.history_ids)
         waiter = [threading.Event(), None]
         with self.lock:
             self.history_waiters[request_id] = waiter
         try:
-            direction = 1 if newer else 0
+            direction = HISTORY_AT if at else 1 if newer else 0
             self.send(
                 HISTORY_REQUEST, struct.pack(">QQB", request_id, reference, direction)
             )
             require(waiter[0].wait(timeout), "History did not answer")
+            require(
+                "error" not in waiter[1], waiter[1].get("error", "Bad history reply")
+            )
             return waiter[1]
         finally:
             with self.lock:
                 self.history_waiters.pop(request_id, None)
 
     def deliver_history(self, data):
+        # The attachment and request ID must be trustworthy before a malformed
+        # payload can fail only that waiter and leave live frames flowing.
         require(
-            len(data) >= 60 and data[:ATTACHMENT_BYTES] == self.attachment,
+            len(data) >= ATTACHMENT_BYTES + 8
+            and data[:ATTACHMENT_BYTES] == self.attachment,
             "Bad history reply",
         )
-        request_id, page_id = struct.unpack_from(">QQ", data, ATTACHMENT_BYTES)
-        length = struct.unpack_from(">I", data, 56)[0]
-        message = data[60 : 60 + length].decode("utf-8", "replace")
-        snapshot = data[60 + length :]
+        request_id = struct.unpack_from(">Q", data, ATTACHMENT_BYTES)[0]
+        try:
+            _, reply = decode_history_reply(data, self.attachment)
+            if reply["snapshot"] and page_place(reply["snapshot"])["scrubbable"]:
+                self.scrubbable = True
+        except GatewayError as error:
+            reply = {"error": str(error)}
         with self.lock:
             waiter = self.history_waiters.get(request_id)
         if waiter is not None:
-            waiter[1] = {
-                "page": page_id,
-                "message": message,
-                "snapshot": snapshot or None,
-            }
+            waiter[1] = reply
             waiter[0].set()
 
     def resize(self, columns, rows):
@@ -1186,12 +1668,20 @@ def status_message(data):
 class TailnetAuth:
     """Admit only the Mac owner's iOS or Android devices and this Mac itself."""
 
+    MAX_WHOIS = 4
+    MAX_CACHE = 256
+    ALLOWED_TTL = 300.0
+    REJECTED_TTL = 60.0
+    WAIT_SECONDS = 5.0
+
     def __init__(self, tailscale="tailscale", allow_local=False, runner=None):
         self.tailscale = tailscale
         self.allow_local = allow_local
         self.runner = runner or self._run
-        self.cache = {}
+        self.clock = time.monotonic
+        self.cache = collections.OrderedDict()
         self.lock = threading.Lock()
+        self.pending = {}
         status = self.runner([self.tailscale, "status", "--json"])
         own = status["Self"]
         self.owner = status["User"][str(own["UserID"])]["LoginName"]
@@ -1210,21 +1700,63 @@ class TailnetAuth:
             return True
         if self.allow_local and address in ("127.0.0.1", "::1"):
             return True
-        now = time.monotonic()
         with self.lock:
+            now = self.clock()
             cached = self.cache.get(address)
-            if cached and cached[1] > now:
+            if cached is not None and cached[1] > now:
+                self.cache.move_to_end(address)
                 return cached[0]
+            self.cache.pop(address, None)
+            event = self.pending.get(address)
+            owned = event is None
+            if owned:
+                if len(self.pending) >= self.MAX_WHOIS:
+                    return False
+                event = threading.Event()
+                self.pending[address] = event
+        if not owned:
+            event.wait(self.WAIT_SECONDS)
+            return self._cached(address)
+        verdict, ttl = False, self.REJECTED_TTL
         try:
             who = self.runner([self.tailscale, "whois", "--json", address])
             login = who["UserProfile"]["LoginName"]
             system = who["Node"]["Hostinfo"].get("OS", "")
             verdict = login == self.owner and system.lower() in ("ios", "android")
-        except (subprocess.SubprocessError, OSError, KeyError, ValueError, TypeError):
-            return False
-        with self.lock:
-            self.cache[address] = (verdict, now + 300)
+            ttl = self.ALLOWED_TTL if verdict else self.REJECTED_TTL
+        except (
+            subprocess.SubprocessError,
+            OSError,
+            KeyError,
+            ValueError,
+            TypeError,
+            AttributeError,
+        ):
+            pass
+        finally:
+            self._publish(address, verdict, ttl)
         return verdict
+
+    def _publish(self, address, verdict, ttl):
+        try:
+            with self.lock:
+                self.cache[address] = (verdict, self.clock() + ttl)
+                self.cache.move_to_end(address)
+                while len(self.cache) > self.MAX_CACHE:
+                    self.cache.popitem(last=False)
+        finally:
+            with self.lock:
+                event = self.pending.pop(address, None)
+            if event is not None:
+                event.set()
+
+    def _cached(self, address):
+        with self.lock:
+            cached = self.cache.get(address)
+            if cached is not None and cached[1] > self.clock():
+                self.cache.move_to_end(address)
+                return cached[0]
+        return False
 
     def hosts(self, port):
         names = set(self.addresses) | {self.dns_name, self.dns_name.split(".")[0]}
@@ -1368,6 +1900,16 @@ class Gateway:
         return load_workspace(self.registry)
 
     def agent(self, identifier):
+        """An agent, or a quick-command terminal, by id."""
+        if identifier.startswith("terminal-"):
+            return next(
+                (
+                    item
+                    for item in load_terminals(self.registry)
+                    if item["id"] == identifier
+                ),
+                None,
+            )
         for agent in self.workspace()["agents"]:
             if agent["id"] == identifier:
                 return agent
@@ -1400,6 +1942,23 @@ class Gateway:
 
 def agent_route(parts, action):
     return len(parts) == 4 and parts[:2] == ["api", "agents"] and parts[3] == action
+
+
+def category_route(parts, action):
+    return len(parts) == 4 and parts[:2] == ["api", "categories"] and parts[3] == action
+
+
+# The Mac settings the phone can change, which the Mac's Settings window also
+# sets: staying awake for the phone, the Mac's alerts, and plan usage. How the
+# Mac's window looks stays the Mac's to choose.
+PHONE_SETTINGS = {
+    "keepAwake": bool,
+    "alertSound": bool,
+    "alertRepeat": int,
+    "finishSound": bool,
+    "notify": bool,
+    "showUsage": bool,
+}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1486,6 +2045,12 @@ class Handler(BaseHTTPRequestHandler):
             self.list_folders()
         elif parts == ["api", "machines"]:
             self.list_machines()
+        elif parts == ["api", "terminals"]:
+            self.list_terminals()
+        elif parts == ["api", "conversations"]:
+            self.list_conversations()
+        elif parts == ["api", "settings"]:
+            self.forward({"request": "settings"}, "settings")
         elif agent_route(parts, "screen"):
             self.screen(parts[2])
         elif agent_route(parts, "stream"):
@@ -1505,8 +2070,26 @@ class Handler(BaseHTTPRequestHandler):
             self.start_agent()
         elif agent_route(parts, "close"):
             self.close_agent(parts[2])
+        elif agent_route(parts, "rename"):
+            self.rename_agent(parts[2])
+        elif agent_route(parts, "place"):
+            self.place_agent(parts[2])
+        elif agent_route(parts, "restart"):
+            if self.drained():
+                self.forward({"request": "restartAgent", "id": parts[2]})
         elif parts == ["api", "categories"]:
             self.create_category()
+        elif category_route(parts, "rename"):
+            self.rename_category(parts[2])
+        elif category_route(parts, "remove"):
+            if self.drained():
+                self.forward({"request": "removeCategory", "id": parts[2]})
+        elif category_route(parts, "place"):
+            self.place_category(parts[2])
+        elif parts == ["api", "settings"]:
+            self.change_settings()
+        elif parts == ["api", "terminals"]:
+            self.open_terminal()
         elif parts == ["api", "captures"]:
             self.capture()
         else:
@@ -1645,10 +2228,10 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 request[field] = value
             title = body.get("title", "")
-            require(isinstance(title, str) and len(title) <= 80, "Invalid title")
+            require(title == "" or valid_name(title), "Invalid title")
             if title:
                 request["title"] = title
-            for field in ("model", "mode"):
+            for field in ("model", "mode", "resume"):
                 value = body.get(field, "")
                 require(
                     isinstance(value, str) and len(value) <= 128, f"Invalid {field}"
@@ -1699,6 +2282,28 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return body
 
+    def drained(self):
+        """Reads any body, so the kept-alive connection stays in step; False
+        after replying when it is too large."""
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+        except ValueError:
+            length = -1
+        if not 0 <= length <= MAX_REQUEST:
+            self.fail(HTTPStatus.BAD_REQUEST, "Invalid request size")
+            return False
+        self.rfile.read(length)
+        return True
+
+    def forward(self, request, field=None):
+        """Asks the Mac's lapis; replies {"ok": true}, or its `field` when named."""
+        answer = self.ask_desktop(request)
+        if answer is not None:
+            self.reply(
+                HTTPStatus.OK,
+                {field: answer.get(field, {})} if field else {"ok": True},
+            )
+
     def create_category(self):
         """A new category on the Mac; the Mac's window stays where it is."""
         body = self.read_object()
@@ -1712,18 +2317,150 @@ class Handler(BaseHTTPRequestHandler):
         if answer is not None:
             self.reply(HTTPStatus.OK, {"id": str(answer.get("id", ""))})
 
-    def close_agent(self, identifier):
-        """Ends the agent, as Command-W does on the Mac."""
-        # Any body is read, so the kept-alive connection stays in step.
-        try:
-            length = int(self.headers.get("Content-Length", "0") or 0)
-        except ValueError:
-            length = -1
-        if not 0 <= length <= MAX_REQUEST:
-            self.fail(HTTPStatus.BAD_REQUEST, "Invalid request size")
+    def rename_agent(self, identifier):
+        """Names the agent on the Mac; the name stays over its conversation's title."""
+        body = self.read_object()
+        if body is None:
             return
-        self.rfile.read(length)
-        answer = self.ask_desktop({"request": "closeAgent", "id": identifier})
+        title = body.get("title")
+        if not valid_name(title):
+            self.fail(HTTPStatus.BAD_REQUEST, "Use an agent name of 1-80 characters")
+            return
+        answer = self.ask_desktop(
+            {"request": "renameAgent", "id": identifier, "title": title.strip()}
+        )
+        if answer is not None:
+            self.reply(HTTPStatus.OK, {"ok": True})
+
+    def rename_category(self, identifier):
+        """Names a category on the Mac, as Rename category does there."""
+        body = self.read_object()
+        if body is None:
+            return
+        name = body.get("name")
+        if not isinstance(name, str) or not 0 < len(name.strip()) <= 80:
+            self.fail(HTTPStatus.BAD_REQUEST, "Use a category name of 1-80 characters")
+            return
+        self.forward(
+            {"request": "renameCategory", "id": identifier, "name": name.strip()}
+        )
+
+    def place_category(self, identifier):
+        """Moves a category to a position in the Mac's list of categories."""
+        body = self.read_object()
+        if body is None:
+            return
+        index = body.get("index")
+        if not position(index):
+            self.fail(HTTPStatus.BAD_REQUEST, "Invalid index")
+            return
+        self.forward({"request": "placeCategory", "id": identifier, "index": index})
+
+    def place_agent(self, identifier):
+        """Moves an agent to a position in a category (its end without one)."""
+        body = self.read_object()
+        if body is None:
+            return
+        category = body.get("category")
+        index = body.get("index", 1 << 20)
+        if not isinstance(category, str) or not 0 < len(category) <= 64:
+            self.fail(HTTPStatus.BAD_REQUEST, "Missing or invalid category")
+            return
+        if not position(index):
+            self.fail(HTTPStatus.BAD_REQUEST, "Invalid index")
+            return
+        self.forward(
+            {
+                "request": "placeAgent",
+                "id": identifier,
+                "category": category,
+                "index": index,
+            }
+        )
+
+    def change_settings(self):
+        """Changes some of PHONE_SETTINGS in the Mac's lapis.json; the answer
+        is all of them."""
+        body = self.read_object()
+        if body is None:
+            return
+        for name, value in body.items():
+            kind = PHONE_SETTINGS.get(name)
+            if kind is bool:
+                valid = isinstance(value, bool)
+            else:
+                valid = kind is int and position(value) and 1 <= value <= 10
+            if not valid:
+                self.fail(HTTPStatus.BAD_REQUEST, f"Invalid setting {name}")
+                return
+        self.forward({"request": "changeSettings", "settings": body}, "settings")
+
+    def list_terminals(self):
+        """The quick-command terminals: plain shells, one per machine."""
+        self.reply(
+            HTTPStatus.OK,
+            {
+                "terminals": [
+                    {
+                        "id": item["id"],
+                        "machine": item["machine"],
+                        "name": item["title"],
+                        "running": service_answers(item["endpoint"]),
+                        "onPhone": self.gateway.session(item["id"]) is not None,
+                    }
+                    for item in load_terminals(self.gateway.registry)
+                ]
+            },
+        )
+
+    def open_terminal(self):
+        """A machine's terminal, started by the Mac's lapis when it has none."""
+        body = self.read_object()
+        if body is None:
+            return
+        machine = body.get("machine", "")
+        if not isinstance(machine, str) or (
+            machine and not MACHINE_NAME.match(machine)
+        ):
+            self.fail(HTTPStatus.BAD_REQUEST, "Invalid machine")
+            return
+        answer = self.ask_desktop({"request": "openTerminal", "machine": machine})
+        if answer is not None:
+            self.reply(HTTPStatus.OK, {"id": str(answer.get("id", ""))})
+
+    def list_conversations(self):
+        """This Mac's recent Claude and Codex conversations, newest first, to
+        resume one as a new agent."""
+        payload, _ = self.gateway.folders.current()
+        if payload is None:
+            self.fail(
+                HTTPStatus.SERVICE_UNAVAILABLE, "Still reading this Mac's conversations"
+            )
+            return
+        home = self.gateway.folders.home
+        now = time.time()
+        self.reply(
+            HTTPStatus.OK,
+            {
+                "conversations": [
+                    {
+                        "harness": item["harness"],
+                        "id": item["id"],
+                        "directory": phone_path(item["directory"], home),
+                        "title": item["title"],
+                        "age": int(max(0, now - item["modified"])),
+                    }
+                    for item in self.gateway.folders.history.conversations[:60]
+                ]
+            },
+        )
+
+    def close_agent(self, identifier):
+        """Ends the agent, as Command-Shift-W does on the Mac, or a terminal's shell."""
+        if not self.drained():
+            return
+        kind = "closeTerminal" if identifier.startswith("terminal-") else "closeAgent"
+        answer = self.ask_desktop({"request": kind, "id": identifier})
         if answer is not None:
             self.gateway.supersede(identifier)
             self.reply(HTTPStatus.OK, {"ok": True})
@@ -1779,6 +2516,13 @@ class Handler(BaseHTTPRequestHandler):
             return True
 
     def pump(self, session):
+        """Report invalid live data through SSE before releasing the attachment."""
+        try:
+            self.pump_frames(session)
+        except GatewayError as error:
+            self.event("status", {"state": "disconnected", "message": str(error)})
+
+    def pump_frames(self, session):
         """Forward the newest screen at most every 50 ms until either side leaves."""
         self.event("frame", render_snapshot(session.first))
         latest, last_sent, last_ping = None, time.monotonic(), time.monotonic()
@@ -1837,6 +2581,10 @@ class Handler(BaseHTTPRequestHandler):
                 after = int(query["after"][0])
                 require(after > 0, "after needs a page")
                 reply = session.request_history(after, newer=True)
+            elif "at" in query:
+                row = int(query["at"][0])
+                require(row >= 0, "at needs a row")
+                reply = session.request_history(row, at=True)
             else:
                 reply = session.request_history(
                     max(0, int(query.get("before", ["0"])[0]))
@@ -1857,6 +2605,7 @@ class Handler(BaseHTTPRequestHandler):
         }
         if page is not None:
             body.update({"columns": page["columns"], "lines": page["lines"]})
+            body["place"] = page_place(reply["snapshot"])
         self.log_message(
             "history page %s, %s rows", body["page"], len(body.get("lines", []))
         )
@@ -1924,10 +2673,32 @@ class Handler(BaseHTTPRequestHandler):
                 if body.get("submit") or "paste" in body:
                     time.sleep(0.12)  # let a paste settle before Enter
                 session.key(str(body["key"]), int(body.get("modifiers", 0)))
+            if "wheel" in body:
+                steps, column, row = body["wheel"]
+                require(
+                    all(position(value) for value in (column, row))
+                    and isinstance(steps, int)
+                    and not isinstance(steps, bool),
+                    "Invalid wheel",
+                )
+                session.wheel(steps, column, row)
         except (ValueError, TypeError, KeyError, GatewayError, OSError) as error:
             self.fail(HTTPStatus.BAD_REQUEST, str(error))
             return
         self.reply(HTTPStatus.OK, {"ok": True})
+
+
+def lapis_home(environ=None, home=None):
+    """Where lapis keeps its workspace, as the desktop decides: LAPIS_HOME,
+    else the downloaded app's ~/.lapis once it has a workspace, else this
+    checkout (a developer build)."""
+    environ = os.environ if environ is None else environ
+    if environ.get("LAPIS_HOME"):
+        return Path(environ["LAPIS_HOME"])
+    app = Path(home or Path.home()) / ".lapis"
+    if (app / "runtime" / "workspace.json").is_file():
+        return app
+    return ROOT
 
 
 def tailscale_address(tailscale):
@@ -2010,9 +2781,11 @@ def serve(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--registry", default=str(ROOT / "runtime" / "workspace.json"))
     parser.add_argument(
-        "--config", default=str(ROOT / "lapis.json"), help="lapis settings"
+        "--registry", default=str(lapis_home() / "runtime" / "workspace.json")
+    )
+    parser.add_argument(
+        "--config", default=str(lapis_home() / "lapis.json"), help="lapis settings"
     )
     parser.add_argument(
         "--bind",

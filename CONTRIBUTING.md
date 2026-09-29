@@ -36,21 +36,23 @@ For subsequent edits, select checks using the [matrix](#checks) and
 python3 scripts/lapis.py doctor    # report which dependencies are ready
 python3 scripts/lapis.py quality  # repository/Python baseline, no GUI
 python3 scripts/lapis.py check
-python3 scripts/lapis.py build
-python3 scripts/lapis.py ui-check
-python3 scripts/lapis.py cli-check
 ```
 
 `scripts/lapis.py` resolves the build environment itself, so no `LAPIS_*`
 variable needs exporting. It finds the bootstrapped Ghostty prefix, supplies the
-socket path, and opens windows on the laptop panel. Equivalent `just` recipes
+socket path, and selects the local build dependencies. Equivalent `just` recipes
 (`just check`, `just desktop`, `just ui-check`, `just cli-check`) call the same
 launcher; run `python3 scripts/lapis.py` with no arguments for the full list.
 The underlying scripts still accept the documented variables directly when a
 specific prefix or display is required.
 
-The desktop steps require a logged-in graphical session and the exact dependencies
-below. Run GUI checks serially, including across worktrees, so windows do not steal
+Use `python3 scripts/lapis.py ui-review` for routine background UI reviews after
+the dependencies are ready. The full desktop gate (`python3 scripts/lapis.py build`)
+includes GUI tests and requires a logged-in graphical session. Schedule it and
+the `ui-check` and `cli-check` capture gates under
+[test host selection](AGENTS.md#test-host-selection), reusing existing session
+authorization. Use focused targets and background cases for ordinary iteration.
+Run GUI checks serially, including across worktrees, so windows do not steal
 focus from another test. The baseline is not a substitute for the scope-specific
 sanitizer, tooling or dependency checks in the [required matrix](#checks).
 For the deferred Linux port, record a headless baseline and its platform limits; do not claim desktop
@@ -68,17 +70,8 @@ edits to root CMake files, shared headers, architecture and status docs. Tempora
 worker scopes prevent collisions; separate worktrees are useful when independent
 changes need isolated builds.
 
-Before a worker writes, record a short brief with these fields (in the task or PR,
-not another project roadmap):
-
-```text
-Objective and exclusions:
-Committed baseline and working directory:
-Temporary write allowlist; shared-file integration owner:
-Dependencies and shared interface/version:
-Acceptance commands; build directory/owner; GUI exclusivity:
-Handoff: changed files, contract effects, commands/results, evidence, open issues
-```
+Before a worker writes, use the [shared work record](#work-records-and-review-checkpoints)
+as its brief. Keep the contract and acceptance criteria with the assignment.
 
 Review the diff and completion receipt before integration; a worker's completed
 turn is not proof that its assignment or tests finished. Reuse the same scoped
@@ -105,6 +98,58 @@ scheduling checks that already passed on unchanged assembled source.
 Individual branches passing tests do not establish integration acceptance. Use
 one build owner per checkout/preset; shared `build/reports/<mode>/` receipts are
 overwritten on rerun, so preserve relevant logs before another run.
+
+### Work records and review checkpoints
+
+For substantial work, keep one compact record in the task context or ignored
+`build/<task>/work.md`. A small edit can use the same fields in a short handoff.
+This is execution state; README still owns product status, architecture owns the
+plan/contracts, and this guide owns procedure. Avoid another tracked roadmap.
+
+```xml
+<work_record>
+  <objective>Requested outcome, current milestone or maintenance batch, exclusions.</objective>
+  <baseline>Checkout, branch, HEAD, dirty work to preserve, relevant PR head and overlap.</baseline>
+  <scope>Temporary write allowlist, collaborators, shared-file and build owner.</scope>
+  <contracts>State/resource owner, session or connection identity, interfaces and compatibility.</contracts>
+  <checks>Supported commands and cases, platform, expected observations, build directory, reusable evidence.</checks>
+  <validation>Fresh or reused result; command, source SHA/dirty state, scope, platform/tool versions, outcome and receipt.</validation>
+  <findings>Kind, concrete trigger, affected contract, disposition, evidence and next action.</findings>
+  <handoff>Changed files, tested source state, outcomes, limits and the next unfinished item.</handoff>
+</work_record>
+```
+
+At each integration checkpoint, update rather than duplicate the record. Classify
+findings as **defect**, **contract gap**, **acceptance gap** or **preference**, and
+record whether each is open, fixed and verified, deferred with a reason, or
+rejected with evidence. A source fix with missing required acceptance remains an
+acceptance gap. Transfer these dispositions into the PR/handoff; preserve concise
+sanitized evidence in `evidence/` and detailed logs under `build/`.
+For reused results, preserve their original revision and explain why their tested
+inputs still match; link the receipt instead of copying its full contents.
+
+### Quality review checkpoints
+
+Reviewers apply these checks to the affected boundaries. These are explicit manual
+review rules, supported by behavior tests where useful; no automated architecture
+gate is implied.
+
+| Boundary | Review question and expected evidence |
+| --- | --- |
+| Module and state ownership | Does the existing owner still make the decision? Declare direct build dependencies, keep adapters independent, and give an extraction a concrete consumer. Avoid parallel registries, provider strings in shared policy, and duplicate sources of derived state. |
+| Async work and persistence | Capture session/host/generation identity before suspension; validate it before mutation, persistence, deferred cleanup and follow-up work. Check A-to-B-to-A changes and unchanged-identity updates. Cache keys must distinguish complete owners; private task handles stay private. |
+| Resources and failure paths | Bound active work, queued work and retained state separately. Check acquisition/start failure as well as normal completion. Preserve the original failure and release only owned resources. Exercise successful cached decisions as well as refusal/retry paths. |
+| Test value and isolation | State the observable behavior each new case adds. Reuse shared fixtures without deleting distinct layer contracts. Await a trigger and completion for stale-response assertions; use a removed-fix control when a race test's sensitivity is uncertain. Give concurrent probes private build/runtime artifacts and clean them on setup failure. |
+| Evidence and integration | Bind results to tested inputs and scope. Reject empty success, stale passing receipts and unreachable assertions. Read review-service output: a green check can accompany a skipped review. Retain unresolved native-platform and sanitizer limitations, and reconcile overlapping PR/local changes before integration. |
+
+When creating or changing a verification runner, invalidate the previous output
+receipt before attempting checks. Setup, compilation and execution failures must
+leave a failing result or no current receipt, never an earlier pass.
+
+If a rule would only be checked by asserting that its wording appears in this
+file, use the manual review checkpoint instead. Mechanical standards belong in
+the existing formatter, analyzer or quality runner; new tests should detect a
+behavioral failure or recovery gap.
 
 ## Code standards
 
@@ -379,10 +424,19 @@ The committed `lapis.json` holds defaults only (see
   the category form.
   Command-Shift-P opens the searchable, scrollable Commands palette. Command-B
   toggles the sidebar; `sidebarVisible` persists in `lapis.json`. Command-V remains paste.
-  Command-comma opens Appearance. Command-W (`closeAgent`) closes the focused
-  agent, confirming first while it may be running. Command-Q quits the GUI and
-  the window's close button detaches it; neither stops service-owned agents.
+  Command-comma opens Appearance. Command-W (`closeAgent`) closes what is in
+  front: the side terminal's panel, else the focused agent (confirming first
+  while it may be running), else, with no agent in the category, the window.
+  Command-Shift-W (`closeWindow`) and the close button hide the window while
+  lapis keeps running, and the Dock icon brings it back; Command-M
+  (`minimizeWindow`) minimizes. Command-Q quits the GUI; none of these stops service-owned agents.
   `detachWindow` still works when configured but has no default key.
+- Command-O (`resumeConversation`) lists past Claude Code and Codex
+  conversations and resumes one as a new agent. ``Command-` `` and ``Control-` ``
+  (`toggleTerminal`) show and hide the side terminal; Command-~
+  (`chooseTerminal`) picks its machine. On the Mac a local key monitor takes
+  ``Command-` `` before AppKit's window cycling. With no agent open, the home list
+  holds the keyboard. Appearance lists every action's keys.
 - Linux uses Control-Shift-based counterparts, with Alt added for the category
   arrows and new-category creation. Bare terminal Control chords remain
   terminal input.
@@ -402,9 +456,11 @@ Appearance settings offer coordinated palettes (including OLED black, whose
 resting surfaces are all `#000000`), border/motion treatments,
 three chrome densities and the terminal font. The Command color theme is the
 default. `terminalFont` holds an optional `family` and a `size` of 10–32 pixels
-(default 16); omitting `family` uses the platform fixed-width font, and an
+(default 14); omitting `family` uses the platform fixed-width font, and an
 unavailable or proportional family falls back to it. The same family is used for
-machine readouts in the window. These choices persist
+machine readouts in the window. Enter a size directly in Appearance or use the
+plus/minus controls; Enter or focus loss applies a valid size, while invalid
+values restore the saved size. Existing saved sizes remain unchanged. These choices persist
 atomically in `lapis.json`; category/session identities and window geometry live
 in private local runtime files. Legacy layout values can still be read for config
 compatibility but do not reintroduce preview panes or change the single stage.
@@ -609,6 +665,23 @@ reproducible symptom; a screenshot alone does not establish an application defec
 Apple silicon Mac with Xcode, Homebrew's `vulkan-headers` and `molten-vk`, and a
 bootstrapped Ghostty build. Everything goes under ignored `build/release/`.
 
+The canonical app icon is [assets/lapis.svg](assets/lapis.svg): the gold-star
+Cabochon with a solid blue face and raised rim. To regenerate its checked-in
+Mac ICNS, iPhone PNG and website SVG/PNGs, run
+`python3 scripts/package_macos.py icon` on macOS with `rsvg-convert` installed
+(`brew install librsvg`; exercised with librsvg 2.63.2). This build tool adds no
+application runtime dependency. The command renders every Mac size from vectors
+and writes source/output hashes to `build/release/icon/receipt.json`.
+The command stages all outputs before replacing any asset and publishes the
+receipt last. A handled publication failure restores previous bytes and metadata
+and removes newly created outputs. If restoration itself fails, the error names
+the retained recovery copy. Replacements are atomic per file; abrupt process
+death or power loss can leave a mixed set.
+Preserve the SVG's `tile-edge`, `tile-face`, `cabochon` and gradient IDs: the
+iPhone export uses the tile bounds and background color for an opaque square,
+leaving corner masking to iOS. The Mac and website retain the SVG's existing
+margin and rim, without an additional crop or mask.
+
 ```sh
 uv run --no-project python scripts/package_macos.py qt       # once: Qt from pinned source
 uv run --no-project python scripts/package_macos.py app      # build, bundle, sign
@@ -627,6 +700,12 @@ the keychain's one Developer ID Application identity (or `LAPIS_SIGN_IDENTITY`)
 and the hardened runtime. `notarize` needs a notarytool keychain profile, made
 once with `xcrun notarytool store-credentials NAME`, and staples the app and
 then the DMG.
+
+For local packaging qualification without a Developer ID identity, use
+`LAPIS_SIGN_IDENTITY=- python3 scripts/package_macos.py app`, then
+`python3 scripts/package_macos.py verify`. This produces an ad hoc signed bundle
+under `build/release/stage/`; it does not establish distribution signing or
+notarization. Record the signing mode with the result.
 
 `verify` fails the release when a binary is not arm64-only, needs a macOS newer
 than 14, links anything outside the bundle or the system, or holds the build
@@ -657,7 +736,7 @@ Run from the repository root:
 
 | Command | What it checks |
 | --- | --- |
-| `just quality` | Repository contracts, diff whitespace, Python lint/format and unit tests; no GUI |
+| `just quality` | Repository contracts, diff whitespace, Python lint/format across `apps`, `scripts` and `tools`, and unit tests; no GUI |
 | `just check` | Compiler warnings as errors, CTest, format, clang-tidy, and Cppcheck |
 | `just asan` | CTest with AddressSanitizer and UndefinedBehaviorSanitizer |
 | `just tsan` | CTest with ThreadSanitizer in a separate build |
@@ -667,7 +746,8 @@ Run from the repository root:
 | `just desktop` | Optimized desktop/service build, PTY/transport/UI cases and static checks |
 | `just run` | Open the previously built live shell window |
 | `just ui` / `just ui-debug` | Isolated source-QML fixture, directly or in LLDB |
-| `just ui-check` | Bounded isolated captures, attention state and expected failures |
+| `just ui-review` | Focused build and background workspace UI, shortcuts and terminal-input checks; no OS focus or pointer changes |
+| `just ui-check` | Native bounded isolated captures, attention state and expected failures |
 | `just cli-check` | Isolated live service/CLI and shell GUI acceptance |
 | `just native-input` | Automated macOS keyboard/clipboard and real Japanese IME through the PTY |
 | `just ios-check` | iPhone app UI tests in a headless simulator, synced with a Mac-side client, including real Codex and Claude Code on a fake model |
@@ -689,7 +769,7 @@ union of the relevant checks; a check satisfying two rows runs once:
 | Disk history | `python3 scripts/check_history.py --disk-full` on macOS, plus desktop-enabled ASan/TSan; the disk-full fixture creates and removes its own 32 MiB disk image |
 | Python tooling | `just quality` (includes Ruff and Python unit tests), plus relevant runtime probes |
 | iPhone app or gateway (`apps/ios`, `apps/remote`) | `just quality` (includes the gateway suite, with a live service when the desktop is built) and `uv run --no-project python scripts/check_ios_remote.py --codex --claude` on macOS with an iOS Simulator runtime |
-| Before a release (Mac and iPhone together) | The full Linux gate (`lapis.py linux-gui`, whose workspace suite joins a view beside the real desktop connection and types both ways) and, on the Mac, `just quality` plus `just ios-check`, whose Mac-side client stays attached through every UI test and must see and answer the phone |
+| Before a release (Mac and iPhone together) | The macOS desktop/native gates above, `just quality` and `just ios-check`, whose Mac-side client stays attached through every UI test and must see and answer the phone. Linux UI qualification remains deferred; run its gate when that port is explicitly selected. |
 | Mac app packaging (`scripts/package_macos.py`, `apps/desktop/macos`, `LAPIS_PACKAGE`) | `just quality`, then `package_macos.py app` and `verify` on the Mac; `verify --notarized` for a release |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; run `just quality` for shared check/config/instruction changes; no unrelated C++ rebuild |
 
@@ -698,6 +778,38 @@ build/run, for example `scripts/check_ios_remote.py --only testRotationWhileComp
 --only testSendScreenToMac`. Apply the result-reuse rules below to unchanged
 adapter coverage. Simulator cleanup shuts down only the device that this run
 booted.
+
+For `AgentSession` or `WorkspaceModel` lifecycle changes, start with the smaller Foundation
+check before simulator integration:
+
+```sh
+python3 tools/qa/run_history_lifecycle_probe.py \
+  --output build/qa/history-lifecycle/receipt.json
+```
+
+It compiles the production Swift models on macOS and uses a disposable loopback
+HTTP/SSE peer to control old responses, replacement attachments, prefetch,
+paging, in-flight input and A-to-B-to-A gateway changes. Preferences and disk
+caches are injected into the fixture and remain isolated from the user's state.
+It exercises model ownership without a simulator or desktop input. Then
+select `testTakenElsewhereThenReopened` and `testScrollingBackLoadsHistory` in the
+simulator runner to verify the affected app integration. Reuse unchanged adapter
+checks according to the selection rules below.
+
+The CLI launch runner also supports focused cases without starting an installed
+agent or desktop window unless explicitly selected and enabled:
+
+```sh
+python3 scripts/check_cli_launch.py --list-cases
+python3 scripts/check_cli_launch.py --case identity-boundaries \
+  --case synchronization-boundaries --output build/qa/cli-ownership.json
+```
+
+Listing is inert and needs no build. Repeat `--case` to choose a subset; duplicate
+selections run once. Unknown cases and cases missing their required `--desktop`
+or `--codex` flag fail before execution and invalidate stale output receipts.
+With no selection, the existing full eligible case set runs. Receipts record
+the actual cases executed; a subset is not the full CLI gate.
 
 ### Claude Code hook qualification
 
@@ -756,7 +868,19 @@ output directory when diagnosing a rerun.
 
 ### Selecting checks and reusing results
 
+For history UI iteration after a desktop build, run
+`build/desktop/apps/desktop/lapis_ui_preview_tests --background --history-only`.
+This selects the real-service history/resize fixture without repeating unrelated
+workspace captures. Use the full background UI runner for an assembled handoff.
+
+
 Select the required commands before running them:
+
+- For routine UI review, start with `just ui-review`. It builds only the two
+  fixture targets and runs their three background cases serially, without the
+  full CTest/static-analysis gate. Use this for iteration, then apply the native
+  and integration rows above when their behavior changes. Do not run the same
+  binaries manually again after this command passes.
 
 - `just quality` includes Python lint, format checks and unit discovery. Separate
   Ruff or unittest commands are useful for focused diagnosis, but need not follow
@@ -789,6 +913,19 @@ require the affected checks again. Required CI and repository rules still apply.
 The commands themselves execute their checks; this procedure does not add an
 automatic cache or silently skip a requested run.
 
+For iPhone model lifecycle edits, the fast local check is
+`python3 tools/qa/run_history_lifecycle_probe.py`. It compiles the production
+Foundation models and checks controlled stale responses, reconnects and cache
+ownership without a simulator. The `--negative-control workspace` and
+`--negative-control terminals` variants remove one ownership guard from a
+temporary source copy; each must exit 1 with its matching stale-response
+diagnostic and record `control_verified: true`. The receipt keeps `passed: false`
+for these controls, including when the expected failure was observed. A setup
+failure, unrelated diagnostic or unexpected fixture route does not verify a
+control. Use these controls when changing the regression itself, rather than
+rerunning them for unrelated edits. This probe does not replace the iOS
+integration row at handoff.
+
 Without `just`, use `python3 scripts/check_cpp.py dev`, replacing `dev` with
 `asan`, `tsan`, `profile`, `desktop`, or `format` as appropriate. The detector check is
 `python3 scripts/verify_cpp_tools.py`.
@@ -796,7 +933,10 @@ Without `just`, use `python3 scripts/check_cpp.py dev`, replacing `dev` with
 Builds use Ninja and ccache when available. Analysis runs in parallel, up to
 eight workers by default; use `--jobs N` on `check_cpp.py` to adjust it. Each
 invocation records diagnostics, tool versions, exit codes, and durations under
-`build/reports/<mode>/`. Static analysis runs even when compilation is cached. Desktop analysis uses the
+`build/reports/<mode>/`. The C++ runner invalidates the previous receipt before
+starting checks and records toolchain/version failures as failures. Format mode
+writes its own receipt; it does not establish compilation or behavior coverage.
+Static analysis runs even when compilation is cached. Desktop analysis uses the
 Qt Cppcheck library and excludes generated MOC/resource files from source analysis;
 the compiler still builds those files with project warnings enabled.
 
@@ -832,16 +972,24 @@ is not a desktop test pass. These are suites, not counts of individual assertion
 | `agent-checkpoint` | Desktop-enabled | Restore-hook sequences, identity/host checks, private records and observer provenance |
 | `live-connection` | Desktop-enabled | Screen-before-input, exact attention decisions/rejections, duplicate gating, explicit reconnect/discovery, lost/stale snapshots and legacy-server rejection |
 | `pty-process` | Desktop-enabled | Real launch/I/O/resize, exit, failure and process cleanup |
+| `terminal-keys-mac` | Desktop-enabled, macOS | AppKit local key monitor, logical layout keys and teardown using the process's own event queue; no focus or cursor changes |
 | `keymap` | Desktop-enabled | Configuration defaults, appearance choices, persistence and invalid input |
 | `workspace` | Desktop-enabled | Category registry (private atomic writes, rollback on failure), agent create/close/reopen, per-category selection, unseen marks, status sources and parent-session marker removal |
 | `window-state` | Desktop-enabled | Machine-local window geometry, off-screen restore, isolated modes, unsafe paths, legacy layout values and modal focus |
+| `agent-search` | Desktop-enabled | Agent matching, ranking and query handling |
+| `app-environment` | Desktop-enabled | Application launch environment and executable discovery |
+| `terminal-find` | Desktop-enabled | Terminal text matching and row/column results |
+| `tile-layout` | Desktop-enabled | Tile placement, navigation and layout bounds |
+| `cell-shapes` | Desktop-enabled | Block, box and quadrant geometry |
+| `harness-models` | Desktop-enabled | Model discovery, parsing, defaults and result bounds |
+| `usage` | Desktop-enabled | Usage parsing, aggregation and provider state |
 | `ui-preview` | Desktop-enabled | Qt reload, screen selection, passive attention, modal response ownership, draft/IME preservation, input and render lifecycle |
 | `appearance-input` | Desktop-enabled, native GUI | Configured settings shortcut, modal focus, all theme/layout/density controls, persistence and shortcut reload |
 | `history-store` | Desktop-enabled | Styled page round trips, per-session/global quotas, corruption, interrupted-write cleanup and file-size write failure recovery |
 | `terminal-input` | Desktop-enabled, native GUI | Qt composition commit/cancel, replacement rejection, paste and focus/document/history/disconnect ownership |
 | `terminal-render` | Desktop-enabled | Real Qt Vulkan pixel regressions for cell background grids, wide/combining characters, fallback/RTL text, styles/decorations, actual Ghostty resize, cursor placement and clearing |
 
-`just desktop` runs these twenty-two suites plus static checks. The separate Python
+`just desktop` runs the registered suites plus static checks. The separate Python
 GUI harness checks five preview captures and seven expected failures. The CLI
 harness checks detached service behavior, attachment generations, fragmented
 handshakes, synchronization timeout, stale controls, bounded queue failure and
@@ -1033,22 +1181,55 @@ request kinds. See the [Milestone 2 plan](docs/architecture.md#milestone-2-atten
 
 ### History and input qualification
 
-For routine terminal input logic, run the explicit background mode after building:
+For macOS terminal shortcut routing, build `lapis_terminal_keys_mac_tests` and
+run `ctest --test-dir build/desktop -R '^terminal-keys-mac$' --output-on-failure
+--no-tests=error`. It sends events only through its own AppKit queue and opens no
+window. This covers the local monitor; it does not replace native IME or
+pasteboard qualification.
+
+For routine terminal input and workspace UI logic, use the supported background
+review command. It configures the desktop preset, builds the required targets,
+and runs the three fixtures serially:
+
+```sh
+python3 scripts/lapis.py ui-review
+python3 scripts/lapis.py ui-review --json  # same checks, machine-readable result
+```
+
+Choose one output form per run. Each invocation saves a private receipt, logs and
+software-rendered PNGs under `build/reports/ui-review/`. The receipt lists captures
+from that invocation, so agents can inspect UI layouts without opening a native
+window or rerunning the fixture. Failures return a nonzero exit code and never
+fall back to a native window. This focused command shares `build/desktop` with the desktop
+gate, so keep one build owner per checkout. It does not run static analysis or
+unrelated CTest suites. For diagnosing a single case after building its target,
+the underlying modes remain available:
 
 ```sh
 build/desktop/apps/desktop/lapis_terminal_input_tests --background
+build/desktop/apps/desktop/lapis_ui_preview_tests --background
+build/desktop/apps/desktop/lapis_ui_preview_tests --background --shortcuts-only
 ```
 
-It selects Qt's offscreen platform and software backend, checks those selections,
-and exercises the same synthetic key, composition, paste, history and ownership
-assertions against the local protocol fixture. It uses virtual window focus and
+These select Qt's offscreen platform and software backend, check those selections,
+and exercise the same synthetic key, composition, paste, history and ownership
+assertions against local protocol fixtures. They use virtual window focus and
 Qt's offscreen clipboard, without requesting macOS foreground access or moving
 the system pointer. Timeout diagnostics identify the calling assertion. This is
-logical Qt coverage; it does not qualify AppKit input, the system pasteboard,
+logical Qt coverage; the background UI mode leaves exact cursor-pixel assertions
+to the native GPU run. It does not qualify AppKit input, the system pasteboard,
 Apple IME, display rendering or GPU presentation. The ordinary CTest entry still
 requires the native desktop. Run the background mode while the desktop is in use;
 reserve short exclusive windows for the native checks below. Do not replace a
 failed native result with a background pass or relabel it as native acceptance.
+
+For a separate background `window-state` run, give Qt an explicit virtual screen.
+Its default offscreen screen can be smaller than the saved-window fixture. A JSON
+file containing `{"screens":[{"name":"qualification","x":0,"y":0,"width":1920,"height":1080}]}`
+can be selected with `QT_QPA_PLATFORM=offscreen:configfile=<absolute-json-path>`
+when running `ctest --test-dir build/desktop -R '^window-state$'
+--output-on-failure --no-tests=error`. This verifies geometry against that virtual
+screen; it does not qualify native window-manager placement.
 
 Build the current desktop first. Run these checks serially with other GUI work:
 
@@ -1148,23 +1329,32 @@ coverage. Physical keyboard hardware and key-to-photon measurements are outside
 Milestone 1 software acceptance. Selection/copy from terminal cells and a
 screen-reader terminal tree remain unsupported.
 
-History is under `runtime/history` by default. Before starting a service, set
-`LAPIS_HISTORY_ROOT` to an absolute private directory and optionally set
+History is kept in a `history` folder beside the service's endpoint (lapis's
+`runtime` folder: `~/.lapis/runtime/history` for the downloaded app), never at a
+path fixed when it was built. Before starting a service, set `LAPIS_HISTORY_ROOT`
+to an absolute private directory to put it elsewhere, and optionally set
 `LAPIS_HISTORY_SESSION_BYTES` / `LAPIS_HISTORY_GLOBAL_BYTES` (positive bytes,
-session <= global <= 4 GiB). Defaults are 64 MiB / 256 MiB, with a 4,096-page global
-cap. The global quota is shared by services using that root, not every arbitrary
-root on the machine. Pages preserve their recorded geometry; only in-memory
-engine history reflows on resize. History controls never resize or send input to
-the child. Return to Live restores its newest retained screen and requested size.
+session <= global <= 64 GiB). Defaults are 1 GiB / 8 GiB of compressed pages,
+which keeps a session back to its first row in practice: a screenful of agent
+output compresses to a few kilobytes. Each session appends pages to segment files
+of at most 16 MiB (`<first page>.seg`), indexed in memory so any row is one read
+away; over budget, a session's oldest segments go first, and over the global
+budget the least recently written closed segments of any session (never another
+session's open one). Pages written before segments (`*.page`) are counted and
+evicted but not read. The global quota is shared by services using that root,
+not every arbitrary root on the machine. Pages preserve their recorded geometry;
+only in-memory engine history reflows on resize. History controls never resize
+or send input to the child. Return to Live restores its newest retained screen
+and requested size.
 
 A storage failure pauses recording and reports a gap when history is requested;
 live I/O continues within its memory bound. Free space or repair the configured
 storage, then use Older to retry. A damaged page is rejected, never rendered as
 valid history. Retire a damaged archive directory only after its owning service
 has ended; archiving is terminal content, so retain it only as long as needed.
-The store removes only its known abandoned `.pending` write under its root lock;
-it leaves unknown files alone. Page-byte quotas exclude fixed metadata and bounded
-atomic-write overhead. Normal exit and direct service error shutdown allow up to three seconds to drain
+The store removes only its known abandoned `.pending` write under its root lock,
+and cuts off a record an interrupted write left at a segment's end; it leaves
+unknown files alone. Byte quotas count segment files, not the sequence counter. Normal exit and direct service error shutdown allow up to three seconds to drain
 queued pages; a forced
 service kill can lose its queued tail. Stored pages are not process recovery.
 
@@ -1192,7 +1382,7 @@ python3 scripts/check_cli_launch.py --build-dir build/desktop-asan \
 Repeat those configure/build/test/harness commands with preset `tsan` and all
 `desktop-asan` paths changed to `desktop-tsan`. Do not combine instrumentation or
 use `ctest --preset asan` for the custom directory: that preset targets
-`build/asan`. Each desktop-enabled directory must list all twenty-two suites above.
+`build/asan`. Each desktop-enabled directory must list all registered suites above.
 Use the same LLVM installation for normal and instrumented builds. Ccache is
 optional (`-DCMAKE_CXX_COMPILER_LAUNCHER=...`); raw CMake does not discover it.
 Reduce `--parallel` for host resource limits. The CLI command above runs service

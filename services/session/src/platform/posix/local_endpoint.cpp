@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <QString>
 #include <stdexcept>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -70,5 +71,13 @@ QString prepare_endpoint(const QString& endpoint) {
         !S_ISSOCK(existing.st_mode))
         throw std::invalid_argument("Socket path already contains a non-socket file");
     return result;
+}
+void widen_socket_buffers(qintptr descriptor) {
+    if (descriptor < 0)
+        return;
+    constexpr int bytes = 1024 * 1024;
+    const auto fd = static_cast<int>(descriptor);
+    static_cast<void>(::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &bytes, sizeof(bytes)));
+    static_cast<void>(::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &bytes, sizeof(bytes)));
 }
 } // namespace lapis::session::posix

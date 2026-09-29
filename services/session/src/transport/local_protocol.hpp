@@ -27,8 +27,21 @@ enum class Kind : quint8 {
     attention_retry,
     // Client request to end the agent's process; the service answers with the
     // ordinary `ended` status once the process has exited.
-    terminate
+    terminate,
+    // A turn of the wheel for a full-screen program (added within v6): BE i16
+    // notches (positive scrolls back), BE u16 column, BE u16 row. Services
+    // before it reject the frame, so clients send it only when a snapshot
+    // says the service accepts it (TerminalSnapshot::accepts_wheel).
+    wheel
 };
+// A wheel payload's fields; encode_wheel/decode_wheel.
+struct Wheel {
+    qint16 steps{};
+    quint16 column{};
+    quint16 row{};
+};
+[[nodiscard]] QByteArray encode_wheel(const Wheel& wheel);
+[[nodiscard]] Wheel decode_wheel(const QByteArray& payload);
 // Identities introduced in v3 and retained in v4/v6: two nonzero 16-byte UUIDs and a BE u64
 // generation.
 struct SessionIdentity {
@@ -48,6 +61,8 @@ struct AttachRequest {
     AttachMode mode{AttachMode::discover};
     QByteArray fingerprint;
     SessionIdentity expected;
+    bool hyperlinks{};      // Optional mode bit 0x80; legacy requests leave it clear.
+    bool attention_phase{}; // Optional capability bit 0x40; legacy requests leave it clear.
 };
 struct Hello {
     Attachment attachment;
@@ -65,10 +80,26 @@ struct SnapshotMessage {
     TerminalSnapshot snapshot;
     SnapshotTiming timing{};
 };
-enum class HistoryDirection : quint8 { older = 0, newer = 1 };
+// A snapshot message with its screen left encoded (encode_snapshot's bytes)
+// and only the screen's size read, for a client that decodes a screen only
+// when it is shown.
+struct SnapshotEnvelope {
+    Attachment attachment;
+    quint64 sequence{};
+    SnapshotTiming timing{};
+    TerminalSize size;
+    QByteArray encoded;
+};
+// `at` (added within v6) asks for the page holding a row, counted from the
+// oldest kept row. Services before it reject it; a client sends it only to a
+// service whose pages say where they sit (their history fields: total_rows
+// kept, viewport_offset the page's first row), which older services leave as
+// the page alone ({rows, 0, rows}).
+enum class HistoryDirection : quint8 { older = 0, newer = 1, at = 2 };
 struct HistoryRequest {
     quint64 request_id{};
-    quint64 reference{}; // Zero means newest for older; newer requires a page ID.
+    // Zero means newest for older; newer requires a page ID; at takes a row.
+    quint64 reference{};
     HistoryDirection direction{HistoryDirection::older};
 };
 struct HistoryReply {
@@ -82,7 +113,7 @@ struct HistoryReply {
 // their own attachment and request ID, independent of live snapshot sequence.
 [[nodiscard]] QByteArray encode_history_request(const HistoryRequest& request);
 [[nodiscard]] HistoryRequest decode_history_request(const QByteArray& payload);
-[[nodiscard]] QByteArray encode_history_reply(const HistoryReply& reply);
+[[nodiscard]] QByteArray encode_history_reply(const HistoryReply& reply, bool hyperlinks = true);
 [[nodiscard]] HistoryReply decode_history_reply(const QByteArray& payload);
 struct ControlMessage {
     Attachment attachment;
@@ -109,8 +140,10 @@ struct Status {
 [[nodiscard]] Hello decode_hello(const QByteArray& payload);
 // Snapshot: attachment[40], BE u64 sequence, three monotonic BE u64 timestamps,
 // existing snapshot encoding. Zero timing means no observed PTY output yet.
-[[nodiscard]] QByteArray encode_snapshot_message(const SnapshotMessage& message);
+[[nodiscard]] QByteArray encode_snapshot_message(const SnapshotMessage& message,
+                                                 bool hyperlinks = true);
 [[nodiscard]] SnapshotMessage decode_snapshot_message(const QByteArray& payload);
+[[nodiscard]] SnapshotEnvelope decode_snapshot_envelope(const QByteArray& payload);
 // Text/paste/key/resize: attachment[40], existing payload (at most 64 KiB).
 [[nodiscard]] QByteArray encode_control(const ControlMessage& message);
 [[nodiscard]] ControlMessage decode_control(const QByteArray& payload);
@@ -129,7 +162,7 @@ struct Frame {
 [[nodiscard]] bool take_frame(QByteArray& buffer, Frame& result);
 // consumed tracks the parsed prefix and is compacted lazily.
 [[nodiscard]] bool take_frame(QByteArray& buffer, qsizetype& consumed, Frame& result);
-[[nodiscard]] QByteArray encode_snapshot(const TerminalSnapshot& snapshot);
+[[nodiscard]] QByteArray encode_snapshot(const TerminalSnapshot& snapshot, bool hyperlinks = true);
 [[nodiscard]] TerminalSnapshot decode_snapshot(const QByteArray& bytes);
 } // namespace lapis::session::wire
 #endif

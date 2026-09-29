@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -17,10 +18,14 @@ namespace {
 using lapis::session::CellKind;
 using lapis::session::ColorKind;
 using lapis::session::CursorShape;
+using lapis::session::max_hyperlink_bytes;
+using lapis::session::max_hyperlink_spans;
+using lapis::session::max_hyperlink_uri_bytes;
 using lapis::session::Terminal;
 using lapis::session::TerminalCell;
 using lapis::session::TerminalColor;
 using lapis::session::TerminalHistory;
+using lapis::session::TerminalHyperlink;
 using lapis::session::TerminalLimits;
 using lapis::session::TerminalSize;
 using lapis::session::TerminalSnapshot;
@@ -53,6 +58,114 @@ void expect_text(const TerminalSnapshot& snapshot, std::size_t row, std::u32stri
 TerminalColor rgb(std::uint32_t value) { return TerminalColor{ColorKind::rgb, value}; }
 
 TerminalColor indexed(std::uint32_t value) { return TerminalColor{ColorKind::indexed, value}; }
+
+std::string osc8_link(std::string_view uri, std::string_view label) {
+    std::string sequence("\x1b]8;;", 5);
+    sequence += uri;
+    sequence += "\x1b\\";
+    sequence += label;
+    sequence += "\x1b]8;;\x1b\\";
+    return sequence;
+}
+
+const TerminalHyperlink& expect_hyperlink(const TerminalSnapshot& snapshot, std::size_t index,
+                                          const TerminalHyperlink& expected) {
+    std::uint32_t previous_end = 0U;
+    for (const TerminalHyperlink& span : snapshot.hyperlinks) {
+        require(span.cell_count > 0U && !span.uri.empty(), "invalid terminal hyperlink span");
+        require(span.first_cell >= previous_end, "terminal hyperlink spans overlap or reorder");
+        previous_end = span.first_cell + span.cell_count;
+        require(previous_end > span.first_cell, "terminal hyperlink span count overflowed");
+        require(previous_end <= snapshot.cells.size(), "terminal hyperlink span exceeds cells");
+    }
+    require(index < snapshot.hyperlinks.size(), "missing terminal hyperlink span");
+    const TerminalHyperlink& span = snapshot.hyperlinks.at(index);
+    require(span == expected, "unexpected terminal hyperlink geometry or URI");
+    return span;
+}
+
+void osc8_labeled_links() {
+    Terminal terminal({12, 3});
+    terminal.feed(osc8_link("https://lapis.example/a", "AA") +
+                  osc8_link("https://lapis.example/a", "BB") + "|" +
+                  osc8_link("https://lapis.example/b", "CC"));
+    const TerminalSnapshot snapshot = terminal.snapshot();
+    require(snapshot.hyperlinks.size() == 2, "adjacent equal URIs did not merge");
+    expect_hyperlink(snapshot, 0, {0U, 4U, "https://lapis.example/a"});
+    expect_hyperlink(snapshot, 1, {5U, 2U, "https://lapis.example/b"});
+}
+
+void osc8_wrapped_and_wide_cells() {
+    Terminal terminal({6, 3});
+    terminal.feed(osc8_link("https://lapis.example/wide", "abcdefg界X"));
+    const TerminalSnapshot snapshot = terminal.snapshot();
+    expect_text(snapshot, 0, U"abcdef");
+    require(cell(snapshot, 0, 1).kind == CellKind::narrow && snapshot.text(6) == U"g",
+            "unexpected wrapped link text");
+    require(cell(snapshot, 1, 1).kind == CellKind::wide && snapshot.text(7) == U"界",
+            "wide link cell was not retained");
+    require(cell(snapshot, 2, 1).kind == CellKind::wide_tail, "wide link tail was not retained");
+    require(snapshot.text(9) == U"X", "trailing link cell was not retained");
+    require(snapshot.hyperlinks.size() == 1, "wrapped/wide link split into multiple spans");
+    expect_hyperlink(snapshot, 0, {0U, 10U, "https://lapis.example/wide"});
+}
+
+void osc8_replacement_clearing_and_durability() {
+    Terminal terminal({12, 3});
+    terminal.feed(osc8_link("https://lapis.example/old", "AAA"));
+    terminal.feed("\x1b[1;1H" + osc8_link("https://lapis.example/new", "BB"));
+    const TerminalSnapshot replaced = terminal.snapshot();
+    expect_hyperlink(replaced, 0, {0U, 2U, "https://lapis.example/new"});
+    expect_hyperlink(replaced, 1, {2U, 1U, "https://lapis.example/old"});
+
+    terminal.feed("\x1b[1;1H\x1b[2K");
+    const TerminalSnapshot cleared = terminal.snapshot();
+    require(cleared.hyperlinks.empty(), "cleared cells retained hyperlink spans");
+    require(replaced.hyperlinks.size() == 2 &&
+                replaced.hyperlinks[0].uri == "https://lapis.example/new",
+            "retained snapshot did not own hyperlink strings");
+}
+
+void osc8_history_view() {
+    Terminal terminal({8, 4});
+    terminal.feed(osc8_link("https://lapis.example/history", "history") + "\r\n");
+    for (int number = 0; number < 10; ++number)
+        terminal.feed("row" + std::to_string(number) + "\r\n");
+    require(terminal.history_metadata().total_rows > 4, "history was not retained");
+    const TerminalSnapshot history = terminal.history_snapshot(0);
+    require(history.hyperlinks.size() == 1, "history link was not retained");
+    expect_hyperlink(history, 0, {0U, 7U, "https://lapis.example/history"});
+}
+
+void osc8_snapshot_bounds() {
+    Terminal malformed({20, 2});
+    malformed.feed(osc8_link("https://example.com/\xc2", "label"));
+    require(malformed.snapshot().hyperlinks.empty(), "truncated UTF8 URI was accepted");
+    require(malformed.snapshot().text(0) == U"l", "malformed URI dropped visible text");
+    Terminal oversized({2, 1});
+    oversized.feed(osc8_link(std::string(max_hyperlink_uri_bytes + 1U, 'u'), "x"));
+    require(oversized.snapshot().hyperlinks.empty(), "oversized URI was accepted");
+
+    Terminal total_bounded({8, 10});
+    for (int index = 0; index < 70; ++index) {
+        std::string uri = "uri:" + std::to_string(index);
+        uri.append(1024 - uri.size(), 'u');
+        total_bounded.feed(osc8_link(uri, "x"));
+    }
+    const TerminalSnapshot total_snapshot = total_bounded.snapshot();
+    std::size_t uri_bytes = 0U;
+    for (const TerminalHyperlink& span : total_snapshot.hyperlinks)
+        uri_bytes += span.uri.size();
+    require(total_snapshot.hyperlinks.size() == 64 && uri_bytes == max_hyperlink_bytes,
+            "total hyperlink byte bound was not applied");
+
+    Terminal span_bounded({512, 3});
+    for (int index = 0; index < 1025; ++index)
+        span_bounded.feed(osc8_link("u" + std::to_string(index), "x"));
+    const TerminalSnapshot span_snapshot = span_bounded.snapshot();
+    require(span_snapshot.hyperlinks.size() == max_hyperlink_spans,
+            "hyperlink span bound was not applied");
+}
 
 void ascii_cursor() {
     Terminal terminal({12, 4});
@@ -194,6 +307,32 @@ void input_modes() {
     require(terminal.encode_key(lapis::session::TerminalKey::up) == "\x1b[A" &&
                 terminal.encode_paste("echo hi") == "echo hi",
             "input modes did not reset");
+}
+
+// The wheel reaches a full-screen program as it asked: mouse wheel events in
+// its format (SGR here, as Claude Code's full-screen mode asks), arrow keys
+// on the alternate screen without mouse reporting, and nothing on the primary
+// screen, whose history the view scrolls instead.
+void wheel_input() {
+    Terminal terminal({12, 4});
+    require(terminal.encode_wheel({1, 0, 0}).empty(), "the primary screen took the wheel");
+    terminal.feed("\x1b[?1049h");
+    require(terminal.encode_wheel({1, 0, 0}) == "\x1b[A\x1b[A\x1b[A" &&
+                terminal.encode_wheel({-1, 0, 0}) == "\x1b[B\x1b[B\x1b[B",
+            "the alternate screen did not scroll by arrow keys");
+    terminal.feed("\x1b[?1000h\x1b[?1006h");
+    require(terminal.encode_wheel({2, 4, 2}) == "\x1b[<64;5;3M\x1b[<64;5;3M",
+            "a wheel back was not two SGR wheel-up events at the cell");
+    require(terminal.encode_wheel({-1, 99, 99}) == "\x1b[<65;12;4M",
+            "a wheel forward was not a wheel-down event inside the screen");
+    constexpr int minimum_steps = std::numeric_limits<int>::min();
+    require(terminal.encode_wheel({minimum_steps, 4, 2}) == terminal.encode_wheel({-64, 4, 2}),
+            "INT_MIN wheel clamping did not preserve direction and bound");
+    terminal.feed("\x1b[?1006l");
+    require(terminal.encode_wheel({1, 0, 0}) == std::string("\x1b[M") + char(32 + 64) + '!' + '!',
+            "the default mouse format was not used");
+    terminal.feed("\x1b[?1000l\x1b[?1049l");
+    require(terminal.encode_wheel({1, 0, 0}).empty(), "the wheel reached a program that left");
 }
 
 void snapshots_survive_changes() {
@@ -485,10 +624,16 @@ constexpr std::array cases{
     Case{"ascii_cursor", ascii_cursor},
     Case{"fragmented_utf8", fragmented_utf8},
     Case{"styles_and_colors", styles_and_colors},
+    Case{"osc8_labeled_links", osc8_labeled_links},
+    Case{"osc8_wrapped_and_wide_cells", osc8_wrapped_and_wide_cells},
+    Case{"osc8_replacement_clearing_and_durability", osc8_replacement_clearing_and_durability},
+    Case{"osc8_history_view", osc8_history_view},
+    Case{"osc8_snapshot_bounds", osc8_snapshot_bounds},
     Case{"erased_backgrounds", erased_backgrounds},
     Case{"alternate_screen", alternate_screen},
     Case{"resize_and_wrap_spacer", resize_and_wrap_spacer},
     Case{"input_modes", input_modes},
+    Case{"wheel_input", wheel_input},
     Case{"snapshot_durability", snapshots_survive_changes},
     Case{"cursor_visibility_and_shape", cursor_visibility_and_shape},
     Case{"dsr_reply_order", dsr_reply_order},

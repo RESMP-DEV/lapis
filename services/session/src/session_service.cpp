@@ -14,6 +14,7 @@
 #include <QDataStream>
 #include <QDebug>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QLocalServer>
@@ -91,9 +92,8 @@ class SessionService final : public QObject {
                    const LaunchSpec& launch)
         : lock_(endpoint + QStringLiteral(".lock")), terminal_(launch.size, limits()),
           fingerprint_(launch_fingerprint(launch)), identity_{requested_session_id, wire::new_id()},
-          history_(qEnvironmentVariable("LAPIS_HISTORY_ROOT",
-                                        QStringLiteral(LAPIS_DEFAULT_HISTORY_ROOT)),
-                   QString::fromLatin1(requested_session_id.toHex()), history_limits()) {
+          history_(history_root(endpoint), QString::fromLatin1(requested_session_id.toHex()),
+                   history_limits()) {
         configure_history();
         resume_endpoint_ = endpoint;
         checkpoint_agent_ = checkpoint_agent_for_launch(launch);
@@ -127,7 +127,6 @@ class SessionService final : public QObject {
             (static_cast<unsigned int>(bound_socket.st_mode) & 0077U) != 0U)
             throw std::runtime_error("Bound socket is not private to the current user");
         timer_.setSingleShot(true);
-        timer_.setInterval(16);
         connect(&timer_, &QTimer::timeout, this, [this] { publish(); });
         ack_timer_.setSingleShot(true);
         ack_timer_.setInterval(launch.agent == AgentMode::codex ? codex_sync_timeout_ms
@@ -227,9 +226,11 @@ class SessionService final : public QObject {
     void note_conversation(const QString& agent, const QString& session_id,
                            ResumeSource source = ResumeSource::observer) {
         // Printed bytes cannot impersonate the managed observer or downgrade
-        // an identity already learned through its independent protocol.
+        // an identity already learned through its independent protocol or an
+        // older Codex/Claude legacy record.
         if (source == ResumeSource::terminal &&
-            (codex_observer_ || claude_observer_ || resume_.source == ResumeSource::observer))
+            (codex_observer_ || claude_observer_ || resume_.source == ResumeSource::observer ||
+             (resume_.source == ResumeSource::legacy && observer_backed_agent(checkpoint_agent_))))
             return;
         if (!valid_resume_identity(session_id) ||
             (resume_.agent == agent && resume_.session_id == session_id &&
@@ -255,24 +256,27 @@ class SessionService final : public QObject {
         QLocalSocket* const destination = client_;
         const auto owner = attachment_;
         try {
-            wire::AttentionSnapshot snapshot{.attachment = owner,
-                                             .available = true,
-                                             .connected = state->connected(),
-                                             .ready = state->ready(),
-                                             .source_epoch = state->epoch(),
-                                             .activity = state->activity(),
-                                             .diagnostic =
-                                                 !decision_error_.isEmpty() ? decision_error_
-                                                 : !codex_error_.isEmpty()  ? codex_error_
-                                                 : codex_observer_ ? codex_observer_->diagnostic()
-                                                                   : claude_observer_->diagnostic(),
-                                             .requests = {}};
+            wire::AttentionSnapshot snapshot{
+                .attachment = owner,
+                .available = true,
+                .connected = state->connected(),
+                .ready = state->ready(),
+                .source_epoch = state->epoch(),
+                .activity = state->activity(),
+                .observation_phase = codex_observer_ ? codex_observer_->observationPhase()
+                                                     : attention::ObservationPhase::unknown,
+                .diagnostic = !decision_error_.isEmpty() ? decision_error_
+                              : !codex_error_.isEmpty()  ? codex_error_
+                              : codex_observer_          ? codex_observer_->diagnostic()
+                                                         : claude_observer_->diagnostic(),
+                .requests = {}};
             for (const auto& [id, pending] : state->pending())
                 snapshot.requests.push_back({pending, codex_observer_
                                                           ? codex_observer_->details(id)
                                                           : claude_observer_->details(id)});
-            const auto bytes = wire::frame(wire::Kind::attention_snapshot,
-                                           wire::encode_attention_snapshot(snapshot));
+            const auto bytes =
+                wire::frame(wire::Kind::attention_snapshot,
+                            wire::encode_attention_snapshot(snapshot, client_attention_phase_));
             if (destination->bytesToWrite() + bytes.size() > wire::max_frame_bytes ||
                 destination->write(bytes) != bytes.size())
                 throw std::runtime_error("Attention output queue unavailable");
@@ -501,6 +505,14 @@ class SessionService final : public QObject {
         result.max_input_bytes = std::size_t{64} * 1024U;
         return result;
     }
+    // Beside the service's endpoint, in lapis's runtime folder, unless
+    // LAPIS_HISTORY_ROOT names another; never a path fixed when it was built.
+    static QString history_root(const QString& endpoint) {
+        const auto chosen = qEnvironmentVariable("LAPIS_HISTORY_ROOT");
+        return chosen.isEmpty()
+                   ? QFileInfo(endpoint).absoluteDir().filePath(QStringLiteral("history"))
+                   : chosen;
+    }
     static HistoryLimits history_limits() {
         HistoryLimits result;
         const auto read_limit = [](const char* name, quint64 fallback) {
@@ -509,7 +521,7 @@ class SessionService final : public QObject {
                 return fallback;
             bool valid{};
             const auto bytes = value.toULongLong(&valid);
-            if (!valid || bytes == 0 || bytes > quint64{4} * 1024 * 1024 * 1024)
+            if (!valid || bytes == 0 || bytes > quint64{64} * 1024 * 1024 * 1024)
                 throw std::invalid_argument("Invalid history byte budget");
             return bytes;
         };
@@ -520,6 +532,11 @@ class SessionService final : public QObject {
     static TerminalSnapshot archive_page(TerminalSnapshot page, std::size_t rows) {
         page.size.rows = static_cast<std::uint16_t>(rows);
         page.cells.resize(rows * page.size.columns);
+        std::erase_if(page.hyperlinks,
+                      [&](const auto& link) { return link.first_cell >= page.cells.size(); });
+        for (auto& link : page.hyperlinks)
+            link.cell_count = static_cast<std::uint32_t>(
+                std::min<std::size_t>(link.cell_count, page.cells.size() - link.first_cell));
         std::size_t codepoints{};
         for (const auto& cell : page.cells)
             codepoints =
@@ -622,7 +639,9 @@ class SessionService final : public QObject {
             return;
         const auto view_id = view ? view->id : 0;
         try {
-            auto bytes = wire::frame(wire::Kind::history_page, wire::encode_history_reply(reply));
+            auto bytes = wire::frame(wire::Kind::history_page,
+                                     wire::encode_history_reply(
+                                         reply, to_client ? client_hyperlinks_ : view->hyperlinks));
             if (destination->bytesToWrite() + bytes.size() > wire::max_frame_bytes)
                 throw std::runtime_error("History response queue full");
             if (destination->write(bytes) != bytes.size())
@@ -724,6 +743,7 @@ class SessionService final : public QObject {
             return;
         }
         pending_.insert(incoming);
+        posix::widen_socket_buffers(incoming->socketDescriptor());
         incoming->setReadBufferSize(75); // v3 attach is exactly 74 framed bytes.
         const auto bytes = std::make_shared<QByteArray>();
         connect(incoming, &QLocalSocket::readyRead, this,
@@ -781,19 +801,25 @@ class SessionService final : public QObject {
             pending_.remove(incoming);
             disconnect(incoming, nullptr, this, nullptr);
             if (request.mode == wire::AttachMode::join)
-                join(incoming);
+                join(incoming, request.hyperlinks);
             else
-                activate(incoming);
+                activate(incoming, request.hyperlinks, request.attention_phase);
         } catch (const std::exception& error) {
             reject_attachment(incoming, QString::fromUtf8(error.what()));
         }
     }
-    void activate(QLocalSocket* incoming) {
+    void activate(QLocalSocket* incoming, bool hyperlinks, bool attention_phase) {
         if (generation_ == std::numeric_limits<quint64>::max()) {
             send_status(incoming, wire::StatusCode::overloaded, "Attachment generation overflow");
             incoming->disconnectFromServer();
             return;
         }
+        // Takeover retires the previous client's deferred history request while
+        // its attachment is still known. Waiting for detach_client() is too
+        // late: attachment_ has already advanced, so the old owner cannot be
+        // matched and the next client sees a stale busy slot.
+        if (pending_history_ && pending_history_->first == attachment_)
+            pending_history_.reset();
         ++generation_;
         attachment_ = {.identity = identity_, .generation = generation_};
         ready_ = false;
@@ -805,6 +831,8 @@ class SessionService final : public QObject {
             retire(client_);
         }
         client_ = incoming;
+        client_hyperlinks_ = hyperlinks;
+        client_attention_phase_ = attention_phase;
         client_wanted_.reset();
         attention_dirty_ = true;
         if (codex_observer_ && pty_requested_ && !codex_state_->connected() &&
@@ -832,13 +860,19 @@ class SessionService final : public QObject {
         dirty_ = true;
         schedule();
     }
+    // A change after a quiet frame goes out as soon as the event loop is free,
+    // so a typed key echoes without waiting; changes within a frame of the
+    // last screen share the next one.
     void schedule() {
         if (!process_started_ || stopping_ || timer_.isActive())
             return;
-        if ((client_ && (!snapshot_in_flight_ || ready_) && dirty_) || views_due())
-            timer_.start();
+        if ((client_ && (!snapshot_in_flight_ || ready_) && dirty_) || views_due()) {
+            const auto since = last_publish_.isValid() ? last_publish_.elapsed() : frame_ms;
+            timer_.start(since >= frame_ms ? 0 : static_cast<int>(frame_ms - since));
+        }
     }
     void publish() {
+        last_publish_.start();
         publish_views();
         publish_client();
     }
@@ -859,7 +893,8 @@ class SessionService final : public QObject {
                             wire::encode_snapshot_message({.attachment = attachment_,
                                                            .sequence = sequence,
                                                            .snapshot = terminal_.snapshot(),
-                                                           .timing = timing_}));
+                                                           .timing = timing_},
+                                                          client_hyperlinks_));
             if (client_->write(bytes) < 0)
                 throw std::runtime_error("Session socket write failed");
             dirty_ = false;
@@ -995,6 +1030,10 @@ class SessionService final : public QObject {
         case wire::Kind::terminate:
             end_agent(control.payload);
             return;
+        case wire::Kind::wheel:
+            // Scrolling reads; it does not take the size as typing does.
+            write_input(frame.kind, control.payload);
+            return;
         case wire::Kind::text:
         case wire::Kind::paste:
         case wire::Kind::key:
@@ -1017,6 +1056,11 @@ class SessionService final : public QObject {
                 std::string_view(payload.constData(), static_cast<std::size_t>(payload.size())));
             return {encoded.data(), static_cast<qsizetype>(encoded.size())};
         }
+        if (kind == wire::Kind::wheel) {
+            const auto wheel = wire::decode_wheel(payload);
+            const auto encoded = terminal_.encode_wheel({wheel.steps, wheel.column, wheel.row});
+            return {encoded.data(), static_cast<qsizetype>(encoded.size())};
+        }
         if (payload.size() != 2)
             throw std::runtime_error("Invalid key message");
         const auto key_value = static_cast<unsigned char>(payload[0]);
@@ -1029,7 +1073,9 @@ class SessionService final : public QObject {
         return {encoded.data(), static_cast<qsizetype>(encoded.size())};
     }
     void write_input(wire::Kind kind, const QByteArray& payload) {
-        if (!pty_.writeBytes(input_bytes(kind, payload)))
+        // A wheel over the primary screen sends the program nothing.
+        const auto bytes = input_bytes(kind, payload);
+        if (!bytes.isEmpty() && !pty_.writeBytes(bytes))
             throw std::runtime_error("PTY input queue full");
     }
     static TerminalSize decode_size(const QByteArray& payload) {
@@ -1119,6 +1165,7 @@ class SessionService final : public QObject {
         QByteArray buffer;
         quint64 ready_sequence{};
         bool ready{};
+        bool hyperlinks{};
         bool in_flight{};
         bool dirty{true};
         std::optional<TerminalSize> wanted;
@@ -1145,7 +1192,7 @@ class SessionService final : public QObject {
             return view->socket && view->dirty && (view->ready || !view->in_flight);
         });
     }
-    void join(QLocalSocket* incoming) {
+    void join(QLocalSocket* incoming, bool hyperlinks) {
         if (!process_started_ || views_.size() >= max_views ||
             generation_ == std::numeric_limits<quint64>::max()) {
             send_status(incoming, wire::StatusCode::overloaded,
@@ -1158,6 +1205,7 @@ class SessionService final : public QObject {
         auto view = std::make_unique<View>();
         view->id = generation_;
         view->socket = incoming;
+        view->hyperlinks = hyperlinks;
         view->attachment = {.identity = identity_, .generation = generation_};
         const auto id = view->id;
         views_.push_back(std::move(view));
@@ -1223,7 +1271,8 @@ class SessionService final : public QObject {
                                 wire::encode_snapshot_message({.attachment = view->attachment,
                                                                .sequence = sequence,
                                                                .snapshot = *snapshot,
-                                                               .timing = timing_}));
+                                                               .timing = timing_},
+                                                              view->hyperlinks));
                 if (view->socket->write(bytes) < 0)
                     throw std::runtime_error("View socket write failed");
                 view->dirty = false;
@@ -1297,9 +1346,14 @@ class SessionService final : public QObject {
             request_history(view.attachment, control.payload);
             return;
         }
+        if (frame.kind == wire::Kind::wheel) {
+            write_input(frame.kind, control.payload);
+            return;
+        }
         if (frame.kind != wire::Kind::text && frame.kind != wire::Kind::paste &&
             frame.kind != wire::Kind::key)
-            throw std::runtime_error("A joined view may only type, resize and page history");
+            throw std::runtime_error(
+                "A joined view may only type, scroll, resize and page history");
         claim_size(view.wanted, view.id);
         write_input(frame.kind, control.payload);
     }
@@ -1331,12 +1385,16 @@ class SessionService final : public QObject {
     wire::Attachment attachment_;
     QByteArray buffer_;
     QTimer timer_;
+    QElapsedTimer last_publish_;
+    static constexpr qint64 frame_ms = 16;
     QTimer ack_timer_;
     quint64 generation_{};
     quint64 snapshot_sequence_{};
     quint64 ready_sequence_{};
     bool dirty_{true};
     bool ready_{};
+    bool client_hyperlinks_{};
+    bool client_attention_phase_{};
     bool snapshot_in_flight_{};
     bool process_started_{};
     bool stopping_{};

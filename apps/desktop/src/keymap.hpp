@@ -69,7 +69,7 @@ struct Theme {
 
 // Terminal text size in pixels. Machine readouts in the chrome share the same
 // family at the chrome's own size.
-inline constexpr int kTerminalFontSizeDefault = 16;
+inline constexpr int kTerminalFontSizeDefault = 14;
 inline constexpr int kTerminalFontSizeMinimum = 10;
 inline constexpr int kTerminalFontSizeMaximum = 32;
 
@@ -192,6 +192,31 @@ class KeyMap final : public QObject {
     Q_INVOKABLE bool setKeepAwake(bool on);
     Q_INVOKABLE bool setNotify(bool on);
     Q_INVOKABLE bool setShowUsage(bool on);
+    // The values remote control may read. KeyMap owns their storage and their
+    // relationship to lapis.json.
+    struct RemoteSettings {
+        bool keepAwake{};
+        bool alertSound{};
+        bool finishSound{};
+        bool notify{};
+        bool showUsage{};
+        int alertRepeat{};
+        [[nodiscard]] bool operator==(const RemoteSettings&) const = default;
+    };
+    // Absent fields leave their settings alone. Present fields are applied
+    // together or not at all: one save writes the batch, and a failed save
+    // restores the changed fields without writing the file.
+    struct RemoteSettingsPatch {
+        std::optional<bool> keepAwake;
+        std::optional<bool> alertSound;
+        std::optional<bool> finishSound;
+        std::optional<bool> notify;
+        std::optional<bool> showUsage;
+        std::optional<int> alertRepeat;
+    };
+    [[nodiscard]] RemoteSettings remoteSettings() const;
+    [[nodiscard]] bool applyRemoteSettings(const RemoteSettingsPatch& changes,
+                                           QString* diagnostic = nullptr);
     [[nodiscard]] bool alertSound() const { return alert_sound_; }
     [[nodiscard]] bool finishSound() const { return finish_sound_; }
     [[nodiscard]] int alertRepeat() const { return alert_repeat_; }

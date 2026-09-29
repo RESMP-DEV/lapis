@@ -3,6 +3,8 @@
 import base64
 import gzip
 import http.client
+import itertools
+import io
 import json
 import os
 import shutil
@@ -16,7 +18,8 @@ import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps" / "remote"))
@@ -67,7 +70,73 @@ def cell(text, kind=0, foreground=DEFAULT, background=DEFAULT, underline=0, flag
     return (text, kind, foreground, background, underline, flags)
 
 
+class StreamFailureTests(unittest.TestCase):
+    def test_malformed_live_snapshot_reports_disconnection(self):
+        valid = snapshot(1, 1, [cell("x")])
+        for broken in (
+            snapshot(1, 1, [cell("x")], alternate=2),
+            valid[:20],
+            valid[:-1],
+        ):
+            with self.subTest(length=len(broken)):
+                session = object.__new__(remote.WireSession)
+                session.first = valid
+                session.closed = False
+                session.attachment = b"x" * remote.ATTACHMENT_BYTES
+                session.sequence = 0
+                session.wheel_accepted = False
+                message = session.attachment + struct.pack(">QQQQ", 1, 0, 0, 0) + broken
+                session.receive = Mock(
+                    side_effect=[(remote.SNAPSHOT, message), EOFError()]
+                )
+                handler = object.__new__(remote.Handler)
+                handler.wfile = io.BytesIO()
+                handler.phone_left = lambda: False
+                # Advance beyond the frame interval to exercise render validation too.
+                with patch.object(
+                    remote.time, "monotonic", side_effect=itertools.count()
+                ):
+                    handler.pump(session)
+                events = handler.wfile.getvalue().decode().split("\n\n")
+                self.assertEqual(
+                    sum(event.startswith("event: frame\n") for event in events), 1
+                )
+                status = next(
+                    event for event in events if event.startswith("event: status\n")
+                )
+                payload = json.loads(status.split("data: ", 1)[1])
+                self.assertEqual(payload["state"], "disconnected")
+                self.assertTrue(payload["message"])
+
+
 class SnapshotTests(unittest.TestCase):
+    def test_wheel_requires_the_alternate_screen_bit(self):
+        for flags in (0, 1, 2, 3, 4):
+            with self.subTest(flags=flags):
+                payload = snapshot(1, 1, [cell("x")], alternate=flags)
+                session = object.__new__(remote.WireSession)
+                session.attachment = b"x" * remote.ATTACHMENT_BYTES
+                session.sequence = 0
+                session.wheel_accepted = False
+                message = (
+                    session.attachment + struct.pack(">QQQQ", 1, 0, 0, 0) + payload
+                )
+                if flags not in (0, 1, 3):
+                    with self.assertRaises(remote.GatewayError):
+                        remote.render_snapshot(payload)
+                    with self.assertRaises(remote.GatewayError):
+                        session.accept_snapshot(remote.SNAPSHOT, message)
+                    self.assertEqual(session.sequence, 0)
+                    self.assertFalse(session.wheel_accepted)
+                else:
+                    self.assertEqual(
+                        remote.render_snapshot(payload)["wheel"], flags == 3
+                    )
+                    self.assertEqual(
+                        session.accept_snapshot(remote.SNAPSHOT, message), payload
+                    )
+                    self.assertEqual(session.wheel_accepted, flags == 3)
+
     def test_runs_colors_cursor_and_wide_cells(self):
         palette = [0] * 256
         palette[1] = 0xFF0000
@@ -154,6 +223,54 @@ class SnapshotTests(unittest.TestCase):
             ):
                 with self.assertRaises(remote.GatewayError):
                     remote.render_snapshot(payload)
+
+
+class HistoryReplyTests(unittest.TestCase):
+    def test_bounded_reply_and_truncated_place(self):
+        attachment = b"s" * remote.ATTACHMENT_BYTES
+        header = attachment + struct.pack(">QQI", 1, 4, 0)
+        screen = snapshot(2, 1, [cell("o"), cell("k")])
+        request_id, reply = remote.decode_history_reply(header + screen, attachment)
+        self.assertEqual((request_id, reply["page"], reply["snapshot"]), (1, 4, screen))
+        for bad in (
+            header[:47],
+            header + b"x",
+            header + bytes(60),
+            header[:-4] + struct.pack(">I", 50),
+        ):
+            with self.subTest(size=len(bad)), self.assertRaises(remote.GatewayError):
+                remote.decode_history_reply(bad, attachment)
+        for length in (0, 36, 60):
+            with (
+                self.subTest(place_bytes=length),
+                self.assertRaises(remote.GatewayError),
+            ):
+                remote.page_place(bytes(length))
+
+        # Exercise waiter completion with an in-process transport. A bad page
+        # fails its request promptly; the same session can then request a page.
+        session = object.__new__(remote.WireSession)
+        session.attachment = attachment
+        session.lock = threading.Lock()
+        session.history_ids = itertools.count(1)
+        session.history_waiters = {}
+        session.scrubbable = False
+
+        def answer(payload):
+            def send(kind, request):
+                self.assertEqual(kind, remote.HISTORY_REQUEST)
+                request_id = struct.unpack_from(">Q", request)[0]
+                session.deliver_history(
+                    attachment + struct.pack(">QQI", request_id, 4, 0) + payload
+                )
+
+            return send
+
+        session.send = answer(b"short")
+        with self.assertRaisesRegex(remote.GatewayError, "Truncated history snapshot"):
+            session.request_history(timeout=0.1)
+        session.send = answer(screen)
+        self.assertEqual(session.request_history(timeout=0.1)["snapshot"], screen)
 
 
 class ResizeTests(unittest.TestCase):
@@ -625,6 +742,27 @@ class StartAgentTests(unittest.TestCase):
                 },
             )
 
+            for title, expected in (
+                ("", 200),
+                ("x" * 80, 200),
+                ("\N{FACE WITH OPEN MOUTH}" * 40, 200),
+                ("\N{FACE WITH OPEN MOUTH}" * 41, 400),
+                ("x" * 81, 400),
+                ("\ud800", 400),
+            ):
+                with self.subTest(title=repr(title)):
+                    status, _ = server.request(
+                        "POST",
+                        "/api/agents",
+                        {
+                            "harness": "codex",
+                            "directory": "~/dev/x",
+                            "category": "later",
+                            "title": title,
+                        },
+                    )
+                    self.assertEqual(status, expected)
+
     def test_refusals_and_malformed_requests(self):
         with (
             Server(self, "{}") as server,
@@ -713,6 +851,242 @@ class StartAgentTests(unittest.TestCase):
             )
             status, refused = server.request("POST", "/api/agents/gone/close", {})
             self.assertEqual((status, refused), (422, {"error": "No such agent"}))
+            # A name chosen on the phone, which the Mac keeps.
+            status, named = server.request(
+                "POST", "/api/agents/a1/rename", {"title": " Resize work "}
+            )
+            self.assertEqual((status, named), (200, {"ok": True}))
+            self.assertEqual(
+                desktop.requests[-1],
+                {
+                    "version": 1,
+                    "request": "renameAgent",
+                    "id": "a1",
+                    "title": "Resize work",
+                },
+            )
+            asked = len(desktop.requests)
+            rejected = (
+                {"title": ""},
+                {"title": "x" * 81},
+                {"title": "\N{FACE WITH OPEN MOUTH}" * 41},
+                {"title": "x\n"},
+                {"title": "\ud800"},
+                {"title": 3},
+                ["x"],
+            )
+            for body in rejected:
+                status, _ = server.request("POST", "/api/agents/a1/rename", body)
+                self.assertEqual(status, 400, body)
+            self.assertEqual(len(desktop.requests), asked, "bad names reach nothing")
+            for body in (
+                {"title": "x" * 80},
+                {"title": "\N{FACE WITH OPEN MOUTH}" * 40},
+            ):
+                status, _ = server.request("POST", "/api/agents/a1/rename", body)
+                self.assertEqual(status, 200, body)
+            self.assertEqual(len(desktop.requests), asked + 2)
+
+    def test_the_phone_arranges_categories_and_agents_through_the_mac(self):
+        def answer(request):
+            if request["request"] == "removeCategory" and request["id"] == "full":
+                return {"ok": False, "error": "Move the agents out first."}
+            return {"ok": True}
+
+        with (
+            Server(self, "{}") as server,
+            FakeDesktop(server.directory, answer) as desktop,
+        ):
+            for path, body, asked in (
+                (
+                    "/api/categories/c1/rename",
+                    {"name": " Someday "},
+                    {"request": "renameCategory", "id": "c1", "name": "Someday"},
+                ),
+                (
+                    "/api/categories/c1/place",
+                    {"index": 0},
+                    {"request": "placeCategory", "id": "c1", "index": 0},
+                ),
+                (
+                    "/api/categories/c1/remove",
+                    None,
+                    {"request": "removeCategory", "id": "c1"},
+                ),
+                (
+                    "/api/agents/a1/place",
+                    {"category": "c2", "index": 1},
+                    {"request": "placeAgent", "id": "a1", "category": "c2", "index": 1},
+                ),
+                (
+                    "/api/agents/a1/place",
+                    {"category": "c2"},
+                    {
+                        "request": "placeAgent",
+                        "id": "a1",
+                        "category": "c2",
+                        "index": 1 << 20,
+                    },
+                ),
+                (
+                    "/api/agents/a1/restart",
+                    None,
+                    {"request": "restartAgent", "id": "a1"},
+                ),
+            ):
+                status, reply = server.request("POST", path, body)
+                self.assertEqual((status, reply), (200, {"ok": True}), path)
+                self.assertEqual(desktop.requests[-1], {"version": 1, **asked})
+            status, refused = server.request("POST", "/api/categories/full/remove")
+            self.assertEqual(
+                (status, refused), (422, {"error": "Move the agents out first."})
+            )
+            asked = len(desktop.requests)
+            for path, body in (
+                ("/api/categories/c1/rename", {"name": ""}),
+                ("/api/categories/c1/place", {"index": -1}),
+                ("/api/categories/c1/place", {"index": True}),
+                ("/api/categories/c1/place", {"index": "0"}),
+                ("/api/agents/a1/place", {"index": 0}),
+                ("/api/agents/a1/place", {"category": "c2", "index": 1.5}),
+                ("/api/agents/a1/place", ["c2"]),
+            ):
+                status, _ = server.request("POST", path, body)
+                self.assertEqual(status, 400, (path, body))
+            self.assertEqual(len(desktop.requests), asked, "bad requests reach nothing")
+
+    def test_the_phone_reads_and_changes_the_macs_settings(self):
+        settings = {
+            "keepAwake": True,
+            "alertSound": True,
+            "alertRepeat": 3,
+            "finishSound": True,
+            "notify": True,
+            "showUsage": True,
+        }
+
+        def answer(request):
+            settings.update(request.get("settings", {}))
+            return {"ok": True, "settings": settings}
+
+        with (
+            Server(self, "{}") as server,
+            FakeDesktop(server.directory, answer) as desktop,
+        ):
+            status, shown = server.request("GET", "/api/settings")
+            self.assertEqual((status, shown), (200, {"settings": settings}))
+            self.assertEqual(
+                desktop.requests[-1], {"version": 1, "request": "settings"}
+            )
+            status, changed = server.request(
+                "POST", "/api/settings", {"keepAwake": False, "alertRepeat": 5}
+            )
+            self.assertEqual(status, 200)
+            self.assertFalse(changed["settings"]["keepAwake"])
+            self.assertEqual(changed["settings"]["alertRepeat"], 5)
+            self.assertEqual(
+                desktop.requests[-1],
+                {
+                    "version": 1,
+                    "request": "changeSettings",
+                    "settings": {"keepAwake": False, "alertRepeat": 5},
+                },
+            )
+            asked = len(desktop.requests)
+            # The Mac's window appearance is not the phone's to change.
+            for body in (
+                {"theme": "amber"},
+                {"keepAwake": "no"},
+                {"keepAwake": 0},
+                {"alertRepeat": 0},
+                {"alertRepeat": 11},
+                {"alertRepeat": True},
+                ["keepAwake"],
+            ):
+                status, _ = server.request("POST", "/api/settings", body)
+                self.assertEqual(status, 400, body)
+            self.assertEqual(len(desktop.requests), asked, "bad settings reach nothing")
+
+    def test_terminals_open_list_and_close_through_the_mac(self):
+        def answer(request):
+            if request["request"] == "openTerminal":
+                if request["machine"] == "nowhere":
+                    return {
+                        "ok": False,
+                        "error": "nowhere is not a host in your ssh config.",
+                    }
+                return {"ok": True, "id": "terminal-1"}
+            return {"ok": True}
+
+        with (
+            Server(self, "{}") as server,
+            FakeDesktop(server.directory, answer) as desktop,
+        ):
+            status, opened = server.request("POST", "/api/terminals", {"machine": ""})
+            self.assertEqual((status, opened), (200, {"id": "terminal-1"}))
+            self.assertEqual(
+                desktop.requests[-1],
+                {"version": 1, "request": "openTerminal", "machine": ""},
+            )
+            status, refused = server.request(
+                "POST", "/api/terminals", {"machine": "nowhere"}
+            )
+            self.assertEqual(status, 422)
+            asked = len(desktop.requests)
+            for body in ({"machine": "-oProxyCommand=x"}, {"machine": 3}, ["x"]):
+                status, _ = server.request("POST", "/api/terminals", body)
+                self.assertEqual(status, 400, body)
+            self.assertEqual(len(desktop.requests), asked, "bad machines reach nothing")
+            # The desktop's terminals.json lists them; only its own endpoints count.
+            folder = server.directory.resolve()
+            (server.directory / "terminals.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "terminals": [
+                            {
+                                "id": "terminal-1",
+                                "machine": "",
+                                "endpoint": str(folder / "terminal-1.sock"),
+                                "program": "/bin/zsh",
+                                "arguments": ["-l", "-i"],
+                                "directory": "/tmp",
+                            },
+                            {
+                                "id": "terminal-2",
+                                "machine": "devbox",
+                                "endpoint": "/elsewhere/terminal-2.sock",
+                                "program": "/usr/bin/ssh",
+                                "arguments": ["-t", "--", "devbox"],
+                                "directory": "/tmp",
+                            },
+                        ],
+                    }
+                )
+            )
+            status, listed = server.request("GET", "/api/terminals")
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                listed["terminals"],
+                [
+                    {
+                        "id": "terminal-1",
+                        "machine": "",
+                        "name": "This Mac",
+                        "running": False,
+                        "onPhone": False,
+                    }
+                ],
+            )
+            found = remote.Handler.gateway.agent("terminal-1")
+            self.assertEqual((found["program"], found["mode"]), ("/bin/zsh", ""))
+            self.assertIsNone(remote.Handler.gateway.agent("terminal-2"))
+            status, closed = server.request("POST", "/api/agents/terminal-1/close", {})
+            self.assertEqual((status, closed), (200, {"ok": True}))
+            self.assertEqual(
+                desktop.requests[-1],
+                {"version": 1, "request": "closeTerminal", "id": "terminal-1"},
+            )
 
     def test_without_lapis_on_the_mac(self):
         with Server(self, "{}") as server:
@@ -723,6 +1097,25 @@ class StartAgentTests(unittest.TestCase):
             )
             self.assertEqual(status, 503)
             self.assertIn("not running on the Mac", reply["error"])
+
+
+class WindowlessHostCleanupTests(unittest.TestCase):
+    def test_inventory_failure_still_reaps_the_owned_host(self):
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            start_new_session=True,
+        )
+        failure = PermissionError("process inventory denied")
+        fixture = SimpleNamespace(host=process, stop_services=Mock(side_effect=failure))
+        try:
+            with self.assertRaises(PermissionError) as raised:
+                WindowlessHostTests.stop(fixture)
+            self.assertIs(raised.exception, failure)
+            self.assertIsNotNone(process.poll(), "owned host survived cleanup failure")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
 
 
 @unittest.skipUnless(DESKTOP and SERVICE.is_file(), "desktop build required")
@@ -776,6 +1169,17 @@ class WindowlessHostTests(unittest.TestCase):
             time.sleep(0.1)
 
     def stop(self):
+        try:
+            self.stop_services()
+        finally:
+            self.host.terminate()
+            try:
+                self.host.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                self.host.kill()
+                self.host.wait(timeout=5)
+
+    def stop_services(self):
         rows = subprocess.run(
             ["ps", "-axo", "pid=,command="], capture_output=True, text=True
         ).stdout.splitlines()
@@ -785,7 +1189,6 @@ class WindowlessHostTests(unittest.TestCase):
                     os.kill(int(row.split(None, 1)[0]), 9)
                 except (ProcessLookupError, ValueError):
                     pass
-        self.host.wait(10)
 
     def test_the_host_starts_an_agent_in_its_category(self):
         with Server(
@@ -926,6 +1329,193 @@ class FolderTests(unittest.TestCase):
         self.assertNotIn("/elsewhere", counts)
         self.assertNotIn(str(self.home / "a"), counts)
 
+    def test_activity_and_conversations(self):
+        # A named Codex thread and a Claude session with a typed first message.
+        lapis = str(self.home / "dev" / "lapis")
+        rollout(
+            self.codex,
+            "01a0d4b2-0000-7000-8000-0000000000aa",
+            {
+                "id": "01a0d4b2-0000-7000-8000-0000000000aa",
+                "cwd": lapis,
+                "source": "cli",
+            },
+        )
+        (self.codex / "session_index.jsonl").write_text(
+            json.dumps(
+                {
+                    "id": "01a0d4b2-0000-7000-8000-0000000000aa",
+                    "thread_name": "Retry work",
+                }
+            )
+            + "\n"
+        )
+        session = (
+            self.claude
+            / "projects"
+            / "-home-b"
+            / "20000000-0000-4000-8000-000000000000.jsonl"
+        )
+        session.write_text(
+            json.dumps({"cwd": str(self.home / "b"), "entrypoint": "cli"})
+            + "\n"
+            + json.dumps({"type": "user", "message": {"content": "<command-name>/x"}})
+            + "\n"
+            + json.dumps({"type": "user", "message": {"content": "fix  the\nresize"}})
+            + "\n"
+        )
+        index = remote.FolderIndex(
+            self.root / "workspace.json",
+            home=self.home,
+            codex_home=self.codex,
+            claude_home=self.claude,
+        )
+        with Server(self, "{}", folders=index) as server:
+            status, body = server.request("GET", "/api/folders")
+            self.assertEqual(status, 200)
+            # Every conversation now counts about 1; b has four, dev/lapis three.
+            self.assertGreater(body["activity"]["b"], body["activity"]["dev/lapis"])
+            self.assertAlmostEqual(body["activity"]["dev/lapis"], 3, places=2)
+            status, listed = server.request("GET", "/api/conversations")
+            self.assertEqual(status, 200)
+            titles = {item["id"]: item for item in listed["conversations"]}
+            self.assertEqual(
+                titles["01a0d4b2-0000-7000-8000-0000000000aa"]["title"], "Retry work"
+            )
+            self.assertEqual(
+                titles["20000000-0000-4000-8000-000000000000"],
+                {
+                    "harness": "claude",
+                    "id": "20000000-0000-4000-8000-000000000000",
+                    "directory": "b",
+                    "title": "fix the resize",
+                    "age": titles["20000000-0000-4000-8000-000000000000"]["age"],
+                },
+            )
+            # Rollouts without an id count for their folder but cannot resume.
+            self.assertEqual(len(listed["conversations"]), 5)
+
+    def test_history_ignores_malformed_records_and_keeps_a_good_title(self):
+        codex_id = "30000000-0000-4000-8000-000000000000"
+        codex = (
+            self.codex
+            / "sessions"
+            / "2026"
+            / "09"
+            / "24"
+            / f"rollout-2026-09-24T12-00-00-{codex_id}.jsonl"
+        )
+        codex.write_text(
+            json.dumps(
+                {
+                    "type": "session_meta",
+                    "payload": {
+                        "id": codex_id,
+                        "cwd": str(self.home / "b"),
+                        "source": "cli",
+                    },
+                }
+            )
+            + "\nnull\n"
+            + json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": 42,
+                    },
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "text", "text": "typed rollout"}],
+                    },
+                }
+            )
+            + "\n"
+        )
+        project = self.claude / "projects" / "-home-b"
+        project.mkdir(parents=True, exist_ok=True)
+        session = project / "31000000-0000-4000-8000-000000000000.jsonl"
+        session.write_text(
+            json.dumps({"cwd": str(self.home / "b"), "entrypoint": "cli"})
+            + "\nnull\n"
+            + json.dumps({"type": "user", "message": "not an object"})
+            + "\n"
+            + json.dumps({"type": "ai-title", "aiTitle": "Generated title"})
+            + "\n"
+            + json.dumps({"type": "ai-title", "aiTitle": "   "})
+            + "\n"
+        )
+        (self.codex / "session_index.jsonl").write_text(
+            "[]\n"
+            + json.dumps({"id": codex_id, "thread_name": "typed  rollout"})
+            + "\n"
+        )
+        history = remote.AgentHistory(self.codex, self.claude)
+
+        def titles():
+            history.counts(None)
+            return {item["id"]: item["title"] for item in history.conversations}
+
+        conversations = titles()
+        self.assertEqual(conversations[codex_id], "typed rollout")
+        self.assertEqual(
+            conversations["31000000-0000-4000-8000-000000000000"],
+            "Generated title",
+        )
+
+        names_index = self.codex / "session_index.jsonl"
+        names_index.write_text(
+            "[]\n"
+            + json.dumps({"id": codex_id, "thread_name": "# wrapper preserved"})
+            + "\n"
+        )
+        self.assertEqual(
+            titles()[codex_id],
+            "# wrapper preserved",
+            "a changed index is parsed and wrapper-like names are kept",
+        )
+
+        names_index.unlink()
+        self.assertEqual(
+            titles()[codex_id],
+            "typed rollout",
+            "deleting names clears the cached title",
+        )
+
+        names_index.write_text(
+            "[]\n"
+            + json.dumps({"id": codex_id, "thread_name": "# wrapper recreated"})
+            + "\n"
+        )
+        self.assertEqual(titles()[codex_id], "# wrapper recreated")
+
+        # Exercise the self-contained program actually sent over SSH, with
+        # fixture homes. A compile-only check misses omitted helper definitions.
+        result = subprocess.run(
+            [sys.executable, "-c", remote.REMOTE_SCRIPT],
+            env={
+                **os.environ,
+                "HOME": str(self.home),
+                "CODEX_HOME": str(self.codex),
+                "CLAUDE_CONFIG_DIR": str(self.claude),
+            },
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        self.assertTrue(result.stdout.startswith(remote.REMOTE_MARKER))
+        report = json.loads(result.stdout[len(remote.REMOTE_MARKER) :])
+        self.assertIn("b", report["activity"])
+
     def test_the_phone_downloads_the_index_once(self):
         index = remote.FolderIndex(
             self.root / "workspace.json",
@@ -958,6 +1548,23 @@ class FolderTests(unittest.TestCase):
             connection.request("GET", "/api/health", headers={"X-Lapis-Client": "ios"})
             self.assertEqual(connection.getresponse().status, 200)
             connection.close()
+
+
+class HomeTests(unittest.TestCase):
+    def test_the_gateway_serves_the_workspace_lapis_uses(self):
+        root = Path(tempfile.mkdtemp(prefix="lh-", dir="/tmp")).resolve()
+        self.addCleanup(shutil.rmtree, root, True)
+        # A developer build keeps its workspace in the checkout.
+        self.assertEqual(remote.lapis_home({}, root), remote.ROOT)
+        # The downloaded app's ~/.lapis wins once it has a workspace.
+        (root / ".lapis" / "runtime").mkdir(parents=True)
+        self.assertEqual(remote.lapis_home({}, root), remote.ROOT)
+        (root / ".lapis" / "runtime" / "workspace.json").write_text("{}")
+        self.assertEqual(remote.lapis_home({}, root), root / ".lapis")
+        # LAPIS_HOME, as the desktop reads it, wins over both.
+        self.assertEqual(
+            remote.lapis_home({"LAPIS_HOME": str(root / "x")}, root), root / "x"
+        )
 
 
 class MachineTests(unittest.TestCase):
@@ -1073,51 +1680,57 @@ def screen_text(frame):
 
 
 @unittest.skipUnless(SERVICE.exists(), "needs the built session service")
+def live_agent(test, program, arguments):
+    """A real session service running `program`, and a registry naming it."""
+    test.runtime = Path(tempfile.mkdtemp(prefix="lr-", dir="/tmp"))
+    test.addCleanup(shutil.rmtree, test.runtime, True)
+    test.identifier = "11111111-2222-4333-8444-555555555555"
+    test.endpoint = test.runtime / (test.identifier + ".sock")
+    service = subprocess.Popen(
+        [str(SERVICE), str(test.endpoint), "/", program, *arguments],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        env={**os.environ, "LAPIS_HISTORY_ROOT": str(test.runtime / "history")},
+    )
+
+    def stop():
+        if service.poll() is None:
+            os.killpg(service.pid, 15)
+            service.wait(10)
+
+    test.addCleanup(stop)
+    deadline = time.monotonic() + 10
+    while not remote.service_answers(str(test.endpoint)):
+        test.assertLess(time.monotonic(), deadline, "service did not start")
+        time.sleep(0.05)
+    test.registry = json.dumps(
+        {
+            "categories": [{"id": "general", "name": "General"}],
+            "activeCategory": "general",
+            "agents": [
+                {
+                    "id": test.identifier,
+                    "title": "echo",
+                    "category": "general",
+                    "harness": "grok",
+                    "endpoint": str(test.endpoint),
+                    "program": program,
+                    "arguments": arguments,
+                    "directory": "/",
+                }
+            ],
+        }
+    )
+
+
 class LiveServiceTests(unittest.TestCase):
     def setUp(self):
-        self.runtime = Path(tempfile.mkdtemp(prefix="lr-", dir="/tmp"))
-        self.addCleanup(shutil.rmtree, self.runtime, True)
-        self.identifier = "11111111-2222-4333-8444-555555555555"
-        self.endpoint = self.runtime / (self.identifier + ".sock")
         script = (
             'printf "ready\\n"; while read line; do printf "got:%s\\n" "$line"; done'
         )
-        self.service = subprocess.Popen(
-            [str(SERVICE), str(self.endpoint), "/", "/bin/sh", "-c", script],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-            env={**os.environ, "LAPIS_HISTORY_ROOT": str(self.runtime / "history")},
-        )
-        self.addCleanup(self.stop)
-        deadline = time.monotonic() + 10
-        while not remote.service_answers(str(self.endpoint)):
-            self.assertLess(time.monotonic(), deadline, "service did not start")
-            time.sleep(0.05)
-        self.registry = json.dumps(
-            {
-                "categories": [{"id": "general", "name": "General"}],
-                "activeCategory": "general",
-                "agents": [
-                    {
-                        "id": self.identifier,
-                        "title": "echo",
-                        "category": "general",
-                        "harness": "grok",
-                        "endpoint": str(self.endpoint),
-                        "program": "/bin/sh",
-                        "arguments": ["-c", script],
-                        "directory": "/",
-                    }
-                ],
-            }
-        )
-
-    def stop(self):
-        if self.service.poll() is None:
-            os.killpg(self.service.pid, 15)
-            self.service.wait(10)
+        live_agent(self, "/bin/sh", ["-c", script])
 
     def test_a_screen_is_read_without_resizing_or_taking_the_agent(self):
         with Server(self, self.registry, self.runtime) as server:
@@ -1270,6 +1883,94 @@ class LiveServiceTests(unittest.TestCase):
             )
             self.desktop_sees(again, "got:still here")
             phone.close()
+
+
+@unittest.skipUnless(SERVICE.exists(), "needs the built session service")
+class WheelTests(unittest.TestCase):
+    """A full-screen program that reports the mouse, as Claude Code's
+    full-screen mode does, gets the phone's wheel as mouse wheel events."""
+
+    def setUp(self):
+        live_agent(self, sys.executable, [str(ROOT / "tools" / "qa" / "fake_agent.py")])
+
+    def test_the_wheel_reaches_a_full_screen_program(self):
+        with Server(self, self.registry, self.runtime) as server:
+            path = f"/api/agents/{self.identifier}"
+            events = Events(server, path + "/stream?columns=40&rows=12")
+            _, first = events.until(
+                lambda name, data: (
+                    name == "frame" and "lapis fake agent" in screen_text(data)
+                )
+            )
+            self.assertFalse(first["wheel"])
+            # The primary screen pages history instead; the wheel is refused.
+            status, _ = server.request("POST", path + "/input", {"wheel": [1, 0, 0]})
+            self.assertEqual(status, 400)
+            server.request("POST", path + "/input", {"text": "mouse\r"})
+            _, shown = events.until(
+                lambda name, data: (
+                    name == "frame" and "mouse ready" in screen_text(data)
+                )
+            )
+            self.assertTrue(shown["alternateScreen"] and shown["wheel"])
+            for bad in ([0, 1, 1], [1, -1, 0], [True, 1, 1], [1, 1]):
+                status, _ = server.request("POST", path + "/input", {"wheel": bad})
+                self.assertEqual(status, 400, bad)
+            status, _ = server.request("POST", path + "/input", {"wheel": [2, 4, 2]})
+            self.assertEqual(status, 200)
+            events.until(
+                lambda name, data: (
+                    name == "frame"
+                    and "mouse got 2 events, first ESC[<64;5;3M" in screen_text(data)
+                )
+            )
+            events.close()
+
+
+@unittest.skipUnless(SERVICE.exists(), "needs the built session service")
+class HistoryJumpTests(unittest.TestCase):
+    """History keeps everything, and the phone jumps to any row of it."""
+
+    def setUp(self):
+        script = (
+            "i=0; while [ $i -lt 2000 ]; do printf 'line %04d\\n' $i; i=$((i + 1));"
+            " done; echo all printed; exec sleep 600"
+        )
+        live_agent(self, "/bin/sh", ["-c", script])
+
+    def test_the_phone_jumps_to_the_first_row(self):
+        with Server(self, self.registry, self.runtime) as server:
+            path = f"/api/agents/{self.identifier}"
+            events = Events(server, path + "/stream?columns=40&rows=12")
+            events.until(
+                lambda name, data: (
+                    name == "frame" and "all printed" in screen_text(data)
+                )
+            )
+            # A jump needs to know the service can; the newest page says so.
+            status, _ = server.request("GET", path + "/history?at=0")
+            self.assertEqual(status, 502)
+            status, newest = server.request("GET", path + "/history?before=0")
+            self.assertEqual(status, 200)
+            place = newest["place"]
+            self.assertTrue(place["scrubbable"])
+            self.assertGreaterEqual(place["total"], 1980)
+            self.assertEqual(place["offset"] + place["rows"], place["total"])
+            status, start = server.request("GET", path + "/history?at=0")
+            self.assertEqual(status, 200)
+            self.assertEqual(start["place"]["offset"], 0)
+            self.assertIn(
+                "line 0000",
+                "\n".join(run[0] for line in start["lines"] for run in line),
+            )
+            status, middle = server.request(
+                "GET", path + f"/history?at={place['total'] // 2}"
+            )
+            self.assertEqual(status, 200)
+            offset = middle["place"]["offset"]
+            self.assertLessEqual(offset, place["total"] // 2)
+            self.assertGreater(offset + middle["place"]["rows"], place["total"] // 2)
+            events.close()
 
 
 class OldServiceTests(unittest.TestCase):

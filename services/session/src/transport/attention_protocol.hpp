@@ -18,6 +18,7 @@ struct AttentionSnapshot {
     bool ready{};
     quint64 source_epoch{};
     attention::Activity activity{attention::Activity::unknown};
+    attention::ObservationPhase observation_phase{attention::ObservationPhase::unknown};
     QString diagnostic;
     std::vector<AttentionItem> requests;
 };
@@ -29,7 +30,10 @@ struct AttentionDecision {
     QString choice;
     QJsonObject answers;
 };
-[[nodiscard]] QByteArray encode_attention_snapshot(const AttentionSnapshot& snapshot);
+// The trailing phase byte exists only when negotiated by attach bit 0x40.
+// Legacy clients otherwise receive the existing v6 snapshot body.
+[[nodiscard]] QByteArray encode_attention_snapshot(const AttentionSnapshot& snapshot,
+                                                   bool observation_phase = false);
 [[nodiscard]] AttentionSnapshot decode_attention_snapshot(const QByteArray& payload);
 [[nodiscard]] QByteArray encode_attention_decision(const AttentionDecision& decision);
 [[nodiscard]] AttentionDecision decode_attention_decision(const QByteArray& payload);

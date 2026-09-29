@@ -14,6 +14,7 @@
 #include <memory>
 
 class QQmlApplicationEngine;
+class QQmlContext;
 class QQmlError;
 class QQuickWindow;
 
@@ -28,13 +29,18 @@ struct UiPreviewOptions {
     // User keybindings and layout, exposed to QML as `keymap`. Optional; a
     // null value uses the shared C++ settings defaults and QML navigation defaults.
     KeyMap* keymap{};
-    QObject* alerts{};      // exposed to QML as `alerts`
-    QObject* agentSearch{}; // exposed to QML as `agentSearch`
-    QObject* usage{};       // exposed to QML as `usage`
-    QObject* desktop{};     // exposed to QML as `desktop`
+    QObject* alerts{};        // exposed to QML as `alerts`
+    QObject* agentSearch{};   // exposed to QML as `agentSearch`
+    QObject* usage{};         // exposed to QML as `usage`
+    QObject* desktop{};       // exposed to QML as `desktop`
+    QObject* conversations{}; // exposed to QML as `conversations`
+    QObject* terminals{};     // exposed to QML as `terminals`
     // Only the normal workspace restores user geometry; tests opt in with an isolated path.
     bool persistGeometry{};
     QString geometryPath{};
+    // Closing the window hides it and the app keeps running (the Mac's
+    // convention); quitting still closes it.
+    bool hideOnClose{};
 };
 
 // View host shared by normal launch and the isolated development fixture.
@@ -80,6 +86,7 @@ class UiPreview final : public QObject {
   private:
     bool eventFilter(QObject* watched, QEvent* event) override;
     bool loadCandidate();
+    void exposeObjects(QQmlContext& context);
     void publishWarnings(const QList<QQmlError>& warnings);
     void configureGeometry(QQuickWindow& target, bool reloading);
     void rememberGeometry();
@@ -97,6 +104,7 @@ class UiPreview final : public QObject {
     QList<QKeySequence> parsed_settings_shortcuts_;
     bool publishing_diagnostics_{};
     bool shutting_down_{};
+    bool quitting_{};
     bool reduced_motion_{};
     bool system_reduced_motion_{};
 };

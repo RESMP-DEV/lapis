@@ -26,6 +26,7 @@
 namespace {
 
 using lapis::codex::Observer;
+using lapis::session::attention::ObservationPhase;
 using lapis::session::attention::RequestId;
 using lapis::session::attention::State;
 
@@ -365,6 +366,8 @@ void unsupported_hash_survives_reconnect_until_qualified_restart() {
             "unsupported start leaves responses disabled");
     require(observer.diagnostic() == QStringLiteral("Unsupported Codex binary hash"),
             "unsupported start is explicit");
+    require(observer.observationPhase() == ObservationPhase::unknown,
+            "unsupported observation has no prompt lifecycle state");
 
     const auto received_before_reconnect = source.received.size();
     observer.reconnect();
@@ -414,6 +417,8 @@ void initial_binding_requires_persistent_metadata(bool temporary_first) {
         "empty discovery waits for classified metadata");
     require(observer.threadId().isEmpty() && state.pending().empty() && !state.ready(),
             "empty discovery cannot enable decisions");
+    require(observer.observationPhase() == ObservationPhase::awaiting_first_prompt,
+            "empty discovery is typed as awaiting the first prompt");
 
     const RequestId id{std::numeric_limits<std::int64_t>::max()};
     auto early = large_approval(std::numeric_limits<std::int64_t>::max());
@@ -703,8 +708,34 @@ void every_qualified_hash_is_accepted() {
     }
 }
 
+void unsupported_approval_decisions_are_observed_only() {
+    State state{"unanswerable", "codex"};
+    Source source;
+    source.start();
+    Observer observer{state};
+    observer.start(source.path(), Observer::qualifiedBinarySha256());
+    require(wait_for([&] { return state.ready(); }), "unanswerable fixture ready");
+    auto request = large_approval(-101);
+    auto params = request["params"].toObject();
+    params.insert("availableDecisions", QJsonArray{QJsonObject{{"type", QStringLiteral("accept")}},
+                                                   QStringLiteral("accept_for_session")});
+    request.insert("params", params);
+    source.send(request);
+    const RequestId identifier{-101};
+    require(wait_for([&] { return state.pending().contains(identifier); }),
+            "unanswerable approval remains observable");
+    const auto& core = state.pending().at(identifier).request;
+    require(core.reason == "Respond in terminal" && core.summary == "Respond in terminal" &&
+                core.choices.empty(),
+            "unsupported approval choices explicitly require terminal response");
+    const auto revision = state.pending().at(identifier).revision;
+    require(!observer.decide(state.epoch(), identifier, revision, QStringLiteral("accept"), {}),
+            "unsupported approval decision is not routed");
+}
+
 int run(int argc, char** argv) {
     QCoreApplication application(argc, argv);
+    unsupported_approval_decisions_are_observed_only();
     initial_binding_requires_persistent_metadata(true);
     initial_binding_requires_persistent_metadata(false);
     unclassified_event_queue_is_bounded();
@@ -726,9 +757,11 @@ int run(int argc, char** argv) {
     QObject::connect(&observer, &Observer::initialized, [&]() { initialized_signal = true; });
     // Once the thread is known to have no rollout, retries keep that diagnostic.
     QStringList diagnostics;
+    std::vector<ObservationPhase> phases;
     QObject::connect(&observer, &Observer::changed, [&]() {
         if (diagnostics.isEmpty() || diagnostics.back() != observer.diagnostic())
             diagnostics.append(observer.diagnostic());
+        phases.push_back(observer.observationPhase());
     });
 
     observer.start(source.path(), QStringLiteral("wrong"));
@@ -759,8 +792,13 @@ int run(int argc, char** argv) {
                                      }) >= 2;
             }),
             "no-rollout retry resumes the same thread");
+    require(std::find(phases.begin(), phases.end(), ObservationPhase::awaiting_first_prompt) !=
+                phases.end(),
+            "a missing rollout is an explicit first-prompt phase");
     require(wait_for([&] { return state.ready() && state.pending().size() == 1; }),
             "resume/read replay");
+    require(observer.observationPhase() == ObservationPhase::unknown,
+            "synchronization clears the transitional phase");
     {
         const auto waiting =
             diagnostics.indexOf(QStringLiteral("Waiting for Codex thread history"));
@@ -844,7 +882,11 @@ int run(int argc, char** argv) {
     const auto sent_responses = response_count();
     source.resolved_before_replay = true;
     observer.reconnect();
+    require(observer.observationPhase() == ObservationPhase::reconciling,
+            "explicit reconnect is typed as reconciling");
     require(wait_for([&] { return state.ready(); }), "explicit reconnect reconciles");
+    require(observer.observationPhase() == ObservationPhase::unknown,
+            "successful reconnect leaves the transitional phase");
     require(observer.threadId() == QStringLiteral("thread"), "thread scope retained");
     require(response_count() == sent_responses, "explicit reconnect sends no decision replay");
     require(state.pending().empty(), "resolution wins over a later copied request during replay");

@@ -121,8 +121,7 @@ final class LapisUITests: XCTestCase {
         guard let identifier = environment["LAPIS_ECHO_ID"], let host = environment["LAPIS_HOST"] else {
             throw XCTSkip("needs the harness")
         }
-        let terminal = openAgent("echo agent")
-        waitFor(terminal, valueContaining: "new conversation")
+        let terminal = try openEchoAgent()
         clearLine()
 
         var request = URLRequest(url: URL(string: "http://\(host)/api/agents/\(identifier)/stream")!)
@@ -145,8 +144,7 @@ final class LapisUITests: XCTestCase {
     }
 
     func testWideOutputAndReturningToTheList() throws {
-        let terminal = openAgent("echo agent")
-        waitFor(terminal, valueContaining: "new conversation")
+        let terminal = try openEchoAgent()
         clearLine()
         submit("wide")
         waitFor(terminal, valueContaining: "box:")
@@ -157,8 +155,7 @@ final class LapisUITests: XCTestCase {
 
     // Output that scrolled off the top loads as the phone scrolls up.
     func testScrollingBackLoadsHistory() throws {
-        let terminal = openAgent("echo agent")
-        waitFor(terminal, valueContaining: "new conversation")
+        let terminal = try openEchoAgent()
         clearLine()
         submit("marker before count")
         waitFor(terminal, valueContaining: "echo: marker before count")
@@ -175,8 +172,7 @@ final class LapisUITests: XCTestCase {
 
     // "Send screen to Mac" saves a screenshot and the screen data on the Mac.
     func testSendScreenToMac() throws {
-        let terminal = openAgent("echo agent")
-        waitFor(terminal, valueContaining: "new conversation")
+        _ = try openEchoAgent()
         let menu = app.buttons["viewMenu"]
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
         menu.tap()
@@ -191,25 +187,43 @@ final class LapisUITests: XCTestCase {
         app.buttons["OK"].tap()
     }
 
-    // Read the PTY itself through a fixture command, without focusing the
-    // composer merely to measure it. Each observation has a unique marker.
-    private func terminalSize(_ terminal: XCUIElement) throws -> (columns: Int, rows: Int) {
+    // Types into the shared fake agent through the gateway, as the phone does,
+    // without focusing the composer (which would raise the keyboard).
+    private func typeToEcho(_ text: String) throws {
         let environment = ProcessInfo.processInfo.environment
         let host = try XCTUnwrap(environment["LAPIS_HOST"])
         let identifier = try XCTUnwrap(environment["LAPIS_ECHO_ID"])
-        let marker = String(UUID().uuidString.prefix(6)).lowercased()
         var request = URLRequest(url: try XCTUnwrap(URL(string: "http://\(host)/api/agents/\(identifier)/input")))
         request.httpMethod = "POST"
         request.setValue("ios", forHTTPHeaderField: "X-Lapis-Client")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["text": "size \(marker)\n"])
-        let sent = expectation(description: "query the fixture PTY grid")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["text": text])
+        let sent = expectation(description: "type into the fixture agent")
         URLSession.shared.dataTask(with: request) { _, response, error in
             XCTAssertNil(error)
             XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
             sent.fulfill()
         }.resume()
         wait(for: [sent], timeout: 10)
+    }
+
+    // The shared fake agent, open and live. Tests take turns on one agent, and
+    // the phone taking it at a different size than the Mac's moves its screen
+    // into history; this agent, unlike real CLIs, never redraws, so its first
+    // line is no proof the screen is live. An echoed marker is.
+    private func openEchoAgent() throws -> XCUIElement {
+        let terminal = openAgent("echo agent")
+        let marker = "live " + String(UUID().uuidString.prefix(6)).lowercased()
+        try typeToEcho(marker + "\n")
+        waitFor(terminal, valueContaining: "echo: " + marker)
+        return terminal
+    }
+
+    // Read the PTY itself through a fixture command, without focusing the
+    // composer merely to measure it. Each observation has a unique marker.
+    private func terminalSize(_ terminal: XCUIElement) throws -> (columns: Int, rows: Int) {
+        let marker = String(UUID().uuidString.prefix(6)).lowercased()
+        try typeToEcho("size \(marker)\n")
         waitFor(terminal, valueContaining: "grid-\(marker)")
         let text = String(describing: terminal.value ?? "")
         let line = try XCTUnwrap(text.components(separatedBy: "\n").last { $0.contains("grid-\(marker)") })
@@ -221,8 +235,7 @@ final class LapisUITests: XCTestCase {
     func testRotationWhileComposing() throws {
         XCUIDevice.shared.orientation = .portrait
         defer { XCUIDevice.shared.orientation = .portrait }
-        let terminal = openAgent("echo agent")
-        waitFor(terminal, valueContaining: "new conversation")
+        let terminal = try openEchoAgent()
         let portrait = try terminalSize(terminal)
         let composer = app.descendants(matching: .any)["composer"]
         composer.tap()
@@ -303,10 +316,318 @@ final class LapisUITests: XCTestCase {
                       "the new category is listed")
     }
 
+    // A plain shell for a quick command: the plus offers Terminal, the Mac is
+    // picked, the shell answers, and it swipes away like an agent.
+    func testTerminalFromThePhone() throws {
+        let folder = ProcessInfo.processInfo.environment["LAPIS_NEW_AGENT_FOLDER"] ?? ""
+        try XCTSkipIf(folder.isEmpty, "the check provides the Mac's lapis")
+        let add = app.buttons["add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 30))
+        add.tap()
+        app.buttons["Terminal"].tap()
+        let mac = app.buttons["terminal-mac"]
+        XCTAssertTrue(mac.waitForExistence(timeout: 15), "the Mac is offered first")
+        snap("11-terminal-machines")
+        mac.tap()
+        let terminal = app.descendants(matching: .any)["terminal"]
+        XCTAssertTrue(terminal.waitForExistence(timeout: 60), "the terminal opens on the phone")
+        submit("echo lapis-$((6*7))")
+        waitFor(terminal, valueContaining: "lapis-42", timeout: 30)
+        snap("12-terminal-open")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let row = app.buttons["terminal-row-mac"]
+        XCTAssertTrue(row.waitForExistence(timeout: 15), "open terminals are listed above the agents")
+        row.swipeLeft()
+        let close = app.buttons["Close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), "swiping offers Close")
+        close.tap()
+        XCTAssertTrue(waitForGone(row, timeout: 20), "the closed terminal leaves the list")
+    }
+
+    // An agent is renamed from the phone by swiping it right; the Mac keeps
+    // that name over its conversation's title.
+    func testRenameFromThePhone() throws {
+        let row = app.buttons["agent-parked"]
+        XCTAssertTrue(row.waitForExistence(timeout: 30))
+        for (from, to) in [("parked", "renamed here"), ("renamed here", "parked")] {
+            let card = app.buttons["agent-\(from)"]
+            XCTAssertTrue(card.waitForExistence(timeout: 20))
+            card.swipeRight()
+            let rename = app.buttons["Rename"]
+            XCTAssertTrue(rename.waitForExistence(timeout: 5), "swiping right offers Rename")
+            rename.tap()
+            let field = app.alerts.textFields.firstMatch
+            XCTAssertTrue(field.waitForExistence(timeout: 5))
+            field.tap()
+            let current = (field.value as? String) ?? ""
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count + 2))
+            field.typeText(to)
+            app.alerts.buttons["Save"].tap()
+            XCTAssertTrue(app.buttons["agent-\(to)"].waitForExistence(timeout: 20), "the new name is listed")
+            if to != "parked" { snap("14-renamed") }
+        }
+    }
+
+    // Swiping over an agent's screen moves to the next agent in its category,
+    // and back, without the list.
+    func testSwipeBetweenAgents() throws {
+        let terminal = try openEchoAgent()
+        let position = app.staticTexts["agentPosition"]
+        XCTAssertTrue(position.waitForExistence(timeout: 10), "the position in the category shows")
+        let total = try XCTUnwrap(Int(position.label.components(separatedBy: " of ").last ?? ""))
+        XCTAssertGreaterThanOrEqual(total, 2, "the fixture supplies at least two agents")
+        XCTAssertEqual(position.label, "1 of \(total)")
+        let at = { (label: String) in
+            XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", label),
+                                      object: self.app.staticTexts["agentPosition"])
+        }
+        let composer = app.descendants(matching: .any)["composer"]
+        composer.tap()
+        composer.typeText("draft for first agent")
+        terminal.swipeLeft()
+        XCTAssertEqual(XCTWaiter().wait(for: [at("2 of \(total)")], timeout: 10), .completed, "the next agent")
+        let second = app.descendants(matching: .any)["terminal"]
+        XCTAssertNotEqual(composer.value as? String, "draft for first agent",
+                          "a draft belongs to the agent where it was entered")
+        submit("paging second agent")
+        waitFor(second, valueContaining: "echo: paging second agent")
+        composer.tap()
+        composer.typeText("draft for second agent")
+        snap("15-swiped")
+        second.swipeRight()
+        XCTAssertEqual(XCTWaiter().wait(for: [at("1 of \(total)")], timeout: 10), .completed, "and back")
+        XCTAssertEqual(composer.value as? String, "draft for first agent",
+                       "paging back restores that agent's unsent draft")
+    }
+
+    private func eventually(_ what: String, timeout: TimeInterval = 20, _ condition: () -> Bool) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        XCTFail(what)
+    }
+
+    private func replaceAlertText(with text: String) {
+        let field = app.alerts.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        let current = (field.value as? String) ?? ""
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count + 2))
+        field.typeText(text)
+    }
+
+    private func menuItem(_ label: String) -> XCUIElement {
+        let item = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", label)).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "the menu offers \(label)")
+        return item
+    }
+
+    private func drag(_ name: String, onto target: String) {
+        let handle = { (row: String) in
+            self.app.cells.containing(.button, identifier: "edit-category-\(row)")
+                .buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "reorder")).firstMatch
+        }
+        XCTAssertTrue(handle(name).waitForExistence(timeout: 5), "\(name) has a drag handle")
+        handle(name).press(forDuration: 0.8, thenDragTo: handle(target))
+    }
+
+    // Categories are arranged from the phone as on the Mac: renamed from a
+    // category's menu, added and ordered under Arrange categories, and removed
+    // once empty; one with agents stays.
+    func testArrangeCategoriesFromThePhone() throws {
+        let menu = app.buttons["category-menu-Later"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 30), "each category has a menu")
+        menu.tap()
+        menuItem("Rename").tap()
+        replaceAlertText(with: "Someday")
+        app.alerts.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["category-Someday"].waitForExistence(timeout: 20), "renamed on the Mac")
+        app.buttons["category-menu-Build"].tap()
+        XCTAssertFalse(menuItem("Remove").isEnabled, "a category with agents stays")
+        menuItem("Arrange categories").tap()
+        let add = app.buttons["addCategory"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10), "the categories open")
+        add.tap()
+        let name = app.alerts.textFields.firstMatch
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.typeText("Scratch")
+        app.alerts.buttons["Create"].tap()
+        XCTAssertTrue(app.buttons["edit-category-Scratch"].waitForExistence(timeout: 20), "a category is added")
+        let row = { (category: String) in self.app.buttons["edit-category-\(category)"] }
+        // A one-row downward move is the off-by-one case: `to` is already the
+        // post-removal destination, so sending `to - 1` makes it a no-op.
+        drag("Build", onto: "Someday")
+        eventually("Someday moves above Build") {
+            row("Someday").frame.minY < row("Build").frame.minY
+        }
+        drag("Someday", onto: "Build")
+        eventually("the move down is undone without moving Scratch") {
+            row("Build").frame.minY < row("Someday").frame.minY
+                && row("Someday").frame.minY < row("Scratch").frame.minY
+        }
+        drag("Someday", onto: "Build")
+        eventually("Someday moves to the top") { row("Someday").frame.minY < row("Build").frame.minY }
+        snap("16-categories")
+        app.buttons["Done"].tap()
+        let header = { (category: String) in self.app.staticTexts["category-\(category)"] }
+        eventually("the list follows the Mac's order") { header("Someday").frame.minY < header("Build").frame.minY }
+        app.buttons["category-menu-Scratch"].tap()
+        menuItem("Remove").tap()
+        XCTAssertTrue(waitForGone(header("Scratch"), timeout: 20), "the empty category is removed")
+        // As it was, for the other tests: renamed by tapping it, and second.
+        app.buttons["category-menu-Someday"].tap()
+        menuItem("Arrange categories").tap()
+        XCTAssertTrue(row("Someday").waitForExistence(timeout: 10))
+        row("Someday").tap()
+        replaceAlertText(with: "Later")
+        app.alerts.buttons["Save"].tap()
+        XCTAssertTrue(row("Later").waitForExistence(timeout: 20), "renamed from the list")
+        drag("Later", onto: "Build")
+        eventually("Later moves back below Build") { row("Build").frame.minY < row("Later").frame.minY }
+        app.buttons["Done"].tap()
+        eventually("the list has it back") { header("Build").frame.minY < header("Later").frame.minY }
+    }
+
+    // An agent moves to another category, and along its own, from its menu.
+    func testMoveAgentsFromThePhone() throws {
+        let parked = app.buttons["agent-parked"]
+        XCTAssertTrue(parked.waitForExistence(timeout: 30))
+        let later = app.staticTexts["category-Later"]
+        parked.press(forDuration: 1.2)
+        menuItem("Move to").tap()
+        menuItem("Build").tap()
+        eventually("it is listed under Build") { parked.frame.maxY < later.frame.minY }
+        // Optional real CLI fixtures add rows. Capture the actual neighbor's
+        // identity before opening the menu, rather than assuming two agents.
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "agent-"))
+            .allElementsBoundByIndex
+        let identifiers = rows.map(\.identifier)
+        let parkedIndex = try XCTUnwrap(identifiers.firstIndex(of: "agent-parked"))
+        XCTAssertGreaterThan(parkedIndex, 0)
+        guard parkedIndex > 0 else { return }
+        let aboveID = identifiers[parkedIndex - 1]
+        parked.press(forDuration: 1.2)
+        XCTAssertFalse(menuItem("Move later").isEnabled, "the last agent cannot move later")
+        menuItem("Move earlier").tap()
+        eventually("it moves before the agent above it") {
+            let ordered = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "agent-"))
+                .allElementsBoundByIndex.map(\.identifier)
+            guard let moved = ordered.firstIndex(of: "agent-parked"),
+                  let previous = ordered.firstIndex(of: aboveID) else { return false }
+            return moved < previous
+        }
+        snap("17-moved")
+        parked.press(forDuration: 1.2)
+        menuItem("Move to").tap()
+        menuItem("Later").tap()
+        eventually("and back to Later") { parked.frame.minY > later.frame.minY }
+    }
+
+    // The Mac's own settings that matter away from it change from the phone
+    // and are saved there (the check reads the Mac's lapis.json afterwards).
+    func testMacSettingsFromThePhone() throws {
+        let settings = app.buttons["settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 20))
+        settings.tap()
+        let usage = app.switches["showUsage"]
+        for _ in 0..<3 where !usage.exists {
+            app.swipeUp()
+            _ = usage.waitForExistence(timeout: 5)
+        }
+        XCTAssertTrue(usage.exists, "the Mac's settings load")
+        XCTAssertEqual(usage.value as? String, "1")
+        usage.switches.firstMatch.tap()
+        eventually("usage turns off") { usage.value as? String == "0" }
+        app.buttons["alertRepeat-Increment"].tap()
+        XCTAssertTrue(app.staticTexts["Chime up to 4 times"].waitForExistence(timeout: 10))
+        snap("18-mac-settings")
+        app.buttons["Done"].tap()
+        settings.tap()
+        for _ in 0..<3 where !usage.exists {
+            app.swipeUp()
+            _ = usage.waitForExistence(timeout: 5)
+        }
+        XCTAssertEqual(usage.value as? String, "0", "the Mac kept it")
+        app.buttons["Done"].tap()
+    }
+
+    // A stopped agent restarts from its menu, as Restart agent does on the Mac.
+    func testRestartAStoppedAgent() throws {
+        let parked = app.buttons["agent-parked"]
+        XCTAssertTrue(parked.waitForExistence(timeout: 30))
+        XCTAssertFalse(parked.label.contains("running"), "it starts stopped")
+        parked.press(forDuration: 1.2)
+        menuItem("Restart").tap()
+        eventually("it runs again", timeout: 30) { parked.label.contains("running") }
+    }
+
+    // A full-screen program that reports the mouse (as Claude Code's
+    // full-screen mode does) scrolls itself: dragging down turns the wheel
+    // back on the Mac, instead of paging an archive it never wrote.
+    func testDraggingScrollsAFullScreenProgram() throws {
+        let terminal = try openEchoAgent()
+        try typeToEcho("mouse\n")
+        waitFor(terminal, valueContaining: "mouse ready")
+        snap("20-full-screen")
+        terminal.swipeDown()
+        waitFor(terminal, valueContaining: "mouse got")
+        waitFor(terminal, valueContaining: "first ESC[<64;")
+    }
+
+    // All of an agent's history is kept, and the bar down the right edge
+    // jumps anywhere in it: dragged to the top, the session's first line.
+    func testScrubbingJumpsToTheStart() throws {
+        let terminal = try openEchoAgent()
+        for round in 1...4 {
+            try typeToEcho("count\n")
+            waitFor(terminal, valueContaining: "count 120")
+            try typeToEcho("round \(round)\n")
+            waitFor(terminal, valueContaining: "echo: round \(round)")
+        }
+        terminal.swipeDown()
+        let scrubber = app.descendants(matching: .any)["historyScrubber"]
+        XCTAssertTrue(scrubber.waitForExistence(timeout: 20), "the history bar shows once pages load")
+        scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95))
+            .press(forDuration: 0.2, thenDragTo: scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)))
+        waitFor(terminal, valueContaining: "lapis fake agent", timeout: 20)
+        XCTAssertTrue(app.buttons["historyGap"].waitForExistence(timeout: 10),
+                      "the output skipped by the jump can load")
+        // The frame that scheduled `loadNewer` before the jump cannot fill the
+        // gap when its delayed task finally runs.
+        RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+        XCTAssertTrue(app.buttons["historyGap"].exists, "the intentional gap stays skipped")
+        snap("21-history-start")
+    }
+
+    // Symbols that also have an emoji form (Claude Code's ⏺ before each
+    // message) are drawn as text in their one cell, as on the Mac.
+    func testSymbolsDrawAsText() throws {
+        let terminal = try openEchoAgent()
+        try typeToEcho("symbols ⏺ ⏸ ⏵ ✻ ▶ ✔ ⚠ ↩ ☑ ● x\n")
+        waitFor(terminal, valueContaining: "symbols ⏺")
+        // Asked for as emoji, it stays one.
+        try typeToEcho("asked ⏺\u{FE0F} x\n")
+        waitFor(terminal, valueContaining: "asked")
+        snap("19-symbols")
+    }
+
+    // Past conversations on the Mac are offered to resume from the plus.
+    func testResumeIsOffered() throws {
+        let add = app.buttons["add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 30))
+        add.tap()
+        app.buttons["Resume conversation"].tap()
+        XCTAssertTrue(app.navigationBars.staticTexts["Resume"].waitForExistence(timeout: 15),
+                      "the resume list opens")
+        app.buttons["Cancel"].tap()
+    }
+
     // Folders come from the Mac's index: the most used ones first and marked,
-    // then the current folder's folders with hidden ones last; typing finds
-    // folders by their letters. Machines are ordered by how often ssh reached
-    // them.
+    // then the current folder's folders, the most active first, with hidden
+    // ones last; typing finds folders by their letters. Machines are ordered
+    // by how often ssh reached them.
     func testFoldersAndMachines() throws {
         try XCTSkipIf(ProcessInfo.processInfo.environment["LAPIS_FOLDER_FIXTURE"] == nil,
                       "the check provides a folder fixture")
@@ -345,8 +666,10 @@ final class LapisUITests: XCTestCase {
         let visible = app.buttons["folder-dev"]
         let hidden = app.buttons["folder-.hidden"]
         XCTAssertTrue(visible.waitForExistence(timeout: 5) && hidden.exists)
-        XCTAssertLessThan(app.buttons["folder-a"].frame.minY, visible.frame.minY, "alphabetical")
-        XCTAssertLessThan(visible.frame.minY, hidden.frame.minY, "hidden folders come last")
+        // The folders with the most recent agent work first, then by name.
+        XCTAssertLessThan(app.buttons["folder-b"].frame.minY, visible.frame.minY, "the busiest folder first")
+        XCTAssertLessThan(visible.frame.minY, app.buttons["folder-a"].frame.minY, "then the rest by name")
+        XCTAssertLessThan(app.buttons["folder-a"].frame.minY, hidden.frame.minY, "hidden folders come last")
         snap("11-folders")
         let search = app.textFields["folderSearch"]
         search.tap()
@@ -364,8 +687,7 @@ final class LapisUITests: XCTestCase {
         guard ProcessInfo.processInfo.environment["LAPIS_MAC_CLIENT"] == "1" else {
             throw XCTSkip("needs the harness's Mac-side client")
         }
-        let terminal = openAgent("echo agent")
-        waitFor(terminal, valueContaining: "new conversation")
+        let terminal = try openEchoAgent()
         clearLine()
         XCTAssertFalse(app.staticTexts["syncNotice"].exists, "the agent is shared, not taken over")
         submit("ping from phone")

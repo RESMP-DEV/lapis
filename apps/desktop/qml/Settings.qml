@@ -36,6 +36,8 @@ Dialog {
     property bool loginAvailable: false
     property bool launchAtLogin: false
     property bool updatesAvailable: false
+    // Every action that has a key: {label, keys}.
+    property var shortcutRows: []
 
     signal themeChosen(string name)
     signal densityChosen(string name)
@@ -542,14 +544,50 @@ Dialog {
                         enabled: settings.fontSize > settings.fontSizeMinimum
                         onClicked: settings.fontSizeChosen(settings.fontSize - 1)
                     }
-                    PlainLabel {
+                    TextField {
+                        id: fontSizeField
                         objectName: "fontSizeValue"
-                        text: qsTr("%1 px").arg(settings.fontSize)
+                        text: settings.fontSize
                         color: settings.paletteText
                         font.family: settings.resolvedFontFamily
                         font.pixelSize: Math.max(12, settings.uiFont - 1)
                         horizontalAlignment: Text.AlignHCenter
-                        Layout.preferredWidth: Math.max(implicitWidth, settings.uiFont * 3.5)
+                        verticalAlignment: TextInput.AlignVCenter
+                        Layout.preferredWidth: settings.uiFont * 3.5
+
+                        validator: RegularExpressionValidator { regularExpression: /[0-9]{1,3}/ }
+                        maximumLength: 3
+                        inputMethodHints: Qt.ImhDigitsOnly
+                        selectByMouse: true
+                        Accessible.name: qsTr("Terminal font size in pixels")
+
+                        background: ChoiceSurface {
+                            hovered: fontSizeField.hovered
+                            pressed: fontSizeField.activeFocus
+                            border.width: fontSizeField.activeFocus ? 2 : 1
+                            border.color: fontSizeField.activeFocus ? settings.paletteAccent :
+                                                                       settings.paletteBorder
+                        }
+
+                        function commitFontSize() {
+                            const pixels = Number.parseInt(fontSizeField.text, 10)
+                            if (Number.isInteger(pixels) &&
+                                    pixels >= settings.fontSizeMinimum &&
+                                    pixels <= settings.fontSizeMaximum &&
+                                    pixels !== settings.fontSize)
+                                settings.fontSizeChosen(pixels)
+                            fontSizeField.text = Qt.binding(() => settings.fontSize)
+                        }
+
+                        onEditingFinished: commitFontSize()
+                        onActiveFocusChanged: if (!activeFocus) commitFontSize()
+                    }
+                    PlainLabel {
+                        objectName: "fontSizeUnit"
+                        text: qsTr("px")
+                        color: settings.paletteMuted
+                        font.family: settings.resolvedFontFamily
+                        font.pixelSize: Math.max(12, settings.uiFont - 1)
                     }
                     StepButton {
                         objectName: "fontLarger"
@@ -703,6 +741,57 @@ Dialog {
                     detail: qsTr("Each signed-in plan under the categories (Codex, Claude, Grok, Kimi, and OMP's accounts), checked every five minutes, with a dashboard per machine. usage.meter and usage.machines in the config pick which. Off, lapis asks no CLI.")
                     on: settings.showUsage
                     onToggled: function(on) { settings.showUsageChosen(on) }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: 1
+                    color: settings.paletteBorder
+                }
+
+                SectionLabel {
+                    text: qsTr("Keyboard shortcuts")
+                }
+                GridLayout {
+                    objectName: "shortcutList"
+                    Layout.fillWidth: true
+                    columns: 2
+                    columnSpacing: 16
+                    rowSpacing: 4
+                    Repeater {
+                        model: settings.shortcutRows
+                        delegate: PlainLabel {
+                            required property var modelData
+                            required property int index
+                            Layout.row: Math.floor(index)
+                            Layout.column: 0
+                            Layout.fillWidth: true
+                            text: modelData.label
+                            color: settings.paletteText
+                            elide: Text.ElideRight
+                        }
+                    }
+                    Repeater {
+                        model: settings.shortcutRows
+                        delegate: PlainLabel {
+                            required property var modelData
+                            required property int index
+                            Layout.row: Math.floor(index)
+                            Layout.column: 1
+                            Layout.alignment: Qt.AlignRight
+                            text: modelData.keys
+                            color: settings.paletteMuted
+                            font.family: settings.resolvedFontFamily
+                            font.pixelSize: settings.readoutFont
+                        }
+                    }
+                }
+                PlainLabel {
+                    Layout.fillWidth: true
+                    text: qsTr("Change any of them under \"keybindings\" in the file below, with the action's name and up to four keys, for example \"toggleTerminal\": [\"Meta+`\"].")
+                    color: settings.paletteMuted
+                    font.pixelSize: Math.max(11, settings.uiFont - 2)
+                    wrapMode: Text.WordWrap
                 }
 
                 Rectangle {

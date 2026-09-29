@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"
+     viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+  <title id="title">lapis — gold-star Cabochon</title>
+  <defs>
+    <linearGradient id="rim" x1="0" y1="0" x2=".78" y2="1">
+      <stop stop-color="#D2DCFF"/>
+      <stop offset=".32" stop-color="#899CE7"/>
+      <stop offset=".55" stop-color="#556BB7"/>
+      <stop offset="1" stop-color="#101B51"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2=".45" y2="1">
+      <stop stop-color="#A3ADC6"/>
+      <stop offset=".46" stop-color="#4C5874"/>
+      <stop offset="1" stop-color="#0D1221"/>
+    </linearGradient>
+  </defs>
+  <g id="tile">
+    <rect x="76" y="88" width="872" height="872" rx="206" fill="#0B0E19"/>
+    <rect id="tile-edge" x="76" y="76" width="872" height="872" rx="206" fill="url(#edge)"/>
+    <rect id="tile-face" x="84" y="84" width="856" height="856" rx="198" fill="#1C2234"/>
+  </g>
+  <g id="cabochon">
+    <ellipse cx="512" cy="522" rx="283" ry="354" fill="#0A1027"/>
+    <ellipse cx="512" cy="502" rx="283" ry="354" fill="url(#rim)"/>
+    <ellipse cx="512" cy="505" rx="265" ry="336" fill="#142466"/>
+    <ellipse cx="512" cy="502" rx="259" ry="330" fill="#293D9B"/>
+    <polygon points="512.00,257.40 526.50,458.87 689.54,372.20 541.00,487.00
+                     689.54,601.80 526.50,515.13 512.00,716.60 497.50,515.13
+                     334.46,601.80 483.00,487.00 334.46,372.20 497.50,458.87"
+             fill="#E5BF67"/>
+  </g>
+</svg>

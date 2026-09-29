@@ -1,7 +1,8 @@
 """Run the lapis iPhone app's UI tests in the iOS Simulator against real services.
 
 Starts, all disposable and on this Mac:
-- a session service running tools/qa/fake_agent.py ("echo agent"),
+- session services running tools/qa/fake_agent.py ("echo agent" and, to
+  swipe to, "second agent"),
 - optionally real Codex (managed mode) and Claude Code agents against
   scripts/fake_models.py, so no model usage is spent ("codex fake",
   "claude fake"),
@@ -641,6 +642,20 @@ def main():
                 ROOT,
             )
         ]
+        # A second live agent in the same category, to swipe to.
+        second = str(uuid.uuid4())
+        agents.append(
+            agent(
+                second,
+                "second agent",
+                "build",
+                "grok",
+                run.service(second, python, [fake], ROOT),
+                python,
+                [fake],
+                ROOT,
+            )
+        )
         parked = str(uuid.uuid4())
         agents.append(
             agent(
@@ -990,6 +1005,14 @@ def main():
                 f"{closed}, made a category: {made}"
             )
             if not (started and closed and made):
+                return 1
+        if not args.only or "testMacSettingsFromThePhone" in args.only:
+            # The phone turned plan usage off and raised the chime count.
+            saved = json.loads((runtime / "lapis.json").read_text())
+            usage = saved.get("usage", {}).get("show")
+            repeat = saved.get("alerts", {}).get("repeat")
+            print(f"Mac: lapis.json after the phone: usage {usage}, chimes {repeat}")
+            if usage is not False or repeat != 4:
                 return 1
         return outcome or unit_outcome
     finally:

@@ -1,5 +1,7 @@
 #include "platform_desktop.hpp"
 
+#import <AppKit/AppKit.h>
+#import <Carbon/Carbon.h>
 #import <Foundation/Foundation.h>
 #import <ServiceManagement/ServiceManagement.h>
 #import <UserNotifications/UserNotifications.h>
@@ -139,5 +141,46 @@ bool updater_available() {
 #else
     return false;
 #endif
+}
+
+void on_terminal_keys(const std::function<bool(bool shifted)>& handler) {
+    static std::function<bool(bool)> current;
+    static id monitor = nil;
+    if (!handler) {
+        if (monitor != nil) {
+            [NSEvent removeMonitor:monitor];
+            monitor = nil;
+        }
+        current = {};
+        return;
+    }
+    current = handler;
+    if (monitor != nil)
+        return;
+    // A local monitor sees the key before the window cycling AppKit does
+    // with Command-`. Match the character produced by the active layout, not
+    // an ANSI hardware key code, because layouts place these keys differently.
+    monitor = [NSEvent
+        addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+                                     handler:^NSEvent*(NSEvent* event) {
+                                       const auto flags =
+                                           event.modifierFlags &
+                                           NSEventModifierFlagDeviceIndependentFlagsMask;
+                                       const auto others =
+                                           NSEventModifierFlagControl | NSEventModifierFlagOption;
+                                       NSString* const characters =
+                                           event.charactersIgnoringModifiers;
+                                       const bool terminal_key =
+                                           characters.length == 1 &&
+                                           ([characters characterAtIndex:0] == '`' ||
+                                            [characters characterAtIndex:0] == '~');
+                                       if (!terminal_key || !(flags & NSEventModifierFlagCommand) ||
+                                           (flags & others) || !current)
+                                           return event;
+                                       const bool shifted =
+                                           (flags & NSEventModifierFlagShift) != 0 ||
+                                           [characters characterAtIndex:0] == '~';
+                                       return current(shifted) ? nil : event;
+                                     }];
 }
 } // namespace lapis::desktop::platform

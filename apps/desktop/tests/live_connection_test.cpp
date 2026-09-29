@@ -1,3 +1,4 @@
+#include "app_paths.hpp"
 #include "live_connection.hpp"
 #include "session_descriptor.hpp"
 #include "transport/local_protocol.hpp"
@@ -11,19 +12,40 @@
 #include <QFileInfo>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QScopeGuard>
+#include <QSemaphore>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QThreadPool>
 #include <array>
+#include <atomic>
 #include <functional>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
+#include <string>
 
 namespace {
 namespace wire = lapis::session::wire;
+using lapis::desktop::ServiceLaunchRequest;
 using lapis::desktop::SessionPreview;
+using lapis::session::DescriptorStore;
+using lapis::session::DescriptorTicket;
 void require(bool value, const char* message) {
     if (!value)
         throw std::runtime_error(message);
+}
+// The first row's text, blanks trimmed.
+std::string first_row(const lapis::session::TerminalSnapshot& snapshot) {
+    std::string text;
+    for (std::size_t column = 0; column < snapshot.size.columns; ++column) {
+        const auto cell = snapshot.text(column);
+        if (cell.empty())
+            text += ' ';
+        for (const auto value : cell)
+            text += static_cast<char>(value);
+    }
+    return text.substr(0, text.find_last_not_of(' ') + 1);
 }
 void until(const std::function<bool()>& condition) {
     QElapsedTimer time;
@@ -138,6 +160,23 @@ struct Fixture {
     }
 };
 
+class BlockingDescriptorStore final : public DescriptorStore {
+  public:
+    QSemaphore entered;
+    QSemaphore release;
+
+  protected:
+    void before_commit(const DescriptorTicket&) override {
+        if (first_commit_.test_and_set())
+            return;
+        entered.release();
+        release.acquire();
+    }
+
+  private:
+    std::atomic_flag first_commit_;
+};
+
 void history_browsing_and_input_gating() {
     Fixture f;
     f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
@@ -164,9 +203,13 @@ void history_browsing_and_input_gating() {
     historical.feed("old");
     f.historyReply(peer, first.request_id, 41, historical.snapshot());
     until([&] { return !f.document.historyRequestPending(); });
-    require(wire::encode_snapshot(f.document.snapshot()) ==
-                wire::encode_snapshot(historical.snapshot()),
-            "History page did not replace the visible page");
+    // History scrolls as one strip: a screen back shows the kept rows in a
+    // whole screen of the live size.
+    require(first_row(f.document.snapshot()) == "old" &&
+                f.document.snapshot().size == f.terminal.snapshot().size &&
+                !f.document.snapshot().cursor.in_viewport,
+            "History did not show the kept rows a screen back");
+    const auto shown = wire::encode_snapshot(f.document.snapshot());
 
     f.terminal.feed("newer-live");
     peer.send(wire::Kind::snapshot,
@@ -174,28 +217,34 @@ void history_browsing_and_input_gating() {
     until([&] {
         return f.document.snapshotTiming().value(QStringLiteral("sequence")).toULongLong() == 2;
     });
-    require(wire::encode_snapshot(f.document.snapshot()) ==
-                wire::encode_snapshot(historical.snapshot()),
-            "Live snapshot replaced the visible history page");
+    require(wire::encode_snapshot(f.document.snapshot()) == shown,
+            "Live snapshot replaced the visible history");
     f.document.sendText("still-blocked");
     f.document.sendKey(lapis::session::TerminalKey::enter, {});
     f.document.resizeTerminal({8, 4});
     settle();
     require(peer.socket->bytesAvailable() == 0, "Displayed history allowed input or resize");
 
+    // A screen forward passes the newest row: live again.
     f.document.newerHistory();
-    const auto second = f.historyRequest(peer);
-    require(second.request_id != first.request_id && second.reference == 41 &&
-                second.direction == wire::HistoryDirection::newer,
-            "Invalid newer-history request");
-    f.document.returnToLive();
     require(!f.document.historyActive() && !f.document.historyRequestPending(),
-            "Return to live did not clear history state");
+            "Scrolling past the newest row did not return to live");
     require(wire::encode_snapshot(f.document.snapshot()) ==
                 wire::encode_snapshot(f.terminal.snapshot()),
             "Return to live did not restore the retained live snapshot");
     const auto resize = peer.read();
     require(resize.kind == wire::Kind::resize, "Deferred desired size was not restored");
+    f.terminal.resize({8, 4});
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 3, f.terminal.snapshot()}));
+    until([&] { return f.document.snapshot().size.rows == 4; });
+    // A reply to a request that returning to live canceled is ignored.
+    f.document.olderHistory();
+    const auto second = f.historyRequest(peer);
+    require(second.request_id != first.request_id &&
+                second.direction == wire::HistoryDirection::older,
+            "Invalid second history request");
+    f.document.returnToLive();
     f.historyReply(peer, second.request_id, 42, historical.snapshot());
     settle();
     require(wire::encode_snapshot(f.document.snapshot()) ==
@@ -203,6 +252,23 @@ void history_browsing_and_input_gating() {
             "Canceled history reply replaced the live screen");
     require(f.document.connectionState() == QStringLiteral("ready"),
             "Canceled history reply disconnected a usable session");
+}
+
+void history_capability_tracks_current_page() {
+    Fixture f;
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    auto page = f.terminal.snapshot();
+    page.history = {.total_rows = 4, .viewport_offset = 2, .viewport_rows = 2};
+    f.document.completeHistoryRequest(1, page, {});
+    require(f.document.historyScrubbable(), "Placed history did not allow scrubbing");
+    f.document.returnToLive();
+    page.history = {.total_rows = 2, .viewport_offset = 0, .viewport_rows = 2};
+    f.document.completeHistoryRequest(2, page, {});
+    require(!f.document.historyScrubbable(), "A single page retained stale scrubbing capability");
 }
 
 void unqueued_history_is_rejected_immediately() {
@@ -282,8 +348,9 @@ void stale_reconnect_and_history_errors() {
     until([&] { return !f.document.historyRequestPending(); });
     require(f.document.historyMessage() == QStringLiteral("No older history"),
             "History message was not surfaced");
-    require(f.document.connectionState() == QStringLiteral("ready") && !f.document.inputReady(),
-            "No-page history reply left read-only mode");
+    require(f.document.connectionState() == QStringLiteral("ready") && f.document.inputReady() &&
+                !f.document.historyActive(),
+            "With nothing kept, the live screen did not stay");
 
     f.document.olderHistory();
     const auto malformed = f.historyRequest(next);
@@ -357,6 +424,90 @@ void missing_and_replaced() {
     f.screen(discovered, 2, 2);
     require(lapis::session::read_descriptor(f.endpoint, fingerprint) == f.identity,
             "Discovery did not remember verified identity");
+}
+
+void stale_descriptor_writer_cannot_resurrect_a_replacement() {
+    Fixture f;
+    auto store = std::make_shared<BlockingDescriptorStore>();
+    auto old = std::make_unique<lapis::desktop::LiveConnection>(f.document, f.endpoint, f.launch,
+                                                                wire::AttachMode::discover, store);
+    auto old_peer = f.accept();
+    static_cast<void>(f.request(old_peer));
+    f.hello(old_peer);
+    old_peer.send(wire::Kind::snapshot,
+                  wire::encode_snapshot_message({{f.identity, 1}, 1, f.terminal.snapshot()}));
+    const auto release_old = qScopeGuard([&] {
+        store->release.release();
+        static_cast<void>(QThreadPool::globalInstance()->waitForDone(8000));
+    });
+    until([&] { return store->entered.tryAcquire(); });
+
+    // Destruction invalidates the old ticket while its worker is stopped at
+    // the commit seam. The QLocalSocket is aborted first so disconnect events
+    // cannot be delivered through the old connection during replacement.
+    old_peer.socket->abort();
+    old.reset();
+
+    const wire::SessionIdentity replacement{wire::new_id(), wire::new_id()};
+    lapis::desktop::LiveConnection newer(f.document, f.endpoint, f.launch,
+                                         wire::AttachMode::discover, store);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    peer.send(wire::Kind::hello, wire::encode_hello({{replacement, 1}, 123}));
+    until([&] { return f.document.connectionState() == QStringLiteral("synchronizing"); });
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{replacement, 1}, 1, f.terminal.snapshot()}));
+    until([&] { return f.document.connectionState() == QStringLiteral("ready"); });
+    require(wire::decode_ready(peer.read().payload).attachment == wire::Attachment{replacement, 1},
+            "Replacement synchronization used the wrong attachment");
+    require(peer.read().kind == wire::Kind::resize, "Replacement did not finish synchronization");
+    require(lapis::session::read_descriptor(
+                f.endpoint, lapis::session::launch_fingerprint(f.launch)) == replacement,
+            "Newer descriptor did not win before old writer release");
+
+    store->release.release();
+    require(QThreadPool::globalInstance()->waitForDone(8000),
+            "Old descriptor writer did not finish");
+    until([&] {
+        return QDir(QFileInfo(f.endpoint).absolutePath())
+            .entryList(QStringList() << QStringLiteral("session.sock.session.*.tmp"),
+                       QDir::Files | QDir::NoDotAndDotDot)
+            .isEmpty();
+    });
+    require(lapis::session::read_descriptor(
+                f.endpoint, lapis::session::launch_fingerprint(f.launch)) == replacement,
+            "Released stale writer replaced the newer connection identity");
+    require(f.document.inputReady(),
+            "Replacement was not the only connection able to become ready");
+}
+
+void launcher_injection_owns_only_detached_start_construction() {
+    Fixture f;
+    std::optional<ServiceLaunchRequest> launched;
+    auto codex_launch = f.launch;
+    codex_launch.agent = lapis::session::AgentMode::codex;
+    lapis::desktop::LiveConnection connection(f.document, f.endpoint, codex_launch,
+                                              wire::AttachMode::create, {},
+                                              [&](const ServiceLaunchRequest& request) {
+                                                  launched = request;
+                                                  return false;
+                                              });
+    until([&] {
+        return launched.has_value() &&
+               f.document.connectionState() == QStringLiteral("disconnected");
+    });
+    if (!launched.has_value())
+        throw std::runtime_error("Injected launcher did not receive the create request");
+    require(launched->program == lapis::desktop::session_service_program(),
+            "Launcher changed the service program");
+    require(launched->arguments.size() >= 4 &&
+                launched->arguments[0] == QStringLiteral("--session-id") &&
+                QByteArray::fromHex(launched->arguments[1].toLatin1()).size() == 16 &&
+                launched->arguments[2] == QStringLiteral("--codex") &&
+                launched->arguments[3] == f.endpoint,
+            "Launcher changed service argument construction");
+    require(launched->log == f.endpoint + QStringLiteral(".log"), "Launcher log path changed");
+    require(!f.server.hasPendingConnections(), "Failed detached start connected anyway");
 }
 void attention_routing_and_reconnect() {
     using namespace lapis::session::attention;
@@ -495,6 +646,126 @@ void legacy_server() {
     until([&] { return f.document.connectionState() == QStringLiteral("disconnected"); });
     require(!f.document.inputReady(), "Legacy server enabled input");
 }
+void history_waits_for_resize_and_cancels() {
+    Fixture f;
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    f.document.resizeTerminal({4, 3});
+    require(peer.read().kind == wire::Kind::resize, "Resize was not sent");
+    f.document.scrollHistory(1);
+    settle();
+    require(f.document.historyRequestPending() && peer.socket->bytesAvailable() == 0,
+            "History used the pre-resize screen");
+    f.terminal.resize({4, 3});
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 2, f.terminal.snapshot()}));
+    const auto request = f.historyRequest(peer);
+    lapis::session::Terminal archive({4, 1});
+    archive.feed("old");
+    f.historyReply(peer, request.request_id, 1, archive.snapshot());
+    until([&] { return !f.document.historyRequestPending(); });
+    require(f.document.historyActive() && f.document.snapshot().size.rows == 3,
+            "History froze an obsolete screen after resize acknowledgement");
+
+    f.document.returnToLive();
+    f.document.sendText("x"); // then resize again
+    static_cast<void>(peer.read());
+    static_cast<void>(peer.read());
+    f.document.resizeTerminal({4, 4});
+    require(peer.read().kind == wire::Kind::resize, "Second resize was not sent");
+    f.document.scrollHistory(1);
+    require(f.document.historyRequestPending(), "History was not deferred");
+    // The surface returns to live before forwarding a typed key.
+    f.document.returnToLive();
+    f.document.sendText("y");
+    f.terminal.resize({4, 4});
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 3, f.terminal.snapshot()}));
+    settle();
+    peer.bytes += peer.socket->readAll();
+    wire::Frame frame;
+    while (wire::take_frame(peer.bytes, frame))
+        require(frame.kind != wire::Kind::history_request, "Canceled deferred history was sent");
+    require(!f.document.historyActive() && !f.document.historyRequestPending(),
+            "Typing left deferred history active");
+}
+
+void capabilities_downgrade_without_losing_supported_links() {
+    for (const bool supports_links : {true, false}) {
+        Fixture f;
+        f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+        auto first = f.accept();
+        const auto requested = f.request(first);
+        require(requested.hyperlinks && requested.attention_phase,
+                "New desktop did not request both capabilities");
+        const auto reject = wire::encode_status(
+            {wire::StatusCode::rejected, QStringLiteral("Invalid local session message")});
+        first.send(wire::Kind::status, reject);
+        auto links = f.accept();
+        const auto retried = f.request(links);
+        require(retried.hyperlinks && !retried.attention_phase &&
+                    retried.fingerprint == requested.fingerprint &&
+                    retried.mode == requested.mode && retried.expected == requested.expected,
+                "Phase downgrade lost supported links or changed identity");
+        require(!f.document.inputReady(), "Retry enabled input before synchronization");
+        if (supports_links) {
+            f.hello(links);
+            f.screen(links);
+        } else {
+            links.send(wire::Kind::status, reject);
+            auto legacy = f.accept();
+            const auto old = f.request(legacy);
+            require(!old.hyperlinks && !old.attention_phase &&
+                        old.fingerprint == requested.fingerprint && old.mode == requested.mode &&
+                        old.expected == requested.expected,
+                    "Legacy downgrade changed identity or retained an unsupported capability");
+            f.hello(legacy);
+            f.screen(legacy);
+        }
+        require(f.document.inputReady(), "Compatible service did not synchronize");
+    }
+
+    Fixture unsupported;
+    unsupported.document.startLive(unsupported.endpoint, unsupported.launch,
+                                   wire::AttachMode::discover);
+    auto unsupported_first = unsupported.accept();
+    static_cast<void>(unsupported.request(unsupported_first));
+    unsupported_first.send(wire::Kind::status,
+                           wire::encode_status({wire::StatusCode::rejected,
+                                                QStringLiteral("Invalid local session message")}));
+    auto unsupported_retry = unsupported.accept();
+    const auto unsupported_request = unsupported.request(unsupported_retry);
+    require(unsupported_request.hyperlinks, "Phase downgrade discarded link capability");
+    require(!unsupported_request.attention_phase, "Second attempt retained phase capability");
+    unsupported_retry.send(wire::Kind::status,
+                           wire::encode_status({wire::StatusCode::rejected,
+                                                QStringLiteral("Invalid local session message")}));
+    auto final_retry = unsupported.accept();
+    const auto final_request = unsupported.request(final_retry);
+    require(!final_request.hyperlinks && !final_request.attention_phase,
+            "Final attempt retained unsupported capabilities");
+    final_retry.send(wire::Kind::status,
+                     wire::encode_status({wire::StatusCode::rejected,
+                                          QStringLiteral("Invalid local session message")}));
+    until([&] { return unsupported.document.connectionState() == QStringLiteral("disconnected"); });
+    settle();
+    require(!unsupported.server.hasPendingConnections(), "Unsupported service retried repeatedly");
+
+    Fixture rejected;
+    rejected.document.startLive(rejected.endpoint, rejected.launch, wire::AttachMode::discover);
+    auto denied = rejected.accept();
+    static_cast<void>(rejected.request(denied));
+    denied.send(wire::Kind::status,
+                wire::encode_status(
+                    {wire::StatusCode::replaced, QStringLiteral("Session identity mismatch")}));
+    until([&] { return rejected.document.connectionState() == QStringLiteral("replaced"); });
+    settle();
+    require(!rejected.server.hasPendingConnections() && !rejected.document.inputReady(),
+            "Identity rejection was bypassed by a capability retry");
+}
 } // namespace
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
@@ -502,11 +773,16 @@ int main(int argc, char** argv) {
         handshake_and_reconnect();
         history_browsing_and_input_gating();
         stale_reconnect_and_history_errors();
+        history_capability_tracks_current_page();
         unqueued_history_is_rejected_immediately();
         missing_and_replaced();
+        stale_descriptor_writer_cannot_resurrect_a_replacement();
+        launcher_injection_owns_only_detached_start_construction();
         attention_routing_and_reconnect();
         lost_before_screen();
         legacy_server();
+        history_waits_for_resize_and_cancels();
+        capabilities_downgrade_without_losing_supported_links();
         std::cout << "Identity, initial-screen gating, history paging/cancellation, explicit "
                      "reconnect/discovery, stale snapshot and legacy rejection passed\n";
         return 0;

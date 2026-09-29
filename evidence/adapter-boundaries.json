@@ -1,0 +1,371 @@
+{
+  "schema": "lapis.adapter-boundaries/1",
+  "recorded_at": "2026-09-27T11:17:31.227377+00:00",
+  "platform": "macOS arm64",
+  "source_revision": "6a9d0ad8a97b4dcd771692395177e3513721fea0",
+  "base_revision": "455a99ba9c077f6015f1c9fa45ec937b2db51a87",
+  "consolidated_terminal_revision": "4ca309231833de62e6daea63dd49a57897d638a6",
+  "implementation": [
+    "Typed observer phase negotiated through v6 attach capability 0x40; link capability 0x80 stays independent and legacy attention bytes are unchanged.",
+    "Bounded two-stage desktop fallback preserves mode, fingerprint and identity; an intermediate service retains link support.",
+    "Shared CLI catalog owns discovery, labels, launch/model/resume arguments and adapter selection while preserving persisted IDs.",
+    "Restore saves the complete restart plan before constructing create-mode connections.",
+    "Cancelable descriptor tickets serialize final commit per endpoint in one process; replaced connections cannot overwrite a newer identity.",
+    "Header forward declarations, direct includes and explicit Qt moc inclusion preserve concrete consumers.",
+    "Consolidates terminal hyperlink, smaller default font and direct size controls from terminal-usability.json."
+  ],
+  "checks": [
+    {
+      "name": "headless",
+      "passed": true,
+      "recorded_at": "2026-09-27T10:27:59.993033+00:00",
+      "commands": [
+        [
+          "cmake",
+          "--preset",
+          "dev",
+          "-DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++",
+          "-DLAPIS_GHOSTTY_PREFIX=$LAPIS_GHOSTTY_PREFIX",
+          "-DCMAKE_CXX_COMPILER_LAUNCHER=/opt/homebrew/bin/ccache",
+          "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+        ],
+        [
+          "cmake",
+          "--build",
+          "--preset",
+          "dev",
+          "--parallel",
+          "8"
+        ],
+        [
+          "ctest",
+          "--preset",
+          "dev",
+          "--parallel",
+          "4",
+          "--no-tests=error"
+        ]
+      ],
+      "local_receipt": "build/reports/adapter-boundaries-headless/receipt.json",
+      "reuse": "Four headless suites passed before the final Qt-only changes; no headless compiled input subsequently changed."
+    },
+    {
+      "name": "integration",
+      "passed": true,
+      "recorded_at": "2026-09-27T10:45:04.938686+00:00",
+      "commands": [
+        [
+          "cmake",
+          "--preset",
+          "desktop",
+          "-DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++",
+          "-DLAPIS_GHOSTTY_PREFIX=$LAPIS_GHOSTTY_PREFIX",
+          "-DCMAKE_CXX_COMPILER_LAUNCHER=/opt/homebrew/bin/ccache",
+          "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+        ],
+        [
+          "cmake",
+          "--build",
+          "--preset",
+          "desktop",
+          "--parallel",
+          "8"
+        ],
+        [
+          "ctest",
+          "--preset",
+          "desktop",
+          "--parallel",
+          "4",
+          "--no-tests=error",
+          "-E",
+          "^(ui-preview|appearance-input|terminal-input|terminal-render)$"
+        ]
+      ],
+      "local_receipt": "build/reports/adapter-boundaries-integration/receipt.json",
+      "suites": 28,
+      "environment": {
+        "QT_QPA_PLATFORM": "offscreen:configfile=$ABSOLUTE_BACKGROUND_CONFIG",
+        "QT_QUICK_BACKEND": "software"
+      },
+      "background_config": {
+        "windowFrameMargins": false,
+        "screens": [
+          {
+            "name": "background",
+            "width": 800,
+            "height": 800
+          }
+        ]
+      }
+    },
+    {
+      "name": "analysis",
+      "passed": true,
+      "recorded_at": "2026-09-27T10:44:20.106375+00:00",
+      "commands": [
+        [
+          "cppcheck",
+          "--project=./build/reports/adapter-boundaries-analysis/compile_commands.json",
+          "--library=qt",
+          "-DQ_MOC_INCLUDE(x)=",
+          "--enable=warning,performance,portability",
+          "--error-exitcode=1",
+          "--inline-suppr",
+          "--template=gcc"
+        ]
+      ],
+      "local_receipt": "build/reports/adapter-boundaries-analysis/receipt.json",
+      "scope": "Full first-party clang-format, Cppcheck and 82 clang-tidy translation units. Temporary window-test diagnostics were removed afterward; final window_state_test.cpp passed a focused clang-tidy and clang-format rerun."
+    },
+    {
+      "name": "asan",
+      "passed": true,
+      "recorded_at": "2026-09-27T10:45:11.189139+00:00",
+      "commands": [
+        [
+          "cmake",
+          "--preset",
+          "asan",
+          "-DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++",
+          "-DLAPIS_GHOSTTY_PREFIX=$LAPIS_GHOSTTY_PREFIX",
+          "-DCMAKE_CXX_COMPILER_LAUNCHER=/opt/homebrew/bin/ccache",
+          "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+          "-DLAPIS_BUILD_DESKTOP=ON"
+        ],
+        [
+          "cmake",
+          "--build",
+          "--preset",
+          "asan",
+          "--parallel",
+          "8",
+          "--target",
+          "lapis_codex_observer_tests",
+          "lapis_attention_protocol_tests",
+          "lapis_local_protocol_tests",
+          "lapis_workspace_tests",
+          "lapis_live_connection_tests",
+          "lapis_harness_models_tests",
+          "lapis_session_descriptor_tests",
+          "lapis_session_service"
+        ],
+        [
+          "ctest",
+          "--preset",
+          "asan",
+          "--parallel",
+          "4",
+          "--no-tests=error",
+          "-R",
+          "^(workspace|live-connection|harness-models|session-descriptor|attention-protocol)$"
+        ]
+      ],
+      "local_receipt": "build/reports/adapter-boundaries-asan/receipt.json",
+      "suites": 5,
+      "environment": {
+        "QT_QPA_PLATFORM": "offscreen",
+        "QT_QUICK_BACKEND": "software"
+      }
+    },
+    {
+      "name": "tsan",
+      "passed": true,
+      "recorded_at": "2026-09-27T10:46:22.560912+00:00",
+      "commands": [
+        [
+          "cmake",
+          "--preset",
+          "tsan",
+          "-DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++",
+          "-DLAPIS_GHOSTTY_PREFIX=$LAPIS_GHOSTTY_PREFIX",
+          "-DCMAKE_CXX_COMPILER_LAUNCHER=/opt/homebrew/bin/ccache",
+          "-DCMAKE_OSX_SYSROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+          "-DLAPIS_BUILD_DESKTOP=ON"
+        ],
+        [
+          "cmake",
+          "--build",
+          "--preset",
+          "tsan",
+          "--parallel",
+          "8",
+          "--target",
+          "lapis_codex_observer_tests",
+          "lapis_attention_protocol_tests",
+          "lapis_local_protocol_tests",
+          "lapis_workspace_tests",
+          "lapis_live_connection_tests",
+          "lapis_harness_models_tests",
+          "lapis_session_descriptor_tests",
+          "lapis_session_service"
+        ],
+        [
+          "ctest",
+          "--preset",
+          "tsan",
+          "--parallel",
+          "4",
+          "--no-tests=error",
+          "-R",
+          "^(workspace|live-connection|session-descriptor)$"
+        ]
+      ],
+      "local_receipt": "build/reports/adapter-boundaries-tsan/receipt.json",
+      "suites": 3,
+      "environment": {
+        "QT_QPA_PLATFORM": "offscreen",
+        "QT_QUICK_BACKEND": "software"
+      }
+    },
+    {
+      "name": "quality",
+      "passed": true,
+      "command": [
+        "python3",
+        "scripts/lapis.py",
+        "quality"
+      ],
+      "python_tests": 215,
+      "local_receipt": "build/reports/quality/receipt.json"
+    },
+    {
+      "name": "background-ui",
+      "passed": true,
+      "command": [
+        "python3",
+        "scripts/lapis.py",
+        "ui-review",
+        "--json",
+        "--jobs",
+        "4"
+      ],
+      "suites": 3,
+      "source_revision": "1b6b31a4b289b4371a2c0d99fdfe46c585ce12d2",
+      "source_dirty": true,
+      "scope": "Qt offscreen/software and intercepted URL dispatch. Later catalog initialization and restore-plan representation changes were covered by focused suites; UI and input behavior is unchanged.",
+      "local_receipt": "build/reports/ui-review/20260927T104201Z-41ltqlmd/receipt.json"
+    },
+    {
+      "name": "real-pty-cli",
+      "passed": true,
+      "suites": 7,
+      "command": [
+        "python3",
+        "scripts/check_cli_launch.py",
+        "--build-dir",
+        "build/desktop",
+        "--output",
+        "build/adapter-boundaries/cli-final.json",
+        "--case",
+        "hyperlink-capability",
+        "--case",
+        "identity-boundaries",
+        "--case",
+        "synchronization-boundaries",
+        "--case",
+        "detach",
+        "--case",
+        "mismatch",
+        "--case",
+        "codex-config-arguments",
+        "--case",
+        "delayed-codex-listener"
+      ],
+      "scope": "Real session service and PTYs with disposable child fixtures; no live Codex model turn.",
+      "local_receipt": "build/adapter-boundaries/cli-final.json"
+    },
+    {
+      "name": "appearance-capture",
+      "passed": true,
+      "command": [
+        "build/desktop/apps/desktop/lapis_ui_preview_tests",
+        "--background",
+        "--shortcuts-only"
+      ],
+      "environment": {
+        "LAPIS_SETTINGS_CAPTURE": "build/adapter-boundaries/appearance.png"
+      },
+      "artifact": "evidence/adapter-boundaries-appearance.png",
+      "scope": "Final-source background Appearance fixture; native input/GPU not exercised."
+    }
+  ],
+  "tools": {
+    "clang++": "Homebrew clang version 23.1.2",
+    "clang-tidy": "Homebrew LLVM version 23.1.2",
+    "clang-format": "Homebrew clang-format version 23.1.2",
+    "clangd": "Homebrew clangd version 23.1.2",
+    "cppcheck": "Cppcheck 2.22.0",
+    "cmake": "cmake version 4.4.3",
+    "ctest": "ctest version 4.4.3"
+  },
+  "review": {
+    "delegation": "Five implementation/investigation workers and two independent source-review workers completed through CCR zai,glm-5.3-flashx. Parent inspected receipts, corrected integration and ran checks.",
+    "source_reviews": "First-wave and lifecycle reviews reported no actionable findings. Source-only reviews do not replace tests."
+  },
+  "regression_evidence": [
+    "Invalid/trailing phase bytes are rejected; legacy snapshots default to unknown and diagnostic wording no longer controls first-prompt presentation.",
+    "Legacy, link-only and phase-capable attachment paths preserve capabilities without relaunch on negotiation retry.",
+    "A blocked old descriptor writer finishes after connection destruction and replacement; the newest descriptor survives and no temporary remains.",
+    "An unwritable registry keeps its original bytes and starts no missing service. This strengthens ordering without claiming a reproduced prior orphan.",
+    "The initial offscreen window-state failure was a synthetic two-pixel frame shift. Disabling synthetic margins passes the unchanged native geometry implementation."
+  ],
+  "limitations": [
+    "Native macOS keyboard/pointer/IME, pasteboard, external URL handlers and GPU presentation were not requalified.",
+    "TSan excludes the pre-existing uninstrumented Qt handoff report in asynchronous harness-model work; no whole-desktop race clearance is claimed.",
+    "Descriptor ticket ordering is same-process; no cross-process writer lock is claimed.",
+    "Old service binaries cannot supply OSC 8 metadata or read newly extended history archives; see terminal-usability.json.",
+    "Q09 deterministic deferred-history regression, Q10 allocation measurement and Q13 shared wire fixture remain separate follow-up. No new milestone features were built.",
+    "Running user apps/services and unrelated dirty worktrees were preserved."
+  ],
+  "source_files_sha256": {
+    "adapters/codex/src/observer.cpp": "7a13d81b371a338071053926fb1a1a934e85733121eccc77748f7aad87fb5559",
+    "adapters/codex/src/observer.hpp": "57ffeec1aa042a56c56d85469c7a7ebd30229514c2c111824e64f18e8366a309",
+    "adapters/codex/tests/observer_test.cpp": "a80d4d8a973917512db9123816e6d1aa752df0698eaef98ba77028fd26fc19c2",
+    "apps/desktop/CMakeLists.txt": "757971cce592451699fa4e3ef658edd76af9754bb1ad4467d365c6e17bacf1ba",
+    "apps/desktop/qml/Main.qml": "bad6734e8e2abf45143e24a607bd26e4ebf027d3fdc1fd9604413425433781b5",
+    "apps/desktop/qml/Settings.qml": "f3b38002f7611098423bc6e4d62c009208786fcc82656805ae8f19bffdeab91e",
+    "apps/desktop/src/attention_view.cpp": "bdfc0695ed2a167313d79f447a18bf9545c13dea93216481b3c5742a31a77ce4",
+    "apps/desktop/src/harness_catalog.cpp": "66a3b01edea6683a522dbb188758c34b6329f769eac093dc1089118d96f086d6",
+    "apps/desktop/src/harness_catalog.hpp": "506f407cdbe548b29b6fe53c3dcb9d952774d630f121f46d024844a6634182f9",
+    "apps/desktop/src/history_strip.cpp": "b40a200ba8441769098dd63d64299247136401c0cce2134d57e7b025bbbda263",
+    "apps/desktop/src/history_strip.hpp": "f9e8404c9ce8754cc2483fc3f710182629b0deb8782f21b4c7ae2df4e45ae1b4",
+    "apps/desktop/src/keymap.hpp": "05a5b6aaa18cc6e9e60e744256ba9ec560a89284b5cb6a3f93267cc68f147ebe",
+    "apps/desktop/src/live_connection.cpp": "9622c315ee07d63ab76c4329d8e695897addcfa9ec5c51ebf4ad8d382cfcda89",
+    "apps/desktop/src/live_connection.hpp": "5da15eeb44c65b0d6d463d4e0f11a15dc0554c6368dd7f6b7b78b3e35bb19f57",
+    "apps/desktop/src/main.cpp": "e33c1830f120cfe8965ef3a6e24d6ce34cafda610b573c7425e15970a7ad7ec0",
+    "apps/desktop/src/terminal_surface.cpp": "4e1bb99575342cb52a65ff126cafeba6fddf765afb129c06b60f6ae0359000ca",
+    "apps/desktop/src/terminal_surface.hpp": "b544753678ae8455fdf46c66f6663e3cd6ed13a7dbdb4566790fbf88725600ac",
+    "apps/desktop/src/ui_capture.cpp": "ad930bdc8cec355e423a96567972462346b3ac241e206c0949ad2145ee74881f",
+    "apps/desktop/src/workspace.cpp": "12205a96740be710b595af415b13a4f4d48fe6dad3132234ebcf0a3a3adf5c68",
+    "apps/desktop/src/workspace.hpp": "44bdd82bbea4b1d0fc9ec59bba4b5ccc7bdb894a0b549b834b05bffdf2a1b450",
+    "apps/desktop/tests/attention_ui_probe.cpp": "d2f8b081ec73a99925ada1c4ea5bd0cdb2b1e63b90e9ab3398b91df6cc1d0130",
+    "apps/desktop/tests/harness_models_test.cpp": "ceea6538bcbaf38235ca18e53ff39893127fd341e3db00bfd2f48b1d27405707",
+    "apps/desktop/tests/history_strip_test.cpp": "668dc7bd7b53ee3b3ff3c163a47a777b340366c6930efbdcb5a946a2641a631b",
+    "apps/desktop/tests/link_receiver.hpp": "9fe8f679dafe8debd6f03864c62127ac319599b29c6ded9743d64391023b8ff7",
+    "apps/desktop/tests/live_connection_test.cpp": "2f794ac7b9a93968fd244c573113850439fe68023b8d9f953d5762a08f34036c",
+    "apps/desktop/tests/native_input_probe.cpp": "868d560d1b2af3f95599462ae690add626aca8983a3e350e76e5ca391f5c2cd0",
+    "apps/desktop/tests/terminal_input_test.cpp": "39f8ee7fcd064bc33c865ab4b62ebfd5305161b4f9f7d319d15802b0b3385eaa",
+    "apps/desktop/tests/terminal_render_test.cpp": "fc4533d8183adc7836abd9c502da72a11e8f89ec0eadba2a7020ce220b9d41c3",
+    "apps/desktop/tests/ui_preview_test.cpp": "668160176054c578eede47c548f97c50ee89b27a906c9c713a722bc6f807978d",
+    "apps/desktop/tests/workspace_test.cpp": "1f839d0b8aed19fe3a9105f240658b448096daeffea25649978de22d449b37cd",
+    "scripts/check_cli_launch.py": "b769ebf36293aa8ffdfee53c9b8bd43e199315292591fc34e17e1017d9528019",
+    "scripts/check_cpp.py": "f9895585418b8661aba2a527be35355c20434876810b2456b61533d61550ec11",
+    "services/session/include/lapis/session/attention.hpp": "8113e5a7d460aeb7606b5f2015378493f98d241f56b8676c26d2f40f06f76aac",
+    "services/session/include/lapis/session/observation_phase.hpp": "ad69819996f953aed7940fe7cf63daae03bf1f8dbfaeb6446d008b654df81a52",
+    "services/session/include/lapis/session/terminal.hpp": "2cda68268b4c4b37495c27d366f35960dfceaa08ea9a10f7d8103bbf077859fa",
+    "services/session/src/session_descriptor.cpp": "07cb83c8d3893c967f0012706edc6c68e9b907a640c065cf0670eb281b4ceffe",
+    "services/session/src/session_descriptor.hpp": "6d59ea6690092ecc249bf2a5db2fcd8d1b382c1b2c74ecfe65e76cdb505e44f3",
+    "services/session/src/session_service.cpp": "db2f99f5392ef2dd723fa76135f8ad2214c0e82d65b1b989e47dfef9cb27c58e",
+    "services/session/src/terminal/terminal.cpp": "8c59a506c5ef0895c1527e19d89b52a3f487334951de07a26c56cedaf7fd7747",
+    "services/session/src/transport/attention_protocol.cpp": "387fe7447bfb51a0f7064203870f93f1be513dec23f8abab1954034485b5a040",
+    "services/session/src/transport/attention_protocol.hpp": "50b9245d17a8841d0608a61fbbbfff3f96ff6b6fb1b4221e94a01688fbe0c38f",
+    "services/session/src/transport/local_protocol.cpp": "14b0589127729909a05edfbf83a9c8130c5521cbce5eaa94ba34be9e6c2423df",
+    "services/session/src/transport/local_protocol.hpp": "2a4021726da38aed262276098c275c1ef5d121b317fa0aae1eea04a43b0fccff",
+    "services/session/tests/attention_protocol_test.cpp": "72545b68a76677ad4508986c0348361c4fd15382c966bbf823ffd7cadf204ef0",
+    "services/session/tests/history_store_test.cpp": "11999be0f579dc54368e533ddcc1a635b6bc990bcad2fbf06a69e416595f7824",
+    "services/session/tests/local_protocol_test.cpp": "482f2bfc8d0409ed7e5ff03f0250b943ac0205826b9e43c0cf1b6e790784c361",
+    "services/session/tests/session_descriptor_test.cpp": "282bf5002f8b378ed1ccce6eb05bb0893226489d2a38fba0beba3c8e246c25de",
+    "services/session/tests/terminal/terminal_test.cpp": "dfd64f1470ec12eaec2c0fdfd6738a64a0fd88b0c13a3fefb80f48807d31635e"
+  }
+}

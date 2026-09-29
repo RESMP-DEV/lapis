@@ -413,9 +413,8 @@ void navigation_defaults_preserve_terminal_editing() {
                               QStringLiteral("nextWindow"),   QStringLiteral("previousWindow"),
                               QStringLiteral("newAgent"),     QStringLiteral("newCategory"),
                               QStringLiteral("closeAgent"),   QStringLiteral("quit")};
-    // Command-W closes an agent; closing the window has no default key.
     require(keymap.sequences(QStringLiteral("detachWindow")).isEmpty(),
-            "the window closes only from its own control or Quit");
+            "the retired detach action stays unbound");
     for (const auto* removed : {"nextPane", "zoomPane", "paneLeft", "dividerLeft"})
         require(keymap.sequences(QString::fromLatin1(removed)).isEmpty(),
                 "the old pane actions stay retired");
@@ -424,21 +423,66 @@ void navigation_defaults_preserve_terminal_editing() {
          {"splitRight", "splitDown", "tileLeft", "tileRight", "tileUp", "tileDown", "zoomTile"})
         require(!keymap.sequences(QString::fromLatin1(tiling)).isEmpty(), "tile actions have keys");
 #ifdef Q_OS_MACOS
-    require(keymap.sequences(QStringLiteral("nextCategory")) ==
-                QStringList({QStringLiteral("Meta+Alt+Right"), QStringLiteral("Meta+Shift+Down")}),
-            "categories keep Command-Option-arrows and gain Command-Shift-arrows");
+    require(
+        keymap.sequences(QStringLiteral("nextCategory")) ==
+                QStringList({QStringLiteral("Meta+Alt+Right"), QStringLiteral("Meta+Shift+Down"),
+                             QStringLiteral("Meta+Shift+J")}) &&
+            keymap.sequences(QStringLiteral("previousCategory")) ==
+                QStringList({QStringLiteral("Meta+Alt+Left"), QStringLiteral("Meta+Shift+Up"),
+                             QStringLiteral("Meta+Shift+K")}),
+        "categories keep Command-Option-arrows and Command-Shift-arrows, and gain "
+        "Command-Shift-J/K on the home row");
     require(keymap.sequences(QStringLiteral("newAgent")) == QStringList{QStringLiteral("Meta+T")} &&
                 keymap.sequences(QStringLiteral("newCategory")) ==
                     QStringList{QStringLiteral("Meta+N")},
             "as in a browser, Command-T opens an agent and Command-N a category");
+    // As in a browser, Command-W closes what is in front (and the window once
+    // nothing is left) and Command-Shift-W the window; Command-M minimizes.
+    require(keymap.sequences(QStringLiteral("closeAgent")) ==
+                    QStringList{QStringLiteral("Meta+W")} &&
+                keymap.sequences(QStringLiteral("closeWindow")) ==
+                    QStringList{QStringLiteral("Meta+Shift+W")} &&
+                keymap.sequences(QStringLiteral("minimizeWindow")) ==
+                    QStringList{QStringLiteral("Meta+M")},
+            "Command-W closes the agent, Command-Shift-W the window, Command-M minimizes");
+    require(keymap.sequences(QStringLiteral("toggleTerminal")) ==
+                    QStringList({QStringLiteral("Meta+`"), QStringLiteral("Ctrl+`")}) &&
+                keymap.sequences(QStringLiteral("chooseTerminal")) ==
+                    QStringList({QStringLiteral("Meta+Shift+`"), QStringLiteral("Meta+~")}) &&
+                keymap.sequences(QStringLiteral("resumeConversation")) ==
+                    QStringList{QStringLiteral("Meta+O")},
+            "terminal defaults keep both grave spellings and tilde");
 #else
+    require(keymap.sequences(QStringLiteral("closeWindow")).isEmpty(),
+            "without a dock to reopen it, closing the window has no key");
+    require(keymap.sequences(QStringLiteral("minimizeWindow")).isEmpty(),
+            "without a Dock, minimizing the window has no key");
+    require(keymap.sequences(QStringLiteral("toggleTerminal")) ==
+                    QStringList{QStringLiteral("Ctrl+`")} &&
+                keymap.sequences(QStringLiteral("chooseTerminal")) ==
+                    QStringList({QStringLiteral("Ctrl+Shift+~"), QStringLiteral("Ctrl+~")}) &&
+                keymap.sequences(QStringLiteral("resumeConversation")) ==
+                    QStringList{QStringLiteral("Ctrl+Shift+O")},
+            "terminal defaults preserve Control chords and the resume shortcut");
     require(keymap.sequences(QStringLiteral("newAgent")) ==
                     QStringList{QStringLiteral("Ctrl+Shift+T")} &&
                 keymap.sequences(QStringLiteral("newCategory")) ==
                     QStringList{QStringLiteral("Ctrl+Shift+N")},
             "Control-Shift-T opens an agent and Control-Shift-N a category");
 #endif
+    const QString category_modifier =
+#ifdef Q_OS_MACOS
+        QStringLiteral("Meta+");
+#else
+        QStringLiteral("Ctrl+Shift+");
+#endif
     QStringList seen;
+    for (int number = 1; number <= 9; ++number) {
+        const auto expected = QStringList{category_modifier + QString::number(number)};
+        require(keymap.sequences(QStringLiteral("category%1").arg(number)) == expected,
+                "the first nine number chords pick the first nine categories");
+        seen.append(expected.constFirst());
+    }
     for (const auto& action : actions) {
         const auto sequences = keymap.sequences(action);
         require(!sequences.isEmpty(), "workspace actions need defaults");
@@ -782,6 +826,65 @@ void terminal_font_persists_and_rolls_back() {
             "each invalid font value is reported");
 }
 
+// Remote settings are one KeyMap-owned transaction, not six separately
+// persisted setters. A failed save leaves both memory and disk where they were.
+void remote_settings_are_transactional() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "remote-settings fixture directory");
+    const QDir dir(directory.path());
+    const QString path = write_config(dir, R"({"retained":true})");
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "remote-settings fixture loads");
+
+    int changes = 0;
+    QObject::connect(&keymap, &KeyMap::changed, [&changes] { ++changes; });
+    const KeyMap::RemoteSettingsPatch batch{.keepAwake = std::optional(false),
+                                            .alertSound = std::optional(false),
+                                            .finishSound = std::optional(false),
+                                            .notify = std::optional(false),
+                                            .showUsage = std::optional(false),
+                                            .alertRepeat = std::optional(7)};
+    require(keymap.applyRemoteSettings(batch), "a valid settings batch applies");
+    require(changes == 1, "one successful settings batch publishes once");
+    const auto saved = keymap.remoteSettings();
+    require(!saved.keepAwake && !saved.alertSound && !saved.finishSound && !saved.notify &&
+                !saved.showUsage && saved.alertRepeat == 7,
+            "every value in a valid settings batch is applied");
+    const auto written = read_config(path);
+    require(!written.value(QStringLiteral("keepAwake")).toBool(true) &&
+                written.value(QStringLiteral("alerts"))
+                        .toObject()
+                        .value(QStringLiteral("repeat"))
+                        .toInt() == 7,
+            "the whole settings batch is written once");
+    require(written.value(QStringLiteral("retained")).toBool(),
+            "settings persistence preserves unrelated config");
+
+    const auto before_failure = keymap.remoteSettings();
+    const QByteArray malformed = "{unfinished remote-settings edit";
+    static_cast<void>(write_config(dir, malformed));
+    keymap.setSourcePathForTesting(path); // Keep memory; watch the new bytes only.
+    QString diagnostic;
+    KeyMap::RemoteSettingsPatch failed_batch;
+    failed_batch.keepAwake = true;
+    failed_batch.alertRepeat = 3;
+    require(!keymap.applyRemoteSettings(failed_batch, &diagnostic),
+            "a failed settings save refuses the whole batch");
+    require(keymap.remoteSettings().keepAwake == before_failure.keepAwake &&
+                keymap.remoteSettings().alertRepeat == before_failure.alertRepeat &&
+                keymap.remoteSettings().alertSound == before_failure.alertSound &&
+                keymap.remoteSettings().finishSound == before_failure.finishSound &&
+                keymap.remoteSettings().notify == before_failure.notify &&
+                keymap.remoteSettings().showUsage == before_failure.showUsage,
+            "a failed settings save rolls back every field it touched");
+    require(diagnostic.contains(QStringLiteral("Could not save")),
+            "a failed settings save reports its diagnostic");
+    QFile raw(path);
+    require(raw.open(QIODevice::ReadOnly), "read the failed settings config");
+    require(raw.readAll() == malformed, "a failed settings save preserves disk bytes");
+}
+
 } // namespace
 
 // Defaults for new agents, alerts and keeping awake come from the file, and
@@ -887,6 +990,7 @@ int main(int argc, char** argv) {
         harness_arguments_are_literal_lists();
         advertised_names_are_accepted();
         terminal_font_persists_and_rolls_back();
+        remote_settings_are_transactional();
         config_reloads_when_edited_elsewhere();
     } catch (const std::exception& error) {
         std::cerr << "keymap_test: " << error.what() << '\n';

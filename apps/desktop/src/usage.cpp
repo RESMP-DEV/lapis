@@ -17,8 +17,8 @@
 
 namespace lapis::desktop {
 namespace {
-constexpr qint64 kChunk = qint64{8} << 20;
-constexpr qsizetype kLongestCount = qsizetype{64} << 20;
+constexpr qint64 kChunk = qint64{8} * 1024 * 1024;
+constexpr qsizetype kLongestCount = qsizetype{64} * 1024 * 1024;
 constexpr int kChartDays = 30;
 
 // The text of the JSON string after `key` (which ends with its opening
@@ -153,29 +153,27 @@ TokenCount& TokenCount::operator-=(const TokenCount& other) {
 }
 
 void TokenLedger::scan(QDate since) {
+    constexpr qint64 full_walk_ms = qint64{30} * 60 * 1000;
+    full_ = !since_full_.isValid() || since_full_.elapsed() >= full_walk_ms || since != since_;
     since_ = since;
     walk(Source::codex, roots_.codex, codex_);
     walk(Source::claude, roots_.claude, claude_);
+    if (full_)
+        since_full_.start();
 }
 
 void TokenLedger::walk(Source source, const QString& root, QHash<QString, File>& files) {
-    if (root.isEmpty())
+    if (root.isEmpty() || !QFileInfo(root).isDir())
         return;
     const QDateTime start(since_, QTime(0, 0));
-    QDirIterator it(
-        root,
-        {source == Source::codex ? QStringLiteral("rollout-*.jsonl") : QStringLiteral("*.jsonl")},
-        QDir::Files | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        it.next();
-        const auto info = it.fileInfo();
+    const auto consider = [&](const QFileInfo& info) {
         const auto modified = info.lastModified();
         const auto found = files.find(info.filePath());
         if (found == files.end() && modified < start)
-            continue;
+            return;
         auto& file = found == files.end() ? files[info.filePath()] : *found;
         if (file.modified == modified && file.size == info.size())
-            continue;
+            return;
         // Rewritten rather than appended: read it again from the top.
         // Claude messages already counted elsewhere stay counted once.
         if (info.size() < file.offset)
@@ -183,6 +181,29 @@ void TokenLedger::walk(Source source, const QString& root, QHash<QString, File>&
         file.modified = modified;
         file.size = info.size();
         read(source, info.filePath(), file);
+    };
+    QHash<QString, QStringList> counted; // by folder
+    if (!full_)
+        for (auto path = files.keyBegin(); path != files.keyEnd(); ++path)
+            counted[path->left(path->lastIndexOf(QLatin1Char('/')))].append(*path);
+    const QStringList pattern{source == Source::codex ? QStringLiteral("rollout-*.jsonl")
+                                                      : QStringLiteral("*.jsonl")};
+    QFileInfoList folders{QFileInfo(root)};
+    QDirIterator below(root, QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    while (below.hasNext())
+        folders.append(below.nextFileInfo());
+    for (const auto& folder : folders) {
+        const auto path = folder.filePath();
+        const auto time = folder.lastModified().toMSecsSinceEpoch();
+        const bool changed = full_ || folders_.value(path, -1) != time;
+        folders_.insert(path, time);
+        if (changed) {
+            for (const auto& info : QDir(path).entryInfoList(pattern, QDir::Files))
+                consider(info);
+            continue;
+        }
+        for (const auto& known : counted.value(path))
+            consider(QFileInfo(known));
     }
 }
 

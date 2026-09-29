@@ -1,0 +1,237 @@
+{
+  "schema": "lapis.local-consolidation/1",
+  "recorded_on": "2026-09-27",
+  "base_revision": "440b3e94c0d71f62532a89c6d67b1cd68f686a7a",
+  "branding_commit": "72e399b77e7505ce81653e9d441d0dc4d020c815",
+  "source_dirty": true,
+  "scope": "Existing local quality repairs reconciled with merged PRs 18 and 19, recovered review hardening, and canonical icon adoption. No new milestone or release.",
+  "changes": [
+    "Preserved newer main provenance, workspace, phone controls and rendering while discarding superseded local patch forms.",
+    "Persisted complete managed reopen plans before launch; failed reopen stays retryable.",
+    "Unified file-drop and keyboard paste ownership, retaining the intended destination.",
+    "Retired outgoing deferred history requests during attachment takeover.",
+    "Bound remote reports, errors, SSH builds and identity lookups; coalesced duplicate work and retained retry windows.",
+    "Guarded iPhone history, input, host responses and cache writes by generation.",
+    "Restored focused CLI selection and isolated short runtime paths; extended Python quality scope and truthful failure receipts.",
+    "Recovered typed frame deadlines and terminal-only unsupported approval handling from the old review branch.",
+    "Reap the owned windowless test host even when process inventory fails; preserve the original failure."
+  ],
+  "checks": [
+    {
+      "name": "quality",
+      "passed": true,
+      "python_tests": 216,
+      "scope": "Repository contracts, diff, Ruff and all Python discovery, including an actual-process inventory-failure cleanup regression and the windowless host integration. Later evidence-only edits use diff and source-hash checks."
+    },
+    {
+      "name": "desktop",
+      "passed": true,
+      "ctest_suites": 28,
+      "scope": "Full developer build, 27 non-native suites and a separately run Codex observer. Window-state passed on an explicit 1920x1080 virtual screen after default offscreen geometry proved too small."
+    },
+    {
+      "name": "background-ui",
+      "passed": true,
+      "cases": [
+        {
+          "name": "ui-full-background",
+          "elapsed_seconds": 19.248
+        },
+        {
+          "name": "ui-shortcuts-background",
+          "elapsed_seconds": 2.557
+        },
+        {
+          "name": "terminal-input-background",
+          "elapsed_seconds": 4.492
+        }
+      ],
+      "scope": {
+        "mode": "background",
+        "qt_platform": "offscreen",
+        "scene_graph": "software",
+        "native_gpu_exercised": false,
+        "native_os_input_exercised": false,
+        "excludes": [
+          "native GPU presentation",
+          "macOS AppKit keyboard/input routing",
+          "system IME",
+          "system pasteboard"
+        ]
+      },
+      "visual_inspection": "Saved workspace capture retains the terminal stage and preview strip."
+    },
+    {
+      "name": "dev-toolchain-gate",
+      "passed": true,
+      "scope": "Real configure/build/CTest/static path of the changed runner."
+    },
+    {
+      "name": "tool-failure-detectors",
+      "passed": true,
+      "checks": 12
+    },
+    {
+      "name": "desktop-static",
+      "passed": true,
+      "checks": 9,
+      "scope": "Repository formatting and Cppcheck; seven changed translation units through clang-tidy with actual flags."
+    },
+    {
+      "name": "asan-ubsan",
+      "passed": true,
+      "ctest_suites": [
+        "workspace",
+        "history-store",
+        "codex-observer"
+      ],
+      "additional": "terminal-input --background"
+    },
+    {
+      "name": "tsan",
+      "passed": true,
+      "ctest_suites": [
+        "workspace",
+        "history-store",
+        "codex-observer"
+      ],
+      "additional": "terminal-input --background"
+    },
+    {
+      "name": "cli-launch",
+      "passed": true,
+      "cases": 15,
+      "scope": "All eligible service cases and installed no-prompt Codex TUI. Final run uses isolated short /tmp paths; it supersedes earlier setup failures under the long worktree runtime path."
+    },
+    {
+      "name": "restore",
+      "passed": true,
+      "agents": 6,
+      "simulated_power_losses": 2,
+      "scope": "Real Codex and Claude against fake models, four CLI stand-ins; same conversations, one managed resume pair, second restart through launchd, and final helper leaves live processes unchanged."
+    },
+    {
+      "name": "foundation-lifecycle",
+      "passed": true,
+      "observed": {
+        "staleOlderRejected": true,
+        "staleNewerRejected": true,
+        "workspaceAtoBtoARejected": true,
+        "workspaceTerminalsAtoBtoARejected": true,
+        "staleInputRejected": true,
+        "attachmentRevisions": [
+          1,
+          2,
+          4
+        ],
+        "replacementPrefetchRequests": 2,
+        "pagingRequests": 4,
+        "emptyRetryRequests": 3
+      },
+      "unexpected_routes": [],
+      "negative_controls": [
+        {
+          "variant": "workspace",
+          "exit_code": 1,
+          "expected_diagnostic": "history-lifecycle-probe: old-host listing survived an A-to-B-to-A host change",
+          "control_source_sha256": "63cf02570ae9a8d75d2c1593f41c04d3db122323b4aebb00273f38e31e0d2300"
+        },
+        {
+          "variant": "terminals",
+          "exit_code": 1,
+          "expected_diagnostic": "history-lifecycle-probe: old-host refresh wrote cache after a terminal-owned await",
+          "control_source_sha256": "c2ec4b0a2453f0f6e4757c73bf21c02127594326d426b90257d67cfa0fcd6d3d"
+        }
+      ]
+    },
+    {
+      "name": "ios-integration",
+      "passed": true,
+      "passedTests": 23,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "totalTestCount": 23,
+      "scope": "Complete headless simulator suite, real Codex and Claude with fake models, rebuilt services and a continuously attached Mac-side client; phone mutations verified from the Mac."
+    },
+    {
+      "name": "icon-generation",
+      "passed": true,
+      "outputs": 5,
+      "scope": "Regenerated output hashes match, rebuilt desktop bundle contains matching ICNS, iOS asset catalog compiled with the app. Release packaging is separate."
+    }
+  ],
+  "source_sha256": {
+    "adapters/codex/src/observer.cpp": "9508c5acdbb8fd28abea88ea833559a4567afcc50b93876ccd4f4ed9fd80d7d1",
+    "adapters/codex/tests/observer_test.cpp": "05b6392fb3a0f2bcf507fe32eaf53560c9575a46370b2c413daf5be7026c5a92",
+    "apps/desktop/CMakeLists.txt": "10f89c564ea0d08141f672672c781a2d71fc9cdbcb9c9e21846d9c9ac26c0a8d",
+    "apps/desktop/qml/Main.qml": "c9f0adcbe59332b0d9c8ad4fe83b5f6b2845834e6cc1f8e920d46c69a9bb54d2",
+    "apps/desktop/src/terminal_surface.cpp": "37aba8f81a26776319cf51bb71a66f45679d331f1746b26acba7210d567d7e6f",
+    "apps/desktop/src/workspace.cpp": "1990113a7fe55c32e200a443a9bca3fbf54eb291f0c5603292243d783382930a",
+    "apps/desktop/src/workspace.hpp": "a7371b9e86d463412dbe786219d43c534608065deff0fdcda5adea8c9876200f",
+    "apps/desktop/tests/terminal_input_test.cpp": "beae375c3a87398bb1cde2d525119c5d280aa9c4e2c2753b4ce32cc1991f5e46",
+    "apps/desktop/tests/workspace_test.cpp": "d66c42c9eaaafe1257dbdc929abcdee3a19d24b1cd19f6a77319ee83e62d016b",
+    "apps/ios/Lapis/Models.swift": "d34f76db80288e7c14a7cac6c61403cb69069aece95b7ae56c7be47acc7adb1d",
+    "apps/remote/lapis_remote.py": "14182a417c47566f2ccbb8446fb65716ffd9b325d5fb039494201192af3c05c3",
+    "assets/lapis.svg": "a896cc7f84892e0b16727feccd65897cd1cf0cc1e47dea72985e4b3119f820d8",
+    "scripts/check_cli_launch.py": "fc18bd13a84638a58f3e5a016b0ece9595e87894b2556452d9c9aeef90aec176",
+    "scripts/check_cpp.py": "67aea74f21c99025e6a8c362724de9c87f8c1b0aa2c7b4f79d319470a8a89aa9",
+    "scripts/check_quality.py": "03db7949ad2cea5423595c7e21f1d6e7fe4b6452dac234c8fdadd3c7bf916f38",
+    "scripts/check_service_attention.py": "c5854966618a225998674fd888e92215759164919df2556ee5c1e070c09e272e",
+    "scripts/check_ui_preview.py": "7fee5aa84df47781345990063e0b11365cae0ee3b58a140105d3e9c943ee8616",
+    "scripts/package_macos.py": "fe02dc6c46d7d20c12fc3b306cd30129507c17c80e30e24c9a6f212d749f8b02",
+    "scripts/tests/test_check_cli_launch.py": "722c4e4785ed89c2e9b883fcfebd10966cd7cb8807f13a6497cde34f6bd3c898",
+    "scripts/tests/test_check_cpp.py": "ce357e13ccc291456b97923b615ff1b47d76ff64468fee0734d58238d5784067",
+    "scripts/tests/test_check_quality.py": "60a5a008bc741dac4e4304214b58b01d1e5275ef303de9263ec929b447f946d0",
+    "scripts/tests/test_check_service_attention.py": "1d6a113f7a4fe1ba7bc43555542293bbd8e11e6b394681196eb51985e0140481",
+    "scripts/tests/test_check_ui_preview.py": "c0a0440fff2881e716170ae27f6ad2eced94a6cb00fbea171e96465bf6dd0dc9",
+    "scripts/tests/test_history_lifecycle_probe.py": "eaf2ba60c754b71e7fb6e18cfd63dca57b3df6f769215d1dffe35d2f2dcb191f",
+    "scripts/tests/test_lapis.py": "be8c70605615ee17efc2563c1125c441bc063ec0100ec820c0343016e4d9e488",
+    "scripts/tests/test_lapis_remote.py": "4d2069a71196a8b59a12808ac48da504116805aad0a45b48eb1b30f91442851c",
+    "scripts/tests/test_lapis_remote_bounds.py": "0a8263a294ef06353d42fa9a08da68c43cd496b7e40fdcd826975a8ca2fdcb8c",
+    "scripts/tests/test_package_macos.py": "aa851d8c4e863052d324ed038182069a7e3bc6ced1f394f5f16f5e3a43d99069",
+    "services/session/CMakeLists.txt": "6c312b4f85ab32239ced8a73d86a84a56ba2490e589fa5c0a8db854356b2d395",
+    "services/session/src/session_service.cpp": "a9a0bdac60a0b0537c48ce5d2ce5679bbd8d1eb0a09dbb6530a3ba33faa9c825",
+    "site/icon.svg": "a896cc7f84892e0b16727feccd65897cd1cf0cc1e47dea72985e4b3119f820d8",
+    "tools/qa/history_lifecycle_probe.swift": "ab8951a21eec77710a9a075686d5ded62c5707f70df0361b59937549148c6823",
+    "tools/qa/run_history_lifecycle_probe.py": "6a8c544830439baf82735cb9d4ae85d87d9d0b1861c5d6ec734b7bbbf19761d9"
+  },
+  "review": {
+    "read_only_audits": 3,
+    "integration_workers": 3,
+    "coordinator": "Reviewed combined diff and corrected missed managed-resume assignments, initializer ordering, CLI runtime isolation, terminal-response ownership, and probe completion/failure handling.",
+    "optional_final_worker": "skipped/unavailable: repeated provider 429 after cooldown; no approval implied."
+  },
+  "limits": [
+    "Native AppKit, system pasteboard, Finder-drop, IME and GPU acceptance were not renewed; software checks retain their narrower scope.",
+    "Deferred-history takeover has ordinary takeover coverage but still lacks a controlled deferred-queue regression.",
+    "Unchanged harness-models/usage TSan qualification with instrumented Qt Core remains open; focused sanitizer passes do not clear those historical reports.",
+    "The pinned release Qt build is absent; no release verification, notarization or installed-app replacement was performed.",
+    "Unmerged IDE-context and native background-input driver branches are preserved separately."
+  ],
+  "local_artifact_policy": "Detailed commands/logs, source snapshots, Git bundles and archived worktree evidence stay under ignored build/branch-cleanup. Historical receipts retain their original revisions. Source hashes above bind this assembled code independently of commit-only changes.",
+  "assembled_revision": "1ff73b4c46601c9e5257b7b2477620865d444c3d",
+  "source_hash_scope": "The assembled revision above, before splitting artwork and quality into independent PRs. Historical check counts and icon hashes describe that assembly.",
+  "review_partition": {
+    "quality_branch": "fix/consolidated-quality",
+    "artwork_branch": "chore/cabochon-artwork",
+    "artwork_revision": "72e399b77e7505ce81653e9d441d0dc4d020c815",
+    "same_quality_source_hashes": 29,
+    "source_paths_owned_by_artwork_pr": [
+      "assets/lapis.svg",
+      "scripts/package_macos.py",
+      "scripts/tests/test_package_macos.py",
+      "site/icon.svg"
+    ],
+    "reuse": "All product code, CMake, QML, Swift probes and non-artwork tests in the quality change are byte-identical to the tested assembly. The pre-evidence-edit merge of both PR trees exactly equals the assembled tree. Compiled, sanitizer, background, CLI, restore and iOS evidence is reused at its original scope.",
+    "standalone_quality": {
+      "source_revision": "14f04c3f1b0ba16845c02999f7e45aad2d5a51a1",
+      "passed": true,
+      "discovered_tests": 215,
+      "passed_tests": 208,
+      "skipped_tests": 7,
+      "skip_scope": "Build-dependent fixtures are skipped in the fresh unbuilt checkout; their original assembled-build results above remain separate evidence.",
+      "command": "python3 scripts/check_quality.py"
+    },
+    "artwork_excluded": "Icon generation/package changes are reviewed in the separate artwork PR. Its historical icon-generation check above is not part of standalone quality qualification."
+  }
+}

@@ -2,13 +2,18 @@
 #include "session_descriptor.hpp"
 #include "transport/local_protocol.hpp"
 
+#include "link_receiver.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
+#include "workspace.hpp"
 #include <QClipboard>
 #include <QDataStream>
+#include <QDesktopServices>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QInputMethod>
 #include <QInputMethodEvent>
@@ -22,8 +27,10 @@
 #include <QSGRendererInterface>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QUrl>
 #include <QWheelEvent>
 #include <array>
+#include <atomic>
 #include <functional>
 #include <iostream>
 #include <source_location>
@@ -197,6 +204,38 @@ void composition(lapis::desktop::TerminalSurface& surface, QStringView preedit,
     event.setCommitString(commit, replace, replace == 0 ? 0 : 1);
     QCoreApplication::sendEvent(&surface, &event);
 }
+void local_file_url_contract(lapis::desktop::TerminalSurface& surface) {
+    struct Case {
+        QString url;
+        QString expected;
+        const char* message{};
+    };
+    QString raw_nul = QStringLiteral("file:///tmp/before");
+    raw_nul.append(QChar(u'\0'));
+    raw_nul.append(QStringLiteral("after"));
+    const std::array cases{
+        Case{QStringLiteral("file://server/share/file"), QStringLiteral("//server/share/file"),
+             "UNC file URL lost its network path"},
+        Case{QStringLiteral("file:///local/file"), QStringLiteral("/local/file"),
+             "Ordinary file URL did not become its local path"},
+        Case{QStringLiteral("file:///drop%20o%27clock%2F%E7%95%8C"),
+             QStringLiteral("/drop o'clock/界"),
+             "Encoded spaces, apostrophes, slashes or Unicode were not decoded"},
+        Case{QStringLiteral("file:///%2"), {}, "A malformed percent escape was accepted as a path"},
+        Case{QStringLiteral("https://example.invalid/file"),
+             {},
+             "A non-file URL was accepted as a local path"},
+        Case{QStringLiteral("file:///invalid%FF"),
+             {},
+             "Invalid encoded UTF-8 was accepted as a different filename"},
+        Case{QStringLiteral("file:///before%00after"),
+             {},
+             "A percent-encoded NUL was accepted as a path"},
+        Case{raw_nul, {}, "A raw NUL was accepted in a file URL"},
+    };
+    for (const auto& tested : cases)
+        require(surface.localFilePath(tested.url) == tested.expected, tested.message);
+}
 void input_contract(bool background) {
     Fixture f;
     QQuickWindow window;
@@ -206,6 +245,9 @@ void input_contract(bool background) {
     window.setGeometry(100, 100, 640, 360);
     lapis::desktop::TerminalSurface surface(window.contentItem());
     surface.setSize(QSizeF(640, 360));
+    // These fixed-grid input fixtures do not implement service resize replies.
+    // Real resize/history ordering is exercised by the connection and UI cases.
+    surface.setHoldResize(true);
     surface.setDocument(&f.document);
     surface.setInteractive(true);
     f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
@@ -224,7 +266,13 @@ void input_contract(bool background) {
         return window.isActive() && surface.hasActiveFocus();
     });
     static_cast<void>(text_frames(peer));
+    local_file_url_contract(surface);
     require(surface.inputMethodQuery(Qt::ImEnabled).toBool(), "Ready terminal disabled IME");
+    // Composition stays on; predictions, completion and corrections, which
+    // the platform would type into the program, are declined.
+    require(Qt::InputMethodHints(surface.inputMethodQuery(Qt::ImHints).toInt())
+                .testFlag(Qt::ImhNoPredictiveText),
+            "Terminal accepted predictive text");
     const auto original = surface.inputMethodQuery(Qt::ImCursorRectangle).toRectF();
     require(!original.isEmpty(), "IME candidate rectangle missing");
     composition(surface, {}, QStringLiteral("✓"));
@@ -236,6 +284,28 @@ void input_contract(bool background) {
     QKeyEvent printable(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
     QCoreApplication::sendEvent(&surface, &printable);
     require(text_frames(peer, 1) == QByteArray("x"), "Printable key fixture did not reach PTY");
+    // After a key, frames keep coming for a moment, so a display that slows
+    // down when nothing changes is still at its full rate for the echo; once
+    // typing pauses they stop.
+    std::atomic<int> frames{0};
+    const auto counting = QObject::connect(
+        &window, &QQuickWindow::frameSwapped, &window, [&frames] { ++frames; },
+        Qt::DirectConnection);
+    const auto frames_within = [&frames](int milliseconds) {
+        frames = 0;
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < milliseconds)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        return frames.load();
+    };
+    QKeyEvent warm(QEvent::KeyPress, Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+    QCoreApplication::sendEvent(&surface, &warm);
+    require(text_frames(peer, 1) == QByteArray("y"), "Second printable key did not reach PTY");
+    require(frames_within(300) >= 4, "Typing did not keep frames coming");
+    static_cast<void>(frames_within(700));
+    require(frames_within(300) <= 1, "Frames kept coming after typing paused");
+    QObject::disconnect(counting);
     for (const auto& [key, expected] :
          std::array{std::pair{Qt::Key_Left, '\x01'}, std::pair{Qt::Key_Right, '\x05'},
                     std::pair{Qt::Key_Backspace, '\x15'}, std::pair{Qt::Key_Delete, '\x0b'}}) {
@@ -308,6 +378,44 @@ void input_contract(bool background) {
     }
     composition(surface, {}, QStringLiteral("late-after-paste"));
     require(text_frames(peer).isEmpty(), "Pre-paste composition committed late");
+    {
+        composition(surface, QStringLiteral("before-drop"));
+        bool paste_claimed = false;
+        bool paste_released = false;
+        const QMetaObject::Connection paste_ownership_connection = QObject::connect(
+            &surface, &lapis::desktop::TerminalSurface::inputOwnershipChanged, [&] {
+                if (surface.pasting())
+                    paste_claimed = true;
+                else
+                    paste_released = true;
+            });
+        require(surface.pasteText(QStringLiteral("dropped界 ")),
+                "Programmatic file-drop paste was rejected");
+        require(text_frames(peer, QStringLiteral("dropped界 ").toUtf8().size()) ==
+                    QStringLiteral("dropped界 ").toUtf8(),
+                "File-drop paste was split or changed");
+        require(paste_claimed && paste_released, "File-drop paste bypassed paste ownership");
+        require(!surface.composing() && !surface.pasting(),
+                "File-drop paste retained stale input ownership");
+        composition(surface, {}, QStringLiteral("late-after-drop"));
+        require(text_frames(peer).isEmpty(), "File-drop composition committed late");
+        QObject::disconnect(paste_ownership_connection);
+    }
+    {
+        SessionPreview replacement(QStringLiteral("replacement"), QStringLiteral("/tmp"), {},
+                                   QColor(Qt::white), "");
+        const auto rebind = QObject::connect(
+            &surface, &lapis::desktop::TerminalSurface::inputOwnershipChanged, [&] {
+                if (surface.pasting())
+                    surface.setDocument(&replacement);
+            });
+        require(!surface.pasteText(QStringLiteral("wrong-destination")),
+                "Paste accepted a destination replaced during ownership notification");
+        require(text_frames(peer).isEmpty(), "Rebound paste reached the old terminal");
+        require(!surface.pasting(), "Rejected paste retained ownership");
+        QObject::disconnect(rebind);
+        surface.setDocument(&f.document);
+    }
     composition(surface, QStringLiteral("before-history"));
     f.document.olderHistory();
     composition(surface, {}, QStringLiteral("history-leak"));
@@ -445,6 +553,176 @@ void links_follow_wrapped_rows() {
     zero_width.feed("https://example.com\xE2\x80\x8B/ ok");
     require(lapis::desktop::terminal_url_at(zero_width.snapshot(), 0, 0).isEmpty(),
             "A zero-width format character was allowed in an opened URL");
+
+    using lapis::desktop::TerminalLink;
+    using lapis::desktop::TerminalMatch;
+    const auto wrapped = lapis::desktop::terminal_link_at(snapshot, 5, 1);
+    require(wrapped && wrapped->kind == TerminalLink::Kind::url &&
+                wrapped->cells == std::vector<TerminalMatch>({{0, 4, 19}, {1, 0, 19}}),
+            "A wrapped link did not cover its cells on both rows");
+    // Words are paths to check: Claude Code's Update(docs/a.md), a line
+    // number after a file, and sentence punctuation after a path.
+    lapis::session::Terminal words({40, 3});
+    words.feed("Update(docs/a.md) at src/x.cpp:12:3\r\nsee ~/notes. ok");
+    const auto update = lapis::desktop::terminal_link_at(words.snapshot(), 10, 0);
+    require(update && update->kind == TerminalLink::Kind::path && update->text == "docs/a.md" &&
+                update->cells == std::vector<TerminalMatch>({{0, 7, 15}}),
+            "A path in brackets was not found as a path");
+    const auto located = lapis::desktop::terminal_link_at(words.snapshot(), 22, 0);
+    require(located && located->text == "src/x.cpp" && located->line == 12,
+            "A file's line number was not taken apart from it");
+    const auto home = lapis::desktop::terminal_link_at(words.snapshot(), 5, 1);
+    require(home && home->text == "~/notes", "Sentence punctuation stayed on a path");
+    require(!lapis::desktop::terminal_link_at(words.snapshot(), 3, 1),
+            "A space was taken for a link");
+
+    QTemporaryDir folder;
+    require(folder.isValid() && QDir(folder.path()).mkpath(QStringLiteral("sub")),
+            "Link folder failed");
+    QFile image(QDir(folder.path()).filePath(QStringLiteral("shot.png")));
+    require(image.open(QIODevice::WriteOnly) && image.write("png") == 3, "Link file failed");
+    image.close();
+    const auto same = [](const QString& a, const QString& b) {
+        return !a.isEmpty() && QFileInfo(a).canonicalFilePath() == QFileInfo(b).canonicalFilePath();
+    };
+    using lapis::desktop::resolve_terminal_path;
+    require(
+        same(resolve_terminal_path(QStringLiteral("shot.png"), folder.path()), image.fileName()) &&
+            same(resolve_terminal_path(QStringLiteral("./sub"), folder.path()),
+                 QDir(folder.path()).filePath(QStringLiteral("sub"))) &&
+            same(resolve_terminal_path(image.fileName(), {}), image.fileName()) &&
+            same(resolve_terminal_path(QStringLiteral("~"), {}), QDir::homePath()),
+        "An existing path did not resolve");
+    require(resolve_terminal_path(QStringLiteral("missing.png"), folder.path()).isEmpty() &&
+                resolve_terminal_path(QStringLiteral("shot.png"), {}).isEmpty(),
+            "A missing path, or a relative one with no folder, resolved");
+}
+
+// Holding Command over a link or an existing file underlines it and shows a
+// hand; releasing Command or moving off clears it; Command-click opens it.
+void command_links_open() {
+    Fixture f;
+    QFile image(QDir(f.directory.path()).filePath(QStringLiteral("shot.png")));
+    require(image.open(QIODevice::WriteOnly) && image.write("png") == 3, "Link file failed");
+    image.close();
+    QQuickWindow window;
+    window.setGeometry(100, 100, 640, 360);
+    lapis::desktop::TerminalSurface surface(window.contentItem());
+    surface.setSize(QSizeF(640, 360));
+    // These fixed-grid input fixtures do not implement service resize replies.
+    // Real resize/history ordering is exercised by the connection and UI cases.
+    surface.setHoldResize(true);
+    surface.setDocument(&f.document);
+    surface.setInteractive(true);
+    LinkReceiver receiver;
+    QStringList opened;
+    QObject::connect(&surface, &lapis::desktop::TerminalSurface::linkOpened,
+                     [&opened](const QString& target) { opened.append(target); });
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    lapis::session::Terminal screen({40, 4});
+    screen.feed("open shot.png or https://example.com/a now");
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 2, screen.snapshot()}));
+    until([&] { return f.document.snapshot().size.columns == 40; });
+    window.show();
+    until([&] { return window.isExposed(); });
+#ifdef Q_OS_MACOS
+    const auto held = Qt::MetaModifier;
+    const auto key = Qt::Key_Meta;
+#else
+    const auto held = Qt::ControlModifier;
+    const auto key = Qt::Key_Control;
+#endif
+    const auto at = [&](int column) { return surface.cellRect(column, 0).center(); };
+    const auto hover = [&](QPointF position, Qt::KeyboardModifiers modifiers) {
+        QHoverEvent event(QEvent::HoverMove, position, surface.mapToGlobal(position), position,
+                          modifiers);
+        QCoreApplication::sendEvent(&surface, &event);
+    };
+    const auto same = [](const QString& a, const QString& b) {
+        return !a.isEmpty() && QFileInfo(a).canonicalFilePath() == QFileInfo(b).canonicalFilePath();
+    };
+    hover(at(7), Qt::NoModifier);
+    require(surface.hoveredLink().isEmpty(), "A path was underlined without Command");
+    hover(at(7), held);
+    require(same(surface.hoveredLink(), image.fileName()) &&
+                surface.cursor().shape() == Qt::PointingHandCursor,
+            "Command over an existing file did not underline it");
+    hover(at(1), held);
+    require(surface.hoveredLink().isEmpty() && surface.cursor().shape() != Qt::PointingHandCursor,
+            "A word naming no file was underlined");
+    hover(at(20), held);
+    require(surface.hoveredLink() == QStringLiteral("https://example.com/a"),
+            "Command over a web link did not underline it");
+    QKeyEvent release(QEvent::KeyRelease, key, Qt::NoModifier);
+    QCoreApplication::sendEvent(&surface, &release);
+    require(surface.hoveredLink().isEmpty(), "Releasing Command left the link underlined");
+    const auto click = [&](QPointF position) {
+        const auto scene = surface.mapToScene(position);
+        QMouseEvent press(QEvent::MouseButtonPress, scene, scene, surface.mapToGlobal(position),
+                          Qt::LeftButton, Qt::LeftButton, held);
+        QCoreApplication::sendEvent(&window, &press);
+        QMouseEvent up(QEvent::MouseButtonRelease, scene, scene, surface.mapToGlobal(position),
+                       Qt::LeftButton, Qt::NoButton, held);
+        QCoreApplication::sendEvent(&window, &up);
+    };
+    click(at(7));
+    click(at(20));
+    click(at(1));
+    require(opened.size() == 2 && same(opened[0], image.fileName()) &&
+                opened[1] == QStringLiteral("https://example.com/a"),
+            "Command-click did not open the file and the link, and only those");
+    require(receiver.urls.size() == 2 && receiver.urls[0].isLocalFile() &&
+                same(receiver.urls[0].toLocalFile(), image.fileName()),
+            "Command-click did not reach the OS URL dispatcher");
+    QFile replacement_file(QDir(f.directory.path()).filePath(QStringLiteral("invalid\uFFFD")));
+    require(replacement_file.open(QIODevice::WriteOnly) && replacement_file.write("x") == 1,
+            "Replacement-character link fixture failed");
+    replacement_file.close();
+    const auto replacement_uri = QUrl::fromLocalFile(replacement_file.fileName()).toEncoded();
+    auto invalid_uri = replacement_uri;
+    invalid_uri.replace("%EF%BF%BD", "%FF");
+    require(invalid_uri != replacement_uri, "Invalid UTF-8 fixture was not encoded");
+    // Real OSC 8 output, including a file URI whose visible label names no path.
+    lapis::session::Terminal labeled({40, 4});
+    const auto file_uri = QUrl::fromLocalFile(image.fileName()).toEncoded();
+    labeled.feed("\x1b]8;;https://example.com/destination\x1b\\docs\x1b]8;;\x1b\\ ");
+    labeled.feed(std::string("\x1b]8;;") + file_uri.toStdString() + "\x1b\\image\x1b]8;;\x1b\\ ");
+    labeled.feed(
+        "www.example.com\r\n\x1b]8;;javascript:alert(1)\x1b\\https://example.com\x1b]8;;\x1b\\");
+    labeled.feed(std::string("\r\n\x1b]8;;") + invalid_uri.toStdString() +
+                 "\x1b\\bad\x1b]8;;\x1b\\ ");
+    labeled.feed(std::string("\x1b]8;;") + replacement_uri.toStdString() +
+                 "\x1b\\valid\x1b]8;;\x1b\\");
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 3, labeled.snapshot()}));
+    until([&] { return f.document.snapshot().hyperlinks.size() == 5; });
+    hover(at(1), held);
+    require(surface.hoveredLink() == QStringLiteral("https://example.com/destination"),
+            "Labeled link hover did not expose its actual destination");
+    click(at(1));
+    click(at(7));
+    click(at(14));
+    click(surface.cellRect(3, 1).center());
+    require(opened.size() == 5 && receiver.urls.size() == 5 &&
+                opened[2] == QStringLiteral("https://example.com/destination") &&
+                same(opened[3], image.fileName()) &&
+                opened[4] == QStringLiteral("https://www.example.com"),
+            "Labeled/web/file links did not dispatch, or an unsupported target dispatched");
+    click(surface.cellRect(1, 2).center());
+    require(opened.size() == 5 && receiver.urls.size() == 5,
+            "Invalid UTF-8 OSC 8 URI dispatched a different local filename");
+    hover(surface.cellRect(1, 2).center(), held);
+    require(surface.hoveredLink().isEmpty(), "Invalid UTF-8 OSC 8 URI exposed a hover target");
+    click(surface.cellRect(5, 2).center());
+    require(opened.size() == 6 && receiver.urls.size() == 6 &&
+                same(opened.back(), replacement_file.fileName()),
+            "A valid encoded replacement-character filename did not open");
+    require(text_frames(peer).isEmpty(), "Command-click sent input to the agent");
 }
 // Dragging selects screen text and double-clicking selects a word. The copy
 // chord copies without sending input, typing clears the selection, and the
@@ -455,6 +733,9 @@ void selection_and_scroll() {
     window.setGeometry(100, 100, 640, 360);
     lapis::desktop::TerminalSurface surface(window.contentItem());
     surface.setSize(QSizeF(640, 360));
+    // These fixed-grid input fixtures do not implement service resize replies.
+    // Real resize/history ordering is exercised by the connection and UI cases.
+    surface.setHoldResize(true);
     surface.setDocument(&f.document);
     surface.setInteractive(true);
     f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
@@ -585,6 +866,48 @@ void selection_and_scroll() {
     QCoreApplication::sendEvent(&surface, &resume);
     require(!f.document.historyActive(), "Typing did not return to the live screen");
     require(text_frames(peer, 1) == QByteArray("y"), "Typing on a history page was dropped");
+    // Partial trackpad/wheel angles must not cross the primary/alternate
+    // boundary: history uses 40 units per row, programs use 120 per notch.
+    quint64 sequence = 4;
+    const auto switch_screen = [&](bool alternate) {
+        f.terminal.feed(alternate ? "\x1b[?1049h" : "\x1b[?1049l");
+        peer.send(wire::Kind::snapshot, wire::encode_snapshot_message(
+                                            {{f.identity, 1}, ++sequence, f.terminal.snapshot()}));
+        until([&] { return f.document.snapshot().alternate_screen == alternate; });
+        static_cast<void>(text_frames(peer));
+    };
+    const auto scroll = [&](int angle) {
+        QWheelEvent event(middle, surface.mapToGlobal(middle), QPoint(), QPoint(0, angle),
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(&surface, &event);
+    };
+    const auto no_scroll = [&] {
+        settle();
+        peer.bytes += peer.socket->readAll();
+        require(peer.bytes.isEmpty(), "A partial wheel angle crossed screen modes");
+    };
+    switch_screen(true);
+    scroll(100);
+    no_scroll();
+    switch_screen(false);
+    scroll(20);
+    no_scroll();
+    scroll(20);
+    const auto partial_history = f.historyRequest(peer);
+    require(partial_history.direction == wire::HistoryDirection::older,
+            "A complete normal-screen wheel row was lost");
+    f.historyReply(peer, partial_history.request_id, 0, {}, QStringLiteral("No more history"));
+    until([&] { return !f.document.historyRequestPending(); });
+    scroll(20);
+    no_scroll();
+    switch_screen(true);
+    scroll(100);
+    no_scroll();
+    scroll(20);
+    const auto program_wheel = peer.read();
+    require(program_wheel.kind == wire::Kind::wheel &&
+                wire::decode_wheel(wire::decode_control(program_wheel.payload).payload).steps == 1,
+            "A complete alternate-screen notch did not reach the program");
 }
 } // namespace
 int main(int argc, char** argv) {
@@ -608,6 +931,7 @@ int main(int argc, char** argv) {
         input_contract(background);
         selection_and_scroll();
         links_follow_wrapped_rows();
+        command_links_open();
         size_returns_to_this_window();
         if (background)
             std::cout << "Background Qt/software mode; native macOS input and GPU not exercised\n";

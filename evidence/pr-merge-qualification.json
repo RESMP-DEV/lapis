@@ -1,0 +1,256 @@
+{
+  "schema_version": 1,
+  "date_utc": "2026-09-28",
+  "purpose": "Qualification of combined PR20-24 source and icon integration before main merges",
+  "sources": {
+    "workspace": "deec65a14c635a0784e22f67a112ff6cf1bc7187",
+    "combined_package": "3610b964ae6f85920148c65b83cdb19463bb206e",
+    "canonical_icons": "a0ba321beef3c3bedcb7bd59eab06f128876b760",
+    "phone_marks": "bb9f742bfff330b749210936152c9e4ce0cd0b0f"
+  },
+  "repairs": [
+    "Restore only relocates a missing native CLI with a matching catalog command; missing SSH keeps its launch metadata and fails validation.",
+    "Discard retires reconnect state only after persistence succeeds; rollback retains the pending retry.",
+    "The unreachable-host fixture awaits the SSH invocation before treating its initial disconnected state as a failed connection.",
+    "Icon integration retains the canonical vector publisher and failure recovery, preserves the phone LapisMark artwork and removes the unused duplicate SVG."
+  ],
+  "checks": [
+    {
+      "scope": "desktop",
+      "command": [
+        "cmake",
+        "--build",
+        "--preset",
+        "desktop",
+        "--parallel",
+        "3",
+        "--target",
+        "lapis_workspace_tests"
+      ],
+      "exit_code": 0
+    },
+    {
+      "scope": "desktop",
+      "command": [
+        "ctest",
+        "--preset",
+        "desktop",
+        "--no-tests=error",
+        "--output-on-failure",
+        "-R",
+        "^workspace$"
+      ],
+      "exit_code": 0
+    },
+    {
+      "scope": "asan",
+      "command": [
+        "cmake",
+        "--build",
+        "--preset",
+        "asan",
+        "--parallel",
+        "3",
+        "--target",
+        "lapis_workspace_tests"
+      ],
+      "exit_code": 0
+    },
+    {
+      "scope": "asan",
+      "command": [
+        "ctest",
+        "--preset",
+        "asan",
+        "--no-tests=error",
+        "--output-on-failure",
+        "-R",
+        "^workspace$"
+      ],
+      "exit_code": 0
+    },
+    {
+      "scope": "tsan",
+      "command": [
+        "cmake",
+        "--build",
+        "--preset",
+        "tsan",
+        "--parallel",
+        "3",
+        "--target",
+        "lapis_workspace_tests"
+      ],
+      "exit_code": 0
+    },
+    {
+      "scope": "tsan",
+      "command": [
+        "ctest",
+        "--preset",
+        "tsan",
+        "--no-tests=error",
+        "--output-on-failure",
+        "-R",
+        "^workspace$"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "source": "efd4864",
+      "reuse": "Only a C++ fixture wait changed afterward; no Python, tool configuration or production changes."
+    },
+    {
+      "command": "python3 scripts/lapis.py ui-review --jobs 3",
+      "exit_code": 0,
+      "source": "efd4864",
+      "scope": "Full background UI, shortcuts and terminal input; existing verified Ghostty prefix supplied. Production inputs unchanged by later fixture wait."
+    },
+    {
+      "command": "clang-format, clang-tidy and Cppcheck on workspace.cpp and workspace_test.cpp with desktop compilation database",
+      "exit_code": 0,
+      "source": "efd4864",
+      "scope": "Two affected translation units and workspace header. Final fixture wait separately compiled in all three presets and passed formatting."
+    },
+    {
+      "command": "python3 scripts/package_macos.py qt",
+      "exit_code": 0,
+      "scope": "Pinned Qt 6.11.2 arm64 macOS 14, bundled dependencies and Vulkan enabled"
+    },
+    {
+      "command": "LAPIS_SIGN_IDENTITY=- python3 scripts/package_macos.py app",
+      "exit_code": 0,
+      "scope": "Final combined production source; ad hoc local signature, existing verified Ghostty prefix"
+    },
+    {
+      "command": "python3 scripts/package_macos.py verify",
+      "exit_code": 0,
+      "scope": "Architectures, deployment targets, linkage, identifying strings, strict signatures, MoltenVK Vulkan device, windowless host and disposable launchd startup"
+    },
+    {
+      "command": "python3 scripts/package_macos.py icon",
+      "exit_code": 0,
+      "scope": "Byte-identical regeneration of canonical outputs; phone marks retained from PR23"
+    },
+    {
+      "command": "check_ios_remote.build_app(iphonesimulator SDK)",
+      "exit_code": 0,
+      "scope": "Existing helper compiled final Swift app and asset catalog and ad hoc signed; no Simulator window"
+    }
+  ],
+  "controls": [
+    {
+      "case": "missing transport catalog substitution",
+      "old_exit": 1,
+      "fixed_exit": 0,
+      "expected_diagnostic": "a missing remote transport is not replaced by its harness"
+    },
+    {
+      "case": "pending reconnect after failed discard",
+      "old_exit": 1,
+      "fixed_exit": 0,
+      "expected_diagnostic": "a dropped connection reconnects after a failed discard"
+    },
+    {
+      "case": "TSan unreachable-host fixture synchronization",
+      "old_exit": 1,
+      "fixed_exit": 0,
+      "old_observed_ssh_launches": 0,
+      "fixed_observed_ssh_launches": 1
+    }
+  ],
+  "control_method": "Temporary focused test entrypoints used the production workspace targets; each removed-fix control failed at its intended assertion. Full original test entrypoint and fixed production source were restored before final builds.",
+  "input_sha256": {
+    "apps/desktop/src/workspace.cpp": "f046be9976e14273ed79bcd240fbec134adb54665ea334b409ae672b26d57fcf",
+    "apps/desktop/tests/workspace_test.cpp": "44acced5489ca85be3275dbdd266d92eae0e2ddd71e9c82f481666b063f9b36e",
+    "apps/desktop/src/workspace.hpp": "4a0129472c788dfe9df5b8d284ce6bfd65df8f22527280398d682435b32066d4",
+    "assets/lapis.svg": "a896cc7f84892e0b16727feccd65897cd1cf0cc1e47dea72985e4b3119f820d8",
+    "apps/desktop/macos/lapis.icns": "6fc962d04fd6f175b50d27de017350b5f64cc72c047d44c5a6085303f6679f2a",
+    "apps/ios/Lapis/Assets.xcassets/AppIcon.appiconset/icon.png": "e70e88d4e31767026e48bf65b7608e79a79cfbb7bf13d1c7fc2e3744765e1b0b",
+    "apps/ios/Lapis/Assets.xcassets/LapisMark.imageset/mark@2x.png": "c7b6f8ed049d7660100b636028e6b2c9904b12ba0f918412fb4ff51a1dbc8544",
+    "apps/ios/Lapis/Assets.xcassets/LapisMark.imageset/mark@3x.png": "bae92500295b814cc2e601fa4d2b4a229a288fde634e784d028ffe0dd1d59850",
+    "site/icon.svg": "a896cc7f84892e0b16727feccd65897cd1cf0cc1e47dea72985e4b3119f820d8",
+    "site/icon.png": "41cbfa3a3314336a0d43704a8b59bbccc7cd6fc403c2bef23cfdbc9f545aacb0",
+    "site/favicon.png": "b6f90c8e5e46958e8f34b75e531d3939caace07d4b4e4d1dd2a276aab1e74756",
+    "scripts/package_macos.py": "df710449734d3b12532e8af601969dbf09015ff74455e39de958dc3dd7e16e39"
+  },
+  "prior_evidence": [
+    "evidence/adapter-boundaries.json",
+    "evidence/pr22-review-followup.json",
+    "evidence/pr24-review-followup.json",
+    "evidence/cabochon-icon.json"
+  ],
+  "review_state_at_qualification": {
+    "unresolved_threads": 0,
+    "kimi": "No findings on all previously pushed heads; updated heads require fresh review state before merge.",
+    "optional_unavailable": [
+      "Codex quota exhausted",
+      "Kilo credits exhausted",
+      "CodeRabbit included-review limit; retry only when eligible",
+      "Local OCR provider errors/incomplete attempts under managed backoff"
+    ]
+  },
+  "limits": [
+    "Ad hoc signature only; no Developer ID identity was installed. Distribution signing, notarization and release publication were not performed.",
+    "Background checks and Vulkan instance creation do not renew native IME/input or GPU presentation qualification.",
+    "Existing whole-desktop TSan harness-model limitation remains; this receipt covers the workspace suite.",
+    "No user application deployment or restart; root dirty work and unrelated worktrees preserved."
+  ],
+  "late_review_followup": {
+    "source": "e66969d",
+    "combined_package": "e70b04d4e078953c6896c0c4ac72354a673e4837",
+    "thread": "https://github.com/RESMP-DEV/lapis/pull/24#discussion_r4118243056",
+    "fix": "Shared strict UTF-8/NUL validation applies to both dropped file URLs and OSC 8 file links. Invalid encoded bytes cannot select a replacement-character filename.",
+    "control": {
+      "old_exit": 1,
+      "fixed_exit": 0,
+      "diagnostic": "Invalid UTF-8 OSC 8 URI dispatched a different local filename",
+      "valid_counterexample": "The correctly encoded replacement-character filename still opens."
+    },
+    "checks": [
+      {
+        "preset": "desktop",
+        "command": [
+          "build/desktop/apps/desktop/lapis_terminal_input_tests",
+          "--background"
+        ],
+        "exit_code": 0
+      },
+      {
+        "preset": "asan",
+        "command": [
+          "build/asan/apps/desktop/lapis_terminal_input_tests",
+          "--background"
+        ],
+        "exit_code": 0
+      },
+      {
+        "preset": "tsan",
+        "command": [
+          "build/tsan/apps/desktop/lapis_terminal_input_tests",
+          "--background"
+        ],
+        "exit_code": 0
+      },
+      {
+        "command": "Scoped clang-format, clang-tidy and Cppcheck for terminal_surface.cpp and terminal_input_test.cpp",
+        "exit_code": 0
+      },
+      {
+        "command": "python3 scripts/lapis.py ui-review --jobs 3",
+        "exit_code": 0
+      },
+      {
+        "command": "LAPIS_SIGN_IDENTITY=- python3 scripts/package_macos.py app; python3 scripts/package_macos.py verify",
+        "exit_code": 0
+      }
+    ],
+    "reuse": "Workspace source and tests are unchanged; retain the preceding full normal/ASan/UBSan/TSan workspace evidence. Packaging reran on the final changed production source.",
+    "input_sha256": {
+      "apps/desktop/src/terminal_surface.cpp": "356bc105cc885179ea9c0c609a645d85a2f4f53e654d48f00d92fb63aa1992c9",
+      "apps/desktop/tests/terminal_input_test.cpp": "c514e1b8dfe590549f54a132643d71d2c0dd36ccbe0c0b13e833e4c0459d21de"
+    }
+  }
+}

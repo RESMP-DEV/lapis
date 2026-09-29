@@ -18,9 +18,12 @@ if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
 endif()
 add_library(lapis_desktop_view STATIC
     src/workspace.cpp src/workspace.hpp
+    src/harness_catalog.cpp src/harness_catalog.hpp
     src/workspace_control.cpp src/workspace_control.hpp
     src/alerts.cpp src/alerts.hpp
     src/agent_search.cpp src/agent_search.hpp
+    src/conversation_index.cpp src/conversation_index.hpp
+    src/terminals.cpp src/terminals.hpp
     src/usage.cpp src/usage.hpp
     src/usage_limits.cpp src/usage_limits.hpp
     src/harness_models.cpp src/harness_models.hpp
@@ -31,15 +34,16 @@ add_library(lapis_desktop_view STATIC
     src/terminal_surface.cpp src/terminal_surface.hpp
     src/cell_shapes.cpp src/cell_shapes.hpp
     src/tile_layout.cpp src/tile_layout.hpp
+    src/history_strip.cpp src/history_strip.hpp
     src/app_paths.cpp src/app_paths.hpp
     src/desktop_actions.cpp src/desktop_actions.hpp src/platform_desktop.hpp
     src/shell_environment.cpp src/shell_environment.hpp
     src/ui_preview.cpp src/ui_preview.hpp)
 target_include_directories(lapis_desktop_view PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 if(APPLE)
-    # Notifications, the login item and (in the downloaded app) Sparkle.
+    # Notifications, the login item, Command-` and (in the downloaded app) Sparkle.
     target_sources(lapis_desktop_view PRIVATE src/desktop_actions_mac.mm)
-    target_link_libraries(lapis_desktop_view PUBLIC "-framework Foundation"
+    target_link_libraries(lapis_desktop_view PUBLIC "-framework AppKit" "-framework Foundation"
         "-framework ServiceManagement" "-framework UserNotifications")
     if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
         get_filename_component(sparkle_directory "${LAPIS_SPARKLE_FRAMEWORK}" DIRECTORY)
@@ -53,8 +57,9 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/count_tokens.
 file(READ src/count_tokens.py LAPIS_COUNT_TOKENS_SCRIPT)
 configure_file(src/count_tokens.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/count_tokens.hpp" @ONLY)
 target_include_directories(lapis_desktop_view PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options
-    PUBLIC lapis_terminal lapis_local_protocol Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network)
+target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options lapis_session_platform
+    PUBLIC lapis_terminal lapis_attention lapis_session_launch lapis_local_protocol
+        Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network)
 if(LAPIS_PACKAGE)
     # The downloadable app finds everything inside its bundle and keeps its
     # data in ~/.lapis; no path on the build machine is compiled in.
@@ -71,7 +76,7 @@ if(APPLE)
     target_link_libraries(lapis_desktop PRIVATE "-framework AppKit")
 endif()
 target_link_libraries(lapis_desktop PRIVATE lapis_project_options lapis_desktop_view Qt6::QuickControls2)
-qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Usage.qml)
+qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml)
 set_target_properties(lapis_desktop PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/macos/Info.plist.in"
     MACOSX_BUNDLE_BUNDLE_NAME "lapis"
@@ -103,6 +108,10 @@ if(BUILD_TESTING)
     target_compile_definitions(lapis_window_state_tests PRIVATE LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
     add_test(NAME window-state COMMAND lapis_window_state_tests)
     set_tests_properties(window-state PROPERTIES TIMEOUT 30 RESOURCE_LOCK "qt_gui" ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
+    add_executable(lapis_conversation_index_tests tests/conversation_index_test.cpp)
+    target_link_libraries(lapis_conversation_index_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME conversation-index COMMAND lapis_conversation_index_tests)
+    set_tests_properties(conversation-index PROPERTIES TIMEOUT 60)
     add_executable(lapis_agent_search_tests tests/agent_search_test.cpp)
     target_link_libraries(lapis_agent_search_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME agent-search COMMAND lapis_agent_search_tests)
@@ -115,6 +124,10 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_terminal_find_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME terminal-find COMMAND lapis_terminal_find_tests)
     set_tests_properties(terminal-find PROPERTIES TIMEOUT 20)
+    add_executable(lapis_history_strip_tests tests/history_strip_test.cpp)
+    target_link_libraries(lapis_history_strip_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME history-strip COMMAND lapis_history_strip_tests)
+    set_tests_properties(history-strip PROPERTIES TIMEOUT 20)
     add_executable(lapis_tile_layout_tests tests/tile_layout_test.cpp)
     target_link_libraries(lapis_tile_layout_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME tile-layout COMMAND lapis_tile_layout_tests)
@@ -156,7 +169,7 @@ if(BUILD_TESTING)
     # Isolate focus ownership from the destructive QML engine-reload fixtures.
     add_test(NAME appearance-input COMMAND lapis_ui_preview_tests --shortcuts-only)
     set_tests_properties(ui-preview appearance-input PROPERTIES RESOURCE_LOCK "qt_gui" TIMEOUT 20 ENVIRONMENT "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
-    add_executable(lapis_terminal_input_tests tests/terminal_input_test.cpp)
+    add_executable(lapis_terminal_input_tests tests/terminal_input_test.cpp tests/link_receiver.hpp)
     target_link_libraries(lapis_terminal_input_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME terminal-input COMMAND lapis_terminal_input_tests)
     set_tests_properties(terminal-input PROPERTIES TIMEOUT 30 RESOURCE_LOCK "qt_gui" ENVIRONMENT
@@ -167,6 +180,10 @@ if(BUILD_TESTING)
     set_tests_properties(terminal-render PROPERTIES TIMEOUT 20 RESOURCE_LOCK "qt_gui" ENVIRONMENT
         "QT_MTL_NO_TRANSACTION=1;QT_VULKAN_LIB=${Vulkan_LIBRARY}")
     if(APPLE)
+        add_executable(lapis_terminal_keys_mac_tests tests/terminal_keys_mac_test.mm)
+        target_link_libraries(lapis_terminal_keys_mac_tests PRIVATE lapis_project_options lapis_desktop_view)
+        add_test(NAME terminal-keys-mac COMMAND lapis_terminal_keys_mac_tests)
+        set_tests_properties(terminal-keys-mac PROPERTIES TIMEOUT 20)
         foreach(test_target IN ITEMS lapis_ui_preview_tests lapis_terminal_input_tests)
             target_sources(${test_target} PRIVATE tests/platform/window_activation.mm)
             target_link_libraries(${test_target} PRIVATE "-framework AppKit")
@@ -211,4 +228,4 @@ target_link_libraries(lapis_attention_ui_probe PRIVATE lapis_project_options lap
     Qt6::QuickControls2)
 target_compile_definitions(lapis_attention_ui_probe PRIVATE LAPIS_VULKAN_LIBRARY="${Vulkan_LIBRARY}")
 qt_add_resources(lapis_attention_ui_probe attention_qml PREFIX "/" FILES
-    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Usage.qml)
+    qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Search.qml qml/Resume.qml qml/Usage.qml)
