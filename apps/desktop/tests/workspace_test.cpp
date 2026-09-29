@@ -1494,6 +1494,8 @@ void remoteOptionsRespectTheArgumentLimit() {
                                   {64, policy, {}},
                                   {62, policy.mid(2), policy.mid(0, 2)},
                                   {58, {"-o", "ControlPath=shared"}, policy},
+                                  {58, {"ControlPath=none"}, policy},
+                                  {58, {"-v", "-o", "ControlPath=none"}, policy.mid(2)},
                                   {62, {}, {}, false, true}};
     for (const auto& variant : cases) {
         QTemporaryDir directory(QStringLiteral("/tmp/lapis-remote-options-XXXXXX"));
