@@ -1,7 +1,9 @@
 {
   "base_revision": "fbd642f151e84f6f3db8aca17206f358fa15da87",
-  "scope": "Test-only checkpoint argument publication synchronization; no product behavior changes.",
-  "source_sha256": "48c8d68e3b95b67854911989d0f9e7788ee608547cddd8e8612c3174d1a2b078",
+  "scope": "Test-only checkpoint argument publication synchronization; no product behavior changes. The changed checkpoint case passed in the normal workspace suite; sanitizer coverage of this changed case was not obtained.",
+  "source_sha256": {
+    "apps/desktop/tests/workspace_test.cpp": "48c8d68e3b95b67854911989d0f9e7788ee608547cddd8e8612c3174d1a2b078"
+  },
   "validation": [
     {
       "command": "cmake --build build/desktop --target lapis_workspace_tests lapis_ui_preview_tests lapis_terminal_input_tests --parallel 4; ctest --test-dir build/desktop -R ^(workspace|ui-preview|terminal-input)$ --no-tests=error --output-on-failure -j 1",
@@ -21,7 +23,7 @@
     },
     {
       "command": "Desktop ASan/UBSan workspace updater case after the combined source rebuild",
-      "result": "Passed in isolation after the earlier concurrent run missed the fixture startup deadline."
+      "result": "Passed in isolation after the earlier concurrent run missed the fixture startup deadline. This updater case does not exercise the changed checkpoint fixture and is not sanitizer coverage for this PR."
     }
   ],
   "retained_failures": [
