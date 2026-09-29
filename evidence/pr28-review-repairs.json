@@ -1,0 +1,46 @@
+{
+  "pr": 28,
+  "baseline": "85cd0f433db8e1103da1832fca98eeb3613fdd33",
+  "changes": [
+    "SSH policy migration is atomic at the 64 argument limit; failed restores retain the saved tab and explain the failure.",
+    "Plain terminal shells retain user SSH policy; managed agents own their connection.",
+    "Reconnect fixture publishes complete argv before its readiness marker."
+  ],
+  "source_sha256": {
+    "apps/desktop/src/terminals.cpp": "88d08dada816a201cad3215d8b4d59739e38e084e2a4cfba5a5ef4c71b612cbf",
+    "apps/desktop/src/workspace.cpp": "444760237cdc6522033d7c7c4142b5f8b0be9a4b9d91a87594379ba0a6244293",
+    "apps/desktop/src/workspace.hpp": "09d2c1c294c5bf34392dc07ad0c43d3a9ec1cf02d72c413b38078521616d484a",
+    "apps/desktop/tests/workspace_test.cpp": "3530c1f6f8aef2ac930f06b23694a1fc9a649eaf624cbe7ab32a2f08b370320b",
+    "docs/architecture.md": "409f41b536831e2f9de0e2bea7c35a1e322e63e069e85b649ca55f79378daccc"
+  },
+  "validation": [
+    {
+      "command": "python3 scripts/lapis.py build --jobs 4",
+      "result": "Initial 30/32 desktop suites passed. Existing renderer default-font drift and reconnect fixture readiness race were repaired. Static findings in changed restore code were repaired."
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R ^(workspace|terminal-render)$ --no-tests=error --output-on-failure",
+      "result": "Passed both suites after repairs; workspace 36.85 seconds and native renderer 1.33 seconds."
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_workspace_tests --case remote-options",
+      "result": "Passed after final restore refactor, normal and desktop ASan/UBSan."
+    },
+    {
+      "command": "clang-tidy affected workspace translation units; cppcheck affected compilation database",
+      "result": "Passed on final source; other units reuse the initial full static gate."
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "result": "Passed."
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop --case literal-resize-exit --case detach --case failures",
+      "result": "All three selected cases passed using disposable stand-ins."
+    }
+  ],
+  "limitations": [
+    "These are macOS stand-in and saved-registry checks; no real SSH host or authentication session was used.",
+    "Original failed logs retained locally; no blanket claim that the initial full gate passed."
+  ]
+}

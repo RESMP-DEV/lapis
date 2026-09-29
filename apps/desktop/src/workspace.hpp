@@ -626,6 +626,7 @@ class Workspace final : public QObject {
                                                  const QString& title);
     void lockRegistry();
     void restore();
+    void connectRestoredAgents();
     void loadCategories(const QJsonArray& groups);
     static void loadManagedResume(const QJsonValue& value, Agent& agent);
     void loadAgents(const QJsonArray& agents);
