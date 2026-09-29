@@ -344,6 +344,10 @@ void stale_reconnect_and_history_errors() {
 
     f.document.olderHistory();
     const auto current = f.historyRequest(next);
+    f.document.resizeTerminal({8, 4});
+    settle();
+    require(next.bytes.isEmpty() && next.socket->bytesAvailable() == 0,
+            "Resize escaped while the first history page was pending");
     f.historyReply(next, current.request_id, 0, {}, QStringLiteral("No older history"));
     until([&] { return !f.document.historyRequestPending(); });
     require(f.document.historyMessage() == QStringLiteral("No older history"),
@@ -351,6 +355,16 @@ void stale_reconnect_and_history_errors() {
     require(f.document.connectionState() == QStringLiteral("ready") && f.document.inputReady() &&
                 !f.document.historyActive(),
             "With nothing kept, the live screen did not stay");
+    const auto resize = next.read();
+    require(resize.kind == wire::Kind::resize,
+            "A no-page reply did not restore the deferred wanted size");
+    const auto control = wire::decode_control(resize.payload);
+    require(control.attachment == wire::Attachment{f.identity, 2} &&
+                control.payload == QByteArray::fromHex("00080004"),
+            "A no-page reply restored the wrong size or attachment");
+    f.terminal.resize({8, 4});
+    next.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 2}, 3, f.terminal.snapshot()}));
 
     f.document.olderHistory();
     const auto malformed = f.historyRequest(next);
@@ -755,7 +769,7 @@ void superseded_resize_can_retry_without_releasing_history() {
     require(f.document.historyRequestPending() && peer.socket->bytesAvailable() == 0,
             "A foreign-size snapshot was mistaken for resize acknowledgement");
 
-    // Leaving history uses sendWantedSize rather than a fresh layout request.
+    // Returning to live reapplies the wanted size without a fresh layout request.
     f.document.returnToLive();
     require(peer.read().kind == wire::Kind::resize,
             "Returning to live kept a superseded resize wedged");
