@@ -3189,6 +3189,44 @@ exit and a few seconds more before touching the bundle. Sparkle replaces the
 bundle only after the app has exited, so it can race BTM the first time lapis
 quits on a Mac with no BTM entry for it yet; that is not yet measured.
 
+### Saved limit resets, spent as OMP spends them (September 29)
+
+Claude accounts hold resets to spend later: a saved grant (program
+`cedar_ember`, the "Reset for free" button on claude.ai and Claude Desktop, such
+as the Opus 5.5 launch reset valid to October 22) and a weekly session reset
+(`juniper_tide`, offered only at the wall; Claude Code's `/limit-reset`). The
+Help Center says the button is not in Claude Code, but that a reset applies to
+the whole account. Codex accounts bank resets too. OMP spends both through the
+accounts' own OAuth tokens, and lapis now does the same with the sign-in each
+CLI keeps on each machine: `GET /api/oauth/usage?cedar_ember=1&skip_spend=1`
+(then `?at_wall=1`) and `POST /api/organizations/{org}/reset_rate_limits` for
+Claude; `GET /wham/usage`, `GET /wham/rate-limit-reset-credits` and `POST
+.../consume` for Codex.
+
+`src/limit_resets.py`, compiled in as text like `count_tokens.py`, holds the
+rules, ported from OMP's planners with its defaults. Restore: a window at
+99.9 percent or more whose latest reset is at least `minBlockedMinutes` away, a
+selected reset that clears every exhausted window (the session reset only a
+five-hour block), and `keepCredits` in reserve. Salvage: a reset expiring within
+`salvageHours` with the weekly window at least a quarter used, ignoring the
+reserve. Each attempt has a key of account, reset, count and blocked windows or
+expiry, and is not tried again; a throttle, a lost answer or `nothing_to_reset`
+is retried after an hour. After spending, the helper reads the account again and
+reports whether it took (modelctl's confirm step). `LimitResets` runs it every
+five minutes on each machine with Claude Code or Codex agents: on this Mac with
+`python3`, and elsewhere by ssh with the helper on stdin (`BatchMode`, its own
+connection), where it reads that machine's `~/.claude/.credentials.json` and
+`~/.codex/auth.json`. On the Mac Claude Code keeps its sign-in in the keychain;
+lapis reads that item itself, off the main thread (the first read waits for
+macOS's permission prompt, which then names lapis rather than a general tool),
+and passes it to the helper as one line on stdin, never on a command line.
+
+A live read on September 28 found one account with its launch reset spent, one
+with it unspent at 88 percent weekly use, and one Codex account with a banked
+reset. `test_limit_resets.py` covers the rules and report parsing;
+`lapis_limit_resets_tests` drives the sweep through stand-ins for python3 and ssh.
+Not yet exercised: a real spend, and the keychain prompt on a Mac.
+
 ## Contracts to preserve
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal

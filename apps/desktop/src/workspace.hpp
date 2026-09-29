@@ -435,6 +435,8 @@ class Workspace final : public QObject {
     // Where an agent is: its category's name, its ssh machine (or ""), and
     // its folder as the card shows it ("~/x", or "host:~/x" over ssh).
     Q_INVOKABLE [[nodiscard]] QVariantMap agentPlace(const QString& id) const;
+    // The machines ("" for this Mac) where agents of these CLIs run.
+    [[nodiscard]] QStringList machinesRunning(const QStringList& harnesses) const;
     void setAgentDefaults(const AgentDefaults& defaults) { agent_defaults_ = defaults; }
     // Where the new-agent forms' model lists come from; lapis keeps it.
     void setHarnessModels(const HarnessModels* models) { harness_models_ = models; }

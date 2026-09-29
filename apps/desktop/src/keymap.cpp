@@ -639,6 +639,7 @@ bool KeyMap::load() {
     load_usage(root);
     load_agent_defaults(root.value(QStringLiteral("newAgent")));
     accounts_ = parse_accounts(root.value(QStringLiteral("accounts")));
+    limit_resets_ = parse_limit_resets(root.value(QStringLiteral("limitResets")));
 
     known_contents_ = contents;
     loaded_ = true;

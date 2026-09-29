@@ -698,9 +698,8 @@ void Workspace::watch(SessionPreview* item) {
             });
 }
 int Workspace::attentionAgents() const {
-    return static_cast<int>(std::count_if(sessions_.begin(), sessions_.end(), [](const auto& item) {
-        return item->unseen();
-    }));
+    return static_cast<int>(std::count_if(sessions_.begin(), sessions_.end(),
+                                          [](const auto& item) { return item->unseen(); }));
 }
 QVariantList Workspace::categories() const {
     QVariantList result;
@@ -1259,6 +1258,17 @@ bool Workspace::createAgent(const QString& directory, const QString& title, cons
                         .select = true,
                         .resume = {}})
                 .isEmpty();
+}
+QStringList Workspace::machinesRunning(const QStringList& harnesses) const {
+    QStringList machines;
+    for (const auto& item : sessions_) {
+        const auto entry = agents_.constFind(item->sessionId());
+        if (entry == agents_.cend() || !harnesses.contains(entry->harness))
+            continue;
+        if (const auto machine = agentMachine(*entry); !machines.contains(machine))
+            machines << machine;
+    }
+    return machines;
 }
 QVariantMap Workspace::agentPlace(const QString& id) const {
     const auto entry = agents_.constFind(id);

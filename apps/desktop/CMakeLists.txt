@@ -25,6 +25,7 @@ add_library(lapis_desktop_view STATIC
     src/conversation_index.cpp src/conversation_index.hpp
     src/terminals.cpp src/terminals.hpp
     src/accounts.cpp src/accounts.hpp
+    src/limit_resets.cpp src/limit_resets.hpp
     src/usage.cpp src/usage.hpp
     src/usage_limits.cpp src/usage_limits.hpp
     src/harness_models.cpp src/harness_models.hpp
@@ -45,7 +46,8 @@ if(APPLE)
     # Notifications, the login item, Command-` and (in the downloaded app) Sparkle.
     target_sources(lapis_desktop_view PRIVATE src/desktop_actions_mac.mm)
     target_link_libraries(lapis_desktop_view PUBLIC "-framework AppKit" "-framework Carbon"
-        "-framework Foundation" "-framework ServiceManagement" "-framework UserNotifications")
+        "-framework Foundation" "-framework Security" "-framework ServiceManagement"
+        "-framework UserNotifications")
     if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
         get_filename_component(sparkle_directory "${LAPIS_SPARKLE_FRAMEWORK}" DIRECTORY)
         target_compile_definitions(lapis_desktop_view PRIVATE LAPIS_SPARKLE)
@@ -57,6 +59,11 @@ endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/count_tokens.py)
 file(READ src/count_tokens.py LAPIS_COUNT_TOKENS_SCRIPT)
 configure_file(src/count_tokens.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/count_tokens.hpp" @ONLY)
+# The limit reset helper each machine runs with python3, compiled in the same way.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/limit_resets.py)
+file(READ src/limit_resets.py LAPIS_LIMIT_RESETS_SCRIPT)
+configure_file(src/limit_resets_script.hpp.in
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/limit_resets_script.hpp" @ONLY)
 target_include_directories(lapis_desktop_view PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options lapis_session_platform
     PUBLIC lapis_terminal lapis_attention lapis_session_launch lapis_local_protocol
@@ -129,6 +136,10 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_accounts_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME accounts COMMAND lapis_accounts_tests)
     set_tests_properties(accounts PROPERTIES TIMEOUT 20)
+    add_executable(lapis_limit_resets_tests tests/limit_resets_test.cpp)
+    target_link_libraries(lapis_limit_resets_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME limit-resets COMMAND lapis_limit_resets_tests)
+    set_tests_properties(limit-resets PROPERTIES TIMEOUT 30)
     add_executable(lapis_history_strip_tests tests/history_strip_test.cpp)
     target_link_libraries(lapis_history_strip_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME history-strip COMMAND lapis_history_strip_tests)

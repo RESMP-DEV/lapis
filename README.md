@@ -310,11 +310,27 @@ accounts. A running session moves only when a ready observer reports idle or a
 finished turn, restarting on the other plan and resuming its conversation. Output
 silence alone never triggers a switch. **Switch plan** in Commands moves an agent
 by hand. `scripts/lapis_accounts.py` fills the section: `homes` records each
-machine's own sign-ins, `add-claude NAME --email E` runs `claude setup-token`
+machine's own sign-ins, `sign-in` goes through every listed Claude Code plan
+that has no token yet (one browser approval each), `add-claude NAME --email E` runs `claude setup-token`
 and keeps the token (0600) on this Mac and the usage machines, and `add-codex
 NAME --email E --on local devbox` signs Codex in to a home kept for that plan,
 which shares its sessions and settings with `~/.codex`. Credentials never
 appear on a command line: a remote session reads its plan's credential there.
+
+Saved limit resets are spent for you, as OMP spends them. Claude and Codex give
+accounts resets to use later (claude.ai's **Reset for free**, Claude Code's
+weekly session reset, Codex's banked resets); claude.ai offers its button only
+on the web and in Claude Desktop, but a reset applies to the whole account. Every
+five minutes, on each machine with Claude Code or Codex agents, lapis runs a
+small helper with that machine's own sign-in (Claude Code's keychain item on
+this Mac, which macOS asks you once to let lapis read). It spends a reset when a
+usage window is exhausted and would stay so for at least an hour and the reset
+clears it, or when a reset would expire within 12 hours with the weekly window at
+least a quarter used, then confirms the account reads as reset and posts a
+notification. **Use a saved limit reset for this agent's plan** in Commands spends
+one at once. `limitResets` in `~/.lapis/lapis.json` tunes it: `auto` (true),
+`minBlockedMinutes` (60), `keepCredits` (0, kept for blocks but not for resets
+about to expire) and `salvageHours` (12).
 
 On the Mac, closing the window (its close button, Command-Shift-W, or Command-W
 with no agent left) only hides it:
