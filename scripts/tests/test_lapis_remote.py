@@ -495,6 +495,60 @@ class AdmissionTests(unittest.TestCase):
         self.assertFalse(auth.allowed("10.243.9.7"))
         self.assertEqual(auth.hosts(7349), set())
 
+    def test_a_fresh_list_then_silence_is_trusted_only_a_while(self):
+        class Clock:  # a movable monotonic clock
+            now = 1000.0
+
+        clock = Clock()
+        state = {"answered": True}
+
+        def runner(command):
+            if state["answered"]:
+                return [ZT_NETWORK]
+            raise FileNotFoundError(2, "No such file or directory", command[0])
+
+        auth = remote.ZeroTierAuth(runner=runner, clock=lambda: clock.now)
+        self.assertTrue(auth.allowed("10.243.9.7"))
+        state["answered"] = False
+        clock.now += remote.ZeroTierAuth.REFRESH + 1  # retried, silent, still fresh
+        self.assertTrue(auth.allowed("10.243.9.7"))
+        clock.now += remote.ZeroTierAuth.STALE + 1  # silent past the trust window
+        self.assertFalse(auth.allowed("10.243.9.7"))
+        self.assertEqual(auth.hosts(7349), set())
+        state["answered"] = True
+        clock.now += remote.ZeroTierAuth.REFRESH + 1  # recovered
+        self.assertTrue(auth.allowed("10.243.9.7"))
+
+    def test_one_fetch_at_a_time(self):
+        started = threading.Semaphore(0)
+        release = threading.Semaphore(0)
+        calls = []
+        gate = threading.Lock()
+
+        def runner(command):
+            with gate:
+                calls.append(command)
+            started.release()
+            release.acquire(timeout=10)
+            return [ZT_NETWORK]
+
+        auth = remote.ZeroTierAuth(runner=runner)
+        answers = []
+
+        def ask():
+            answers.append(auth.allowed("10.243.9.7"))
+
+        threads = [threading.Thread(target=ask) for _ in range(3)]
+        for thread in threads:
+            thread.start()
+        self.assertTrue(started.acquire(timeout=10))  # the first fetch is in flight
+        for _ in range(2):
+            release.release()
+        for thread in threads:
+            thread.join(10)
+        self.assertEqual(len(calls), 1)  # no second fetch, so no out-of-order one
+        self.assertEqual(answers, [True, True, True])
+
     def test_either_overlay_admits(self):
         admission = remote.Admission(
             tailnet=remote.TailnetAuth(

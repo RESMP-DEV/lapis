@@ -1783,13 +1783,17 @@ class ZeroTierAuth:
     """
 
     REFRESH = 30.0
+    STALE = 300.0  # a silent CLI is trusted no longer than this
 
-    def __init__(self, cli="zerotier-cli", runner=None):
+    def __init__(self, cli="zerotier-cli", runner=None, clock=time.monotonic):
         self.cli = cli
         self.runner = runner or self._run
-        self.lock = threading.Lock()
+        self.clock = clock
+        self.lock = threading.Lock()  # guards the fields below
+        self.fetch_lock = threading.Lock()  # one fetch at a time
         self.networks = []
-        self.built = 0.0  # the first question fetches the list
+        self.fresh = 0.0  # when the list in hand was actually fetched
+        self.built = 0.0  # when a fetch last finished, success or not
 
     @staticmethod
     def _run(command):
@@ -1798,46 +1802,60 @@ class ZeroTierAuth:
         )
         return json.loads(result.stdout)
 
+    def _trusted(self, now):
+        """The list in hand, or nothing once the CLI has been silent too long."""
+        return self.networks if now - self.fresh <= self.STALE else []
+
     def current(self):
         """(managed routes, own addresses) per joined private network, fetched
-        at most every 30 s; the last answer outlives a silent CLI."""
-        now = time.monotonic()
+        at most every 30 s by one thread at a time, so an older answer can
+        never overwrite a newer one; a CLI that falls silent is trusted for
+        STALE seconds and then admits nobody until it answers again."""
+        now = self.clock()
         with self.lock:
             if now - self.built <= self.REFRESH:
-                return self.networks
-        try:
-            listed = []
-            for network in self.runner([self.cli, "-j", "listnetworks"]):
-                if network.get("status") != "OK" or network.get("type") != "PRIVATE":
-                    continue
-                routes, assigned = set(), []
-                for route in network.get("routes") or []:
-                    try:
-                        target = ipaddress.ip_network(route["target"], strict=False)
-                    except (KeyError, TypeError, ValueError):
-                        continue
-                    if target.prefixlen == 0:
-                        continue  # a full-tunnel route is not overlay membership
-                    routes.add(target)
-                for address in network.get("assignedAddresses") or []:
-                    try:
-                        assigned.append(ipaddress.ip_interface(address))
-                    except (TypeError, ValueError):
-                        continue
-                listed.append((routes, assigned))
-        except (
-            subprocess.SubprocessError,
-            OSError,
-            ValueError,
-            TypeError,
-            AttributeError,
-        ):
+                return self._trusted(now)
+        with self.fetch_lock:
+            now = self.clock()
             with self.lock:
-                self.built = now  # a silent CLI is retried at the same pace
-            return self.networks
-        with self.lock:
-            self.networks, self.built = listed, now
-        return listed
+                if now - self.built <= self.REFRESH:
+                    return self._trusted(now)
+            try:
+                listed = []
+                for network in self.runner([self.cli, "-j", "listnetworks"]):
+                    if (
+                        network.get("status") != "OK"
+                        or network.get("type") != "PRIVATE"
+                    ):
+                        continue
+                    routes, assigned = set(), []
+                    for route in network.get("routes") or []:
+                        try:
+                            target = ipaddress.ip_network(route["target"], strict=False)
+                        except (KeyError, TypeError, ValueError):
+                            continue
+                        if target.prefixlen == 0:
+                            continue  # a full-tunnel route is not overlay membership
+                        routes.add(target)
+                    for address in network.get("assignedAddresses") or []:
+                        try:
+                            assigned.append(ipaddress.ip_interface(address))
+                        except (TypeError, ValueError):
+                            continue
+                    listed.append((routes, assigned))
+            except (
+                subprocess.SubprocessError,
+                OSError,
+                ValueError,
+                TypeError,
+                AttributeError,
+            ):
+                with self.lock:
+                    self.built = now  # a silent CLI is retried at the same pace
+                return self._trusted(now)
+            with self.lock:
+                self.networks, self.fresh, self.built = listed, now, now
+            return listed
 
     def allowed(self, address):
         try:
