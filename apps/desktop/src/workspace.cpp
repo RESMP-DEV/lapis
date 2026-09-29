@@ -1672,6 +1672,25 @@ bool Workspace::serviceRunning(const QString& endpoint) {
 void Workspace::applyStartupDefaults(const Agent& agent, ResumeLaunch& plan) {
     // This function is used only after `serviceRunning()` proved the old
     // service is gone. Reattach keeps the recorded launch untouched.
+    if (agent.harness == QLatin1String("grok") &&
+        QFileInfo(plan.launch.program).fileName() == QLatin1String("grok")) {
+        const auto& arguments = plan.launch.arguments;
+        const auto separator =
+            std::find(arguments.cbegin(), arguments.cend(), QStringLiteral("--"));
+        const bool explicit_screen =
+            std::any_of(arguments.cbegin(), separator, [](const QString& argument) {
+                return argument == QLatin1String("--fullscreen") ||
+                       argument == QLatin1String("--no-fullscreen") ||
+                       argument.startsWith(QLatin1String("--fullscreen="));
+            });
+        if (!explicit_screen && arguments.size() < max_saved_arguments) {
+            plan.launch.arguments.prepend(QStringLiteral("--fullscreen"));
+            if (plan.managed_resume_index >= 0)
+                ++plan.managed_resume_index;
+        } else if (!explicit_screen) {
+            qWarning() << "Grok fullscreen default not added: saved argument limit reached";
+        }
+    }
     if (agent.harness == QLatin1String("codex") && !hasCodexUpdateSetting(plan.launch.arguments)) {
         if (plan.launch.arguments.size() + 2 <= max_saved_arguments) {
             const auto* descriptor = find_harness(agent.harness);
