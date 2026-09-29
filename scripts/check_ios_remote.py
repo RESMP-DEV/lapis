@@ -585,7 +585,7 @@ def run_unit(sdk, platform, args):
             write_unit_xctestrun(),
             device["udid"],
             results,
-            [f"LapisTests/LapisTests/{method}" for method in args.only or []],
+            [f"LapisTests/ATSTests/{method}" for method in args.only or []],
             "test-unit.log",
         )
         print(f"results {results}")
