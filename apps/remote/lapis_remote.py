@@ -139,6 +139,22 @@ def fingerprint(program, arguments, directory, mode):
     return hashlib.sha256(data).digest()
 
 
+# How long a listing request that already has the registry's current version
+# waits for the desktop to change it, so a change on the Mac (a category
+# moved, say) reaches the phone at once rather than at its next poll.
+LISTING_WAIT = 8.0
+
+
+def registry_version(path):
+    """Changes whenever the desktop rewrites its registry, which it does by
+    replacing the file; empty when it cannot be read."""
+    try:
+        stat = Path(path).stat()
+    except OSError:
+        return ""
+    return f"{stat.st_ino}-{stat.st_mtime_ns}-{stat.st_size}"
+
+
 def load_workspace(path):
     """Categories and agents from the desktop's registry, as it reads them."""
     path = Path(path).absolute()
@@ -1981,6 +1997,18 @@ class Handler(BaseHTTPRequestHandler):
             self.fail(HTTPStatus.NOT_FOUND, "Not found")
 
     def list_agents(self):
+        # A phone that already has this version waits for the next one. The
+        # version is read before the registry, so it can only be older than
+        # what is sent and never hides a change.
+        after = parse_qs(urlsplit(self.path).query).get("after", [""])[0]
+        deadline = time.monotonic() + LISTING_WAIT
+        while (
+            after
+            and registry_version(self.gateway.registry) == after
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.2)
+        version = registry_version(self.gateway.registry)
         try:
             workspace = self.gateway.workspace()
         except (OSError, ValueError, GatewayError) as error:
@@ -2007,7 +2035,11 @@ class Handler(BaseHTTPRequestHandler):
             categories.append({**category, "agents": agents})
         self.reply(
             HTTPStatus.OK,
-            {"categories": categories, "activeCategory": workspace["activeCategory"]},
+            {
+                "categories": categories,
+                "activeCategory": workspace["activeCategory"],
+                "version": version,
+            },
         )
 
     def ask_desktop(self, request):

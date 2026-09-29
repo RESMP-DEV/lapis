@@ -109,18 +109,22 @@ final class WorkspaceModel {
         return digest.map { String(format: "%02x", $0) }.joined() + "-" + name
     }
 
-    func refresh() async {
+    // Waiting, the gateway answers once the Mac's registry changes, or after
+    // eight seconds. Returns whether it did, so the caller need not pause.
+    @discardableResult
+    func refresh(waiting: Bool = false) async -> Bool {
         let generation = hostGeneration
         let responseHost = host
         guard let gateway else {
             if hostGeneration == generation {
                 error = GatewayError.invalidHost.localizedDescription
             }
-            return
+            return false
         }
+        let after = waiting ? listing?.version : nil
         do {
-            let current = try await gateway.agents()
-            guard hostGeneration == generation else { return }
+            let current = try await gateway.agents(after: after)
+            guard hostGeneration == generation else { return false }
             listing = current
             error = nil
             // A failed refresh is not evidence that existing terminals closed.
@@ -128,18 +132,20 @@ final class WorkspaceModel {
             let currentTerminals = try? await gateway.terminals()
             // The optional terminal capability is independent of ownership:
             // an old answer still cannot save, refresh, or publish terminals.
-            guard hostGeneration == generation else { return }
+            guard hostGeneration == generation else { return false }
             if let currentTerminals {
                 terminals = currentTerminals
             }
             cache.save(current, cacheName("listing", for: responseHost))
             Task { await prefetch() }
+            return after != nil
         } catch is CancellationError {
         } catch let failure as URLError where failure.code == .cancelled {
         } catch {
-            guard hostGeneration == generation else { return }
+            guard hostGeneration == generation else { return false }
             self.error = describe(error)
         }
+        return false
     }
 
     private func due(_ key: String, _ age: TimeInterval) -> Bool {
@@ -404,7 +410,8 @@ extension WorkspaceModel {
         guard let current = listing else { return }
         var categories = current.categories
         change(&categories)
-        listing = WorkspaceListing(categories: categories, activeCategory: current.activeCategory)
+        listing = WorkspaceListing(categories: categories, activeCategory: current.activeCategory,
+                                   version: current.version)
     }
 
     private func change(_ action: (Gateway) async throws -> Void) async {

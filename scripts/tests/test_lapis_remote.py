@@ -471,6 +471,68 @@ class Server:
         return response.status, json.loads(data) if data else None
 
 
+class ListingTests(unittest.TestCase):
+    """The phone lists categories in the Mac's order, and a change there
+    reaches a phone that waits on the version it has at once."""
+
+    @staticmethod
+    def registry(*names):
+        return json.dumps(
+            {
+                "version": 2,
+                "activeCategory": names[0],
+                "categories": [{"id": name, "name": name} for name in names],
+                "agents": [],
+            }
+        )
+
+    def test_a_change_on_the_mac_answers_a_waiting_phone(self):
+        wait = remote.LISTING_WAIT
+        remote.LISTING_WAIT = 1.5
+        self.addCleanup(setattr, remote, "LISTING_WAIT", wait)
+        with Server(self, self.registry("Build", "Later", "Ideas")) as server:
+            status, listed = server.request("GET", "/api/agents")
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                [category["name"] for category in listed["categories"]],
+                ["Build", "Later", "Ideas"],
+            )
+            version = listed["version"]
+            self.assertTrue(version)
+
+            # Nothing changes: the gateway waits, then answers the same.
+            began = time.monotonic()
+            status, same = server.request("GET", f"/api/agents?after={version}")
+            self.assertGreaterEqual(time.monotonic() - began, 1.3)
+            self.assertEqual((status, same["version"]), (200, version))
+
+            # The Mac replaces its registry, as QSaveFile does.
+            def reorder():
+                time.sleep(0.4)
+                moved = server.registry.with_name("workspace.json.new")
+                moved.write_text(self.registry("Later", "Ideas", "Build"))
+                os.replace(moved, server.registry)
+
+            mover = threading.Thread(target=reorder)
+            began = time.monotonic()
+            mover.start()
+            status, changed = server.request("GET", f"/api/agents?after={version}")
+            mover.join()
+            self.assertLess(time.monotonic() - began, 1.3)
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                [category["name"] for category in changed["categories"]],
+                ["Later", "Ideas", "Build"],
+            )
+            self.assertNotEqual(changed["version"], version)
+
+            # A phone with an older version is answered at once.
+            began = time.monotonic()
+            status, _ = server.request("GET", f"/api/agents?after={version}")
+            self.assertEqual(status, 200)
+            self.assertLess(time.monotonic() - began, 1.0)
+
+
 class CaptureTests(unittest.TestCase):
     def test_captures_are_saved_privately_beside_the_workspace(self):
         png = b"\x89PNG\r\n\x1a\n" + b"0" * 32

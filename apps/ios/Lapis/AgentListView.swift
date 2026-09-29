@@ -144,11 +144,14 @@ struct AgentListView: View {
                 }
         }
         .task(id: scenePhase) {
-            // Keep the list current while it is on screen and the app is active.
+            // Keep the list current while it is on screen and the app is active:
+            // the gateway answers as soon as the Mac changes it (a category
+            // moved or renamed there), or every eight seconds. A Mac whose
+            // gateway cannot wait is asked every eight seconds.
             guard scenePhase == .active else { return }
             while !Task.isCancelled {
-                await model.refresh()
-                try? await Task.sleep(for: .seconds(8))
+                let waited = await model.refresh(waiting: true)
+                try? await Task.sleep(for: waited ? .milliseconds(300) : .seconds(8))
             }
         }
     }
@@ -247,9 +250,11 @@ struct AgentListView: View {
                         }
                     }
                 }
-                ForEach(listing.categories) { category in
+                // Numbered as the Mac numbers them, in the Mac's order.
+                ForEach(Array(listing.categories.enumerated()), id: \.element.id) { offset, category in
                     CategoryHeader(
                         category: category,
+                        number: offset + 1,
                         last: listing.categories.count == 1,
                         newAgent: { newAgent = NewAgentTarget(category: category.id) },
                         rename: {
@@ -298,6 +303,7 @@ struct AgentListView: View {
 // menu at its end, or by holding it.
 struct CategoryHeader: View {
     let category: AgentCategory
+    let number: Int
     let last: Bool
     let newAgent: () -> Void
     let rename: () -> Void
@@ -306,6 +312,11 @@ struct CategoryHeader: View {
 
     var body: some View {
         HStack(spacing: 4) {
+            Text("\(number)")
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Theme.quiet.opacity(0.7))
+                .frame(minWidth: 18, alignment: .leading)
+                .accessibilityIdentifier("category-number-\(category.name)")
             Text(category.name)
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                 .textCase(.uppercase)
