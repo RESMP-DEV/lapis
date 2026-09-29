@@ -1907,7 +1907,14 @@ A prototype, deliberately simpler than the SSH design first proposed:
   shown on the stage, or the pointer moving over it. It resends its size once
   per size shown, and ignores hover events repeated at a resting pointer, which
   Qt Quick sends as the scene changes, so a busy agent under an idle cursor
-  cannot take the size from the phone. A service started before joining existed
+  cannot take the size from the phone. A separate explicit layout request or
+  return from history may retry an unconfirmed size once after each received
+  snapshot; repeated requests without new progress remain coalesced. Snapshot
+  progress alone never acknowledges a resize or releases deferred history: a
+  matching size is still required. A history request that fails or is canceled
+  without displaying a page releases the size requested while it was pending.
+  Returning to live coalesces a size already queued by that recovery path.
+  A service started before joining existed
   rejects the mode; the gateway then takes the agent over in discover mode (the
   desktop card reads replaced until Reconnect agent) and tells the phone.
   Screens go out as server-sent events of styled runs (text,
