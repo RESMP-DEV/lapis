@@ -31,7 +31,20 @@ when a ready observer reports it idle or finished with a turn, restarting on the
 other plan and resuming its conversation; output going quiet alone never
 switches it. **Switch plan** in Commands moves an agent by hand.
 
-`scripts/lapis_accounts.py` fills the section:
+**Add a Claude Code plan** in Commands signs in any account from inside lapis.
+It starts Claude Code's own sign-in and opens its link in your default browser,
+copies it, and keeps it shown with **Open again** in case a try goes wrong. Sign
+in there with the account to add, then type that account's email and press
+Return. lapis keeps the token Claude Code prints (owner-only, never shown),
+and records the plan only after that token is stored. New plans start on this
+Mac. Refreshing an existing plan also copies it to that plan's explicitly listed
+`machines`, with at most 64 destinations per attempt. An unrelated ssh-config
+entry never receives the credential. Each replacement is atomic; incomplete
+remote copies preserve the previous token. The panel names failures. Escape
+ends an unfinished sign-in, and a new attempt retires older copies. Codex plans are
+still added with the script below.
+
+`scripts/lapis_accounts.py` fills the section too:
 
 - `homes` records each machine's own sign-ins.
 - `sign-in` offers Claude plans missing a local setup token. Each token goes to

@@ -3372,6 +3372,48 @@ fills after authoritative idle (but not output quiet or unknown status), with it
 conversation, and a switch asked for. `scripts/tests/test_lapis_accounts.py`
 covers the helper's config merge, token masking and real stand-in exec failures.
 Missing executables and unsuccessful setup-token exits retain their actual cause.
+
+**Signing a plan in from lapis (September 29).** OMP's own Anthropic logins
+cannot carry a plan to Claude Code: they are short-lived OAuth access tokens
+that OMP refreshes, and a second refresher would rotate OMP's refresh token out
+from under it (on the author's machines every one had failed to refresh and
+been disabled for eleven days). So **Add a Claude Code plan** runs
+`claude setup-token` itself: `plan_sign_in.py`, compiled in like the other
+helpers, gives it a terminal of its own with `open` and `$BROWSER` replaced by a
+script that records the link. lapis validates the Anthropic HTTPS authorization
+URL, opens it in the default browser, copies it and keeps it visible for another
+try. The helper writes the token to a private per-attempt staging path and emits
+only a success marker. The email must be submitted for that same attempt; opening
+the form clears earlier identity and copy state.
+
+`KeyMap::addPlanMachine` chooses the first effective email match from the current
+file, or allocates an unused name, including a suffix when derived names collide.
+Names alone never merge accounts. Cooperating KeyMap writers share a nonblocking
+config lock across allocation, credential preparation and publication. Before
+publishing local availability, its
+preparation callback atomically stores the token; a write failure leaves the
+existing credential and config intact. A later config-write failure may leave a
+valid unregistered credential, but cannot advertise a missing one. Malformed
+account collections are preserved with a diagnostic.
+
+New plans start locally. Existing plans copy only to their explicitly configured
+`machines`, not every ssh-config entry, with a 64-destination bound. Each copy
+captures the attempt, email and plan name, sends bytes on stdin, validates the
+complete byte count in a private temporary file, then atomically replaces the
+remote token. Completion records a machine only if the current plan still matches
+the captured identity. Output tails are bounded and credential shapes are masked.
+Cancellation or a new attempt retires the prior helpers and callbacks. The
+Python guardian is forked inside the PTY child's session before exec; helper
+death closes its pipe and makes it signal its own anchored process group.
+Token parsing requires a delimiter or actual EOF, never a quiet-time guess.
+These local fixtures exercise forced helper death without running a real agent.
+
+The token's `user:inference` scope cannot identify the account, so the person
+supplies its email. The tests use private stand-in CLIs and token files; they do
+not qualify a new real OAuth login or remote credential transfer. The original
+helper investigation reached the sign-in link with Claude Code 2.1.285. Codex
+(`codex login --device-auth` in a plan home, as the script does) and other CLIs
+remain follow-ups.
 ### Update a CLI, then reload (September 28)
 
 A running agent keeps the CLI version it started with, and the start-time

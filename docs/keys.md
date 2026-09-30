@@ -38,7 +38,7 @@ all. Terminal Control chords stay with the agent.
 | Keys | Does |
 | --- | --- |
 | Command-F | Find text on the screen, then in history (Return older, Shift-Return newer) |
-| Command-C / Command-V | Copy the selection / paste |
+| Command-C / Command-V | Copy the selection / paste; selecting text (a drag or a double-click) copies it too |
 | Command-plus, minus, zero | Text size bigger, smaller, reset |
 | Command-Left / Right | Start or end of the line |
 | Command-Backspace / Command-Delete | Delete to the line's start / end |

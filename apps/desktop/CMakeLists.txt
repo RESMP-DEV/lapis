@@ -31,6 +31,7 @@ add_library(lapis_desktop_view STATIC
     src/usage.cpp src/usage.hpp
     src/usage_limits.cpp src/usage_limits.hpp
     src/next_prompt.cpp src/next_prompt.hpp
+    src/plan_sign_in.cpp src/plan_sign_in.hpp
     src/harness_models.cpp src/harness_models.hpp
     src/attention_view.cpp
     src/keymap.cpp src/keymap.hpp
@@ -73,6 +74,10 @@ configure_file(src/limit_resets_script.hpp.in
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/next_prompt.py)
 file(READ src/next_prompt.py LAPIS_NEXT_PROMPT_SCRIPT)
 configure_file(src/next_prompt_script.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/next_prompt_script.hpp" @ONLY)
+# The plan sign-in helper, compiled in the same way.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/plan_sign_in.py)
+file(READ src/plan_sign_in.py LAPIS_PLAN_SIGN_IN_SCRIPT)
+configure_file(src/plan_sign_in_script.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/plan_sign_in_script.hpp" @ONLY)
 target_include_directories(lapis_desktop_view PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options lapis_session_platform
     PUBLIC lapis_terminal lapis_attention lapis_session_launch lapis_local_protocol
@@ -174,6 +179,10 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_next_prompt_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME next-prompt COMMAND lapis_next_prompt_tests)
     set_tests_properties(next-prompt PROPERTIES TIMEOUT 30)
+    add_executable(lapis_plan_sign_in_tests tests/plan_sign_in_test.cpp)
+    target_link_libraries(lapis_plan_sign_in_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME plan-sign-in COMMAND lapis_plan_sign_in_tests)
+    set_tests_properties(plan-sign-in PROPERTIES TIMEOUT 60)
     add_executable(lapis_usage_tests tests/usage_test.cpp)
     target_link_libraries(lapis_usage_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME usage COMMAND lapis_usage_tests)
