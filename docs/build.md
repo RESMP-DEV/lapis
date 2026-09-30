@@ -63,6 +63,25 @@ normal startup discovery and write logs. The receipt keeps method names and
 counts, not thread content or credentials. Local receipts may include machine
 paths; sanitize a dated copy before adding it to `evidence/`.
 
+## Checking Claude Code release notes
+
+The changelog CLI reads Claude Code's public RSS feed without launching Claude
+or using an account. Initialize a local baseline once, then check for new entries:
+
+```sh
+uv run --no-project python scripts/check_claude_changelog.py --record
+uv run --no-project python scripts/check_claude_changelog.py --json
+```
+
+Run `--record` again after reviewing the reported releases. Ordinary checks leave
+the baseline unchanged; a missing baseline is reported explicitly and older
+releases are not all marked new. `--state` selects an isolated baseline,
+`--timeout` bounds each network wait, and response bytes are capped at 2 MiB.
+Read/write or feed errors exit 1, invalid arguments exit 2, and successful checks
+exit 0. Recording replaces the baseline atomically. The CLI creates no scheduled
+job. Release notes suggest what to probe; they do not qualify the installed
+adapter's runtime behavior.
+
 ## Development fixtures
 
 `--ui-preview` runs the same category UI with synthetic data; it is never added
