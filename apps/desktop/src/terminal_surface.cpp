@@ -671,8 +671,7 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
     // render thread gets owned immutable values through an explicit C++ handoff.
     auto frame = std::make_shared<RenderState>();
     frame->preedit = preedit_;
-    frame->suggestion =
-        document_ && document_->attentionPending() ? QString() : suggestion_;
+    frame->suggestion = document_ && document_->attentionPending() ? QString() : suggestion_;
     frame->viewport = size();
     frame->font_family = use_system_font_ ? QString() : resolved_font_family_;
     frame->font_pixel_size = font_pixel_size_;
