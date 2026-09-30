@@ -1,7 +1,7 @@
 # Architecture and near-term plan
 
 This is the single implementation plan for lapis. See the
-[current status](../README.md#current-status) for what has been implemented and exercised.
+[current status](status.md) for what has been implemented and exercised.
 macOS is the active target, and the signed Mac app is now the working daily
 environment; the [pseudo-production section](#pseudo-production-direction-and-integration-spread-september-27)
 below owns the current work order and re-weights the remaining milestones.
@@ -356,7 +356,7 @@ optional checks once the affected behavior passes.
 ### Persistent terminal acceptance
 
 The explicit launch slice is implemented. Current exercise status is in the
-[README](../README.md#current-status), with a
+[status](status.md), with a
 [sanitized receipt](../evidence/cli-launch.json). The macOS acceptance below is
 complete; the [assembled receipt](../evidence/milestone-one.json) records its scope.
 Visual review of the earlier UI refinements remains pending.
