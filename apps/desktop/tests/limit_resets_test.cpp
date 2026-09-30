@@ -43,8 +43,9 @@ void write(const QString& path, const QByteArray& text) {
 }
 void standIn(const QDir& root, const QString& name, const QString& record) {
     const auto path = root.filePath(QStringLiteral("bin/") + name);
-    write(path, QStringLiteral("#!/bin/sh\nprintf '%s\\n' \"$@\" > '%1.args'\ncat > '%1.stdin'\n"
-                               "cat '%1.reply'\n")
+    // The arguments land last and whole, so a test that sees them sees stdin too.
+    write(path, QStringLiteral("#!/bin/sh\nprintf '%s\\n' \"$@\" > '%1.part'\ncat > '%1.stdin'\n"
+                               "mv '%1.part' '%1.args'\ncat '%1.reply'\n")
                     .arg(root.filePath(record))
                     .toUtf8());
     require(QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
