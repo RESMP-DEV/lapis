@@ -14,10 +14,13 @@ inline constexpr qsizetype relay_frame_limit = qsizetype{16} * 1024;
 // deadline, frame bound and forwarded identity fields together so neither side
 // can drift. The server deliberately uses the relay deadline without an extra
 // margin; its timer starts later, at accept, so the relay expires first.
-inline constexpr std::array<QStringView, 8> relay_identity_fields{
+// `in_flight` is the relay's own count, never copied from the hook: at Stop,
+// how many background tasks and session wakeups (Claude Code's
+// `background_tasks` and `session_crons`) will start another turn.
+inline constexpr std::array<QStringView, 9> relay_identity_fields{
     QStringView{u"hook_event_name"}, QStringView{u"session_id"},  QStringView{u"prompt_id"},
     QStringView{u"tool_name"},       QStringView{u"tool_use_id"}, QStringView{u"notification_type"},
-    QStringView{u"source"},          QStringView{u"reason"},
+    QStringView{u"source"},          QStringView{u"reason"},      QStringView{u"in_flight"},
 };
 
 int run_hook_relay(const QString& socket, const QString& nonce) noexcept;

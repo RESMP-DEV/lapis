@@ -66,6 +66,14 @@ class Observer::Impl {
         if (!server_.listen(socket_))
             throw std::runtime_error("Cannot listen for Claude hooks");
         QObject::connect(&server_, &QLocalServer::newConnection, &server_, [this] { accept(); });
+        paused_.setSingleShot(true);
+        paused_.setInterval(Observer::paused_turn_ms);
+        QObject::connect(&paused_, &QTimer::timeout, &server_, [this] {
+            if (stopped_ || failed_ || completed_ || !state_.ready())
+                return;
+            finish_turn();
+            notify();
+        });
     }
     ~Impl() { close(); }
     void notify() {
@@ -92,6 +100,7 @@ class Observer::Impl {
     void stop() {
         if (stopped_)
             return;
+        paused_.stop();
         close();
         state_.disconnect();
         diagnostic_ = QStringLiteral("Claude hook observation stopped");
@@ -282,6 +291,7 @@ class Observer::Impl {
             if (failed_)
                 return;
             retired_sources_.insert(pinned_);
+            paused_.stop();
             state_.disconnect();
             pinned_.clear();
             prompt_.clear();
@@ -305,6 +315,14 @@ class Observer::Impl {
             turn_event(event);
         notify();
     }
+    void finish_turn() {
+        paused_.stop();
+        clear();
+        if (failed_)
+            return;
+        completed_ = true;
+        applied(state_.activity(next(), attention::Activity::turn_completed));
+    }
     void new_prompt(const QString& prompt) {
         if (prompt.isEmpty()) {
             loss(QStringLiteral("Claude prompt boundary has no identity"));
@@ -316,6 +334,7 @@ class Observer::Impl {
             loss(QStringLiteral("Claude prompt identity bound exceeded"));
             return;
         }
+        paused_.stop();
         clear();
         if (failed_)
             return;
@@ -363,11 +382,14 @@ class Observer::Impl {
         if (name == QLatin1String("Stop")) {
             if (completed_)
                 return;
-            clear();
-            if (failed_)
+            // Background tasks or wakeups the agent started will begin its
+            // next turn themselves: the agent is still at work, not waiting
+            // for the person, unless no turn follows in time.
+            if (event.value("in_flight").toString().toInt() > 0) {
+                paused_.start();
                 return;
-            completed_ = true;
-            applied(state_.activity(next(), attention::Activity::turn_completed));
+            }
+            finish_turn();
         } else if (name == QLatin1String("Notification") &&
                    event.value("notification_type") == QLatin1String("idle_prompt")) {
             // Idle notices are one deterministic notice per prompt. After the
@@ -417,6 +439,7 @@ class Observer::Impl {
     bool failed_{};
     bool completed_{};
     bool awaiting_start_{};
+    QTimer paused_;
 };
 Observer::Observer(attention::State& state, QObject* parent)
     : QObject(parent), impl_(std::make_unique<Impl>(state, *this)) {}
@@ -431,4 +454,5 @@ QStringList Observer::launchArguments(const QStringList& original, const QString
     return impl_->launch(original, executable);
 }
 void Observer::stop() { impl_->stop(); }
+void Observer::setPausedTurnMsForTesting(int ms) { impl_->paused_.setInterval(ms); }
 } // namespace lapis::claude

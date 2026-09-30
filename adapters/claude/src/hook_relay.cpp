@@ -1,6 +1,7 @@
 #include "hook_relay.hpp"
 #include <QDeadlineTimer>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QLocalSocket>
 #include <array>
@@ -54,6 +55,13 @@ int run_hook_relay(const QString& socket, const QString& nonce) noexcept {
         for (const auto& key : relay_identity_fields)
             if (object.contains(key))
                 event.insert(key, object.value(key));
+        event.remove(QStringLiteral("in_flight"));
+        const auto tasks = object.value(QStringLiteral("background_tasks"));
+        const auto wakeups = object.value(QStringLiteral("session_crons"));
+        if (object.value(QStringLiteral("hook_event_name")) == QLatin1String("Stop") &&
+            (tasks.isArray() || wakeups.isArray()))
+            event.insert(QStringLiteral("in_flight"),
+                         QString::number(tasks.toArray().size() + wakeups.toArray().size()));
         const auto data = QJsonDocument(QJsonObject{{"nonce", nonce}, {"event", event}})
                               .toJson(QJsonDocument::Compact) +
                           '\n';

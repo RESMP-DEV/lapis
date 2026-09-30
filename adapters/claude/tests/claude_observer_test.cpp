@@ -279,6 +279,45 @@ void connection_overflow_is_observable() {
     require(f.state.ready() && f.state.pending().contains(std::string{"after-overload"}));
 }
 
+// A Stop with background tasks or wakeups in flight is a paused turn: the
+// agent's own work starts its next turn (a new prompt), and only a Stop with
+// nothing in flight, or a pause no turn follows, finishes it.
+void background_work_pauses_the_turn() {
+    Fixture f;
+    f.begin();
+    auto stop = event("Stop");
+    stop.insert("background_tasks", QJsonArray{QJsonObject{{"id", "b1"}, {"status", "running"}}});
+    stop.insert("session_crons", QJsonArray{});
+    f.raw(QJsonDocument(stop).toJson(QJsonDocument::Compact));
+    require(f.state.activity() == attention::Activity::working);
+    f.send(event("UserPromptSubmit", {}, {}, "turn-2")); // the task's notification
+    auto last = event("Stop", {}, {}, "turn-2");
+    last.insert("background_tasks", QJsonArray{});
+    last.insert("session_crons", QJsonArray{});
+    f.raw(QJsonDocument(last).toJson(QJsonDocument::Compact));
+    require(f.state.activity() == attention::Activity::turn_completed);
+
+    // A claimed count from the hook itself is ignored; the relay derives it.
+    Fixture forged;
+    forged.begin();
+    auto claimed = event("Stop");
+    claimed.insert("in_flight", "3");
+    forged.raw(QJsonDocument(claimed).toJson(QJsonDocument::Compact));
+    require(forged.state.activity() == attention::Activity::turn_completed);
+
+    // A wakeup counts too, and a pause nothing follows still finishes.
+    Fixture waiting;
+    waiting.observer.setPausedTurnMsForTesting(50);
+    waiting.begin();
+    auto wakeup = event("Stop");
+    wakeup.insert("session_crons", QJsonArray{QJsonObject{{"id", "c1"}}});
+    waiting.raw(QJsonDocument(wakeup).toJson(QJsonDocument::Compact));
+    require(waiting.state.activity() == attention::Activity::working);
+    QEventLoop loop;
+    QTimer::singleShot(200, &loop, &QEventLoop::quit);
+    loop.exec();
+    require(waiting.state.activity() == attention::Activity::turn_completed);
+}
 void session_replacement() {
     Fixture f;
     f.begin();
@@ -353,6 +392,7 @@ int main(int argc, char** argv) {
         completed_tools_reset_at_prompt_epoch();
         connection_overflow_is_observable();
         session_replacement();
+        background_work_pauses_the_turn();
         privacy_bounds_and_transport();
         std::cout << "Claude live relay, identity, retirement, bounds, privacy and deadline cases "
                      "passed\n";

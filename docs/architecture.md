@@ -1243,6 +1243,22 @@ quoted executable/socket/token; event contents never become shell commands.
 The listener and ledger survive desktop detach. Reopening the GUI restores that
 service's ledger, not a reconstructed Claude event history.
 
+A `Stop` ends a turn, not the agent's work. Since 2.1.285 Claude Code's `Stop`
+input lists `background_tasks` (in-flight background shells and agents) and
+`session_crons` (wakeups and loops), documented as telling "session is done"
+from "paused waiting for background work to wake it". The relay forwards only
+their combined count, as its own `in_flight` field (a claimed value from the
+hook is dropped). A `Stop` with work in flight leaves the agent working, so no
+finished-turn chime or notification fires; the task's notification arrives as
+a new prompt (a `UserPromptSubmit` with a fresh `prompt_id`, observed live) and
+that turn's `Stop` with nothing in flight finishes it. A paused turn no prompt
+follows within ten minutes (a server left running, say) finishes then. On
+September 29, 2003 of the 4097 turn ends with a next event in a day of the
+author's transcripts were followed by a background task's notification rather
+than a prompt from the person, which is why finished-turn pings arrived while
+agents were still iterating. Older Claude Code, without these fields, behaves as
+before.
+
 `SessionEnd` retires the conversation's notices without closing the service-owned
 listener. A subsequent `SessionStart` with a fresh source identity begins a new
 observation epoch, so `/clear` can continue in the same Claude process. Delayed
