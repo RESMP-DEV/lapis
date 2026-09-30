@@ -161,6 +161,23 @@ QStringList modeArguments(const QString& harness, const QString& mode) {
         }
     return {};
 }
+// The mode a new agent starts in. One asked for without a mode (the phone may
+// leave it out) gets the one new agents default to, the config's else Full
+// access, as the Mac's forms do: since Claude Code 2.1.284 no mode means auto
+// mode, not asking. Arguments configured for the CLI that already set a mode
+// win.
+QString launch_mode(const AgentRequest& request, const QStringList& configured,
+                    const QString& fallback) {
+    if (!request.mode.isEmpty())
+        return request.mode;
+    for (const auto& entry : mode_flags)
+        if (request.harness == QLatin1String(entry.harness))
+            for (const auto* flag : entry.flags)
+                if (flag != nullptr && flag[0] == '-' && configured.contains(QLatin1String(flag)))
+                    return {};
+    const QString mode = fallback.isEmpty() ? QStringLiteral("full") : fallback;
+    return modeArguments(request.harness, mode).isEmpty() ? QString() : mode;
+}
 QVariantList harnessModes(const QString& harness) {
     QVariantList modes;
     for (const auto& [mode, name] : mode_names)
@@ -1316,9 +1333,11 @@ std::optional<session::LaunchSpec> Workspace::agentLaunch(const AgentRequest& re
         return refuse(QStringLiteral("This agent cannot resume that conversation."));
     // The user's configured arguments, this agent's model and mode, then the
     // conversation to resume.
+    const auto approval =
+        launch_mode(request, harness_arguments_.value(request.harness), agent_defaults_.mode);
     auto arguments = harness->defaultArguments() + harness_arguments_.value(request.harness) +
                      harness->modelArguments(request.model) +
-                     modeArguments(request.harness, request.mode);
+                     modeArguments(request.harness, approval);
     if (!request.resume.isEmpty())
         arguments += QStringList{harness->resumeOption, request.resume};
     if (!request.machine.isEmpty()) {

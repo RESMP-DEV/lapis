@@ -179,7 +179,10 @@ folder picker. Chips under the folder choose a model, from the models the CLI
 itself lists for your account (its default first; Kimi, OpenCode and OMP from
 their config, recent models and roles), and one of three approval modes:
 Accept edits, Auto or Full access (the first time, Full access, or
-`newAgent.mode`), each passed as that CLI's own flag. The mode
+`newAgent.mode`), each passed as that CLI's own flag. An agent asked for
+without a mode (from the phone, or a resumed conversation) gets that same
+default: since Claude Code 2.1.284 no flag means auto mode rather than asking,
+so lapis always passes one, unless `harnessArguments` already sets one. The mode
 stays when the CLI changes; a CLI without it (OMP, OpenCode and Antigravity
 have no Auto, Kimi and OpenCode no Accept edits) uses its nearest, less access
 first. The next agent starts with the same CLI, mode and model. Everything else
@@ -188,6 +191,11 @@ To add your own flags to every new agent of a harness (lapis adds none itself),
 set `harnessArguments` in `lapis.json`, for example
 `{"harnessArguments": {"claude": ["--dangerously-skip-permissions"]}}`; shell
 aliases do not apply, because lapis starts the executable directly.
+Since Claude Code 2.1.285 a shell command Claude runs in the background stops
+after 30 minutes unless it asks for more (at most 2 hours; `BASH_MAX_TIMEOUT_MS`
+raises that ceiling). That is Claude Code's limit, not lapis's: start a longer job
+detached (`nohup`, `setsid` or `tmux`, writing to a log the agent reads), which
+also outlives restarts, reloads and plan switches.
 New tabs show the harness mark and a home-relative project path such as `~/dev/lapis`.
 Codex and Claude Code have verified activity integration. Other harnesses run
 their native CLI and show an output estimate instead of guessing turns.

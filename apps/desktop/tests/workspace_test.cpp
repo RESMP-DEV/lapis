@@ -1631,8 +1631,9 @@ exec sleep 600
                 first.contains(QStringLiteral("cd ~/dev/far && s=")) &&
                 !conversation(first).isEmpty() &&
                 first.contains(QStringLiteral(
-                    R"(-lic 'export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-1}"; claude '"$o $s")")),
-            "ssh has its own connection, kept alive, and names the conversation");
+                    R"(-lic 'export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-1}"; claude --permission-mode bypassPermissions '"$o $s")")),
+            "ssh has its own connection, kept alive, and names the conversation; with no mode "
+            "asked for, Claude Code starts in Full access, as the forms default, not auto mode");
         require(workspace.agentPlace(id).value(QStringLiteral("place")) ==
                     QStringLiteral("devbox:~/dev/far"),
                 "the agent's place is still its machine and folder");
@@ -2748,26 +2749,30 @@ void resumingAConversationStartsItsCli() {
                                       QStringLiteral("conv-123")),
                 "a past conversation resumes, named after its folder");
         auto* agent = workspace.focusedSession();
-        require(agent != nullptr &&
-                    waitFor(
-                        [agent] {
-                            return screenText(agent->snapshot())
-                                .contains(QStringLiteral("grok args: --fullscreen -r conv-123"));
-                        },
-                        10000),
-                "the CLI starts with its resume option");
+        require(agent != nullptr && waitFor(
+                                        [agent] {
+                                            return screenText(agent->snapshot())
+                                                .remove(QLatin1Char('\n'))
+                                                .contains(QStringLiteral(
+                                                    "grok args: --fullscreen --permission-mode "
+                                                    "bypassPermissions -r conv-123"));
+                                        },
+                                        10000),
+                "the CLI starts with its resume option, in the default mode");
         lapis::desktop::WorkspaceControl control(workspace, false);
         auto request = createRequest(workspace.activeCategoryId(), QStringLiteral("grok"), project);
         request.insert(QStringLiteral("resume"), QStringLiteral("conv-456"));
         const auto started = askWorkspace(workspace.storagePath(), request);
         auto* phone = workspace.session(started.value(QStringLiteral("id")).toString());
-        require(phone != nullptr &&
-                    waitFor(
-                        [phone] {
-                            return screenText(phone->snapshot())
-                                .contains(QStringLiteral("grok args: --fullscreen -r conv-456"));
-                        },
-                        10000),
+        require(phone != nullptr && waitFor(
+                                        [phone] {
+                                            return screenText(phone->snapshot())
+                                                .remove(QLatin1Char('\n'))
+                                                .contains(QStringLiteral(
+                                                    "grok args: --fullscreen --permission-mode "
+                                                    "bypassPermissions -r conv-456"));
+                                        },
+                                        10000),
                 "the phone resumes a conversation too");
         QFile saved(workspace.storagePath());
         require(saved.open(QIODevice::ReadOnly), "read the registry");
@@ -3210,15 +3215,17 @@ void phoneStartsAnAgentInItsCategory() {
         require(
             waitFor(
                 [far] {
-                    const auto text = screenText(far->snapshot());
+                    // The command wraps on the fixture's narrow screen.
+                    const auto text = screenText(far->snapshot()).remove(QLatin1Char('\n'));
                     return text.contains(QStringLiteral("[-t]")) &&
                            text.contains(QStringLiteral("[devbox]")) &&
                            text.contains(QStringLiteral(
-                               R"([cd ~/'dev/some project' && exec "${SHELL:-/bin/sh}" -lic '/opt/grok/bin/grok --fullscreen'])"));
+                               R"([cd ~/'dev/some project' && exec "${SHELL:-/bin/sh}" -lic '/opt/grok/bin/grok --fullscreen --permission-mode bypassPermissions'])"));
                 },
                 10000) &&
                 waitFor([far] { return far->inputReady(); }, 10000),
-            "ssh runs the CLI in that machine's folder and login shell");
+            "ssh runs the CLI in that machine's folder and login shell, in the default mode "
+            "when the phone named none");
         // The Mac's own form names the machine the same way.
         QFile config(root.filePath(QStringLiteral("ssh_config")));
         require(config.open(QIODevice::WriteOnly), "write an ssh config");
