@@ -1,0 +1,72 @@
+{
+  "source_revision": "4e2598e892f5331e267b332250ab10fcf6e07b99",
+  "reviewed_upstream_head": "2556d5184cc7b155831caf42776063dfa5920752",
+  "source_sha256": {
+    "apps/desktop/qml/Main.qml": "c8fc58eb979c44bc637e0fe4b5d2aada6c90414b18a77b880f122996a979e89e",
+    "apps/desktop/src/next_prompt.cpp": "e234127b60f6980f0964e5f9e96d8bf30a6ae071e5aaced8dc3265fa9025f555",
+    "apps/desktop/src/next_prompt.hpp": "dce4227cf8e03675d277a0b00f4ba47807a2ae2ac50ab2db80c1dac735659fe4",
+    "apps/desktop/src/next_prompt.py": "7de24da17577281c242948b689faa923d172044c643c691db92054a604e63055",
+    "apps/desktop/src/terminal_surface.cpp": "7faa06e70cafa8008fab2e8a6b43c0929d7eb74f2310e8233ff2ed1da324feaf",
+    "apps/desktop/src/terminal_surface.hpp": "d535ac33c94770d9881edc60e30ced7d3b46d4ec6ed8497d2daa1eb82833cd0b",
+    "apps/desktop/src/live_connection.cpp": "a799f28595840ae5ea4495e68452c4a823935feea57a42af8e8cdf8c3467283e",
+    "apps/desktop/tests/next_prompt_test.cpp": "0afb60e2323f3eb078176f1620e06c0ab1aab96e05477245a30c6561a3a7c23d",
+    "apps/desktop/tests/terminal_input_test.cpp": "9f139b4f2b3173f39418506d43fa9b5ebded15ac0aee2c0fec5e2457b56b3ce2",
+    "scripts/next_prompt_eval.py": "13e83269951876f6cd5ecdcf1a3aded0e8aa0b0664bea8b3e6ad63ead9312a0c",
+    "scripts/tests/test_next_prompt.py": "c8bac900fd086ab13dcc77e014bfe959188c3c81d7028b7e06d58c455fab60e2",
+    "services/session/src/session_service.cpp": "43b37cfabd9095a0b3af7eb42fc90224b9ba84df73a601d5877a5fc3c4ade2fb"
+  },
+  "contracts": [
+    "Suggestion fill and submit require negotiated service admission, with original session/offer/request identity. Submit is refused for a known pending service request.",
+    "Full submission requires the same offer and text to have appeared whole in the last presented frame. A newer snapshot cannot authorize unseen text.",
+    "Explicit transcript identity never falls back to a different conversation; generic XML prompts remain user text.",
+    "Helper process groups, stdout/stderr, log records and rotation are bounded; raw failure text is replaced by stable categories.",
+    "Concurrent contexts reserve the shared prediction budget at launch; failed process starts refund it."
+  ],
+  "checks": [
+    {
+      "command": "ctest --test-dir build/desktop -R \"^(next-prompt|workspace|live-connection|local-protocol)$\" --output-on-failure --no-tests=error",
+      "result": "4/4 passed",
+      "seconds": 46.26
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen build/desktop/apps/desktop/lapis_terminal_input_tests --background",
+      "result": "passed, including unpresented text and a wider live snapshot before presentation"
+    },
+    {
+      "command": "ctest --test-dir build/desktop-asan -R \"^next-prompt$\" --no-tests=error --output-on-failure",
+      "result": "passed with ASAN_OPTIONS=detect_leaks=0",
+      "seconds": 1.74
+    },
+    {
+      "command": "ctest --test-dir build/desktop-tsan -R \"^next-prompt$\" --no-tests=error --output-on-failure",
+      "result": "passed",
+      "seconds": 9.82
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen build/<desktop-asan|desktop-tsan>/apps/desktop/lapis_terminal_input_tests --background",
+      "result": "both passed; ASan leak detection disabled on macOS"
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen python3 scripts/check_ui_preview.py --binary build/desktop/apps/desktop/lapis_desktop.app/Contents/MacOS/lapis_desktop",
+      "result": "all 12 capture/rejection scenarios passed"
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "result": "passed, including 290 Python tests"
+    },
+    {
+      "command": "clang-tidy -p build/desktop <four affected next-prompt/input translation units>",
+      "result": "passed; final shared-pointer move refinement rechecked"
+    }
+  ],
+  "reuse": {
+    "validated_state": "4bd6737198510e47428d237ff5c0a4f24c19f2a2 plus the source repairs committed in source_revision",
+    "after_sanitizer_checks": "Only the final painted_state shared-pointer assignment changed from copy to move; remaining changes were comments and documentation. The desktop was rebuilt for the subsequent UI capture checks."
+  },
+  "limits": [
+    "Background Qt/software evidence does not qualify native macOS GPU presentation or physical input.",
+    "Provider predictions, live remote transcript access, model acceptance quality and actual resets were not exercised by these stand-ins.",
+    "Queue admission is not application consumption; uncertain delivery is never automatically replayed.",
+    "An old service needs an operator-controlled upgrade/restart before suggestions can be admitted."
+  ]
+}
