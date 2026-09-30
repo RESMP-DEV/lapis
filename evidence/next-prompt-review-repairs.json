@@ -70,11 +70,11 @@
     "An old service needs an operator-controlled upgrade/restart before suggestions can be admitted."
   ],
   "python_followup": {
-    "source_revision": "cc171e04edb8d626f6fac43b3ba9fe2d0f140c4c",
+    "source_revision": "d32a3ef99e069c2d31ccda9f81a9d26715562ca0",
     "source_sha256": {
-      "apps/desktop/src/next_prompt.py": "40a901002b4e016cf9b963edd6da3396876a85080175458ba5c4f7308607d3ee",
-      "scripts/next_prompt_eval.py": "d29540bde511bac3cc6ccdc2239a0be73ba0fda894193d7926a6710aac3c6884",
-      "scripts/tests/test_next_prompt.py": "351d8cf3fb9ec3c0c0028632938c43c6599bf2088b431e1197a286835c720b34",
+      "apps/desktop/src/next_prompt.py": "f854f97a67367dd072c0c8d5d49e543c4fbbf9f5b75bb1fc9d3da5e1e09608ed",
+      "scripts/next_prompt_eval.py": "1a5e550f700fe96eeece4bc1b2b32fddc4342cbdd3f4da5375a8789058fa87fa",
+      "scripts/tests/test_next_prompt.py": "50b073f1ce7f3b11a2a9e7c03fe1af44596dcd6a0aef59150fc5c7743627c3d3",
       "docs/suggestions.md": "1473147f85aeeef2c2763a566f108fcc7b22625376b889e8b2f8df703c7d60c8"
     },
     "checks": [
@@ -84,7 +84,8 @@
     "contracts": [
       "Provider/auth/timeout failures stop without an immediate retry; only malformed prediction answers get one format-repair attempt.",
       "Missing context and judge failures are counted separately; ungraded results never enter quality denominators.",
-      "Invalid judge rows are ignored as missing; test-owned temporary folders are removed on completion."
+      "Invalid judge rows are ignored as missing; test-owned temporary folders are removed on completion.",
+      "Sampling compares timestamp instants rather than strings and preserves explicit UTC offsets; extraction launch failures remain structured."
     ]
   }
 }
