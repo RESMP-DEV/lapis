@@ -25,6 +25,7 @@ add_library(lapis_desktop_view STATIC
     src/conversation_index.cpp src/conversation_index.hpp
     src/terminals.cpp src/terminals.hpp
     src/accounts.cpp src/accounts.hpp
+    src/limit_resets.cpp src/limit_resets.hpp
     src/usage.cpp src/usage.hpp
     src/usage_limits.cpp src/usage_limits.hpp
     src/next_prompt.cpp src/next_prompt.hpp
@@ -33,6 +34,8 @@ add_library(lapis_desktop_view STATIC
     src/keymap.cpp src/keymap.hpp
     src/live_connection.cpp src/live_connection.hpp
     src/platform/updater_process.cpp src/platform/updater_process.hpp
+    src/platform/reset_journal.cpp src/platform/reset_journal.hpp
+    src/platform/published_task.hpp
     src/terminal_surface.cpp src/terminal_surface.hpp
     src/cell_shapes.cpp src/cell_shapes.hpp
     src/tile_layout.cpp src/tile_layout.hpp
@@ -46,7 +49,8 @@ if(APPLE)
     # Notifications, the login item, Command-` and (in the downloaded app) Sparkle.
     target_sources(lapis_desktop_view PRIVATE src/desktop_actions_mac.mm)
     target_link_libraries(lapis_desktop_view PUBLIC "-framework AppKit" "-framework Carbon"
-        "-framework Foundation" "-framework ServiceManagement" "-framework UserNotifications")
+        "-framework Foundation" "-framework Security" "-framework ServiceManagement"
+        "-framework UserNotifications")
     if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
         get_filename_component(sparkle_directory "${LAPIS_SPARKLE_FRAMEWORK}" DIRECTORY)
         target_compile_definitions(lapis_desktop_view PRIVATE LAPIS_SPARKLE)
@@ -58,6 +62,11 @@ endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/count_tokens.py)
 file(READ src/count_tokens.py LAPIS_COUNT_TOKENS_SCRIPT)
 configure_file(src/count_tokens.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/count_tokens.hpp" @ONLY)
+# The limit reset helper each machine runs with python3, compiled in the same way.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/limit_resets.py)
+file(READ src/limit_resets.py LAPIS_LIMIT_RESETS_SCRIPT)
+configure_file(src/limit_resets_script.hpp.in
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/limit_resets_script.hpp" @ONLY)
 # The next-prompt helper, run here or sent to another machine, compiled in as text.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/next_prompt.py)
 file(READ src/next_prompt.py LAPIS_NEXT_PROMPT_SCRIPT)
@@ -134,6 +143,15 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_accounts_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME accounts COMMAND lapis_accounts_tests)
     set_tests_properties(accounts PROPERTIES TIMEOUT 20)
+    add_executable(lapis_limit_resets_tests tests/limit_resets_test.cpp)
+    target_link_libraries(lapis_limit_resets_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME limit-resets COMMAND lapis_limit_resets_tests)
+    set_tests_properties(limit-resets PROPERTIES TIMEOUT 30)
+    if(LAPIS_SANITIZER STREQUAL "thread")
+        # Process/FS recovery cases take about 23 s under TSan on the reference
+        # Mac; leave headroom for concurrent builds without changing app deadlines.
+        set_tests_properties(limit-resets PROPERTIES TIMEOUT 60)
+    endif()
     add_executable(lapis_history_strip_tests tests/history_strip_test.cpp)
     target_link_libraries(lapis_history_strip_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME history-strip COMMAND lapis_history_strip_tests)

@@ -1338,6 +1338,17 @@ bool Workspace::createAgent(const QString& directory, const QString& title, cons
                         .resume = {}})
                 .isEmpty();
 }
+QStringList Workspace::machinesRunning(const QStringList& harnesses) const {
+    QStringList machines;
+    for (const auto& item : sessions_) {
+        const auto entry = agents_.constFind(item->sessionId());
+        if (entry == agents_.cend() || !harnesses.contains(entry->harness))
+            continue;
+        if (const auto machine = agentMachine(*entry); !machines.contains(machine))
+            machines << machine;
+    }
+    return machines;
+}
 QVariantMap Workspace::agentPlace(const QString& id) const {
     const auto entry = agents_.constFind(id);
     if (entry == agents_.cend())
@@ -1978,6 +1989,21 @@ QString Workspace::agentAccount(const QString& id) const {
         return entry->account;
     const auto* own = accounts_.own(cli, agentMachine(*entry));
     return own != nullptr ? own->name : QString();
+}
+QString Workspace::agentPlanCredential(const QString& id) const {
+    const auto entry = agents_.constFind(id);
+    if (entry == agents_.cend() || entry->account.isEmpty())
+        return {};
+    const auto cli = accountCli(entry->harness);
+    const auto* account = accounts_.find(cli, entry->account);
+    const auto machine = agentMachine(*entry);
+    if (account == nullptr || (account->hasHome && account->home == machine))
+        return {};
+    const auto kept = cli == QLatin1String("claude")
+                          ? QStringLiteral("claude/%1.token").arg(account->name)
+                          : QStringLiteral("codex/") + account->name;
+    return machine.isEmpty() ? QDir(accountsRoot()).filePath(kept)
+                             : QStringLiteral("~/.lapis/accounts/") + kept;
 }
 bool Workspace::canSwitchAccount(const QString& id) const {
     const auto entry = agents_.constFind(id);
