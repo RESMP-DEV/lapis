@@ -2802,6 +2802,60 @@ procedure. A companion feature may remain experimental rather than delaying a
 local-only release, but an unqualified behavior must not remain an unconditional
 promise in the entry documentation.
 
+#### Persistent supervisor direction (September 29)
+
+Use one persistent per-user lapis supervisor, owned by launchd and started at
+login, with restart supervision. Boot-time startup before user login is a
+separate deployment mode, not the default: this workspace depends on the user's
+home, login keychain and graphical-session integration. A reboot can restore
+saved conversations after login; no daemon preserves a running process across
+machine reboot.
+
+The existing login item is a starting point, not that supervisor contract.
+`dev.lapis.desktop.restore.plist` has `RunAtLoad`, invokes the desktop binary
+with `--restore-agents --serve`, and has no keep-alive policy. The headless
+workspace currently hands control to the GUI and exits when the GUI opens.
+Making that job restart forever without changing the handoff would create a
+restart/ownership loop. Move the ownership boundary before enabling persistence.
+
+Recommended responsibilities and boundaries:
+
+- The supervisor owns session inventory, launch/stop/restart admission and durable
+  workspace mutations. GUI and CLI clients attach through authenticated per-user
+  local IPC; opening a window never transfers authoritative ownership. Preserve
+  single-writer registry and attachment generation checks during migration.
+- Keep each existing session service responsible for its PTY, terminal state,
+  history and adapter connection. Launch those services outside the GUI's
+  coalition, and explicitly define how a supervisor restart reconnects to live
+  services without duplicating or terminating them. The supervisor is not a
+  replacement for the terminal engine or a new provider gateway.
+- Codex's shared daemon remains an upstream subsystem. lapis supervises its own
+  session/client identities and processes through supported interfaces; it must
+  not assume ownership of every Codex session on the machine or globally stop
+  that daemon when a lapis agent closes. Claude and other CLIs keep independent
+  verified adapters.
+- Extract a headless lifecycle target using the existing C++/Qt Core services and
+  contracts, without requiring QML, a GPU or a visible window. Extend the owning
+  CLI with daemon status/start/stop and machine-readable health. Explicit stop,
+  disabled startup and crash restart must have distinct behavior; bound restart
+  storms and diagnostics. Do not hide a failed registration by spawning services
+  from the GUI again.
+- An update must coordinate compatible GUI, supervisor and session-service
+  versions. Existing children keep running where the protocol supports it;
+  incompatible migrations require an explicit staged recovery path. Do not let
+  removal of a bundle containing the running supervisor become the next lifetime
+  dependency. Package location, launchd registration and supported replacement
+  behavior are part of R1/R4 qualification, not incidental installer details.
+
+This is analogous to a shared Codex daemon in connection lifetime, while lapis
+owns a multi-CLI workspace rather than Codex's conversation implementation. Build
+it as the R1/R4 vertical slice: first one supervised local session and two
+reconnecting clients, then the existing workspace, login registration and upgrade
+path. Qualification must include supervisor crash/restart, simultaneous clients,
+GUI replacement, disabled background permission, graceful shutdown and real
+login/reboot. Persistence is a desired architecture; it is not implemented by
+this documentation change.
+
 #### Current PR disposition
 
 PR #41's artwork is on main. The remaining feature PRs already have substantive

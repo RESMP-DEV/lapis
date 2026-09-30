@@ -438,7 +438,8 @@ Normal launch restores machine-local window geometry and does not force a screen
 `--screen <text>` is an explicit capture/qualification override. Routine UI
 iteration uses `just ui-review` or the existing background fixtures
 on the current capable checkout. macOS is the active target; use Linux virtual
-displays only when Linux is explicitly selected. Native foreground checks run
+displays only when Linux is explicitly selected, using
+`uv run --no-project python scripts/lapis.py linux-gui`. Native foreground checks run
 serially under the session's existing authorization, and their evidence stays
 separate from offscreen results.
 
