@@ -1,0 +1,101 @@
+{
+  "audit_date": "2026-09-29",
+  "baseline": "61a87e56e68dab12506feb7334c173a2e2e527f6",
+  "objective": "Triage architecture for a broader macOS daily-use rollout; no release qualification or new feature implementation implied.",
+  "release_observation": {
+    "tag": "v0.5.0",
+    "target": "0ec13cb46491a4f63faa372dba7b58959426c7d6",
+    "dmg_sha256_from_github": "4992b7cb0aa8936523a49462c067101d4047056569f713d26afa73cbabeee9d1",
+    "published_at": "2026-09-29T04:37:51Z",
+    "scope": "Live GitHub release metadata and local tag/history read; no asset downloaded, installed or requalified. The release tree differs from current main."
+  },
+  "observations": [
+    {
+      "gate": "R1",
+      "kind": "documented platform failure / architecture gap",
+      "source": "docs/architecture.md, macOS 27 coalition investigation",
+      "result": "Independent service lifetime is intended but GUI-spawned process birth remains coupled to BTM and bundle replacement. The audit does not repeat the recorded OS experiment."
+    },
+    {
+      "gate": "R2",
+      "kind": "source-verified contract gap",
+      "source": "services/session/src/session_service.cpp::write_input and PR43 LiveConnection::sendText",
+      "result": "The client queue precheck and service PTY admission are different boundaries. Successful empty-queue probes do not establish whole-transfer completion under service backlog or disconnection."
+    },
+    {
+      "gate": "R3",
+      "kind": "source-verified identity gap",
+      "source": "apps/desktop/src/workspace.cpp::withRemoteAccount / applyAccount; PR40 reset dispatch",
+      "result": "A missing kept remote credential permits fallback while the selected account is recorded. Reset dispatch additionally lacks selected-plan identity and stable retry IDs."
+    },
+    {
+      "gate": "R4",
+      "kind": "source-verified enforcement / acceptance gap",
+      "source": "scripts/package_macos.py::command_release",
+      "result": "Release validates a staple and remote containment of current HEAD, without an immutable build-to-artifact qualification manifest."
+    },
+    {
+      "gate": "R5",
+      "kind": "source pressure risk / qualification gap",
+      "source": "apps/remote/lapis_remote.py::Handler.list_agents, ThreadingHTTPServer; apps/ios/Lapis/Gateway.swift, Models.swift",
+      "result": "Listing wait and serial endpoint probes can exceed the iOS request timeout; active handler count is unbounded. Native rendering and broad sanitizer acceptance remain separate."
+    }
+  ],
+  "pr_inventory": {
+    "41": "merged",
+    "40": {
+      "head": "e886f6291a2d1592cf9237037026adf1c24c098c",
+      "unresolved_threads": 33
+    },
+    "43": {
+      "head": "19baa20a9c097ade9163b2fe8b88633c2560c2b8",
+      "unresolved_threads": 15
+    },
+    "44": {
+      "head": "8b1252551a2f84afcc9955aab293e57f67dc79da",
+      "unresolved_threads": 63
+    }
+  },
+  "review_scope": "Complete thread-aware snapshots fetched with pagination checked. Core blockers inspected in source and grouped by contract. Other reported claims remain candidates for reproduction or API validation; raw counts are not verified defect counts. No unresolved feature thread was silently resolved.",
+  "checks": [
+    {
+      "command": "git diff --check",
+      "result": "PASS"
+    },
+    {
+      "command": "Resolve new rollout Markdown links against actual headings",
+      "result": "PASS"
+    },
+    {
+      "command": "uv run --no-project python scripts/lapis.py --help",
+      "result": "PASS; inspection only"
+    },
+    {
+      "command": "uv run --no-project python scripts/package_macos.py verify --help",
+      "result": "PASS; --notarized interface confirmed without launching a package check"
+    },
+    {
+      "command": "uv run --no-project python scripts/check_cli_launch.py --list-cases",
+      "result": "PASS; existing backpressure, detach, identity and synchronization cases discovered without starting agents"
+    }
+  ],
+  "limits": [
+    "No native UI interaction, real reboot, package install/update, actual reset consumption, external SSH operation or new model turn performed.",
+    "The pinned read-only worker launcher rejected fallback tiers before inference. Coordinator completed the source audit; no independent worker success claimed.",
+    "Root dirty work and other contributors were preserved. No new worktree created.",
+    "The current package source and main have separate histories; neither is inferred to include the other tree from a release label."
+  ],
+  "source_sha256": {
+    "apps/desktop/src/workspace.cpp": "f9ef4f3e9d5d6cb9b62b9d87e119fb92b7d4a738ee78e3a8ff677cbe2c344550",
+    "services/session/src/session_service.cpp": "031c9246dcc148413983f2d0086976e41222709094b62834d9a8e4a6a2fc84f2",
+    "apps/remote/lapis_remote.py": "23791a9619d6fb96e374448ce226f4ad2915670f1796b8e111b2139edd75accd",
+    "apps/ios/Lapis/Gateway.swift": "fdff67671495aff5043c0ba6db294fca7001801e70a5b3169a26f731fada0974",
+    "apps/ios/Lapis/Models.swift": "e783b6cb21c3ff50ab1745b3459aebca62756c3cc56c31ca74eb51cdf9e3472f",
+    "scripts/package_macos.py": "e94be341d6f115b23c7d6b1d800e10732360962913e751c1d8dbcbddff0e49e3"
+  },
+  "document_sha256": {
+    "README.md": "0af10017f0aa75b90327bfec0acfd3ecc7374a78c2533405796dcb0299b93512",
+    "CONTRIBUTING.md": "98244ca6c56607233d9a7eb1ef0ec4c8d35431efe3a4fd5763540fdec0fb94ad",
+    "docs/architecture.md": "c9012e5f9246ee360ecc8732bf5fa56a452c4952a7094a14b9293dd0f4f36a94"
+  }
+}

@@ -2746,6 +2746,115 @@ listings, along with rejection of stale older-history, newer-history and input
 responses. The earlier receipts remain dated evidence for their original source,
 not qualification of the assembled revision.
 
+### Broader macOS rollout readiness (September 29)
+
+The next objective is a dependable daily workspace that another person can
+install, update and recover. The existing separation of terminal state, process
+ownership, adapters, focus policy and presentation remains the architecture.
+Close the failure paths and qualify that assembled system before adding more
+supervision features; a redesign of the terminal or adapter stack is not the
+starting point.
+
+This is the current release work order. The September 27 integration spread
+below remains a feature backlog, not a prerequisite for this rollout. Milestone 4
+still owns the controlled 32-session experiment. Passing an old milestone or
+merging a feature does not qualify a new binary for distribution.
+
+#### Minimum supported slice
+
+Start with an explicitly labelled macOS Apple Silicon early-access release:
+local Codex and Claude Code, the existing terminal workspace, explicit account
+selection, and version-pinned observation capabilities. A signed arm64 binary
+with a macOS 14 deployment target is not evidence that macOS 14 through 27 all
+work. Publish the OS and CLI versions actually exercised with each release.
+Other CLIs retain their declared observation limits. Linux UI qualification,
+additional response-capable adapters, multiple windows, automatic focus changes,
+and new integrations remain outside this exit.
+
+Remote sessions, shared plans and phone companions keep their separate
+qualification rows. Do not advertise them as equivalent to the local desktop
+until account identity, reconnect and bounded fan-out are exercised. Preserve
+these implementations while restricting readiness claims to measured behavior.
+Next-prompt inference and automatic spending of saved resets are optional
+features, not dependencies of the minimum rollout. Their provider calls, account
+identity, logs and input behavior need their own reviewed contracts.
+
+#### Release blockers and accountable batches
+
+The evidence basis for this audit is main `61a87e5`, the complete review state of
+PRs #40, #43 and #44, and the live release inventory. Findings below distinguish
+source defects from missing acceptance. The owning module names are temporary
+write scopes; contributors still share feature ownership.
+
+| Order | Finding and current evidence | Required outcome | Acceptance before claiming readiness |
+| --- | --- | --- | --- |
+| R1, process lifetime | **Contract gap, reproduced platform failure.** `LiveConnection` starts services from the GUI. The [macOS 27 investigation](#macos-27-ends-a-quitting-apps-background-processes-september-28) shows that `setsid` and detached spawning do not escape its coalition; replacing the bundle or lacking BTM permission can kill every agent. | The platform launcher must make an independent launchd-owned service/broker responsible for process birth and supervision, with an explicit registration/disabled state. The GUI attaches to it. Keep service failure and reboot recovery distinct from GUI detach. Do not use an installer delay as the durability contract. | On a disposable qualified Mac installation: preserve child PID and terminal bytes through window close, GUI quit/crash and application replacement; exercise allowed/denied/unknown background permission, login item on/off, service crash and a real reboot. Reboot may resume a conversation; it must not be reported as same-process survival. Reuse the existing restore fixtures, then qualify the actual package. |
+| R2, input integrity | **Known current limit and pending repair.** Main accepts bounded single input frames. PR #43 prechecks the desktop socket queue then emits many frames; the service independently rejects a full PTY queue (`Service::write_input`). Socket acceptance cannot prove that the whole paste reached the child. | Agree a service-owned paste admission/completion contract before claiming large-paste atomicity. Keep encoding at the owner of the current terminal mode, reserve/check the service budget, bind a transfer to attachment/epoch, and distinguish rejection from delivery interrupted after admission. Old peers must refuse unsupported sizes visibly. A later implementation can use a bounded complete frame or a negotiated transfer; do not disguise a transfer as unacknowledged ordinary text. | Extend the existing live-connection and terminal-input fixtures: fill the service PTY queue before pasting, use a slow reader, disconnect after each chunk boundary, change bracketed-paste mode, switch focus during paste/IME, and repeat on the side shell. Compare actual PTY bytes and matching bracket markers; a refused paste sends no input, and interrupted delivery is explicit. PR #44 paste-plus-Return must use this same completion/ownership contract rather than a 150 ms guess. |
+| R3, account identity | **Shipped contract gap plus pending feature defects.** `withRemoteAccount` intentionally falls back to the machine sign-in if the selected plan file is absent, while `applyAccount` records the selected plan. PR #40 also resolves a reset by machine/CLI instead of the agent's selected plan and creates new consume IDs on retries. | Carry the chosen account identity through launch, usage and optional reset operations. Missing selected credentials must fail visibly before replacing a healthy agent or spending a reset. Never silently act as another plan. A reset needs a stable persisted operation ID, reconciliation after uncertain delivery, and a bounded retry record that survives helper/GUI failure. | Use disposable credential/provider stand-ins to check local/remote home and visiting plans, missing/unreadable setup tokens and Codex homes, malformed credit responses, all model-specific exhausted windows, reserve policy, wrong-CLI exclusion, timeout after server acceptance and restart before the reply is saved. Validate real read-only account identity separately; real consumption is not required for routine tests. |
+| R4, release and upgrade provenance | **Acceptance and enforcement gaps.** `package_macos.py release` validates the DMG staple and checks that current HEAD exists on a remote; it does not bind the staged app/DMG to that HEAD, version and qualification result. The latest published v0.5.0 targets `0ec13cb`, a separate release tree from this audit's main. | Produce one immutable package manifest linking source tree/dirty status, app version, toolchain/dependency pins, bundled notices/SBOM, app and DMG hashes, appcast signature and validation. Refuse publishing stale/mismatched artifacts. Exercise installation and the Sparkle transition, including recoverable registry/history migration and a documented recovery/rollback path. Keep signing-key recovery outside the repository. | Run the existing `package_macos.py verify --notarized` on the exact staged artifact, then verify the downloaded asset and appcast. Qualify Finder launch in a fresh user environment without developer tools or pre-existing BTM state; install an update with live sessions; recover after a failed update/migration. Record source and artifact digests together. Do not relabel source tests or the old 0.2.0 signature receipt as v0.5.0 acceptance. |
+| R5, operational bounds and support | **Measured coverage gaps and source-level pressure risks.** The gateway uses `ThreadingHTTPServer`; listing can spend eight seconds waiting and then probe every service serially at up to 0.3 s each, while the iOS request timeout is 15 s. `followNewHistory` still defers by a full second. Native UI/Metal and full TSan qualification have retained failures in the current review receipts. | Bound gateway clients, listing work and cancellation, preserve the local terminal under remote/output pressure, and make degraded health actionable. Record session counts/rates, history/log budgets and error causes. Extend the existing CLI with package/runtime diagnostics and a user-controlled redacted support export; the current developer `doctor` only establishes dependency/build readiness. | Start with the advertised early-access workload and a long-running reconnect/output soak; inspect memory, file descriptors, disk use, idle CPU and input/switch tails. Then run Milestone 4's controlled 32-session workload. Include dead endpoints and disconnected long-poll clients. Resolve or accurately scope the retained native-render and sanitizer failures before reusing that evidence; background Qt success alone is not GPU acceptance. |
+
+R1 and R4 form the first complete delivery slice: install, start, detach, update,
+recover and uninstall without losing owned sessions or misidentifying an artifact.
+R2 and R3 can be implemented in parallel once their service/adaptor identity
+contracts are agreed. R5 supplies the rollout's operational limits and support
+procedure. A companion feature may remain experimental rather than delaying a
+local-only release, but an unqualified behavior must not remain an unconditional
+promise in the entry documentation.
+
+#### Current PR disposition
+
+PR #41's artwork is on main. The remaining feature PRs already have substantive
+reviews; optional reviewer completion is not their blocker. Counts are a dated
+inventory, not severity scores: #40 has 33 unresolved threads, #43 has 15, and #44
+has 63. Several reports duplicate the same issue or question deliberate behavior.
+The complete snapshots and per-thread triage belong in the review work record;
+this document retains the architectural decisions and acceptance.
+
+- **#40, saved resets:** repair the account/operation identity and response-shape
+  cluster before merge. Preserve every exhausted model window. Separate unknown
+  delivery from definite refusal, bound helper lifetime/output and persisted
+  attempts, and validate per-plan credential destinations. Do not count a clean
+  stylistic review as a counterexample to an observed wrong-account path.
+- **#43, long paste:** make R2's delivery semantics reviewable first. Normal and
+  slow-reader success on an empty queue are valuable evidence but do not cover a
+  prefilled service queue or partial transport failure. Preserve explicit size
+  refusal and the side-shell notice without treating display-unit preferences as
+  the core defect. It touches input surfaces shared with #44; land the input
+  contract first and rebase the dependent work.
+- **#44, next-prompt suggestions:** keep it optional and outside this release's
+  critical path. In addition to R2, fix offer-identity accounting (identical text
+  is not the same offer), retain ordinary Tab when no navigation destination
+  exists, and prevent unrelated typing/selection from being submitted by a delayed
+  Return. Bound and classify local logs, declare exactly which context goes to the
+  configured model, and qualify impression/acceptance denominators independently
+  of replay scores. QObject and renderer lifetime warnings require source/API
+  verification before treating every generated warning as a defect.
+
+Late feedback on merged #38 also identifies review-tool hardening work. Track
+that as developer tooling, separate from user-facing release readiness; a pending
+optional reviewer is not itself a production defect.
+
+#### Qualification without duplicate testing
+
+Select the smallest affected rows of [the required-check matrix](../CONTRIBUTING.md#checks)
+for each batch. Use existing focused CTest cases and the background UI runner
+while iterating; tests must discriminate a failure or contract rather than repeat
+an implementation. One build owner per preset keeps receipts coherent. Keep
+sanitizer, real-adapter, native input/GPU and package results distinct. Reuse
+unchanged source evidence with its original revision and platform; rerun the
+assembled integration gate once after dependent changes are combined.
+
+Each release candidate needs one dated receipt mapping these gates to exact
+source and artifact hashes, exercised OS/CLI versions, commands/results, review
+basis, known limits and recovery instructions. One substantive review can suffice
+after focused findings are repaired and verified; additional optional reviews do
+not hold the candidate open. Known correctness failures and required acceptance
+remain gates. Publish first to the declared early-access cohort, collect failures
+against that exact artifact, and widen the support claim only after those gates
+are met. This audit has not performed a real reboot, installed an update, spent
+any reset or qualified a fresh native GPU build.
+
 ### Pseudo-production direction and integration spread (September 27)
 
 lapis is now run as the primary daily workspace: the signed Mac app with its
@@ -2760,7 +2869,11 @@ Except for the already-present pieces the rescoped rows below mark as
 verified, nothing here is implemented yet; each batch carries its own
 observable finish line before it is claimed.
 
-#### Work order
+#### Feature backlog after rollout reliability
+
+The [September 29 rollout gates](#broader-macos-rollout-readiness-september-29)
+take priority over these new capabilities. This table preserves the feature
+ordering once the supported daily-use slice is reliable.
 
 | Order | Batch | Gate |
 | --- | --- | --- |
@@ -2959,8 +3072,8 @@ the owning adapter document.
 
 ### Following milestones
 
-The [September 27 pseudo-production section](#pseudo-production-direction-and-integration-spread-september-27)
-orders the near-term batches; this table keeps the qualification exits. With
+The [September 29 rollout gates](#broader-macos-rollout-readiness-september-29)
+order the near-term reliability batches; this table keeps the qualification exits. With
 the two-session workspace assembled, the remaining qualification stages are
 scale, another independent adapter, and platform completion. A later Linux port
 still needs actual input, rendering and lifecycle evidence. These stages remain

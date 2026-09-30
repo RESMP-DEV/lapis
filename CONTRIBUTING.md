@@ -435,16 +435,20 @@ renderer and the proposed change: a valid baseline failure must identify a
 pixel/layout assertion after window and snapshot preconditions pass.
 
 Normal launch restores machine-local window geometry and does not force a screen.
-`--screen <text>` is an explicit capture/qualification override. Routine GUI tests
-run on the Linux test host through `uv run --no-project python scripts/lapis.py linux-gui`.
-Do not use the user's Mac as an automatic GUI-testing fallback.
+`--screen <text>` is an explicit capture/qualification override. Routine UI
+iteration uses `just ui-review` or the existing background fixtures
+on the current capable checkout. macOS is the active target; use Linux virtual
+displays only when Linux is explicitly selected. Native foreground checks run
+serially under the session's existing authorization, and their evidence stays
+separate from offscreen results.
 
 ### Keybindings and layout
 
 `lapis.json` stores appearance and optional keybinding overrides. Empty overrides
 use platform defaults. Command-R on macOS reloads it. The product has one terminal
 stage, category navigation and the category's agent strip under the stage; no
-tab row, tiling or preview layout picker. `previewsVisible` hides the strip
+tab row or preview layout picker; dragging an agent preview onto the stage
+creates a tile. `previewsVisible` hides the strip
 (default on); the `togglePreviews` action has no default key.
 `harnessArguments` maps a harness id (`codex`, `claude`, `grok`, ...) to literal
 arguments added when lapis starts a new agent of that harness; each agent's
@@ -466,7 +470,10 @@ The committed `lapis.json` holds defaults only (see
   while it may be running), else, with no agent in the category, the window.
   Command-Shift-W (`closeWindow`) and the close button hide the window while
   lapis keeps running, and the Dock icon brings it back; Command-M
-  (`minimizeWindow`) minimizes. Command-Q quits the GUI; none of these stops service-owned agents.
+  (`minimizeWindow`) minimizes. Command-Q quits the GUI. The intended service
+  lifetime is independent, but macOS 27 can terminate GUI-spawned services with
+  the app's coalition; see the [current rollout blocker](docs/architecture.md#broader-macos-rollout-readiness-september-29).
+  Do not promise quit/update survival until that platform gate is qualified.
   `detachWindow` still works when configured but has no default key.
 - Command-O (`resumeConversation`) lists past Claude Code and Codex
   conversations and resumes one as a new agent. ``Command-` `` and ``Control-` ``

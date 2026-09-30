@@ -24,6 +24,14 @@ to that same file so Codex and Claude Code share one set of project instructions
 
 ## Current status
 
+The next delivery target is a dependable macOS Apple Silicon early-access
+release. The [rollout gates](docs/architecture.md#broader-macos-rollout-readiness-september-29)
+prioritize process survival, input integrity, account identity, verified upgrades
+and operational bounds before more integrations. Source checks, daily use and
+the published app are distinct evidence: the latest v0.5.0 release targets
+`0ec13cb`, not every fix now on main. Support claims follow the OS, CLI versions
+and artifact actually exercised.
+
 The category workspace supports creating Codex agents, moving and renaming tabs,
 remembering each category's selection, restoring the same service-owned processes,
 and displaying source-derived activity and pending requests. Window placement is
