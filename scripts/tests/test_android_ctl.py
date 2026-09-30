@@ -106,15 +106,18 @@ class KeycodeTest(unittest.TestCase):
 
 def canned_device(window_dump, activities_dump, ime_dump=None):
     """A Device whose shell() answers canned dumpsys output, so the
-    lock/IME probes run against build-variant dumps without hardware."""
+    lock/IME probes run against build-variant dumps without hardware.
+    Missing dumps coerce to the empty string (a None reply would turn a
+    later locked() call into a TypeError), and the stub keeps shell()'s
+    real signature so production call sites may pass timeout=."""
     device = android_ctl.Device.__new__(android_ctl.Device)
     replies = {
-        "dumpsys window": window_dump,
-        "dumpsys activity activities": activities_dump,
+        "dumpsys window": window_dump or "",
+        "dumpsys activity activities": activities_dump or "",
     }
     if ime_dump is not None:
         replies["dumpsys input_method"] = ime_dump
-    device.shell = lambda command: replies.get(command, "")
+    device.shell = lambda command, timeout=30: replies.get(command, "")
     return device
 
 
@@ -157,6 +160,16 @@ class LockedTest(unittest.TestCase):
             "  ...permission android.permission.FOREGROUND_EMERGENCY unrelated",
         )
         self.assertFalse(device.locked())
+
+    def test_systemui_keyguard_component_reads_locked(self):
+        # The "keyguard" half of the keyword match catches a SystemUI
+        # keyguard activity reported as resumed instead of a dialer.
+        device = canned_device(
+            "isKeyguardShowing=false",
+            "  ResumedActivity: ActivityRecord{7 u0 com.android.systemui/"
+            ".keyguard.ui.KeyguardService t2}",
+        )
+        self.assertTrue(device.locked())
 
     def test_unlocked_app_and_missing_fields_read_unlocked(self):
         device = canned_device(
