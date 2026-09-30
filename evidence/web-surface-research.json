@@ -160,5 +160,19 @@
       ],
       "scope": "Installed declarations only; no import, frame or GPU experiment performed."
     }
+  },
+  "review_validation": {
+    "source_revision": "98509ef77ed113023f7d5ccf4abd45f9950c7b6e",
+    "base_main": "82f77af2b7da566884940cfd4637a1de2329c14a",
+    "architecture_sha256": "08d382f5888379b9039d197f8efbffc309f7458e5659f08be5fcc4e6e971fe81",
+    "checks": [
+      "Python JSON parse and final newline",
+      "Six new/referenced architecture anchors and four cited repository paths verified",
+      "git diff --check",
+      "Current CEF candidate index entry and native DevTools header fetched",
+      "Installed Qt 6.11.2 Metal/Vulkan native-texture declarations inspected"
+    ],
+    "compiled_checks": "Not run: this PR changes only architecture and its research receipt; compiled main inputs are unchanged.",
+    "reviewer_status": "Independent FlashX and Kilo completed with findings; repaired in this branch. Codex cloud review unavailable due explicit quota, no retry before next local day. Optional follow-ups do not replace runtime qualification."
   }
 }

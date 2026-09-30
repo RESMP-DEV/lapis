@@ -3804,8 +3804,9 @@ same identity/epoch handshake discipline as session endpoints:
   stage views publish onto the frame clock and preview-only views consume the
   lower 250 ms feed.
 - CLI channel: peer credentials establish the OS user, not which same-user
-  agent owns a view. The supervisor also issues a revocable capability bound
-  to session, view, epoch and permitted operations. Cross-view delegation
+  agent owns a view. Creation/listing uses a session-scoped capability;
+  existing-view commands use a revocable capability bound to session, view,
+  epoch and permitted operations. Cross-view delegation
   requires an explicit attention decision. W1 tests a wrong capability from
   the correct OS user and revocation/reconnect; this is not an OS sandbox
   against arbitrary same-user native code.
