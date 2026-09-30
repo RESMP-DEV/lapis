@@ -98,7 +98,7 @@ for ownership, shared contracts and integration checks across large changes.
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
 | Transport | Version 6 local framing with session/epoch/generation identity, readiness, history paging, attention messages and retained workspace entries | Automatic service recovery remains deferred |
 | Codex mode | Managed ordinary TUI with a dedicated service-owned backend and observer; desktop responses qualified in Milestone 2 | Milestone 3 qualifies routing across two independent sessions; other binaries and request kinds need separate evidence |
-| Web surfaces | CEF 8037 (Chromium 154) pinned candidate for service-owned, CLI-drivable web views; September 29 design only | [Web surfaces section](#web-surfaces-september-29) owns the engine gate, wire contract, injection determinism and import consent |
+| Web surfaces | CEF 8037 (Chromium 154) provisional candidate for service-owned, CLI-drivable web views; September 29 design only, runtime pin awaits W0 | [Web surfaces section](#web-surfaces-september-29) owns the engine gate, wire contract, injection determinism and import consent |
 
 The [research receipt](../evidence/terminal-research.json) retains pinned upstream
 sources. Contour is the closest structural reference; WezTerm supplies service/GUI
@@ -1259,7 +1259,19 @@ notification fires; the task's notification arrives as a new prompt (a
 A paused turn with no new prompt within ten minutes (a server left running,
 say) finishes then; duplicate Stop hooks never extend this deadline. Malformed
 background lists or unknown task statuses report schema unavailability and use
-the bounded pause fallback. An unobservable deadline reports lost
+the bounded pause fallback. When one optional list is present, the absent
+sibling counts as empty; a nonempty crons-only payload still pauses the turn.
+With both fields absent, the relay reports the legacy contract. This matches the
+qualified optional-field schema; a future field rename needs a new adapter probe
+and cannot be inferred from the absence of an optional field alone.
+
+Diagnostics compose the current lifecycle/transport status with a transient
+background-schema message. A known background count clears only that transient
+message, preserving transport-loss or connection-overflow evidence. The base
+status is the current health message, not a promise to keep the initial
+terminal-only instruction visible through every failure. The event dispatcher
+publishes after handling each accepted hook, including an unknown-schema Stop.
+An unobservable deadline reports lost
 synchronization rather than silently discarding the turn. On September 29, the
 author's analysis of one day of transcripts found that 2,003 of 4,097 turn
 endings with a subsequent event were followed by a background-task notification
@@ -3879,7 +3891,8 @@ commands emit one JSON object; `events --follow` emits one envelope per NDJSON
 line. The envelope is `{v, view, session, epoch, seq, url, injection, status,
 refs, approval, error}`; progress goes to stderr. Network output is allowlisted
 metadata, excluding bodies and credential headers. URL echoes omit query and
-fragment values by default.
+fragment values unconditionally in v1; there is no option to re-enable them.
+This managed-output rule does not claim to redact arbitrary page DOM or pixels.
 
 Filesystem verbs are constrained by the binding's approved upload/output roots.
 Relative paths resolve from the session workspace; absolute paths are allowed
