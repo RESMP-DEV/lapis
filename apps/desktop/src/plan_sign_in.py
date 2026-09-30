@@ -21,6 +21,7 @@ import re
 import select
 import shutil
 import signal
+import stat
 import struct
 import sys
 import tempfile
@@ -48,7 +49,15 @@ def say(**message):
 def keep(token: bytes, path: str) -> None:
     folder = os.path.dirname(os.path.abspath(path))
     os.makedirs(folder, mode=0o700, exist_ok=True)
-    os.chmod(folder, 0o700)
+    info = os.stat(folder, follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != os.geteuid()
+        or stat.S_IMODE(info.st_mode) & 0o077
+    ):
+        raise PermissionError(
+            "credential directory must be private; existing permissions were left unchanged"
+        )
     handle, temporary = tempfile.mkstemp(dir=folder, prefix=".signing-in-")
     try:
         with os.fdopen(handle, "wb") as out:

@@ -20,6 +20,7 @@
 #include <QThread>
 
 #include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -149,6 +150,10 @@ raise SystemExit(subprocess.run(["/bin/sh", "-c", command], input=data).returnco
                          "copy completion must carry the captured plan identity");
                  if (prepare && !prepare(QStringLiteral("work"), reason))
                      return QString();
+                 if (machine == QLatin1String("unrecorded")) {
+                     *reason = QStringLiteral("config busy");
+                     return QString();
+                 }
                  recorded << email + QLatin1Char('@') +
                                  (machine.isEmpty() ? QStringLiteral("mac") : machine);
                  return QStringLiteral("work");
@@ -156,7 +161,7 @@ raise SystemExit(subprocess.run(["/bin/sh", "-c", command], input=data).returnco
          .machines =
              [](const QString&) {
                  return QStringList{QStringLiteral("devbox"), QStringLiteral("gone"),
-                                    QStringLiteral("short")};
+                                    QStringLiteral("short"), QStringLiteral("unrecorded")};
              }},
         {.helper = root.filePath(QStringLiteral("runtime/plan_sign_in.py")),
          .accounts = root.filePath(QStringLiteral("accounts"))});
@@ -191,8 +196,13 @@ raise SystemExit(subprocess.run(["/bin/sh", "-c", command], input=data).returnco
                     .contains("mv -f \"$tmp\" "
                               "\"$HOME/.lapis/accounts/claude/work.token\""),
             "the token goes on stdin into a remote temporary file, then is moved whole");
-    require(signIn.message().contains(QStringLiteral("Not reachable: gone")),
-            "a machine that did not take it is named");
+    require(signIn.message().contains(QStringLiteral("Copy failed:")) &&
+                signIn.message().contains(QStringLiteral("gone")),
+            "a machine whose transfer failed is named");
+    require(signIn.message().contains(QStringLiteral("Copied but not recorded: unrecorded")) &&
+                read(root.filePath(QStringLiteral(
+                    "remote/unrecorded/accounts/claude/work.token"))) == token() + '\n',
+            "a successful transfer with failed config registration is reported honestly");
     require(QDir(root.filePath(QStringLiteral("accounts/claude")))
                 .entryList({QStringLiteral(".signing-in-*.token")}, QDir::Files | QDir::Hidden)
                 .isEmpty(),
@@ -299,32 +309,44 @@ void keepsTokensWholeAndNamedSafely() {
                       "sleep 1\nprintf 'Your token:\\r\\n" +
                       token() + "\\r\\n'\nsleep 30\n");
     QFile::setPermissions(claude, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
-    const auto replace = [&](const QString& recordedName, bool directoryWritable) {
+    enum class RecordOutcome : std::uint8_t { saved, fail_after_store, skip_store };
+    QString last_message;
+    const auto replace = [&](const QString& recordedName, bool directoryWritable,
+                             RecordOutcome outcome = RecordOutcome::saved) {
         const QDir accounts(root.filePath(QStringLiteral("accounts")));
         require(QDir().mkpath(accounts.filePath(QStringLiteral("claude"))),
                 "fixture account folder");
+        require(QFile::setPermissions(accounts.filePath(QStringLiteral("claude")),
+                                      QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+                "fixture credential folder is private");
         const auto existing = accounts.filePath(QStringLiteral("claude/work.token"));
         write(existing, "old-" + token());
-        if (!directoryWritable)
-            QFile::setPermissions(accounts.filePath(QStringLiteral("claude")),
-                                  QFile::ReadOwner | QFile::ExeOwner);
-        PlanSignIn signIn({.program =
-                               [&claude](const QString& name) {
-                                   if (name == QLatin1String("claude"))
-                                       return claude;
-                                   return QStandardPaths::findExecutable(name);
-                               },
-                           .copy = [](const QString&) {},
-                           .open = [](const QString&) {},
-                           .record =
-                               [recordedName](const QString&, const QString&, const QString&,
-                                              const PlanSignIn::Prepare& prepare, QString* reason) {
-                                   return prepare && !prepare(recordedName, reason) ? QString()
-                                                                                    : recordedName;
-                               },
-                           .machines = [](const QString&) { return QStringList(); }},
-                          {.helper = root.filePath(QStringLiteral("runtime/plan_sign_in.py")),
-                           .accounts = accounts.absolutePath()});
+        PlanSignIn signIn(
+            {.program =
+                 [&claude](const QString& name) {
+                     if (name == QLatin1String("claude"))
+                         return claude;
+                     return QStandardPaths::findExecutable(name);
+                 },
+             .copy = [](const QString&) {},
+             .open = [](const QString&) {},
+             .record =
+                 [recordedName, outcome](const QString&, const QString&, const QString&,
+                                         const PlanSignIn::Prepare& prepare, QString* reason) {
+                     if (outcome == RecordOutcome::skip_store)
+                         return recordedName;
+                     if (prepare && !prepare(recordedName, reason))
+                         return QString();
+                     if (outcome == RecordOutcome::fail_after_store) {
+                         *reason =
+                             QStringLiteral("config write failed\nretry after unlocking config");
+                         return QString();
+                     }
+                     return recordedName;
+                 },
+             .machines = [](const QString&) { return QStringList(); }},
+            {.helper = root.filePath(QStringLiteral("runtime/plan_sign_in.py")),
+             .accounts = accounts.absolutePath()});
         signIn.start();
         require(waitFor([&] { return signIn.state() == QLatin1String("signedIn"); }),
                 "the replacement fixture produces its staging token");
@@ -342,6 +364,7 @@ void keepsTokensWholeAndNamedSafely() {
         if (!directoryWritable)
             ::chmod(QFile::encodeName(accounts.filePath(QStringLiteral("claude"))).constData(),
                     0700);
+        last_message = signIn.message();
         return std::pair{signIn.state(), read(existing)};
     };
     const auto replaced = replace(QStringLiteral("work"), true);
@@ -355,6 +378,18 @@ void keepsTokensWholeAndNamedSafely() {
     const auto failed = replace(QStringLiteral("work"), false);
     require(failed.first == QLatin1String("failed") && failed.second == "old-" + token(),
             "a failed replacement leaves the old credential in place");
+    const auto unregistered =
+        replace(QStringLiteral("work"), true, RecordOutcome::fail_after_store);
+    require(unregistered.first == QLatin1String("failed") &&
+                unregistered.second == token() + '\n' &&
+                last_message.contains(QStringLiteral("Credential stored for work")) &&
+                last_message.contains(
+                    QStringLiteral("config write failed\nretry after unlocking config")),
+            "stored credential and multi-line config failure remain explicit without an unsafe "
+            "rollback");
+    const auto skipped = replace(QStringLiteral("work"), true, RecordOutcome::skip_store);
+    require(skipped.first == QLatin1String("failed") && skipped.second == "old-" + token(),
+            "a recorder returning a name without preparing cannot bypass the runtime guard");
 }
 
 void rejectsMalformedHelperOutputAndUnsafeNames() {

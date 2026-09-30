@@ -115,7 +115,9 @@ class PlanSignIn final : public QObject {
     QHash<QString, Copy> copying_; // by machine, for one finished sign-in
     QHash<QString, QString> copyReasons_;
     QStringList reached_;
-    QStringList unreached_;
+    QStringList copy_failed_;
+    QStringList copied_unregistered_;
+    bool copy_limit_hit_{};
     QPointer<UpdaterProcess> process_;
     QByteArray output_;
     QByteArray helper_error_;

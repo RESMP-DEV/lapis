@@ -105,6 +105,26 @@ class SignInTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(token.parent.stat().st_mode), 0o700)
         self.assertNotIn(TOKEN, result.stdout + result.stderr)
 
+    def test_existing_directory_permissions_are_preserved(self):
+        folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        token = folder / "accounts" / "claude" / "pending.token"
+        token.parent.mkdir(parents=True)
+        token.parent.chmod(0o750)
+        claude = stand_in(folder, f"printf '{TOKEN}\\n'\n")
+        process = self.start_helper(token, claude)
+        stdout, stderr = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 1, stderr)
+        self.assertIn("existing permissions were left unchanged", stdout)
+        self.assertEqual(stat.S_IMODE(token.parent.stat().st_mode), 0o750)
+        self.assertFalse(token.exists())
+        token.parent.chmod(
+            0o700
+        )  # An explicit operator repair, not a side effect of sign-in.
+        process = self.start_helper(token, claude)
+        process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 0)
+        self.assertEqual(stat.S_IMODE(token.stat().st_mode), 0o600)
+
     def test_a_sign_in_that_stops_says_why_without_a_token(self):
         result, lines, token = self.run_helper(
             f"open \"{LINK}\"\nprintf 'OAuth error: denied\\r\\n'\nexit 1\n"
