@@ -12,6 +12,7 @@
 #include <QGuiApplication>
 #include <QInputMethod>
 #include <QKeySequence>
+#include <QLocale>
 #include <QMatrix4x4>
 #include <QMouseEvent>
 #include <QQuickWindow>
@@ -673,6 +674,16 @@ class TerminalNode final : public QSGTransformNode {
     }
 };
 
+// A size in KB below a megabyte, else in MB, rounded up so a paste just over
+// a limit never reads as the limit.
+QString data_size(qsizetype bytes) {
+    constexpr qsizetype kilobyte = 1024;
+    if (bytes < kilobyte * kilobyte)
+        return QStringLiteral("%1 KiB").arg((bytes + kilobyte - 1) / kilobyte);
+    const auto tenths = (bytes * 10 + kilobyte * kilobyte - 1) / (kilobyte * kilobyte);
+    return QStringLiteral("%1 MiB").arg(
+        QLocale().toString(static_cast<double>(tenths) / 10, 'f', 1));
+}
 } // namespace
 
 struct TerminalSurface::RenderState {
@@ -847,6 +858,11 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     clearLink();
     if (document_) {
         connect(document_, &SessionPreview::snapshotChanged, this, &TerminalSurface::screenChanged);
+        connect(document_, &SessionPreview::pasteResult, this,
+                [this](quint64, bool queued, bool, const QString& message) {
+                    if (!queued)
+                        emit pasteRefused(message);
+                });
         connect(document_, &SessionPreview::connectionChanged, this, [this] {
             if (!document_ || !document_->inputReady()) {
                 ++ime_epoch_;
@@ -1592,6 +1608,14 @@ bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
 bool TerminalSurface::pasteText(const QString& text) {
     if (!document_ || text.isEmpty() || !interactive_ || !document_->live() || pasting_)
         return false;
+    const QByteArray bytes = text.toUtf8();
+    if (bytes.size() > session::wire::max_paste_bytes) {
+        emit pasteRefused(
+            tr("This paste is %1; lapis pastes up to %2 at a time. Save it to a "
+               "file and drop the file on the agent instead.")
+                .arg(data_size(bytes.size()), data_size(session::wire::max_paste_bytes)));
+        return false;
+    }
     if (document_->historyActive())
         document_->returnToLive();
     if (!acceptsTerminalInput())
@@ -1611,7 +1635,10 @@ bool TerminalSurface::pasteText(const QString& text) {
     if (document_ != owner || !acceptsTerminalInput())
         return false;
     clearSelection();
-    document_->sendText(text.toUtf8(), true);
+    if (!document_->sendText(bytes, true)) {
+        emit pasteRefused(document_->activity());
+        return false;
+    }
     return true;
 }
 

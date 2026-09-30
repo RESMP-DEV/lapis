@@ -191,6 +191,8 @@ class TerminalSurface : public QQuickItem {
     // submitted; `typedFirst` keys went to the agent while it was offered.
     void suggestionUsed(bool sent, int typedFirst);
 
+    void pasteRefused(const QString& reason);
+
   protected:
     QSGNode* updatePaintNode(QSGNode* old_node, UpdatePaintNodeData* data) override;
     void geometryChange(const QRectF& new_geometry, const QRectF& old_geometry) override;
