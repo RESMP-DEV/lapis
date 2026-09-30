@@ -6,7 +6,9 @@
 
 #include <QElapsedTimer>
 #include <QFont>
+#include <QFontMetricsF>
 #include <QInputMethodEvent>
+#include <QJSValue>
 #include <QKeyEvent>
 #include <QPoint>
 #include <QPointer>
@@ -59,6 +61,21 @@ terminal_link_at(const session::TerminalSnapshot& snapshot, int column, int row)
                                                          const QString& needle, QPoint from,
                                                          bool backwards);
 
+// How an offered next prompt lays out after the cursor: the one line shown
+// (elided to the room left before the row's last two cells), whether that is
+// the whole suggestion (so Tab may send it), the keys hint, the first column
+// and the width drawn. Empty `shown` when there is no room.
+struct SuggestionLayout {
+    QString shown;
+    QString keys;
+    bool whole{};
+    int column{};
+    qreal width{};
+};
+[[nodiscard]] SuggestionLayout lay_out_suggestion(const session::TerminalSnapshot& snapshot,
+                                                  const QFontMetricsF& metrics,
+                                                  const QString& suggestion);
+
 class TerminalSurface : public QQuickItem {
     Q_OBJECT
     Q_PROPERTY(lapis::desktop::SessionPreview* document READ document WRITE setDocument NOTIFY
@@ -93,7 +110,15 @@ class TerminalSurface : public QQuickItem {
     // cursor. With `tabFlow`, Tab sends it (Option-Tab only types it), and
     // Tab with nothing offered and nothing typed moves to the next agent.
     Q_PROPERTY(QString suggestion READ suggestion WRITE setSuggestion NOTIFY suggestionChanged)
+    // The offer the suggestion belongs to: one impression per offer, even when
+    // two offers have the same words.
+    Q_PROPERTY(
+        QString suggestionKey READ suggestionKey WRITE setSuggestionKey NOTIFY suggestionChanged)
     Q_PROPERTY(bool tabFlow READ tabFlow WRITE setTabFlow NOTIFY tabFlowChanged)
+    // Called by Tab with nothing offered and nothing typed: moves to the next
+    // agent that needs you and returns true, or returns false and Tab goes to
+    // the program.
+    Q_PROPERTY(QJSValue tabAway READ tabAway WRITE setTabAway NOTIFY tabFlowChanged)
   public:
     explicit TerminalSurface(QQuickItem* parent = nullptr);
     // Text as if pasted (bracketed when the agent asked for it): what files
@@ -124,8 +149,12 @@ class TerminalSurface : public QQuickItem {
     [[nodiscard]] bool pasting() const { return pasting_; }
     [[nodiscard]] const QString& suggestion() const { return suggestion_; }
     void setSuggestion(const QString& suggestion);
+    [[nodiscard]] const QString& suggestionKey() const { return suggestion_key_; }
+    void setSuggestionKey(const QString& key);
     [[nodiscard]] bool tabFlow() const { return tab_flow_; }
     void setTabFlow(bool enabled);
+    [[nodiscard]] QJSValue tabAway() const { return tab_away_; }
+    void setTabAway(const QJSValue& move);
     [[nodiscard]] QVariant inputMethodQuery(Qt::InputMethodQuery query) const override;
     [[nodiscard]] const QString& fontFamily() const { return font_family_; }
     void setFontFamily(const QString& family);
@@ -161,8 +190,6 @@ class TerminalSurface : public QQuickItem {
     // The offered suggestion was typed into the agent, and `sent` when also
     // submitted; `typedFirst` keys went to the agent while it was offered.
     void suggestionUsed(bool sent, int typedFirst);
-    // Tab with nothing offered and nothing typed: go to the next agent.
-    void nextAgentRequested();
 
   protected:
     QSGNode* updatePaintNode(QSGNode* old_node, UpdatePaintNodeData* data) override;
@@ -254,7 +281,13 @@ class TerminalSurface : public QQuickItem {
     bool pasting_{};
     QString preedit_;
     QString suggestion_;
+    QString suggestion_key_;
     QString seen_;
+    QJSValue tab_away_;
+    // A Tab-sent suggestion's Return, for the agent that got the paste.
+    QPointer<SessionPreview> submit_owner_;
+    QTimer submit_timer_;
+    [[nodiscard]] bool suggestionWhole() const;
     bool tab_flow_{};
     bool typed_since_arrival_{};
     int typed_while_offered_{};

@@ -79,7 +79,10 @@ NextPrompt::NextPrompt(Lookup lookup, Agents agents, Program program, const File
     : QObject(parent), lookup_(std::move(lookup)), agents_(std::move(agents)),
       program_(std::move(program)),
       script_path_(QDir(files.folder).filePath(QStringLiteral("next_prompt.py"))),
-      log_path_(files.log) {
+      log_path_(files.log),
+      // Offer ids are unique across launches: the log outlives any one.
+      run_(QString::number(QDateTime::currentMSecsSinceEpoch(), 36)) {
+    QDir().mkpath(files.folder, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
     QSaveFile script(script_path_);
     if (script.open(QIODevice::WriteOnly)) {
         script.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
@@ -99,9 +102,14 @@ NextPrompt::~NextPrompt() {
 void NextPrompt::setSettings(NextPromptSettings settings) {
     const bool was = settings_.automatic;
     settings_ = std::move(settings);
-    if (!settings_.automatic)
+    if (!settings_.automatic) {
         for (const auto& id : offers_.keys())
             withdraw(id, Withdrawal::off);
+        for (const auto& run : std::as_const(running_))
+            if (run.process)
+                run.process->kill();
+        running_.clear();
+    }
     if (was != settings_.automatic) {
         ++revision_;
         emit changed();
@@ -130,7 +138,6 @@ void NextPrompt::turnFinished(const QString& id) {
                 {QStringLiteral("max_per_hour"), settings_.maxPerHour}});
         return;
     }
-    started_.push_back(now);
     if (auto old = running_.take(id); old.process)
         old.process->kill();
     const auto generation = ++generation_;
@@ -172,12 +179,12 @@ void NextPrompt::start(const QString& id, quint64 generation, const QString& pro
             return;
         const auto answer = QJsonDocument::fromJson(process->readAllStandardOutput()).object();
         if (answer.isEmpty() || answer.contains(QStringLiteral("error"))) {
-            running_.remove(id);
+            const auto agent = running_.take(id).agent;
             const auto why =
                 answer.isEmpty()
                     ? QString::fromUtf8(process->readAllStandardError()).simplified().right(200)
                     : answer.value(QStringLiteral("error")).toString();
-            failed(id, stage,
+            failed(id, agent, stage,
                    why.isEmpty() ? QStringLiteral("no answer (timed out or ended)") : why);
             return;
         }
@@ -198,10 +205,12 @@ void NextPrompt::start(const QString& id, quint64 generation, const QString& pro
 void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObject& context) {
     const auto claude = program_(QStringLiteral("claude"));
     if (claude.isEmpty()) {
-        running_.remove(id);
-        failed(id, Stage::predict, QStringLiteral("no Claude Code CLI on this Mac"));
+        failed(id, running_.take(id).agent, Stage::predict,
+               QStringLiteral("no Claude Code CLI on this Mac"));
         return;
     }
+    // The hourly cap counts model calls, not turns that never got this far.
+    started_.push_back(clock_.elapsed());
     const auto agent = running_.value(id).agent;
     QJsonObject about{{QStringLiteral("title"), agent.title},
                       {QStringLiteral("cli"), agent.cli},
@@ -232,7 +241,7 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     const bool shown = !text.isEmpty() &&
                        top.value(QStringLiteral("p")).toDouble() >= settings_.minConfidence &&
                        settings_.automatic;
-    const Offer made{QStringLiteral("%1:%2").arg(id).arg(++offers_made_), text,
+    const Offer made{QStringLiteral("%1:%2.%3").arg(id, run_).arg(++offers_made_), text,
                      context.value(QStringLiteral("conversation")).toString(),
                      context.value(QStringLiteral("turn")).toInt(), 0};
     auto event = about(made, id);
@@ -257,18 +266,26 @@ QString NextPrompt::suggestion(const QString& id) const { return offers_.value(i
 
 // A prediction that came to nothing is recorded too, with the stage and why:
 // the log accounts for every finished turn it was asked about.
-void NextPrompt::failed(const QString& id, Stage stage, const QString& why) {
-    const auto agent = lookup_(id);
+void NextPrompt::failed(const QString& id, const Agent& agent, Stage stage, const QString& why) {
+    auto reason = why.left(300);
+    reason.replace(QDir::homePath(), QStringLiteral("~"));
     record({{QStringLiteral("event"), QStringLiteral("failed")},
             {QStringLiteral("agent"), id},
-            {QStringLiteral("machine"), agent ? agent->machine : QString()},
-            {QStringLiteral("cli"), agent ? agent->cli : QString()},
+            {QStringLiteral("machine"), agent.machine},
+            {QStringLiteral("cli"), agent.cli},
             {QStringLiteral("stage"),
              stage == Stage::predict ? QStringLiteral("predict") : QStringLiteral("context")},
-            {QStringLiteral("error"), why.left(300)}});
+            {QStringLiteral("error"), reason}});
 }
 
-QStringList NextPrompt::readyAgents() const { return offers_.keys(); }
+QVariantMap NextPrompt::readyAgents() const {
+    QVariantMap ready;
+    for (auto offer = offers_.cbegin(); offer != offers_.cend(); ++offer)
+        ready.insert(offer.key(), offer->seen_ms != 0);
+    return ready;
+}
+
+QString NextPrompt::offerKey(const QString& id) const { return offers_.value(id).key; }
 
 QJsonObject NextPrompt::about(const Offer& offer, const QString& id) {
     return {{QStringLiteral("offer"), offer.key},
@@ -325,13 +342,14 @@ void NextPrompt::record(QJsonObject event) const {
     QFile file(log_path_);
     const bool created = !file.exists();
     if (created)
-        QDir().mkpath(QFileInfo(log_path_).absolutePath());
+        QDir().mkpath(QFileInfo(log_path_).absolutePath(),
+                      QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
     if (!file.open(QIODevice::Append | QIODevice::WriteOnly)) {
         qWarning() << "Next prompt: cannot write the log:" << file.errorString();
         return;
     }
-    if (created)
-        file.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
+    // Owner-only however it was created: it holds screens and conversations.
+    file.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
     file.write(line(event));
 }
 

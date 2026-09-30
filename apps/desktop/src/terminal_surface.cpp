@@ -424,44 +424,66 @@ QColor blend(const QColor& from, const QColor& to, qreal share) {
                             static_cast<float>(from.blueF() * share + to.blueF() * (1 - share)));
 }
 
-// An offered next prompt, dim just after the cursor, then the keys that take
-// it. It covers the rest of the row but its last two cells (a box's border),
-// so a CLI's own suggestion there does not show through.
-void add_suggestion(QSGNode& overlays, QQuickWindow& window,
-                    const session::TerminalSnapshot& snapshot, const QFont& font,
-                    const QString& suggestion, qreal cell_width, qreal row_height) {
+} // namespace
+
+SuggestionLayout lay_out_suggestion(const session::TerminalSnapshot& snapshot,
+                                    const QFontMetricsF& metrics, const QString& suggestion) {
+    SuggestionLayout layout;
+    const qreal cell_width = metrics.horizontalAdvance(QLatin1Char('M'));
     const int first = snapshot.cursor.column + 1;
     const int last = static_cast<int>(snapshot.size.columns) - 2;
     if (!snapshot.cursor.in_viewport || snapshot.cursor.row >= snapshot.size.rows ||
         last - first < 4)
-        return;
-    const QFontMetricsF metrics(font);
+        return layout;
     const qreal room = (last - first) * cell_width;
-    const QString keys = QStringLiteral("  \u21e5");
-    const qreal keys_width = room > 24 * cell_width ? metrics.horizontalAdvance(keys) : 0;
-    QString text = suggestion.trimmed().section(QLatin1Char('\n'), 0, 0);
-    if (text.size() < suggestion.trimmed().size())
-        text += QStringLiteral(" …");
-    text = metrics.elidedText(text, Qt::ElideRight, room - keys_width);
-    const QPointF origin(first * cell_width, snapshot.cursor.row * row_height);
+    const QString text = suggestion.trimmed();
+    const QString line = text.section(QLatin1Char('\n'), 0, 0);
+    layout.keys = QStringLiteral("  ⇥");
+    const qreal keys_width = metrics.horizontalAdvance(layout.keys);
+    layout.whole =
+        line.size() == text.size() && metrics.horizontalAdvance(line) <= room - keys_width;
+    if (!layout.whole)
+        layout.keys = QStringLiteral("  ⇥ types it");
+    if (room < metrics.horizontalAdvance(layout.keys) + 8 * cell_width)
+        layout.keys.clear();
+    const qreal keys_room = metrics.horizontalAdvance(layout.keys);
+    layout.shown = metrics.elidedText(layout.whole ? line : line + QStringLiteral(" …"),
+                                      Qt::ElideRight, room - keys_room);
+    layout.column = first;
+    layout.width = metrics.horizontalAdvance(layout.shown) + keys_room;
+    return layout;
+}
+
+namespace {
+// An offered next prompt, dim just after the cursor, then the keys that take
+// it: Tab sends it when it shows whole, else only types it. The row is covered
+// only under what is drawn.
+void add_suggestion(QSGNode& overlays, QQuickWindow& window,
+                    const session::TerminalSnapshot& snapshot, const QFont& font,
+                    const QString& suggestion, qreal cell_width, qreal row_height) {
+    const QFontMetricsF metrics(font);
+    const auto layout = lay_out_suggestion(snapshot, metrics, suggestion);
+    if (layout.shown.isEmpty())
+        return;
+    const QPointF origin(layout.column * cell_width, snapshot.cursor.row * row_height);
     const QColor background = color(snapshot.background_rgb);
     const QColor foreground = color(snapshot.foreground_rgb);
-    add_rectangle(overlays, QRectF(origin, QSizeF(room, row_height)), background);
+    add_rectangle(overlays, QRectF(origin, QSizeF(layout.width, row_height)), background);
     const auto write = [&](const QString& words, QPointF at, qreal share) {
         auto node = std::unique_ptr<QSGTextNode>(window.createTextNode());
         node->setColor(blend(foreground, background, share));
-        QTextLayout layout(words, font);
-        layout.beginLayout();
-        auto line = layout.createLine();
+        QTextLayout text(words, font);
+        text.beginLayout();
+        auto line = text.createLine();
         if (line.isValid())
             line.setLineWidth(10000);
-        layout.endLayout();
-        node->addTextLayout(at, &layout);
+        text.endLayout();
+        node->addTextLayout(at, &text);
         overlays.appendChildNode(node.release());
     };
-    write(text, origin, 0.5);
-    if (keys_width > 0)
-        write(keys, origin + QPointF(metrics.horizontalAdvance(text), 0), 0.3);
+    write(layout.shown, origin, 0.5);
+    if (!layout.keys.isEmpty())
+        write(layout.keys, origin + QPointF(metrics.horizontalAdvance(layout.shown), 0), 0.3);
 }
 
 void add_cursor(QSGNode& overlays, QQuickWindow& window, const session::TerminalSnapshot& snapshot,
@@ -671,7 +693,7 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
     // render thread gets owned immutable values through an explicit C++ handoff.
     auto frame = std::make_shared<RenderState>();
     frame->preedit = preedit_;
-    frame->suggestion = suggestion_;
+    frame->suggestion = document_ && document_->attentionPending() ? QString() : suggestion_;
     frame->viewport = size();
     frame->font_family = use_system_font_ ? QString() : resolved_font_family_;
     frame->font_pixel_size = font_pixel_size_;
@@ -723,6 +745,14 @@ bool TerminalSurface::acceptsTerminalInput() const {
 TerminalSurface::TerminalSurface(QQuickItem* parent)
     : QQuickItem(parent),
       resolved_font_family_(QFontDatabase::systemFont(QFontDatabase::FixedFont).family()) {
+    submit_timer_.setSingleShot(true);
+    connect(&submit_timer_, &QTimer::timeout, this, [this] {
+        // Still never into a request that arrived meanwhile.
+        if (submit_owner_ && submit_owner_->live() && submit_owner_->inputReady() &&
+            !submit_owner_->attentionPending())
+            submit_owner_->sendKey(session::TerminalKey::enter, {});
+        submit_owner_.clear();
+    });
     setFlag(ItemHasContents);
     setClip(true);
     setAcceptHoverEvents(true);
@@ -1472,6 +1502,14 @@ void TerminalSurface::setSuggestion(const QString& suggestion) {
     reportSeen();
 }
 
+void TerminalSurface::setSuggestionKey(const QString& key) {
+    if (suggestion_key_ == key)
+        return;
+    suggestion_key_ = key;
+    emit suggestionChanged();
+    reportSeen();
+}
+
 void TerminalSurface::setTabFlow(bool enabled) {
     if (tab_flow_ == enabled)
         return;
@@ -1479,53 +1517,70 @@ void TerminalSurface::setTabFlow(bool enabled) {
     emit tabFlowChanged();
 }
 
-// A suggestion counts as seen once it is on screen in the active window.
+void TerminalSurface::setTabAway(const QJSValue& move) {
+    tab_away_ = move;
+    emit tabFlowChanged();
+}
+
+// A suggestion counts as seen once it is on screen in the active window, once
+// per offer: the same words offered again after another turn are a new offer.
 void TerminalSurface::reportSeen() {
-    if (suggestion_.isEmpty() || seen_ == suggestion_ || !isVisible() || !window() ||
-        !window()->isActive())
+    const auto& key = suggestion_key_.isEmpty() ? suggestion_ : suggestion_key_;
+    if (suggestion_.isEmpty() || seen_ == key || !isVisible() || !window() || !window()->isActive())
         return;
-    seen_ = suggestion_;
+    seen_ = key;
     emit suggestionSeen();
 }
 
+// Input the person sent the agent: it counts against a pending Tab's Return,
+// which then waits for them instead.
 void TerminalSurface::noteTyped() {
     typed_since_arrival_ = true;
     if (!suggestion_.isEmpty())
         ++typed_while_offered_;
+    if (submit_owner_ && submit_owner_ == document_)
+        submit_timer_.stop();
+}
+
+bool TerminalSurface::suggestionWhole() const {
+    if (!document_ || suggestion_.isEmpty())
+        return false;
+    const QFontMetricsF metrics(
+        terminal_font(use_system_font_ ? QString() : resolved_font_family_, font_pixel_size_));
+    return lay_out_suggestion(document_->snapshot(), metrics, suggestion_).whole;
 }
 
 // With the Tab flow on (an agent lapis guesses for), Tab sends the offered
-// suggestion: typed as a paste, then Return once it settled, as the phone
-// does. Option-Tab only types it. With nothing offered and nothing typed
-// since arriving, Tab asks for the next agent that needs you. Typing keeps
-// the suggestion: it stays until used or replaced, and what was typed first
-// is counted.
+// suggestion when it shows whole: typed as a paste, then Return once it
+// settled, as the phone does, to that agent even if Tab moved on meanwhile,
+// unless the person typed to it first. Otherwise, and with Option-Tab, Tab
+// only types it. With nothing offered and nothing typed since arriving, Tab
+// moves to the next agent that needs you, and is the program's own when none
+// does. Typing keeps the suggestion; what was typed first is counted.
 bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
-    if (!tab_flow_ || modifier_key(event.key()))
+    if (!tab_flow_ || !document_ || modifier_key(event.key()))
         return false;
     const auto modifiers = event.modifiers() & ~Qt::KeypadModifier;
     const bool tab = event.key() == Qt::Key_Tab && modifiers == Qt::NoModifier;
     const bool fill = event.key() == Qt::Key_Tab && modifiers == Qt::AltModifier;
-    if (!suggestion_.isEmpty() && (tab || fill)) {
+    // Never over a request: Return in a permission dialog would answer it.
+    const bool offered = !suggestion_.isEmpty() && !document_->attentionPending();
+    if (offered && (tab || fill)) {
+        const bool send = tab && suggestionWhole();
         const int typed_first = typed_while_offered_;
         if (!pasteText(suggestion_))
             return true;
         setSuggestion({});
-        typed_since_arrival_ = !tab;
-        if (tab) {
-            const QPointer<SessionPreview> owner = document_;
-            QTimer::singleShot(kSubmitAfterPasteMs, this, [this, owner] {
-                if (owner && document_ == owner && acceptsTerminalInput())
-                    document_->sendKey(session::TerminalKey::enter, {});
-            });
+        typed_since_arrival_ = !send;
+        if (send) {
+            submit_owner_ = document_;
+            submit_timer_.start(kSubmitAfterPasteMs);
         }
-        emit suggestionUsed(tab, typed_first);
+        emit suggestionUsed(send, typed_first);
         return true;
     }
-    if (tab && !typed_since_arrival_) {
-        emit nextAgentRequested();
+    if (tab && !typed_since_arrival_ && tab_away_.isCallable() && tab_away_.call().toBool())
         return true;
-    }
     // Keys that reach the agent, including Command-Delete and friends.
     if (!modifiers.testFlag(Qt::MetaModifier) || event.key() == Qt::Key_Backspace ||
         event.key() == Qt::Key_Delete || event.key() == Qt::Key_Left ||

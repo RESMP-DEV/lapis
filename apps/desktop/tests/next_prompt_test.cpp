@@ -13,6 +13,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
+#include <QVariantMap>
 #include <lapis/session/terminal.hpp>
 
 #include <functional>
@@ -185,33 +186,38 @@ void predictsAndOffers() {
             "the model sees the agent, its screen, the others and the conversation");
 
     auto logged = events(log);
-    require(logged.size() == 1 &&
-                logged[0].value(QStringLiteral("event")) == QLatin1String("predicted") &&
-                logged[0].value(QStringLiteral("shown")).toBool() &&
-                logged[0].value(QStringLiteral("turn")).toInt() == 7 &&
-                logged[0].value(QStringLiteral("conversation")) == QLatin1String("c1") &&
-                logged[0].value(QStringLiteral("candidates")).toArray().size() == 2 &&
-                logged[0].value(QStringLiteral("offer")) == QLatin1String("a:1") &&
-                logged[0].value(QStringLiteral("v")).toInt() == 2,
-            "the prediction is logged with where it belongs");
-    require(next.enabled() && next.readyAgents() == QStringList{QStringLiteral("a")},
-            "the agent is ready for Tab");
+    require(
+        logged.size() == 1 &&
+            logged[0].value(QStringLiteral("event")) == QLatin1String("predicted") &&
+            logged[0].value(QStringLiteral("shown")).toBool() &&
+            logged[0].value(QStringLiteral("turn")).toInt() == 7 &&
+            logged[0].value(QStringLiteral("conversation")) == QLatin1String("c1") &&
+            logged[0].value(QStringLiteral("candidates")).toArray().size() == 2 &&
+            logged[0].value(QStringLiteral("offer")).toString().startsWith(QStringLiteral("a:")) &&
+            logged[0].value(QStringLiteral("offer")).toString().endsWith(QStringLiteral(".1")) &&
+            logged[0].value(QStringLiteral("v")).toInt() == 2,
+        "the prediction is logged with where it belongs");
+    const auto first_offer = logged[0].value(QStringLiteral("offer")).toString();
+    require(next.enabled() && next.readyAgents() == QVariantMap{{QStringLiteral("a"), false}} &&
+                next.offerKey(QStringLiteral("a")) == first_offer,
+            "the agent is ready for Tab, its offer not yet seen");
     const auto others = QFile::ReadGroup | QFile::WriteGroup | QFile::ExeGroup | QFile::ReadOther |
                         QFile::WriteOther | QFile::ExeOther;
     require((QFileInfo(log).permissions() & others) == 0, "and only its owner can read the log");
 
     next.seen(QStringLiteral("a"));
     next.seen(QStringLiteral("a"));
+    require(next.readyAgents() == QVariantMap{{QStringLiteral("a"), true}}, "now seen");
     next.used(QStringLiteral("a"), true, 5);
     require(next.suggestion(QStringLiteral("a")).isEmpty() && next.readyAgents().isEmpty(),
             "a used suggestion is gone");
     logged = events(log);
     require(logged.size() == 3 &&
                 logged[1].value(QStringLiteral("event")) == QLatin1String("seen") &&
-                logged[1].value(QStringLiteral("offer")) == QLatin1String("a:1"),
+                logged[1].value(QStringLiteral("offer")) == first_offer,
             "it was seen once");
     require(logged[2].value(QStringLiteral("event")) == QLatin1String("used") &&
-                logged[2].value(QStringLiteral("offer")) == QLatin1String("a:1") &&
+                logged[2].value(QStringLiteral("offer")) == first_offer &&
                 logged[2].value(QStringLiteral("sent")).toBool() &&
                 logged[2].value(QStringLiteral("typed_first")).toInt() == 5 &&
                 logged[2].value(QStringLiteral("ms_after_seen")).toInteger() >= 0 &&
@@ -255,7 +261,7 @@ void predictsAndOffers() {
     require(withdrawn.value(QStringLiteral("event")) == QLatin1String("withdrawn") &&
                 withdrawn.value(QStringLiteral("reason")) == QLatin1String("new_turn") &&
                 withdrawn.value(QStringLiteral("seen")).toBool() &&
-                withdrawn.value(QStringLiteral("offer")) == QLatin1String("a:3"),
+                withdrawn.value(QStringLiteral("offer")).toString().endsWith(QStringLiteral(".3")),
             "an offer seen but not used is recorded as replaced");
     QFile::remove(root.filePath(QStringLiteral("context.args")));
     static_cast<void>(waitFor([] { return false; }, 300));

@@ -17,6 +17,7 @@
 #include <QGuiApplication>
 #include <QInputMethod>
 #include <QInputMethodEvent>
+#include <QJSEngine>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QLocalServer>
@@ -760,13 +761,19 @@ void suggestions() {
     settle();
     std::vector<std::pair<bool, int>> used;
     int seen = 0;
-    int next = 0;
     QObject::connect(&surface, &lapis::desktop::TerminalSurface::suggestionUsed,
                      [&used](bool sent, int typed) { used.emplace_back(sent, typed); });
     QObject::connect(&surface, &lapis::desktop::TerminalSurface::suggestionSeen,
                      [&seen] { ++seen; });
-    QObject::connect(&surface, &lapis::desktop::TerminalSurface::nextAgentRequested,
-                     [&next] { ++next; });
+    // Tab-away is QML's function: here it counts calls and answers `moves`.
+    QJSEngine engine;
+    engine.globalObject().setProperty(QStringLiteral("calls"), 0);
+    engine.globalObject().setProperty(QStringLiteral("moves"), true);
+    surface.setTabAway(
+        engine.evaluate(QStringLiteral("(function() { calls += 1; return moves; })")));
+    const auto calls = [&engine] {
+        return engine.globalObject().property(QStringLiteral("calls")).toInt();
+    };
     const auto frames = [&peer](std::size_t count) {
         std::vector<wire::Frame> found;
         until([&] {
@@ -778,6 +785,10 @@ void suggestions() {
             return found.size() >= count;
         });
         return found;
+    };
+    const auto nothing_sent = [&frames] {
+        settle();
+        return frames(0).empty();
     };
     const auto payload = [](const wire::Frame& frame) {
         return wire::decode_control(frame.payload).payload;
@@ -795,14 +806,24 @@ void suggestions() {
     // is the program's.
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     auto typed = frames(1);
-    require(is_key(typed[0], lapis::session::TerminalKey::tab) && next == 0,
+    require(is_key(typed[0], lapis::session::TerminalKey::tab) && calls() == 0,
             "Tab was taken without the Tab flow");
     surface.setTabFlow(true);
 
+    // Drawn dim on the cursor's row only, after the cursor.
     const auto plain = window.grabWindow();
+    surface.setSuggestionKey(QStringLiteral("a:1"));
     surface.setSuggestion(QStringLiteral("go now"));
     settle();
-    require(window.grabWindow() != plain, "The suggestion was not drawn");
+    const auto shown = window.grabWindow();
+    QRect changed;
+    for (int y = 0; y < shown.height(); ++y)
+        for (int x = 0; x < shown.width(); ++x)
+            if (shown.pixel(x, y) != plain.pixel(x, y))
+                changed |= QRect(x, y, 1, 1);
+    require(!changed.isEmpty() && changed.height() <= shown.height() / 4 &&
+                changed.left() > shown.width() / 40,
+            "The suggestion was not drawn on the cursor's row after the cursor");
     require(seen == 1, "The suggestion on screen was not reported seen");
 
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
@@ -813,8 +834,18 @@ void suggestions() {
     require(used == std::vector<std::pair<bool, int>>{{true, 0}} && surface.suggestion().isEmpty(),
             "Tab was not reported as sent");
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    require(calls() == 1 && nothing_sent(), "The second Tab did not move to the next agent");
+    engine.globalObject().setProperty(QStringLiteral("moves"), false);
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(calls() == 2 && is_key(typed[0], lapis::session::TerminalKey::tab),
+            "With nowhere to go Tab was not the program's");
+
+    // The same words offered again are a new offer, seen again.
+    surface.setSuggestionKey(QStringLiteral("a:2"));
+    surface.setSuggestion(QStringLiteral("go now"));
     settle();
-    require(next == 1 && frames(0).empty(), "The second Tab did not ask for the next agent");
+    require(seen == 2, "A new offer with the same words was not seen again");
 
     // Typing is not a refusal: the suggestion stays, and what was typed first
     // (here "no", then Command-Delete) is counted when Tab takes it.
@@ -832,6 +863,47 @@ void suggestions() {
                 used.back() == std::pair{true, 3},
             "Tab after typing did not send it, counting three keys typed first");
 
+    // Typing to the agent before its Return goes cancels the Return: the
+    // person is editing and presses Return themselves.
+    surface.setSuggestion(QStringLiteral("rerun"));
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    press(Qt::Key_S, Qt::NoModifier, QStringLiteral("s"));
+    typed = frames(2);
+    QElapsedTimer past_return;
+    past_return.start();
+    while (past_return.elapsed() < 400)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    require(payload(typed[0]) == QByteArray("rerun") && payload(typed[1]) == QByteArray("s") &&
+                frames(0).empty(),
+            "A key typed before the Return did not cancel it");
+
+    // A suggestion that does not show whole is only typed, for the person to
+    // read before sending.
+    const QString longer(60, QLatin1Char('w'));
+    surface.setSuggestion(longer);
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(payload(typed[0]) == longer.toUtf8() && used.back() == std::pair{false, 0} &&
+                nothing_sent(),
+            "A suggestion not shown whole was sent");
+
+    // A pending request (a permission dialog) is never answered by Tab: the
+    // suggestion is not sent, and Tab moves on instead.
+    engine.globalObject().setProperty(QStringLiteral("moves"), true);
+    surface.setDocument(nullptr);
+    surface.setDocument(&f.document);
+    surface.forceActiveFocus();
+    surface.setSuggestion(QStringLiteral("yes do it"));
+    require(f.document.addPreviewRequest(QStringLiteral("r1"), QStringLiteral("rm -rf")),
+            "Fixture request was not added");
+    const int before = calls();
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    require(nothing_sent() && calls() == before + 1 &&
+                surface.suggestion() == QLatin1String("yes do it"),
+            "Tab answered a pending request with the suggestion");
+    require(f.document.resolvePreviewRequest(QStringLiteral("r1")), "Fixture request stayed");
+    surface.setSuggestion({});
+
     // Option-Tab only types it; Tab after typing is the program's.
     surface.setSuggestion(QStringLiteral("rerun it"));
     press(Qt::Key_Tab, Qt::AltModifier, QStringLiteral("\t"));
@@ -839,9 +911,10 @@ void suggestions() {
     require(typed.size() == 1 && payload(typed[0]) == QByteArray("rerun it") &&
                 used.back() == std::pair{false, 0},
             "Option-Tab did not only type the suggestion");
+    const int after_fill = calls();
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
-    require(is_key(typed[0], lapis::session::TerminalKey::tab) && next == 1,
+    require(is_key(typed[0], lapis::session::TerminalKey::tab) && calls() == after_fill,
             "Tab after typing did not reach the agent");
 }
 

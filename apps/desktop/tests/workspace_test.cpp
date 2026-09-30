@@ -705,8 +705,9 @@ void latestAttentionGoesToTheNewest() {
     require(!workspace.latestAttention(), "and nothing once all were looked at");
 }
 
-// Tab's next agent: one with a guessed prompt ready first, then the one that
-// has waited longest; an agent at work is not waiting even with a guess.
+// Tab's next agent: a guess not yet seen first, then a turn finished unseen,
+// then a guess already seen, so Tab cannot bounce between guesses while
+// another agent waits; an agent at work is not waiting even with a guess.
 void tabGoesToTheReadyThenTheOldest() {
     Workspace workspace(WorkspaceMode::preview);
     require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
@@ -723,17 +724,21 @@ void tabGoesToTheReadyThenTheOldest() {
     };
     auto* older = finish("agent");
     auto* newer = finish("checks");
-    const QStringList ready{newer->sessionId()};
-    require(workspace.nextPriorityAttention(ready) && workspace.focusedSession() == newer,
-            "the agent with a guess goes first");
-    require(workspace.nextPriorityAttention(ready) && workspace.focusedSession() == older,
-            "then the one waiting longest");
-    require(workspace.nextPriorityAttention(ready) && workspace.focusedSession() == newer,
-            "a guess not yet used keeps its agent waiting");
+    require(workspace.nextPriorityAttention({{newer->sessionId(), false}}) &&
+                workspace.focusedSession() == newer,
+            "the agent with a guess not yet seen goes first");
+    const QVariantMap seen{{newer->sessionId(), true}};
+    require(workspace.nextPriorityAttention(seen) && workspace.focusedSession() == older,
+            "then the one whose turn finished unseen");
+    require(workspace.nextPriorityAttention(seen) && workspace.focusedSession() == newer,
+            "a guess already seen and not used keeps its agent in the rotation, last");
+    auto* third = finish("renderer");
+    require(workspace.nextPriorityAttention(seen) && workspace.focusedSession() == third,
+            "an unseen turn goes before a guess already seen");
     require(workspace.selectSession(older->sessionId()), "back to the older one");
     state.activity = lapis::session::attention::Activity::working;
     newer->applyAttention(state);
-    require(!workspace.nextPriorityAttention(ready),
+    require(!workspace.nextPriorityAttention(seen),
             "nothing is waiting once the one with a guess is at work");
 }
 
