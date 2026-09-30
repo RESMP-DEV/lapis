@@ -1,0 +1,27 @@
+{
+  "baseline": "8c6fa8d4f68aeddaef02a001d0b04afb50e975ee",
+  "scope": "Late PR45 uninstall cleanup and test precision follow-up.",
+  "changes": [
+    "Remove startup registration even if bounded bootout fails; return a partial-failure diagnostic rather than claiming the live job stopped.",
+    "Name oversized diff/helper output as unsuitable for automatic review.",
+    "Limit readiness-race injection to descriptors owned by the test child.",
+    "Verify exact bootout/bootstrap targets, tolerated bootout nonzero status, checked bootstrap refusal, and timeout cleanup."
+  ],
+  "checks": [
+    {
+      "command": "uv run --no-project python -m unittest discover -s scripts/tests -p test_grok_review.py -v",
+      "result": "PASS: 23 existing cases extended."
+    },
+    {
+      "command": "uv run --no-project python scripts/lapis.py quality",
+      "result": "PASS: 276 tests, seven unrelated skips; Python suite 15.010 seconds."
+    }
+  ],
+  "source_sha256": {
+    "scripts/grok_review.py": "ce03f46ace3e4cc0a5067c7035b6ef403177e831db682b3549c967ea30e8534c",
+    "scripts/tests/test_grok_review.py": "f921bdf90fc82502e1d01e7f4729be238b688e31a6ed2d155c1b1a80de5f15b9"
+  },
+  "limits": [
+    "Grok LaunchAgent commands used stand-ins; no real installation/uninstallation or Grok provider turn occurred."
+  ]
+}

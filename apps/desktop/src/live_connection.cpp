@@ -17,6 +17,8 @@
 #include <exception>
 #include <limits>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <utility>
 
 namespace lapis::desktop {
@@ -25,6 +27,10 @@ namespace {
 constexpr int codex_sync_timeout_ms = 15000;
 constexpr int terminal_sync_timeout_ms = 5000;
 constexpr int history_timeout_ms = 5000;
+// Input waiting for the socket, and what each message adds to it: a kind, a
+// length and the attachment.
+constexpr qint64 input_queue_bytes = qint64{1024} * 1024;
+constexpr qint64 message_overhead = 45;
 bool start_service_detached(const ServiceLaunchRequest& launch) {
     QProcess service;
     service.setProgram(launch.program);
@@ -287,11 +293,25 @@ void SessionPreview::setActivity(const QString& activity) {
     activity_ = activity;
     emit snapshotChanged();
 }
-void SessionPreview::sendText(const QByteArray& bytes, bool paste) {
-    if (history_active_ || history_request_pending_)
-        return;
-    if (live_)
-        live_->send(paste ? wire::Kind::paste : wire::Kind::text, bytes);
+bool SessionPreview::sendText(const QByteArray& bytes, bool paste) {
+    if (history_active_ || history_request_pending_ || !live_)
+        return false;
+    if (paste && live_->supportsPasteTransactions())
+        return live_->sendPaste(bytes) != 0;
+    if (paste && bytes.size() > wire::max_input_bytes) {
+        setActivity(
+            QStringLiteral("This service needs a restart before it can accept large pastes"));
+        return false;
+    }
+    return live_->send(paste ? wire::Kind::paste : wire::Kind::text, bytes);
+}
+bool SessionPreview::takesPasteSubmit() const {
+    return live_ && live_->supportsPasteTransactions();
+}
+quint64 SessionPreview::sendPasteAndSubmit(const QByteArray& bytes) {
+    if (!live_ || history_active_ || history_request_pending_)
+        return 0;
+    return live_->sendPaste(bytes, true);
 }
 bool SessionPreview::terminate() {
     return live_ && input_ready_ && live_->send(wire::Kind::terminate, {});
@@ -437,6 +457,7 @@ void LiveConnection::begin(wire::AttachMode mode) {
         request_ = {.mode = mode, .fingerprint = fingerprint_, .expected = {}};
         request_.hyperlinks = true;
         request_.attention_phase = true;
+        request_.paste_transactions = true;
         if (mode == wire::AttachMode::reconnect) {
             const auto saved = session::read_descriptor(endpoint_, fingerprint_);
             if (!saved) {
@@ -530,6 +551,11 @@ void LiveConnection::fail(const QString& message, wire::StatusCode code) {
     if (failed_)
         return;
     failed_ = true;
+    const QPointer<LiveConnection> alive(this);
+    abandonPastes(QStringLiteral("Paste delivery is unknown after disconnect; it was not retried"));
+    if (!alive)
+        return;
+    paste_transactions_ = false;
     clearDescriptorWrite();
     ready_ = false;
     connected_ = false;
@@ -553,8 +579,8 @@ bool LiveConnection::send(wire::Kind kind, const QByteArray& payload) {
         report(QStringLiteral("Input was not sent: session is not synchronized."));
         return false;
     }
-    if (payload.size() > qsizetype{64} * 1024 ||
-        socket_->bytesToWrite() + payload.size() + 45 > qint64{1024} * 1024) {
+    if (payload.size() > wire::max_input_bytes ||
+        socket_->bytesToWrite() + payload.size() + message_overhead > input_queue_bytes) {
         report(QStringLiteral("Input queue full; input was not sent"));
         return false;
     }
@@ -569,6 +595,60 @@ bool LiveConnection::send(wire::Kind kind, const QByteArray& payload) {
         return false;
     }
     return true;
+}
+quint64 LiveConnection::sendPaste(const QByteArray& text, bool submit) {
+    if (!ready_ || failed_ || !attachment_ || !paste_transactions_) {
+        report(QStringLiteral(
+            "Service is not ready for confirmed paste; restart it if it is an older version"));
+        return 0;
+    }
+    if (text.size() > wire::max_paste_bytes || pending_pastes_.size() >= 8 || next_paste_id_ == 0) {
+        report(QStringLiteral("Paste size or pending request limit reached; paste was not sent"));
+        return 0;
+    }
+    try {
+        const auto id = next_paste_id_++;
+        const auto frame =
+            wire::frame(wire::Kind::paste_request,
+                        wire::encode_paste_request({*attachment_, id, submit, text}));
+        if (socket_->bytesToWrite() + frame.size() > input_queue_bytes) {
+            report(QStringLiteral("Input queue full; paste was not sent"));
+            return 0;
+        }
+        pending_pastes_.insert(id, submit);
+        if (socket_->write(frame) != frame.size()) {
+            fail(QStringLiteral("Paste transport failed; delivery is unknown"));
+            return 0;
+        }
+        QTimer::singleShot(10000, this, [owner = QPointer<LiveConnection>(this), id] {
+            auto* self = owner.data();
+            if (self == nullptr)
+                return;
+            const auto found = self->pending_pastes_.find(id);
+            if (found == self->pending_pastes_.end())
+                return;
+            const bool submitted = found.value();
+            self->pending_pastes_.erase(found);
+            const auto message = QStringLiteral(
+                "Paste admission timed out; delivery is unknown and was not retried");
+            self->report(message);
+            if (owner)
+                emit owner->document_.pasteResult(id, false, submitted, message);
+        });
+        return id;
+    } catch (const std::exception& error) {
+        fail(QString::fromUtf8(error.what()));
+        return 0;
+    }
+}
+void LiveConnection::abandonPastes(const QString& reason) {
+    const QPointer<LiveConnection> alive(this);
+    const auto pending = std::exchange(pending_pastes_, {});
+    for (auto it = pending.cbegin(); it != pending.cend(); ++it) {
+        if (!alive)
+            return;
+        emit document_.pasteResult(it.key(), false, it.value(), reason);
+    }
 }
 void LiveConnection::resize(session::TerminalSize size) {
     wanted_size_requested_ = true;
@@ -675,7 +755,10 @@ void LiveConnection::acceptHello(const wire::Hello& hello) {
              wire::StatusCode::replaced);
         return;
     }
+    if (hello.paste_transactions && !request_.paste_transactions)
+        throw std::runtime_error("Unrequested paste capability");
     attachment_ = hello.attachment;
+    paste_transactions_ = hello.paste_transactions;
     document_.setServiceIdentity(attachment_->identity.session_id);
     document_.setConnection(QStringLiteral("synchronizing"), false);
     report(QStringLiteral("Restoring terminal screen"));
@@ -827,15 +910,32 @@ void LiveConnection::handle(const wire::Frame& frame) {
     case wire::Kind::history_page:
         acceptHistoryReply(wire::decode_history_reply(frame.payload));
         return;
+    case wire::Kind::paste_result: {
+        const auto result = wire::decode_paste_result(frame.payload);
+        if (!ready_ || !attachment_ || result.attachment != *attachment_)
+            throw std::runtime_error("Stale paste receipt");
+        const auto found = pending_pastes_.find(result.request_id);
+        if (found == pending_pastes_.end())
+            return; // A late receipt after declared uncertainty never replays input.
+        const bool submitted = found.value();
+        pending_pastes_.erase(found);
+        if (!result.queued)
+            report(result.message);
+        emit document_.pasteResult(result.request_id, result.queued, submitted, result.message);
+        return;
+    }
     case wire::Kind::status: {
         const auto status = wire::decode_status(frame.payload);
-        // Downgrade phase first, retaining links on services that support them,
+        // Downgrade paste first, then phase, retaining links where supported,
         // then links for older v6 services. Both retries preserve identity and
         // reconnect the socket only; neither path launches a service.
-        if (!attachment_ && (request_.attention_phase || request_.hyperlinks) &&
+        if (!attachment_ &&
+            (request_.paste_transactions || request_.attention_phase || request_.hyperlinks) &&
             status.code == wire::StatusCode::rejected &&
             status.message == QStringLiteral("Invalid local session message")) {
-            if (request_.attention_phase)
+            if (request_.paste_transactions)
+                request_.paste_transactions = false;
+            else if (request_.attention_phase)
                 request_.attention_phase = false;
             else
                 request_.hyperlinks = false;

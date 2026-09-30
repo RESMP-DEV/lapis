@@ -17,6 +17,7 @@ void check(bool valid) {
 constexpr quint32 link_extension = 0x4c4e4b31U; // LNK1
 constexpr quint8 attach_link_capability = 0x80U;
 constexpr quint8 attach_phase_capability = 0x40U;
+constexpr quint8 attach_paste_capability = 0x20U;
 void validate_links(const TerminalSnapshot& snapshot) {
     check(snapshot.hyperlinks.size() <= max_hyperlink_spans);
     std::size_t end = 0;
@@ -85,7 +86,8 @@ QByteArray encode_attach(const AttachRequest& request) {
     append_quint32(result, version);
     result += request.fingerprint;
     result.append(static_cast<char>(mode | (request.hyperlinks ? attach_link_capability : 0U) |
-                                    (request.attention_phase ? attach_phase_capability : 0U)));
+                                    (request.attention_phase ? attach_phase_capability : 0U) |
+                                    (request.paste_transactions ? attach_paste_capability : 0U)));
     result += expected.session_id;
     result += expected.epoch;
     return result;
@@ -99,7 +101,8 @@ AttachRequest decode_attach(const QByteArray& payload) {
     const auto flags = *cursor++;
     result.hyperlinks = (flags & attach_link_capability) != 0;
     result.attention_phase = (flags & attach_phase_capability) != 0;
-    const auto mode = flags & 0x3fU;
+    result.paste_transactions = (flags & attach_paste_capability) != 0;
+    const auto mode = flags & 0x1fU;
     check(mode <= static_cast<quint8>(AttachMode::join));
     result.mode = static_cast<AttachMode>(mode);
     result.expected.session_id = raw_bytes(cursor, 16);
@@ -126,17 +129,66 @@ QByteArray encode_hello(const Hello& hello) {
     append_quint32(result, version);
     result += encode_attachment(hello.attachment);
     append_quint64(result, hello.pid);
+    if (hello.paste_transactions)
+        append_quint32(result, 1);
     return result;
 }
 Hello decode_hello(const QByteArray& payload) {
-    check(payload.size() == 52);
+    check(payload.size() == 52 || payload.size() == 56);
     const unsigned char* cursor = reinterpret_cast<const unsigned char*>(payload.constData());
     check(read_quint32(cursor) == version);
     Hello result;
     result.attachment = decode_attachment(cursor);
     result.pid = read_quint64(cursor);
+    if (payload.size() == 56) {
+        check(read_quint32(cursor) == 1);
+        result.paste_transactions = true;
+    }
     check(result.pid != 0 &&
           cursor == reinterpret_cast<const unsigned char*>(payload.constData()) + payload.size());
+    return result;
+}
+QByteArray encode_paste_request(const PasteRequest& request) {
+    check(request.request_id != 0 && request.text.size() <= max_paste_bytes);
+    auto bytes = encode_attachment(request.attachment);
+    append_quint64(bytes, request.request_id);
+    bytes.append(request.submit ? char{1} : char{0});
+    bytes += request.text;
+    return bytes;
+}
+PasteRequest decode_paste_request(const QByteArray& payload) {
+    check(payload.size() >= 49 && payload.size() <= 49 + max_paste_bytes);
+    const auto* cursor = reinterpret_cast<const unsigned char*>(payload.constData());
+    PasteRequest request;
+    request.attachment = decode_attachment(cursor);
+    request.request_id = read_quint64(cursor);
+    const auto submit = *cursor;
+    check(request.request_id != 0 && submit <= 1);
+    request.submit = submit != 0;
+    request.text = payload.sliced(49);
+    return request;
+}
+QByteArray encode_paste_result(const PasteResult& result) {
+    const auto message = result.message.toUtf8();
+    check(result.request_id != 0 && message.size() <= 4096);
+    auto bytes = encode_attachment(result.attachment);
+    append_quint64(bytes, result.request_id);
+    bytes.append(result.queued ? char{1} : char{0});
+    bytes += message;
+    return bytes;
+}
+PasteResult decode_paste_result(const QByteArray& payload) {
+    check(payload.size() >= 49 && payload.size() <= 49 + 4096);
+    const auto* cursor = reinterpret_cast<const unsigned char*>(payload.constData());
+    PasteResult result;
+    result.attachment = decode_attachment(cursor);
+    result.request_id = read_quint64(cursor);
+    const auto queued = *cursor;
+    check(result.request_id != 0 && queued <= 1);
+    result.queued = queued != 0;
+    const auto message = payload.sliced(49);
+    result.message = QString::fromUtf8(message);
+    check(result.message.toUtf8() == message);
     return result;
 }
 QByteArray encode_snapshot_message(const SnapshotMessage& message, bool hyperlinks) {
@@ -285,7 +337,7 @@ Status decode_status(const QByteArray& payload) {
     return {static_cast<StatusCode>(code), std::move(text)};
 }
 QByteArray frame(Kind kind, const QByteArray& payload) {
-    check(kind >= Kind::hello && kind <= Kind::wheel);
+    check(kind >= Kind::hello && kind <= Kind::paste_result);
     check(payload.size() + 1 <= max_frame_bytes);
     QByteArray result;
     QDataStream out(&result, QIODevice::WriteOnly);
@@ -314,7 +366,8 @@ bool take_frame(QByteArray& buffer, qsizetype& consumed, Frame& result) {
     if (available < static_cast<qsizetype>(size) + 4)
         return false;
     const auto kind = static_cast<quint8>(header[4]);
-    check(kind >= static_cast<quint8>(Kind::hello) && kind <= static_cast<quint8>(Kind::wheel));
+    check(kind >= static_cast<quint8>(Kind::hello) &&
+          kind <= static_cast<quint8>(Kind::paste_result));
     result = {static_cast<Kind>(kind), buffer.mid(consumed + 5, static_cast<qsizetype>(size) - 1)};
     consumed += static_cast<qsizetype>(size) + 4;
     if (consumed > buffer.size() / 2) {

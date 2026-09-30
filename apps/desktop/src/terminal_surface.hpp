@@ -190,6 +190,9 @@ class TerminalSurface : public QQuickItem {
     // The offered suggestion was typed into the agent, and `sent` when also
     // submitted; `typedFirst` keys went to the agent while it was offered.
     void suggestionUsed(bool sent, int typedFirst);
+    // A paste was too long to send, or did not reach the agent; `reason` says
+    // which, for the person who pasted.
+    void pasteRefused(const QString& reason);
 
   protected:
     QSGNode* updatePaintNode(QSGNode* old_node, UpdatePaintNodeData* data) override;
@@ -292,6 +295,7 @@ class TerminalSurface : public QQuickItem {
     bool typed_since_arrival_{};
     int typed_while_offered_{};
     bool takeSuggestion(const QKeyEvent& event);
+    bool deliverPaste(const QString& text, bool submit);
     void reportSeen();
     void noteTyped();
     quint64 ime_epoch_{};

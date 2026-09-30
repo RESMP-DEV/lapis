@@ -216,19 +216,25 @@ def run_process(
                     if key.data == "stdin":
                         try:
                             pending = pending[os.write(key.fd, pending[:8192]) :]
+                        except BlockingIOError:
+                            continue  # readiness is advisory; keep the unwritten bytes
                         except BrokenPipeError:
                             pending = pending[len(pending) :]
                         if not pending:
                             selector.unregister(key.fileobj)
                             key.fileobj.close()
                         continue
-                    chunk = os.read(key.fd, min(65536, max_output + 1))
+                    try:
+                        chunk = os.read(key.fd, min(65536, max_output + 1))
+                    except BlockingIOError:
+                        continue
                     if not chunk:
                         selector.unregister(key.fileobj)
                         key.fileobj.close()
                     elif len(output[key.data]) + len(chunk) > max_output:
                         raise ReviewError(
-                            f"{command[0]} output exceeds {max_output} bytes"
+                            f"{command[0]} {key.data} exceeds {max_output} bytes; "
+                            "the diff or helper diagnostics are too large for automatic review"
                         )
                     else:
                         output[key.data].extend(chunk)
@@ -590,8 +596,12 @@ def ask_grok(worktree, prompt):
 
 def validate_review(value: Any, schema: dict[str, Any], path: str = "review") -> None:
     """Validate the schema subset we supply; drift enters normal retry handling."""
-    expected = schema["type"]
+    expected = schema.get("type")
     types = {"object": dict, "array": list, "string": str, "integer": int}
+    if not isinstance(expected, str) or expected not in types:
+        raise ReviewError(f"Unsupported schema type at {path}: {expected!r}")
+    if expected == "array" and not isinstance(schema.get("items"), dict):
+        raise ReviewError(f"Missing array item schema at {path}")
     if type(value) is not types[expected] or (
         "enum" in schema and value not in schema["enum"]
     ):
@@ -885,17 +895,21 @@ def install(repository, publish):
         )
     )
     domain = f"gui/{os.getuid()}"
-    subprocess.run(["launchctl", "bootout", f"{domain}/{LABEL}"], capture_output=True)
-    subprocess.run(["launchctl", "bootstrap", domain, str(PLIST)], check=True)
+    run(["launchctl", "bootout", f"{domain}/{LABEL}"], check=False)
+    run(["launchctl", "bootstrap", domain, str(PLIST)])
     print(
         f"installed {PLIST} ({'posting' if publish else 'saving'} reviews); log {LOG}"
     )
 
 
 def uninstall():
-    subprocess.run(
-        ["launchctl", "bootout", f"gui/{os.getuid()}/{LABEL}"], capture_output=True
-    )
+    try:
+        run(["launchctl", "bootout", f"gui/{os.getuid()}/{LABEL}"], check=False)
+    except ReviewError as error:
+        PLIST.unlink(missing_ok=True)
+        raise ReviewError(
+            f"Startup registration removed, but the running job may need stopping: {error}"
+        ) from error
     PLIST.unlink(missing_ok=True)
     print("removed")
 

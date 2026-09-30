@@ -176,7 +176,13 @@ class SessionPreview final : public QObject {
     void cancelHistoryRequests();
     void setHistoryRequestId(quint64 request_id);
     void setActivity(const QString& activity);
-    void sendText(const QByteArray& bytes, bool paste = false);
+    // False when nothing was sent: no live connection, history showing, or
+    // the input queue full.
+    bool sendText(const QByteArray& bytes, bool paste = false);
+    // Requires service admission; pasteResult reports the eventual outcome.
+    quint64 sendPasteAndSubmit(const QByteArray& bytes);
+    // Whether this agent's service queues a paste and its Return as one.
+    [[nodiscard]] bool takesPasteSubmit() const;
     void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
     // A turn of the wheel for the program on the alternate screen, over a
     // viewport cell; only when its snapshot says the service accepts wheels.
@@ -233,6 +239,7 @@ class SessionPreview final : public QObject {
     void attentionChanged();
     void attentionArrived();
     void unseenChanged();
+    void pasteResult(quint64 requestId, bool queued, bool submit, const QString& message);
 
   private:
     std::unique_ptr<LiveConnection> live_;
@@ -329,6 +336,17 @@ struct AgentRequest {
     // A conversation to resume, as the CLI's resume option takes it.
     QString resume;
 };
+
+// The approval mode a new agent starts in. One asked for without a mode (the
+// phone may leave it out) gets the one new agents default to, `fallback`
+// (newAgent.mode) else Full access, or the nearest the CLI offers, less access
+// first, as the forms choose: since Claude Code 2.1.284 (2.1.283 on
+// third-party providers) no flag means auto mode rather than asking.
+// Arguments configured for the CLI that already choose a mode win, however
+// spelled (`--permission-mode=plan` too); empty then, and for a CLI without
+// modes.
+[[nodiscard]] QString launch_mode(const AgentRequest& request, const QStringList& configured,
+                                  const QString& fallback);
 
 struct WorkspaceOptions {
     QString endpoint;

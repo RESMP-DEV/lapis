@@ -380,7 +380,7 @@ class CommandTests(unittest.TestCase):
         ):
             for script, message in (
                 ("import time; time.sleep(30)", "timeout"),
-                ("import os; os.write(1,b'x'*65536)", "output exceeds"),
+                ("import os; os.write(1,b'x'*65536)", "stdout exceeds"),
             ):
                 with self.subTest(message=message):
                     with self.assertRaisesRegex(grok_review.ReviewError, message):
@@ -393,11 +393,52 @@ class CommandTests(unittest.TestCase):
                     with grok_review.exclusive():
                         pass
             script = "import sys; data=sys.stdin.buffer.read(); sys.stdout.buffer.write(data); sys.stderr.write('diagnostic')"
-            result = grok_review.run_process(
-                [sys.executable, "-c", script], input="payload" * 10000
-            )
+            original_read, original_write = os.read, os.write
+            original_popen = grok_review.subprocess.Popen
+            owned = {"read": set(), "write": set()}
+            blocked = set()
+
+            def capture_process(*args, **kwargs):
+                process = original_popen(*args, **kwargs)
+                owned["read"] = {process.stdout.fileno(), process.stderr.fileno()}
+                owned["write"] = {process.stdin.fileno()}
+                return process
+
+            def once_unready(name, function, fd, value):
+                if (
+                    fd in owned[name]
+                    and not os.get_blocking(fd)
+                    and name not in blocked
+                ):
+                    blocked.add(name)
+                    raise BlockingIOError("fixture readiness changed")
+                return function(fd, value)
+
+            with (
+                patch.object(
+                    grok_review.subprocess, "Popen", side_effect=capture_process
+                ),
+                patch.object(
+                    grok_review.os,
+                    "read",
+                    side_effect=lambda fd, size: once_unready(
+                        "read", original_read, fd, size
+                    ),
+                ),
+                patch.object(
+                    grok_review.os,
+                    "write",
+                    side_effect=lambda fd, data: once_unready(
+                        "write", original_write, fd, data
+                    ),
+                ),
+            ):
+                result = grok_review.run_process(
+                    [sys.executable, "-c", script], input="payload" * 10000
+                )
             self.assertEqual(result.stdout, "payload" * 10000)
             self.assertEqual(result.stderr, "diagnostic")
+            self.assertEqual(blocked, {"read", "write"})
 
 
 class GrokRunTests(unittest.TestCase):
@@ -513,6 +554,17 @@ class GrokRunTests(unittest.TestCase):
                 ):
                     grok_review.ask_grok(self.worktree, "brief")
 
+        for value, schema in (
+            (True, {"type": "boolean"}),
+            ([], {"type": "array"}),
+            (None, {}),
+        ):
+            with (
+                self.subTest(schema=schema),
+                self.assertRaises(grok_review.ReviewError),
+            ):
+                grok_review.validate_review(value, schema)
+
     def test_quota_pauses_all_repositories_without_spending_pr_attempts(self):
         now = [datetime(2026, 1, 10, 12).timestamp()]
         pr = {"number": 7, "headRefOid": "abc", "isDraft": False}
@@ -600,7 +652,19 @@ class AdmissionTests(unittest.TestCase):
                 patch.object(
                     grok_review.shutil, "which", return_value="/usr/bin/fixture"
                 ),
-                patch.object(grok_review.subprocess, "run") as launch,
+                patch.object(
+                    grok_review,
+                    "run_process",
+                    side_effect=[
+                        grok_review.subprocess.CompletedProcess(
+                            [], 1, "", "not loaded"
+                        ),
+                        grok_review.subprocess.CompletedProcess([], 0, "", ""),
+                        grok_review.subprocess.CompletedProcess(
+                            [], 1, "", "not loaded"
+                        ),
+                    ],
+                ) as launch,
                 patch.object(
                     sys,
                     "argv",
@@ -621,6 +685,33 @@ class AdmissionTests(unittest.TestCase):
                     ["--repo", "fixture/repo", "--model", "fixture-model", "watch"],
                 )
                 self.assertEqual(launch.call_count, 2)
+                grok_review.uninstall()
+                domain = f"gui/{os.getuid()}"
+                self.assertEqual(
+                    [c.args[0] for c in launch.call_args_list],
+                    [
+                        ["launchctl", "bootout", f"{domain}/{grok_review.LABEL}"],
+                        ["launchctl", "bootstrap", domain, str(plist)],
+                        ["launchctl", "bootout", f"{domain}/{grok_review.LABEL}"],
+                    ],
+                )
+                self.assertFalse(plist.exists())
+                launch.side_effect = [
+                    grok_review.subprocess.CompletedProcess([], 1, "", "not loaded"),
+                    grok_review.subprocess.CompletedProcess(
+                        [], 1, "", "bootstrap refused"
+                    ),
+                ]
+                with self.assertRaisesRegex(
+                    grok_review.ReviewError, "bootstrap refused"
+                ):
+                    grok_review.install("fixture/repo", False)
+                launch.side_effect = grok_review.ReviewError("helper timeout")
+                with self.assertRaisesRegex(
+                    grok_review.ReviewError, "running job may need stopping"
+                ):
+                    grok_review.uninstall()
+                self.assertFalse(plist.exists())
 
     def test_only_repository_writers_are_admitted(self):
         for permission in ("admin", "maintain", "write", "read", "triage", None):

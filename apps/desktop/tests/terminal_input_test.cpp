@@ -30,6 +30,7 @@
 #include <QThread>
 #include <QUrl>
 #include <QWheelEvent>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <functional>
@@ -120,9 +121,10 @@ struct Fixture {
                 "Wrong launch fingerprint");
         return request;
     }
-    void hello(Peer& peer, quint64 generation = 1) {
+    void hello(Peer& peer, quint64 generation = 1, bool paste_transactions = false) {
         generation_ = generation;
-        peer.send(wire::Kind::hello, wire::encode_hello({{identity, generation}, 123}));
+        peer.send(wire::Kind::hello,
+                  wire::encode_hello({{identity, generation}, 123, paste_transactions}));
         until([&] { return document.connectionState() == QStringLiteral("synchronizing"); });
         require(!document.inputReady(), "Hello enabled input before the screen");
     }
@@ -725,6 +727,91 @@ void command_links_open() {
             "A valid encoded replacement-character filename did not open");
     require(text_frames(peer).isEmpty(), "Command-click sent input to the agent");
 }
+// A paste longer than one input message arrives whole, as text the desktop
+// encoded in the newest screen's mode; one longer than the service can queue
+// is refused with a reason, and nothing is sent.
+void long_pastes() {
+    Fixture f;
+    QQuickWindow window;
+    window.setGeometry(100, 100, 640, 360);
+    lapis::desktop::TerminalSurface surface(window.contentItem());
+    surface.setSize(QSizeF(640, 360));
+    surface.setHoldResize(true);
+    surface.setDocument(&f.document);
+    surface.setInteractive(true);
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer, 1, true);
+    f.screen(peer);
+    window.show();
+    until([&] { return window.isExposed(); });
+    lapis::desktop::test::activate_test_window(window);
+    until([&] { return window.isActive(); });
+    settle();
+    until([&] {
+        surface.forceActiveFocus();
+        return surface.hasActiveFocus();
+    });
+    static_cast<void>(text_frames(peer));
+    QStringList refusals;
+    QObject::connect(&surface, &lapis::desktop::TerminalSurface::pasteRefused,
+                     [&refusals](const QString& reason) { refusals << reason; });
+    QString transcript;
+    while (transcript.toUtf8().size() <= 3 * wire::max_input_bytes)
+        transcript += QStringLiteral("speaker 界: a line with an escape \x1b[31m in it\n");
+    const auto utf8 = transcript.toUtf8();
+    require(surface.pasteText(transcript), "Expected a supported long paste to be submitted");
+    auto packet = peer.read();
+    require(packet.kind == wire::Kind::paste_request, "A paste must be one complete request");
+    auto request = wire::decode_paste_request(packet.payload);
+    require(request.text == utf8 && !request.submit, "The desktop must retain raw paste bytes");
+    peer.send(wire::Kind::paste_result,
+              wire::encode_paste_result({request.attachment, request.request_id, true, {}}));
+    settle();
+    f.terminal.feed("\x1b[?2004h");
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 2, f.terminal.snapshot()}));
+    until([&] { return f.document.snapshot().bracketed_paste; });
+    require(surface.pasteText(transcript),
+            "Expected raw long paste even with bracketed mode advertised");
+    packet = peer.read();
+    auto later = wire::decode_paste_request(packet.payload);
+    require(later.request_id > request.request_id && later.text == utf8,
+            "Each paste has a new ID and service-owned encoding");
+    peer.send(wire::Kind::paste_result,
+              wire::encode_paste_result({later.attachment, later.request_id, false,
+                                         QStringLiteral("fixture queue full")}));
+    until([&] { return !refusals.isEmpty(); });
+    require(refusals.back() == QStringLiteral("fixture queue full") && f.document.inputReady(),
+            "Service refusal must be visible without losing the connection");
+    const auto submit = f.document.sendPasteAndSubmit("go");
+    require(submit != 0, "Combined paste and submit needs an admitted request ID");
+    const auto combined = wire::decode_paste_request(peer.read().payload);
+    require(combined.submit && combined.request_id == submit && combined.text == "go",
+            "Submit belongs to the same paste request");
+    peer.send(wire::Kind::paste_result,
+              wire::encode_paste_result({combined.attachment, submit, true, {}}));
+    settle();
+    refusals.clear();
+    const QString tooLong(static_cast<qsizetype>(wire::max_paste_bytes) + 1, QLatin1Char('x'));
+    require(!surface.pasteText(tooLong), "An oversized paste was accepted");
+    require(refusals.size() == 1 &&
+                refusals.front().startsWith(
+                    QStringLiteral("This paste is 961 KiB; lapis pastes up to 960 KiB at a time.")),
+            "Size refusal must state its real binary-byte limit");
+    require(text_frames(peer).isEmpty(), "A refused paste sent part of itself");
+    require(!surface.pasting(), "A refused paste kept input ownership");
+    refusals.clear();
+    require(surface.pasteText(QStringLiteral("pending")),
+            "Expected a pending paste before disconnect");
+    require(peer.read().kind == wire::Kind::paste_request, "Pending paste request missing");
+    peer.socket->abort();
+    until([&] { return !refusals.isEmpty(); });
+    require(refusals.back().contains(QStringLiteral("unknown")) && !f.document.inputReady(),
+            "Lost paste receipt must report uncertainty without replay");
+}
+
 // A next prompt offered at the cursor, with the Tab flow on: drawn there and
 // seen once; Tab sends it, Option-Tab only types it; typing keeps it and is
 // counted; and Tab with nothing offered and nothing typed asks for the next
@@ -916,6 +1003,59 @@ void suggestions() {
     typed = frames(1);
     require(is_key(typed[0], lapis::session::TerminalKey::tab) && calls() == after_fill,
             "Tab after typing did not reach the agent");
+}
+
+// With a service that queues a paste and its Return as one, Tab sends the
+// guess as a single paste request with submit, and no Return of its own.
+void suggestions_submit_as_one() {
+    Fixture f;
+    QQuickWindow window;
+    window.setGeometry(100, 100, 640, 360);
+    lapis::desktop::TerminalSurface surface(window.contentItem());
+    surface.setSize(QSizeF(640, 360));
+    surface.setHoldResize(true);
+    surface.setDocument(&f.document);
+    surface.setInteractive(true);
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    require(f.request(peer).paste_transactions, "The desktop did not offer paste transactions");
+    f.hello(peer, 1, true);
+    f.screen(peer);
+    window.show();
+    until([&] { return window.isExposed(); });
+    lapis::desktop::test::activate_test_window(window);
+    until([&] { return window.isActive(); });
+    settle();
+    until([&] {
+        surface.forceActiveFocus();
+        return surface.hasActiveFocus();
+    });
+    static_cast<void>(text_frames(peer));
+    require(f.document.takesPasteSubmit(), "A service with transactions was not used for submit");
+    lapis::session::Terminal wide{{40, 4}};
+    wide.feed("> ");
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 2, wide.snapshot()}));
+    until([&] { return f.document.snapshot().size.columns == 40; });
+    settle();
+    surface.setTabFlow(true);
+    surface.setSuggestion(QStringLiteral("go now"));
+    QKeyEvent tab(QEvent::KeyPress, Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    QCoreApplication::sendEvent(&surface, &tab);
+    const auto packet = peer.read();
+    require(packet.kind == wire::Kind::paste_request, "Tab did not send one paste request");
+    const auto request = wire::decode_paste_request(packet.payload);
+    require(request.submit && request.text == QByteArray("go now"),
+            "The paste request did not carry the guess with its Return");
+    QElapsedTimer quiet;
+    quiet.start();
+    while (quiet.elapsed() < 400)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    peer.bytes += peer.socket->readAll();
+    wire::Frame extra;
+    while (wire::take_frame(peer.bytes, extra))
+        require(extra.kind == wire::Kind::resize,
+                "Tab sent a Return of its own besides the request");
 }
 
 // Dragging selects screen text and double-clicking selects a word. The copy
@@ -1123,18 +1263,20 @@ int main(int argc, char** argv) {
         require(background == (QGuiApplication::platformName() == QStringLiteral("offscreen")),
                 "Offscreen input tests require explicit --background mode");
         input_contract(background);
+        long_pastes();
         suggestions();
+        suggestions_submit_as_one();
         selection_and_scroll();
         links_follow_wrapped_rows();
         command_links_open();
         size_returns_to_this_window();
         if (background)
             std::cout << "Background Qt/software mode; native macOS input and GPU not exercised\n";
-        std::cout
-            << "Qt IME commit/cancel, replacement rejection, paste, suggestions, selection/copy, "
-               "wheel, links, "
-               "history, focus, document, size claims "
-               "and disconnect ownership passed\n";
+        std::cout << "Qt IME commit/cancel, replacement rejection, paste, long paste, suggestions, "
+                     "selection/copy, "
+                     "wheel, links, "
+                     "history, focus, document, size claims "
+                     "and disconnect ownership passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
