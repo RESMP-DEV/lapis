@@ -679,6 +679,51 @@ void unseenFollowsTurnsAndSelection() {
     require(!workspace.nextAttention(), "nor does it draw the jump again");
 }
 
+// An agent asked for without a mode starts in the forms' default, or the
+// nearest mode its CLI offers, unless its configured arguments choose one.
+void modelessAgentsGetTheDefaultMode() {
+    using lapis::desktop::AgentRequest;
+    using lapis::desktop::launch_mode;
+    const auto asked = [](const char* harness, const char* mode = "") {
+        AgentRequest request;
+        request.harness = QString::fromLatin1(harness);
+        request.mode = QString::fromLatin1(mode);
+        return request;
+    };
+    require(launch_mode(asked("claude", "edits"), {}, QStringLiteral("full")) ==
+                QLatin1String("edits"),
+            "a mode asked for is kept");
+    require(launch_mode(asked("claude"), {}, {}) == QLatin1String("full"),
+            "no mode and no default: Full access");
+    require(launch_mode(asked("claude"), {}, QStringLiteral("auto")) == QLatin1String("auto"),
+            "no mode: newAgent.mode");
+    require(launch_mode(asked("omp"), {}, QStringLiteral("auto")) == QLatin1String("edits"),
+            "a CLI without the default takes the nearest, less access first");
+    require(launch_mode(asked("opencode"), {}, QStringLiteral("edits")).isEmpty(),
+            "an unavailable conservative mode must not grant full access");
+    require(launch_mode(asked("kimi"), {}, QStringLiteral("edits")).isEmpty(),
+            "modeless requests cannot escalate to a higher supported mode");
+    require(launch_mode(asked("claude"), {}, QStringLiteral("unknown")).isEmpty(),
+            "unknown preferences do not become full access");
+    require(launch_mode(asked("claude"),
+                        {QStringLiteral("--"), QStringLiteral("--permission-mode")},
+                        QStringLiteral("edits")) == QLatin1String("edits"),
+            "a literal prompt token must not suppress the configured permission mode");
+    require(launch_mode(asked("codex"), {QStringLiteral("-s"), QStringLiteral("read-only")},
+                        QStringLiteral("edits")) == QLatin1String("edits"),
+            "sandbox selection is separate from approval mode");
+    for (const auto* configured :
+         {"--permission-mode=acceptEdits", "--permission-mode", "--dangerously-skip-permissions"})
+        require(launch_mode(asked("claude"), {QString::fromLatin1(configured)}, {}).isEmpty(),
+                "configured arguments that choose a mode win, however spelled");
+    require(launch_mode(asked("codex"), {QStringLiteral("--ask-for-approval=never")}, {}).isEmpty(),
+            "Codex's own approval option wins too");
+    require(launch_mode(asked("claude"), {QStringLiteral("--verbose")}, {}) ==
+                QLatin1String("full"),
+            "other configured arguments do not");
+    require(launch_mode(asked("shell"), {}, {}).isEmpty(), "a CLI without modes gets none");
+}
+
 // Command-L goes to the agent that most recently began to need you, then the
 // one before it.
 void latestAttentionGoesToTheNewest() {
@@ -703,6 +748,43 @@ void latestAttentionGoesToTheNewest() {
     require(workspace.latestAttention() && workspace.focusedSession() == first,
             "then the one before it");
     require(!workspace.latestAttention(), "and nothing once all were looked at");
+}
+
+// Tab's next agent: a guess not yet seen first, then a turn finished unseen,
+// then a guess already seen, so Tab cannot bounce between guesses while
+// another agent waits; an agent at work is not waiting even with a guess.
+void tabGoesToTheReadyThenTheOldest() {
+    Workspace workspace(WorkspaceMode::preview);
+    require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
+    lapis::session::wire::AttentionSnapshot state;
+    state.available = state.connected = state.ready = true;
+    const auto finish = [&](const char* id) {
+        auto* item = workspace.session(QString::fromLatin1(id));
+        state.activity = lapis::session::attention::Activity::working;
+        item->applyAttention(state);
+        state.activity = lapis::session::attention::Activity::turn_completed;
+        item->applyAttention(state);
+        QThread::msleep(5);
+        return item;
+    };
+    auto* older = finish("agent");
+    auto* newer = finish("checks");
+    require(workspace.nextPriorityAttention({{newer->sessionId(), false}}) &&
+                workspace.focusedSession() == newer,
+            "the agent with a guess not yet seen goes first");
+    const QVariantMap seen{{newer->sessionId(), true}};
+    require(workspace.nextPriorityAttention(seen) && workspace.focusedSession() == older,
+            "then the one whose turn finished unseen");
+    require(workspace.nextPriorityAttention(seen) && workspace.focusedSession() == newer,
+            "a guess already seen and not used keeps its agent in the rotation, last");
+    auto* third = finish("renderer");
+    require(workspace.nextPriorityAttention(seen) && workspace.focusedSession() == third,
+            "an unseen turn goes before a guess already seen");
+    require(workspace.selectSession(older->sessionId()), "back to the older one");
+    state.activity = lapis::session::attention::Activity::working;
+    newer->applyAttention(state);
+    require(!workspace.nextPriorityAttention(seen),
+            "nothing is waiting once the one with a guess is at work");
 }
 
 // Claude agents run under the service's Claude Code adapter and read their
@@ -1631,8 +1713,9 @@ exec sleep 600
                 first.contains(QStringLiteral("cd ~/dev/far && s=")) &&
                 !conversation(first).isEmpty() &&
                 first.contains(QStringLiteral(
-                    R"(-lic 'export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-1}"; claude '"$o $s")")),
-            "ssh has its own connection, kept alive, and names the conversation");
+                    R"(-lic 'export CLAUDE_CODE_NO_FLICKER="${CLAUDE_CODE_NO_FLICKER:-1}"; claude --permission-mode bypassPermissions '"$o $s")")),
+            "ssh has its own connection, kept alive, and names the conversation; with no mode "
+            "asked for, Claude Code starts in Full access, as the forms default, not auto mode");
         require(workspace.agentPlace(id).value(QStringLiteral("place")) ==
                     QStringLiteral("devbox:~/dev/far"),
                 "the agent's place is still its machine and folder");
@@ -2748,26 +2831,30 @@ void resumingAConversationStartsItsCli() {
                                       QStringLiteral("conv-123")),
                 "a past conversation resumes, named after its folder");
         auto* agent = workspace.focusedSession();
-        require(agent != nullptr &&
-                    waitFor(
-                        [agent] {
-                            return screenText(agent->snapshot())
-                                .contains(QStringLiteral("grok args: --fullscreen -r conv-123"));
-                        },
-                        10000),
-                "the CLI starts with its resume option");
+        require(agent != nullptr && waitFor(
+                                        [agent] {
+                                            return screenText(agent->snapshot())
+                                                .remove(QLatin1Char('\n'))
+                                                .contains(QStringLiteral(
+                                                    "grok args: --fullscreen --permission-mode "
+                                                    "bypassPermissions -r conv-123"));
+                                        },
+                                        10000),
+                "the CLI starts with its resume option, in the default mode");
         lapis::desktop::WorkspaceControl control(workspace, false);
         auto request = createRequest(workspace.activeCategoryId(), QStringLiteral("grok"), project);
         request.insert(QStringLiteral("resume"), QStringLiteral("conv-456"));
         const auto started = askWorkspace(workspace.storagePath(), request);
         auto* phone = workspace.session(started.value(QStringLiteral("id")).toString());
-        require(phone != nullptr &&
-                    waitFor(
-                        [phone] {
-                            return screenText(phone->snapshot())
-                                .contains(QStringLiteral("grok args: --fullscreen -r conv-456"));
-                        },
-                        10000),
+        require(phone != nullptr && waitFor(
+                                        [phone] {
+                                            return screenText(phone->snapshot())
+                                                .remove(QLatin1Char('\n'))
+                                                .contains(QStringLiteral(
+                                                    "grok args: --fullscreen --permission-mode "
+                                                    "bypassPermissions -r conv-456"));
+                                        },
+                                        10000),
                 "the phone resumes a conversation too");
         QFile saved(workspace.storagePath());
         require(saved.open(QIODevice::ReadOnly), "read the registry");
@@ -2859,6 +2946,30 @@ void resumingAConversationStartsItsCli() {
             require(workspace.closeSession(closing), "close the stand-in agents");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "the stand-in agents close");
+        workspace.setHarnessArguments(
+            {{QStringLiteral("grok"),
+              {QStringLiteral("--"), QStringLiteral("--permission-mode")}}});
+        lapis::desktop::AgentDefaults defaults;
+        defaults.mode = QStringLiteral("edits");
+        workspace.setAgentDefaults(defaults);
+        require(workspace.resumeAgent(project, QStringLiteral("literal"), QStringLiteral("grok"),
+                                      QStringLiteral("conv-literal")),
+                "a modeless resume with literal configured arguments starts");
+        auto* literal = workspace.focusedSession();
+        require(literal != nullptr && waitFor(
+                                          [literal] {
+                                              return literal->inputReady() &&
+                                                     screenText(literal->snapshot())
+                                                         .remove(QLatin1Char('\n'))
+                                                         .contains(QStringLiteral(
+                                                             "--permission-mode acceptEdits -r "
+                                                             "conv-literal -- --permission-mode"));
+                                          },
+                                          10000),
+                "generated mode and resume flags must precede literal prompt arguments");
+        require(workspace.closeSession(literal->sessionId()), "close the literal-argument fixture");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the literal-argument fixture closes");
     }
     qputenv("PATH", path);
 }
@@ -3210,15 +3321,17 @@ void phoneStartsAnAgentInItsCategory() {
         require(
             waitFor(
                 [far] {
-                    const auto text = screenText(far->snapshot());
+                    // The command wraps on the fixture's narrow screen.
+                    const auto text = screenText(far->snapshot()).remove(QLatin1Char('\n'));
                     return text.contains(QStringLiteral("[-t]")) &&
                            text.contains(QStringLiteral("[devbox]")) &&
                            text.contains(QStringLiteral(
-                               R"([cd ~/'dev/some project' && exec "${SHELL:-/bin/sh}" -lic '/opt/grok/bin/grok --fullscreen'])"));
+                               R"([cd ~/'dev/some project' && exec "${SHELL:-/bin/sh}" -lic '/opt/grok/bin/grok --fullscreen --permission-mode bypassPermissions'])"));
                 },
                 10000) &&
                 waitFor([far] { return far->inputReady(); }, 10000),
-            "ssh runs the CLI in that machine's folder and login shell");
+            "ssh runs the CLI in that machine's folder and login shell, in the default mode "
+            "when the phone named none");
         // The Mac's own form names the machine the same way.
         QFile config(root.filePath(QStringLiteral("ssh_config")));
         require(config.open(QIODevice::WriteOnly), "write an ssh config");
@@ -4571,6 +4684,17 @@ struct PrintedCheckpointFixture {
     WorkspaceOptions options;
     QString endpoint;
 
+    [[nodiscard]] bool waitForArguments(const QByteArray& expected) const {
+        // Service attachment can finish before the restarted child has
+        // published its argv. Match the child's receipt, not input readiness.
+        return waitFor(
+            [&] {
+                QFile file(argv_path);
+                return file.open(QIODevice::ReadOnly) && file.readAll() == expected;
+            },
+            10000);
+    }
+
     PrintedCheckpointFixture(const QString& harness, const QString& session_id,
                              const QJsonArray& arguments, bool legacy_record = false) {
         require(directory.isValid(), "checkpoint fixture directory");
@@ -4641,11 +4765,8 @@ void printedCheckpointsResumeButNeverOverrideTheObserver() {
     require(waitFor([&] { return workspace.restartAgent(id); }, 10000),
             "restart checkpoint fixture");
     require(waitFor([&] { return item->inputReady(); }, 10000), "checkpoint fixture restarts");
-    QFile argv_file(fixture.argv_path);
-    require(argv_file.open(QIODevice::ReadOnly) &&
-                argv_file.readAll() == QByteArray("--yolo\n--session\nforged-conversation\n"),
+    require(fixture.waitForArguments("--yolo\n--session\nforged-conversation\n"),
             "a printed checkpoint resumes a CLI lapis has no observer for");
-    argv_file.close();
     item->sendText("done\r");
     require(waitFor([&] { return item->connectionState() == QStringLiteral("ended"); }, 10000),
             "advisory recovery fixture exits");
@@ -4662,8 +4783,7 @@ void printedCheckpointsResumeButNeverOverrideTheObserver() {
     require(verified_record && verified_record->source == lapis::session::ResumeSource::observer &&
                 verified_record->session_id == QStringLiteral("verified-id"),
             "printed output cannot overwrite an observer checkpoint");
-    require(argv_file.open(QIODevice::ReadOnly) &&
-                argv_file.readAll() == QByteArray("--yolo\n--session\nverified-id\n"),
+    require(fixture.waitForArguments("--yolo\n--session\nverified-id\n"),
             "only the verified identity becomes a resume argument");
     require(workspace.closeSession(id) &&
                 waitFor([&] { return workspace.sessions().isEmpty(); }, 10000),
@@ -4862,6 +4982,8 @@ int main(int argc, char** argv) {
         unknownRegistryVersionsAreRejected();
         unseenFollowsTurnsAndSelection();
         latestAttentionGoesToTheNewest();
+        tabGoesToTheReadyThenTheOldest();
+        modelessAgentsGetTheDefaultMode();
         claudeAgentsUseServiceAdapter();
         agentArgumentsPersist();
         directTileSelectionNormalizesAStaleTarget();

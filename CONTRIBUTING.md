@@ -262,6 +262,43 @@ present prose-only rules as an automated gate.
    and human approvals. Report unavailable reviewers in the handoff. Templates
    standardize submissions; they do not enforce these gates in GitHub.
 
+### Grok review
+
+`scripts/grok_review.py` runs Grok Build (`grok-4.7`, reasoning
+`xhigh`) as a read-only reviewer: in a clone of its own under
+`runtime/grok-review`, with only read_file, grep and list_dir tools and a supplied diff.
+The child inherits an allowlisted environment and its file-based Grok login.
+The author must have repository write, maintain or admin access, rechecked
+before inference and posting; unknown permissions fail closed. This tool is for
+trusted contributors: tool selection is not filesystem isolation, and the
+review process can still read the operator's home directory.
+`review NUMBER` prints a review of the PR head;
+`--post` publishes it as a review comment, never an approval or change request,
+with findings on changed lines inline and the rest in the summary. `install`
+runs `watch` every five minutes as a LaunchAgent, reviewing each open, non-draft
+PR head once after it has stood ten minutes (saving reviews locally unless
+installed with `--post`); `status` lists what it reviewed and what failed. It uses
+the Grok account signed in on that machine, so its usage limit applies; a
+quota failure pauses all repositories until the next local day when no reset
+time is supplied, without consuming a head's two non-quota attempts. MCP discovery/invocation tools are removed and MCPTool permission is denied.
+Helper commands have a five-minute deadline and bounded output; over-limit diffs
+are stopped while reading, and uncertain POST failures are not reposted.
+Malformed model output enters normal failure handling. Concurrent
+invocations skip immediately instead of queuing behind a long review. Diffs over
+256 KiB fail explicitly instead of sending an unbounded model request.
+The optional global `--repo owner/name` selects separate clones, worktrees,
+saved reviews and retry state under `runtime/grok-review/repos`; an installed
+watcher keeps this selection. The original lapis state is retained and read
+on first use of its namespaced state. A moved head must settle before inference.
+
+The September 29 live probe of Grok Build 1.0.41 rejected the previous
+`grok-4.7-build-fast` pin as unknown. Its catalog advertises `grok-4.7`; a request
+for that model reached an account usage limit. The pin follows the catalog,
+without automatic fallback, but a completed live review remains unqualified.
+Which models a Grok account may use differs by team: on another team the same
+build refused `grok-4.7` (404) and completed a review with `grok-4.7-build-fast`.
+The global `--model` option picks one, and `install` keeps it for the watcher.
+
 Keep the PR description current as scope changes. Use `Change`, `Validation` and
 `Risks and follow-up`; a small change needs only a sentence or two plus its checks.
 For visual changes include useful screenshots/captures; for performance changes
@@ -398,16 +435,21 @@ renderer and the proposed change: a valid baseline failure must identify a
 pixel/layout assertion after window and snapshot preconditions pass.
 
 Normal launch restores machine-local window geometry and does not force a screen.
-`--screen <text>` is an explicit capture/qualification override. Routine GUI tests
-run on the Linux test host through `uv run --no-project python scripts/lapis.py linux-gui`.
-Do not use the user's Mac as an automatic GUI-testing fallback.
+`--screen <text>` is an explicit capture/qualification override. Routine UI
+iteration uses `just ui-review` or the existing background fixtures
+on the current capable checkout. macOS is the active target; use Linux virtual
+displays only when Linux is explicitly selected, using
+`uv run --no-project python scripts/lapis.py linux-gui`. Native foreground checks run
+serially under the session's existing authorization, and their evidence stays
+separate from offscreen results.
 
 ### Keybindings and layout
 
 `lapis.json` stores appearance and optional keybinding overrides. Empty overrides
 use platform defaults. Command-R on macOS reloads it. The product has one terminal
 stage, category navigation and the category's agent strip under the stage; no
-tab row, tiling or preview layout picker. `previewsVisible` hides the strip
+tab row or preview layout picker; dragging an agent preview onto the stage
+creates a tile. `previewsVisible` hides the strip
 (default on); the `togglePreviews` action has no default key.
 `harnessArguments` maps a harness id (`codex`, `claude`, `grok`, ...) to literal
 arguments added when lapis starts a new agent of that harness; each agent's
@@ -429,7 +471,10 @@ The committed `lapis.json` holds defaults only (see
   while it may be running), else, with no agent in the category, the window.
   Command-Shift-W (`closeWindow`) and the close button hide the window while
   lapis keeps running, and the Dock icon brings it back; Command-M
-  (`minimizeWindow`) minimizes. Command-Q quits the GUI; none of these stops service-owned agents.
+  (`minimizeWindow`) minimizes. Command-Q quits the GUI. The intended service
+  lifetime is independent, but macOS 27 can terminate GUI-spawned services with
+  the app's coalition; see the [current rollout blocker](docs/architecture.md#broader-macos-rollout-readiness-september-29).
+  Do not promise quit/update survival until that platform gate is qualified.
   `detachWindow` still works when configured but has no default key.
 - Command-O (`resumeConversation`) lists past Claude Code and Codex
   conversations and resumes one as a new agent. ``Command-` `` and ``Control-` ``
@@ -665,9 +710,10 @@ reproducible symptom; a screenshot alone does not establish an application defec
 Apple silicon Mac with Xcode, Homebrew's `vulkan-headers` and `molten-vk`, and a
 bootstrapped Ghostty build. Everything goes under ignored `build/release/`.
 
-The canonical app icon is [assets/lapis.svg](assets/lapis.svg): the gold-star
-Cabochon with a solid blue face and raised rim. To regenerate its checked-in
-Mac ICNS, iPhone PNG and website SVG/PNGs, run
+The canonical app icon is [assets/lapis.svg](assets/lapis.svg): the silk
+Cabochon with an ultramarine dome, white six-ray star and raised rim. To
+regenerate its checked-in Mac ICNS, iPhone PNG, in-app LapisMark and website
+SVG/PNGs, run
 `python3 scripts/package_macos.py icon` on macOS with `rsvg-convert` installed
 (`brew install librsvg`; exercised with librsvg 2.63.2). This build tool adds no
 application runtime dependency. The command renders every Mac size from vectors

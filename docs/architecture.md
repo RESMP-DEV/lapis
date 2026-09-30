@@ -1,7 +1,7 @@
 # Architecture and near-term plan
 
 This is the single implementation plan for lapis. See the
-[current status](../README.md#current-status) for what has been implemented and exercised.
+[current status](status.md) for what has been implemented and exercised.
 macOS is the active target, and the signed Mac app is now the working daily
 environment; the [pseudo-production section](#pseudo-production-direction-and-integration-spread-september-27)
 below owns the current work order and re-weights the remaining milestones.
@@ -356,7 +356,7 @@ optional checks once the affected behavior passes.
 ### Persistent terminal acceptance
 
 The explicit launch slice is implemented. Current exercise status is in the
-[README](../README.md#current-status), with a
+[status](status.md), with a
 [sanitized receipt](../evidence/cli-launch.json). The macOS acceptance below is
 complete; the [assembled receipt](../evidence/milestone-one.json) records its scope.
 Visual review of the earlier UI refinements remains pending.
@@ -418,7 +418,27 @@ qualification. A final output tail is bounded to 16 MiB after child exit.
 Snapshot-size limits detach the display with an explicit status while keeping the
 child alive; reattachment succeeds once its screen fits again. Socket ancestors
 must be trusted and not shared writable unless sticky, with an owner-only 0700
-immediate parent. Oversized paste remains an atomic rejection at 64 KiB.
+immediate parent. Legacy paste/control messages remain bounded at 64 KiB.
+The negotiated paste-transaction capability (attach bit 0x20, optional Hello
+capability word) enables one complete raw paste request up to 960 KiB. The service
+encodes it in its current terminal mode and admits the entire byte array to its
+PTY queue at once, including an optional trailing Enter. A correlated receipt
+confirms queue admission or rejection; it does not prove that the application
+processed the input. Partial frames never reach the PTY. A lost receipt or a
+child failure is reported as uncertain and never causes automatic replay.
+
+Request IDs increase within an attachment; stale identities and repeated IDs are
+rejected. The desktop bounds outstanding requests and reports timeout/disconnect
+without transferring the input to another session. Primary and joined views use
+the same admission path. Old v6 services reject the new attach bit; the desktop
+retries capability negotiation without starting a replacement service. It retains
+legacy small pastes and visibly refuses larger ones until that service is upgraded.
+The main terminal and side shell both show refusal/uncertainty notices. This
+replaces the earlier client-side chunking proposal, whose socket budget could not
+reserve capacity in the service's separate PTY queue.
+The service queues at most 1 MiB of PTY input for a slow reader, which bounds the
+total. A longer paste is still an atomic rejection, now stated over the terminal
+instead of only in the agent menu.
 Cursor rendering honors block, bar, underline and hollow-block shapes and optional
 cursor color; a filled block redraws its covered grapheme for readability.
 See the [review repair receipt](../evidence/pr2-review.json) and
@@ -881,7 +901,7 @@ Preserving the ordinary CLI interface is the product preference. A shared-server
 route is eligible only if live evidence establishes event delivery, response
 ownership and reconciliation for that same TUI session. A method in an exported
 schema or an empty list from another server cannot establish those capabilities.
-The [Codex investigation](../adapters/codex/README.md#next-qualification) owns the
+The [Codex investigation](../adapters/codex/README.md#requalifying-a-codex-binary) owns the
 probe details and capability matrix.
 
 Hooks that only notify are useful partial integration. Keep answers in the
@@ -2137,11 +2157,16 @@ A release is `lapis.app` in a signed DMG, built by `scripts/package_macos.py`
 (procedure in [Contributing](../CONTRIBUTING.md#build-the-mac-app)).
 
 - **One icon source.** [assets/lapis.svg](../assets/lapis.svg) is the selected
-  gold-star Cabochon: solid ultramarine, a six-ray gold star and narrow edge
-  relief. The `icon` packaging command derives the Mac ICNS, iPhone asset and
-  website icons from it. The Mac keeps the approved framing; the iPhone uses
-  the same stone relative to an opaque tile, with corners supplied by iOS.
-  White-star and Material treatments remain design-study alternatives.
+  silk Cabochon: an ultramarine dome with raised rim and narrow edge relief, a
+  white six-ray star and a diagonal silk sheen. The `icon` packaging command
+  derives the Mac ICNS, iPhone asset, in-app mark and website icons from it.
+  The Mac keeps the approved framing; the iPhone uses the same stone relative
+  to an opaque tile, with corners supplied by iOS, and its toolbar mark is the
+  stone alone on transparency. The unpicked study variant is Contour: the same
+  artwork with the `shade` rim vignette painted on. Its signature is exactly
+  that painted `shade` reference, so the canonical silk SVG keeps the gradient
+  defined but unreferenced; the def is the template's variant switch, not dead
+  weight.
 - **Qt built for lapis.** The official Qt 6.11.2 macOS binaries are built without
   Vulkan (`QT_FEATURE_vulkan` is off), and Homebrew's Qt requires macOS 26 and
   brings glib, ICU, OpenSSL and a dozen other libraries. The release builds
@@ -2741,6 +2766,177 @@ listings, along with rejection of stale older-history, newer-history and input
 responses. The earlier receipts remain dated evidence for their original source,
 not qualification of the assembled revision.
 
+### Broader macOS rollout readiness (September 29)
+
+The next objective is a dependable daily workspace that another person can
+install, update and recover. The existing separation of terminal state, process
+ownership, adapters, focus policy and presentation remains the architecture.
+Close the failure paths and qualify that assembled system before adding more
+supervision features; a redesign of the terminal or adapter stack is not the
+starting point.
+
+This is the current release work order. The September 27 integration spread
+below remains a feature backlog, not a prerequisite for this rollout. Milestone 4
+still owns the controlled 32-session experiment. Passing an old milestone or
+merging a feature does not qualify a new binary for distribution.
+
+#### Minimum supported slice
+
+Start with an explicitly labelled macOS Apple Silicon early-access release:
+local Codex and Claude Code, the existing terminal workspace, explicit account
+selection, and version-pinned observation capabilities. A signed arm64 binary
+with a macOS 14 deployment target is not evidence that macOS 14 through 27 all
+work. Publish the OS and CLI versions actually exercised with each release.
+Other CLIs retain their declared observation limits. Linux UI qualification,
+additional response-capable adapters, multiple windows, automatic focus changes,
+and new integrations remain outside this exit.
+
+Remote sessions, shared plans and phone companions keep their separate
+qualification rows. Do not advertise them as equivalent to the local desktop
+until account identity, reconnect and bounded fan-out are exercised. Preserve
+these implementations while restricting readiness claims to measured behavior.
+Next-prompt inference and automatic spending of saved resets are optional
+features, not dependencies of the minimum rollout. Their provider calls, account
+identity, logs and input behavior need their own reviewed contracts.
+
+#### Release blockers and accountable batches
+
+The evidence basis for this audit is main `61a87e5`, the complete review state of
+PRs #40, #43 and #44, and the live release inventory. Findings below distinguish
+source defects from missing acceptance. The owning module names are temporary
+write scopes; contributors still share feature ownership.
+
+| Order | Finding and current evidence | Required outcome | Acceptance before claiming readiness |
+| --- | --- | --- | --- |
+| R1, process lifetime | **Contract gap, reproduced platform failure.** `LiveConnection` starts services from the GUI. The [macOS 27 investigation](#macos-27-ends-a-quitting-apps-background-processes-september-28) shows that `setsid` and detached spawning do not escape its coalition; replacing the bundle or lacking BTM permission can kill every agent. | The platform launcher must make an independent launchd-owned service/broker responsible for process birth and supervision, with an explicit registration/disabled state. The GUI attaches to it. Keep service failure and reboot recovery distinct from GUI detach. Do not use an installer delay as the durability contract. | On a disposable qualified Mac installation: preserve child PID and terminal bytes through window close, GUI quit/crash and application replacement; exercise allowed/denied/unknown background permission, login item on/off, service crash and a real reboot. Reboot may resume a conversation; it must not be reported as same-process survival. Reuse the existing restore fixtures, then qualify the actual package. |
+| R2, input integrity | **Known current limit and pending repair.** Main accepts bounded single input frames. PR #43 prechecks the desktop socket queue then emits many frames; the service independently rejects a full PTY queue (`Service::write_input`). Socket acceptance cannot prove that the whole paste reached the child. | Agree a service-owned paste admission/completion contract before claiming large-paste atomicity. Keep encoding at the owner of the current terminal mode, reserve/check the service budget, bind a transfer to attachment/epoch, and distinguish rejection from delivery interrupted after admission. Old peers must refuse unsupported sizes visibly. A later implementation can use a bounded complete frame or a negotiated transfer; do not disguise a transfer as unacknowledged ordinary text. | Extend the existing live-connection and terminal-input fixtures: fill the service PTY queue before pasting, use a slow reader, disconnect after each chunk boundary, change bracketed-paste mode, switch focus during paste/IME, and repeat on the side shell. Compare actual PTY bytes and matching bracket markers; a refused paste sends no input, and interrupted delivery is explicit. PR #44 paste-plus-Return must use this same completion/ownership contract rather than a 150 ms guess. |
+| R3, account identity | **Shipped contract gap plus pending feature defects.** `withRemoteAccount` intentionally falls back to the machine sign-in if the selected plan file is absent, while `applyAccount` records the selected plan. PR #40 also resolves a reset by machine/CLI instead of the agent's selected plan and creates new consume IDs on retries. | Carry the chosen account identity through launch, usage and optional reset operations. Missing selected credentials must fail visibly before replacing a healthy agent or spending a reset. Never silently act as another plan. A reset needs a stable persisted operation ID, reconciliation after uncertain delivery, and a bounded retry record that survives helper/GUI failure. | Use disposable credential/provider stand-ins to check local/remote home and visiting plans, missing/unreadable setup tokens and Codex homes, malformed credit responses, all model-specific exhausted windows, reserve policy, wrong-CLI exclusion, timeout after server acceptance and restart before the reply is saved. Validate real read-only account identity separately; real consumption is not required for routine tests. |
+| R4, release and upgrade provenance | **Acceptance and enforcement gaps.** `package_macos.py release` validates the DMG staple and checks that current HEAD exists on a remote; it does not bind the staged app/DMG to that HEAD, version and qualification result. The latest published v0.5.0 targets `0ec13cb`, a separate release tree from this audit's main. | Produce one immutable package manifest linking source tree/dirty status, app version, toolchain/dependency pins, bundled notices/SBOM, app and DMG hashes, appcast signature and validation. Refuse publishing stale/mismatched artifacts. Exercise installation and the Sparkle transition, including recoverable registry/history migration and a documented recovery/rollback path. Keep signing-key recovery outside the repository. | Run the existing `package_macos.py verify --notarized` on the exact staged artifact, then verify the downloaded asset and appcast. Qualify Finder launch in a fresh user environment without developer tools or pre-existing BTM state; install an update with live sessions; recover after a failed update/migration. Record source and artifact digests together. Do not relabel source tests or the old 0.2.0 signature receipt as v0.5.0 acceptance. |
+| R5, operational bounds and support | **Measured coverage gaps and source-level pressure risks.** The gateway uses `ThreadingHTTPServer`; listing can spend eight seconds waiting and then probe every service serially at up to 0.3 s each, while the iOS request timeout is 15 s. `followNewHistory` still defers by a full second. Native UI/Metal and full TSan qualification have retained failures in the current review receipts. | Bound gateway clients, listing work and cancellation, preserve the local terminal under remote/output pressure, and make degraded health actionable. Record session counts/rates, history/log budgets and error causes. Extend the existing CLI with package/runtime diagnostics and a user-controlled redacted support export; the current developer `doctor` only establishes dependency/build readiness. | Start with the advertised early-access workload and a long-running reconnect/output soak; inspect memory, file descriptors, disk use, idle CPU and input/switch tails. Then run Milestone 4's controlled 32-session workload. Include dead endpoints and disconnected long-poll clients. Resolve or accurately scope the retained native-render and sanitizer failures before reusing that evidence; background Qt success alone is not GPU acceptance. |
+
+The R2 protocol repair landed in PR #43: one negotiated raw paste is encoded in
+the service's current terminal mode and admitted or refused as a whole. The
+next-prompt integration uses that receipt for both fill and paste-plus-Return,
+refuses known pending requests in the service, and bases submission on the last
+presented frame. Focused real-PTY admission, background Qt, ASan/UBSan and TSan
+checks are recorded with their source revisions; these do not close R1 or the
+remaining native GPU/package acceptance.
+
+R1 and R4 form the first complete delivery slice: install, start, detach, update,
+recover and uninstall without losing owned sessions or misidentifying an artifact.
+R2 and R3 can be implemented in parallel once their service/adaptor identity
+contracts are agreed. R5 supplies the rollout's operational limits and support
+procedure. A companion feature may remain experimental rather than delaying a
+local-only release, but an unqualified behavior must not remain an unconditional
+promise in the entry documentation.
+
+#### Persistent supervisor direction (September 29)
+
+Use one persistent per-user lapis supervisor, owned by launchd and started at
+login, with restart supervision. Boot-time startup before user login is a
+separate deployment mode, not the default: this workspace depends on the user's
+home, login keychain and graphical-session integration. A reboot can restore
+saved conversations after login; no daemon preserves a running process across
+machine reboot.
+
+The existing login item is a starting point, not that supervisor contract.
+`dev.lapis.desktop.restore.plist` has `RunAtLoad`, invokes the desktop binary
+with `--restore-agents --serve`, and has no keep-alive policy. The headless
+workspace currently hands control to the GUI and exits when the GUI opens.
+Making that job restart forever without changing the handoff would create a
+restart/ownership loop. Move the ownership boundary before enabling persistence.
+
+Recommended responsibilities and boundaries:
+
+- The supervisor owns session inventory, launch/stop/restart admission and durable
+  workspace mutations. GUI and CLI clients attach through authenticated per-user
+  local IPC; opening a window never transfers authoritative ownership. Preserve
+  single-writer registry and attachment generation checks during migration.
+- Keep each existing session service responsible for its PTY, terminal state,
+  history and adapter connection. Launch those services outside the GUI's
+  coalition, and explicitly define how a supervisor restart reconnects to live
+  services without duplicating or terminating them. The supervisor is not a
+  replacement for the terminal engine or a new provider gateway.
+- Codex's shared daemon remains an upstream subsystem. lapis supervises its own
+  session/client identities and processes through supported interfaces; it must
+  not assume ownership of every Codex session on the machine or globally stop
+  that daemon when a lapis agent closes. Claude and other CLIs keep independent
+  verified adapters.
+- Extract a headless lifecycle target using the existing C++/Qt Core services and
+  contracts, without requiring QML, a GPU or a visible window. Extend the owning
+  CLI with daemon status/start/stop and machine-readable health. Explicit stop,
+  disabled startup and crash restart must have distinct behavior; bound restart
+  storms and diagnostics. Do not hide a failed registration by spawning services
+  from the GUI again.
+- An update must coordinate compatible GUI, supervisor and session-service
+  versions. Existing children keep running where the protocol supports it;
+  incompatible migrations require an explicit staged recovery path. Do not let
+  removal of a bundle containing the running supervisor become the next lifetime
+  dependency. Package location, launchd registration and supported replacement
+  behavior are part of R1/R4 qualification, not incidental installer details.
+
+This is analogous to a shared Codex daemon in connection lifetime, while lapis
+owns a multi-CLI workspace rather than Codex's conversation implementation. Build
+it as the R1/R4 vertical slice: first one supervised local session and two
+reconnecting clients, then the existing workspace, login registration and upgrade
+path. Qualification must include supervisor crash/restart, simultaneous clients,
+GUI replacement, disabled background permission, graceful shutdown and real
+login/reboot. Persistence is a desired architecture; it is not implemented by
+this documentation change.
+
+#### Current PR disposition
+
+PR #41's artwork is on main. The remaining feature PRs already have substantive
+reviews; optional reviewer completion is not their blocker. Counts are a dated
+inventory, not severity scores: #40 has 33 unresolved threads, #43 has 15, and #44
+has 63. Several reports duplicate the same issue or question deliberate behavior.
+The complete snapshots and per-thread triage belong in the review work record;
+this document retains the architectural decisions and acceptance.
+
+- **#40, saved resets:** repair the account/operation identity and response-shape
+  cluster before merge. Preserve every exhausted model window. Separate unknown
+  delivery from definite refusal, bound helper lifetime/output and persisted
+  attempts, and validate per-plan credential destinations. Do not count a clean
+  stylistic review as a counterexample to an observed wrong-account path.
+- **#43, long paste:** make R2's delivery semantics reviewable first. Normal and
+  slow-reader success on an empty queue are valuable evidence but do not cover a
+  prefilled service queue or partial transport failure. Preserve explicit size
+  refusal and the side-shell notice without treating display-unit preferences as
+  the core defect. It touches input surfaces shared with #44; land the input
+  contract first and rebase the dependent work.
+- **#44, next-prompt suggestions:** keep it optional and outside this release's
+  critical path. In addition to R2, fix offer-identity accounting (identical text
+  is not the same offer), retain ordinary Tab when no navigation destination
+  exists, and prevent unrelated typing/selection from being submitted by a delayed
+  Return. Bound and classify local logs, declare exactly which context goes to the
+  configured model, and qualify impression/acceptance denominators independently
+  of replay scores. QObject and renderer lifetime warnings require source/API
+  verification before treating every generated warning as a defect.
+
+Late feedback on merged #38 also identifies review-tool hardening work. Track
+that as developer tooling, separate from user-facing release readiness; a pending
+optional reviewer is not itself a production defect.
+
+#### Qualification without duplicate testing
+
+Select the smallest affected rows of [the required-check matrix](../CONTRIBUTING.md#checks)
+for each batch. Use existing focused CTest cases and the background UI runner
+while iterating; tests must discriminate a failure or contract rather than repeat
+an implementation. One build owner per preset keeps receipts coherent. Keep
+sanitizer, real-adapter, native input/GPU and package results distinct. Reuse
+unchanged source evidence with its original revision and platform; rerun the
+assembled integration gate once after dependent changes are combined.
+
+Each release candidate needs one dated receipt mapping these gates to exact
+source and artifact hashes, exercised OS/CLI versions, commands/results, review
+basis, known limits and recovery instructions. One substantive review can suffice
+after focused findings are repaired and verified; additional optional reviews do
+not hold the candidate open. Known correctness failures and required acceptance
+remain gates. Publish first to the declared early-access cohort, collect failures
+against that exact artifact, and widen the support claim only after those gates
+are met. This audit has not performed a real reboot, installed an update, spent
+any reset or qualified a fresh native GPU build.
+
 ### Pseudo-production direction and integration spread (September 27)
 
 lapis is now run as the primary daily workspace: the signed Mac app with its
@@ -2755,7 +2951,11 @@ Except for the already-present pieces the rescoped rows below mark as
 verified, nothing here is implemented yet; each batch carries its own
 observable finish line before it is claimed.
 
-#### Work order
+#### Feature backlog after rollout reliability
+
+The [September 29 rollout gates](#broader-macos-rollout-readiness-september-29)
+take priority over these new capabilities. This table preserves the feature
+ordering once the supported daily-use slice is reliable.
 
 | Order | Batch | Gate |
 | --- | --- | --- |
@@ -2782,8 +2982,8 @@ these tables, not the parity statements.
 Splits and tiling, window arrangements with process restore, request-aware
 notifications, undo-close and the command palette are already at parity or
 better. Rectangular and multi-click selection, link hover feedback and
-terminal accessibility remain tracked terminal-fidelity gaps in the README
-status table; this re-ordering does not change their queue. The valuable
+terminal accessibility remain tracked terminal-fidelity gaps in the
+[status](status.md) table; this re-ordering does not change their queue. The valuable
 deltas are attention reach and ergonomics:
 
 | Feature | Direction | Acceptance |
@@ -2954,8 +3154,8 @@ the owning adapter document.
 
 ### Following milestones
 
-The [September 27 pseudo-production section](#pseudo-production-direction-and-integration-spread-september-27)
-orders the near-term batches; this table keeps the qualification exits. With
+The [September 29 rollout gates](#broader-macos-rollout-readiness-september-29)
+order the near-term reliability batches; this table keeps the qualification exits. With
 the two-session workspace assembled, the remaining qualification stages are
 scale, another independent adapter, and platform completion. A later Linux port
 still needs actual input, rendering and lifecycle evidence. These stages remain
@@ -2968,20 +3168,22 @@ planned; they are not implied by Milestone 3 passing.
 
 Dependency notices, a complete bundled inventory/SBOM and redistribution obligations
 must be closed before publishing binaries; the Mac app's are collected above. This release requirement is independent
-of a local milestone passing. Keep current implementation status in the README;
+of a local milestone passing. Keep current implementation status in [status](status.md);
 the tables here define work order and acceptance only.
 
-### The gold star cabochon icon (September 27)
+### The silk cabochon icon (September 28)
 
-The icon is a tall cabochon of solid lapis blue (#293D9B) with a raised rim
-and a gold (#E5BF67) six-ray star on #1C2234. Its simplified shape remains
-readable at 16 px. [assets/lapis.svg](../assets/lapis.svg) is the single SVG
-source for the app and website icons.
+The icon is a tall cabochon of lapis blue with a raised rim, a white six-ray
+star and a diagonal silk sheen band, on the dark #1C2234 tile. Its simplified
+shape remains readable at 16 px. [assets/lapis.svg](../assets/lapis.svg) is the
+single SVG source for the app and website icons.
 
 `package_macos.py icon` renders the Mac ICNS at every scale, the iPhone app
-icon, and the website SVG/PNG directly from that source. The iPhone export
-uses the tile bounds and background color for an opaque square, leaving corner
-masking to iOS. The phone's in-app LapisMark assets remain the stone alone.
+icon, the phone's in-app LapisMark and the website SVG/PNG directly from that
+source. The iPhone export uses the tile bounds and background color for an
+opaque square, leaving corner masking to iOS. The in-app LapisMark assets are
+the stone alone on transparency, regenerated at 48 and 72 px for its 24 pt
+toolbar frame.
 
 ### The phone follows the Mac's category order (September 28)
 
@@ -3226,6 +3428,146 @@ with it unspent at 88 percent weekly use, and one Codex account with a banked
 reset. `test_limit_resets.py` covers the rules and report parsing;
 `lapis_limit_resets_tests` drives the sweep through stand-ins for python3 and ssh.
 Not yet exercised: a real spend, and the keychain prompt on a Mac.
+
+### Predicting the next prompt (September 29)
+
+The goal is Cursor's Tab for prompts: when an agent finishes a turn, the prompt
+the person will likely type is ready at its cursor. A pilot on 40 prompts one
+person typed to Claude Code in September (Opus 5.5 given only the conversation
+before each, and that person's standing instructions; a second Opus call
+grading) found one of three guesses sendable as-is for 7, and the right intent
+for 17. Short replies were the predictable part: 5 of 7 prompts of four words or
+fewer, and all 4 approvals, against 2 of 33 longer prompts. Most longer prompts
+carried something the conversation did not: another agent's state, where the
+person was, a pasted meeting, a new idea. The model also over-guessed approval
+(a one- or two-word first guess 12 times, right twice). So the design offers a
+guess only when the model gives it at least `minConfidence` probability, as
+Cursor's retrained Tab shows fewer suggestions to be accepted more often, and it
+logs every guess to measure that threshold.
+
+- **Where it runs.** `NextPrompt` follows `Workspace::turnFinished`, which covers
+  Codex and Claude turns and requests but not terminal agents' output pauses.
+  `next_prompt.py context` reads the conversation where the agent runs (the
+  CLI's transcript, by the conversation id lapis knows, else the newest
+  interactive one in its folder), sent over ssh with the helper on stdin for
+  another machine, as limit resets and token counts are. `predict` runs on the
+  Mac through `claude -p` with tools, settings and MCP off, no saved session,
+  and `ANTHROPIC_API_KEY` removed, so it spends the signed-in plan and cannot
+  read the future from disk.
+- **What it sees.** The conversation's newest 24,000 characters, the agent's
+  screen (permission dialogs and errors are not in transcripts), one line for
+  every agent (title, category, status, waiting), the person's newest prompts
+  on that machine in the last six hours, the time, and `~/.claude/CLAUDE.md` as
+  priors.
+- **How it is offered.** `TerminalSurface.suggestion` draws the guess dim after
+  the cursor, covering only what it draws, and only while the agent is finished
+  or idle: never over a pending request, since Return in a permission dialog
+  would answer it (the view also refuses to send one then). With `tabFlow` (a
+  Claude Code or Codex agent while guessing is on), Tab sends a guess that
+  shows whole: one negotiated paste request with its Return included in the
+  service's atomic queue admission. Later typing follows that operation; no
+  GUI timer submits it. The service refuses submission while a known request
+  is pending. A longer or multi-line guess is only typed, as Option-Tab always
+  does, so nothing unseen is submitted. Both suggestion actions require the
+  negotiated receipt; older services refuse visibly until upgraded/restarted. Typing does not withdraw a guess; keys typed first are counted.
+  With nothing offered and nothing typed since arriving, Tab calls QML's
+  `tabAway`, which asks `Workspace::nextPriorityAttention` for a guess not yet
+  seen, then an unseen turn or a request, then a guess already seen (the longest
+  waiting within each, so Tab cannot bounce between two guesses while another
+  agent waits); when nothing waits, Tab goes to the program. Tab keeps its
+  meaning after typing (completion, Codex's queue) and without the flow (shells,
+  and CLIs such as OpenCode that switch modes with Tab). Surfacing never sends:
+  the person's key does, keeping "surfacing never approves" when agent output
+  could steer a guess. The model's prompt puts screens, transcripts and titles
+  in blocks fenced with a random tag the text cannot close, and says their
+  contents are material, not instructions.
+- **What it keeps.** `runtime/next_prompt.jsonl` in the data folder
+  (owner-only, one JSON object a line, `v` 2; an earlier build's log beside the
+  folder moves in) gives every guess an offer id (`<agent>:<launch>.<n>`,
+  unique across launches) and records `predicted` (candidates, probabilities,
+  category, threshold, whether offered), `seen` (first on screen in the active
+  window after a presented frame, once per offer even when two offers share
+  their words: the impression), `used` (service-admitted Tab or Option-Tab,
+  keys typed first, milliseconds after seen) and `withdrawn` (replaced by the next turn's guess, or the setting turned
+  off, and whether it had been seen), plus `failed` (the stage, context or
+  predict, and a stable reason category without raw error text) and `skipped`
+  (the hourly cap, which counts model calls). Log records are bounded to 1 MiB;
+  the active log rotates at 4 MiB with one owner-only backup. Helper stdout is
+  bounded to 1 MiB and stderr to 64 KiB; timeout, overflow, disable and
+  supersession stop its process group. Session and offer identity are captured
+  before input is sent and checked again for every receipt, so a document
+  switch or replaced offer cannot take credit. Admission is not proof of CLI
+  consumption, and lost replies are never replayed automatically. Turns of CLIs lapis does not guess for
+  record nothing. Acceptance is used over seen: a guess never on screen, or one
+  replaced before the person came, is not a refusal. `scripts/next_prompt_eval.py
+  log` reports it by category and confidence with the attempts behind it;
+  `--judge` grades the guesses seen but not used against the prompt typed
+  instead (read from the transcript by conversation and prompt number);
+  `replay` repeats the pilot on any machine's transcripts and sweeps the
+  threshold. Reports cover retained log records, not every historical turn:
+  unsupported CLIs and work cancelled by supersession or disable produce no
+  prediction outcome. The hourly cap reserves prediction attempts after context
+  extraction; failed process launches refund their reservation. Each attempt
+  can retry a malformed answer once, so the cap does not count provider requests
+  one-for-one.
+
+`scripts/next_prompt_eval.py replay` then repeated the test on 60 prompts typed
+since September 1, half on the Mac and half on the Linux test host, across
+Claude Code and Codex: one of three guesses was sendable for 10% and had the
+right intent for 42%; 44% of the 9 prompts of four words or fewer were
+sendable, against 4% of the 51 longer ones, and none of the 22 questions or 11
+new tasks. Opus 5.5's stated probabilities for its first guess clustered at 0.3
+to 0.4 (one reached 0.5). At a 0.4 threshold 27% of turns got an offer and a
+quarter of those were sendable, Cursor's break-even for showing a suggestion,
+with the right intent for 44%; at 0.5 almost nothing is offered. The default is
+0.4; the log will show whether that holds with lapis's state in the prompt.
+
+It is off by default: each prediction is a model call on the person's plan.
+Claude Code 2.1.285 has its own prompt suggestions (on unless
+`promptSuggestionEnabled` is false; they back off after 20 unused); lapis's
+guess covers them but does not turn them off. Past transcripts do not record
+lapis's state, so the replay cannot measure what the other agents' state adds;
+the log can.
+
+### Claude Code 2.1.281 to 2.1.285 (September 29)
+
+A changelog watcher opens an issue per Claude Code release with its lapis
+impact (#25, #26, #27, #34, #42). Reviewed against how lapis starts Claude:
+
+- **No mode now means auto mode.** 2.1.283 (third-party providers, telemetry off),
+  2.1.284 (every interactive session) and 2.1.285 (`claude -p` and the SDK)
+  start without a configured permission mode in auto mode instead of asking.
+  The Mac's forms always pass a mode (Full access by default, or
+  `newAgent.mode`), and restarts, reopens and splits reuse the flags an agent
+  started with, but an agent asked for without one (the phone can leave it out,
+  and `resumeAgent` takes it as optional) started with no flag. Now it gets the
+  forms' default, or the nearest mode that CLI offers as the forms choose,
+  unless the CLI's `harnessArguments` already choose one (by option name, so
+  `--permission-mode=plan` counts). lapis's
+  own `claude -p` calls (next-prompt guesses) run with tools off, so the
+  headless default does not reach them.
+- **Requests.** 2.1.281 asks before a recursive `rm` of command-substitution
+  output even in Full access, then denies after two minutes so unattended
+  sessions continue; these arrive through the permission hook like any request.
+  2.1.284's "Yes, but ask again next time" is an auto-mode answer; Claude
+  requests are answered in the terminal, so it needs no routing here. Nothing
+  lapis types for the person may answer a pending request; the next-prompt Tab
+  (#44) sends nothing while one is pending.
+- **Background commands stop after 30 minutes** (2.1.285) unless Claude asks
+  for up to two hours; `BASH_MAX_TIMEOUT_MS` raises the ceiling and
+  `BASH_DEFAULT_TIMEOUT_MS` the default for foreground and background alike.
+  Session ownership is unchanged: this is the CLI's policy for its own
+  children, documented for users in [agents](agents.md#long-jobs).
+- **Fixes lapis benefits from:** bracketed paste after a mode reset (2.1.282)
+  and fast type-ahead (2.1.283), which lapis's paste and Tab rely on; synchronous
+  hooks no longer hanging on a background child (2.1.285); and resume fixes for
+  interrupted tool calls, pending prompts and malformed compaction markers.
+- **Not applicable to how lapis starts Claude:** gateway, SDK, VS Code,
+  Bedrock/Vertex and custom `ANTHROPIC_BASE_URL` items.
+
+Still open: the Claude qualification scripts pin `SUPPORTED_VERSION` 2.1.280
+and refuse newer CLIs. Their fixtures drive a GLM model through a local model
+router, so the bump waits for a run on a machine with that router.
 
 ## Contracts to preserve
 

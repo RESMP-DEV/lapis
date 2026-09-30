@@ -28,6 +28,7 @@ add_library(lapis_desktop_view STATIC
     src/limit_resets.cpp src/limit_resets.hpp
     src/usage.cpp src/usage.hpp
     src/usage_limits.cpp src/usage_limits.hpp
+    src/next_prompt.cpp src/next_prompt.hpp
     src/harness_models.cpp src/harness_models.hpp
     src/attention_view.cpp
     src/keymap.cpp src/keymap.hpp
@@ -64,6 +65,10 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/limit_resets.
 file(READ src/limit_resets.py LAPIS_LIMIT_RESETS_SCRIPT)
 configure_file(src/limit_resets_script.hpp.in
     "${CMAKE_CURRENT_BINARY_DIR}/generated/limit_resets_script.hpp" @ONLY)
+# The next-prompt helper, run here or sent to another machine, compiled in as text.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/next_prompt.py)
+file(READ src/next_prompt.py LAPIS_NEXT_PROMPT_SCRIPT)
+configure_file(src/next_prompt_script.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/next_prompt_script.hpp" @ONLY)
 target_include_directories(lapis_desktop_view PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(lapis_desktop_view PRIVATE lapis_project_options lapis_session_platform
     PUBLIC lapis_terminal lapis_attention lapis_session_launch lapis_local_protocol
@@ -156,6 +161,10 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_harness_models_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME harness-models COMMAND lapis_harness_models_tests)
     set_tests_properties(harness-models PROPERTIES TIMEOUT 60)
+    add_executable(lapis_next_prompt_tests tests/next_prompt_test.cpp)
+    target_link_libraries(lapis_next_prompt_tests PRIVATE lapis_project_options lapis_desktop_view)
+    add_test(NAME next-prompt COMMAND lapis_next_prompt_tests)
+    set_tests_properties(next-prompt PROPERTIES TIMEOUT 30)
     add_executable(lapis_usage_tests tests/usage_test.cpp)
     target_link_libraries(lapis_usage_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME usage COMMAND lapis_usage_tests)

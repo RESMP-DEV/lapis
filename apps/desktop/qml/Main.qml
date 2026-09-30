@@ -3269,6 +3269,31 @@ ApplicationWindow {
                     interactive: visible && window.visible && !window.inputBlocked && document !== null
                                  && (preview.active || document.inputReady || document.historyActive)
                     focus: visible && window.visible && !window.inputBlocked && !window.sideTerminalOpen
+                    // The next prompt lapis predicted for the agent, while it
+                    // waits for a prompt (never over a request, where Return
+                    // would answer it): Tab sends it (Option-Tab only types it), and
+                    // Tab with nothing offered moves to the next agent that
+                    // needs you, so a day can be spent pressing Tab.
+                    readonly property bool predicting: typeof nextPrompt !== "undefined" && nextPrompt !== null
+                                                       && nextPrompt.enabled && document !== null
+                    tabFlow: predicting && ["claude", "codex"].indexOf(document.harnessId) >= 0
+                    suggestion: predicting && nextPrompt.revision >= 0 && !document.historyActive
+                                && ["finished", "idle"].indexOf(document.statusKind) >= 0
+                                ? nextPrompt.suggestion(document.sessionId) : ""
+                    onSuggestionSeen: (sessionId, offerKey) => {
+                        if (typeof nextPrompt !== "undefined" && nextPrompt !== null)
+                            nextPrompt.seenOffer({session: sessionId, offer: offerKey})
+                    }
+                    onSuggestionUsed: (sessionId, offerKey, sent, typedFirst) => {
+                        if (typeof nextPrompt !== "undefined" && nextPrompt !== null)
+                            nextPrompt.used(sessionId, sent, typedFirst, offerKey)
+                    }
+                    // Follows every offer, even one with the same words as the last.
+                    suggestionKey: suggestion.length > 0 && nextPrompt.revision >= 0
+                                   ? nextPrompt.offerKey(document.sessionId) : ""
+                    tabAway: function() {
+                        return predicting && workspace.nextPriorityAttention(nextPrompt.readyAgents())
+                    }
                     // New and restarted agents start at this grid, not resized
                     // just after they drew.
                     onGridSizeChanged: workspace.setLaunchSize(gridSize)
@@ -3410,6 +3435,47 @@ ApplicationWindow {
                                     historyBanner.session.returnToLive()
                                 preview.deferTerminalFocus()
                             }
+                        }
+                    }
+                }
+
+                // A paste lapis could not send says why, over the bottom of the
+                // terminal, for a few seconds.
+                Rectangle {
+                    id: pasteNote
+                    objectName: "pasteNote"
+                    property string reason: ""
+                    visible: reason.length > 0 && liveTerminal.visible
+                    z: 6
+                    width: Math.min(liveTerminal.width - 16, pasteNoteLabel.implicitWidth + 16)
+                    height: pasteNoteLabel.height + 12
+                    x: liveTerminal.x + (liveTerminal.width - width) / 2
+                    y: liveTerminal.y + liveTerminal.height - height - 8
+                    color: window.surfaceColor
+                    border.color: window.faultColor
+                    border.width: 1
+                    radius: window.chromeRadius
+                    PlainLabel {
+                        id: pasteNoteLabel
+                        anchors.centerIn: parent
+                        width: parent.width - 16
+                        text: pasteNote.reason
+                        color: window.textColor
+                        wrapMode: Text.WordWrap
+                    }
+                    Timer {
+                        id: pasteNoteTimer
+                        interval: 8000
+                        onTriggered: pasteNote.reason = ""
+                    }
+                    Connections {
+                        target: liveTerminal
+                        function onPasteRefused(reason) {
+                            pasteNote.reason = reason
+                            pasteNoteTimer.restart()
+                        }
+                        function onDocumentChanged() {
+                            pasteNote.reason = ""
                         }
                     }
                 }
@@ -4141,6 +4207,8 @@ ApplicationWindow {
     // The side terminal: over the stage's right half, above the agents.
     Rectangle {
         id: sidePanel
+        property string pasteReason: ""
+        Timer { id: sidePasteTimer; interval: 8000; onTriggered: sidePanel.pasteReason = "" }
         objectName: "sideTerminal"
         parent: stage
         z: 60
@@ -4165,6 +4233,11 @@ ApplicationWindow {
                 ToolTip.text: hoveredLink
                 ToolTip.delay: 250
                 objectName: "sideTerminalSurface"
+                onPasteRefused: (reason) => {
+                    sidePanel.pasteReason = reason
+                    sidePasteTimer.restart()
+                }
+                onDocumentChanged: sidePanel.pasteReason = ""
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 document: window.terminalsAvailable ? terminals.current : null
@@ -4184,6 +4257,14 @@ ApplicationWindow {
                 wrapMode: Text.WordWrap
                 color: window.mutedTextColor
                 text: window.terminalsAvailable && terminals.error.length > 0 ? terminals.error : qsTr("Starting a shell…")
+            }
+            PlainLabel {
+                objectName: "sidePasteRefusal"
+                visible: sidePanel.pasteReason.length > 0
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: window.faultColor
+                text: sidePanel.pasteReason
             }
         }
     }

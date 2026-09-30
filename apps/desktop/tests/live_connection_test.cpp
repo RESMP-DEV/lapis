@@ -810,6 +810,12 @@ void capabilities_downgrade_without_losing_supported_links() {
         const auto reject = wire::encode_status(
             {wire::StatusCode::rejected, QStringLiteral("Invalid local session message")});
         first.send(wire::Kind::status, reject);
+        auto phase = f.accept();
+        const auto without_paste = f.request(phase);
+        require(!without_paste.paste_transactions && without_paste.attention_phase &&
+                    without_paste.hyperlinks,
+                "Paste downgrade must preserve other capabilities");
+        phase.send(wire::Kind::status, reject);
         auto links = f.accept();
         const auto retried = f.request(links);
         require(retried.hyperlinks && !retried.attention_phase &&
@@ -842,6 +848,12 @@ void capabilities_downgrade_without_losing_supported_links() {
     unsupported_first.send(wire::Kind::status,
                            wire::encode_status({wire::StatusCode::rejected,
                                                 QStringLiteral("Invalid local session message")}));
+    auto paste_retry = unsupported.accept();
+    require(!unsupported.request(paste_retry).paste_transactions,
+            "Paste capability did not downgrade");
+    paste_retry.send(wire::Kind::status,
+                     wire::encode_status({wire::StatusCode::rejected,
+                                          QStringLiteral("Invalid local session message")}));
     auto unsupported_retry = unsupported.accept();
     const auto unsupported_request = unsupported.request(unsupported_retry);
     require(unsupported_request.hyperlinks, "Phase downgrade discarded link capability");

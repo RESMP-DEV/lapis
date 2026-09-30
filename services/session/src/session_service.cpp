@@ -502,7 +502,7 @@ class SessionService final : public QObject {
         TerminalLimits result;
         result.max_cells = wire::max_cells;
         result.max_grapheme_codepoints = wire::max_codepoints;
-        result.max_input_bytes = std::size_t{64} * 1024U;
+        result.max_input_bytes = static_cast<std::size_t>(wire::max_paste_bytes);
         return result;
     }
     // Beside the service's endpoint, in lapis's runtime folder, unless
@@ -801,14 +801,16 @@ class SessionService final : public QObject {
             pending_.remove(incoming);
             disconnect(incoming, nullptr, this, nullptr);
             if (request.mode == wire::AttachMode::join)
-                join(incoming, request.hyperlinks);
+                join(incoming, request.hyperlinks, request.paste_transactions);
             else
-                activate(incoming, request.hyperlinks, request.attention_phase);
+                activate(incoming, request.hyperlinks, request.attention_phase,
+                         request.paste_transactions);
         } catch (const std::exception& error) {
             reject_attachment(incoming, QString::fromUtf8(error.what()));
         }
     }
-    void activate(QLocalSocket* incoming, bool hyperlinks, bool attention_phase) {
+    void activate(QLocalSocket* incoming, bool hyperlinks, bool attention_phase,
+                  bool paste_transactions) {
         if (generation_ == std::numeric_limits<quint64>::max()) {
             send_status(incoming, wire::StatusCode::overloaded, "Attachment generation overflow");
             incoming->disconnectFromServer();
@@ -833,6 +835,8 @@ class SessionService final : public QObject {
         client_ = incoming;
         client_hyperlinks_ = hyperlinks;
         client_attention_phase_ = attention_phase;
+        client_paste_transactions_ = paste_transactions;
+        client_paste_id_ = 0;
         client_wanted_.reset();
         attention_dirty_ = true;
         if (codex_observer_ && pty_requested_ && !codex_state_->connected() &&
@@ -854,9 +858,11 @@ class SessionService final : public QObject {
     void hello() {
         if (!client_ || !process_started_ || stopping_)
             return;
-        client_->write(wire::frame(
-            wire::Kind::hello,
-            wire::encode_hello({.attachment = attachment_, .pid = quint64(pty_.processId())})));
+        client_->write(
+            wire::frame(wire::Kind::hello,
+                        wire::encode_hello({.attachment = attachment_,
+                                            .pid = quint64(pty_.processId()),
+                                            .paste_transactions = client_paste_transactions_})));
         dirty_ = true;
         schedule();
     }
@@ -1014,10 +1020,20 @@ class SessionService final : public QObject {
             acknowledge(frame.payload);
             return;
         }
+        if (frame.kind == wire::Kind::paste_request) {
+            if (!ready_ || !client_paste_transactions_)
+                throw std::runtime_error("Paste transaction was not negotiated or synchronized");
+            const auto request = wire::decode_paste_request(frame.payload);
+            if (request.attachment != attachment_)
+                throw std::runtime_error("Stale paste attachment");
+            claim_size(client_wanted_);
+            paste_input(client_, request, client_paste_id_);
+            return;
+        }
         const auto control = wire::decode_control(frame.payload);
         if (control.attachment != attachment_ || !ready_)
             throw std::runtime_error("Stale attachment or session is not ready for input");
-        if (control.payload.size() > qsizetype{64} * 1024)
+        if (control.payload.size() > wire::max_input_bytes)
             throw std::runtime_error("Input message too large");
         QByteArray bytes;
         switch (frame.kind) {
@@ -1077,6 +1093,36 @@ class SessionService final : public QObject {
         const auto bytes = input_bytes(kind, payload);
         if (!bytes.isEmpty() && !pty_.writeBytes(bytes))
             throw std::runtime_error("PTY input queue full");
+    }
+    void paste_input(QLocalSocket* destination, const wire::PasteRequest& request,
+                     quint64& last_id) {
+        if (request.request_id <= last_id)
+            throw std::runtime_error("Paste request was already submitted; it was not repeated");
+        last_id = request.request_id;
+        wire::PasteResult result{request.attachment, request.request_id, false, {}};
+        try {
+            if (request.submit && attention_state() && !attention_state()->pending().empty())
+                throw std::runtime_error(
+                    "Agent has a pending request; automatic paste-plus-Return was refused");
+            auto bytes = input_bytes(wire::Kind::paste, request.text);
+            if (request.submit) {
+                const auto enter = terminal_.encode_key(TerminalKey::enter, {});
+                bytes.append(enter.data(), static_cast<qsizetype>(enter.size()));
+            }
+            // One queue admission includes both bracket markers and optional
+            // Return. Existing pending input competes for this same budget.
+            result.queued = pty_.writeBytes(bytes);
+            if (!result.queued)
+                result.message = QStringLiteral(
+                    "PTY input queue full or child unavailable; paste was not queued");
+        } catch (const std::exception& error) {
+            result.message = QString::fromUtf8(error.what()).left(1000);
+        }
+        const auto frame = wire::frame(wire::Kind::paste_result, wire::encode_paste_result(result));
+        if (!destination || destination->bytesToWrite() + frame.size() > wire::max_frame_bytes ||
+            destination->write(frame) != frame.size())
+            throw std::runtime_error(
+                "Paste result could not be delivered; do not retry automatically");
     }
     static TerminalSize decode_size(const QByteArray& payload) {
         if (payload.size() != 4)
@@ -1166,6 +1212,8 @@ class SessionService final : public QObject {
         quint64 ready_sequence{};
         bool ready{};
         bool hyperlinks{};
+        bool paste_transactions{};
+        quint64 paste_id{};
         bool in_flight{};
         bool dirty{true};
         std::optional<TerminalSize> wanted;
@@ -1192,7 +1240,7 @@ class SessionService final : public QObject {
             return view->socket && view->dirty && (view->ready || !view->in_flight);
         });
     }
-    void join(QLocalSocket* incoming, bool hyperlinks) {
+    void join(QLocalSocket* incoming, bool hyperlinks, bool paste_transactions) {
         if (!process_started_ || views_.size() >= max_views ||
             generation_ == std::numeric_limits<quint64>::max()) {
             send_status(incoming, wire::StatusCode::overloaded,
@@ -1206,6 +1254,7 @@ class SessionService final : public QObject {
         view->id = generation_;
         view->socket = incoming;
         view->hyperlinks = hyperlinks;
+        view->paste_transactions = paste_transactions;
         view->attachment = {.identity = identity_, .generation = generation_};
         const auto id = view->id;
         views_.push_back(std::move(view));
@@ -1213,9 +1262,10 @@ class SessionService final : public QObject {
         connect(incoming, &QLocalSocket::readyRead, this, [this, id] { receive_view(id); });
         connect(incoming, &QLocalSocket::bytesWritten, this, [this] { schedule(); });
         connect(incoming, &QLocalSocket::disconnected, this, [this, id] { drop_view(id); });
-        incoming->write(wire::frame(wire::Kind::hello,
-                                    wire::encode_hello({.attachment = views_.back()->attachment,
-                                                        .pid = quint64(pty_.processId())})));
+        incoming->write(wire::frame(
+            wire::Kind::hello, wire::encode_hello({.attachment = views_.back()->attachment,
+                                                   .pid = quint64(pty_.processId()),
+                                                   .paste_transactions = paste_transactions})));
         QTimer::singleShot(ack_timer_.interval(), this, [this, id] {
             if (const auto* view = find_view(id); view && !view->ready)
                 drop_view(id, wire::StatusCode::rejected,
@@ -1332,10 +1382,20 @@ class SessionService final : public QObject {
             schedule();
             return;
         }
+        if (frame.kind == wire::Kind::paste_request) {
+            if (!view.ready || !view.paste_transactions)
+                throw std::runtime_error("Paste transaction was not negotiated or synchronized");
+            const auto request = wire::decode_paste_request(frame.payload);
+            if (request.attachment != view.attachment)
+                throw std::runtime_error("Stale paste attachment");
+            claim_size(view.wanted, view.id);
+            paste_input(view.socket, request, view.paste_id);
+            return;
+        }
         const auto control = wire::decode_control(frame.payload);
         if (control.attachment != view.attachment || !view.ready)
             throw std::runtime_error("Stale attachment or view is not ready for input");
-        if (control.payload.size() > qsizetype{64} * 1024)
+        if (control.payload.size() > wire::max_input_bytes)
             throw std::runtime_error("Input message too large");
         if (frame.kind == wire::Kind::resize) {
             view.wanted = decode_size(control.payload);
@@ -1395,6 +1455,8 @@ class SessionService final : public QObject {
     bool ready_{};
     bool client_hyperlinks_{};
     bool client_attention_phase_{};
+    bool client_paste_transactions_{};
+    quint64 client_paste_id_{};
     bool snapshot_in_flight_{};
     bool process_started_{};
     bool stopping_{};
