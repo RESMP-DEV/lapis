@@ -63,13 +63,23 @@ class SignInTest(unittest.TestCase):
                     {"name": "first", "email": "a@example.com", "home": "local"},
                     {"name": "second", "email": "b@example.com", "home": "gpubox"},
                     {"name": "third", "email": "c@example.com", "home": "gpubox"},
+                    {"name": "../escape", "email": "d@example.com"},
+                    {"name": None, "email": "e@example.com"},
+                    {"name": "fourth", "email": None, "machines": None},
+                    {"name": "fifth", "email": "f@example.com", "machines": ["spare"]},
                 ],
                 "codex": [
-                    {"name": "x", "email": "x@example.com", "machines": ["spare"]}
+                    {"name": "x", "email": "x@example.com", "machines": ["other"]}
                 ],
             },
         }
-        self.assertEqual(accounts.plan_machines(config), ["devbox", "gpubox", "spare"])
+        third, fifth = config["accounts"]["claude"][2], config["accounts"]["claude"][6]
+        self.assertEqual(accounts.plan_machines(config, third), ["devbox", "gpubox"])
+        self.assertEqual(
+            accounts.plan_machines(config, fifth),
+            ["devbox", "spare"],
+            "a token goes to its own plan's machines, never another plan's",
+        )
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / "claude").mkdir()
@@ -91,8 +101,25 @@ class SignInTest(unittest.TestCase):
                 ),
             ):
                 accounts.command_sign_in(config, ["gpubox"], ask)
-        self.assertEqual(len(asked), 2)  # first already has a token
-        self.assertEqual(added, [("third", "c@example.com", ["gpubox"])])
+                # Unusable names and missing emails are skipped before any
+                # path is built from them; first already has a token.
+                self.assertEqual(len(asked), 3)
+                self.assertEqual(
+                    added,
+                    [
+                        ("third", "c@example.com", ["gpubox"]),
+                        ("fifth", "f@example.com", ["gpubox"]),
+                    ],
+                )
+                added.clear()
+                accounts.command_sign_in(config, None, ask)
+        self.assertEqual(
+            added,
+            [
+                ("third", "c@example.com", ["devbox", "gpubox"]),
+                ("fifth", "f@example.com", ["devbox", "spare"]),
+            ],
+        )
 
 
 class TokenTest(unittest.TestCase):

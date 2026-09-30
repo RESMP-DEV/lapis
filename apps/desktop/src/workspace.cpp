@@ -1990,6 +1990,21 @@ QString Workspace::agentAccount(const QString& id) const {
     const auto* own = accounts_.own(cli, agentMachine(*entry));
     return own != nullptr ? own->name : QString();
 }
+QString Workspace::agentPlanCredential(const QString& id) const {
+    const auto entry = agents_.constFind(id);
+    if (entry == agents_.cend() || entry->account.isEmpty())
+        return {};
+    const auto cli = accountCli(entry->harness);
+    const auto* account = accounts_.find(cli, entry->account);
+    const auto machine = agentMachine(*entry);
+    if (account == nullptr || (account->hasHome && account->home == machine))
+        return {};
+    const auto kept = cli == QLatin1String("claude")
+                          ? QStringLiteral("claude/%1.token").arg(account->name)
+                          : QStringLiteral("codex/") + account->name;
+    return machine.isEmpty() ? QDir(accountsRoot()).filePath(kept)
+                             : QStringLiteral("~/.lapis/accounts/") + kept;
+}
 bool Workspace::canSwitchAccount(const QString& id) const {
     const auto entry = agents_.constFind(id);
     if (entry == agents_.cend())

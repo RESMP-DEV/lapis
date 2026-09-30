@@ -104,8 +104,13 @@ QByteArray claude_code_credentials() {
     CFTypeRef found = nullptr;
     const OSStatus status = SecItemCopyMatching(query, &found);
     CFRelease(query);
-    if (status != errSecSuccess || found == nullptr)
+    // Anything but data (or a failure that still set a result) is released
+    // and ignored.
+    if (status != errSecSuccess || found == nullptr || CFGetTypeID(found) != CFDataGetTypeID()) {
+        if (found != nullptr)
+            CFRelease(found);
         return {};
+    }
     const auto* data = static_cast<CFDataRef>(found);
     QByteArray stored(reinterpret_cast<const char*>(CFDataGetBytePtr(data)),
                       static_cast<qsizetype>(CFDataGetLength(data)));

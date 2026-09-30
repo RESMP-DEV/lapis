@@ -12,15 +12,17 @@
 #include <QJsonObject>
 #include <QSaveFile>
 
-#include <limits>
 #include <thread>
 
 namespace lapis::desktop {
 namespace {
 constexpr int kSweepMs = 5 * 60 * 1000;
 constexpr int kFirstSweepMs = 60 * 1000;
-constexpr int kHelperTimeoutMs = 90 * 1000;
+// The helper's requests can take 200 seconds between them (two accounts, each
+// read, spent and read again), plus the ssh connection.
+constexpr int kHelperTimeoutMs = 240 * 1000;
 constexpr qint64 kRetryLaterMs = qint64{60} * 60 * 1000;
+constexpr qint64 kSettledMs = qint64{8} * 24 * 60 * 60 * 1000;
 const QStringList& agentClis() {
     static const QStringList clis{QStringLiteral("claude"), QStringLiteral("codex")};
     return clis;
@@ -58,7 +60,10 @@ LimitResets::LimitResets(Machines machines, Agent agent, Program program, Creden
       program_(std::move(program)), credentials_(std::move(credentials)),
       script_path_(QDir(folder).filePath(QStringLiteral("limit_resets.py"))) {
     QSaveFile script(script_path_);
-    if (script.open(QIODevice::WriteOnly)) {
+    if (!QDir().mkpath(folder) || !script.open(QIODevice::WriteOnly)) {
+        qWarning() << "Limit resets: cannot write the helper on this Mac:" << script_path_
+                   << script.errorString();
+    } else {
         script.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
         script.write(kLimitResetsScript);
         if (!script.commit())
@@ -75,7 +80,7 @@ LimitResets::~LimitResets() {
             process->kill();
 }
 
-void LimitResets::setSettings(LimitResetSettings settings) {
+void LimitResets::setSettings(const LimitResetSettings& settings) {
     settings_ = settings;
     if (!settings_.automatic) {
         timer_.stop();
@@ -90,17 +95,19 @@ void LimitResets::setSettings(LimitResetSettings settings) {
 
 void LimitResets::sweep() {
     for (const auto& machine : machines_())
-        run({machine, {}});
+        run({.machine = machine, .asked = {}, .credential = {}});
 }
 
 bool LimitResets::canUseNow(const QString& id) const {
-    return agentClis().contains(agent_(id).second);
+    return agentClis().contains(agent_(id).cli);
 }
 
 void LimitResets::useNow(const QString& id) {
-    const auto [machine, cli] = agent_(id);
-    if (agentClis().contains(cli))
-        run({machine, cli});
+    auto agent = agent_(id);
+    if (agentClis().contains(agent.cli))
+        run({.machine = std::move(agent.machine),
+             .asked = std::move(agent.cli),
+             .credential = std::move(agent.credential)});
 }
 
 void LimitResets::run(const Check& check) {
@@ -111,7 +118,7 @@ void LimitResets::run(const Check& check) {
         return;
     }
     running_.insert(check.machine, nullptr);
-    if (!check.machine.isEmpty() || !credentials_) {
+    if (!check.machine.isEmpty() || !check.credential.isEmpty() || !credentials_) {
         start(check, {});
         return;
     }
@@ -131,10 +138,15 @@ void LimitResets::run(const Check& check) {
 
 QStringList LimitResets::arguments(const Check& check, bool withCredentials) const {
     QStringList arguments;
-    if (settings_.automatic)
+    // Asking for one CLI's reset spends that one alone.
+    if (settings_.automatic && check.asked.isEmpty())
         arguments << QStringLiteral("--apply");
     if (!check.asked.isEmpty())
         arguments << QStringLiteral("--now") << check.asked;
+    if (!check.credential.isEmpty())
+        arguments << (check.asked == QLatin1String("claude") ? QStringLiteral("--claude-token-file")
+                                                             : QStringLiteral("--codex-home"))
+                  << check.credential;
     arguments << QStringLiteral("--min-blocked-minutes")
               << QString::number(settings_.minBlockedMinutes) << QStringLiteral("--keep")
               << QString::number(settings_.keepCredits) << QStringLiteral("--salvage-hours")
@@ -214,14 +226,17 @@ void LimitResets::note(const Check& check, const QJsonObject& account, qint64 no
     const auto decision = account.value(QStringLiteral("decision")).toString();
     const auto result = account.value(QStringLiteral("result")).toString();
     const auto key = account.value(QStringLiteral("attempt")).toString();
-    // Nothing to reset yet, a throttle or a lost answer is tried again later;
-    // any other answer settles the attempt.
+    // Nothing to reset yet, a throttle, a server error or a lost answer is
+    // tried again later; any other answer settles the attempt. Past keys are
+    // forgotten once they can no longer come back.
     const bool later =
         result == QLatin1String("nothing_to_reset") || result == QLatin1String("rate_limited") ||
-        result == QLatin1String("http_429") || result.startsWith(QLatin1String("error: "));
+        result == QLatin1String("http_429") || result.startsWith(QLatin1String("http_5")) ||
+        result.startsWith(QLatin1String("error: "));
+    auto& attempted = attempted_[check.machine];
+    attempted.removeIf([nowMs](const auto& entry) { return entry.value() <= nowMs; });
     if (!key.isEmpty() && !result.isEmpty())
-        attempted_[check.machine][key] =
-            later ? nowMs + kRetryLaterMs : std::numeric_limits<qint64>::max();
+        attempted[key] = nowMs + (later ? kRetryLaterMs : kSettledMs);
     if (result == QLatin1String("reset")) {
         const auto email = account.value(QStringLiteral("email")).toString();
         const auto title = account.value(QStringLiteral("credit"))

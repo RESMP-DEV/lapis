@@ -3,6 +3,7 @@ salvage rules, and reading the accounts' own reports."""
 
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -139,6 +140,42 @@ class PlanTests(unittest.TestCase):
         self.assertTrue(key.startswith("now|claude|e|launch|1|"))
 
 
+def sweep_arguments(**changes):
+    values = dict(
+        min_blocked_minutes=60,
+        keep=0,
+        salvage_hours=12,
+        attempted=[],
+        apply=False,
+        now=None,
+        claude_credentials_stdin=False,
+        claude_token_file=None,
+        codex_home=None,
+    )
+    values.update(changes)
+    return limit_resets.argparse.Namespace(**values)
+
+
+class ModelCapTests(unittest.TestCase):
+    def test_an_exhausted_model_cap_must_be_cleared_too(self):
+        windows = {
+            "five_hour": (1.0, NOW + 3 * HOUR),
+            "seven_day": (0.7, NOW + 2 * 24 * HOUR),
+            "seven_day_opus": (1.0, NOW + 2 * 24 * HOUR),
+        }
+        self.assertEqual(plan(windows)[:2], (None, "incomplete-coverage"))
+        clears_opus = credit(clears=["five_hour", "seven_day", "seven_day_opus"])
+        self.assertEqual(plan(windows, clears_opus)[0], "restore")
+
+    def test_a_busy_model_cap_counts_toward_salvage(self):
+        windows = {
+            "seven_day": (0.1, NOW + 2 * 24 * HOUR),
+            "seven_day_sonnet": (0.8, NOW + 2 * 24 * HOUR),
+        }
+        expiring = credit(expires=NOW + 6 * HOUR)
+        self.assertEqual(plan(windows, expiring)[:2], ("salvage", "expiring"))
+
+
 class ReportTests(unittest.TestCase):
     def test_claude_reports_its_windows_and_selected_reset(self):
         usage = {
@@ -218,12 +255,125 @@ class ReportTests(unittest.TestCase):
             with self.assertRaises(limit_resets.Unavailable):
                 limit_resets.claude_token(stale)
 
+    def test_codex_reports_its_windows_and_soonest_reset(self):
+        answers = {
+            "/wham/usage": {
+                "email": "someone@example.com",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 100,
+                        "limit_window_seconds": 5 * HOUR,
+                        "reset_at": NOW + 2 * HOUR,
+                    },
+                    "secondary_window": {
+                        "used_percent": 40,
+                        "limit_window_seconds": 7 * 24 * HOUR,
+                        "reset_at": NOW + 3 * 24 * HOUR,
+                    },
+                },
+            },
+            "/wham/rate-limit-reset-credits": {
+                "credits": [
+                    {"title": "No id", "expires_at": NOW + HOUR},
+                    {"id": "used", "status": "redeemed", "expires_at": NOW + HOUR},
+                    {"id": "later", "expires_at": NOW + 9 * 24 * HOUR},
+                    {
+                        "id": "soon",
+                        "title": "Banked",
+                        "expires_at": NOW + 2 * 24 * HOUR,
+                    },
+                ]
+            },
+        }
+
+        def answer(url, headers, body=None, timeout=15):
+            return 200, answers[url.removeprefix(limit_resets.CODEX_API)]
+
+        with tempfile.TemporaryDirectory() as home:
+            Path(home, "auth.json").write_text(
+                json.dumps({"tokens": {"access_token": "a", "account_id": "acct"}})
+            )
+            with patch.object(limit_resets, "request", answer):
+                account = limit_resets.Codex(home)
+                windows, spend = account.read()
+        self.assertEqual(account.email, "someone@example.com")
+        self.assertEqual(
+            windows,
+            {
+                "five_hour": (1.0, NOW + 2 * HOUR),
+                "seven_day": (0.4, NOW + 3 * 24 * HOUR),
+            },
+        )
+        self.assertEqual(
+            (spend["id"], spend["title"], spend["remaining"]), ("soon", "Banked", 2)
+        )
+
+    def test_a_retried_spend_reuses_its_request_id(self):
+        sent = []
+
+        def answer(url, headers, body=None, timeout=15):
+            sent.append(body)
+            return 200, {"result": "reset"}
+
+        claude = limit_resets.Claude.__new__(limit_resets.Claude)
+        claude.headers, claude.org = {}, "org"
+        with patch.object(limit_resets, "request", answer):
+            claude.spend(credit(), "block|k")
+            claude.spend(credit(), "block|k")
+            claude.spend(credit(), "block|other")
+        ids = [body["request_id"] for body in sent]
+        self.assertEqual(ids[0], ids[1])
+        self.assertNotEqual(ids[0], ids[2])
+
+    def test_a_lost_answer_is_a_spend_only_if_the_account_reads_as_reset(self):
+        class Account:
+            cli = "claude"
+            took = False
+
+            def __init__(self, given=None, token_file=None):
+                self.email = "someone@example.com"
+
+            def read(self):
+                if Account.took:
+                    return {"seven_day": (0.0, NOW + 7 * 24 * HOUR)}, None
+                return {"seven_day": (1.0, NOW + 2 * 24 * HOUR)}, credit()
+
+            def spend(self, chosen, key):
+                Account.took = Account.lands
+                raise limit_resets.Unavailable("network: timed out")
+
+        with (
+            patch.object(limit_resets, "Claude", Account),
+            patch.object(limit_resets.time, "time", return_value=NOW),
+        ):
+            for lands, result in (
+                (False, "error: network: timed out"),
+                (True, "reset"),
+            ):
+                Account.took, Account.lands = False, lands
+                report = limit_resets.sweep(sweep_arguments(now="claude"))
+                self.assertEqual(
+                    [account["cli"] for account in report["accounts"]], ["claude"]
+                )
+                self.assertEqual(report["accounts"][0]["result"], result)
+
+    def test_a_plan_token_file_and_an_undated_sign_in_are_used(self):
+        with tempfile.TemporaryDirectory() as folder:
+            token = Path(folder, "work.token")
+            token.write_text("plan-token\n")
+            self.assertEqual(limit_resets.claude_token(None, str(token)), "plan-token")
+            with self.assertRaises(limit_resets.Unavailable):
+                limit_resets.claude_token(None, str(Path(folder, "missing.token")))
+        undated = {"claudeAiOauth": {"accessToken": "kept", "expiresAt": 0}}
+        with patch.dict(limit_resets.os.environ, {"CLAUDE_CONFIG_DIR": "/nonexistent"}):
+            self.assertEqual(limit_resets.claude_token(undated), "kept")
+
     def test_the_sweep_reports_without_spending_unless_asked(self):
         class Account:
             cli = "claude"
             spent = []
 
-            def __init__(self, given=None):
+            def __init__(self, given=None, token_file=None):
                 self.email = "someone@example.com"
 
             def read(self):
@@ -231,25 +381,17 @@ class ReportTests(unittest.TestCase):
                     return {"seven_day": (0.0, NOW + 7 * 24 * HOUR)}, None
                 return {"seven_day": (1.0, NOW + 2 * 24 * HOUR)}, credit()
 
-            def spend(self, chosen):
+            def spend(self, chosen, key):
                 Account.spent.append(chosen["id"])
                 return "reset"
 
         class Missing:
             cli = "codex"
 
-            def __init__(self, given=None):
+            def __init__(self, home=None):
                 raise limit_resets.Unavailable("no Codex sign-in")
 
-        arguments = limit_resets.argparse.Namespace(
-            min_blocked_minutes=60,
-            keep=0,
-            salvage_hours=12,
-            attempted=[],
-            apply=False,
-            now=None,
-            claude_credentials_stdin=False,
-        )
+        arguments = sweep_arguments()
         with (
             patch.object(limit_resets, "Claude", Account),
             patch.object(limit_resets, "Codex", Missing),

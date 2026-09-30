@@ -3412,9 +3412,16 @@ selected reset that clears every exhausted window (the session reset only a
 five-hour block), and `keepCredits` in reserve. Salvage: a reset expiring within
 `salvageHours` with the weekly window at least a quarter used, ignoring the
 reserve. Each attempt has a key of account, reset, count and blocked windows or
-expiry, and is not tried again; a throttle, a lost answer or `nothing_to_reset`
-is retried after an hour. After spending, the helper reads the account again and
-reports whether it took (modelctl's confirm step). `LimitResets` runs it every
+expiry, and is not tried again for eight days; a throttle, a server error, a
+lost answer or `nothing_to_reset` is retried after an hour. A spend's request id
+is derived from its key, and a lost answer counts as a spend when the account
+then reads as reset, so a retry cannot spend a second reset. The Opus and Sonnet
+weekly caps are plan windows too: a reset must clear every exhausted one, and
+the busiest weekly window decides salvage. After spending, the helper reads the
+account again and reports whether it took (modelctl's confirm step). Asking for
+an agent's reset runs the helper for that CLI alone, with the agent's plan
+credential when lapis keeps one (a setup token, which may lack the scope to
+read usage; that is not yet exercised). `LimitResets` runs it every
 five minutes on each machine with Claude Code or Codex agents: on this Mac with
 `python3`, and elsewhere by ssh with the helper on stdin (`BatchMode`, its own
 connection), where it reads that machine's `~/.claude/.credentials.json` and

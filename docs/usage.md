@@ -57,8 +57,9 @@ keychain item, which macOS asks you once to let lapis read). It spends a reset
 when a usage window is used up for at least another hour and the reset clears
 it, or when a reset would expire within 12 hours and the weekly window is at
 least a quarter used. It then checks that the account reads as reset and posts
-a notification. **Use a saved limit reset for this agent's plan** in Commands
-spends one at once.
+a notification. The Opus and Sonnet weekly caps count: a reset that would leave
+one of them used up is kept. **Use a saved limit reset for this agent's plan** in
+Commands spends that plan's reset at once, and no other CLI's.
 
 `limitResets` in `lapis.json` tunes it: `auto` (true), `minBlockedMinutes` (60),
 `keepCredits` (0; kept for a block, not for a reset about to expire) and

@@ -473,6 +473,10 @@ class Workspace final : public QObject {
     void setAccountLoads(QHash<QString, AccountLoad> loads);
     // The plan an agent runs on; empty for its machine's own sign-in.
     Q_INVOKABLE [[nodiscard]] QString agentAccount(const QString& id) const;
+    // Where the credential lapis gave the agent's plan is kept on the agent's
+    // machine: a Claude Code token file or a Codex home ("~/" on another
+    // machine). Empty when the agent uses its machine's own sign-in.
+    [[nodiscard]] QString agentPlanCredential(const QString& id) const;
     Q_INVOKABLE [[nodiscard]] bool canSwitchAccount(const QString& id) const;
     // Starts the agent again on the plan with the most room besides its own.
     Q_INVOKABLE bool switchAccount(const QString& id);

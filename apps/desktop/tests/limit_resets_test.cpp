@@ -41,12 +41,18 @@ void write(const QString& path, const QByteArray& text) {
     require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "write a fixture file");
     file.write(text);
 }
-void standIn(const QDir& root, const QString& name, const QString& record) {
-    const auto path = root.filePath(QStringLiteral("bin/") + name);
+// A stand-in for a program that records its arguments and stdin under
+// `record` and answers with `record`.reply.
+struct StandIn {
+    QString program;
+    QString record;
+};
+void standIn(const QDir& root, const StandIn& stand_in) {
+    const auto path = root.filePath(QStringLiteral("bin/") + stand_in.program);
     // The arguments land last and whole, so a test that sees them sees stdin too.
     write(path, QStringLiteral("#!/bin/sh\nprintf '%s\\n' \"$@\" > '%1.part'\ncat > '%1.stdin'\n"
                                "mv '%1.part' '%1.args'\ncat '%1.reply'\n")
-                    .arg(root.filePath(record))
+                    .arg(root.filePath(stand_in.record))
                     .toUtf8());
     require(QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
             "make a stand-in executable");
@@ -61,26 +67,31 @@ void sweepsEachMachineWithItsOwnSignIn() {
     require(directory.isValid(), "fixture directory");
     const QDir root(directory.path());
     require(root.mkpath(QStringLiteral("bin")), "fixture bin");
-    standIn(root, QStringLiteral("python3"), QStringLiteral("local"));
-    standIn(root, QStringLiteral("ssh"), QStringLiteral("remote"));
+    standIn(root, {.program = QStringLiteral("python3"), .record = QStringLiteral("local")});
+    standIn(root, {.program = QStringLiteral("ssh"), .record = QStringLiteral("remote")});
     write(root.filePath(QStringLiteral("local.reply")),
           R"({"accounts": [{"cli": "claude", "email": "someone@example.com", "decision": "restore",
               "attempt": "block|k", "result": "reset", "credit": {"title": "Launch reset"},
               "confirmed": true}, {"cli": "codex", "error": "no Codex sign-in"}]})");
     write(root.filePath(QStringLiteral("remote.reply")),
           R"({"accounts": [{"cli": "codex", "decision": "not-needed"}]})");
-    const QByteArray stored = "{\"claudeAiOauth\":\n {\"accessToken\": \"t\"}}\n";
+    QByteArray stored = "{\"claudeAiOauth\":\n {\"accessToken\": \"t\"}}\n";
     LimitResets resets(
         [] { return QStringList{QString(), QStringLiteral("devbox")}; },
-        [](const QString& id) {
+        [&root](const QString& id) {
+            // Machine, CLI, and the plan's credential when lapis keeps one.
+            using AgentPlan = LimitResets::AgentPlan;
             if (id == QLatin1String("a"))
-                return std::pair{QString(), QStringLiteral("claude")};
+                return AgentPlan{QString(), QStringLiteral("claude"), QString()};
             if (id == QLatin1String("b"))
-                return std::pair{QStringLiteral("devbox"), QStringLiteral("codex")};
-            return std::pair{QString(), QStringLiteral("shell")};
+                return AgentPlan{QStringLiteral("devbox"), QStringLiteral("codex"), QString()};
+            if (id == QLatin1String("p"))
+                return AgentPlan{QString(), QStringLiteral("claude"),
+                                 root.filePath(QStringLiteral("work.token"))};
+            return AgentPlan{QString(), QStringLiteral("shell"), QString()};
         },
         [&root](const QString& id) { return root.filePath(QStringLiteral("bin/") + id); },
-        [stored] { return stored; }, root.path());
+        [&stored] { return stored; }, root.path());
     resets.setSettings(
         {.automatic = true, .minBlockedMinutes = 30, .keepCredits = 1, .salvageHours = 6});
     std::vector<Spent> spent;
@@ -150,7 +161,6 @@ void sweepsEachMachineWithItsOwnSignIn() {
     require(resets.canUseNow(QStringLiteral("a")) && resets.canUseNow(QStringLiteral("b")) &&
                 !resets.canUseNow(QStringLiteral("s")),
             "only Claude Code and Codex agents have resets");
-    resets.setSettings({.automatic = false});
     resets.useNow(QStringLiteral("a"));
     require(waitFor([&] { return declined.size() == 1; }), "an unavailable reset is declined");
     require(declined.front() == QLatin1String("no-credit"), "with the helper's reason");
@@ -158,7 +168,17 @@ void sweepsEachMachineWithItsOwnSignIn() {
         QString::fromUtf8(read(root.filePath(QStringLiteral("local.args")))).split('\n');
     require(asked.contains(QStringLiteral("--now")) && asked.contains(QStringLiteral("claude")) &&
                 !asked.contains(QStringLiteral("--apply")),
-            "asking spends only that CLI's reset, with automatic spending off");
+            "asking spends only that CLI's reset, though automatic spending is on");
+
+    resets.useNow(QStringLiteral("p"));
+    require(waitFor([&] { return declined.size() == 2; }), "the plan's reset is asked for");
+    const auto plan =
+        QString::fromUtf8(read(root.filePath(QStringLiteral("local.args")))).split('\n');
+    const auto token = plan.indexOf(QStringLiteral("--claude-token-file"));
+    require(token > 0 && plan.value(token + 1) == root.filePath(QStringLiteral("work.token")) &&
+                !plan.contains(QStringLiteral("--claude-credentials-stdin")) &&
+                read(root.filePath(QStringLiteral("local.stdin"))).isEmpty(),
+            "an agent on a plan spends that plan's reset, not the machine's sign-in");
 }
 
 void settingsReadFromTheConfig() {

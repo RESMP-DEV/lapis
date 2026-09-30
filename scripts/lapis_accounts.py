@@ -343,40 +343,46 @@ def command_add_codex(config: dict, name: str, email: str, where: list[str]) -> 
     )
 
 
-def plan_machines(config: dict) -> list[str]:
-    """The machines besides this Mac that the usage dashboard asks or a plan
-    names as its home or keeps a credential on."""
+def plan_machines(config: dict, plan: dict) -> list[str]:
+    """The machines besides this Mac that the usage dashboard asks, or that
+    this plan names as its home or keeps a credential on."""
     hosts = machines(config)[1:]
-    for cli in ("claude", "codex"):
-        for plan in config.get("accounts", {}).get(cli, []):
-            for host in [plan.get("home"), *plan.get("machines", [])]:
-                if (
-                    isinstance(host, str)
-                    and host != LOCAL
-                    and HOST.match(host)
-                    and host not in hosts
-                ):
-                    hosts.append(host)
+    kept = plan.get("machines")
+    for host in [plan.get("home"), *(kept if isinstance(kept, list) else [])]:
+        if (
+            isinstance(host, str)
+            and host != LOCAL
+            and HOST.match(host)
+            and host not in hosts
+        ):
+            hosts.append(host)
     return hosts
 
 
-def command_sign_in(config: dict, hosts: list[str], ask=input) -> None:
-    waiting = [
-        plan
-        for plan in config.get("accounts", {}).get("claude", [])
-        if not (ACCOUNTS / "claude" / f"{plan.get('name')}.token").exists()
-    ]
+def command_sign_in(config: dict, hosts: list[str] | None, ask=input) -> None:
+    """Sign in each listed Claude Code plan that has no token on this Mac yet,
+    keeping each token on `hosts`, else on that plan's own machines."""
+    waiting = []
+    for plan in config.get("accounts", {}).get("claude", []):
+        if not isinstance(plan, dict):
+            continue
+        name, email = plan.get("name"), plan.get("email")
+        if not isinstance(name, str) or not NAME.match(name):
+            print(f"skipping a plan with an unusable name: {name!r}")
+        elif not isinstance(email, str) or "@" not in email:
+            print(f"skipping {name}: its email is missing")
+        elif not (ACCOUNTS / "claude" / f"{name}.token").exists():
+            waiting.append(plan)
     if not waiting:
-        print("Every Claude Code plan already has a token on this Mac.")
+        print("Every usable Claude Code plan already has a token on this Mac.")
         return
     for plan in waiting:
-        name, email = plan.get("name", ""), plan.get("email", "")
-        if not NAME.match(name):
-            print(f"skipping a plan with an unusable name: {name!r}")
-            continue
+        name, email = plan["name"], plan["email"]
         if ask(f"Sign in {name} ({email}) now? [Y/n] ").strip().lower() in ("n", "no"):
             continue
-        command_add_claude(config, name, email, hosts)
+        command_add_claude(
+            config, name, email, plan_machines(config, plan) if hosts is None else hosts
+        )
 
 
 def command_list(config: dict) -> None:
@@ -403,7 +409,8 @@ def main(argv: list[str]) -> int:
     sign_in.add_argument(
         "--to",
         nargs="*",
-        help="hosts to keep the tokens on (default: every plan's machines)",
+        help="hosts to keep the tokens on; none after it keeps them on this Mac "
+        "alone (default: each plan's own machines and the usage machines)",
     )
     claude = commands.add_parser("add-claude")
     claude.add_argument("name")
@@ -433,8 +440,7 @@ def main(argv: list[str]) -> int:
         elif arguments.command == "homes":
             command_homes(config, arguments.hosts)
         elif arguments.command == "sign-in":
-            hosts = arguments.to if arguments.to is not None else plan_machines(config)
-            command_sign_in(config, hosts)
+            command_sign_in(config, arguments.to)
         elif arguments.command == "add-claude":
             hosts = arguments.to if arguments.to is not None else machines(config)[1:]
             command_add_claude(config, arguments.name, arguments.email, hosts)

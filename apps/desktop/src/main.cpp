@@ -470,8 +470,10 @@ QObject* keep_limit_resets(std::optional<lapis::desktop::LimitResets>& kept,
         },
         [&workspace](const QString& id) {
             const auto* item = workspace.session(id);
-            return std::pair{workspace.agentPlace(id).value(QStringLiteral("machine")).toString(),
-                             item != nullptr ? item->harnessId() : QString()};
+            return LimitResets::AgentPlan{
+                .machine = workspace.agentPlace(id).value(QStringLiteral("machine")).toString(),
+                .cli = item != nullptr ? item->harnessId() : QString(),
+                .credential = workspace.agentPlanCredential(id)};
         },
         [](const QString& id) { return QStandardPaths::findExecutable(id); },
 #ifdef Q_OS_MACOS

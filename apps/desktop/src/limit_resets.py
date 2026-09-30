@@ -2,6 +2,7 @@
 
     python3 limit_resets.py [--apply] [--now CLI] [--min-blocked-minutes 60]
         [--keep 0] [--salvage-hours 12] [--attempted KEY ...]
+        [--claude-token-file PATH] [--codex-home PATH]
 
 lapis runs this on each machine with Claude Code or Codex agents, locally or by
 ssh with the script on stdin (`python3 - ARGS`). It reads the sign-in the CLI
@@ -19,10 +20,14 @@ After spending, it reads the account again and reports whether the reset took
 (`confirmed`), as modelctl's reset sequence does.
 
 --now CLI spends that CLI's selected reset at once, as the claude.ai button
-does. A key in --attempted (printed back as `attempt`) is not tried again.
-Credentials come from the CLI's own files, or for Claude Code on the Mac from
-its keychain item, which lapis reads and passes as one JSON line on stdin with
---claude-credentials-stdin. They are never printed.
+does, and reads no other CLI. A key in --attempted (printed back as `attempt`)
+is not tried again, and a spend's request id comes from its key, so a spend
+retried after a lost answer cannot spend a second reset. Credentials come from
+the CLI's own files, or for Claude Code on the Mac from its keychain item, which
+lapis reads and passes as one JSON line on stdin with
+--claude-credentials-stdin. A plan lapis keeps a credential for is named by
+--claude-token-file (a `claude setup-token` token) or --codex-home. They are
+never printed.
 """
 
 from __future__ import annotations
@@ -49,7 +54,17 @@ JUNIPER = "juniper_tide"  # the weekly session reset (Claude Code's /limit-reset
 SALVAGE_MIN_USED = 0.25
 EXHAUSTED = 0.999
 HOUR = 3600.0
-MAX_REMAINING = {"five_hour": 6 * HOUR, "seven_day": 8 * 24 * HOUR}
+# Claude's plan windows, and the longest each can plausibly stay blocked. The
+# Opus and Sonnet weekly caps count: a reset that leaves one exhausted does not
+# restore the agent.
+MAX_REMAINING = {
+    "five_hour": 6 * HOUR,
+    "seven_day": 8 * 24 * HOUR,
+    "seven_day_opus": 8 * 24 * HOUR,
+    "seven_day_sonnet": 8 * 24 * HOUR,
+}
+WEEKLY = ("seven_day", "seven_day_opus", "seven_day_sonnet")
+REQUEST_IDS = uuid.UUID("8f0b6c1e-3c55-4b8e-9d7a-6c1b4f0e2a91")
 
 
 class Unavailable(Exception):
@@ -91,9 +106,25 @@ def parse_time(value):
 # Claude Code ---------------------------------------------------------------
 
 
-def claude_token(given=None):
-    """Claude Code's current access token: what lapis read from the Mac's
-    keychain and passed on stdin, else Claude Code's credentials file."""
+def request_id(key):
+    """The same id for every try of one attempt, so the account can tell a
+    retry from a second spend."""
+    return uuid.uuid5(REQUEST_IDS, key or uuid.uuid4().hex)
+
+
+def claude_token(given=None, token_file=None):
+    """Claude Code's current access token: a plan's setup token, else what
+    lapis read from the Mac's keychain and passed on stdin, else Claude Code's
+    credentials file. A token without an expiry is tried as it is."""
+    if token_file:
+        try:
+            with open(os.path.expanduser(token_file)) as file:
+                token = file.read(8192).strip()
+        except OSError:
+            token = ""
+        if not token or "\n" in token:
+            raise Unavailable("the plan has no usable Claude Code token here")
+        return token
     home = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
     candidates = [given] if given else []
     try:
@@ -105,7 +136,10 @@ def claude_token(given=None):
         oauth = stored.get("claudeAiOauth") if isinstance(stored, dict) else None
         if not isinstance(oauth, dict) or not oauth.get("accessToken"):
             continue
-        if (oauth.get("expiresAt") or 0) / 1000 > time.time() + 60:
+        expires = oauth.get("expiresAt")
+        if not isinstance(expires, (int, float)) or expires <= 0:
+            return oauth["accessToken"]
+        if expires / 1000 > time.time() + 60:
             return oauth["accessToken"]
     raise Unavailable(
         "no current Claude Code sign-in (start a Claude session to refresh it)"
@@ -170,8 +204,8 @@ def claude_credit(usage, at_wall):
 class Claude:
     cli = "claude"
 
-    def __init__(self, given=None):
-        self.token = claude_token(given)
+    def __init__(self, given=None, token_file=None):
+        self.token = claude_token(given, token_file)
         self.headers = dict(CLAUDE_HEADERS, authorization="Bearer " + self.token)
         status, profile = request(f"{CLAUDE_API}/api/oauth/profile", self.headers)
         if status != 200 or not isinstance(profile, dict):
@@ -196,10 +230,10 @@ class Claude:
             at_wall = at_wall if status == 200 and isinstance(at_wall, dict) else None
         return claude_windows(usage), claude_credit(usage, at_wall)
 
-    def spend(self, credit):
+    def spend(self, credit, key):
         body = {"program": credit["program"]}
         if credit["program"] == CEDAR:
-            body.update(grant_id=credit["id"], request_id=uuid.uuid4().hex)
+            body.update(grant_id=credit["id"], request_id=request_id(key).hex)
         status, payload = request(
             f"{CLAUDE_API}/api/organizations/{self.org}/reset_rate_limits",
             self.headers,
@@ -216,8 +250,8 @@ class Claude:
 class Codex:
     cli = "codex"
 
-    def __init__(self, given=None):
-        home = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+    def __init__(self, home=None):
+        home = os.path.expanduser(home or os.environ.get("CODEX_HOME") or "~/.codex")
         try:
             with open(os.path.join(home, "auth.json")) as file:
                 tokens = json.load(file).get("tokens") or {}
@@ -264,7 +298,10 @@ class Codex:
                 else []
             )
             or []
-            if isinstance(c, dict) and (c.get("status") or "available") == "available"
+            if isinstance(c, dict)
+            and isinstance(c.get("id"), str)
+            and c["id"]
+            and (c.get("status") or "available") == "available"
         ]
         credits.sort(key=lambda c: parse_time(c.get("expires_at")) or float("inf"))
         if not credits:
@@ -282,8 +319,8 @@ class Codex:
             "requires_limit": False,
         }
 
-    def spend(self, credit):
-        body = {"credit_id": credit["id"], "redeem_request_id": str(uuid.uuid4())}
+    def spend(self, credit, key):
+        body = {"credit_id": credit["id"], "redeem_request_id": str(request_id(key))}
         if self.account:
             body["account_id"] = self.account
         status, payload = request(
@@ -308,7 +345,6 @@ def plan(cli, email, windows, credit, now, settings, attempted, force=False):
     if force:
         return "now", "asked", f"now|{identity}|{int(now // 60)}"
     blockers = sorted(name for name, (used, _) in windows.items() if used >= EXHAUSTED)
-    blockers = [name for name in blockers if name in MAX_REMAINING] or blockers
     if blockers:
         if any(name not in credit["clears"] for name in blockers):
             return None, "incomplete-coverage", None
@@ -333,13 +369,13 @@ def plan(cli, email, windows, credit, now, settings, attempted, force=False):
             if key in attempted
             else ("restore", "blocked", key)
         )
-    weekly = windows.get("seven_day")
+    weekly = max((windows[name][0] for name in WEEKLY if name in windows), default=None)
     horizon = settings["salvage_hours"] * HOUR
     if horizon <= 0 or credit["expires"] is None or credit["expires"] - now > horizon:
         return None, "not-needed", None
     if credit["requires_limit"]:
         return None, "needs-limit", None
-    if weekly is None or weekly[0] < SALVAGE_MIN_USED:
+    if weekly is None or weekly < SALVAGE_MIN_USED:
         return None, "window-mostly-free", None
     key = f"salvage|{identity}|{int(credit['expires'] // 60)}"
     return (
@@ -364,13 +400,24 @@ def sweep(arguments):
             given = None
     accounts = []
     for kind in (Claude, Codex):
+        if arguments.now and kind.cli != arguments.now:
+            continue
         report = {"cli": kind.cli}
         accounts.append(report)
         try:
-            account = kind(given if kind is Claude else None)
+            account = (
+                Claude(given, arguments.claude_token_file)
+                if kind is Claude
+                else Codex(arguments.codex_home)
+            )
             windows, credit = account.read()
         except Unavailable as error:
             report["error"] = str(error)
+            continue
+        except (KeyError, TypeError, AttributeError) as error:
+            # An answer in a shape this helper does not know: report it
+            # rather than lose the other account's report.
+            report["error"] = f"unexpected answer: {type(error).__name__} {error}"
             continue
         now = time.time()
         report.update(
@@ -400,12 +447,16 @@ def sweep(arguments):
         if key:
             report["attempt"] = key
         if action and (arguments.apply or arguments.now == kind.cli):
+            took = None
             try:
-                report["result"] = account.spend(credit)
+                report["result"] = account.spend(credit, key)
             except Unavailable as error:
-                report["result"] = f"error: {error}"
+                # The answer was lost, not necessarily the spend: if the
+                # account now reads as reset, it took.
+                took = confirmed(account, credit)
+                report["result"] = "reset" if took else f"error: {error}"
             if report["result"] == "reset":
-                report["confirmed"] = confirmed(account, credit)
+                report["confirmed"] = took or confirmed(account, credit)
     return {"time": time.time(), "accounts": accounts}
 
 
@@ -441,6 +492,10 @@ def main(argv=None):
         action="store_true",
         help="read Claude Code's stored credentials as one JSON line on stdin",
     )
+    parser.add_argument(
+        "--claude-token-file", help="a Claude Code plan's setup token file"
+    )
+    parser.add_argument("--codex-home", help="a Codex plan's home folder")
     print(json.dumps(sweep(parser.parse_args(argv))))
 
 
