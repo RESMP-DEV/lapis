@@ -77,6 +77,8 @@ class Account:
         if (root/'wrong-account').exists() or (phase != 'prepare' and (root/'change-account').exists()):
             self.email = 'different@example.test'
     def read(self, credit_id=None):
+        if (root/'listing-fails').exists():
+            raise module.Unavailable('fixture credit listing unavailable')
         windows = {'five_hour': (1.0, time.time()+7200)}
         if credit_id and (root/'settled').exists():
             return windows, None
@@ -89,6 +91,8 @@ class Account:
             log.write(identifier+'\n')
         if (root/'lose-reply').exists():
             os._exit(0)
+        if (root/'provider-refusal').exists():
+            return (root/'provider-refusal').read_text().strip()
         return 'reset'
 class Claude(Account):
     cli = 'claude'
@@ -276,6 +280,7 @@ void journalAndIdentityFailuresRefuseBeforeConsume() {
     f.controller->useNow(QStringLiteral("0"));
     require(waitFor([&] { return !f.uncertain.isEmpty(); }), "create pending fixture");
     const auto path = f.journal();
+    const auto valid_pending = QJsonDocument::fromJson(read(path)).object();
     f.controller.reset();
     write(path,
           R"({"v":2,"format":"lapis-reset-journal","attempts":{},"pending":{"credit":"broken"}})");
@@ -287,6 +292,41 @@ void journalAndIdentityFailuresRefuseBeforeConsume() {
     require(f.calls().size() == count + 1 &&
                 f.calls().last().value("phase") == QLatin1String("prepare"),
             "invalid journal allows account discovery but never consume");
+    for (const auto& credit :
+         {QString(257, QLatin1Char('x')), QStringLiteral("credit with space")}) {
+        f.controller.reset();
+        auto invalid = valid_pending;
+        auto pending = invalid.value(QStringLiteral("pending")).toObject();
+        pending.insert(QStringLiteral("credit"), credit);
+        invalid.insert(QStringLiteral("pending"), pending);
+        const auto bytes = QJsonDocument(invalid).toJson();
+        write(path, bytes);
+        const auto before = f.calls().size();
+        f.uncertain.clear();
+        f.start();
+        f.controller->useNow(QStringLiteral("0"));
+        require(waitFor([&] { return !f.uncertain.isEmpty(); }),
+                "invalid helper credit identity is visible");
+        require(f.calls().size() == before + 1 && read(path) == bytes,
+                "native validation preserves the invalid journal and never submits its credit");
+    }
+}
+void structuredHelperReasonsRemainVisible() {
+    Fixture f;
+    write(f.root.filePath(QStringLiteral("listing-fails")), "yes");
+    f.start();
+    f.controller->useNow(QStringLiteral("0"));
+    require(waitFor([&] { return !f.declined.isEmpty(); }), "helper failure surfaced");
+    require(f.declined.last().contains(QStringLiteral("fixture credit listing unavailable")),
+            "structured helper reason is retained without relying on stderr");
+    Fixture refused;
+    write(refused.root.filePath(QStringLiteral("provider-refusal")), "not_limited");
+    refused.start();
+    refused.controller->useNow(QStringLiteral("0"));
+    require(waitFor([&] { return !refused.declined.isEmpty(); }), "business refusal is reported");
+    require(refused.declined.last().contains(QStringLiteral("not_limited")) &&
+                !QJsonDocument::fromJson(read(refused.journal())).object().contains("pending"),
+            "definitive refusal retires pending state and retains its reason");
 }
 
 void configuredTargetsUseTheirOwnRoutes() {
@@ -424,6 +464,7 @@ int main(int argc, char** argv) {
         admissionAndAccountIsolation();
         interruptedConsumeReconcilesWithoutReplay();
         journalAndIdentityFailuresRefuseBeforeConsume();
+        structuredHelperReasonsRemainVisible();
         configuredTargetsUseTheirOwnRoutes();
         journalCapacityReclaimsOnlyExpiredClosedRecords();
         closingDuringCredentialLookupCannotLaunchAHelper();
