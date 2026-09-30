@@ -39,6 +39,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from lapis import SetupError, ghostty_prefix  # noqa: E402
+from release_manifest import (  # noqa: E402
+    ManifestError,
+    bind_appcast,
+    dependency_snapshot,
+    digest as artifact_digest,
+    load_manifest,
+    new_manifest,
+    preflight_release,
+    project_version,
+    set_artifacts,
+    set_notarized,
+    set_verification,
+    source_snapshot,
+    write_manifest,
+)
 
 RELEASE = ROOT / "build" / "release"
 DOWNLOADS = RELEASE / "downloads"
@@ -76,6 +91,7 @@ SPARKLE = RELEASE / "sparkle"
 APPCAST = RELEASE / "appcast.xml"
 RELEASES = "https://github.com/RESMP-DEV/lapis/releases"
 APP = RELEASE / "stage" / "lapis.app"
+PACKAGE_MANIFEST = RELEASE / "package-manifest.json"
 APP_ZIP = RELEASE / "lapis-app.zip"
 DMG = RELEASE / "lapis-macos-arm64.dmg"
 ENTITLEMENTS = ROOT / "apps/desktop/macos/lapis.entitlements"
@@ -822,6 +838,42 @@ def fetch_sparkle():
     return framework
 
 
+def release_dependencies(ghostty):
+    """Hash every release dependency input for the durable package manifest."""
+    try:
+        return dependency_snapshot(
+            ROOT,
+            qt_version=QT_VERSION,
+            qt_modules=QT_MODULES,
+            sparkle_version=SPARKLE_VERSION,
+            sparkle_sha256=SPARKLE_SHA256,
+            notices=NOTICES,
+            ghostty_prefix=ghostty,
+            moltenvk_library=MOLTENVK_LIBRARY,
+        )
+    except SetupError as error:
+        raise PackageError(f"cannot verify release dependencies: {error}") from error
+    except ManifestError as error:
+        raise PackageError(str(error)) from error
+
+
+def unchanged_release_source(manifest_path):
+    """Reject any source change after the recorded snapshot was captured."""
+    try:
+        manifest = load_manifest(manifest_path)
+        recorded = manifest.get("source")
+        current = source_snapshot(ROOT, capture)
+    except ManifestError as error:
+        _unlink(manifest_path)
+        raise PackageError(str(error)) from error
+    if recorded != current:
+        _unlink(manifest_path)
+        raise PackageError(
+            "the release source changed after its snapshot was recorded; rebuild the app"
+        )
+    return manifest
+
+
 def build_lapis():
     if not (QT_PREFIX / f".qtdeclarative-{QT_VERSION}").exists():
         raise PackageError("Build Qt first: package_macos.py qt")
@@ -848,7 +900,7 @@ def build_lapis():
         ["cmake", "--build", APP_BUILD, "--target", "lapis_desktop"]
         + ["--parallel", str(JOBS)]
     )
-    return APP_BUILD / "apps" / "desktop" / "lapis.app"
+    return APP_BUILD / "apps" / "desktop" / "lapis.app", ghostty
 
 
 # Highway (inside Ghostty's library) names its header in assertion messages by
@@ -954,8 +1006,27 @@ def sign(identity):
 
 
 def command_app(_arguments):
-    deploy(build_lapis())
+    """Build the source once, bind its exact state, then sign the result."""
+    source = source_snapshot(ROOT, capture)
+    built, ghostty = build_lapis()
+    if source_snapshot(ROOT, capture) != source:
+        raise PackageError("the source changed while lapis was built")
+    try:
+        dependencies = release_dependencies(ghostty)
+        manifest = new_manifest(source, dependencies)
+        write_manifest(PACKAGE_MANIFEST, manifest)
+    except ManifestError as error:
+        _unlink(PACKAGE_MANIFEST)
+        raise PackageError(str(error)) from error
+
+    deploy(built)
     sign(signing_identity())
+    unchanged_release_source(PACKAGE_MANIFEST)
+    try:
+        set_artifacts(PACKAGE_MANIFEST, {"app": artifact_digest(APP)})
+    except ManifestError as error:
+        _unlink(PACKAGE_MANIFEST)
+        raise PackageError(str(error)) from error
     print(f"Signed {APP.relative_to(ROOT)}", flush=True)
 
 
@@ -989,9 +1060,23 @@ def notarize(path, profile):
 
 
 def command_dmg(_arguments):
+    """Create a DMG while recording the exact app bytes it copied."""
     if not APP.exists():
         raise PackageError("Build the app first: package_macos.py app")
+    unchanged_release_source(PACKAGE_MANIFEST)
+    try:
+        manifest = load_manifest(PACKAGE_MANIFEST)
+        artifacts = manifest.get("artifacts", {})
+        expected = artifacts.get("app") if isinstance(artifacts, dict) else None
+        if expected != artifact_digest(APP):
+            raise ManifestError(
+                "the staged app does not match the manifest; rebuild package_macos.py app"
+            )
+    except ManifestError as error:
+        _unlink(PACKAGE_MANIFEST)
+        raise PackageError(str(error)) from error
     folder = RELEASE / "dmg"
+    source_app = artifact_digest(APP)
     shutil.rmtree(folder, ignore_errors=True)
     folder.mkdir(parents=True)
     run(["ditto", APP, folder / "lapis.app"])
@@ -1003,13 +1088,63 @@ def command_dmg(_arguments):
     )
     run(["codesign", "--force", "--timestamp", "--sign", signing_identity(), DMG])
     shutil.rmtree(folder)
+    try:
+        set_artifacts(
+            PACKAGE_MANIFEST,
+            {"app": artifact_digest(APP), "dmg": artifact_digest(DMG)},
+            provenance={"dmg_source_app_sha256": source_app},
+        )
+    except ManifestError as error:
+        _unlink(PACKAGE_MANIFEST)
+        raise PackageError(str(error)) from error
     print(f"{DMG.relative_to(ROOT)}  sha256 {sha256(DMG)}", flush=True)
 
 
 def command_notarize(arguments):
+    """Notarize and staple, refreshing byte bindings after every mutation."""
+    unchanged_release_source(PACKAGE_MANIFEST)
+    try:
+        manifest = load_manifest(PACKAGE_MANIFEST)
+        artifacts = manifest.get("artifacts", {})
+        states = manifest.get("notarized", {})
+        if not isinstance(artifacts, dict) or artifacts.get("app") != artifact_digest(
+            APP
+        ):
+            raise ManifestError(
+                "the staged app does not match the manifest; rebuild package_macos.py app"
+            )
+        if (
+            isinstance(artifacts, dict)
+            and artifacts.get("dmg") is not None
+            and (artifacts.get("dmg") != artifact_digest(DMG))
+        ):
+            raise ManifestError(
+                "the staged DMG does not match the manifest; rebuild package_macos.py dmg"
+            )
+        app_was_notarized = isinstance(states, dict) and states.get("app") is True
+    except ManifestError as error:
+        _unlink(PACKAGE_MANIFEST)
+        raise PackageError(str(error)) from error
+
     notarize(APP, arguments.profile)
+    try:
+        set_artifacts(PACKAGE_MANIFEST, {"app": artifact_digest(APP)})
+        set_notarized(PACKAGE_MANIFEST, True, app_was_notarized)
+    except ManifestError as error:
+        _unlink(PACKAGE_MANIFEST)
+        raise PackageError(str(error)) from error
     command_dmg(arguments)
     notarize(DMG, arguments.profile)
+    unchanged_release_source(PACKAGE_MANIFEST)
+    try:
+        set_artifacts(
+            PACKAGE_MANIFEST,
+            {"app": artifact_digest(APP), "dmg": artifact_digest(DMG)},
+        )
+        set_notarized(PACKAGE_MANIFEST, True, True)
+    except ManifestError as error:
+        _unlink(PACKAGE_MANIFEST)
+        raise PackageError(str(error)) from error
     print(f"{DMG.relative_to(ROOT)}  sha256 {sha256(DMG)}", flush=True)
 
 
@@ -1210,7 +1345,36 @@ def check_updates(problems):
 
 
 def command_verify(arguments):
+    """Qualify this exact bundle and record its digest set only on success."""
+    try:
+        manifest = unchanged_release_source(PACKAGE_MANIFEST)
+        artifacts = manifest.get("artifacts", {})
+        if not isinstance(artifacts, dict) or artifacts.get("app") != artifact_digest(
+            APP
+        ):
+            raise ManifestError(
+                "the staged app does not match the manifest; rebuild package_macos.py app"
+            )
+        if arguments.notarized:
+            states = manifest.get("notarized", {})
+            if not (
+                isinstance(states, dict)
+                and states.get("app") is True
+                and states.get("dmg") is True
+            ):
+                raise ManifestError(
+                    "run package_macos.py notarize before verify --notarized"
+                )
+            if artifacts.get("dmg") != artifact_digest(DMG):
+                raise ManifestError(
+                    "the staged DMG does not match the manifest; rerun notarization"
+                )
+    except ManifestError as error:
+        _unlink(PACKAGE_MANIFEST)
+        raise PackageError(str(error)) from error
+
     problems = []
+    check_release_version(problems, manifest)
     check_updates(problems)
     run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", APP])
     check_binaries(problems)
@@ -1235,16 +1399,90 @@ def command_verify(arguments):
         )
     if problems:
         raise PackageError("\n  ".join(["the app is not ready:"] + problems))
+    unchanged_release_source(PACKAGE_MANIFEST)
+    qualified = {"app": artifact_digest(APP)}
+    if arguments.notarized:
+        qualified["dmg"] = artifact_digest(DMG)
+    try:
+        set_verification(
+            PACKAGE_MANIFEST,
+            scope="notarized" if arguments.notarized else "signed",
+            artifacts=qualified,
+        )
+    except ManifestError as error:
+        _unlink(PACKAGE_MANIFEST)
+        raise PackageError(str(error)) from error
     print("The app passed every check", flush=True)
 
 
+def check_release_version(problems, manifest):
+    """The staged bundle must carry the source's CMake version."""
+    try:
+        info = plistlib.loads((APP / "Contents" / "Info.plist").read_bytes())
+        version = manifest.get("version")
+        if info.get("CFBundleShortVersionString") != version:
+            problems.append(
+                f"the app version {info.get('CFBundleShortVersionString')!r} "
+                f"does not match source version {version!r}"
+            )
+    except (OSError, plistlib.InvalidFileError) as error:
+        problems.append(f"cannot read the app version: {error}")
+
+
 def command_release(arguments):
-    """Attach the notarized DMG and the Qt sources to a GitHub release."""
+    """Publish only the exact source, bytes, qualification and appcast manifest."""
     run(["xcrun", "stapler", "validate", DMG])
+    arguments.notarized = True
+    command_verify(arguments)
+    try:
+        ghostty = ghostty_prefix()
+        dependencies = release_dependencies(ghostty)
+        version = project_version(ROOT)
+        preflight_release(
+            PACKAGE_MANIFEST,
+            root=ROOT,
+            tag=arguments.tag,
+            version=version,
+            artifacts={"app": APP, "dmg": DMG},
+            dependencies=dependencies,
+            downloads=DOWNLOADS,
+            appcast=None,
+            release_url=RELEASES,
+            capture=capture,
+            require_appcast=False,
+        )
+    except ManifestError as error:
+        _unlink(PACKAGE_MANIFEST)
+        raise PackageError(str(error)) from error
+    write_appcast(arguments.tag, version)
+    try:
+        bind_appcast(
+            PACKAGE_MANIFEST,
+            tag=arguments.tag,
+            version=version,
+            appcast=APPCAST,
+            dmg=DMG,
+            release_url=RELEASES,
+        )
+        preflight_release(
+            PACKAGE_MANIFEST,
+            root=ROOT,
+            tag=arguments.tag,
+            version=version,
+            artifacts={"app": APP, "dmg": DMG},
+            dependencies=dependencies,
+            downloads=DOWNLOADS,
+            appcast=APPCAST,
+            release_url=RELEASES,
+            capture=capture,
+            require_appcast=True,
+        )
+    except ManifestError as error:
+        _unlink(PACKAGE_MANIFEST)
+        raise PackageError(str(error)) from error
     commit = capture(["git", "-C", ROOT, "rev-parse", "HEAD"]).strip()
     if capture(["git", "-C", ROOT, "branch", "-r", "--contains", commit]).strip() == "":
         raise PackageError("Push the commit the app was built from first")
-    version = arguments.tag.removeprefix("v")
     notes = "\n".join(
         [
             f"lapis {version} for Apple silicon Macs with macOS 14 or later.",
@@ -1260,7 +1498,6 @@ def command_release(arguments):
     sources = [
         DOWNLOADS / f"{name}-everywhere-src-{QT_VERSION}.tar.xz" for name in QT_MODULES
     ]
-    write_appcast(arguments.tag, version)
     run(
         ["gh", "release", "create", arguments.tag, "--target", commit]
         + ["--title", f"lapis {version}", "--notes", notes]
