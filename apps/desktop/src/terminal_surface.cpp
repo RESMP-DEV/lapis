@@ -417,6 +417,74 @@ void add_row(QSGNode& backgrounds, QSGTextNode& glyphs, const session::TerminalS
         add_shapes(backgrounds, drawn, ink);
 }
 
+QColor blend(const QColor& from, const QColor& to, qreal share) {
+    return QColor::fromRgbF(static_cast<float>(from.redF() * share + to.redF() * (1 - share)),
+                            static_cast<float>(from.greenF() * share + to.greenF() * (1 - share)),
+                            static_cast<float>(from.blueF() * share + to.blueF() * (1 - share)));
+}
+
+} // namespace
+
+SuggestionLayout lay_out_suggestion(const session::TerminalSnapshot& snapshot,
+                                    const QFontMetricsF& metrics, const QString& suggestion) {
+    SuggestionLayout layout;
+    const qreal cell_width = metrics.horizontalAdvance(QLatin1Char('M'));
+    const int first = snapshot.cursor.column + 1;
+    const int last = static_cast<int>(snapshot.size.columns) - 2;
+    if (!snapshot.cursor.in_viewport || snapshot.cursor.row >= snapshot.size.rows ||
+        last - first < 4)
+        return layout;
+    const qreal room = (last - first) * cell_width;
+    const QString text = suggestion.trimmed();
+    const QString line = text.section(QLatin1Char('\n'), 0, 0);
+    layout.keys = QStringLiteral("  ⇥");
+    const qreal keys_width = metrics.horizontalAdvance(layout.keys);
+    layout.whole =
+        line.size() == text.size() && metrics.horizontalAdvance(line) <= room - keys_width;
+    if (!layout.whole)
+        layout.keys = QStringLiteral("  ⇥ types it");
+    if (room < metrics.horizontalAdvance(layout.keys) + 8 * cell_width)
+        layout.keys.clear();
+    const qreal keys_room = metrics.horizontalAdvance(layout.keys);
+    layout.shown = metrics.elidedText(layout.whole ? line : line + QStringLiteral(" …"),
+                                      Qt::ElideRight, room - keys_room);
+    layout.column = first;
+    layout.width = metrics.horizontalAdvance(layout.shown) + keys_room;
+    return layout;
+}
+
+namespace {
+// An offered next prompt, dim just after the cursor, then the keys that take
+// it: Tab sends it when it shows whole, else only types it. The row is covered
+// only under what is drawn.
+void add_suggestion(QSGNode& overlays, QQuickWindow& window,
+                    const session::TerminalSnapshot& snapshot, const QFont& font,
+                    const QString& suggestion, qreal cell_width, qreal row_height) {
+    const QFontMetricsF metrics(font);
+    const auto layout = lay_out_suggestion(snapshot, metrics, suggestion);
+    if (layout.shown.isEmpty())
+        return;
+    const QPointF origin(layout.column * cell_width, snapshot.cursor.row * row_height);
+    const QColor background = color(snapshot.background_rgb);
+    const QColor foreground = color(snapshot.foreground_rgb);
+    add_rectangle(overlays, QRectF(origin, QSizeF(layout.width, row_height)), background);
+    const auto write = [&](const QString& words, QPointF at, qreal share) {
+        auto node = std::unique_ptr<QSGTextNode>(window.createTextNode());
+        node->setColor(blend(foreground, background, share));
+        QTextLayout text(words, font);
+        text.beginLayout();
+        auto line = text.createLine();
+        if (line.isValid())
+            line.setLineWidth(10000);
+        text.endLayout();
+        node->addTextLayout(at, &text);
+        overlays.appendChildNode(node.release());
+    };
+    write(layout.shown, origin, 0.5);
+    if (!layout.keys.isEmpty())
+        write(layout.keys, origin + QPointF(metrics.horizontalAdvance(layout.shown), 0), 0.3);
+}
+
 void add_cursor(QSGNode& overlays, QQuickWindow& window, const session::TerminalSnapshot& snapshot,
                 const QFont& font, qreal cell_width, qreal row_height) {
     if (!snapshot.cursor.visible || !snapshot.cursor.in_viewport ||
@@ -626,6 +694,9 @@ struct TerminalSurface::RenderState {
     qreal minimum_scale{};
     std::optional<std::pair<QPoint, QPoint>> selection;
     std::vector<TerminalMatch> link;
+    QString suggestion;
+    QString session_id;
+    QString offer_key;
 };
 
 void TerminalSurface::publishFrame(bool snapshot_changed) {
@@ -633,6 +704,11 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
     // render thread gets owned immutable values through an explicit C++ handoff.
     auto frame = std::make_shared<RenderState>();
     frame->preedit = preedit_;
+    if (document_ && !document_->attentionPending()) {
+        frame->suggestion = suggestion_;
+        frame->session_id = document_->sessionId();
+        frame->offer_key = suggestion_key_;
+    }
     frame->viewport = size();
     frame->font_family = use_system_font_ ? QString() : resolved_font_family_;
     frame->font_pixel_size = font_pixel_size_;
@@ -707,6 +783,27 @@ void TerminalSurface::bindWindow(QQuickWindow* current) {
         disconnect(window_active_connection_);
     if (window_visible_connection_)
         disconnect(window_visible_connection_);
+    if (suggestion_frame_connection_)
+        disconnect(suggestion_frame_connection_);
+    disconnect(presentation_connection_);
+    {
+        const std::lock_guard lock(render_mutex_);
+        painted_state_.reset();
+        presented_state_.reset();
+    }
+    if (current)
+        presentation_connection_ = connect(
+            current, &QQuickWindow::frameSwapped, this,
+            [this] {
+                // Runs at presentation on the render thread. Only immutable
+                // render values cross this handoff, never GUI-owned objects.
+                const std::lock_guard lock(render_mutex_);
+                presented_state_ = painted_state_;
+            },
+            Qt::DirectConnection);
+    if (current)
+        suggestion_frame_connection_ =
+            connect(current, &QQuickWindow::frameSwapped, this, &TerminalSurface::reportSeen);
     if (current)
         window_visible_connection_ =
             connect(current, &QWindow::visibleChanged, this, &TerminalSurface::updateViewing);
@@ -719,6 +816,7 @@ void TerminalSurface::bindWindow(QQuickWindow* current) {
             } else {
                 updateInputContext(Qt::ImEnabled | Qt::ImCursorRectangle);
                 claimSize();
+                publishFrame(false);
             }
         });
 }
@@ -727,6 +825,8 @@ TerminalSurface::~TerminalSurface() {
     disconnect(window_changed_connection_);
     disconnect(window_active_connection_);
     disconnect(window_visible_connection_);
+    disconnect(suggestion_frame_connection_);
+    disconnect(presentation_connection_);
     disconnect(warm_connection_);
     if (viewed_)
         viewed_->removeViewer(viewed_interval_);
@@ -769,6 +869,7 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     if (document_)
         disconnect(document_, nullptr, this, nullptr);
     document_ = document;
+    typed_since_arrival_ = false;
     wheel_remainder_ = 0;
     pixel_remainder_ = 0;
     selecting_ = false;
@@ -870,7 +971,9 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
         const std::lock_guard lock(render_mutex_);
         frame = render_state_;
     }
-    if (!frame || !frame->snapshot || frame->viewport.isEmpty()) {
+    if (!frame || !frame->snapshot || frame->viewport.isEmpty() || !window()) {
+        const std::lock_guard lock(render_mutex_);
+        painted_state_.reset();
         delete old_node;
         return nullptr;
     }
@@ -898,6 +1001,9 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
         root->overlays->removeChildNode(child);
         delete child;
     }
+    if (!frame->suggestion.isEmpty() && frame->preedit.isEmpty())
+        add_suggestion(*root->overlays, *window(), snapshot, font, frame->suggestion, cell_width,
+                       row_height);
     add_cursor(*root->overlays, *window(), snapshot, font, cell_width, row_height);
     if (frame->selection)
         add_selection(*root->overlays, snapshot, frame->selection->first, frame->selection->second,
@@ -924,6 +1030,10 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
     matrix.translate(0, static_cast<float>(-layout.first_row * row_height * layout.scale));
     matrix.scale(static_cast<float>(layout.scale));
     root->setMatrix(matrix);
+    {
+        const std::lock_guard lock(render_mutex_);
+        painted_state_ = std::move(frame);
+    }
     return root;
 }
 
@@ -1423,7 +1533,123 @@ std::optional<TerminalMatch> terminal_find(const session::TerminalSnapshot& snap
     return std::nullopt;
 }
 
+void TerminalSurface::setSuggestion(const QString& suggestion) {
+    if (suggestion_ == suggestion)
+        return;
+    suggestion_ = suggestion;
+    typed_while_offered_ = 0;
+    emit suggestionChanged();
+    publishFrame(false);
+}
+
+void TerminalSurface::setSuggestionKey(const QString& key) {
+    if (suggestion_key_ == key)
+        return;
+    suggestion_key_ = key;
+    emit suggestionChanged();
+    publishFrame(false);
+}
+
+void TerminalSurface::setTabFlow(bool enabled) {
+    if (tab_flow_ == enabled)
+        return;
+    tab_flow_ = enabled;
+    emit tabFlowChanged();
+}
+
+void TerminalSurface::setTabAway(const QJSValue& move) {
+    tab_away_ = move;
+    emit tabFlowChanged();
+}
+
+// A suggestion counts as seen once it is on screen in the active window, once
+// per offer: the same words offered again after another turn are a new offer.
+void TerminalSurface::reportSeen() {
+    const auto& key = suggestion_key_.isEmpty() ? suggestion_ : suggestion_key_;
+    if (!document_ || suggestion_.isEmpty() || seen_ == key || !isVisible() || !window() ||
+        !window()->isActive())
+        return;
+    if (presentedSuggestion().shown.isEmpty())
+        return;
+    seen_ = key;
+    emit suggestionSeen(document_->sessionId(), suggestion_key_);
+}
+
+// Count manual input separately from the already-ordered paste transaction.
+void TerminalSurface::noteTyped() {
+    typed_since_arrival_ = true;
+    if (!suggestion_.isEmpty())
+        ++typed_while_offered_;
+}
+
+bool TerminalSurface::suggestionWhole() const { return presentedSuggestion().whole; }
+
+SuggestionLayout TerminalSurface::presentedSuggestion() const {
+    std::shared_ptr<const RenderState> frame;
+    {
+        const std::lock_guard lock(render_mutex_);
+        frame = presented_state_;
+    }
+    if (!document_ || !frame || !frame->snapshot || !frame->preedit.isEmpty() ||
+        frame->session_id != document_->sessionId() || frame->offer_key != suggestion_key_ ||
+        frame->suggestion != suggestion_)
+        return {};
+    const QFontMetricsF metrics(terminal_font(frame->font_family, frame->font_pixel_size));
+    return lay_out_suggestion(*frame->snapshot, metrics, frame->suggestion);
+}
+
+// With the Tab flow on (an agent lapis guesses for), Tab sends the offered
+// suggestion when it shows whole: one service-admitted paste plus Return,
+// bound to that agent even if Tab moves on. Otherwise, and with Option-Tab, Tab
+// only types it. With nothing offered and nothing typed since arriving, Tab
+// moves to the next agent that needs you, and is the program's own when none
+// does. Typing keeps the suggestion; what was typed first is counted.
+bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
+    if (!tab_flow_ || !document_ || modifier_key(event.key()))
+        return false;
+    const auto modifiers = event.modifiers() & ~Qt::KeypadModifier;
+    const bool tab = event.key() == Qt::Key_Tab && modifiers == Qt::NoModifier;
+    const bool fill = event.key() == Qt::Key_Tab && modifiers == Qt::AltModifier;
+    // Never over a request: Return in a permission dialog would answer it.
+    const bool offered = !suggestion_.isEmpty() && !document_->attentionPending();
+    if (offered && (tab || fill)) {
+        const bool send = tab && suggestionWhole();
+        const int typed_first = typed_while_offered_;
+        const auto owner = document_;
+        const auto session_id = owner->sessionId();
+        const auto offer_key = suggestion_key_;
+        const auto request_id = pasteTextRequest(suggestion_, send);
+        if (request_id == 0)
+            return true;
+        setSuggestion({});
+        typed_since_arrival_ = !send;
+        const auto connection = std::make_shared<QMetaObject::Connection>();
+        *connection =
+            connect(owner.data(), &SessionPreview::pasteResult, owner.data(),
+                    [surface = QPointer<TerminalSurface>(this), connection, request_id, session_id,
+                     offer_key, send, typed_first](quint64 id, bool queued, bool, const QString&) {
+                        if (id != request_id)
+                            return;
+                        QObject::disconnect(*connection);
+                        if (surface && queued)
+                            emit surface->suggestionUsed(session_id, offer_key, send, typed_first);
+                    });
+        return true;
+    }
+    if (tab && !typed_since_arrival_ && tab_away_.isCallable() && tab_away_.call().toBool())
+        return true;
+    // Keys that reach the agent, including Command-Delete and friends.
+    if (!modifiers.testFlag(Qt::MetaModifier) || event.key() == Qt::Key_Backspace ||
+        event.key() == Qt::Key_Delete || event.key() == Qt::Key_Left ||
+        event.key() == Qt::Key_Right)
+        noteTyped();
+    return false;
+}
+
 bool TerminalSurface::pasteText(const QString& text) {
+    return pasteTextRequest(text, std::nullopt) != 0;
+}
+quint64 TerminalSurface::pasteTextRequest(const QString& text, std::optional<bool> submit) {
     if (!document_ || text.isEmpty() || !interactive_ || !document_->live() || pasting_)
         return false;
     const QByteArray bytes = text.toUtf8();
@@ -1453,11 +1679,12 @@ bool TerminalSurface::pasteText(const QString& text) {
     if (document_ != owner || !acceptsTerminalInput())
         return false;
     clearSelection();
-    if (!document_->sendText(bytes, true)) {
+    const auto request = submit.has_value() ? document_->requestPaste(bytes, *submit)
+                         : document_->sendText(bytes, true) ? quint64{1}
+                                                            : quint64{0};
+    if (request == 0)
         emit pasteRefused(document_->activity());
-        return false;
-    }
-    return true;
+    return request;
 }
 
 QString TerminalSurface::localFilePath(const QString& url) const {
@@ -1726,6 +1953,7 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
     if (composition_state_ == CompositionState::stale)
         composition_state_ = CompositionState::idle;
     if (event->matches(QKeySequence::Paste)) {
+        noteTyped();
         const QString text = QGuiApplication::clipboard()->text();
         static_cast<void>(pasteText(text));
         event->accept();
@@ -1736,6 +1964,10 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
             ++ime_epoch_;
             resetInputContext();
         }
+        event->accept();
+        return;
+    }
+    if (takeSuggestion(*event)) {
         event->accept();
         return;
     }
@@ -1856,6 +2088,7 @@ void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
             event->ignore();
             return;
         }
+        noteTyped();
         document_->sendText(event->commitString().toUtf8());
     }
     if (composition_epoch != ime_epoch_) {

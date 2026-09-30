@@ -3266,6 +3266,31 @@ ApplicationWindow {
                     interactive: visible && window.visible && !window.inputBlocked && document !== null
                                  && (preview.active || document.inputReady || document.historyActive)
                     focus: visible && window.visible && !window.inputBlocked && !window.sideTerminalOpen
+                    // The next prompt lapis predicted for the agent, while it
+                    // waits for a prompt (never over a request, where Return
+                    // would answer it): Tab sends it (Option-Tab only types it), and
+                    // Tab with nothing offered moves to the next agent that
+                    // needs you, so a day can be spent pressing Tab.
+                    readonly property bool predicting: typeof nextPrompt !== "undefined" && nextPrompt !== null
+                                                       && nextPrompt.enabled && document !== null
+                    tabFlow: predicting && ["claude", "codex"].indexOf(document.harnessId) >= 0
+                    suggestion: predicting && nextPrompt.revision >= 0 && !document.historyActive
+                                && ["finished", "idle"].indexOf(document.statusKind) >= 0
+                                ? nextPrompt.suggestion(document.sessionId) : ""
+                    onSuggestionSeen: (sessionId, offerKey) => {
+                        if (typeof nextPrompt !== "undefined" && nextPrompt !== null)
+                            nextPrompt.seenOffer({session: sessionId, offer: offerKey})
+                    }
+                    onSuggestionUsed: (sessionId, offerKey, sent, typedFirst) => {
+                        if (typeof nextPrompt !== "undefined" && nextPrompt !== null)
+                            nextPrompt.used(sessionId, sent, typedFirst, offerKey)
+                    }
+                    // Follows every offer, even one with the same words as the last.
+                    suggestionKey: suggestion.length > 0 && nextPrompt.revision >= 0
+                                   ? nextPrompt.offerKey(document.sessionId) : ""
+                    tabAway: function() {
+                        return predicting && workspace.nextPriorityAttention(nextPrompt.readyAgents())
+                    }
                     // New and restarted agents start at this grid, not resized
                     // just after they drew.
                     onGridSizeChanged: workspace.setLaunchSize(gridSize)

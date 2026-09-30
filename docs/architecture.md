@@ -2814,6 +2814,14 @@ write scopes; contributors still share feature ownership.
 | R4, release and upgrade provenance | **Acceptance and enforcement gaps.** `package_macos.py release` validates the DMG staple and checks that current HEAD exists on a remote; it does not bind the staged app/DMG to that HEAD, version and qualification result. The latest published v0.5.0 targets `0ec13cb`, a separate release tree from this audit's main. | Produce one immutable package manifest linking source tree/dirty status, app version, toolchain/dependency pins, bundled notices/SBOM, app and DMG hashes, appcast signature and validation. Refuse publishing stale/mismatched artifacts. Exercise installation and the Sparkle transition, including recoverable registry/history migration and a documented recovery/rollback path. Keep signing-key recovery outside the repository. | Run the existing `package_macos.py verify --notarized` on the exact staged artifact, then verify the downloaded asset and appcast. Qualify Finder launch in a fresh user environment without developer tools or pre-existing BTM state; install an update with live sessions; recover after a failed update/migration. Record source and artifact digests together. Do not relabel source tests or the old 0.2.0 signature receipt as v0.5.0 acceptance. |
 | R5, operational bounds and support | **Measured coverage gaps and source-level pressure risks.** The gateway uses `ThreadingHTTPServer`; listing can spend eight seconds waiting and then probe every service serially at up to 0.3 s each, while the iOS request timeout is 15 s. `followNewHistory` still defers by a full second. Native UI/Metal and full TSan qualification have retained failures in the current review receipts. | Bound gateway clients, listing work and cancellation, preserve the local terminal under remote/output pressure, and make degraded health actionable. Record session counts/rates, history/log budgets and error causes. Extend the existing CLI with package/runtime diagnostics and a user-controlled redacted support export; the current developer `doctor` only establishes dependency/build readiness. | Start with the advertised early-access workload and a long-running reconnect/output soak; inspect memory, file descriptors, disk use, idle CPU and input/switch tails. Then run Milestone 4's controlled 32-session workload. Include dead endpoints and disconnected long-poll clients. Resolve or accurately scope the retained native-render and sanitizer failures before reusing that evidence; background Qt success alone is not GPU acceptance. |
 
+The R2 protocol repair landed in PR #43: one negotiated raw paste is encoded in
+the service's current terminal mode and admitted or refused as a whole. The
+next-prompt integration uses that receipt for both fill and paste-plus-Return,
+refuses known pending requests in the service, and bases submission on the last
+presented frame. Focused real-PTY admission, background Qt, ASan/UBSan and TSan
+checks are recorded with their source revisions; these do not close R1 or the
+remaining native GPU/package acceptance.
+
 R1 and R4 form the first complete delivery slice: install, start, detach, update,
 recover and uninstall without losing owned sessions or misidentifying an artifact.
 R2 and R3 can be implemented in parallel once their service/adaptor identity
@@ -3382,6 +3390,106 @@ has answered for it loses every agent. An install waits for the old window to
 exit and a few seconds more before touching the bundle. Sparkle replaces the
 bundle only after the app has exited, so it can race BTM the first time lapis
 quits on a Mac with no BTM entry for it yet; that is not yet measured.
+
+### Predicting the next prompt (September 29)
+
+The goal is Cursor's Tab for prompts: when an agent finishes a turn, the prompt
+the person will likely type is ready at its cursor. A pilot on 40 prompts one
+person typed to Claude Code in September (Opus 5.5 given only the conversation
+before each, and that person's standing instructions; a second Opus call
+grading) found one of three guesses sendable as-is for 7, and the right intent
+for 17. Short replies were the predictable part: 5 of 7 prompts of four words or
+fewer, and all 4 approvals, against 2 of 33 longer prompts. Most longer prompts
+carried something the conversation did not: another agent's state, where the
+person was, a pasted meeting, a new idea. The model also over-guessed approval
+(a one- or two-word first guess 12 times, right twice). So the design offers a
+guess only when the model gives it at least `minConfidence` probability, as
+Cursor's retrained Tab shows fewer suggestions to be accepted more often, and it
+logs every guess to measure that threshold.
+
+- **Where it runs.** `NextPrompt` follows `Workspace::turnFinished`, which covers
+  Codex and Claude turns and requests but not terminal agents' output pauses.
+  `next_prompt.py context` reads the conversation where the agent runs (the
+  CLI's transcript, by the conversation id lapis knows, else the newest
+  interactive one in its folder), sent over ssh with the helper on stdin for
+  another machine, as limit resets and token counts are. `predict` runs on the
+  Mac through `claude -p` with tools, settings and MCP off, no saved session,
+  and `ANTHROPIC_API_KEY` removed, so it spends the signed-in plan and cannot
+  read the future from disk.
+- **What it sees.** The conversation's newest 24,000 characters, the agent's
+  screen (permission dialogs and errors are not in transcripts), one line for
+  every agent (title, category, status, waiting), the person's newest prompts
+  on that machine in the last six hours, the time, and `~/.claude/CLAUDE.md` as
+  priors.
+- **How it is offered.** `TerminalSurface.suggestion` draws the guess dim after
+  the cursor, covering only what it draws, and only while the agent is finished
+  or idle: never over a pending request, since Return in a permission dialog
+  would answer it (the view also refuses to send one then). With `tabFlow` (a
+  Claude Code or Codex agent while guessing is on), Tab sends a guess that
+  shows whole: one negotiated paste request with its Return included in the
+  service's atomic queue admission. Later typing follows that operation; no
+  GUI timer submits it. The service refuses submission while a known request
+  is pending. A longer or multi-line guess is only typed, as Option-Tab always
+  does, so nothing unseen is submitted. Both suggestion actions require the
+  negotiated receipt; older services refuse visibly until upgraded/restarted. Typing does not withdraw a guess; keys typed first are counted.
+  With nothing offered and nothing typed since arriving, Tab calls QML's
+  `tabAway`, which asks `Workspace::nextPriorityAttention` for a guess not yet
+  seen, then an unseen turn or a request, then a guess already seen (the longest
+  waiting within each, so Tab cannot bounce between two guesses while another
+  agent waits); when nothing waits, Tab goes to the program. Tab keeps its
+  meaning after typing (completion, Codex's queue) and without the flow (shells,
+  and CLIs such as OpenCode that switch modes with Tab). Surfacing never sends:
+  the person's key does, keeping "surfacing never approves" when agent output
+  could steer a guess. The model's prompt puts screens, transcripts and titles
+  in blocks fenced with a random tag the text cannot close, and says their
+  contents are material, not instructions.
+- **What it keeps.** `runtime/next_prompt.jsonl` in the data folder
+  (owner-only, one JSON object a line, `v` 2; an earlier build's log beside the
+  folder moves in) gives every guess an offer id (`<agent>:<launch>.<n>`,
+  unique across launches) and records `predicted` (candidates, probabilities,
+  category, threshold, whether offered), `seen` (first on screen in the active
+  window after a presented frame, once per offer even when two offers share
+  their words: the impression), `used` (service-admitted Tab or Option-Tab,
+  keys typed first, milliseconds after seen) and `withdrawn` (replaced by the next turn's guess, or the setting turned
+  off, and whether it had been seen), plus `failed` (the stage, context or
+  predict, and a stable reason category without raw error text) and `skipped`
+  (the hourly cap, which counts model calls). Log records are bounded to 1 MiB;
+  the active log rotates at 4 MiB with one owner-only backup. Helper stdout is
+  bounded to 1 MiB and stderr to 64 KiB; timeout, overflow, disable and
+  supersession stop its process group. Session and offer identity are captured
+  before input is sent and checked again for every receipt, so a document
+  switch or replaced offer cannot take credit. Admission is not proof of CLI
+  consumption, and lost replies are never replayed automatically. Turns of CLIs lapis does not guess for
+  record nothing. Acceptance is used over seen: a guess never on screen, or one
+  replaced before the person came, is not a refusal. `scripts/next_prompt_eval.py
+  log` reports it by category and confidence with the attempts behind it;
+  `--judge` grades the guesses seen but not used against the prompt typed
+  instead (read from the transcript by conversation and prompt number);
+  `replay` repeats the pilot on any machine's transcripts and sweeps the
+  threshold. Reports cover retained log records, not every historical turn:
+  unsupported CLIs and work cancelled by supersession or disable produce no
+  prediction outcome. The hourly cap reserves prediction attempts after context
+  extraction; failed process launches refund their reservation. Each attempt
+  can retry a malformed answer once, so the cap does not count provider requests
+  one-for-one.
+
+`scripts/next_prompt_eval.py replay` then repeated the test on 60 prompts typed
+since September 1, half on the Mac and half on the Linux test host, across
+Claude Code and Codex: one of three guesses was sendable for 10% and had the
+right intent for 42%; 44% of the 9 prompts of four words or fewer were
+sendable, against 4% of the 51 longer ones, and none of the 22 questions or 11
+new tasks. Opus 5.5's stated probabilities for its first guess clustered at 0.3
+to 0.4 (one reached 0.5). At a 0.4 threshold 27% of turns got an offer and a
+quarter of those were sendable, Cursor's break-even for showing a suggestion,
+with the right intent for 44%; at 0.5 almost nothing is offered. The default is
+0.4; the log will show whether that holds with lapis's state in the prompt.
+
+It is off by default: each prediction is a model call on the person's plan.
+Claude Code 2.1.285 has its own prompt suggestions (on unless
+`promptSuggestionEnabled` is false; they back off after 20 unused); lapis's
+guess covers them but does not turn them off. Past transcripts do not record
+lapis's state, so the replay cannot measure what the other agents' state adds;
+the log can.
 
 ### Claude Code 2.1.281 to 2.1.285 (September 29)
 

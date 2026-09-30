@@ -45,20 +45,26 @@
   ],
   "source_sha256": {
     "apps/desktop/qml/Main.qml": "5ff43300422e57ebcedbc26f9849de40762d3a8c79a040b68625f92aed2d3372",
-    "apps/desktop/src/live_connection.cpp": "5c0b915c89641a6668acd9154ea01df869661e0e861778a050e4081e71a46ad3",
+    "apps/desktop/src/live_connection.cpp": "a799f28595840ae5ea4495e68452c4a823935feea57a42af8e8cdf8c3467283e",
     "apps/desktop/src/live_connection.hpp": "622e9b95e3f2f2e6a5d862529e0f51baf1585b90f0eb41963501f09e2657ac8b",
     "apps/desktop/src/terminal_surface.cpp": "d67200fd7279309e17438e71b7213a947dffb168cd1e58dcc62e2be6ca465b62",
-    "apps/desktop/src/workspace.hpp": "0e9b78173029b95809448ba853aeb36915e5dbcdf3beee7f6efe3495731967a8",
+    "apps/desktop/src/workspace.hpp": "36fdb107f0dd6c7236571346e999f7cec5ad4aced2ff13a47243e55ac418d114",
     "apps/desktop/tests/live_connection_test.cpp": "5d948e1c9079dc1a5ee157234ca71ffeaa4288cf12fa65b04261ba1edffa9cc1",
     "apps/desktop/tests/terminal_input_test.cpp": "665180628ef5bd7c01f37b074444ce6a66beced0a7a84b4ddddef86fc845abc0",
-    "docs/architecture.md": "98c1ab69b57dcb22be35d49fcff154eb5d91776eae53f463d323cdbf4f799ea0",
+    "docs/architecture.md": "b3b8e72342f8d2ad8344d3bf54fa147b72d8909e6e84a1fc89aa7e29d4745148",
     "scripts/check_cli_launch.py": "507ded8ae5e2d54b07d49e9622f3d6c7920145f6ac11172571746cd849579e8b",
     "services/session/include/lapis/session/terminal.hpp": "2cda68268b4c4b37495c27d366f35960dfceaa08ea9a10f7d8103bbf077859fa",
-    "services/session/src/session_service.cpp": "11ab001e0d2b4d34836cae6b8881b72c694a6bfed84d9aa290f54a9a1c049d4f",
+    "services/session/src/session_service.cpp": "43b37cfabd9095a0b3af7eb42fc90224b9ba84df73a601d5877a5fc3c4ade2fb",
     "services/session/src/terminal/terminal.cpp": "8c59a506c5ef0895c1527e19d89b52a3f487334951de07a26c56cedaf7fd7747",
     "services/session/src/transport/local_protocol.cpp": "e357d4f20ba9440ec9bd9b11eecc545d614b2f438bd9c18785f0a49ea0e63f39",
     "services/session/src/transport/local_protocol.hpp": "0a9c4d4933ae0942fb03b1a491e72910b32597ecec3d4ae7d013d373b7d76b21",
     "services/session/tests/local_protocol_test.cpp": "a3430e60b50593add68aea0221421e6979c8938a0f36c7a26385cf8e13b6d743",
     "services/session/tests/terminal/terminal_test.cpp": "dfd64f1470ec12eaec2c0fdfd6738a64a0fd88b0c13a3fefb80f48807d31635e"
-  }
+  },
+  "followup": {
+    "contract": "The service independently refuses paste-plus-Return while normalized requests are pending. requestPaste exposes the correlated transaction for both send and fill consumers.",
+    "checks": "Normal, ASan/UBSan and TSan real-service admission reruns passed after the submit guard; normal service clang-tidy passed. Consumer pending-request refusal is exercised by the next-prompt input fixture.",
+    "review_fixes": "Fresh refusal reason on every early sendText/requestPaste failure; source hashes explicitly tied to source_revision after the main merge. Normal live-connection rerun passed."
+  },
+  "source_revision": "9258f74ad646b1794f1eb1e8a35e0ebc8684aaf5"
 }

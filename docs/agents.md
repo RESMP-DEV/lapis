@@ -38,7 +38,8 @@ and right arrows, while up and down choose the CLI). On another machine the agen
 runs over ssh in that machine's `newAgent` folder, else its home, in its login
 shell. When such a Claude Code agent's connection drops (the Mac changed
 networks or slept), lapis reconnects it and it resumes its conversation. The
-**+** under the last category opens the same form, machines included.
+The agent strip's **+** opens the same form, machines included. The category
+rail's **+** creates a category instead.
 
 A new tab shows the CLI's mark and a home-relative folder such as `~/dev/lapis`;
 agents in the same folder are numbered. An agent still named after its folder

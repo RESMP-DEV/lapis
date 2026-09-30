@@ -9,7 +9,7 @@ a strip under the one you are working with, and jump straight to whichever needs
 you. Each agent runs in its own session service, so closing or updating lapis
 normally leaves it running (macOS 27 adds [conditions](docs/install.md#updates)),
 and one whose service is gone (after a crash or a power cut) starts again in its
-card, resuming its conversation where its CLI can.
+card when lapis next opens, resuming its conversation where its CLI can.
 
 It is built for speed first: switching agents and typing should feel instant on
 an Apple silicon Mac with a high-refresh display.
@@ -36,6 +36,8 @@ they are released. See
 - **Plan usage** for every CLI you are signed in to, on this Mac and your other
   machines, with several plans shared across sessions. [Usage](docs/usage.md)
 - **Your phone** shows and drives the same agents. [Phone](docs/phone.md)
+- **Suggestions** guess your next prompt for each agent; Tab sends it and moves
+  on to the next agent that needs you. [Suggestions](docs/suggestions.md)
 - Every shortcut is in [keys](docs/keys.md) and every setting in
   [config](docs/config.md).
 
@@ -62,6 +64,7 @@ uv run --no-project python scripts/lapis.py run
 | [config](docs/config.md) | `lapis.json`: defaults, alerts, editor, CLI flags |
 | [usage](docs/usage.md) | Plan usage and plans shared across sessions |
 | [phone](docs/phone.md) | The iPhone app and its gateway |
+| [suggestions](docs/suggestions.md) | Guessed next prompts, Tab, and their acceptance log |
 | [build](docs/build.md) | Building, checks, probes and fixtures |
 | [status](docs/status.md) | What is qualified, what remains, and the evidence |
 | [architecture](docs/architecture.md) | Design decisions and the plan |

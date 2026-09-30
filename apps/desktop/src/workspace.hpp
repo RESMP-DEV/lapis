@@ -181,6 +181,7 @@ class SessionPreview final : public QObject {
     bool sendText(const QByteArray& bytes, bool paste = false);
     // Requires service admission; pasteResult reports the eventual outcome.
     quint64 sendPasteAndSubmit(const QByteArray& bytes);
+    quint64 requestPaste(const QByteArray& bytes, bool submit = false);
     void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
     // A turn of the wheel for the program on the alternate screen, over a
     // viewport cell; only when its snapshot says the service accepts wheels.
@@ -502,6 +503,8 @@ class Workspace final : public QObject {
     // Each agent's current conversation, as its CLI resumes it: agent id to
     // conversation id, for the agents that have one.
     [[nodiscard]] QHash<QString, QString> agentConversations() const;
+    // One agent's current conversation, or empty.
+    [[nodiscard]] QString agentConversation(const QString& id) const;
     Q_INVOKABLE bool moveSessionBy(const QString& id, int delta);
     // Puts agents, in their strip order, at `index` of a category's strip (at
     // its end when `index` is past it), moving them there from any category.
@@ -516,6 +519,13 @@ class Workspace final : public QObject {
     // Selects the agent that most recently began to need you; again, the one
     // before it. False when none is waiting.
     Q_INVOKABLE bool latestAttention();
+    // Tab's next agent, in any category, of those that need you: first one
+    // with a guessed next prompt not yet seen, then a turn that finished unseen
+    // or a request, then a guess already seen (so Tab cannot bounce between
+    // two guesses while others wait), the one waiting longest within each.
+    // `ready` maps agents with a guess to whether it was seen. False when none.
+    // Advances past the focused session; false leaves Tab with the program.
+    Q_INVOKABLE bool nextPriorityAttention(const QVariantMap& ready);
     [[nodiscard]] QVariantList sessions() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;
