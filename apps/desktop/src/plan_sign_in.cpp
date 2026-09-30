@@ -24,13 +24,25 @@ QString plan_name_for(const QString& email) {
     return name.isEmpty() ? QStringLiteral("plan") : name;
 }
 
-PlanSignIn::PlanSignIn(Program program, Copy copy, Record record, Places places, QObject* parent)
-    : QObject(parent), program_(std::move(program)), copy_(std::move(copy)),
-      record_(std::move(record)), places_(std::move(places)) {}
+namespace {
+constexpr int kCopyTimeoutMs = 30 * 1000;
+}
+
+PlanSignIn::PlanSignIn(Hooks hooks, Places places, QObject* parent)
+    : QObject(parent), hooks_(std::move(hooks)), places_(std::move(places)) {}
 
 PlanSignIn::~PlanSignIn() {
     if (process_)
         process_->kill();
+    for (const auto& copy : std::as_const(copying_))
+        if (copy)
+            copy->kill();
+}
+
+QStringList PlanSignIn::machines() const {
+    if (plan_.isEmpty())
+        return {};
+    return QStringList{tr("this Mac")} + reached_;
 }
 
 QString PlanSignIn::pendingToken() const {
@@ -53,8 +65,10 @@ void PlanSignIn::start() {
     link_.clear();
     plan_.clear();
     output_.clear();
-    const auto python = program_(QStringLiteral("python3"));
-    const auto claude = program_(QStringLiteral("claude"));
+    reached_.clear();
+    unreached_.clear();
+    const auto python = hooks_.program(QStringLiteral("python3"));
+    const auto claude = hooks_.program(QStringLiteral("claude"));
     if (claude.isEmpty())
         return fail(tr("Claude Code is not installed on this Mac."));
     if (python.isEmpty())
@@ -96,7 +110,8 @@ void PlanSignIn::read() {
         if (const auto link = message.value(QStringLiteral("link")).toString();
             link.startsWith(QLatin1String("https://"))) {
             link_ = link;
-            copy_(link_);
+            hooks_.copy(link_);
+            hooks_.open(link_);
             set(QStringLiteral("waiting"));
         } else if (message.value(QStringLiteral("signedIn")).toBool()) {
             set(QStringLiteral("signedIn"));
@@ -123,7 +138,12 @@ void PlanSignIn::setEmail(const QString& email) {
 
 void PlanSignIn::copyLink() {
     if (!link_.isEmpty())
-        copy_(link_);
+        hooks_.copy(link_);
+}
+
+void PlanSignIn::openLink() {
+    if (!link_.isEmpty())
+        hooks_.open(link_);
 }
 
 void PlanSignIn::finish() {
@@ -133,7 +153,7 @@ void PlanSignIn::finish() {
         return;
     }
     QString reason;
-    const auto name = record_(email_, &reason);
+    const auto name = hooks_.record(email_, {}, &reason);
     if (name.isEmpty())
         return fail(reason);
     const auto kept = QDir(places_.accounts).filePath(QStringLiteral("claude/%1.token").arg(name));
@@ -141,7 +161,71 @@ void PlanSignIn::finish() {
     if (!QFile::rename(pendingToken(), kept))
         return fail(tr("lapis could not keep the token for %1.").arg(name));
     plan_ = name;
-    set(QStringLiteral("done"), tr("%1 is a plan on this Mac now.").arg(name));
+    QFile token(kept);
+    spread(token.open(QIODevice::ReadOnly) ? token.read(8192).trimmed() : QByteArray());
+    state_ = QStringLiteral("done");
+    report();
+}
+
+// The token goes to each ssh host on stdin, never on a command line, into
+// the same owner-only file the agents' launch reads there.
+void PlanSignIn::spread(const QByteArray& token) {
+    const auto ssh = hooks_.program(QStringLiteral("ssh"));
+    if (token.isEmpty() || ssh.isEmpty() || !hooks_.machines)
+        return;
+    const auto target = QStringLiteral("umask 077 && mkdir -p ~/.lapis/accounts/claude && "
+                                       "chmod 700 ~/.lapis/accounts ~/.lapis/accounts/claude "
+                                       "&& cat > ~/.lapis/accounts/claude/%1.token")
+                            .arg(plan_);
+    for (const auto& machine : hooks_.machines()) {
+        if (machine.isEmpty() || machine.startsWith(QLatin1Char('-')) || copying_.contains(machine))
+            continue;
+        auto* process = new QProcess(this);
+        copying_.insert(machine, process);
+        process->setProgram(ssh);
+        process->setArguments({QStringLiteral("-o"), QStringLiteral("BatchMode=yes"),
+                               QStringLiteral("-o"), QStringLiteral("ConnectTimeout=10"),
+                               QStringLiteral("-o"), QStringLiteral("ControlPath=none"),
+                               QStringLiteral("-T"), QStringLiteral("--"), machine, target});
+        process->setProcessChannelMode(QProcess::MergedChannels);
+        const auto done = [this, machine, process](bool ok) {
+            if (copying_.value(machine) != process)
+                return;
+            copying_.remove(machine);
+            process->deleteLater();
+            QString reason;
+            if (ok && !hooks_.record(email_, machine, &reason).isEmpty())
+                reached_ << machine;
+            else
+                unreached_ << machine;
+            report();
+        };
+        connect(process, &QProcess::finished, this,
+                [process, done](int code, QProcess::ExitStatus status) {
+                    Q_UNUSED(process);
+                    done(status == QProcess::NormalExit && code == 0);
+                });
+        connect(process, &QProcess::errorOccurred, this, [done](QProcess::ProcessError error) {
+            if (error == QProcess::FailedToStart)
+                done(false);
+        });
+        QTimer::singleShot(kCopyTimeoutMs, process, [process] { process->kill(); });
+        process->start();
+        process->write(token + '\n');
+        process->closeWriteChannel();
+    }
+}
+
+void PlanSignIn::report() {
+    auto text = tr("%1 can be used on %2.").arg(plan_, machines().join(QStringLiteral(", ")));
+    if (!copying_.isEmpty())
+        text +=
+            QLatin1Char(' ') + tr("Copying it to %n more machine(s)…", "", int(copying_.size()));
+    else if (!unreached_.isEmpty())
+        text +=
+            QLatin1Char(' ') + tr("Not reachable: %1.").arg(unreached_.join(QStringLiteral(", ")));
+    message_ = std::move(text);
+    emit changed();
 }
 
 void PlanSignIn::cancel() {

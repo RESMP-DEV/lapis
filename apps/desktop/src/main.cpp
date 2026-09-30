@@ -22,6 +22,7 @@
 #include <QClipboard>
 #include <QCommandLineParser>
 #include <QDebug>
+#include <QDesktopServices>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -474,19 +475,26 @@ void follow_usage_setting(lapis::desktop::Usage& usage, const lapis::desktop::Ke
 // Command+Shift+P "Add a Claude Code plan": signs in any account and keeps
 // its token for sessions on this Mac.
 QObject* keep_plan_sign_in(std::optional<lapis::desktop::PlanSignIn>& kept,
+                           const lapis::desktop::Workspace& workspace,
                            lapis::desktop::KeyMap& keymap, bool isolated) {
     if (isolated)
         return nullptr;
     return &kept.emplace(
-        [](const QString& name) {
-            return name == QLatin1String("claude") ? lapis::desktop::harness_program(name)
-                                                   : QStandardPaths::findExecutable(name);
-        },
-        [](const QString& text) { QGuiApplication::clipboard()->setText(text); },
-        [&keymap](const QString& email, QString* reason) {
-            return keymap.addPlanMachine(
-                {.cli = QStringLiteral("claude"), .email = email, .machine = {}}, reason);
-        },
+        lapis::desktop::PlanSignIn::Hooks{
+            .program =
+                [](const QString& name) {
+                    return name == QLatin1String("claude") ? lapis::desktop::harness_program(name)
+                                                           : QStandardPaths::findExecutable(name);
+                },
+            .copy = [](const QString& text) { QGuiApplication::clipboard()->setText(text); },
+            .open = [](const QString& link) { QDesktopServices::openUrl(QUrl(link)); },
+            .record =
+                [&keymap](const QString& email, const QString& machine, QString* reason) {
+                    return keymap.addPlanMachine(
+                        {.cli = QStringLiteral("claude"), .email = email, .machine = machine},
+                        reason);
+                },
+            .machines = [&workspace] { return workspace.sshMachines(); }},
         lapis::desktop::PlanSignIn::Places{
             .helper = QDir(lapis::desktop::data_directory())
                           .filePath(QStringLiteral("runtime/plan_sign_in.py")),
@@ -767,7 +775,7 @@ int main(int argc, char** argv) {
         std::optional<NextPrompt> nextPrompt;
         QObject* const nextForQml = keep_next_prompt(nextPrompt, workspace, keymap, isolated);
         std::optional<lapis::desktop::PlanSignIn> planSignIn;
-        QObject* const signInForQml = keep_plan_sign_in(planSignIn, keymap, isolated);
+        QObject* const signInForQml = keep_plan_sign_in(planSignIn, workspace, keymap, isolated);
         const auto conversations = conversation_index(workspace);
         if (!isolated) {
             follow_conversation_titles(workspace, *conversations);

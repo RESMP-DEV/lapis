@@ -3342,15 +3342,20 @@ helpers, gives it a terminal of its own with `open` and `$BROWSER` replaced by a
 script that records the link, so the person chooses the browser and the account.
 The link is copied and shown; Claude Code's localhost callback receives the
 sign-in, and the helper writes the token it prints, owner-only, to
-`accounts/claude/.signing-in.token` and says only `signedIn`. `PlanSignIn` then
+`accounts/claude/.signing-in.token` and says only `signedIn`. lapis opens the
+link in the default browser as well as copying it, and keeps it on screen for
+another try. `PlanSignIn` then
 records the plan through `KeyMap::addPlanMachine`: the plan with that email
 gains `local` among its `machines`, else a new plan is named from the email
 (`someone@example.com` becomes `someone-example`), and the token is renamed to
-the plan's name. The token's scope is `user:inference` only, so it cannot name
+the plan's name. It then goes to every host in the ssh config, in parallel, on
+ssh's stdin (`BatchMode`, `ConnectTimeout=10`, `ControlPath=none`) into the same
+owner-only file a remote launch reads, and each host that takes it is added to
+the plan's `machines`; the others are named. The token's scope is `user:inference` only, so it cannot name
 its account; the person types the email. Cancelling ends the helper with
 SIGTERM, which ends Claude Code's sign-in and leaves no token. Still to do:
-Codex (`codex login --device-auth` in a plan home, as the script does), other
-CLIs, and copying the token to other machines. `plan-sign-in` and
+Codex (`codex login --device-auth` in a plan home, as the script does) and
+other CLIs. `plan-sign-in` and
 `test_plan_sign_in.py` drive stand-in CLIs; the helper was also run against
 Claude Code 2.1.285 up to its link.
 ### Update a CLI, then reload (September 28)

@@ -92,27 +92,47 @@ void signsInAnyAccount() {
     QTemporaryDir directory;
     require(directory.isValid(), "fixture directory");
     const QDir root(directory.path());
-    const auto claude = root.filePath(QStringLiteral("claude"));
+    QString claude = root.filePath(QStringLiteral("claude"));
     write(claude, "#!/bin/sh\nopen '" + link().toUtf8() + "'\nsleep 1\nprintf 'Your token:\\r\\n" +
                       token() + "\\r\\n'\nsleep 30\n");
     QFile::setPermissions(claude, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    // A stand-in ssh: "devbox" keeps what arrives on stdin; "gone" is down.
+    QString ssh = root.filePath(QStringLiteral("ssh"));
+    write(ssh, "#!/bin/sh\nfor a; do host=$last; last=$a; done\n"
+               "[ \"$host\" = gone ] && exit 255\n"
+               "printf '%s\\n' \"$@\" > '" +
+                   root.filePath(QStringLiteral("ssh.args")).toUtf8() + "'\ncat > '" +
+                   root.filePath(QStringLiteral("ssh.stdin")).toUtf8() + "'\n");
+    QFile::setPermissions(ssh, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
     QStringList copied;
+    QStringList opened;
     QStringList recorded;
     PlanSignIn signIn(
-        [&claude](const QString& name) {
-            return name == QLatin1String("claude") ? claude : QStandardPaths::findExecutable(name);
-        },
-        [&copied](const QString& text) { copied << text; },
-        [&recorded](const QString& email, QString*) {
-            recorded << email;
-            return QStringLiteral("work");
-        },
+        {.program =
+             [&claude, &ssh](const QString& name) {
+                 if (name == QLatin1String("claude"))
+                     return claude;
+                 return name == QLatin1String("ssh") ? ssh : QStandardPaths::findExecutable(name);
+             },
+         .copy = [&copied](const QString& text) { copied << text; },
+         .open = [&opened](const QString& text) { opened << text; },
+         .record =
+             [&recorded](const QString& email, const QString& machine, QString*) {
+                 recorded << email + QLatin1Char('@') +
+                                 (machine.isEmpty() ? QStringLiteral("mac") : machine);
+                 return QStringLiteral("work");
+             },
+         .machines = [] { return QStringList{QStringLiteral("devbox"), QStringLiteral("gone")}; }},
         {.helper = root.filePath(QStringLiteral("runtime/plan_sign_in.py")),
          .accounts = root.filePath(QStringLiteral("accounts"))});
     signIn.start();
     require(waitFor([&] { return signIn.state() == QLatin1String("waiting"); }),
             "the link comes back");
-    require(signIn.link() == link() && copied == QStringList{link()}, "and is copied");
+    require(signIn.link() == link() && copied == QStringList{link()} &&
+                opened == QStringList{link()},
+            "and is opened in the browser and copied");
+    signIn.openLink();
+    require(opened.size() == 2, "and can be opened again");
     signIn.setEmail(QStringLiteral(" Someone@Example.com "));
     require(waitFor([&] { return signIn.state() == QLatin1String("done"); }),
             "signing in with an email already given records the plan");
@@ -121,9 +141,20 @@ void signsInAnyAccount() {
                 QFileInfo(kept).permissions() ==
                     (QFile::ReadOwner | QFile::WriteOwner | QFile::ReadUser | QFile::WriteUser),
             "the token is kept owner-only under the plan's name");
-    require(recorded == QStringList{QStringLiteral("someone@example.com")} &&
-                signIn.plan() == QLatin1String("work"),
-            "for the email given");
+    require(waitFor([&] { return !signIn.spreading(); }), "the copies to other machines end");
+    require(recorded == QStringList({QStringLiteral("someone@example.com@mac"),
+                                     QStringLiteral("someone@example.com@devbox")}) &&
+                signIn.plan() == QLatin1String("work") &&
+                signIn.machines() ==
+                    QStringList({QStringLiteral("this Mac"), QStringLiteral("devbox")}),
+            "for the email given, here and on the machine that took it");
+    require(read(root.filePath(QStringLiteral("ssh.stdin"))) == token() + '\n' &&
+                !read(root.filePath(QStringLiteral("ssh.args"))).contains(token()) &&
+                read(root.filePath(QStringLiteral("ssh.args")))
+                    .contains("cat > ~/.lapis/accounts/claude/work.token"),
+            "the token goes over ssh on stdin, never on the command line");
+    require(signIn.message().contains(QStringLiteral("Not reachable: gone")),
+            "a machine that did not take it is named");
     require(!QFileInfo::exists(root.filePath(QStringLiteral("accounts/claude/.signing-in.token"))),
             "nothing is left pending");
 
@@ -139,10 +170,14 @@ void signsInAnyAccount() {
             "without keeping a token");
 
     // Claude Code missing is said plainly.
-    PlanSignIn missing([](const QString&) { return QString(); }, [](const QString&) {},
-                       [](const QString&, QString*) { return QString(); },
-                       {.helper = root.filePath(QStringLiteral("runtime/x.py")),
-                        .accounts = root.filePath(QStringLiteral("accounts"))});
+    PlanSignIn missing(
+        {.program = [](const QString&) { return QString(); },
+         .copy = [](const QString&) {},
+         .open = [](const QString&) {},
+         .record = [](const QString&, const QString&, QString*) { return QString(); },
+         .machines = [] { return QStringList(); }},
+        {.helper = root.filePath(QStringLiteral("runtime/x.py")),
+         .accounts = root.filePath(QStringLiteral("accounts"))});
     missing.start();
     require(missing.state() == QLatin1String("failed") &&
                 missing.message().contains(QStringLiteral("not installed")),

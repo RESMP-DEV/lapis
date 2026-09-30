@@ -2153,14 +2153,18 @@ int run_strip_ui_tests() {
             QFile::setPermissions(claude, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
     }
     QStringList copied;
-    PlanSignIn signIn(
-        [&claude](const QString& name) {
-            return name == QLatin1String("claude") ? claude : QStandardPaths::findExecutable(name);
-        },
-        [&copied](const QString& text) { copied << text; },
-        [](const QString&, QString*) { return QString(); },
-        {.helper = config.filePath(QStringLiteral("runtime/plan_sign_in.py")),
-         .accounts = config.filePath(QStringLiteral("accounts"))});
+    PlanSignIn signIn({.program =
+                           [&claude](const QString& name) {
+                               return name == QLatin1String("claude")
+                                          ? claude
+                                          : QStandardPaths::findExecutable(name);
+                           },
+                       .copy = [&copied](const QString& text) { copied << text; },
+                       .open = [](const QString&) {},
+                       .record = [](const QString&, const QString&, QString*) { return QString(); },
+                       .machines = [] { return QStringList(); }},
+                      {.helper = config.filePath(QStringLiteral("runtime/plan_sign_in.py")),
+                       .accounts = config.filePath(QStringLiteral("accounts"))});
     UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),

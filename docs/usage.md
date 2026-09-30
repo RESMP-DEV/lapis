@@ -32,13 +32,15 @@ other plan and resuming its conversation; output going quiet alone never
 switches it. **Switch plan** in Commands moves an agent by hand.
 
 **Add a Claude Code plan** in Commands signs in any account from inside lapis.
-It starts Claude Code's own sign-in, copies its link and shows it: open the link
-in any browser on this Mac, sign in with the account to add, then type that
-account's email and press Return. lapis keeps the token Claude Code prints
-(owner-only, never shown) and adds the plan, or this Mac to an existing plan with
-that email, so Claude Code agents here can use it. Escape ends a sign-in that
-has not finished. Codex plans are still added with the script below, and a plan
-added this way is kept on this Mac only.
+It starts Claude Code's own sign-in and opens its link in your default browser,
+copies it, and keeps it shown with **Open again** in case a try goes wrong. Sign
+in there with the account to add, then type that account's email and press
+Return. lapis keeps the token Claude Code prints (owner-only, never shown),
+copies it over ssh to every host in your ssh config that takes it, and records
+the plan, or those machines for an existing plan with that email, so Claude Code
+agents on this Mac and on those machines can use it. The panel names any machine
+it could not reach. Escape ends a sign-in that has not finished. Codex plans are
+still added with the script below.
 
 `scripts/lapis_accounts.py` fills the section too:
 

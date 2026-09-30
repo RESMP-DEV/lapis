@@ -1,20 +1,24 @@
 #ifndef LAPIS_DESKTOP_PLAN_SIGN_IN_HPP
 #define LAPIS_DESKTOP_PLAN_SIGN_IN_HPP
 
+#include <QHash>
 #include <QObject>
 #include <QPointer>
 #include <QProcess>
 #include <QString>
+#include <QStringList>
 #include <functional>
 
 namespace lapis::desktop {
 
 // Adds a Claude Code plan from inside lapis, signed in as whichever account
-// the person chooses. plan_sign_in.py runs `claude setup-token` with the
-// browser left closed; its sign-in link is copied and shown until someone
-// signs in with it. The token Claude Code then prints goes owner-only into
-// the accounts folder, never through lapis, and the plan is recorded under
-// the email the person names (`Record`), usable on this Mac.
+// the person chooses. plan_sign_in.py runs `claude setup-token` and passes its
+// sign-in link on instead of opening it; lapis opens it in the default
+// browser, copies it and keeps it shown for another try until someone signs
+// in. The token Claude Code then prints goes owner-only into the accounts
+// folder and the plan is recorded under the email the person names. The
+// token is then copied, owner-only, to every ssh host that takes it, and the
+// plan is recorded there too, so agents on any of those machines can use it.
 class PlanSignIn final : public QObject {
     Q_OBJECT
     // "idle", "starting", "waiting" (the link is out), "signedIn" (waiting
@@ -24,18 +28,33 @@ class PlanSignIn final : public QObject {
     Q_PROPERTY(QString message READ message NOTIFY changed)
     // The plan that was recorded, once done.
     Q_PROPERTY(QString plan READ plan NOTIFY changed)
+    // Where the plan can be used so far ("this Mac" first), and whether
+    // copies to other machines are still under way.
+    Q_PROPERTY(QStringList machines READ machines NOTIFY changed)
+    Q_PROPERTY(bool spreading READ spreading NOTIFY changed)
   public:
     // The path of "python3" or "claude" on this Mac, or empty.
     using Program = std::function<QString(const QString&)>;
-    using Copy = std::function<void(const QString&)>;
-    // Records the plan for `email` on this Mac and returns its name, or an
-    // empty name and a reason.
-    using Record = std::function<QString(const QString& email, QString* reason)>;
+    // Copies the link, or opens it in the default browser.
+    using Hand = std::function<void(const QString&)>;
+    // Records the plan for `email` on `machine` ("" for this Mac) and returns
+    // its name, or an empty name and a reason.
+    using Record =
+        std::function<QString(const QString& email, const QString& machine, QString* reason)>;
+    // The ssh hosts to copy a new plan's token to.
+    using Machines = std::function<QStringList()>;
+    struct Hooks {
+        Program program;
+        Hand copy;
+        Hand open;
+        Record record;
+        Machines machines;
+    };
     struct Places {
         QString helper;   // where plan_sign_in.py is written
         QString accounts; // ~/.lapis/accounts
     };
-    PlanSignIn(Program program, Copy copy, Record record, Places places, QObject* parent = nullptr);
+    PlanSignIn(Hooks hooks, Places places, QObject* parent = nullptr);
     ~PlanSignIn() override;
     PlanSignIn(const PlanSignIn&) = delete;
     PlanSignIn& operator=(const PlanSignIn&) = delete;
@@ -44,6 +63,8 @@ class PlanSignIn final : public QObject {
     [[nodiscard]] const QString& link() const { return link_; }
     [[nodiscard]] const QString& message() const { return message_; }
     [[nodiscard]] const QString& plan() const { return plan_; }
+    [[nodiscard]] QStringList machines() const;
+    [[nodiscard]] bool spreading() const { return !copying_.isEmpty(); }
 
     // Starts a sign-in, ending any earlier one.
     Q_INVOKABLE void start();
@@ -51,6 +72,7 @@ class PlanSignIn final : public QObject {
     // and the sign-in are in.
     Q_INVOKABLE void setEmail(const QString& email);
     Q_INVOKABLE void copyLink();
+    Q_INVOKABLE void openLink();
     // Ends a sign-in that has not finished and forgets its token.
     Q_INVOKABLE void cancel();
 
@@ -64,10 +86,13 @@ class PlanSignIn final : public QObject {
     void fail(const QString& why);
     void set(const QString& state, const QString& message = {});
     [[nodiscard]] QString pendingToken() const;
-    Program program_;
-    Copy copy_;
-    Record record_;
+    void spread(const QByteArray& token);
+    void report();
+    Hooks hooks_;
     Places places_;
+    QHash<QString, QPointer<QProcess>> copying_; // by machine
+    QStringList reached_;
+    QStringList unreached_;
     QPointer<QProcess> process_;
     QByteArray output_;
     QString state_{QStringLiteral("idle")};

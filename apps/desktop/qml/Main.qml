@@ -2112,9 +2112,10 @@ ApplicationWindow {
         }
     }
 
-    // Commands > "Add a Claude Code plan": Claude Code's sign-in link, copied
-    // and shown until an account signs in with it, and that account's email
-    // (Return records it). Escape ends a sign-in that has not finished.
+    // Commands > "Add a Claude Code plan": Claude Code's sign-in link, opened in
+    // the default browser, copied and kept here until an account signs in with
+    // it, and that account's email (Return records it). The plan then goes to
+    // every ssh host that takes it. Escape ends a sign-in that has not finished.
     StageDialog {
         id: planSignInDialog
         objectName: "planSignInDialog"
@@ -2153,9 +2154,9 @@ ApplicationWindow {
                     const engine = planSignInDialog.engine
                     switch (planSignInDialog.state) {
                     case "starting": return qsTr("Starting Claude Code's sign-in…")
-                    case "waiting": return qsTr("Link copied. Open it in any browser and sign in with the account to add, then type that account's email here and press Return.")
+                    case "waiting": return qsTr("Opened in your browser and copied. Sign in with the account to add, then type its email here and press Return. The link stays here for another try.")
                     case "signedIn": return engine.message.length > 0 ? engine.message : qsTr("Signed in. Type the account's email and press Return.")
-                    case "done": return engine.message + " " + qsTr("New Claude Code agents can use it when your other plans are full.")
+                    case "done": return engine.message + (engine.spreading ? "" : " " + qsTr("Claude Code agents there can use it when their plans are full."))
                     case "failed": return qsTr("Sign-in failed: %1").arg(engine.message)
                     default: return ""
                     }
@@ -2202,6 +2203,13 @@ ApplicationWindow {
             RowLayout {
                 Layout.alignment: Qt.AlignRight
                 spacing: 8
+                CommandButton {
+                    objectName: "planSignInOpen"
+                    visible: planSignInDialog.working
+                    enabled: planSignInDialog.engine !== null && planSignInDialog.engine.link.length > 0
+                    text: qsTr("Open again")
+                    onClicked: planSignInDialog.engine.openLink()
+                }
                 CommandButton {
                     objectName: "planSignInCopy"
                     visible: planSignInDialog.working
