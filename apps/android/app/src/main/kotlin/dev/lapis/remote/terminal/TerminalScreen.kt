@@ -316,10 +316,15 @@ fun TerminalScreen(
     // A fling keeps scrolling after the finger lifts, so the drag-end
     // evaluation above can miss the list settling at the bottom; re-anchor
     // whenever any scroll (drag, fling, programmatic) comes to rest there.
+    // snapshotFlow emits its current value the moment collection starts, and
+    // a list that has never been laid out (first composition, or the whole
+    // time a wheel-taking program keeps the archive uncomposed) reports no
+    // items; that emission must not touch the anchor or the screen would
+    // open and return at the top.
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }
             .collect { inProgress ->
-                if (!inProgress) {
+                if (!inProgress && listState.layoutInfo.totalItemsCount > 0) {
                     val info = listState.layoutInfo
                     val last = info.visibleItemsInfo.lastOrNull()
                     followBottom = last != null && last.index >= info.totalItemsCount - 1 &&
