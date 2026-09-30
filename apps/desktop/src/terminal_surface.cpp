@@ -695,6 +695,8 @@ struct TerminalSurface::RenderState {
     std::optional<std::pair<QPoint, QPoint>> selection;
     std::vector<TerminalMatch> link;
     QString suggestion;
+    QString session_id;
+    QString offer_key;
 };
 
 void TerminalSurface::publishFrame(bool snapshot_changed) {
@@ -702,7 +704,11 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
     // render thread gets owned immutable values through an explicit C++ handoff.
     auto frame = std::make_shared<RenderState>();
     frame->preedit = preedit_;
-    frame->suggestion = document_ && document_->attentionPending() ? QString() : suggestion_;
+    if (document_ && !document_->attentionPending()) {
+        frame->suggestion = suggestion_;
+        frame->session_id = document_->sessionId();
+        frame->offer_key = suggestion_key_;
+    }
     frame->viewport = size();
     frame->font_family = use_system_font_ ? QString() : resolved_font_family_;
     frame->font_pixel_size = font_pixel_size_;
@@ -779,6 +785,22 @@ void TerminalSurface::bindWindow(QQuickWindow* current) {
         disconnect(window_visible_connection_);
     if (suggestion_frame_connection_)
         disconnect(suggestion_frame_connection_);
+    disconnect(presentation_connection_);
+    {
+        const std::lock_guard lock(render_mutex_);
+        painted_state_.reset();
+        presented_state_.reset();
+    }
+    if (current)
+        presentation_connection_ = connect(
+            current, &QQuickWindow::frameSwapped, this,
+            [this] {
+                // Runs at presentation on the render thread. Only immutable
+                // render values cross this handoff, never GUI-owned objects.
+                const std::lock_guard lock(render_mutex_);
+                presented_state_ = painted_state_;
+            },
+            Qt::DirectConnection);
     if (current)
         suggestion_frame_connection_ =
             connect(current, &QQuickWindow::frameSwapped, this, &TerminalSurface::reportSeen);
@@ -804,6 +826,7 @@ TerminalSurface::~TerminalSurface() {
     disconnect(window_active_connection_);
     disconnect(window_visible_connection_);
     disconnect(suggestion_frame_connection_);
+    disconnect(presentation_connection_);
     disconnect(warm_connection_);
     if (viewed_)
         viewed_->removeViewer(viewed_interval_);
@@ -948,7 +971,9 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
         const std::lock_guard lock(render_mutex_);
         frame = render_state_;
     }
-    if (!frame || !frame->snapshot || frame->viewport.isEmpty()) {
+    if (!frame || !frame->snapshot || frame->viewport.isEmpty() || !window()) {
+        const std::lock_guard lock(render_mutex_);
+        painted_state_.reset();
         delete old_node;
         return nullptr;
     }
@@ -1005,6 +1030,10 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
     matrix.translate(0, static_cast<float>(-layout.first_row * row_height * layout.scale));
     matrix.scale(static_cast<float>(layout.scale));
     root->setMatrix(matrix);
+    {
+        const std::lock_guard lock(render_mutex_);
+        painted_state_ = std::move(frame);
+    }
     return root;
 }
 
@@ -1518,6 +1547,7 @@ void TerminalSurface::setSuggestionKey(const QString& key) {
         return;
     suggestion_key_ = key;
     emit suggestionChanged();
+    publishFrame(false);
 }
 
 void TerminalSurface::setTabFlow(bool enabled) {
@@ -1539,6 +1569,8 @@ void TerminalSurface::reportSeen() {
     if (!document_ || suggestion_.isEmpty() || seen_ == key || !isVisible() || !window() ||
         !window()->isActive())
         return;
+    if (presentedSuggestion().shown.isEmpty())
+        return;
     seen_ = key;
     emit suggestionSeen(document_->sessionId(), suggestion_key_);
 }
@@ -1550,12 +1582,20 @@ void TerminalSurface::noteTyped() {
         ++typed_while_offered_;
 }
 
-bool TerminalSurface::suggestionWhole() const {
-    if (!document_ || suggestion_.isEmpty())
-        return false;
-    const QFontMetricsF metrics(
-        terminal_font(use_system_font_ ? QString() : resolved_font_family_, font_pixel_size_));
-    return lay_out_suggestion(document_->snapshot(), metrics, suggestion_).whole;
+bool TerminalSurface::suggestionWhole() const { return presentedSuggestion().whole; }
+
+SuggestionLayout TerminalSurface::presentedSuggestion() const {
+    std::shared_ptr<const RenderState> frame;
+    {
+        const std::lock_guard lock(render_mutex_);
+        frame = presented_state_;
+    }
+    if (!document_ || !frame || !frame->snapshot || !frame->preedit.isEmpty() ||
+        frame->session_id != document_->sessionId() || frame->offer_key != suggestion_key_ ||
+        frame->suggestion != suggestion_)
+        return {};
+    const QFontMetricsF metrics(terminal_font(frame->font_family, frame->font_pixel_size));
+    return lay_out_suggestion(*frame->snapshot, metrics, frame->suggestion);
 }
 
 // With the Tab flow on (an agent lapis guesses for), Tab sends the offered

@@ -240,12 +240,15 @@ class TerminalSurface : public QQuickItem {
     void commandKey(QKeyEvent& event);
     void scrollProgram(int steps, QPoint cell);
     struct RenderState;
-    std::mutex render_mutex_;
+    mutable std::mutex render_mutex_;
     std::shared_ptr<const RenderState> render_state_;
+    std::shared_ptr<const RenderState> painted_state_;
+    std::shared_ptr<const RenderState> presented_state_;
     QPointer<SessionPreview> document_;
     QMetaObject::Connection window_active_connection_;
     QMetaObject::Connection window_visible_connection_;
     QMetaObject::Connection suggestion_frame_connection_;
+    QMetaObject::Connection presentation_connection_;
     // The agent this view is showing, registered as its viewer while this
     // view and its window are visible, so unseen agents' screens stay encoded.
     QPointer<SessionPreview> viewed_;
@@ -289,6 +292,7 @@ class TerminalSurface : public QQuickItem {
     QString seen_;
     QJSValue tab_away_;
     [[nodiscard]] bool suggestionWhole() const;
+    [[nodiscard]] SuggestionLayout presentedSuggestion() const;
     bool tab_flow_{};
     bool typed_since_arrival_{};
     int typed_while_offered_{};

@@ -880,6 +880,7 @@ void suggestions() {
     // Typing is not a refusal: the suggestion stays, and what was typed first
     // (here "no", then Command-Delete) is counted when Tab takes it.
     surface.setSuggestion(QStringLiteral("status?"));
+    settle();
     press(Qt::Key_N, Qt::NoModifier, QStringLiteral("n"));
     press(Qt::Key_O, Qt::NoModifier, QStringLiteral("o"));
     press(Qt::Key_Backspace, Qt::MetaModifier, {});
@@ -896,6 +897,7 @@ void suggestions() {
     // The Enter belongs to the same admitted operation; later typing cannot
     // be accidentally submitted by a delayed GUI timer.
     surface.setSuggestion(QStringLiteral("rerun"));
+    settle();
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     press(Qt::Key_S, Qt::NoModifier, QStringLiteral("s"));
     typed = frames(3);
@@ -904,10 +906,25 @@ void suggestions() {
                 payload(typed[2]) == QByteArray("s") && nothing_sent(),
             "Later typing was interleaved before the admitted Enter");
 
+    // A fresh offer has not been presented yet: Tab may fill it, but must not
+    // submit text the person could not have read in a completed frame.
+    surface.setSuggestion(QStringLiteral("not yet drawn"));
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(payload(typed[0]) == QByteArray("not yet drawn") &&
+                used.back() == std::pair{false, 0} && nothing_sent(),
+            "An unpresented suggestion was submitted");
+
     // A suggestion that does not show whole is only typed, for the person to
     // read before sending.
     const QString longer(60, QLatin1Char('w'));
     surface.setSuggestion(longer);
+    settle();
+    lapis::session::Terminal expanded{{100, 4}};
+    expanded.feed("> ");
+    // The live snapshot now fits the whole text, but the last presented
+    // frame still showed it elided. Input must follow that presented frame.
+    f.document.applySnapshot(expanded.snapshot());
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
     require(payload(typed[0]) == longer.toUtf8() && used.back() == std::pair{false, 0} &&

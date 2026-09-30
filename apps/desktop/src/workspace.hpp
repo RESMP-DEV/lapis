@@ -524,6 +524,7 @@ class Workspace final : public QObject {
     // or a request, then a guess already seen (so Tab cannot bounce between
     // two guesses while others wait), the one waiting longest within each.
     // `ready` maps agents with a guess to whether it was seen. False when none.
+    // Advances past the focused session; false leaves Tab with the program.
     Q_INVOKABLE bool nextPriorityAttention(const QVariantMap& ready);
     [[nodiscard]] QVariantList sessions() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }

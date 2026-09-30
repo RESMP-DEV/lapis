@@ -12,9 +12,10 @@ Add this to `~/.lapis/lapis.json`:
 ```
 
 The other settings are `model` (`claude-opus-5-5`), `effort`, `minConfidence`
-(0.4) and `maxPerHour` (60). Each guess is a model call on the Claude Code plan
+(0.4) and `maxPerHour` (60). Each prediction attempt uses the Claude Code plan
 this Mac is signed in to: API keys, custom endpoints and cloud-provider
-variables are removed from the call, so it never bills anything else.
+variables are removed from the call. An attempt may retry a malformed answer
+once, so `maxPerHour` bounds attempts rather than individual provider requests.
 
 Claude Code has its own prompt suggestions, which may show beneath lapis's. Set
 `promptSuggestionEnabled` to false in Claude Code's settings to leave only
@@ -31,10 +32,10 @@ waits on a request such as a permission prompt.
 
 ## Tab
 
-- **Tab** sends the guess: it is typed and Return is pressed. A service from
-  this build queues the two together; an older one gets the Return a moment
-  later. A guess too long to show whole, or on several lines, is only typed, for
-  you to read first.
+- **Tab** sends the guess: the service queues its text and Return together.
+  A guess too long to show whole, or on several lines, is only typed, for you
+  to read first. Suggestions require a service from this build; an older
+  service refuses the operation visibly until it is upgraded and restarted.
 - **Option-Tab** only types it.
 - **Typing** leaves the guess there: start your own, clear it with
   Command-Delete, and Tab still takes the guess.
@@ -50,7 +51,11 @@ Tab keeps its usual meaning in shells and in CLIs lapis does not guess for.
 Every guess is kept, owner-only, in `~/.lapis/runtime/next_prompt.jsonl`: when it
 was on screen, whether Tab or Option-Tab used it, how many keys you typed first
 and how long you took, or that the next turn replaced it unused. A prediction
-that failed (and why) or was skipped at the hourly cap is kept too.
+that failed (with a stable reason category) or was skipped at the hourly cap
+is kept too. A use is recorded only after the service admits its input.
+Admission does not guarantee the CLI consumed it before a crash. The log
+rotates at 4 MiB and retains one previous file; helper output is bounded and
+raw error output is never copied into the log.
 
 ```sh
 python3 scripts/next_prompt_eval.py log            # acceptance: of the guesses you saw, the share you used

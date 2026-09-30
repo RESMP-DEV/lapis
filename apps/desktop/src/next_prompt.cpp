@@ -115,7 +115,10 @@ QString terminal_screen_text(const session::TerminalSnapshot& snapshot) {
     }
     while (!rows.isEmpty() && rows.last().isEmpty())
         rows.removeLast();
-    return rows.join(QLatin1Char('\n')).right(kScreenChars);
+    auto text = rows.join(QLatin1Char('\n')).right(kScreenChars);
+    if (!text.isEmpty() && text.front().isLowSurrogate())
+        text.remove(0, 1);
+    return text;
 }
 
 NextPrompt::NextPrompt(Lookup lookup, Agents agents, Program program, const Files& files,
@@ -172,18 +175,10 @@ void NextPrompt::turnFinished(const QString& id) {
     const auto agent = lookup_(id);
     if (!agent || (agent->cli != QLatin1String("claude") && agent->cli != QLatin1String("codex")))
         return;
-    const auto now = clock_.elapsed();
-    while (!started_.empty() && now - started_.front() > kHourMs)
-        started_.pop_front();
-    if (std::cmp_greater_equal(started_.size(), settings_.maxPerHour)) {
-        record({{QStringLiteral("event"), QStringLiteral("skipped")},
-                {QStringLiteral("agent"), id},
-                {QStringLiteral("reason"), QStringLiteral("hourly_cap")},
-                {QStringLiteral("max_per_hour"), settings_.maxPerHour}});
-        return;
-    }
     if (auto old = running_.take(id); old.process)
         old.process->stopGroup();
+    if (!budgetAvailable(id))
+        return;
     const auto generation = ++generation_;
     running_.insert(id, {generation, *agent, {}});
     QStringList words{
@@ -210,6 +205,19 @@ void NextPrompt::turnFinished(const QString& id) {
           kNextPromptScript, Stage::context, done);
 }
 
+bool NextPrompt::budgetAvailable(const QString& id) {
+    const auto now = clock_.elapsed();
+    while (!started_.empty() && now - started_.front().at >= kHourMs)
+        started_.pop_front();
+    if (std::cmp_less(started_.size(), settings_.maxPerHour))
+        return true;
+    record({{QStringLiteral("event"), QStringLiteral("skipped")},
+            {QStringLiteral("agent"), id},
+            {QStringLiteral("reason"), QStringLiteral("hourly_cap")},
+            {QStringLiteral("max_per_hour"), settings_.maxPerHour}});
+    return false;
+}
+
 void NextPrompt::start(const QString& id, quint64 generation, const QString& program,
                        const QStringList& arguments, const QByteArray& input, Stage stage,
                        const std::function<void(const QJsonObject&)>& done) {
@@ -224,6 +232,10 @@ void NextPrompt::start(const QString& id, quint64 generation, const QString& pro
     const auto finish = [this, id, generation, process, stage, done, result] {
         result->drain(*process);
         process->deleteLater();
+        if (stage == Stage::predict && process->error() == QProcess::FailedToStart)
+            std::erase_if(started_, [generation](const Attempt& attempt) {
+                return attempt.generation == generation;
+            });
         if (!current(id, generation) || running_.value(id).process != process)
             return;
         QJsonParseError error{};
@@ -258,8 +270,13 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
                QStringLiteral("no Claude Code CLI on this Mac"));
         return;
     }
-    // The hourly cap counts model calls, not turns that never got this far.
-    started_.push_back(clock_.elapsed());
+    // Context extraction is concurrent. Reserve here too, otherwise several
+    // contexts admitted below the cap could all launch after it was reached.
+    if (!budgetAvailable(id)) {
+        running_.remove(id);
+        return;
+    }
+    started_.push_back({clock_.elapsed(), generation});
     const auto agent = running_.value(id).agent;
     QJsonObject about{{QStringLiteral("title"), agent.title},
                       {QStringLiteral("cli"), agent.cli},
@@ -313,8 +330,8 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
 
 QString NextPrompt::suggestion(const QString& id) const { return offers_.value(id).text; }
 
-// A prediction that came to nothing is recorded too, with the stage and why:
-// the log accounts for every finished turn it was asked about.
+// A completed attempt that came to nothing records its stage and reason.
+// Superseded or disabled work is cancelled before producing an offer.
 void NextPrompt::failed(const QString& id, const Agent& agent, Stage stage, const QString& why) {
     const QStringList known{QStringLiteral("no transcript"),
                             QStringLiteral("invalid conversation id"),
@@ -422,7 +439,8 @@ void NextPrompt::record(QJsonObject event) const {
     if (created)
         QDir().mkpath(QFileInfo(log_path_).absolutePath(),
                       QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
-    if (!file.open(QIODevice::Append | QIODevice::WriteOnly)) {
+    if (!file.open(QIODevice::Append | QIODevice::WriteOnly,
+                   QFile::ReadOwner | QFile::WriteOwner)) {
         qWarning() << "Next prompt: cannot write the log:" << file.errorString();
         return;
     }

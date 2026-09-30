@@ -137,9 +137,15 @@ class TranscriptTests(Homes):
             [(t["role"], t["text"]) for t in turns],
             [("person", "run the suite"), ("agent", "All 29 pass.")],
         )
+        for text in ("<task>fix it</task>", "<iostream>", "< file"):
+            self.assertEqual(next_prompt.typed(text), text)
 
     def test_a_transcript_is_found_by_id_or_by_folder(self):
         find = next_prompt.find_transcript
+        # Initial metadata is not necessarily the first valid record.
+        self.codex_path.write_text(
+            '{"type":"event_msg"}\n' + self.codex_path.read_text()
+        )
         self.assertEqual(find("claude", "c1", ""), str(self.claude_path))
         self.assertEqual(find("claude", "", str(self.work)), str(self.claude_path))
         self.assertEqual(find("codex", "x9", ""), str(self.codex_path))
@@ -150,6 +156,9 @@ class TranscriptTests(Homes):
             find("codex", "", "'" + str(self.work) + "'"), str(self.codex_path)
         )
         self.assertIsNone(find("claude", "", str(self.root)))
+        for cli in ("claude", "codex"):
+            for missing in ("not-present", "bad/id"):
+                self.assertIsNone(find(cli, missing, str(self.work)))
 
     def test_context_counts_prompts_and_brings_other_recent_ones(self):
         now = self.claude_path.stat().st_mtime

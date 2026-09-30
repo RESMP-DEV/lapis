@@ -2814,6 +2814,14 @@ write scopes; contributors still share feature ownership.
 | R4, release and upgrade provenance | **Acceptance and enforcement gaps.** `package_macos.py release` validates the DMG staple and checks that current HEAD exists on a remote; it does not bind the staged app/DMG to that HEAD, version and qualification result. The latest published v0.5.0 targets `0ec13cb`, a separate release tree from this audit's main. | Produce one immutable package manifest linking source tree/dirty status, app version, toolchain/dependency pins, bundled notices/SBOM, app and DMG hashes, appcast signature and validation. Refuse publishing stale/mismatched artifacts. Exercise installation and the Sparkle transition, including recoverable registry/history migration and a documented recovery/rollback path. Keep signing-key recovery outside the repository. | Run the existing `package_macos.py verify --notarized` on the exact staged artifact, then verify the downloaded asset and appcast. Qualify Finder launch in a fresh user environment without developer tools or pre-existing BTM state; install an update with live sessions; recover after a failed update/migration. Record source and artifact digests together. Do not relabel source tests or the old 0.2.0 signature receipt as v0.5.0 acceptance. |
 | R5, operational bounds and support | **Measured coverage gaps and source-level pressure risks.** The gateway uses `ThreadingHTTPServer`; listing can spend eight seconds waiting and then probe every service serially at up to 0.3 s each, while the iOS request timeout is 15 s. `followNewHistory` still defers by a full second. Native UI/Metal and full TSan qualification have retained failures in the current review receipts. | Bound gateway clients, listing work and cancellation, preserve the local terminal under remote/output pressure, and make degraded health actionable. Record session counts/rates, history/log budgets and error causes. Extend the existing CLI with package/runtime diagnostics and a user-controlled redacted support export; the current developer `doctor` only establishes dependency/build readiness. | Start with the advertised early-access workload and a long-running reconnect/output soak; inspect memory, file descriptors, disk use, idle CPU and input/switch tails. Then run Milestone 4's controlled 32-session workload. Include dead endpoints and disconnected long-poll clients. Resolve or accurately scope the retained native-render and sanitizer failures before reusing that evidence; background Qt success alone is not GPU acceptance. |
 
+The R2 protocol repair landed in PR #43: one negotiated raw paste is encoded in
+the service's current terminal mode and admitted or refused as a whole. The
+next-prompt integration uses that receipt for both fill and paste-plus-Return,
+refuses known pending requests in the service, and bases submission on the last
+presented frame. Focused real-PTY admission, background Qt, ASan/UBSan and TSan
+checks are recorded with their source revisions; these do not close R1 or the
+remaining native GPU/package acceptance.
+
 R1 and R4 form the first complete delivery slice: install, start, detach, update,
 recover and uninstall without losing owned sessions or misidentifying an artifact.
 R2 and R3 can be implemented in parallel once their service/adaptor identity
@@ -3418,12 +3426,12 @@ logs every guess to measure that threshold.
   or idle: never over a pending request, since Return in a permission dialog
   would answer it (the view also refuses to send one then). With `tabFlow` (a
   Claude Code or Codex agent while guessing is on), Tab sends a guess that
-  shows whole: to a service with paste transactions as one paste request with
-  submit, so the service queues the paste and its Return together; to an older
-  service as a paste, then Return 150 ms later to the agent that got it even if
-  Tab moved on, unless the person typed to it first. A longer or
-  multi-line guess is only typed, as Option-Tab always does, so nothing unseen
-  is submitted. Typing does not withdraw a guess; keys typed first are counted.
+  shows whole: one negotiated paste request with its Return included in the
+  service's atomic queue admission. Later typing follows that operation; no
+  GUI timer submits it. The service refuses submission while a known request
+  is pending. A longer or multi-line guess is only typed, as Option-Tab always
+  does, so nothing unseen is submitted. Both suggestion actions require the
+  negotiated receipt; older services refuse visibly until upgraded/restarted. Typing does not withdraw a guess; keys typed first are counted.
   With nothing offered and nothing typed since arriving, Tab calls QML's
   `tabAway`, which asks `Workspace::nextPriorityAttention` for a guess not yet
   seen, then an unseen turn or a request, then a guess already seen (the longest
@@ -3440,20 +3448,30 @@ logs every guess to measure that threshold.
   folder moves in) gives every guess an offer id (`<agent>:<launch>.<n>`,
   unique across launches) and records `predicted` (candidates, probabilities,
   category, threshold, whether offered), `seen` (first on screen in the active
-  window, once per offer even when two offers share their words: the
-  impression), `used` (Tab or Option-Tab, keys typed first, milliseconds after
-  seen) and `withdrawn` (replaced by the next turn's guess, or the setting turned
+  window after a presented frame, once per offer even when two offers share
+  their words: the impression), `used` (service-admitted Tab or Option-Tab,
+  keys typed first, milliseconds after seen) and `withdrawn` (replaced by the next turn's guess, or the setting turned
   off, and whether it had been seen), plus `failed` (the stage, context or
-  predict, and the reason, with the home folder shown as `~`) and `skipped` (the
-  hourly cap, which counts model calls). Turns of CLIs lapis does not guess for
+  predict, and a stable reason category without raw error text) and `skipped`
+  (the hourly cap, which counts model calls). Log records are bounded to 1 MiB;
+  the active log rotates at 4 MiB with one owner-only backup. Helper stdout is
+  bounded to 1 MiB and stderr to 64 KiB; timeout, overflow, disable and
+  supersession stop its process group. Session and offer identity are captured
+  before input is sent and checked again for every receipt, so a document
+  switch or replaced offer cannot take credit. Admission is not proof of CLI
+  consumption, and lost replies are never replayed automatically. Turns of CLIs lapis does not guess for
   record nothing. Acceptance is used over seen: a guess never on screen, or one
   replaced before the person came, is not a refusal. `scripts/next_prompt_eval.py
   log` reports it by category and confidence with the attempts behind it;
   `--judge` grades the guesses seen but not used against the prompt typed
   instead (read from the transcript by conversation and prompt number);
   `replay` repeats the pilot on any machine's transcripts and sweeps the
-  threshold. Those logs are the data for a small model of one's own, trained
-  on acceptance as Cursor's is.
+  threshold. Reports cover retained log records, not every historical turn:
+  unsupported CLIs and work cancelled by supersession or disable produce no
+  prediction outcome. The hourly cap reserves prediction attempts after context
+  extraction; failed process launches refund their reservation. Each attempt
+  can retry a malformed answer once, so the cap does not count provider requests
+  one-for-one.
 
 `scripts/next_prompt_eval.py replay` then repeated the test on 60 prompts typed
 since September 1, half on the Mac and half on the Linux test host, across

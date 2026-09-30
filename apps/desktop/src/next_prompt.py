@@ -24,7 +24,12 @@ from datetime import datetime, timezone
 
 # Tags and notes the CLIs add as user turns, which nobody typed.
 NOT_TYPED = (
-    "<",
+    "<command-name>",
+    "<local-command-caveat>",
+    "<local-command-stdout>",
+    "<environment_context>",
+    "<system-reminder>",
+    "<task-notification>",
     "Caveat:",
     "This session is being continued",
     "[Request interrupted",
@@ -108,7 +113,8 @@ def claude_turns(path):
 
 def codex_meta(path):
     for entry in records(path):
-        return entry.get("payload", {}) if entry.get("type") == "session_meta" else None
+        if entry.get("type") == "session_meta":
+            return entry.get("payload", {})
     return None
 
 
@@ -162,16 +168,15 @@ def folder_path(folder):
 
 
 def find_transcript(cli, conversation, folder):
-    """The conversation's transcript, else the newest one begun in `folder`."""
+    """Resolve a named conversation; use the folder only when no id is known."""
     if conversation and not CONVERSATION.match(conversation):
-        conversation = ""  # not a name the CLIs use: fall back to the folder
+        return None
     if cli == "claude":
         if conversation:
             found = glob.glob(
                 os.path.join(claude_home(), "projects", "*", conversation + ".jsonl")
             )
-            if found:
-                return found[0]
+            return found[0] if found else None
         slug = re.sub(r"[^A-Za-z0-9]", "-", folder_path(folder))
         candidates = glob.glob(os.path.join(claude_home(), "projects", slug, "*.jsonl"))
         candidates = [p for p in candidates if claude_interactive(p)]
@@ -184,8 +189,7 @@ def find_transcript(cli, conversation, folder):
                 else "rollout-*" + conversation
             )
             found = glob.glob(os.path.join(root, "*", "*", "*", name + ".jsonl"))
-            if found:
-                return found[0]
+            return found[0] if found else None
         cutoff = time.time() - 3 * 86400
         candidates = []
         for path in glob.glob(os.path.join(root, "*", "*", "*", "rollout-*.jsonl")):
@@ -246,6 +250,8 @@ def recent_prompts(skip, hours=RECENT_HOURS, limit=20):
 
 
 def command_context(arguments):
+    if arguments.conversation and not CONVERSATION.match(arguments.conversation):
+        return {"error": "invalid conversation id"}
     path = find_transcript(arguments.cli, arguments.conversation, arguments.folder)
     if not path:
         return {"error": "no transcript"}
@@ -260,6 +266,8 @@ def command_context(arguments):
 
 def command_actual(arguments):
     """The person's prompt number `turn` (from 0) in a conversation."""
+    if not CONVERSATION.match(arguments.conversation):
+        return {"error": "invalid conversation id"}
     path = find_transcript(arguments.cli, arguments.conversation, "")
     if not path:
         return {"error": "no transcript"}

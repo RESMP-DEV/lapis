@@ -115,7 +115,7 @@ class NextPrompt final : public QObject {
         QPointer<UpdaterProcess> process;
     };
     struct Offer {
-        QString key; // "<agent>:<n>", on each of its log records
+        QString key; // "<agent>:<launch>.<n>", on each of its log records
         QString text;
         QString conversation;
         int turn{};
@@ -136,6 +136,7 @@ class NextPrompt final : public QObject {
     enum class Withdrawal : std::uint8_t { next_turn, off };
     void withdraw(const QString& id, Withdrawal why);
     void record(QJsonObject event) const;
+    bool budgetAvailable(const QString& id);
     [[nodiscard]] bool current(const QString& id, quint64 generation) const;
     Lookup lookup_;
     Agents agents_;
@@ -145,7 +146,11 @@ class NextPrompt final : public QObject {
     NextPromptSettings settings_;
     QHash<QString, Run> running_; // by agent id
     QHash<QString, Offer> offers_;
-    std::deque<qint64> started_; // for maxPerHour
+    struct Attempt {
+        qint64 at;
+        quint64 generation;
+    };
+    std::deque<Attempt> started_; // reserved prediction attempts for maxPerHour
     QElapsedTimer clock_;
     quint64 generation_{};
     QString run_; // this launch, in offer ids

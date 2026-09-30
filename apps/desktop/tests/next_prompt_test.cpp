@@ -98,6 +98,45 @@ void screensReadAsText() {
     terminal.feed("hi\r\n> go   ");
     require(lapis::desktop::terminal_screen_text(terminal.snapshot()) == QLatin1String("hi\n> go"),
             "rows without trailing blanks or blank last rows");
+    lapis::session::Terminal large({1000, 7});
+    std::string emoji;
+    for (int i = 0; i < 3500; ++i)
+        emoji += "\xf0\x9f\x98\x80";
+    large.feed(emoji);
+    const auto clipped = lapis::desktop::terminal_screen_text(large.snapshot());
+    require(!clipped.isEmpty() && !clipped.front().isLowSurrogate(),
+            "the screen text budget must retain complete Unicode scalars");
+}
+
+void concurrentContextsRespectCap() {
+    QTemporaryDir directory;
+    const QDir root(directory.path());
+    require(root.mkpath(QStringLiteral("bin")), "fixture bin");
+    standIns(root);
+    write(root.filePath(QStringLiteral("context.reply")), R"({"conversation":"c"})");
+    write(root.filePath(QStringLiteral("predict.reply")),
+          R"({"candidates":[{"text":"go","p":0.8}]})");
+    const auto log = root.filePath(QStringLiteral("next.jsonl"));
+    NextPrompt next(
+        [](const QString&) -> std::optional<NextPrompt::Agent> {
+            NextPrompt::Agent agent;
+            agent.cli = QStringLiteral("claude");
+            return agent;
+        },
+        [] { return QJsonArray{}; },
+        [&root](const QString& name) { return root.filePath(QStringLiteral("bin/") + name); },
+        {root.path(), log});
+    next.setSettings(on(1));
+    next.turnFinished(QStringLiteral("a"));
+    next.turnFinished(QStringLiteral("b"));
+    require(waitFor([&] { return events(log).size() == 2; }), "both contexts finish");
+    int predicted = 0;
+    int skipped = 0;
+    for (const auto& event : events(log)) {
+        predicted += event.value(QStringLiteral("event")) == QLatin1String("predicted");
+        skipped += event.value(QStringLiteral("event")) == QLatin1String("skipped");
+    }
+    require(predicted == 1 && skipped == 1, "concurrent contexts must share the prediction cap");
 }
 
 void predictsAndOffers() {
@@ -293,6 +332,14 @@ void predictsAndOffers() {
             "arbitrary helper failures are recorded");
     require(events(log).last().value(QStringLiteral("error")) == QLatin1String("helper failed"),
             "raw helper output must not be persisted in the failure log");
+    write(root.filePath(QStringLiteral("context.reply")),
+          QByteArray(qsizetype{1024} * 1024 + 1, 'x'));
+    const auto before_overflow = events(log).size();
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] { return events(log).size() > before_overflow; }),
+            "oversized helper output finishes with a bounded failure");
+    require(events(log).last().value(QStringLiteral("error")) == QLatin1String("output too large"),
+            "helper output is bounded before JSON parsing");
     write(log, QByteArray(qsizetype{4} * 1024 * 1024, '\n'));
     next.setSettings(on(0));
     next.turnFinished(QStringLiteral("a"));
@@ -310,6 +357,7 @@ int main(int argc, char** argv) {
     try {
         settingsReadFromTheConfig();
         screensReadAsText();
+        concurrentContextsRespectCap();
         predictsAndOffers();
     } catch (const std::exception& error) {
         std::cerr << "next_prompt_test: " << error.what() << '\n';
