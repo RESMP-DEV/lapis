@@ -2954,8 +2954,8 @@ these tables, not the parity statements.
 Splits and tiling, window arrangements with process restore, request-aware
 notifications, undo-close and the command palette are already at parity or
 better. Rectangular and multi-click selection, link hover feedback and
-terminal accessibility remain tracked terminal-fidelity gaps in [status](status.md)
-status table; this re-ordering does not change their queue. The valuable
+terminal accessibility remain tracked terminal-fidelity gaps in the
+[status](status.md) table; this re-ordering does not change their queue. The valuable
 deltas are attention reach and ergonomics:
 
 | Feature | Direction | Acceptance |
