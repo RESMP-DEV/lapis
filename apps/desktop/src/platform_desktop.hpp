@@ -1,5 +1,6 @@
 #ifndef LAPIS_DESKTOP_PLATFORM_DESKTOP_HPP
 #define LAPIS_DESKTOP_PLATFORM_DESKTOP_HPP
+#include <QByteArray>
 #include <QString>
 #include <QtGlobal>
 #include <functional>
@@ -25,6 +26,10 @@ void on_terminal_keys(const std::function<bool(bool shifted)>& handler);
 // Command-Option-L from any app brings lapis to the front and runs the handler.
 // An empty handler releases the key; false when the key could not be taken.
 bool on_latest_attention_key(const std::function<void()>& handler);
+// Claude Code's stored sign-in (its keychain item's JSON), empty when absent or
+// refused. The first read asks the person's permission, so call it off the main
+// thread.
+[[nodiscard]] QByteArray claude_code_credentials();
 #else
 inline void post_notification(const QString&, const QString&, const QString&) {}
 inline void on_notification_opened(const std::function<void(const QString&)>&) {}
@@ -35,6 +40,7 @@ inline void check_for_updates() {}
 inline bool updater_available() { return false; }
 inline void on_terminal_keys(const std::function<bool(bool)>&) {}
 inline bool on_latest_attention_key(const std::function<void()>&) { return false; }
+inline QByteArray claude_code_credentials() { return {}; }
 #endif
 } // namespace lapis::desktop::platform
 #endif

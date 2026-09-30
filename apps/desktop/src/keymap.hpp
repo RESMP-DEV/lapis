@@ -2,6 +2,7 @@
 #define LAPIS_DESKTOP_KEYMAP_HPP
 
 #include "accounts.hpp"
+#include "limit_resets.hpp"
 #include "next_prompt.hpp"
 #include <QFileSystemWatcher>
 #include <QHash>
@@ -233,6 +234,7 @@ class KeyMap final : public QObject {
     [[nodiscard]] const AgentDefaults& agentDefaults() const { return agent_defaults_; }
     // The Claude Code and Codex plans lapis may give sessions ("accounts").
     [[nodiscard]] const AccountsConfig& accounts() const { return accounts_; }
+    [[nodiscard]] const LimitResetSettings& limitResets() const { return limit_resets_; }
     // {"nextPrompt": {...}}: when and how lapis predicts the next prompt.
     [[nodiscard]] const NextPromptSettings& nextPrompt() const { return next_prompt_; }
     [[nodiscard]] static int terminalFontSizeMinimum() { return kTerminalFontSizeMinimum; }
@@ -285,6 +287,7 @@ class KeyMap final : public QObject {
     QStringList usage_machines_;
     AgentDefaults agent_defaults_;
     AccountsConfig accounts_;
+    LimitResetSettings limit_resets_;
     NextPromptSettings next_prompt_;
     QFileSystemWatcher watcher_;
     QTimer settle_;

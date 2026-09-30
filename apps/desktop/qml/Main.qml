@@ -460,6 +460,9 @@ ApplicationWindow {
         // A running CLI keeps the version it started with.
         add("updateTab", qsTr("Update this tab's CLI and reload it"), "", hasAgent && agent.live && workspace.canUpdateAgent(agent.sessionId), hasAgent ? qsTr("lapis cannot update this agent's CLI") : needAgent, () => workspace.updateAndReloadAgent(agent.sessionId))
         add("updateClaude", qsTr("Update Claude Code and reload its tabs"), "", workspace.sessions.some(session => session.harnessId === "claude"), qsTr("No Claude Code agent is open"), () => workspace.updateClaudeAndReload())
+        // The claude.ai "Reset for free" for Claude Code and Codex: spends the
+        // saved limit reset of this agent's plan, on its machine.
+        add("useLimitReset", qsTr("Use a saved limit reset for this agent's plan"), "", hasAgent && typeof limitResets !== "undefined" && limitResets !== null && limitResets.canUseNow(agent.sessionId), qsTr("Only for a Claude Code or Codex agent"), () => limitResets.useNow(agent.sessionId))
         add("nextCategory", qsTr("Next category"), "nextCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory())
         add("previousCategory", qsTr("Previous category"), "previousCategory", workspace.categories.length > 1, qsTr("Add another category first"), () => workspace.nextCategory(-1))
         for (let i = 0; i < Math.min(9, workspace.categories.length); ++i) {

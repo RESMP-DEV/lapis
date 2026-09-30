@@ -179,6 +179,10 @@ vice versa.
   network, disk and parsing work off the GUI thread; bound queues and caches with
   named limits and explicit overflow behavior. Do not replace these boundaries
   with locks, inheritance or custom allocators without a demonstrated need.
+  `platform/published_task.hpp` provides explicit C++ publication for one-shot
+  callbacks crossing external Qt queues, whose internal synchronization may be
+  invisible to sanitizers. Capture owned values and read guarded GUI objects
+  only on the GUI thread; publication does not serialize the task bodies.
 - Validate external sizes, IDs, paths and protocol state before allocation or
   mutation. Preserve identity/epoch checks, atomic settings writes and existing
   configuration values. Specify units and whether boundary values such as zero
