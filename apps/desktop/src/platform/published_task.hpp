@@ -7,42 +7,67 @@
 #include <utility>
 
 namespace lapis::desktop::platform {
-// One-shot callable publication through external Qt queues. Qt owns the
-// callable's lifetime; release/acquire makes payload transfer visible in C++
-// even when Qt's queue implementation is not instrumented. Moved-from and
-// cancelled callables publish/acquire their state before destruction too.
-class PublishedTask final {
+// Callable storage publication through external Qt queues/connections. Qt owns
+// the callable lifetime; release/acquire makes construction, moves and eventual
+// destruction visible even when the Qt library itself is uninstrumented.
+// This does not serialize calls or extend the lifetime of a captured raw pointer.
+class PublishedCallback final {
   public:
-    explicit PublishedTask(std::function<void()> task) : task_(std::move(task)) { publish(); }
-    PublishedTask(const PublishedTask& other) {
-        other.acquire();
-        task_ = other.task_;
+    explicit PublishedCallback(std::function<void()> callback) : callback_(std::move(callback)) {
         publish();
     }
-    PublishedTask(PublishedTask&& other) noexcept {
+    PublishedCallback(const PublishedCallback& other) {
         other.acquire();
-        task_ = std::move(other.task_);
+        callback_ = other.callback_;
+        publish();
+    }
+    PublishedCallback(PublishedCallback&& other) noexcept {
+        other.acquire();
+        callback_ = std::move(other.callback_);
         other.publish();
         publish();
     }
-    PublishedTask& operator=(const PublishedTask&) = delete;
-    PublishedTask& operator=(PublishedTask&&) = delete;
-    ~PublishedTask() { acquire(); }
-    void operator()() {
+    PublishedCallback& operator=(const PublishedCallback&) = delete;
+    PublishedCallback& operator=(PublishedCallback&&) = delete;
+    ~PublishedCallback() { acquire(); }
+    void operator()() const {
         acquire();
-        auto task = std::move(task_);
-        publish();
-        task();
+        callback_();
     }
 
   private:
+    friend class PublishedTask;
+    std::function<void()> take() {
+        acquire();
+        auto callback = std::move(callback_);
+        publish();
+        return callback;
+    }
     void publish() noexcept { published_.store(true, std::memory_order_release); }
     void acquire() const noexcept {
         if (!published_.load(std::memory_order_acquire))
             std::terminate();
     }
     std::atomic<bool> published_{false};
-    std::function<void()> task_;
+    std::function<void()> callback_;
+};
+
+// One-shot work consumes its callable. Repeated invocation is not supported;
+// use PublishedCallback for a signal that intentionally fires more than once.
+class PublishedTask final {
+  public:
+    explicit PublishedTask(std::function<void()> task) : callback_(std::move(task)) {}
+    PublishedTask(const PublishedTask&) = default;
+    PublishedTask(PublishedTask&&) noexcept = default;
+    PublishedTask& operator=(const PublishedTask&) = delete;
+    PublishedTask& operator=(PublishedTask&&) = delete;
+    void operator()() {
+        auto task = callback_.take();
+        task();
+    }
+
+  private:
+    PublishedCallback callback_;
 };
 } // namespace lapis::desktop::platform
 #endif

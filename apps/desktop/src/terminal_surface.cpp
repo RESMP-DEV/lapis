@@ -1,5 +1,6 @@
 #include "terminal_surface.hpp"
 #include "cell_shapes.hpp"
+#include "platform/published_task.hpp"
 #include "workspace.hpp"
 #include <QScopeGuard>
 
@@ -699,6 +700,15 @@ struct TerminalSurface::RenderState {
     QString offer_key;
 };
 
+struct TerminalSurface::FrameHandoff {
+    std::mutex mutex;
+    std::uint64_t epoch{};
+    bool active{true};
+    std::shared_ptr<const RenderState> pending;
+    std::shared_ptr<const RenderState> painted;
+    std::shared_ptr<const RenderState> presented;
+};
+
 void TerminalSurface::publishFrame(bool snapshot_changed) {
     // Only the GUI thread touches document_, preedit_, or item geometry. The
     // render thread gets owned immutable values through an explicit C++ handoff.
@@ -718,16 +728,17 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
     if (hovered_link_)
         frame->link = hovered_link_->cells;
     {
-        const std::lock_guard lock(render_mutex_);
-        if (!snapshot_changed && render_state_)
-            frame->snapshot = render_state_->snapshot;
+        const std::lock_guard lock(handoff_->mutex);
+        if (!snapshot_changed && handoff_->pending)
+            frame->snapshot = handoff_->pending->snapshot;
     }
     if (snapshot_changed && document_)
         frame->snapshot = std::make_shared<const session::TerminalSnapshot>(document_->snapshot());
     {
-        const std::lock_guard lock(render_mutex_);
-        render_state_ = std::move(frame);
+        const std::lock_guard lock(handoff_->mutex);
+        handoff_->pending = std::move(frame);
     }
+    armSuggestionObservation();
     update();
 }
 
@@ -758,7 +769,7 @@ bool TerminalSurface::acceptsTerminalInput() const {
 }
 
 TerminalSurface::TerminalSurface(QQuickItem* parent)
-    : QQuickItem(parent),
+    : QQuickItem(parent), handoff_(std::make_shared<FrameHandoff>()),
       resolved_font_family_(QFontDatabase::systemFont(QFontDatabase::FixedFont).family()) {
     setFlag(ItemHasContents);
     setClip(true);
@@ -783,27 +794,27 @@ void TerminalSurface::bindWindow(QQuickWindow* current) {
         disconnect(window_active_connection_);
     if (window_visible_connection_)
         disconnect(window_visible_connection_);
-    if (suggestion_frame_connection_)
-        disconnect(suggestion_frame_connection_);
+    cancelSuggestionObservation();
     disconnect(presentation_connection_);
+    std::uint64_t epoch = 0;
     {
-        const std::lock_guard lock(render_mutex_);
-        painted_state_.reset();
-        presented_state_.reset();
+        const std::lock_guard lock(handoff_->mutex);
+        epoch = ++handoff_->epoch;
+        handoff_->painted.reset();
+        handoff_->presented.reset();
     }
     if (current)
-        presentation_connection_ = connect(
-            current, &QQuickWindow::frameSwapped, this,
-            [this] {
-                // Runs at presentation on the render thread. Only immutable
-                // render values cross this handoff, never GUI-owned objects.
-                const std::lock_guard lock(render_mutex_);
-                presented_state_ = painted_state_;
-            },
-            Qt::DirectConnection);
-    if (current)
-        suggestion_frame_connection_ =
-            connect(current, &QQuickWindow::frameSwapped, this, &TerminalSurface::reportSeen);
+        presentation_connection_ = connect(current, &QQuickWindow::frameSwapped, current,
+                                           platform::PublishedCallback([handoff = handoff_, epoch] {
+                                               // Qt disconnect does not wait for an in-flight
+                                               // direct slot. Capture no item: the bridge survives
+                                               // teardown, and an old window's callback cannot
+                                               // publish into a new binding.
+                                               const std::lock_guard lock(handoff->mutex);
+                                               if (handoff->active && handoff->epoch == epoch)
+                                                   handoff->presented = handoff->painted;
+                                           }),
+                                           Qt::DirectConnection);
     if (current)
         window_visible_connection_ =
             connect(current, &QWindow::visibleChanged, this, &TerminalSurface::updateViewing);
@@ -825,13 +836,17 @@ TerminalSurface::~TerminalSurface() {
     disconnect(window_changed_connection_);
     disconnect(window_active_connection_);
     disconnect(window_visible_connection_);
-    disconnect(suggestion_frame_connection_);
+    cancelSuggestionObservation();
     disconnect(presentation_connection_);
     disconnect(warm_connection_);
     if (viewed_)
         viewed_->removeViewer(viewed_interval_);
-    const std::lock_guard lock(render_mutex_);
-    render_state_.reset();
+    const std::lock_guard lock(handoff_->mutex);
+    handoff_->active = false;
+    ++handoff_->epoch;
+    handoff_->pending.reset();
+    handoff_->painted.reset();
+    handoff_->presented.reset();
 }
 
 // A new screen: redraw now, or within the view's frame interval.
@@ -877,6 +892,8 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     clearLink();
     if (document_) {
         connect(document_, &SessionPreview::snapshotChanged, this, &TerminalSurface::screenChanged);
+        connect(document_, &SessionPreview::attentionChanged, this,
+                [this] { publishFrame(false); });
         connect(document_, &SessionPreview::pasteResult, this,
                 [this](quint64, bool queued, bool, const QString& message) {
                     if (!queued)
@@ -935,6 +952,7 @@ void TerminalSurface::keepFramesComing() {
 // Shown while this view and its window are visible: a hidden window, a
 // hidden strip or a closed tile decodes nothing for its agent.
 void TerminalSurface::updateViewing() {
+    armSuggestionObservation();
     SessionPreview* showing =
         document_ && isVisible() && window() != nullptr && window()->isVisible() ? document_.data()
                                                                                  : nullptr;
@@ -967,13 +985,16 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
     // Qt owns the returned nodes. No GUI-owned document or mutable text is
     // dereferenced here, including on an empty/reloaded surface.
     std::shared_ptr<const RenderState> frame;
+    std::uint64_t epoch = 0;
     {
-        const std::lock_guard lock(render_mutex_);
-        frame = render_state_;
+        const std::lock_guard lock(handoff_->mutex);
+        frame = handoff_->pending;
+        epoch = handoff_->epoch;
     }
     if (!frame || !frame->snapshot || frame->viewport.isEmpty() || !window()) {
-        const std::lock_guard lock(render_mutex_);
-        painted_state_.reset();
+        const std::lock_guard lock(handoff_->mutex);
+        if (handoff_->active && handoff_->epoch == epoch)
+            handoff_->painted.reset();
         delete old_node;
         return nullptr;
     }
@@ -1031,8 +1052,9 @@ QSGNode* TerminalSurface::updatePaintNode(QSGNode* old_node, UpdatePaintNodeData
     matrix.scale(static_cast<float>(layout.scale));
     root->setMatrix(matrix);
     {
-        const std::lock_guard lock(render_mutex_);
-        painted_state_ = std::move(frame);
+        const std::lock_guard lock(handoff_->mutex);
+        if (handoff_->active && handoff_->epoch == epoch)
+            handoff_->painted = std::move(frame);
     }
     return root;
 }
@@ -1572,6 +1594,55 @@ void TerminalSurface::setTabAway(const QJSValue& move) {
     emit tabFlowChanged();
 }
 
+void TerminalSurface::cancelSuggestionObservation() {
+    ++suggestion_watch_ticket_;
+    suggestion_watch_pending_ = false;
+    disconnect(suggestion_frame_connection_);
+    suggestion_frame_connection_ = {};
+}
+
+void TerminalSurface::armSuggestionObservation() {
+    const auto key = suggestion_key_.isEmpty() ? suggestion_ : suggestion_key_;
+    if (!document_ || document_->attentionPending() || suggestion_.isEmpty() || seen_ == key ||
+        !isVisible() || !window() || !window()->isActive()) {
+        cancelSuggestionObservation();
+        return;
+    }
+    if (suggestion_watch_pending_)
+        return;
+    std::shared_ptr<const RenderState> watched;
+    std::uint64_t epoch = 0;
+    {
+        const std::lock_guard lock(handoff_->mutex);
+        watched = handoff_->pending;
+        epoch = handoff_->epoch;
+    }
+    // At most one queued observation per publication. Empty/already-seen
+    // previews have no connection, and an unshowable stable offer does not
+    // enqueue work on every frame of another view's animation.
+    suggestion_watch_pending_ = true;
+    const auto ticket = ++suggestion_watch_ticket_;
+    suggestion_frame_connection_ = connect(
+        window(), &QQuickWindow::frameSwapped, this,
+        [this, handoff = handoff_, epoch, watched, ticket] {
+            if (ticket != suggestion_watch_ticket_)
+                return;
+            bool newer = false;
+            {
+                const std::lock_guard lock(handoff->mutex);
+                if (!handoff->active || handoff->epoch != epoch)
+                    return;
+                newer = handoff->pending != watched;
+            }
+            suggestion_frame_connection_ = {};
+            suggestion_watch_pending_ = false;
+            if (newer)
+                armSuggestionObservation();
+            reportSeen(); // A signal receiver may destroy this item; no access afterward.
+        },
+        static_cast<Qt::ConnectionType>(Qt::QueuedConnection | Qt::SingleShotConnection));
+}
+
 // A suggestion counts as seen once it is on screen in the active window, once
 // per offer: the same words offered again after another turn are a new offer.
 void TerminalSurface::reportSeen() {
@@ -1582,6 +1653,7 @@ void TerminalSurface::reportSeen() {
     if (presentedSuggestion().shown.isEmpty())
         return;
     seen_ = key;
+    cancelSuggestionObservation();
     emit suggestionSeen(document_->sessionId(), suggestion_key_);
 }
 
@@ -1597,8 +1669,8 @@ bool TerminalSurface::suggestionWhole() const { return presentedSuggestion().who
 SuggestionLayout TerminalSurface::presentedSuggestion() const {
     std::shared_ptr<const RenderState> frame;
     {
-        const std::lock_guard lock(render_mutex_);
-        frame = presented_state_;
+        const std::lock_guard lock(handoff_->mutex);
+        frame = handoff_->presented;
     }
     if (!document_ || !frame || !frame->snapshot || !frame->preedit.isEmpty() ||
         frame->session_id != document_->sessionId() || frame->offer_key != suggestion_key_ ||

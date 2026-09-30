@@ -333,12 +333,11 @@ QString NextPrompt::suggestion(const QString& id) const { return offers_.value(i
 // A completed attempt that came to nothing records its stage and reason.
 // Superseded or disabled work is cancelled before producing an offer.
 void NextPrompt::failed(const QString& id, const Agent& agent, Stage stage, const QString& why) {
-    const QStringList known{QStringLiteral("no transcript"),
-                            QStringLiteral("invalid conversation id"),
-                            QStringLiteral("timeout"),
-                            QStringLiteral("output too large"),
-                            QStringLiteral("invalid helper JSON"),
-                            QStringLiteral("helper unavailable")};
+    const QStringList known{
+        QStringLiteral("no transcript"),           QStringLiteral("no Claude Code CLI on this Mac"),
+        QStringLiteral("invalid conversation id"), QStringLiteral("timeout"),
+        QStringLiteral("output too large"),        QStringLiteral("invalid helper JSON"),
+        QStringLiteral("helper unavailable")};
     const auto reason = known.contains(why) ? why : QStringLiteral("helper failed");
     record({{QStringLiteral("event"), QStringLiteral("failed")},
             {QStringLiteral("agent"), id},

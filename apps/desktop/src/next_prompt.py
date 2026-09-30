@@ -479,11 +479,13 @@ def ask(system, prompt, model, effort="", claude="claude", timeout=150):
         env=environment,
         cwd=tempfile.gettempdir(),
     )
-    if run.returncode != 0:
-        raise RuntimeError(run.stderr.strip()[-300:] or "CLI request failed")
     try:
         envelope = json.loads(run.stdout)
     except ValueError:
+        if run.returncode != 0:
+            raise RuntimeError(
+                run.stderr.strip()[-300:] or "CLI request failed"
+            ) from None
         raise RuntimeError(
             (run.stderr or run.stdout).strip()[-300:] or "no answer"
         ) from None
@@ -491,6 +493,8 @@ def ask(system, prompt, model, effort="", claude="claude", timeout=150):
         raise RuntimeError("invalid CLI envelope")
     if envelope.get("is_error"):
         raise RuntimeError(str(envelope.get("result", "error"))[-300:])
+    if run.returncode != 0:
+        raise RuntimeError(run.stderr.strip()[-300:] or "CLI request failed")
     return envelope.get("result", ""), envelope
 
 

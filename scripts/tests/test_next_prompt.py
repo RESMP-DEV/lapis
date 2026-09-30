@@ -327,6 +327,13 @@ class ModelTests(unittest.TestCase):
         self.assertIn(
             "not logged in", next_prompt.predict({}, "m", "", str(fake))["error"]
         )
+        fake.write_text(
+            '#!/bin/sh\nprintf \'%s\n\' \'{"is_error":true,"result":"account quota exhausted"}\'\nexit 1\n'
+        )
+        self.assertIn(
+            "account quota exhausted",
+            next_prompt.predict({}, "m", "", str(fake))["error"],
+        )
         for failure in (
             RuntimeError("rate limited"),
             OSError("missing CLI"),
@@ -387,12 +394,41 @@ class AcceptanceTests(unittest.TestCase):
                 },
             )
             self.assertEqual(report["judge_missing_grades"], 1)
+            self.assertEqual(
+                report["grading"],
+                {
+                    "requested": 1,
+                    "graded": 0,
+                    "coverage": 0.0,
+                    "metrics_basis": "successfully graded predictions",
+                },
+            )
             self.assertEqual(report["seen_not_used_graded"], {"count": 0})
             self.assertEqual(rows, [])
         item = {"id": 1, "last": "", "actual": "go", "candidates": [{"text": "go"}]}
         for response in ('{"grades":[{"id":1,"scores":null}]}', '{"grades":[null]}'):
             with patch.object(next_prompt, "ask", return_value=(response, {})):
                 self.assertEqual(next_prompt_eval.judge([item], "stand-in"), {})
+
+    def test_failed_stage_and_cli_category_are_bounded(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        _, report = next_prompt_eval.acceptance(
+            [
+                {"event": "failed", "stage": [], "error": "no transcript"},
+                {"event": "failed", "stage": {}, "error": "no transcript"},
+                {
+                    "event": "failed",
+                    "stage": "predict",
+                    "error": "no Claude Code CLI on this Mac",
+                },
+            ]
+        )
+        self.assertEqual(
+            report["failed"],
+            {"unknown: no transcript": 2, "predict: no Claude Code CLI on this Mac": 1},
+        )
 
     def test_offers_seen_used_typed_first_and_never_seen(self):
         sys.path.insert(0, str(ROOT / "scripts"))
