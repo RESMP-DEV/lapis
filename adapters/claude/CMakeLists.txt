@@ -18,4 +18,9 @@ if(BUILD_TESTING)
         lapis_project_options lapis_claude_adapter)
     add_test(NAME claude-observer COMMAND lapis_claude_observer_tests)
     set_tests_properties(claude-observer PROPERTIES TIMEOUT 60)
+    if(LAPIS_SANITIZER STREQUAL "thread")
+        # The real relay subprocess cases take about 87 seconds under TSan on
+        # the measured macOS host. Production relay deadlines stay unchanged.
+        set_tests_properties(claude-observer PROPERTIES TIMEOUT 180)
+    endif()
 endif()
