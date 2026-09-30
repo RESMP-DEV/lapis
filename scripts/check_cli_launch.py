@@ -28,6 +28,7 @@ VERSION = 6
 HELLO, SNAPSHOT, TEXT, PASTE, KEY, RESIZE, STATUS, ATTACH, READY = range(1, 10)
 HISTORY_REQUEST, HISTORY_PAGE = range(10, 12)
 ATTENTION_SNAPSHOT, ATTENTION_DECISION, ATTENTION_RETRY = range(12, 15)
+PASTE_REQUEST, PASTE_RESULT = 17, 18
 WAIT = 5
 
 
@@ -84,13 +85,26 @@ def decode_history_reply(payload):
 
 
 def attach_payload(
-    program, arguments, directory, expected=None, *, codex=False, claude=False
+    program,
+    arguments,
+    directory,
+    expected=None,
+    *,
+    codex=False,
+    claude=False,
+    paste_transactions=False,
+    join=False,
 ):
     identity = expected[:32] if expected is not None else bytes(32)
     return (
         struct.pack(">I", VERSION)
         + fingerprint(program, arguments, directory, codex=codex, claude=claude)
-        + bytes([1 if expected is not None else 0])
+        + bytes(
+            [
+                (3 if join else 1 if expected is not None else 0)
+                | (0x20 if paste_transactions else 0)
+            ]
+        )
         + identity
     )
 
@@ -192,15 +206,35 @@ class WireClient:
             self.buffer.extend(chunk)
 
     def attach(
-        self, program, arguments, directory, expected=None, *, codex=False, claude=False
+        self,
+        program,
+        arguments,
+        directory,
+        expected=None,
+        *,
+        codex=False,
+        claude=False,
+        paste_transactions=False,
+        join=False,
     ):
         self.send(
             ATTACH,
             attach_payload(
-                program, arguments, directory, expected, codex=codex, claude=claude
+                program,
+                arguments,
+                directory,
+                expected,
+                codex=codex,
+                claude=claude,
+                paste_transactions=paste_transactions,
+                join=join,
             ),
         )
         pid = self.hello()
+        require(
+            not paste_transactions or self.paste_transactions,
+            "Paste capability not acknowledged",
+        )
         if expected is not None:
             require(self.attachment[:32] == expected[:32], "Reconnect identity changed")
             require(
@@ -214,7 +248,12 @@ class WireClient:
 
     def hello(self):
         kind, data = self.receive()
-        require(kind == HELLO and len(data) == 52, "Expected hello after attachment")
+        require(
+            kind == HELLO and len(data) in (52, 56), "Expected hello after attachment"
+        )
+        self.paste_transactions = (
+            len(data) == 56 and struct.unpack_from(">I", data, 52)[0] == 1
+        )
         version = struct.unpack_from(">I", data)[0]
         self.attachment = data[4:44]
         pid = struct.unpack_from(">Q", data, 44)[0]
@@ -978,6 +1017,136 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
                 restored.send(TEXT, b"after-timeout\n")
                 restored.snapshot(lambda s: "ECHO:after-timeout" in s["text"])
 
+    def paste_admission():
+        output = runtime / "paste-input.bin"
+        code = """import os, signal, sys, tty
+from pathlib import Path
+tty.setraw(0)
+signal.signal(signal.SIGUSR1, lambda *_: os.write(1, b'\\x1b[?2004lMODEOFF\\r\\n'))
+os.write(1, b'\\x1b[?2004hREADY\\r\\n')
+with open(sys.argv[1], 'wb', buffering=0) as output:
+    while True:
+        data = os.read(0, 65536)
+        if not data:
+            break
+        output.write(data)
+"""
+        argv = ["-u", "-c", code, str(output)]
+        service = Service(
+            binary, runtime, artifacts, "paste-admission", program, argv, runtime
+        )
+
+        def wait_bytes(expected):
+            deadline = time.monotonic() + WAIT
+            while time.monotonic() < deadline:
+                if output.exists() and output.stat().st_size >= len(expected):
+                    require(
+                        output.read_bytes() == expected,
+                        "Paste bytes were partial, duplicated or mis-encoded",
+                    )
+                    return
+                time.sleep(0.01)
+            raise CheckError("Paste bytes did not reach the reader")
+
+        def request(client, request_id, text, submit=False):
+            client.socket.sendall(
+                frame(
+                    PASTE_REQUEST,
+                    client.attachment
+                    + struct.pack(">QB", request_id, int(submit))
+                    + text,
+                )
+            )
+            deadline = time.monotonic() + WAIT
+            while time.monotonic() < deadline:
+                kind, payload = client.receive(max(0.01, deadline - time.monotonic()))
+                if kind == SNAPSHOT:
+                    continue
+                require(
+                    kind == PASTE_RESULT and payload[:40] == client.attachment,
+                    "Wrong paste receipt attachment",
+                )
+                require(
+                    struct.unpack_from(">Q", payload, 40)[0] == request_id,
+                    "Wrong paste receipt ID",
+                )
+                return bool(payload[48]), payload[49:].decode()
+            raise CheckError("Paste receipt timed out")
+
+        try:
+            wait_socket(service.endpoint, service.process)
+            with WireClient(service.endpoint) as client:
+                service.child_pid = client.attach(
+                    program, argv, runtime, paste_transactions=True
+                )
+                client.snapshot(lambda screen: "READY" in screen["text"])
+                os.kill(service.child_pid, signal.SIGSTOP)
+                filler = b"f" * (256 * 1024)
+                for offset in range(0, len(filler), 65536):
+                    client.send(TEXT, filler[offset : offset + 65536])
+                queued, message = request(client, 1, b"p" * (960 * 1024))
+                require(
+                    not queued and "queue" in message,
+                    "Prefilled PTY queue admitted an incomplete paste",
+                )
+                os.kill(service.child_pid, signal.SIGCONT)
+                wait_bytes(filler)
+                large = b"p" * (960 * 1024)
+                require(
+                    request(client, 2, large)[0], "Empty queue rejected a maximum paste"
+                )
+                expected = filler + b"\x1b[200~" + large + b"\x1b[201~"
+                wait_bytes(expected)
+                require(
+                    request(client, 3, b"go", True)[0], "Paste-and-submit was refused"
+                )
+                expected += b"\x1b[200~go\x1b[201~\r"
+                wait_bytes(expected)
+                os.kill(service.child_pid, signal.SIGUSR1)
+                client.snapshot(lambda screen: "MODEOFF" in screen["text"])
+                require(request(client, 4, b"one\ntwo")[0], "Plain paste refused")
+                expected += b"one\rtwo"
+                wait_bytes(expected)
+                with WireClient(service.endpoint) as joined:
+                    pid = joined.attach(
+                        program, argv, runtime, paste_transactions=True, join=True
+                    )
+                    require(
+                        pid == service.child_pid, "Joined paste started another child"
+                    )
+                    require(request(joined, 1, b"joined")[0], "Joined paste rejected")
+                    expected += b"joined"
+                    wait_bytes(expected)
+                # An incomplete frame must never send its prefix to the PTY.
+                with WireClient(service.endpoint) as partial:
+                    partial.attach(
+                        program, argv, runtime, paste_transactions=True, join=True
+                    )
+                    packet = frame(
+                        PASTE_REQUEST,
+                        partial.attachment + struct.pack(">QB", 1, 0) + b"not-written",
+                    )
+                    partial.socket.sendall(packet[:-1])
+                require(
+                    request(client, 5, b"after-partial")[0],
+                    "Partial peer broke primary input",
+                )
+                expected += b"after-partial"
+                wait_bytes(expected)
+                return {
+                    "max_paste_bytes": len(large),
+                    "pty_sha256": hashlib.sha256(expected).hexdigest(),
+                    "prefilled_refused_whole": True,
+                    "joined_and_partial_frame": True,
+                }
+        finally:
+            if service.child_pid:
+                try:
+                    os.kill(service.child_pid, signal.SIGCONT)
+                except ProcessLookupError:
+                    pass
+            service.stop()
+
     def backpressure():
         with session("backpressure") as service, service.connect() as client:
             client.snapshot(lambda screen: "READY" in screen["text"])
@@ -1279,6 +1448,11 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
         (
             "initial screen acknowledgement, fragmentation and protocol version boundaries",
             synchronization_boundaries,
+            None,
+        ),
+        (
+            "Atomic paste admission, service encoding and ordered submit",
+            paste_admission,
             None,
         ),
         ("PTY queue overflow and non-reading attachment", backpressure, None),

@@ -1,0 +1,64 @@
+{
+  "baseline": "8ed57964a18eb10ae77a4d1226f0cedf874257a3",
+  "scope": "PR43 service-owned paste admission and negotiated compatibility; background macOS checks only.",
+  "contract": {
+    "version": 6,
+    "attach_capability": "0x20; legacy fallback removes this before phase/link bits",
+    "hello": "52-byte legacy; 56 bytes with requested paste capability word1",
+    "request_kind": 17,
+    "result_kind": 18,
+    "request": "attachment40 + request ID u64 + submit flag u8 + raw bytes <=983040",
+    "result": "attachment40 + request ID u64 + queued flag u8 + UTF-8 message <=4096 bytes",
+    "admission": "Service-current terminal encoding; one PtyProcess::writeBytes call for entire paste plus optional Enter. Refusal does not write part of a paste or disconnect the view.",
+    "limits": "Eight pending client requests, ten-second response timeout, monotonic per-attachment IDs, no automatic replay; lost delivery is explicitly unknown.",
+    "compatibility": "Old clients receive legacy Hello. New clients downgrade against old services, keep small pastes and visibly refuse unsupported larger pastes."
+  },
+  "validation": [
+    {
+      "command": "ctest --test-dir build/desktop -R ^(local-protocol|live-connection|terminal-behavior|pty-process)$ --no-tests=error --output-on-failure",
+      "result": "PASS: 4 suites, 2.08s; final live-connection rerun passed after guarded timeout callback refinement."
+    },
+    {
+      "command": "lapis_terminal_input_tests --background; lapis_ui_preview_tests --background",
+      "result": "PASS: offscreen input/refusal/ownership and UI checks; final input rerun covers pending receipt disconnect uncertainty."
+    },
+    {
+      "command": "check_cli_launch.py --case paste-admission --case backpressure --case identity-boundaries --case synchronization-boundaries",
+      "result": "PASS: actual service/PTY, max983040-byte paste, prefilled queue whole rejection, service mode, ordered Enter, joined view, incomplete frame, and existing backpressure/identity/synchronization cases."
+    },
+    {
+      "command": "Desktop ASan/UBSan and TSan: local-protocol, live-connection, and paste-admission CLI case",
+      "result": "PASS in both presets. Final client callback compiled/reran live-connection in ASan1.93s and TSan4.32s. No full sanitizer-suite claim."
+    },
+    {
+      "command": "Scoped clang-tidy and clang-format; git diff --check; lapis.py quality",
+      "result": "PASS. Quality276 Python tests, seven skips. One analyzer null-pointer warning on the timeout callback was resolved with an explicit guarded owner capture."
+    }
+  ],
+  "removed_redundancy": "Removed the now-unused client-side encoder API and its equivalence-only test; retained engine behavior coverage and added one discriminating real-service admission case.",
+  "limitations": [
+    "No foreground native input/GPU qualification or installed app upgrade performed.",
+    "Queued admission is not proof of application processing; process death after admission can interrupt delivery.",
+    "Old services require an upgrade/restart to enable the new capability; active sessions are not restarted automatically.",
+    "Initial stale test binary/format and obsolete-kind expectations failed during iteration and were corrected; raw logs retained locally.",
+    "The new wire capability and submit ordering need fresh substantive contract review before merge."
+  ],
+  "source_sha256": {
+    "apps/desktop/qml/Main.qml": "5ff43300422e57ebcedbc26f9849de40762d3a8c79a040b68625f92aed2d3372",
+    "apps/desktop/src/live_connection.cpp": "5c0b915c89641a6668acd9154ea01df869661e0e861778a050e4081e71a46ad3",
+    "apps/desktop/src/live_connection.hpp": "622e9b95e3f2f2e6a5d862529e0f51baf1585b90f0eb41963501f09e2657ac8b",
+    "apps/desktop/src/terminal_surface.cpp": "d67200fd7279309e17438e71b7213a947dffb168cd1e58dcc62e2be6ca465b62",
+    "apps/desktop/src/workspace.hpp": "0e9b78173029b95809448ba853aeb36915e5dbcdf3beee7f6efe3495731967a8",
+    "apps/desktop/tests/live_connection_test.cpp": "5d948e1c9079dc1a5ee157234ca71ffeaa4288cf12fa65b04261ba1edffa9cc1",
+    "apps/desktop/tests/terminal_input_test.cpp": "665180628ef5bd7c01f37b074444ce6a66beced0a7a84b4ddddef86fc845abc0",
+    "docs/architecture.md": "98c1ab69b57dcb22be35d49fcff154eb5d91776eae53f463d323cdbf4f799ea0",
+    "scripts/check_cli_launch.py": "507ded8ae5e2d54b07d49e9622f3d6c7920145f6ac11172571746cd849579e8b",
+    "services/session/include/lapis/session/terminal.hpp": "2cda68268b4c4b37495c27d366f35960dfceaa08ea9a10f7d8103bbf077859fa",
+    "services/session/src/session_service.cpp": "11ab001e0d2b4d34836cae6b8881b72c694a6bfed84d9aa290f54a9a1c049d4f",
+    "services/session/src/terminal/terminal.cpp": "8c59a506c5ef0895c1527e19d89b52a3f487334951de07a26c56cedaf7fd7747",
+    "services/session/src/transport/local_protocol.cpp": "e357d4f20ba9440ec9bd9b11eecc545d614b2f438bd9c18785f0a49ea0e63f39",
+    "services/session/src/transport/local_protocol.hpp": "0a9c4d4933ae0942fb03b1a491e72910b32597ecec3d4ae7d013d373b7d76b21",
+    "services/session/tests/local_protocol_test.cpp": "a3430e60b50593add68aea0221421e6979c8938a0f36c7a26385cf8e13b6d743",
+    "services/session/tests/terminal/terminal_test.cpp": "dfd64f1470ec12eaec2c0fdfd6738a64a0fd88b0c13a3fefb80f48807d31635e"
+  }
+}
