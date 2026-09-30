@@ -1,0 +1,37 @@
+{
+ "schema_version": 1,
+ "recorded_at": "2026-09-30T18:10:00+00:00",
+ "platform": "android",
+ "scope": "Milestone C on-device verification of the Android companion client's command bar: the fixed key row (navigation keys plus Ctrl chords) and the snippet row below the stage, exercised live on the phone's cover screen through the ADB loopback harness. Finish line per spec: ^C verifiably interrupts a running program (exercised, not assumed) and snippets round-trip across process death.",
+ "base_revision": "95cbd56d9d7e",
+ "branch": "feature/android-command-bar",
+ "verified_commits": {
+  "app": "the command bar commits on this branch (CommandBar/CommandBarKeys/SnippetStore/SnippetEditorDialog plus AgentStage/SettingsScreen wiring)",
+  "harness": "the interrupt and snippets checks plus the fake_agent busy workload"
+ },
+ "device": {
+  "hardware": "Samsung Z Fold SM-F966U over USB, debug APK (dev.lapis.remote)",
+  "display": "Cover display active: display 0 at 1080x2520. Fold/unfold adaptivity is milestone D's gate.",
+  "transport": "adb reverse tcp:7351 to the fixture gateway with --allow-local; no overlay membership exercised by this gate."
+ },
+ "checks": {
+  "interrupt": "send 'busy' through the composer, wait for the program's numbered output, swipe the key row until the ^C chip is on screen, tap it; the PTY line discipline turns the byte into SIGINT and the program reports 'busy interrupted after N lines'; the agent then answers a follow-up line, proving the session is alive after the interrupt",
+  "snippets": "tap + to open the editor, type a snippet, Add, Done; the chip appears in the bar with the saved text and tapping it sends paste+Enter (the fake agent echoes the line); force-stop and plain relaunch restores the chip from DataStore with the right text"
+ },
+ "result": {
+  "receipt": "build/android/remote-check.json: checks [list, open, sync, draft, scrollback, resize, wheel, interrupt, background, snippets, crash], failed [], mac_saw_phone true, mac_closed_by null, grids [100x30, 37x23, 56x45, 56x47]",
+  "runs": "Full suite green on the final build; unit checks 80/80 in scripts/check_android.py (CommandBarKeysTest 6, SnippetStoreTest 6 among them); mechanical quality gate all rows PASS",
+  "screens": "ignored build/android/remote-screens/<run>/ (09-interrupt, 11-snippet-added, 12-snippet-restored among them); screenshots contain fixture terminal content only and are not committed"
+ },
+ "defects_found_and_fixed": [
+  "The snippet editor's test tags never reached uiautomator: AlertDialog opens its own window, so the root-level testTagsAsResourceId set in MainActivity does not apply to the dialog's composition, and the harness could not address any node inside it by resource id (the dialog itself opened and worked). Fixed by setting testTagsAsResourceId on the editor column and the Done button inside the dialog.",
+  "The busy workload first ran denser (a line every 150 ms) and uiautomator could not dump the window at all — the phone-side observation channel goes blind on a window redrawing that fast, which surfaced as a false 'the busy program never started' while the program was actually running. Slowed to one line per 1.5 s so dumps have quiet windows; the interrupt itself was always delivered.",
+  "The scrollback check left the terminal surrendered from follow-bottom (a drag landed off the live row), so later checks could not see new output. The check now scrolls back down to the live bottom before finishing."
+ ],
+ "limitations": [
+  "Ctrl chords other than ^C (^D ^U ^L ^R ^Z ^W) are unit-tested as raw control-byte payloads but not individually exercised on device; ^C is the spec's named finish line and its SIGINT path through the PTY is the same wire shape all chords use.",
+  "The compact-width scrollable strip is what the cover screen exercises; the expanded FlowRow layout at >=840dp awaits milestone D's unfolded-display gate, as does any posture-docked placement.",
+  "Snippet persistence is per-device DataStore; the settings hide/show toggle is implemented and tagged but its UI interaction is not an automated check row (the bar's presence is asserted indirectly by every key/snippet check).",
+  "Transport remains the adb-reverse loopback with the fake_agent fixture; the real-Codex overlay run is still folded into the milestone A/D gates."
+ ]
+}
