@@ -488,6 +488,7 @@ class Workspace final : public QObject {
     bool followConversationTitle(const QString& id, QStringView title);
     // Each agent's current conversation, as its CLI resumes it: agent id to
     // conversation id, for the agents that have one.
+    [[nodiscard]] QString agentConversation(const QString& id) const;
     [[nodiscard]] QHash<QString, QString> agentConversations() const;
     Q_INVOKABLE bool moveSessionBy(const QString& id, int delta);
     // Puts agents, in their strip order, at `index` of a category's strip (at
@@ -508,6 +509,7 @@ class Workspace final : public QObject {
     // waits), one with a guess first, then the one waiting longest. False
     // when none does.
     Q_INVOKABLE bool nextPriorityAttention(const QStringList& ready);
+    Q_INVOKABLE [[nodiscard]] bool hasNextPriorityAttention(const QStringList& ready) const;
     [[nodiscard]] QVariantList sessions() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;
@@ -696,6 +698,8 @@ class Workspace final : public QObject {
     bool discardSession(const QString& id);
     void changed();
     void restoreSelection();
+    [[nodiscard]] const SessionPreview* priorityAttention(const QStringList& ready) const;
+    QHash<QString, qint64> tab_visited_;
     void watch(SessionPreview* item);
     // A remote agent's reconnection after its connection dropped.
     struct Reconnect {

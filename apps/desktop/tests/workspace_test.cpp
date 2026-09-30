@@ -735,6 +735,18 @@ void tabGoesToTheReadyThenTheOldest() {
     newer->applyAttention(state);
     require(!workspace.nextPriorityAttention(ready),
             "nothing is waiting once the one with a guess is at work");
+    require(!workspace.hasNextPriorityAttention(ready), "empty navigation remains unavailable");
+    auto* quiet = finish("renderer");
+    older = finish("agent");
+    newer = finish("checks");
+    const QStringList two_ready{older->sessionId(), newer->sessionId()};
+    require(workspace.hasNextPriorityAttention(two_ready), "ready navigation is available");
+    require(workspace.nextPriorityAttention(two_ready) && workspace.focusedSession() == newer,
+            "the other ready agent is visited first");
+    require(workspace.nextPriorityAttention(two_ready) && workspace.focusedSession() == older,
+            "the second ready agent is visited once");
+    require(workspace.nextPriorityAttention(two_ready) && workspace.focusedSession() == quiet,
+            "two ready offers must not starve the older quiet agent");
 }
 
 // Claude agents run under the service's Claude Code adapter and read their

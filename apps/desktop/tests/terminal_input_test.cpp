@@ -762,9 +762,15 @@ void suggestions() {
     int seen = 0;
     int next = 0;
     QObject::connect(&surface, &lapis::desktop::TerminalSurface::suggestionUsed,
-                     [&used](bool sent, int typed) { used.emplace_back(sent, typed); });
-    QObject::connect(&surface, &lapis::desktop::TerminalSurface::suggestionSeen,
-                     [&seen] { ++seen; });
+                     [&used, &f](const QString& id, bool sent, int typed) {
+                         require(id == f.document.sessionId(), "Suggestion use changed owners");
+                         used.emplace_back(sent, typed);
+                     });
+    QObject::connect(
+        &surface, &lapis::desktop::TerminalSurface::suggestionSeen, [&seen, &f](const QString& id) {
+            require(id == f.document.sessionId(), "Suggestion impression changed owners");
+            ++seen;
+        });
     QObject::connect(&surface, &lapis::desktop::TerminalSurface::nextAgentRequested,
                      [&next] { ++next; });
     const auto frames = [&peer](std::size_t count) {
@@ -798,12 +804,23 @@ void suggestions() {
     require(is_key(typed[0], lapis::session::TerminalKey::tab) && next == 0,
             "Tab was taken without the Tab flow");
     surface.setTabFlow(true);
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(is_key(typed[0], lapis::session::TerminalKey::tab) && next == 0,
+            "Tab without a navigation destination did not reach the agent");
+    surface.setNextAgentAvailable(true);
 
     const auto plain = window.grabWindow();
     surface.setSuggestion(QStringLiteral("go now"));
     settle();
     require(window.grabWindow() != plain, "The suggestion was not drawn");
     require(seen == 1, "The suggestion on screen was not reported seen");
+    surface.setSuggestionRevision(1);
+    settle();
+    require(seen == 2, "An identical suggestion from a new revision was not reported seen");
+    surface.setSuggestionRevision(1);
+    settle();
+    require(seen == 2, "The same suggestion revision was counted twice");
 
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(2);

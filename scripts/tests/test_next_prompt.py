@@ -225,11 +225,11 @@ class ModelTests(unittest.TestCase):
             }
         )
         for part in (
-            "paste fix (claude)",
-            "gpu run [infra] Working",
-            "email [ops] Finished (waiting for you)",
-            "- status?",
-            "> |",
+            '"title": "paste fix"',
+            '"title": "gpu run"',
+            '"waiting": true',
+            '"text": "status?"',
+            "\\u003e |",
             "Done.",
             "Tue 2:30 pm",
         ):
@@ -288,7 +288,7 @@ class ModelTests(unittest.TestCase):
         fake.write_text("#!/bin/sh\necho 'not logged in' >&2\nexit 1\n")
         fake.chmod(0o700)
         self.assertIn(
-            "not logged in", next_prompt.predict({}, "m", "", str(fake))["error"]
+            "model call failed", next_prompt.predict({}, "m", "", str(fake))["error"]
         )
 
 

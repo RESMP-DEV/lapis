@@ -46,25 +46,66 @@ THRESHOLDS = (0.0, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 
 def on_machine(machine, arguments):
     """The helper's JSON answer, run here or on `machine` with itself on stdin."""
-    if not machine:
-        command = [sys.executable, str(HELPER), *arguments]
-        run = subprocess.run(command, capture_output=True, text=True, timeout=900)
-    else:
-        remote = "python3 - " + " ".join(
-            "'" + a.replace("'", "'\\''") + "'" for a in arguments
-        )
-        command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-T", "--"]
+    command = [sys.executable, str(HELPER), *arguments]
+    stdin = ""
+    if machine:
+        command = [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=10",
+            "-T",
+            "--",
+            machine,
+            "python3 - "
+            + " ".join("'" + a.replace("'", "'\\''") + "'" for a in arguments),
+        ]
+        stdin = HELPER.read_text()
+    try:
         run = subprocess.run(
-            command + [machine, remote],
-            input=HELPER.read_text(),
+            command,
+            input=stdin,
             capture_output=True,
             text=True,
             timeout=900,
         )
+    except subprocess.TimeoutExpired:
+        return {"error": "timeout"}
+    except OSError:
+        return {"error": "process failed"}
     try:
         return json.loads(run.stdout)
     except ValueError:
-        return {"error": (run.stderr or "no answer").strip()[-300:]}
+        return {"error": "invalid helper JSON"}
+
+
+def failure_key(event):
+    """A small category for grouping; raw errors never become report keys."""
+    stage = (
+        event.get("stage")
+        if event.get("stage") in {"context", "predict"}
+        else "unknown"
+    )
+    raw = str(event.get("error", "")).strip()
+    known = {
+        "no transcript",
+        "invalid conversation id",
+        "invalid folder",
+        "invalid time",
+        "invalid model response",
+        "model call failed",
+        "invalid helper JSON",
+        "output too large",
+        "timeout",
+        "process failed",
+        "superseded",
+    }
+    if raw in known:
+        return "{}: {}".format(stage, raw)
+    if raw.startswith("invalid "):
+        return "{}: invalid input".format(stage)
+    return "{}: failed".format(stage)
 
 
 def judge(items, model):
@@ -88,8 +129,16 @@ def judge(items, model):
         return json.loads(text[text.index("{") : text.rindex("}") + 1])["grades"]
 
     chunks = [items[i : i + 8] for i in range(0, len(items), 8)]
+    grades, failed = {}, 0
     with ThreadPoolExecutor(4) as pool:
-        return {g["id"]: g for chunk in pool.map(batch, chunks) for g in chunk}
+        futures = [pool.submit(batch, chunk) for chunk in chunks]
+        for future in futures:
+            try:
+                for grade in future.result():
+                    grades[grade["id"]] = grade
+            except (OSError, ValueError, KeyError, TypeError):
+                failed += 1
+    return grades, failed
 
 
 def summarize(rows):
@@ -145,6 +194,14 @@ def summarize(rows):
     return report
 
 
+def _safe_call(function, item):
+    """One bad prediction or machine must not abort the remaining sweep."""
+    try:
+        return function(item)
+    except Exception:
+        return {"error": "prediction failed"}
+
+
 def replay(arguments):
     items = []
     for machine in [""] + (arguments.machine or []):
@@ -172,12 +229,14 @@ def replay(arguments):
         item["id"] = number
 
     def guess(item):
-        when = item["time"]
         try:
-            when = datetime.fromisoformat(when.replace("Z", "+00:00")).astimezone()
-            when = when.strftime("%a %-I:%M %p")
-        except ValueError:
-            pass
+            when = (
+                next_prompt.prompt_time(item["time"])
+                .astimezone()
+                .strftime("%a %-I:%M %p")
+            )
+        except (TypeError, ValueError):
+            when = ""
         bundle = {
             "agent": {"cli": item["cli"], "machine": item["machine"]},
             "context": {"turns": item["turns"]},
@@ -186,7 +245,8 @@ def replay(arguments):
         return next_prompt.predict(bundle, arguments.model, arguments.effort)
 
     with ThreadPoolExecutor(arguments.parallel) as pool:
-        guesses = list(pool.map(guess, items))
+        guesses = list(pool.map(lambda item: _safe_call(guess, item), items))
+    prediction_failures = sum(1 for answer in guesses if answer.get("error"))
     graded = []
     for item, answer in zip(items, guesses):
         if answer.get("candidates"):
@@ -217,6 +277,7 @@ def replay(arguments):
     report = summarize(rows)
     report["sampled"] = len(items)
     report["predicted"] = len(graded)
+    report["prediction_failed"] = prediction_failures
     report["model"] = arguments.model
     if graded:
         report["median_ms"] = sorted(g["ms"] for g in graded)[len(graded) // 2]
@@ -256,9 +317,7 @@ def acceptance(events):
     failures = defaultdict(int)
     for e in events:
         if e.get("event") == "failed":
-            failures[
-                "{}: {}".format(e.get("stage", "?"), str(e.get("error", ""))[:80])
-            ] += 1
+            failures[failure_key(e)] += 1
     shown = [o for o in offers.values() if o.get("shown")]
     seen = [o for o in shown if o["seen"]]
     used = [o for o in seen if o["used"]]

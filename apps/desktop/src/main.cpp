@@ -33,11 +33,13 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QSet>
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
 #include <algorithm>
 #include <exception>
+#include <memory>
 #include <optional>
 #include <set>
 
@@ -490,7 +492,7 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
             return NextPrompt::Agent{machine,
                                      folder,
                                      item->harnessId(),
-                                     workspace.agentConversations().value(id),
+                                     workspace.agentConversation(id),
                                      item->title(),
                                      place.value(QStringLiteral("category")).toString(),
                                      lapis::desktop::terminal_screen_text(item->snapshot())};
@@ -499,6 +501,8 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
             QJsonArray agents;
             for (const auto& value : workspace.sessions()) {
                 const auto* item = value.value<SessionPreview*>();
+                if (item == nullptr)
+                    continue;
                 agents.append(QJsonObject{
                     {QStringLiteral("title"), item->title()},
                     {QStringLiteral("category"), workspace.agentPlace(item->sessionId())
@@ -511,7 +515,7 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
         },
         [](const QString& name) { return QStandardPaths::findExecutable(name); },
         NextPrompt::Files{data.filePath(QStringLiteral("runtime")),
-                          data.filePath(QStringLiteral("next_prompt.jsonl"))});
+                          data.filePath(QStringLiteral("runtime/next_prompt.jsonl"))});
     const auto follow = [&next, &keymap] { next.setSettings(keymap.nextPrompt()); };
     follow();
     QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &next, follow);

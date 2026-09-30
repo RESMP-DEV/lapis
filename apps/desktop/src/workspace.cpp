@@ -31,6 +31,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <thread>
+#include <tuple>
 #include <utility>
 
 #include <QDir>
@@ -569,7 +570,7 @@ bool Workspace::latestAttention() {
             latest = item.get();
     return latest != nullptr && selectSession(latest->sessionId());
 }
-bool Workspace::nextPriorityAttention(const QStringList& ready) {
+const SessionPreview* Workspace::priorityAttention(const QStringList& ready) const {
     const auto waiting = [&ready](const SessionPreview& item) {
         const auto kind = item.statusKind();
         return item.unseen() || item.attentionPending() ||
@@ -577,8 +578,10 @@ bool Workspace::nextPriorityAttention(const QStringList& ready) {
                 (kind == QLatin1String("finished") || kind == QLatin1String("idle") ||
                  kind == QLatin1String("waiting")));
     };
-    const auto rank = [&ready](const SessionPreview& item) {
-        return std::pair{ready.contains(item.sessionId()) ? 0 : 1, item.neededAtMs()};
+    const auto rank = [this, &ready](const SessionPreview& item) {
+        const bool visited = tab_visited_.contains(item.sessionId()) &&
+                             tab_visited_.value(item.sessionId()) == item.neededAtMs();
+        return std::tuple{visited, ready.contains(item.sessionId()) ? 0 : 1, item.neededAtMs()};
     };
     const SessionPreview* best = nullptr;
     const auto* const focused = focusedSession();
@@ -586,7 +589,34 @@ bool Workspace::nextPriorityAttention(const QStringList& ready) {
         if (item.get() != focused && waiting(*item) &&
             (best == nullptr || rank(*item) < rank(*best)))
             best = item.get();
-    return best != nullptr && selectSession(best->sessionId());
+    return best;
+}
+
+bool Workspace::hasNextPriorityAttention(const QStringList& ready) const {
+    return priorityAttention(ready) != nullptr;
+}
+
+bool Workspace::nextPriorityAttention(const QStringList& ready) {
+    for (auto it = tab_visited_.begin(); it != tab_visited_.end();) {
+        if (session(it.key()) == nullptr)
+            it = tab_visited_.erase(it);
+        else
+            ++it;
+    }
+    const auto* best = priorityAttention(ready);
+    if (best == nullptr)
+        return false;
+    if (tab_visited_.contains(best->sessionId()) &&
+        tab_visited_.value(best->sessionId()) == best->neededAtMs()) {
+        tab_visited_.clear();
+        best = priorityAttention(ready);
+    }
+    const auto id = best->sessionId();
+    const auto needed = best->neededAtMs();
+    if (!selectSession(id))
+        return false;
+    tab_visited_.insert(id, needed);
+    return true;
 }
 bool SessionPreview::addPreviewRequest(const QString& id, const QString& reason) {
     if (id.isEmpty() || id.size() > 64 || reason.size() > 256 || requests_.contains(id) ||
@@ -717,9 +747,8 @@ void Workspace::watch(SessionPreview* item) {
             });
 }
 int Workspace::attentionAgents() const {
-    return static_cast<int>(std::count_if(sessions_.begin(), sessions_.end(), [](const auto& item) {
-        return item->unseen();
-    }));
+    return static_cast<int>(std::count_if(sessions_.begin(), sessions_.end(),
+                                          [](const auto& item) { return item->unseen(); }));
 }
 QVariantList Workspace::categories() const {
     QVariantList result;
@@ -963,16 +992,21 @@ bool Workspace::followConversationTitle(const QString& id, QStringView title) {
     item->rename(name);
     return true;
 }
+QString Workspace::agentConversation(const QString& id) const {
+    const auto entry = agents_.constFind(id);
+    if (entry == agents_.cend())
+        return {};
+    const auto record = session::read_resume_record(entry->endpoint);
+    if (record && record->agent == entry->harness && resumable(*record, entry->harness))
+        return record->session_id;
+    return entry->managed_resume_identity;
+}
 QHash<QString, QString> Workspace::agentConversations() const {
     QHash<QString, QString> conversations;
     for (auto entry = agents_.cbegin(); entry != agents_.cend(); ++entry) {
-        // The observer's (or, for other CLIs, the hook's) record follows /new
-        // and /resume; a resumed agent without one yet has lapis's pair.
-        const auto record = session::read_resume_record(entry->endpoint);
-        if (record && record->agent == entry->harness && resumable(*record, entry->harness))
-            conversations.insert(entry.key(), record->session_id);
-        else if (!entry->managed_resume_identity.isEmpty())
-            conversations.insert(entry.key(), entry->managed_resume_identity);
+        const auto conversation = agentConversation(entry.key());
+        if (!conversation.isEmpty())
+            conversations.insert(entry.key(), conversation);
     }
     return conversations;
 }

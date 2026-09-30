@@ -3273,16 +3273,20 @@ ApplicationWindow {
                     readonly property bool predicting: typeof nextPrompt !== "undefined" && nextPrompt !== null
                                                        && nextPrompt.enabled && document !== null
                     tabFlow: predicting && ["claude", "codex"].indexOf(document.harnessId) >= 0
+                    suggestionRevision: predicting ? nextPrompt.revision : 0
+                    nextAgentAvailable: predicting && nextPrompt.revision >= 0
+                                        && workspace.focusedIndex >= 0 && workspace.categories.length >= 0
+                                        && workspace.hasNextPriorityAttention(nextPrompt.readyAgents())
                     suggestion: predicting && nextPrompt.revision >= 0 && !document.historyActive
                                 && ["finished", "idle", "waiting"].indexOf(document.statusKind) >= 0
                                 ? nextPrompt.suggestion(document.sessionId) : ""
-                    onSuggestionSeen: {
-                        if (predicting)
-                            nextPrompt.seen(document.sessionId)
+                    onSuggestionSeen: (sessionId) => {
+                        if (typeof nextPrompt !== "undefined" && nextPrompt !== null)
+                            nextPrompt.seen(sessionId)
                     }
-                    onSuggestionUsed: (sent, typedFirst) => {
-                        if (predicting)
-                            nextPrompt.used(document.sessionId, sent, typedFirst)
+                    onSuggestionUsed: (sessionId, sent, typedFirst) => {
+                        if (typeof nextPrompt !== "undefined" && nextPrompt !== null)
+                            nextPrompt.used(sessionId, sent, typedFirst)
                     }
                     onNextAgentRequested: {
                         if (predicting)

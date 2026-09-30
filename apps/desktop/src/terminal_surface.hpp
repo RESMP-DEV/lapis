@@ -93,7 +93,11 @@ class TerminalSurface : public QQuickItem {
     // cursor. With `tabFlow`, Tab sends it (Option-Tab only types it), and
     // Tab with nothing offered and nothing typed moves to the next agent.
     Q_PROPERTY(QString suggestion READ suggestion WRITE setSuggestion NOTIFY suggestionChanged)
+    Q_PROPERTY(int suggestionRevision READ suggestionRevision WRITE setSuggestionRevision NOTIFY
+                   suggestionRevisionChanged)
     Q_PROPERTY(bool tabFlow READ tabFlow WRITE setTabFlow NOTIFY tabFlowChanged)
+    Q_PROPERTY(bool nextAgentAvailable READ nextAgentAvailable WRITE setNextAgentAvailable NOTIFY
+                   nextAgentAvailableChanged)
   public:
     explicit TerminalSurface(QQuickItem* parent = nullptr);
     // Text as if pasted (bracketed when the agent asked for it): what files
@@ -124,8 +128,12 @@ class TerminalSurface : public QQuickItem {
     [[nodiscard]] bool pasting() const { return pasting_; }
     [[nodiscard]] const QString& suggestion() const { return suggestion_; }
     void setSuggestion(const QString& suggestion);
+    [[nodiscard]] int suggestionRevision() const { return suggestion_revision_; }
+    void setSuggestionRevision(int revision);
     [[nodiscard]] bool tabFlow() const { return tab_flow_; }
     void setTabFlow(bool enabled);
+    [[nodiscard]] bool nextAgentAvailable() const { return next_agent_available_; }
+    void setNextAgentAvailable(bool available);
     [[nodiscard]] QVariant inputMethodQuery(Qt::InputMethodQuery query) const override;
     [[nodiscard]] const QString& fontFamily() const { return font_family_; }
     void setFontFamily(const QString& family);
@@ -155,12 +163,14 @@ class TerminalSurface : public QQuickItem {
     // Command-click opened a URL or a file or folder's path.
     void linkOpened(const QString& target);
     void suggestionChanged();
+    void suggestionRevisionChanged();
     void tabFlowChanged();
+    void nextAgentAvailableChanged();
     // The suggestion is on screen in the active window, once per suggestion.
-    void suggestionSeen();
+    void suggestionSeen(const QString& sessionId);
     // The offered suggestion was typed into the agent, and `sent` when also
     // submitted; `typedFirst` keys went to the agent while it was offered.
-    void suggestionUsed(bool sent, int typedFirst);
+    void suggestionUsed(const QString& sessionId, bool sent, int typedFirst);
     // Tab with nothing offered and nothing typed: go to the next agent.
     void nextAgentRequested();
 
@@ -229,6 +239,7 @@ class TerminalSurface : public QQuickItem {
     QElapsedTimer since_typed_;
     QMetaObject::Connection warm_connection_;
     QMetaObject::Connection window_changed_connection_;
+    QMetaObject::Connection suggestion_frame_connection_;
     QPointF last_hover_;
     // The link under the pointer while Command is held, underlined, and what
     // it opens.
@@ -255,6 +266,8 @@ class TerminalSurface : public QQuickItem {
     QString preedit_;
     QString suggestion_;
     QString seen_;
+    int suggestion_revision_{};
+    bool next_agent_available_{};
     bool tab_flow_{};
     bool typed_since_arrival_{};
     int typed_while_offered_{};

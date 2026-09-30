@@ -102,9 +102,12 @@ class NextPrompt final : public QObject {
     void changed();
 
   private:
+    enum class Stage : std::uint8_t { context, predict };
     struct Run {
         quint64 generation{};
         Agent agent;
+        QJsonObject context; // present once the context stage has succeeded
+        Stage stage{};       // the stage whose answer this run is waiting for
         QPointer<QProcess> process;
     };
     struct Offer {
@@ -116,10 +119,10 @@ class NextPrompt final : public QObject {
     };
     [[nodiscard]] static QJsonObject about(const Offer& offer, const QString& id);
     // Reading the conversation where the agent runs, then the model here.
-    enum class Stage : std::uint8_t { context, predict };
     void start(const QString& id, quint64 generation, const QString& program,
                const QStringList& arguments, const QByteArray& input, Stage stage,
                const std::function<void(const QJsonObject&)>& done);
+    void superseded(const QString& id, const Run& run);
     void failed(const QString& id, Stage stage, const QString& why);
     void predict(const QString& id, quint64 generation, const QJsonObject& context);
     void offer(const QString& id, const Agent& agent, const QJsonObject& context,
@@ -142,6 +145,7 @@ class NextPrompt final : public QObject {
     QElapsedTimer clock_;
     quint64 generation_{};
     quint64 offers_made_{};
+    QString launch_id_;
     int revision_{};
 };
 

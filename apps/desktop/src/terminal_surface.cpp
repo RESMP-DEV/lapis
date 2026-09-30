@@ -746,6 +746,11 @@ void TerminalSurface::bindWindow(QQuickWindow* current) {
         disconnect(window_active_connection_);
     if (window_visible_connection_)
         disconnect(window_visible_connection_);
+    if (suggestion_frame_connection_)
+        disconnect(suggestion_frame_connection_);
+    if (current)
+        suggestion_frame_connection_ =
+            connect(current, &QQuickWindow::frameSwapped, this, &TerminalSurface::reportSeen);
     if (current)
         window_visible_connection_ =
             connect(current, &QWindow::visibleChanged, this, &TerminalSurface::updateViewing);
@@ -758,7 +763,7 @@ void TerminalSurface::bindWindow(QQuickWindow* current) {
             } else {
                 updateInputContext(Qt::ImEnabled | Qt::ImCursorRectangle);
                 claimSize();
-                reportSeen();
+                publishFrame(false);
             }
         });
 }
@@ -809,6 +814,7 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     if (document_)
         disconnect(document_, nullptr, this, nullptr);
     document_ = document;
+    seen_.clear();
     typed_since_arrival_ = false;
     wheel_remainder_ = 0;
     pixel_remainder_ = 0;
@@ -1466,10 +1472,26 @@ void TerminalSurface::setSuggestion(const QString& suggestion) {
     if (suggestion_ == suggestion)
         return;
     suggestion_ = suggestion;
+    seen_.clear();
     typed_while_offered_ = 0;
     emit suggestionChanged();
     publishFrame(false);
-    reportSeen();
+}
+
+void TerminalSurface::setSuggestionRevision(int revision) {
+    if (suggestion_revision_ == revision)
+        return;
+    suggestion_revision_ = revision;
+    seen_.clear();
+    emit suggestionRevisionChanged();
+    publishFrame(false);
+}
+
+void TerminalSurface::setNextAgentAvailable(bool available) {
+    if (next_agent_available_ == available)
+        return;
+    next_agent_available_ = available;
+    emit nextAgentAvailableChanged();
 }
 
 void TerminalSurface::setTabFlow(bool enabled) {
@@ -1481,11 +1503,14 @@ void TerminalSurface::setTabFlow(bool enabled) {
 
 // A suggestion counts as seen once it is on screen in the active window.
 void TerminalSurface::reportSeen() {
-    if (suggestion_.isEmpty() || seen_ == suggestion_ || !isVisible() || !window() ||
-        !window()->isActive())
+    if (!document_ || suggestion_.isEmpty() || !isVisible() || !window() || !window()->isActive())
         return;
-    seen_ = suggestion_;
-    emit suggestionSeen();
+    const auto identity =
+        document_->sessionId() + QLatin1Char(':') + QString::number(suggestion_revision_);
+    if (seen_ == identity)
+        return;
+    seen_ = identity;
+    emit suggestionSeen(document_->sessionId());
 }
 
 void TerminalSurface::noteTyped() {
@@ -1507,6 +1532,7 @@ bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
     const bool tab = event.key() == Qt::Key_Tab && modifiers == Qt::NoModifier;
     const bool fill = event.key() == Qt::Key_Tab && modifiers == Qt::AltModifier;
     if (!suggestion_.isEmpty() && (tab || fill)) {
+        const auto session_id = document_ ? document_->sessionId() : QString();
         const int typed_first = typed_while_offered_;
         if (!pasteText(suggestion_))
             return true;
@@ -1519,10 +1545,10 @@ bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
                     document_->sendKey(session::TerminalKey::enter, {});
             });
         }
-        emit suggestionUsed(tab, typed_first);
+        emit suggestionUsed(session_id, tab, typed_first);
         return true;
     }
-    if (tab && !typed_since_arrival_) {
+    if (tab && !typed_since_arrival_ && next_agent_available_) {
         emit nextAgentRequested();
         return true;
     }
