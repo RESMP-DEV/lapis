@@ -208,8 +208,9 @@ void admissionAndAccountIsolation() {
     QLockFile another_controller(f.journal() + QStringLiteral(".lock"));
     require(another_controller.tryLock(0), "completed operation releases its process lock");
     f.controller->useNow(QStringLiteral("0"));
-    require(f.declined.size() == 2 && f.calls().size() == 2,
-            "another controller's account lock prevents overlapping reset helpers");
+    require(waitFor([&] { return f.declined.size() == 2; }) && f.calls().size() == 3 &&
+                f.calls().last().value("phase") == QLatin1String("prepare"),
+            "another controller's account lock allows discovery but prevents consume");
 }
 
 void interruptedConsumeReconcilesWithoutReplay() {
@@ -283,7 +284,9 @@ void journalAndIdentityFailuresRefuseBeforeConsume() {
     f.controller->useNow(QStringLiteral("0"));
     require(waitFor([&] { return f.uncertain.size() == 2; }),
             "malformed pending state fails closed");
-    require(f.calls().size() == count, "invalid journal invokes no helper");
+    require(f.calls().size() == count + 1 &&
+                f.calls().last().value("phase") == QLatin1String("prepare"),
+            "invalid journal allows account discovery but never consume");
 }
 
 void configuredTargetsUseTheirOwnRoutes() {
@@ -389,6 +392,29 @@ void closingDuringCredentialLookupCannotLaunchAHelper() {
     QCoreApplication::sendPostedEvents();
     require(f.calls().isEmpty(), "a late credential result cannot start an orphan reset");
 }
+
+void aliasesOnDifferentHostsSharePendingRecovery() {
+    Fixture f;
+    f.targets.append({QStringLiteral("fixture-host"),
+                      QStringLiteral("claude"),
+                      QStringLiteral("another-alias"),
+                      {},
+                      false,
+                      QStringLiteral("plan@example.test"),
+                      {}});
+    write(f.root.filePath(QStringLiteral("lose-reply")), "yes");
+    f.start();
+    f.controller->useNow(QStringLiteral("0"));
+    require(waitFor([&] { return f.uncertain.size() == 1; }), "first host loses its receipt");
+    const auto before = read(f.journal());
+    f.controller->useNow(QStringLiteral("1"));
+    require(waitFor([&] { return f.uncertain.size() == 2; }),
+            "another host reconciles the same provider account");
+    const auto calls = f.calls();
+    require(calls.size() == 4 && calls.last().value("phase") == QLatin1String("reconcile") &&
+                read(f.journal()) == before,
+            "changing machine or plan alias cannot create another consume operation");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -401,6 +427,7 @@ int main(int argc, char** argv) {
         configuredTargetsUseTheirOwnRoutes();
         journalCapacityReclaimsOnlyExpiredClosedRecords();
         closingDuringCredentialLookupCannotLaunchAHelper();
+        aliasesOnDifferentHostsSharePendingRecovery();
     } catch (const std::exception& error) {
         std::cerr << "limit_resets_test: " << error.what() << '\n';
         return 1;

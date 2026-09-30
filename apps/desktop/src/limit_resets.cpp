@@ -1,6 +1,7 @@
 #include "limit_resets.hpp"
 
 #include "limit_resets_script.hpp"
+#include "platform/published_task.hpp"
 #include "platform/reset_journal.hpp"
 #include "platform/updater_process.hpp"
 
@@ -21,7 +22,6 @@
 #include <QUuid>
 
 #include <algorithm>
-#include <mutex>
 #include <utility>
 
 namespace lapis::desktop {
@@ -35,46 +35,7 @@ constexpr qsizetype kErrorLimit = qsizetype{64} * 1024;
 constexpr int kConcurrentLimit = 8;
 constexpr int kAttemptLimit = platform::reset_journal_max_attempts;
 
-// Qt's external queue implementation is not sanitizer-instrumented. Keep
-// callable publication explicit in C++ for both thread-pool and GUI dispatch;
-// no I/O or callback runs while this mutex is held. Destruction also acquires
-// the handoff, including when Qt cancels an event without invoking it.
-std::mutex task_publication;
-class PublishedTask final {
-  public:
-    explicit PublishedTask(std::function<void()> task) {
-        const std::lock_guard lock(task_publication);
-        task_ = std::move(task);
-    }
-    PublishedTask(const PublishedTask& other) {
-        const std::lock_guard lock(task_publication);
-        task_ = other.task_;
-    }
-    PublishedTask(PublishedTask&& other) noexcept {
-        const std::lock_guard lock(task_publication);
-        task_ = std::move(other.task_);
-    }
-    PublishedTask& operator=(const PublishedTask&) = delete;
-    PublishedTask& operator=(PublishedTask&&) = delete;
-    ~PublishedTask() {
-        std::function<void()> released;
-        {
-            const std::lock_guard lock(task_publication);
-            released = std::move(task_);
-        }
-    }
-    void operator()() {
-        std::function<void()> task;
-        {
-            const std::lock_guard lock(task_publication);
-            task = std::move(task_);
-        }
-        task();
-    }
-
-  private:
-    std::function<void()> task_;
-};
+using platform::PublishedTask;
 
 bool supported(const QString& cli) {
     return cli == QLatin1String("claude") || cli == QLatin1String("codex");
@@ -107,6 +68,10 @@ bool validState(const QJsonObject& state) {
     for (const auto& value : attempts.toObject())
         if (!value.isDouble() || value.toDouble() < 0)
             return false;
+    if (state.contains(QStringLiteral("last_request_at")) &&
+        (!state.value(QStringLiteral("last_request_at")).isDouble() ||
+         state.value(QStringLiteral("last_request_at")).toDouble() < 0))
+        return false;
     if (!state.contains(QStringLiteral("pending")))
         return true;
     const auto pending = state.value(QStringLiteral("pending")).toObject();
@@ -249,28 +214,22 @@ void LimitResets::run(AgentTarget target, bool asked) {
         if (asked)
             emit declined(target.machine, target.cli,
                           QStringLiteral("a reset check is already running"));
+        else
+            qInfo() << "Skipping a duplicate or capacity-limited automatic reset check";
         return;
     }
     auto pending = std::make_shared<Run>();
     pending->target = std::move(target);
     pending->key = key;
     pending->asked = asked;
-    pending->state_path = QDir(state_folder_).filePath(key + QStringLiteral(".json"));
     running_.insert(key, pending);
-    pending->lock = std::make_unique<QLockFile>(pending->state_path + QStringLiteral(".lock"));
-    pending->lock->setStaleLockTime(0); // Age alone cannot expire a live reset operation.
-    if (!pending->lock->tryLock(0)) {
-        refuse(pending, QStringLiteral("the account reset journal is locked or unavailable"));
-        return;
-    }
     if (!helper_ready_ || !pending->target.refusal.isEmpty()) {
         refuse(pending, pending->target.refusal.isEmpty()
                             ? QStringLiteral("reset helper unavailable")
                             : pending->target.refusal);
         return;
     }
-    if (loadState(pending))
-        readCredentials(pending);
+    readCredentials(pending);
 }
 bool LimitResets::loadState(const std::shared_ptr<Run>& pending) {
     QFile state(pending->state_path);
@@ -449,15 +408,38 @@ void LimitResets::finish(const std::shared_ptr<Run>& run) {
     else
         completed(run, account);
 }
+bool LimitResets::loadAccountState(const std::shared_ptr<Run>& run, const QString& account_id) {
+    // Transport/plan aliases are not account identities. Every host using the
+    // same provider account shares this journal and lock after read-only discovery.
+    const QJsonObject identity{{QStringLiteral("cli"), run->target.cli},
+                               {QStringLiteral("account_id"), account_id}};
+    const auto journal_key = QString::fromLatin1(
+        QCryptographicHash::hash(QJsonDocument(identity).toJson(QJsonDocument::Compact),
+                                 QCryptographicHash::Sha256)
+            .toHex());
+    run->state_path = QDir(state_folder_).filePath(journal_key + QStringLiteral(".json"));
+    run->lock = std::make_unique<QLockFile>(run->state_path + QStringLiteral(".lock"));
+    run->lock->setStaleLockTime(0);
+    if (!run->lock->tryLock(0)) {
+        refuse(run, QStringLiteral("the account reset journal is locked or unavailable"));
+        return false;
+    }
+    return loadState(run);
+}
 void LimitResets::prepared(const std::shared_ptr<Run>& run, const QJsonObject& account) {
     const auto email = account.value(QStringLiteral("email")).toString().toLower();
     const auto account_id = account.value(QStringLiteral("account_id")).toString();
-    auto pending = run->state.value(QStringLiteral("pending")).toObject();
-    const auto expected = pending.isEmpty() ? run->target.email.toLower()
-                                            : pending.value(QStringLiteral("email")).toString();
     if (!account.value(QStringLiteral("error")).toString().isEmpty() || email.isEmpty() ||
-        account_id.isEmpty() || (!expected.isEmpty() && email != expected)) {
+        account_id.isEmpty() ||
+        (!run->target.email.isEmpty() && email != run->target.email.toLower())) {
         refuse(run, QStringLiteral("selected plan identity could not be verified"));
+        return;
+    }
+    if (!loadAccountState(run, account_id))
+        return;
+    auto pending = run->state.value(QStringLiteral("pending")).toObject();
+    if (!pending.isEmpty() && pending.value(QStringLiteral("email")).toString() != email) {
+        refuse(run, QStringLiteral("the email no longer matches the pending operation"));
         return;
     }
     if (!pending.isEmpty()) {
@@ -468,6 +450,13 @@ void LimitResets::prepared(const std::shared_ptr<Run>& run, const QJsonObject& a
         }
         run->phase = Phase::reconcile;
         start(run);
+        return;
+    }
+    const auto last_request = run->state.value(QStringLiteral("last_request_at")).toDouble();
+    if (!run->asked && last_request > 0 &&
+        static_cast<double>(QDateTime::currentMSecsSinceEpoch()) - last_request < kSweepMs) {
+        refuse(run, QStringLiteral(
+                        "this provider account was already checked in the current reset interval"));
         return;
     }
     const auto decision = account.value(QStringLiteral("action")).toString();
@@ -481,6 +470,10 @@ void LimitResets::prepared(const std::shared_ptr<Run>& run, const QJsonObject& a
         return;
     }
     const auto attempts = unexpiredAttempts(run->state);
+    if (!run->asked && attempts.contains(key)) {
+        refuse(run, QStringLiteral("this reset window was already handled"));
+        return;
+    }
     if (attempts.size() >= kAttemptLimit || key.size() > 512 || credit.size() > 256) {
         refuse(run, QStringLiteral("reset attempt capacity reached"));
         return;
@@ -494,6 +487,8 @@ void LimitResets::prepared(const std::shared_ptr<Run>& run, const QJsonObject& a
     const QJsonObject state{{QStringLiteral("v"), platform::reset_journal_version},
                             {QStringLiteral("format"), QStringLiteral("lapis-reset-journal")},
                             {QStringLiteral("pending"), pending},
+                            {QStringLiteral("last_request_at"),
+                             static_cast<double>(QDateTime::currentMSecsSinceEpoch())},
                             {QStringLiteral("attempts"), attempts}};
     persist(run, state, AfterWrite::admitted);
 }
@@ -563,9 +558,11 @@ void LimitResets::completed(const std::shared_ptr<Run>& run, const QJsonObject& 
     attempts.insert(pending.value(QStringLiteral("attempt")).toString(),
                     static_cast<double>(QDateTime::currentMSecsSinceEpoch() +
                                         (refused ? kRetryMs : kSettledMs)));
-    const QJsonObject state{{QStringLiteral("v"), platform::reset_journal_version},
-                            {QStringLiteral("format"), QStringLiteral("lapis-reset-journal")},
-                            {QStringLiteral("attempts"), attempts}};
+    const QJsonObject state{
+        {QStringLiteral("v"), platform::reset_journal_version},
+        {QStringLiteral("format"), QStringLiteral("lapis-reset-journal")},
+        {QStringLiteral("last_request_at"), run->state.value(QStringLiteral("last_request_at"))},
+        {QStringLiteral("attempts"), attempts}};
     run->receipt = account;
     persist(run, state, AfterWrite::completed);
 }

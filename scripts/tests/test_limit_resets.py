@@ -46,6 +46,17 @@ def plan(windows, spend=None, attempted=(), **settings):
 
 
 class PlanTests(unittest.TestCase):
+    def test_every_exhausted_model_cap_must_be_covered(self):
+        for model in ("seven_day_opus", "seven_day_sonnet"):
+            windows = {
+                "five_hour": (1.0, NOW + 3 * HOUR),
+                "seven_day": (0.7, NOW + 2 * 24 * HOUR),
+                model: (1.0, NOW + 2 * 24 * HOUR),
+            }
+            self.assertEqual(plan(windows)[:2], (None, "incomplete-coverage"))
+            complete = credit(clears=["five_hour", "seven_day", model])
+            self.assertEqual(plan(windows, complete)[0], "restore")
+
     def test_a_long_block_is_restored_once(self):
         windows = {
             "five_hour": (0.4, NOW + HOUR),

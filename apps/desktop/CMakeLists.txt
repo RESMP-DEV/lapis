@@ -35,6 +35,7 @@ add_library(lapis_desktop_view STATIC
     src/live_connection.cpp src/live_connection.hpp
     src/platform/updater_process.cpp src/platform/updater_process.hpp
     src/platform/reset_journal.cpp src/platform/reset_journal.hpp
+    src/platform/published_task.hpp
     src/terminal_surface.cpp src/terminal_surface.hpp
     src/cell_shapes.cpp src/cell_shapes.hpp
     src/tile_layout.cpp src/tile_layout.hpp
@@ -146,6 +147,11 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_limit_resets_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME limit-resets COMMAND lapis_limit_resets_tests)
     set_tests_properties(limit-resets PROPERTIES TIMEOUT 30)
+    if(LAPIS_SANITIZER STREQUAL "thread")
+        # Process/FS recovery cases take about 23 s under TSan on the reference
+        # Mac; leave headroom for concurrent builds without changing app deadlines.
+        set_tests_properties(limit-resets PROPERTIES TIMEOUT 60)
+    endif()
     add_executable(lapis_history_strip_tests tests/history_strip_test.cpp)
     target_link_libraries(lapis_history_strip_tests PRIVATE lapis_project_options lapis_desktop_view)
     add_test(NAME history-strip COMMAND lapis_history_strip_tests)

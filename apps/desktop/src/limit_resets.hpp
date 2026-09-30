@@ -71,6 +71,7 @@ class LimitResets final : public QObject {
     struct Run;
     void run(AgentTarget target, bool asked);
     bool loadState(const std::shared_ptr<Run>& run);
+    bool loadAccountState(const std::shared_ptr<Run>& run, const QString& account_id);
     void readCredentials(const std::shared_ptr<Run>& run);
     void start(const std::shared_ptr<Run>& run);
     void finish(const std::shared_ptr<Run>& run);

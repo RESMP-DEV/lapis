@@ -3420,7 +3420,9 @@ mode defaults on; this is a lapis policy choice, not OMP's ask-first behavior.
    fresh operation UUID in a private journal. The file and parent directory are
    synchronized off the GUI thread before a consume helper can start. Failed
    persistence cannot authorize a consume. A per-account process lock covers the
-   complete operation; manual and automatic checks share it.
+   complete operation; manual and automatic checks share it. Journals and locks
+   are keyed by CLI and provider account ID, so aliases and different machines
+   using one account share its pending operation after read-only discovery.
 3. The consume re-reads only that credit and rechecks both the email and provider ID. Its
    receipt must match the admitted account, operation and credit. Missing provider IDs
    refuse admission rather than falling back to email-only identity. An explicit
@@ -3442,7 +3444,9 @@ corrupt state and older journal versions are preserved; unsupported versions
 refuse further work rather than guessing an identity or silently migrating it. Helpers have a three-minute deadline, a 1 MiB stdout bound,
 a 64 KiB stderr bound and process-group cleanup; at most eight targets run at
 once. Automatic checks run one minute after enabling and then every five
-minutes. Settings updates retain that cadence; disabling cancels the initial
+minutes. A shared admission timestamp prevents multiple hosts or aliases from
+submitting automatic resets inside the same five-minute account interval.
+Settings updates retain that cadence; disabling cancels the initial
 check and prevents a prepared automatic operation from being submitted.
 
 The controller currently belongs to the workspace host. The persistent

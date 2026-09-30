@@ -120,7 +120,15 @@ def merge_plan(
         (
             p
             for p in plans
-            if p.get("name") == name or (email and p.get("email", "").lower() == email)
+            if isinstance(p, dict)
+            and (
+                p.get("name") == name
+                or (
+                    email
+                    and isinstance(p.get("email"), str)
+                    and p["email"].lower() == email
+                )
+            )
         ),
         None,
     )
@@ -131,7 +139,12 @@ def merge_plan(
         plan["email"] = email
     if home is not None and "home" not in plan:
         plan["home"] = home
-    held = [m for m in plan.get("machines", []) if isinstance(m, str)]
+    existing = plan.get("machines")
+    held = (
+        [m for m in existing if isinstance(m, str)]
+        if isinstance(existing, list)
+        else []
+    )
     for machine in kept:
         if machine not in held:
             held.append(machine)
@@ -347,14 +360,17 @@ def plan_machines(config: dict, plan: dict) -> list[str]:
     """Usage hosts plus this Claude plan's own credential destinations."""
     hosts = machines(config)[1:]
     selected = plan.get("machines")
+    if selected is not None and not isinstance(selected, list):
+        print("skipping a malformed plan destination list")
     selected = selected if isinstance(selected, list) else []
-    for host in [plan.get("home"), *selected]:
-        if (
-            isinstance(host, str)
-            and host != LOCAL
-            and HOST.fullmatch(host)
-            and host not in hosts
-        ):
+    candidates = [plan["home"]] if plan.get("home") is not None else []
+    for host in [*candidates, *selected]:
+        if host == "" or host == LOCAL:
+            continue
+        if not isinstance(host, str) or not HOST.fullmatch(host):
+            print("skipping an invalid plan destination")
+            continue
+        if host not in hosts:
             hosts.append(host)
     return hosts
 

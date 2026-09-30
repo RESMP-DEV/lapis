@@ -62,7 +62,7 @@ Opus/Sonnet weekly cap.
 Missing plan credentials or provider IDs, or an account mismatch, stop the
 operation; email alone is not an account identity. If its reply
 is lost, lapis reports an unknown outcome and checks the recorded credit without
-spending again. An expired or absent credit can settle that uncertainty; this is
+spending again, even from another machine or plan alias for that account. An expired or absent credit can settle that uncertainty; this is
 not reported as a newly spent reset. Expired, settled journals are reclaimed under capacity pressure; pending or
 unrecognized records are never evicted. Corrupt, full or unwritable journals
 refuse new operations. Keep the private runtime `limit-resets/` records when recovering

@@ -55,6 +55,35 @@ class PlanTest(unittest.TestCase):
 
 
 class SignInTest(unittest.TestCase):
+    def test_sign_in_merges_after_real_token_write_with_malformed_siblings(self):
+        config = {
+            "theme": "night",
+            "accounts": {
+                "claude": [
+                    None,
+                    {"name": "bad", "email": None},
+                    {"name": "valid", "email": "valid@example.test", "machines": None},
+                ]
+            },
+        }
+        save = accounts.save_config
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "lapis.json"
+            with (
+                patch.object(accounts, "ACCOUNTS", root / "accounts"),
+                patch.object(accounts, "read_setup_token", return_value=TOKEN),
+                patch.object(
+                    accounts, "save_config", side_effect=lambda c: save(c, path)
+                ),
+            ):
+                accounts.command_sign_in(config, [], ask=lambda _: "")
+            self.assertTrue((root / "accounts/claude/valid.token").is_file())
+            saved = accounts.load_config(path)
+            self.assertEqual(saved["theme"], "night")
+            self.assertEqual(saved["accounts"]["claude"][-1]["machines"], ["local"])
+            self.assertIsNone(saved["accounts"]["claude"][0])
+
     def test_validation_precedes_auth_and_destinations_are_per_plan(self):
         config = {
             "usage": {"machines": ["usage-host"]},
