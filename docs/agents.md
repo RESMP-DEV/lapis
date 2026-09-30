@@ -18,7 +18,8 @@
    edits**, **Auto** or **Full access**, each passed as that CLI's own flag: Full
    access the first time, or `newAgent.mode` from [config](config.md). A CLI
    without the chosen mode (OMP, OpenCode and Antigravity have no Auto, Kimi and
-   OpenCode no Accept edits) uses its nearest, less access first.
+   OpenCode no Accept edits) uses the nearest supported mode with less access,
+   or adds no mode flag when none exists.
 
 An agent asked for without a mode (from the phone, or a resumed conversation)
 uses `newAgent.mode`, or Full access when that setting is absent. If the CLI
