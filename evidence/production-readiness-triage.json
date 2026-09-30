@@ -42,18 +42,23 @@
     }
   ],
   "pr_inventory": {
-    "41": "merged",
+    "41": {
+      "state": "merged"
+    },
     "40": {
       "head": "e886f6291a2d1592cf9237037026adf1c24c098c",
-      "unresolved_threads": 33
+      "unresolved_threads": 33,
+      "state": "open"
     },
     "43": {
       "head": "19baa20a9c097ade9163b2fe8b88633c2560c2b8",
-      "unresolved_threads": 15
+      "unresolved_threads": 15,
+      "state": "open"
     },
     "44": {
       "head": "8b1252551a2f84afcc9955aab293e57f67dc79da",
-      "unresolved_threads": 63
+      "unresolved_threads": 63,
+      "state": "open"
     }
   },
   "review_scope": "Complete thread-aware snapshots fetched with pagination checked. Core blockers inspected in source and grouped by contract. Other reported claims remain candidates for reproduction or API validation; raw counts are not verified defect counts. No unresolved feature thread was silently resolved.",
@@ -95,7 +100,12 @@
   },
   "document_sha256": {
     "README.md": "0af10017f0aa75b90327bfec0acfd3ecc7374a78c2533405796dcb0299b93512",
-    "CONTRIBUTING.md": "98244ca6c56607233d9a7eb1ef0ec4c8d35431efe3a4fd5763540fdec0fb94ad",
-    "docs/architecture.md": "c9012e5f9246ee360ecc8732bf5fa56a452c4952a7094a14b9293dd0f4f36a94"
+    "CONTRIBUTING.md": "05d95fc4dffab0fc249164b5241adc9b5a0777a8fdfe6c1195d62b96ebe2ca43",
+    "docs/architecture.md": "55ff73866a6e2053f6c7f1f45e4dbb05f5a8fbc3ad44d823bd2afe0b28a26db1"
+  },
+  "documents_at": "d21f25d49e3fec1663edf1a7f8e5c9160c44f584",
+  "followup": {
+    "supervisor": "One persistent per-user launchd-owned supervisor at login; GUI/CLI attach without ownership handoff. Existing RunAtLoad helper exits at handoff and cannot safely gain KeepAlive unchanged. No new daemon is implemented here.",
+    "validation": "Document hash map is tied to documents_at; inventory uses uniform object values; scoped linux-gui command restored."
   }
 }
