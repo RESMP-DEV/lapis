@@ -14,7 +14,7 @@
     },
     {
       "command": "uv run --no-project python scripts/lapis.py quality",
-      "result": "PASS: 276 tests, seven unrelated skips; Python suite15.010 seconds."
+      "result": "PASS: 276 tests, seven unrelated skips; Python suite 15.010 seconds."
     }
   ],
   "source_sha256": {
