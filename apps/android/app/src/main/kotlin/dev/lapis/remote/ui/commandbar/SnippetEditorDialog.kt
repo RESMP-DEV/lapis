@@ -91,6 +91,16 @@ fun SnippetEditorDialog(
                                     rows = rows.toMutableList().also { it[index] = value }
                                 }
                             },
+                            // The bound is observable, so a rejected over-length
+                            // paste reads as "the counter is stuck at the cap"
+                            // instead of as a dead field.
+                            supportingText = {
+                                Text(
+                                    "${text.length} / ${SnippetStore.MAX_LENGTH}",
+                                    color = LapisColors.quiet,
+                                    style = TextStyle(fontSize = 11.sp, fontFamily = FontFamily.Monospace),
+                                )
+                            },
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("snippet-edit-$index"),
@@ -134,6 +144,13 @@ fun SnippetEditorDialog(
                             if (value.length <= SnippetStore.MAX_LENGTH) {
                                 draft = value
                             }
+                        },
+                        supportingText = {
+                            Text(
+                                "${draft.length} / ${SnippetStore.MAX_LENGTH}",
+                                color = LapisColors.quiet,
+                                style = TextStyle(fontSize = 11.sp, fontFamily = FontFamily.Monospace),
+                            )
                         },
                         modifier = Modifier
                             .weight(1f)

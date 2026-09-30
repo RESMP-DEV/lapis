@@ -139,24 +139,36 @@ fun AgentStage(
     // reads everything and flips the gate once, so the first open happens
     // at the geometry the user actually configured.
     var settingsLoaded by remember { mutableStateOf(false) }
-    LaunchedEffect(settings, fontSizeOverride) {
-        if (fontSizeOverride == null) {
-            fontSize = settings.getString(FONT_SIZE_KEY)?.toFloatOrNull()
-                ?.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE) ?: DEFAULT_FONT_SIZE
+    // Keyed on settings only: the override is a debug intent, and re-running
+    // the store loads when it changes would revert a snippet save still in
+    // flight back to the persisted list.
+    val currentFontOverride by rememberUpdatedState(fontSizeOverride)
+    LaunchedEffect(settings) {
+        try {
+            if (currentFontOverride == null) {
+                fontSize = settings.getString(FONT_SIZE_KEY)?.toFloatOrNull()
+                    ?.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE) ?: DEFAULT_FONT_SIZE
+            }
+            commandBarEnabled = settings.getString(COMMAND_BAR_KEY)?.toBooleanStrictOrNull() ?: true
+            snippets = snippetStore.load()
+        } finally {
+            // A stage that never opens is a worse failure than one that
+            // opens at default geometry: any unexpected throwable in the
+            // reads still releases the fit() gate.
+            settingsLoaded = true
         }
-        commandBarEnabled = settings.getString(COMMAND_BAR_KEY)?.toBooleanStrictOrNull() ?: true
-        snippets = snippetStore.load()
-        settingsLoaded = true
     }
 
-    fun setSnippets(next: List<String>) {
-        // The store's bounds apply to the live list too, so the bar shows
-        // exactly what a restart restores.
-        val bounded = SnippetStore.normalize(next)
-        snippets = bounded
-        // The application-lived scope: leaving the stage (or the editor
-        // closing) must not cancel the persistence write.
-        sessionScope.launch { snippetStore.save(bounded) }
+    val setSnippets: (List<String>) -> Unit = remember(sessionScope, snippetStore) {
+        { next: List<String> ->
+            // The store's bounds apply to the live list too, so the bar shows
+            // exactly what a restart restores.
+            val bounded = SnippetStore.normalize(next)
+            snippets = bounded
+            // The application-lived scope: leaving the stage (or the editor
+            // closing) must not cancel the persistence write.
+            sessionScope.launch { snippetStore.save(bounded) }
+        }
     }
 
     val density = LocalDensity.current
@@ -366,7 +378,7 @@ fun AgentStage(
                     onInput = remember(session) {
                         { input: Input -> session.send(input) }
                     },
-                    onSnippets = { next -> setSnippets(next) },
+                    onSnippets = setSnippets,
                 )
             }
             Composer(

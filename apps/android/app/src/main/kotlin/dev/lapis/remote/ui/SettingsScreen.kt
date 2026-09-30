@@ -66,9 +66,11 @@ fun SettingsScreen(
     var checking by rememberSaveable { mutableStateOf(false) }
     var result by rememberSaveable { mutableStateOf<String?>(null) }
     var commandBar by rememberSaveable { mutableStateOf(true) }
+    var commandBarLoaded by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(settings) {
         commandBar = settings.getString(COMMAND_BAR_KEY)?.toBooleanStrictOrNull() ?: true
+        commandBarLoaded = true
     }
 
     LaunchedEffect(checking) {
@@ -194,6 +196,10 @@ fun SettingsScreen(
                     )
                 }
                 Switch(
+                    // Disabled for the one frame before the DataStore read
+                    // lands, so the flash of the default cannot be flipped
+                    // and written back over a saved "off".
+                    enabled = commandBarLoaded,
                     checked = commandBar,
                     onCheckedChange = { value ->
                         commandBar = value

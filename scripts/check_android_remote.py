@@ -252,34 +252,34 @@ def send_line(device, text):
     device.tap_node(id="send")
 
 
-def screen_width(device):
-    """The panel width an override (a resize check) or the physical panel gives."""
-    lines = device.shell("wm size").splitlines()
-    line = next((part for part in lines if part.startswith("Override")), None) or next(
-        (part for part in lines if part.startswith("Physical")), None
-    )
-    if line is None:
-        raise android_ctl.DeviceError("wm size reported no panel size")
-    return int(line.split(":")[1].strip().split("x")[0])
-
-
 def reveal(device, target_id, max_swipes=8):
-    """Swipe the command bar's scrolled strip left until the target chip is
-    actually on screen. Rows in the compact bar compose every chip, so the
-    dump reports off-screen bounds; tapping those coordinates taps nothing."""
-    width = screen_width(device)
+    """Swipe the chip's own row left until the target chip is actually on
+    screen. Rows in the compact bar compose every chip, so the dump reports
+    off-screen bounds; tapping those coordinates taps nothing.
+
+    Containment is judged against the bar's own right edge, not the panel
+    size: on a foldable `wm size` can report the unfolded panel while the
+    cover display is in use, and a chip past the visible edge would then
+    pass a `right <= panel_width` check and get tapped out of the window.
+    The swipe row comes from the chip's own bounds, so a snippet chip
+    swipes the snippet row, not the key row above it. Returns None when the
+    bar itself is absent, so callers can name that failure instead of
+    blaming the chip."""
     for _ in range(max_swipes):
-        node = device.find(id=target_id)
-        if node is not None:
-            left, _, right, _ = node["bounds"]
-            if left >= 0 and right <= width:
-                return True
         bar = device.find(id="command-bar")
         if bar is None:
-            return False
-        _, top, _, bottom = bar["bounds"]
-        row_y = top + (bottom - top) // 4
-        device.swipe(width - 80, row_y, 80, row_y, 250)
+            return None
+        bar_right = bar["bounds"][2]
+        node = device.find(id=target_id)
+        if node is not None:
+            left, top, right, bottom = node["bounds"]
+            if left >= 0 and right <= bar_right:
+                return True
+            row_y = (top + bottom) // 2
+        else:
+            _, bar_top, _, bar_bottom = bar["bounds"]
+            row_y = bar_top + (bar_bottom - bar_top) // 4
+        device.swipe(bar_right - 80, row_y, 80, row_y, 250)
         time.sleep(0.4)
     return False
 
@@ -415,8 +415,22 @@ def install_apk(device, allow_build):
 def checks(device, mac, screens):
     """Each named check drives the phone and asserts on both sides."""
 
+    # Set when a check may have left the busy program owning the PTY: the
+    # later checks that type into the terminal report SKIPPED instead of
+    # failing with messages that blame the wrong interaction.
+    wedged = {"busy": False}
+
     def shot(name):
         device.screenshot(screens / f"{name}.png")
+
+    def bar_absent():
+        if device.find(id="command-bar") is None:
+            return "the command bar is disabled in settings; enable it and rerun"
+        return None
+
+    def long_press(device, node):
+        x, y = android_ctl.bounds_center(tuple(node["bounds"]))
+        device.swipe(x, y, x, y, 600)
 
     def check_list():
         device.launch(host=f"127.0.0.1:{PORT}", font=12, reset_cache=True, fresh=True)
@@ -578,14 +592,21 @@ def checks(device, mac, screens):
         # the agent must still answer afterwards. On any failure the busy
         # loop still owns the foreground PTY (it survives the app's process
         # death; the agent lives on the gateway side), so the exit paths
-        # best-effort-interrupt it — otherwise later checks type into a
-        # wedged terminal and fail with misleading messages.
+        # best-effort-interrupt it and the checks that type into the
+        # terminal afterwards skip, rather than reporting misleading
+        # failures about their own interactions.
+        absent = bar_absent()
+        if absent is not None:
+            return absent
         send_line(device, "busy")
         interrupted = False
         try:
             if not wait_terminal(device, "busy 3", timeout=20):
                 return "the busy program never started (busy may still own the PTY)"
-            if not reveal(device, "key-ctrl-c"):
+            revealed = reveal(device, "key-ctrl-c")
+            if revealed is None:
+                return "the command bar vanished mid-check"
+            if not revealed:
                 return (
                     "the ^C chip never scrolled into view (busy may still own the PTY)"
                 )
@@ -595,6 +616,7 @@ def checks(device, mac, screens):
             interrupted = True
         finally:
             if not interrupted:
+                wedged["busy"] = True
                 # Best effort, and never at the cost of the real failure
                 # above: the chip is only tappable when it is on screen.
                 try:
@@ -610,6 +632,8 @@ def checks(device, mac, screens):
         return None
 
     def check_background():
+        if wedged["busy"]:
+            return "SKIPPED: the busy program may still own the PTY after the interrupt failure"
         device.key("HOME")
         time.sleep(1.0)
         device.launch()  # the same task comes forward and reattaches
@@ -633,8 +657,20 @@ def checks(device, mac, screens):
         # editor and assert on a run-unique text, so stale entries from
         # earlier runs can neither crowd the 24-snippet cap nor occupy
         # index 0 under this check's feet.
+        if wedged["busy"]:
+            return "SKIPPED: the busy program may still own the PTY after the interrupt failure"
+        absent = bar_absent()
+        if absent is not None:
+            return absent
         snippet_text = f"git status {time.strftime('%H%M%S')}"
-        device.tap_node(id="snippets-add")
+        # The + chip is the snippet row's rightmost child, off-screen once
+        # any snippet persists; the leftmost chip is always visible and its
+        # long-press opens the same editor.
+        first = device.find(id="snippet-0")
+        if first is not None:
+            long_press(device, first)
+        else:
+            device.tap_node(id="snippets-add")
         if device.wait(id="snippet-new", timeout=10) is None:
             return "the snippet editor never opened"
         for _ in range(25):
@@ -697,8 +733,8 @@ def main():
     parser.add_argument("--only", action="append", help="check name; repeat several")
     parser.add_argument(
         "--serial",
-        help="adb serial to drive; default is the first attached device, so an "
-        "unexpected emulator can steal the run — name the device explicitly",
+        help="adb serial to drive; required when more than one device is "
+        "attached, so an unexpected emulator cannot steal the run",
     )
     parser.add_argument(
         "--no-install", action="store_true", help="reuse the installed APK"
@@ -738,6 +774,16 @@ def main():
     if serial is not None and serial not in attached:
         print(f"--serial {serial} is not an attached device", file=sys.stderr)
         return 1
+    if serial is None and len(attached) > 1:
+        # The default only ever picks the sole attached device; with several
+        # attached, an unexpected emulator could silently steal the run.
+        print(
+            "more than one adb device attached ("
+            + ", ".join(attached)
+            + "); name one with --serial",
+            file=sys.stderr,
+        )
+        return 1
     device = android_ctl.Device(serial=serial or attached[0])
 
     if not arguments.no_install or not device.state().get("app_version"):
@@ -750,6 +796,7 @@ def main():
     screens.mkdir(parents=True, exist_ok=True)
     mac = None
     failed = []
+    skipped = []
     try:
         agents, gateway = fixture(run)
         device.reverse(PORT)
@@ -772,6 +819,11 @@ def main():
                 problem = f"{type(error).__name__}: {error}"
             if problem is None:
                 print(f"[{name}] ok", flush=True)
+            elif problem.startswith("SKIPPED:"):
+                # A check that cannot run meaningfully (wedged PTY) is not a
+                # failure of what it tests; record it so the receipt says so.
+                print(f"[{name}] {problem}", file=sys.stderr)
+                skipped.append(name)
             else:
                 print(f"[{name}] FAILED: {problem}", file=sys.stderr)
                 failed.append((name, problem))
@@ -785,6 +837,7 @@ def main():
             "checks": chosen,
             "failed": [name for name, _ in failed],
             "failures": {name: problem for name, problem in failed},
+            "skipped": skipped,
             "mac_saw_phone": saw_phone,
             "mac_closed_by": closed_by,
             "grids": grids,

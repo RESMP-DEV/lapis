@@ -198,6 +198,14 @@ def main():
                 line = input()
             except EOFError:
                 return 0
+            except KeyboardInterrupt:
+                # A stray ^C at the idle prompt is a no-op, as in a real
+                # shell. The busy command restores the default SIGINT
+                # handler on its way out, so a second ^C from a harness
+                # cleanup path must not kill the fixture and cascade into
+                # every later check failing against a dead agent.
+                say("^C")
+                continue
             run(line.strip().lower(), line)
     finally:
         stop.set()
