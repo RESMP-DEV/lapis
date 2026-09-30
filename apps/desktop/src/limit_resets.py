@@ -16,6 +16,12 @@ chosen `credit_id`, then passes it with an `--operation` UUID for the consume.
 - salvage: a reset expires within --salvage-hours while the weekly window is at
   least a quarter used, so it is not lost unspent.
 
+The native journal owner never replays an uncertain consume. Cedar receives
+an operation-derived request_id, while the surveyed Juniper endpoint accepts
+only its program selector; Juniper has no qualified provider idempotency key.
+Invoking this standalone helper twice is not a durable transaction coordinator:
+after an uncertain call use --reconcile-only, never repeat --apply/--now.
+
 The consume re-reads only the persisted credit. `--reconcile-only` never
 replays a consume: an available credit remains `outcome_unknown`; an absent,
 consumed or expired credit is `settled` without claiming a confirmed reset.
@@ -618,6 +624,17 @@ def consume_answer(account, answer):
     """Classify a conservative provider answer; unknown never clears a retry."""
     if answer == "reset":
         return "reset"
+    if not isinstance(answer, str):
+        return "outcome_unknown"
+    # Claude Code 2.1.285 parses these explicit business rejections for both
+    # reset programs. Unknown/unavailable results do not prove non-consumption.
+    if account.cli == "claude" and answer in {
+        "already_used",
+        "not_limited",
+        "cooldown",
+        "ineligible",
+    }:
+        return "refused"
     if answer.startswith("http_"):
         code = number(answer.removeprefix("http_"))
         if code is not None and 400 <= code < 500 and code not in (408, 429):
@@ -977,6 +994,8 @@ def sweep(arguments):
             report["answer"] = answer
             report["result"] = result
             report["decision"] = result
+            if result == "refused":
+                report["reason"] = f"provider refused reset ({answer})"
             if result == "reset":
                 report["confirmed"] = confirmed(account, exact)
             else:

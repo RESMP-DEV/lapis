@@ -3410,15 +3410,23 @@ config lock across allocation, credential preparation and publication. Before
 publishing local availability, its
 preparation callback atomically stores the token; a write failure leaves the
 existing credential and config intact. A later config-write failure may leave a
-valid unregistered credential, but cannot advertise a missing one. Malformed
-account collections are preserved with a diagnostic.
+valid unregistered credential, but cannot advertise a missing one. The panel
+names that partial outcome without rolling back a potentially valid credential.
+Malformed account collections are preserved with a diagnostic. The local helper
+creates new credential directories with owner-only permissions and refuses an
+existing symlink, wrong owner or group/other access without changing permissions.
 
 New plans start locally. Existing plans copy only to their explicitly configured
 `machines`, not every ssh-config entry, with a 64-destination bound. Each copy
 captures the attempt, email and plan name, sends bytes on stdin, validates the
 complete byte count in a private temporary file, then atomically replaces the
 remote token. Completion records a machine only if the current plan still matches
-the captured identity. Output tails are bounded and credential shapes are masked.
+the captured identity. A successful transfer with failed registration is reported
+separately from a copy failure; the copy-limit message is not a destination name.
+The first 16 KiB of copy output is retained, so truncation cannot discard a
+credential's identifying prefix. Credential shapes are masked before selecting
+the last retained diagnostic line and its display bound. Local registration
+errors retain their bounded multi-line context.
 Cancellation or a new attempt retires the prior helpers and callbacks. The
 Python guardian is forked inside the PTY child's session before exec; helper
 death closes its pipe and makes it signal its own anchored process group.
@@ -3533,6 +3541,16 @@ mode defaults on; this is a lapis policy choice, not OMP's ask-first behavior.
    expired settles the record without claiming a confirmed reset. Failed or
    partial listings remain unknown. No provider idempotency guarantee is assumed,
    including for the Claude session-reset endpoint with no known request-ID field.
+
+The native controller and helper accept the same bounded credit identity (at
+most 256 characters, no whitespace). Known Claude business refusals
+`already_used`, `not_limited`, `cooldown` and `ineligible` retire the operation as
+refused, not consumed. Those codes were observed in the installed CLI source;
+this is not live provider qualification. `unavailable`, unknown codes and
+malformed responses remain uncertain. Bounded structured `error`, `reason` and
+`detail` fields reach the user instead of a generic failure alone. The native
+journal provides no-replay protection; invoking the standalone helper repeatedly
+does not establish provider idempotency for the session-reset endpoint.
 
 Journals live in the private runtime `limit-resets/` directory, one per account
 target, at most 256 targets and 64 KiB per file. Each retains at most 128 recent

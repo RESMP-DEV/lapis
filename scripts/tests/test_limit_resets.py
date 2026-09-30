@@ -597,6 +597,22 @@ class TwoPhaseTests(unittest.TestCase):
 
 
 class ProviderFieldTests(unittest.TestCase):
+    def test_explicit_claude_refusals_do_not_hide_as_unknown(self):
+        claude = object.__new__(limit_resets.Claude)
+        codex = object.__new__(limit_resets.Codex)
+        for answer in ("already_used", "not_limited", "cooldown", "ineligible"):
+            with self.subTest(answer=answer):
+                self.assertEqual(limit_resets.consume_answer(claude, answer), "refused")
+                self.assertEqual(
+                    limit_resets.consume_answer(codex, answer), "outcome_unknown"
+                )
+        for account in (claude, codex):
+            for answer in ("unavailable", "new_result", {}, [], None, 42):
+                with self.subTest(cli=account.cli, answer=answer):
+                    self.assertEqual(
+                        limit_resets.consume_answer(account, answer), "outcome_unknown"
+                    )
+
     def test_failed_listing_cannot_settle_a_pending_credit(self):
         claude = object.__new__(limit_resets.Claude)
         claude.headers = {}

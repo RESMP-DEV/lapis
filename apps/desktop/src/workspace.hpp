@@ -649,8 +649,13 @@ class Workspace final : public QObject {
     QString error_;
     bool storage_failed_{};
     bool fail(const QString& message);
-    // The launch for a new agent, or nullopt with workspaceError().
-    std::optional<session::LaunchSpec> agentLaunch(const AgentRequest& request);
+    struct ResumeLaunch {
+        session::LaunchSpec launch;
+        int managed_resume_index{-1};
+        QString managed_resume_identity{};
+    };
+    // Build the launch and its managed resume provenance together.
+    std::optional<ResumeLaunch> agentLaunch(const AgentRequest& request);
     QString insertCategory(const QString& name, bool select);
     // Starts an agent from a finished launch; the rest of startAgent. A
     // managed resume plan is committed in the same registry save as the
@@ -695,11 +700,6 @@ class Workspace final : public QObject {
     void finishClosing(SessionPreview* item);
     [[nodiscard]] static SessionPreview::StatusSource statusSource(const Agent& agent);
     [[nodiscard]] static QStringList savedArguments(const QJsonValue& value);
-    struct ResumeLaunch {
-        session::LaunchSpec launch;
-        int managed_resume_index{-1};
-        QString managed_resume_identity{};
-    };
     static void applyStartupDefaults(const Agent& agent, ResumeLaunch& plan);
     [[nodiscard]] static std::optional<ResumeLaunch> restoredLaunch(const Agent& agent,
                                                                     QString* diagnostic = nullptr);

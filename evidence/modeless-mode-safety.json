@@ -11,7 +11,7 @@
   "checks": [
     {
       "command": "cmake --build build/desktop --target lapis_workspace_tests; ctest --test-dir build/desktop -R ^workspace$ --no-tests=error --output-on-failure",
-      "result": "PASS: full workspace suite43.08s, with new conservative/unknown/literal/sandbox cases in the existing mode-selection test."
+      "result": "PASS: full workspace suite, 43.08 s, with new conservative/unknown/literal/sandbox cases in the existing mode-selection test."
     },
     {
       "command": "clang-tidy -p build/desktop apps/desktop/src/workspace.cpp; clang-format; git diff --check",
@@ -19,7 +19,7 @@
     },
     {
       "command": "uv run --no-project python scripts/lapis.py quality",
-      "result": "PASS:276 tests, Python suite22.584s."
+      "result": "PASS: 276 tests, Python suite, 22.584 s."
     }
   ],
   "source_sha256": {
@@ -35,6 +35,6 @@
   "source_revision": "b72802ad9e20538c4928032b59ff4e0b92374685",
   "followup": {
     "change": "Generated model, approval and resume options are inserted before the first literal separator.",
-    "validation": "The existing real stand-in CLI resume test now checks the resulting argv order. Workspace passed43.53s; workspace.cpp and its test clang-tidy passed. An initial fixture cleanup race was fixed by waiting for input readiness before closing the test child; the child was cleaned up."
+    "validation": "The existing real stand-in CLI resume test now checks the resulting argv order. Workspace passed, 43.53 s; workspace.cpp and its test clang-tidy passed. An initial fixture cleanup race was fixed by waiting for input readiness before closing the test child; the child was cleaned up."
   }
 }

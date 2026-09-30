@@ -1,0 +1,111 @@
+{
+  "source_revision": "1491b90bb263f7f940662dee60319e385c25e167",
+  "platform": "macOS 26.7.1 arm64",
+  "scope": "Late PR40/50/52 launch policy, reset refusal diagnostics and credential registration/reporting; integrates merged PR57 publication wrapper.",
+  "source_sha256": {
+    "CONTRIBUTING.md": "eef4cf541baa8055ff99b1583cc600b3b9e568fa599fd49b9e385ef3fe80a081",
+    "apps/desktop/src/limit_resets.cpp": "c06d0454b9a9be4eee4b89d087298f42cc8cf72506c32a85eb579c7e34257bcc",
+    "apps/desktop/src/limit_resets.py": "62fe60d19d890d99e95c542b93ffc0eee53528336ff9f6035950de43e7bd0169",
+    "apps/desktop/src/plan_sign_in.cpp": "a89a266b97027a5838541232d034f4eb063210b4eae605d1acb63b2005ff22c8",
+    "apps/desktop/src/plan_sign_in.hpp": "c0ee7d3d8fb531ec282f8cc32e68c18c40467a15f7c39db70ff7aa621b625e3f",
+    "apps/desktop/src/plan_sign_in.py": "e2f59e1bd39b2307ee4795987b00e0778a11e1d54031f761c49547b509ec88a3",
+    "apps/desktop/src/workspace.cpp": "b9591dd7bd0b19702da4e91767122b5f70e45e1ecd5888fb8db224ee8f1035df",
+    "apps/desktop/src/workspace.hpp": "2c85a54ab7c213d3b1227f56642b18d7c6b400744c6df7d5693c2665122753af",
+    "apps/desktop/tests/limit_resets_test.cpp": "e8153bb60b6439981ec67a7a34750f2ca6b209e95b3cf26af0396900d860cae6",
+    "apps/desktop/tests/plan_sign_in_test.cpp": "00bd013675db729915c81ffe493d6c209974d0eb68b4c677ccb78ebcc749e574",
+    "apps/desktop/tests/workspace_test.cpp": "26cb9df67de0b87f068e4aa0a6bd11452a0f51edcddfa025621f169af0ad598e",
+    "docs/agents.md": "c5d8411dcf51e5f451c5eac6b3245e9b06ec8c619999177e66eca9b8bc58a794",
+    "docs/architecture.md": "52d32ea8b0ff107a8dde990be22be0e996de47f72e9e8c496930811dfdffdcde",
+    "docs/usage.md": "d7020d08ebef9ac37007c8939a519ac0ef4076cd0b3a55718978d47dd7009832",
+    "evidence/modeless-mode-safety.json": "ea17c029a0d2e620beee7aba745994e9a82d6efdaf0819720e2a35f641cfee83",
+    "scripts/tests/test_limit_resets.py": "55067e04dfae383c03863bed6b7fab22ee3b82c21a6cab76656042303d3e67f4",
+    "scripts/tests/test_plan_sign_in.py": "94b66bc6c8bf2c3d9825b97582fb3cf39d5d93d22dbed1b09ee61c1c067464a6"
+  },
+  "checks": [
+    {
+      "command": "ctest --test-dir build/desktop -R '^(workspace|plan-sign-in|limit-resets)$' --no-tests=error --output-on-failure",
+      "result": "3/3 pass at 3fca6c9 before final redaction/selector and PR57 integration",
+      "seconds": 56.2
+    },
+    {
+      "command": "ctest --test-dir build/desktop-asan -R '^(workspace|plan-sign-in|limit-resets)$' --no-tests=error --output-on-failure",
+      "result": "3/3 pass on the same pre-integration source",
+      "seconds": 80.74
+    },
+    {
+      "command": "cmake --build build/<desktop|desktop-asan|desktop-tsan> --target lapis_workspace_tests lapis_plan_sign_in_tests lapis_limit_resets_tests -j4",
+      "result": "pass, final combined source; also rebuilt lapis_desktop in normal and ASan"
+    },
+    {
+      "command": "ctest --test-dir build/<configuration> -R '^(limit-resets|plan-sign-in)$' --no-tests=error --output-on-failure",
+      "result": "2/2 pass per final configuration",
+      "seconds": {
+        "desktop": 11.64,
+        "desktop-asan": 19.32,
+        "desktop-tsan": 60.45
+      }
+    },
+    {
+      "command": "build/<configuration>/apps/desktop/lapis_workspace_tests --case launch-policy",
+      "result": "pass in normal, ASan/UBSan and TSan; existing mode table and real-service generated resume argv cases"
+    },
+    {
+      "command": "build/<configuration>/apps/desktop/lapis_workspace_tests --case chimes",
+      "result": "pass in all three configurations, checks shared publication consumer after PR57 integration"
+    },
+    {
+      "command": "uv run --no-project python -m unittest scripts.tests.test_limit_resets scripts.tests.test_plan_sign_in",
+      "result": "39 tests pass in 4.808 seconds; relevant Ruff lint/format pass"
+    },
+    {
+      "command": "clang-tidy -p build/desktop <six affected translation units>",
+      "result": "pass; changed diagnostic/test and workspace selector units rerun after follow-up edits"
+    },
+    {
+      "command": "cppcheck --project=<six-TU filtered compilation database> --library=qt -DQ_MOC_INCLUDE(x)= --enable=warning,performance,portability --error-exitcode=1 --inline-suppr --template=gcc",
+      "result": "pass on final source"
+    },
+    {
+      "command": "clang-format --dry-run --Werror <affected C++ files>; git diff --check",
+      "result": "pass"
+    }
+  ],
+  "regressions": [
+    "Configured Codex read-only sandbox suppresses generated modeless defaults; option values are not treated as option names.",
+    "Generated resume provenance remains before a duplicate option/identity in a literal tail.",
+    "Oversized or whitespace pending-credit journals refuse without consuming and remain preserved.",
+    "Known Claude business refusals retire pending; unavailable/malformed/unknown results remain uncertain.",
+    "Structured helper refusal/error detail survives native reporting.",
+    "Successful remote delivery with failed registration differs from failed delivery; local failed config retains private named credential for recovery.",
+    "A recorder skipping prepare cannot bypass runtime name validation.",
+    "Noisy and oversized echoed-token diagnostics failed before the repair (1.30 seconds) and pass after; retaining the first 16 KiB and masking before display truncation prevents suffix disclosure."
+  ],
+  "review": {
+    "reviewed_revision": "3fca6c9022be4a14e77e45ae6058d21a21d44e3f",
+    "reviewer": "GLM-5.3-FlashX, max reasoning, read-only local worker",
+    "dispositions": [
+      "Valid copy-diagnostic truncation issue repaired and reproduced before/after.",
+      "False umask claim: a private local filesystem probe confirms mode0700 leaf under umask022; intermediate parent0755 is not the credential leaf being checked.",
+      "Historical modeless receipt retained at its original revision; this separate receipt supplies new integration evidence."
+    ],
+    "later_changes": "8e01368 redaction repair and docs; PR57 merge reviewed separately; 1491b90 selects existing launch cases without changing their behavior. Parent inspected combined diff and final scoped checks."
+  },
+  "failed_attempts": [
+    {
+      "command": "ctest --test-dir build/desktop-tsan -R '^(workspace|plan-sign-in|limit-resets)$'",
+      "result": "Reset/sign-in passed; full workspace reached its existing 120-second CTest deadline, without a sanitizer diagnostic. This is not a full TSan suite pass.",
+      "resolution": "Ran the affected existing launch cases through --case launch-policy, plus reset/sign-in/chime consumers on final combined source; all pass. No application timeout or sanitizer suppression changed. The private service left by the interrupted fixture was identified and stopped."
+    }
+  ],
+  "reuse": {
+    "python_baseline": "335-test quality pass with Ruff at the PR57 source, recorded in evidence/presentation-review-followup.json. Only reset/sign-in Python differs here; its 39 scoped cases and Ruff were run on this branch.",
+    "presentation": "PR57 normal/background/sanitizer presentation evidence applies unchanged; no terminal input/render source edited by this batch.",
+    "old_modeless_receipt": "evidence/modeless-mode-safety.json remains dated evidence at its recorded source; only timing typography was corrected."
+  },
+  "limits": [
+    "No real provider reset, account login, remote credential transfer or Codex desktop launch.",
+    "Claude refusal strings were observed in version-pinned installed source, not qualified through a live consume.",
+    "Unknown journal state and failed pre-spend durability intentionally fail closed; standalone Juniper helper calls have no qualified provider idempotency.",
+    "No native GUI/GPU or release/package qualification."
+  ]
+}

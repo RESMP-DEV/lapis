@@ -40,7 +40,12 @@ and records the plan only after that token is stored. New plans start on this
 Mac. Refreshing an existing plan also copies it to that plan's explicitly listed
 `machines`, with at most 64 destinations per attempt. An unrelated ssh-config
 entry never receives the credential. Each replacement is atomic; incomplete
-remote copies preserve the previous token. The panel names failures. Escape
+remote copies preserve the previous token. The panel distinguishes a failed copy
+from a token that arrived but could not be recorded in the plan configuration.
+If saving the local configuration fails after storing the token, it says so and
+retains that credential for recovery. Existing credential directories must be
+private and owned by the current user; lapis reports incompatible permissions
+without changing them. Escape
 ends an unfinished sign-in, and a new attempt retires older copies. Codex plans are
 still added with the script below.
 
@@ -73,7 +78,8 @@ window is at least one-quarter used. A weekly session reset cannot clear an
 Opus/Sonnet weekly cap.
 
 Missing plan credentials or provider IDs, or an account mismatch, stop the
-operation; email alone is not an account identity. If its reply
+operation; email alone is not an account identity. A definite provider refusal
+is reported with a bounded reason. If its reply
 is lost, lapis reports an unknown outcome and checks the recorded credit without
 spending again, even from another machine or plan alias for that account. An expired or absent credit can settle that uncertainty; this is
 not reported as a newly spent reset. Expired, settled journals are reclaimed under capacity pressure; pending or

@@ -18,7 +18,8 @@
    edits**, **Auto** or **Full access**, each passed as that CLI's own flag: Full
    access the first time, or `newAgent.mode` from [config](config.md). A CLI
    without the chosen mode (OMP, OpenCode and Antigravity have no Auto, Kimi and
-   OpenCode no Accept edits) uses its nearest, less access first.
+   OpenCode no Accept edits) uses the nearest supported mode with less access,
+   or adds no mode flag when none exists.
 
 An agent asked for without a mode (from the phone, or a resumed conversation)
 uses `newAgent.mode`, or Full access when that setting is absent. If the CLI
@@ -26,7 +27,10 @@ cannot offer a configured mode, lapis can choose a less-permissive mode but does
 not automatically grant a higher one; unknown preferences add no mode flag.
 Explicit request modes win. Claude Code 2.1.283–2.1.285 changed no-mode defaults
 across providers and entry points, so lapis passes the selected supported mode,
-unless your `harnessArguments` already choose a mode.
+unless your `harnessArguments` already choose a mode. For Codex this includes an
+explicit `--sandbox`, so a configured `--sandbox read-only` is preserved when a
+request omits its mode. Literal arguments after `--` do not choose launch modes
+or replace the generated conversation-resume argument.
 
 The next agent starts with the same CLI, mode and model. Everything else stays in
 each CLI's own config. lapis adds no flags of its own; to add yours to every new

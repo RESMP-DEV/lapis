@@ -58,11 +58,19 @@ constexpr qint64 kMaximumTokenBytes = qint64{64} * 1024;
     return allowed && url.path().endsWith(QLatin1String("/oauth/authorize"));
 }
 
+[[nodiscard]] QString safeReason(QString text) {
+    static const QRegularExpression token(QStringLiteral("sk-ant-oat01-[A-Za-z0-9_-]+"));
+    text.replace(token, QStringLiteral("[token]"));
+    return text.trimmed().left(2048);
+}
+
 // Copy output may echo a token on a hostile or misconfigured host. Keep only
 // a short diagnostic, with any credential shape masked.
 [[nodiscard]] QString copyReason(const QByteArray& output, const QString& fallback) {
     static const QRegularExpression token(QStringLiteral("sk-ant-oat01-[A-Za-z0-9_-]+"));
-    auto text = QString::fromUtf8(output.right(4096));
+    // Mask the complete retained prefix before selecting a diagnostic line;
+    // taking a tail first can strip the identifying prefix off a credential.
+    auto text = QString::fromUtf8(output);
     text.replace(token, QStringLiteral("[token]"));
     const auto lines = text.split(QRegularExpression(R"(\r?\n)"), Qt::SkipEmptyParts);
     for (auto line = lines.rbegin(); line != lines.rend(); ++line) {
@@ -87,7 +95,8 @@ PlanSignIn::~PlanSignIn() {
         active->kill();
         static_cast<void>(active->waitForFinished(1000));
     }
-    QFile::remove(pendingToken());
+    if (!pendingToken().isEmpty())
+        QFile::remove(pendingToken());
     // QObject destroys the owned UpdaterProcesses; their guards also cover
     // application shutdown before asynchronous cleanup callbacks run.
 }
@@ -108,8 +117,10 @@ void PlanSignIn::set(const QString& state, const QString& message) {
 
 void PlanSignIn::fail(const QString& why) {
     stopSignIn();
-    QFile::remove(pendingToken());
-    set(QStringLiteral("failed"), copyReason(why.toUtf8(), tr("Sign-in failed")));
+    if (!pendingToken().isEmpty())
+        QFile::remove(pendingToken());
+    const auto reason = safeReason(why);
+    set(QStringLiteral("failed"), reason.isEmpty() ? tr("Sign-in failed") : reason);
 }
 
 void PlanSignIn::stopSignIn() {
@@ -159,7 +170,9 @@ void PlanSignIn::start() {
     email_.clear();
     emailSubmitted_ = false;
     reached_.clear();
-    unreached_.clear();
+    copy_failed_.clear();
+    copied_unregistered_.clear();
+    copy_limit_hit_ = false;
     copyReasons_.clear();
     const auto python = hooks_.program(QStringLiteral("python3"));
     const auto claude = hooks_.program(QStringLiteral("claude"));
@@ -317,9 +330,16 @@ void PlanSignIn::finish() {
         return true;
     };
     const auto name = hooks_.record(email_, {}, {}, prepare, &reason);
-    if (name.isEmpty() || prepared != name)
-        return fail(reason.isEmpty() ? tr("The plan credential was not committed.") : reason);
-    QFile::remove(pendingToken());
+    if (name.isEmpty() || prepared != name) {
+        const auto cause = reason.isEmpty() ? tr("The plan credential was not committed.") : reason;
+        return fail(
+            prepared.isEmpty()
+                ? cause
+                : tr("Credential stored for %1, but plan configuration could not be saved: %2")
+                      .arg(prepared, cause));
+    }
+    if (!pendingToken().isEmpty())
+        QFile::remove(pendingToken());
     plan_ = name;
     spread(token);
     state_ = QStringLiteral("done");
@@ -350,12 +370,12 @@ void PlanSignIn::spread(const QByteArray& token) {
     constexpr qsizetype max_copies = 64;
     qsizetype admitted = 0;
     for (const auto& machine : destinations) {
-        if (admitted >= max_copies) {
-            unreached_ << tr("Additional destinations exceed the 64-copy limit");
-            break;
-        }
         if (machine.isEmpty() || machine.startsWith(QLatin1Char('-')) || copying_.contains(machine))
             continue;
+        if (admitted >= max_copies) {
+            copy_limit_hit_ = true;
+            break;
+        }
         ++admitted;
         copyTo({.machine = machine, .program = ssh, .command = target, .token = token});
     }
@@ -382,7 +402,7 @@ void PlanSignIn::copyTo(const CopyLaunch& launch) {
         const auto bytes = process->readAllStandardOutput();
         auto copy = copying_.find(machine);
         if (copy != copying_.end() && copy->process == process && copy->attempt == attempt_)
-            copy->output = (copy->output + bytes).right(qsizetype{16} * 1024);
+            copy->output = (copy->output + bytes).left(qsizetype{16} * 1024);
     });
     const auto done = [this, machine, process](bool ok) {
         const auto copy = copying_.value(machine);
@@ -391,12 +411,17 @@ void PlanSignIn::copyTo(const CopyLaunch& launch) {
         copying_.remove(machine);
         process->whenStopped([process] { process->deleteLater(); });
         QString reason;
-        if (ok && hooks_.record(copy.email, machine, copy.plan, {}, &reason) == copy.plan) {
-            reached_ << machine;
+        if (ok) {
+            if (hooks_.record(copy.email, machine, copy.plan, {}, &reason) == copy.plan)
+                reached_ << machine;
+            else {
+                copied_unregistered_ << machine;
+                copyReasons_[machine] =
+                    reason.isEmpty() ? tr("configuration could not be saved") : safeReason(reason);
+            }
         } else {
-            const auto why = reason.isEmpty() ? copyReason(copy.output, QString()) : reason;
-            unreached_ << machine;
-            copyReasons_[machine] = why.isEmpty() ? tr("ssh exited unsuccessfully") : why;
+            copy_failed_ << machine;
+            copyReasons_[machine] = copyReason(copy.output, tr("ssh exited unsuccessfully"));
         }
         report();
     };
@@ -418,14 +443,21 @@ void PlanSignIn::report() {
     if (!copying_.isEmpty())
         text +=
             QLatin1Char(' ') + tr("Copying it to %n more machine(s)…", "", int(copying_.size()));
-    else if (!unreached_.isEmpty()) {
-        QStringList named;
-        for (const auto& machine : std::as_const(unreached_))
-            named << (copyReasons_.contains(machine)
-                          ? tr("%1 (%2)").arg(machine, copyReasons_.value(machine))
-                          : machine);
-        text += QLatin1Char(' ') + tr("Not reachable: %1.").arg(named.join(QStringLiteral(", ")));
-    }
+    const auto named = [this](const QStringList& machines) {
+        QStringList entries;
+        for (const auto& machine : machines)
+            entries << (copyReasons_.contains(machine)
+                            ? tr("%1 (%2)").arg(machine, copyReasons_.value(machine))
+                            : machine);
+        return entries.join(QStringLiteral(", "));
+    };
+    if (!copy_failed_.isEmpty())
+        text += QLatin1Char(' ') + tr("Copy failed: %1.").arg(named(copy_failed_));
+    if (!copied_unregistered_.isEmpty())
+        text +=
+            QLatin1Char(' ') + tr("Copied but not recorded: %1.").arg(named(copied_unregistered_));
+    if (copy_limit_hit_)
+        text += QLatin1Char(' ') + tr("Additional destinations were skipped at the 64-copy limit.");
     message_ = std::move(text);
     emit changed();
 }
@@ -433,7 +465,8 @@ void PlanSignIn::report() {
 void PlanSignIn::cancel() {
     stopSignIn();
     if (state_ != QLatin1String("done"))
-        QFile::remove(pendingToken());
+        if (!pendingToken().isEmpty())
+            QFile::remove(pendingToken());
     stopCopies();
     if (state_ != QLatin1String("idle"))
         set(QStringLiteral("idle"));
