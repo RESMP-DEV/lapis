@@ -3339,25 +3339,34 @@ from under it (on the author's machines every one had failed to refresh and
 been disabled for eleven days). So **Add a Claude Code plan** runs
 `claude setup-token` itself: `plan_sign_in.py`, compiled in like the other
 helpers, gives it a terminal of its own with `open` and `$BROWSER` replaced by a
-script that records the link, so the person chooses the browser and the account.
-The link is copied and shown; Claude Code's localhost callback receives the
-sign-in, and the helper writes the token it prints, owner-only, to
-`accounts/claude/.signing-in.token` and says only `signedIn`. lapis opens the
-link in the default browser as well as copying it, and keeps it on screen for
-another try. `PlanSignIn` then
-records the plan through `KeyMap::addPlanMachine`: the plan with that email
-gains `local` among its `machines`, else a new plan is named from the email
-(`someone@example.com` becomes `someone-example`), and the token is renamed to
-the plan's name. It then goes to every host in the ssh config, in parallel, on
-ssh's stdin (`BatchMode`, `ConnectTimeout=10`, `ControlPath=none`) into the same
-owner-only file a remote launch reads, and each host that takes it is added to
-the plan's `machines`; the others are named. The token's scope is `user:inference` only, so it cannot name
-its account; the person types the email. Cancelling ends the helper with
-SIGTERM, which ends Claude Code's sign-in and leaves no token. Still to do:
-Codex (`codex login --device-auth` in a plan home, as the script does) and
-other CLIs. `plan-sign-in` and
-`test_plan_sign_in.py` drive stand-in CLIs; the helper was also run against
-Claude Code 2.1.285 up to its link.
+script that records the link. lapis validates the Anthropic HTTPS authorization
+URL, opens it in the default browser, copies it and keeps it visible for another
+try. The helper writes the token to a private per-attempt staging path and emits
+only a success marker. The email must be submitted for that same attempt; opening
+the form clears earlier identity and copy state.
+
+`KeyMap::addPlanMachine` chooses the first effective email match from the current
+file, or allocates an unused name, including a suffix when derived names collide.
+Names alone never merge accounts. Before publishing local availability, its
+preparation callback atomically stores the token; a write failure leaves the
+existing credential and config intact. A later config-write failure may leave a
+valid unregistered credential, but cannot advertise a missing one. Malformed
+account collections are preserved with a diagnostic.
+
+New plans start locally. Existing plans copy only to their explicitly configured
+`machines`, not every ssh-config entry, with a 64-destination bound. Each copy
+captures the attempt, email and plan name, sends bytes on stdin, validates the
+complete byte count in a private temporary file, then atomically replaces the
+remote token. Completion records a machine only if the current plan still matches
+the captured identity. Output tails are bounded and credential shapes are masked.
+Cancellation or a new attempt retires the prior helpers and callbacks.
+
+The token's `user:inference` scope cannot identify the account, so the person
+supplies its email. The tests use private stand-in CLIs and token files; they do
+not qualify a new real OAuth login or remote credential transfer. The original
+helper investigation reached the sign-in link with Claude Code 2.1.285. Codex
+(`codex login --device-auth` in a plan home, as the script does) and other CLIs
+remain follow-ups.
 ### Update a CLI, then reload (September 28)
 
 A running agent keeps the CLI version it started with, and the start-time

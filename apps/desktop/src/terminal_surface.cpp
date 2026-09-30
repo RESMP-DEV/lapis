@@ -1288,6 +1288,10 @@ void TerminalSurface::mouseMoveEvent(QMouseEvent* event) {
 // As in a terminal's copy-on-select: the text a drag selected is on the
 // clipboard when the button comes up, and a double-clicked word too.
 void TerminalSurface::mouseReleaseEvent(QMouseEvent* event) {
+    if (event->button() != Qt::LeftButton) {
+        event->ignore();
+        return;
+    }
     if (selecting_ && !selection_text_.isEmpty())
         QGuiApplication::clipboard()->setText(selection_text_);
     selecting_ = false;

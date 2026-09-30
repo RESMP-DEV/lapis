@@ -17,6 +17,7 @@
 #include <array>
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 
 namespace lapis::desktop {
@@ -240,8 +241,13 @@ class KeyMap final : public QObject {
         QString cli;
         QString email;
         QString machine;
+        QString expectedName{}; // optional identity pinned before asynchronous delivery
     };
-    QString addPlanMachine(const PlanCredential& credential, QString* reason = nullptr);
+    // Called with the freshly allocated name, after config validation and before
+    // publishing machine availability. A failed credential write leaves config intact.
+    using PreparePlan = std::function<bool(const QString& name, QString* reason)>;
+    QString addPlanMachine(const PlanCredential& credential, QString* reason = nullptr,
+                           PreparePlan prepare = {});
     // {"nextPrompt": {...}}: when and how lapis predicts the next prompt.
     [[nodiscard]] const NextPromptSettings& nextPrompt() const { return next_prompt_; }
     [[nodiscard]] static int terminalFontSizeMinimum() { return kTerminalFontSizeMinimum; }
@@ -299,8 +305,10 @@ class KeyMap final : public QObject {
         QString name;
         QString email;
         QString machine;
+        QString expectedName{};
     };
     std::optional<PlanMachine> adding_plan_;
+    PreparePlan prepare_plan_;
     NextPromptSettings next_prompt_;
     QFileSystemWatcher watcher_;
     QTimer settle_;

@@ -10,6 +10,7 @@
 #include <functional>
 
 namespace lapis::desktop {
+class UpdaterProcess;
 
 // Adds a Claude Code plan from inside lapis, signed in as whichever account
 // the person chooses. plan_sign_in.py runs `claude setup-token` and passes its
@@ -17,8 +18,8 @@ namespace lapis::desktop {
 // browser, copies it and keeps it shown for another try until someone signs
 // in. The token Claude Code then prints goes owner-only into the accounts
 // folder and the plan is recorded under the email the person names. The
-// token is then copied, owner-only, to every ssh host that takes it, and the
-// plan is recorded there too, so agents on any of those machines can use it.
+// token is then copied, owner-only, only to this plan's configured destinations.
+// New plans are local until additional destinations are explicitly configured.
 class PlanSignIn final : public QObject {
     Q_OBJECT
     // "idle", "starting", "waiting" (the link is out), "signedIn" (waiting
@@ -39,10 +40,14 @@ class PlanSignIn final : public QObject {
     using Hand = std::function<void(const QString&)>;
     // Records the plan for `email` on `machine` ("" for this Mac) and returns
     // its name, or an empty name and a reason.
-    using Record =
-        std::function<QString(const QString& email, const QString& machine, QString* reason)>;
-    // The ssh hosts to copy a new plan's token to.
-    using Machines = std::function<QStringList()>;
+    using Prepare = std::function<bool(const QString& name, QString* reason)>;
+    // The config owner chooses a name, runs prepare, then commits availability.
+    // expectedName pins a destination chosen before an asynchronous copy.
+    using Record = std::function<QString(const QString& email, const QString& machine,
+                                         const QString& expectedName, const Prepare& prepare,
+                                         QString* reason)>;
+    // Explicit destinations for this email's plan; never a global SSH inventory.
+    using Machines = std::function<QStringList(const QString& email)>;
     struct Hooks {
         Program program;
         Hand copy;
@@ -86,20 +91,38 @@ class PlanSignIn final : public QObject {
     void fail(const QString& why);
     void set(const QString& state, const QString& message = {});
     [[nodiscard]] QString pendingToken() const;
+    void stopCopies();
+    void stopSignIn();
     void spread(const QByteArray& token);
+    void copyTo(const QString& machine, const QString& ssh, const QString& target,
+                const QByteArray& token);
     void report();
     Hooks hooks_;
     Places places_;
-    QHash<QString, QPointer<QProcess>> copying_; // by machine
+    struct Copy {
+        QPointer<UpdaterProcess> process;
+        QString email;
+        QString plan;
+        QString machine;
+        QByteArray output;
+        std::uint64_t attempt{};
+    };
+    QHash<QString, Copy> copying_; // by machine, for one finished sign-in
+    QHash<QString, QString> copyReasons_;
     QStringList reached_;
     QStringList unreached_;
-    QPointer<QProcess> process_;
+    QPointer<UpdaterProcess> process_;
     QByteArray output_;
+    QByteArray helper_error_;
+    qsizetype helper_bytes_{};
+    QString pending_token_;
     QString state_{QStringLiteral("idle")};
     QString link_;
     QString message_;
     QString email_;
+    bool emailSubmitted_{};
     QString plan_;
+    std::uint64_t attempt_{};
 };
 
 // A plan name from an email: someone@example.com -> someone-example.

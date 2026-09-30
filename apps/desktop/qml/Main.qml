@@ -2115,7 +2115,7 @@ ApplicationWindow {
     // Commands > "Add a Claude Code plan": Claude Code's sign-in link, opened in
     // the default browser, copied and kept here until an account signs in with
     // it, and that account's email (Return records it). The plan then goes to
-    // every ssh host that takes it. Escape ends a sign-in that has not finished.
+    // its configured machines. Escape ends a sign-in that has not finished.
     StageDialog {
         id: planSignInDialog
         objectName: "planSignInDialog"

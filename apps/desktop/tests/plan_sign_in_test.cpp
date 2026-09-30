@@ -15,10 +15,12 @@
 #include <QJsonObject>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QThread>
 
 #include <functional>
 #include <iostream>
 #include <stdexcept>
+#include <sys/stat.h>
 
 using lapis::desktop::KeyMap;
 using lapis::desktop::PlanSignIn;
@@ -63,7 +65,7 @@ void plansRecordThisMac() {
     require(keymap.load(), "config loads");
     const auto add = [&keymap](const QString& email) {
         return keymap.addPlanMachine(
-            {.cli = QStringLiteral("claude"), .email = email, .machine = {}});
+            {.cli = QStringLiteral("claude"), .email = email, .machine = {}, .expectedName = {}});
     };
     require(add(QStringLiteral("Someone@Example.com")) == QLatin1String("work"),
             "a plan with that email keeps its name");
@@ -98,11 +100,32 @@ void signsInAnyAccount() {
     QFile::setPermissions(claude, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
     // A stand-in ssh: "devbox" keeps what arrives on stdin; "gone" is down.
     QString ssh = root.filePath(QStringLiteral("ssh"));
-    write(ssh, "#!/bin/sh\nfor a; do host=$last; last=$a; done\n"
-               "[ \"$host\" = gone ] && exit 255\n"
-               "printf '%s\\n' \"$@\" > '" +
-                   root.filePath(QStringLiteral("ssh.args")).toUtf8() + "'\ncat > '" +
-                   root.filePath(QStringLiteral("ssh.stdin")).toUtf8() + "'\n");
+    write(ssh, R"(#!/usr/bin/env python3
+import pathlib
+import shlex
+import subprocess
+import sys
+root = pathlib.Path(__file__).resolve().parent
+host, command = sys.argv[-2:]
+if host == "gone":
+    print("fixture connection refused", file=sys.stderr)
+    raise SystemExit(255)
+data = sys.stdin.buffer.read()
+if host == "devbox":
+    (root / "ssh.args").write_text("\n".join(sys.argv[1:]))
+    (root / "ssh.stdin").write_bytes(data)
+remote = root / "remote" / host
+remote.mkdir(parents=True, exist_ok=True)
+if host == "short":
+    previous = remote / "accounts/claude/work.token"
+    previous.parent.mkdir(parents=True, exist_ok=True)
+    previous.write_bytes(b"previous token")
+    data = data[:-1]
+# Only the destination prefix is redirected; run the actual emitted command.
+command = command.replace("~/.lapis", shlex.quote(str(remote)))
+command = command.replace("$HOME/.lapis", str(remote))
+raise SystemExit(subprocess.run(["/bin/sh", "-c", command], input=data).returncode)
+)");
     QFile::setPermissions(ssh, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
     QStringList copied;
     QStringList opened;
@@ -117,12 +140,19 @@ void signsInAnyAccount() {
          .copy = [&copied](const QString& text) { copied << text; },
          .open = [&opened](const QString& text) { opened << text; },
          .record =
-             [&recorded](const QString& email, const QString& machine, QString*) {
+             [&recorded](const QString& email, const QString& machine, const QString&,
+                         const PlanSignIn::Prepare& prepare, QString* reason) {
+                 if (prepare && !prepare(QStringLiteral("work"), reason))
+                     return QString();
                  recorded << email + QLatin1Char('@') +
                                  (machine.isEmpty() ? QStringLiteral("mac") : machine);
                  return QStringLiteral("work");
              },
-         .machines = [] { return QStringList{QStringLiteral("devbox"), QStringLiteral("gone")}; }},
+         .machines =
+             [](const QString&) {
+                 return QStringList{QStringLiteral("devbox"), QStringLiteral("gone"),
+                                    QStringLiteral("short")};
+             }},
         {.helper = root.filePath(QStringLiteral("runtime/plan_sign_in.py")),
          .accounts = root.filePath(QStringLiteral("accounts"))});
     signIn.start();
@@ -151,12 +181,41 @@ void signsInAnyAccount() {
     require(read(root.filePath(QStringLiteral("ssh.stdin"))) == token() + '\n' &&
                 !read(root.filePath(QStringLiteral("ssh.args"))).contains(token()) &&
                 read(root.filePath(QStringLiteral("ssh.args")))
-                    .contains("cat > ~/.lapis/accounts/claude/work.token"),
-            "the token goes over ssh on stdin, never on the command line");
+                    .contains("mktemp ~/.lapis/accounts/claude/.work.XXXXXX") &&
+                read(root.filePath(QStringLiteral("ssh.args")))
+                    .contains("mv -f \"$tmp\" "
+                              "\"$HOME/.lapis/accounts/claude/work.token\""),
+            "the token goes on stdin into a remote temporary file, then is moved whole");
     require(signIn.message().contains(QStringLiteral("Not reachable: gone")),
             "a machine that did not take it is named");
     require(!QFileInfo::exists(root.filePath(QStringLiteral("accounts/claude/.signing-in.token"))),
             "nothing is left pending");
+
+    // A second attempt has no identity left over. The token may arrive before
+    // the person submits the email; only an email submitted to this attempt
+    // can finish it.
+    recorded.clear();
+    require(read(root.filePath(QStringLiteral("remote/short/accounts/claude/work.token"))) ==
+                "previous token",
+            "a short remote transfer preserves its previous credential");
+    require(QDir(root.filePath(QStringLiteral("remote/short/accounts/claude")))
+                .entryList({QStringLiteral(".work.*")}, QDir::Files | QDir::Hidden)
+                .isEmpty(),
+            "failed remote copy removes its private temporary file");
+    signIn.start();
+    require(waitFor([&] { return signIn.state() == QLatin1String("waiting"); }),
+            "the stale state is cleared and a new link appears");
+    require(waitFor([&] { return signIn.state() == QLatin1String("signedIn"); }),
+            "a signed-in token waits for this attempt's email");
+    require(recorded.isEmpty() && signIn.plan().isEmpty(),
+            "the previous email is not reused for the new token");
+    signIn.setEmail(QStringLiteral("second@place.dev"));
+    require(waitFor([&] { return signIn.state() == QLatin1String("done"); }),
+            "the newly submitted email finishes the attempt");
+    require(recorded == QStringList{QStringLiteral("second@place.dev@mac")},
+            "the new attempt records only its own email");
+    signIn.cancel();
+    require(signIn.state() == QLatin1String("idle"), "a completed attempt can be closed");
 
     // A sign-in that is abandoned leaves no token.
     signIn.start();
@@ -170,18 +229,195 @@ void signsInAnyAccount() {
             "without keeping a token");
 
     // Claude Code missing is said plainly.
-    PlanSignIn missing(
-        {.program = [](const QString&) { return QString(); },
-         .copy = [](const QString&) {},
-         .open = [](const QString&) {},
-         .record = [](const QString&, const QString&, QString*) { return QString(); },
-         .machines = [] { return QStringList(); }},
-        {.helper = root.filePath(QStringLiteral("runtime/x.py")),
-         .accounts = root.filePath(QStringLiteral("accounts"))});
+    PlanSignIn missing({.program = [](const QString&) { return QString(); },
+                        .copy = [](const QString&) {},
+                        .open = [](const QString&) {},
+                        .record = [](const QString&, const QString&, const QString&,
+                                     const PlanSignIn::Prepare&, QString*) { return QString(); },
+                        .machines = [](const QString&) { return QStringList(); }},
+                       {.helper = root.filePath(QStringLiteral("runtime/x.py")),
+                        .accounts = root.filePath(QStringLiteral("accounts"))});
     missing.start();
     require(missing.state() == QLatin1String("failed") &&
                 missing.message().contains(QStringLiteral("not installed")),
             "a missing Claude Code fails with a reason");
+}
+
+// A replacement is committed whole, and an unsafe recorder cannot use the
+// sign-in flow to put a token at a shell-controlled path.
+void keepsTokensWholeAndNamedSafely() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "fixture directory");
+    const QDir root(directory.path());
+    QString claude = root.filePath(QStringLiteral("claude"));
+    write(claude, "#!/bin/sh\nopen '" + link().toUtf8() +
+                      "'\n"
+                      "sleep 1\nprintf 'Your token:\\r\\n" +
+                      token() + "\\r\\n'\nsleep 30\n");
+    QFile::setPermissions(claude, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    const auto replace = [&](const QString& recordedName, bool directoryWritable) {
+        const QDir accounts(root.filePath(QStringLiteral("accounts")));
+        require(QDir().mkpath(accounts.filePath(QStringLiteral("claude"))),
+                "fixture account folder");
+        const auto existing = accounts.filePath(QStringLiteral("claude/work.token"));
+        write(existing, "old-" + token());
+        if (!directoryWritable)
+            QFile::setPermissions(accounts.filePath(QStringLiteral("claude")),
+                                  QFile::ReadOwner | QFile::ExeOwner);
+        PlanSignIn signIn({.program =
+                               [&claude](const QString& name) {
+                                   if (name == QLatin1String("claude"))
+                                       return claude;
+                                   return QStandardPaths::findExecutable(name);
+                               },
+                           .copy = [](const QString&) {},
+                           .open = [](const QString&) {},
+                           .record =
+                               [recordedName](const QString&, const QString&, const QString&,
+                                              const PlanSignIn::Prepare& prepare, QString* reason) {
+                                   return prepare && !prepare(recordedName, reason) ? QString()
+                                                                                    : recordedName;
+                               },
+                           .machines = [](const QString&) { return QStringList(); }},
+                          {.helper = root.filePath(QStringLiteral("runtime/plan_sign_in.py")),
+                           .accounts = accounts.absolutePath()});
+        signIn.start();
+        require(waitFor([&] { return signIn.state() == QLatin1String("signedIn"); }),
+                "the replacement fixture produces its staging token");
+        // The helper restores its folder while writing the pending token; take
+        // that permission away only after signedIn to isolate token commit.
+        if (!directoryWritable)
+            ::chmod(QFile::encodeName(accounts.filePath(QStringLiteral("claude"))).constData(),
+                    0500);
+        signIn.setEmail(QStringLiteral("Someone@Example.com"));
+        require(waitFor([&] {
+                    return signIn.state() == QLatin1String("done") ||
+                           signIn.state() == QLatin1String("failed");
+                }),
+                "the replacement attempt ends");
+        if (!directoryWritable)
+            ::chmod(QFile::encodeName(accounts.filePath(QStringLiteral("claude"))).constData(),
+                    0700);
+        return std::pair{signIn.state(), read(existing)};
+    };
+    const auto replaced = replace(QStringLiteral("work"), true);
+    require(replaced.first == QLatin1String("done") && replaced.second == token() + '\n',
+            "an existing token is replaced whole");
+    require(QDir(root.filePath(QStringLiteral("accounts/claude")))
+                .entryList({QStringLiteral(".signing-in-*.token")}, QDir::Files | QDir::Hidden)
+                .isEmpty(),
+            "the pending copy is retired after the replacement");
+
+    const auto failed = replace(QStringLiteral("work"), false);
+    require(failed.first == QLatin1String("failed") && failed.second == "old-" + token(),
+            "a failed replacement leaves the old credential in place");
+}
+
+void rejectsMalformedHelperOutputAndUnsafeNames() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "fixture directory");
+    const QDir root(directory.path());
+    auto command = root.filePath(QStringLiteral("command"));
+    auto helper = root.filePath(QStringLiteral("runtime/plan_sign_in.py"));
+    PlanSignIn signIn(
+        {.program =
+             [&command, &helper](const QString& name) {
+                 if (name == QLatin1String("python3"))
+                     return command;
+                 if (name == QLatin1String("claude"))
+                     return helper;
+                 return QString();
+             },
+         .copy = [](const QString&) {},
+         .open = [](const QString&) {},
+         .record =
+             [](const QString&, const QString&, const QString&, const PlanSignIn::Prepare& prepare,
+                QString* reason) {
+                 const auto name = QStringLiteral("bad;path");
+                 return prepare && !prepare(name, reason) ? QString() : name;
+             },
+         .machines = [](const QString&) { return QStringList{QStringLiteral("devbox")}; }},
+        {.helper = helper, .accounts = root.filePath(QStringLiteral("accounts"))});
+    write(command, "#!/bin/sh\nshift 3\nprintf '%s\\n' "
+                   "'{\"signedIn\": true}'\n");
+    QFile::setPermissions(command, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    signIn.start();
+    require(waitFor([&] { return signIn.state() == QLatin1String("signedIn"); }),
+            "signed-in JSON is accepted");
+    signIn.setEmail(QStringLiteral("someone@example.com"));
+    require(waitFor([&] { return signIn.state() == QLatin1String("failed"); }),
+            "a missing or malformed token fails instead of spreading");
+    require(signIn.message().contains(QStringLiteral("usable token")), "the failure says why");
+
+    write(command, "#!/bin/sh\nmkdir -p \"$(dirname \"$3\")\"\nprintf '" + token() +
+                       "\n' > \"$3\"\nprintf '%s\n' '{\"signedIn\": true}'\n");
+    QFile::setPermissions(command, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    signIn.start();
+    require(waitFor([&] { return signIn.state() == QLatin1String("signedIn"); }),
+            "the second malformed-name fixture starts");
+    signIn.setEmail(QStringLiteral("someone@example.com"));
+    require(waitFor([&] { return signIn.state() == QLatin1String("failed"); }),
+            "an unsafe recorded name never reaches a command or a path");
+    require(!QFileInfo::exists(root.filePath(QStringLiteral("ssh.args"))),
+            "no remote command was built");
+    require(!QFileInfo::exists(root.filePath(QStringLiteral("accounts/claude/bad;path.token"))),
+            "and no unsafe token path was used");
+}
+
+// A prior copy is killed and forgets its captured identity before a new
+// attempt's state is installed.
+void stopsOldCopiesBeforeANewAttempt() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "fixture directory");
+    const QDir root(directory.path());
+    QString claude = root.filePath(QStringLiteral("claude"));
+    write(claude, "#!/bin/sh\nopen '" + link().toUtf8() +
+                      "'\n"
+                      "sleep 1\nprintf 'Your token:\\r\\n" +
+                      token() + "\\r\\n'\nsleep 30\n");
+    QFile::setPermissions(claude, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    QString ssh = root.filePath(QStringLiteral("ssh"));
+    write(ssh, "#!/bin/sh\nsleep 5\ncat >/dev/null\n");
+    QFile::setPermissions(ssh, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    QStringList recorded;
+    PlanSignIn signIn(
+        {.program =
+             [&claude, &ssh](const QString& name) {
+                 if (name == QLatin1String("claude"))
+                     return claude;
+                 if (name == QLatin1String("ssh"))
+                     return ssh;
+                 return QStandardPaths::findExecutable(name);
+             },
+         .copy = [](const QString&) {},
+         .open = [](const QString&) {},
+         .record =
+             [&recorded](const QString& email, const QString& machine, const QString&,
+                         const PlanSignIn::Prepare& prepare, QString* reason) {
+                 if (prepare && !prepare(QStringLiteral("work"), reason))
+                     return QString();
+                 recorded << email + QLatin1Char('@') +
+                                 (machine.isEmpty() ? QStringLiteral("mac") : machine);
+                 return QStringLiteral("work");
+             },
+         .machines = [](const QString&) { return QStringList{QStringLiteral("devbox")}; }},
+        {.helper = root.filePath(QStringLiteral("runtime/plan_sign_in.py")),
+         .accounts = root.filePath(QStringLiteral("accounts"))});
+    signIn.start();
+    require(waitFor([&] { return signIn.state() == QLatin1String("waiting"); }), "the link");
+    signIn.setEmail(QStringLiteral("first@example.com"));
+    require(waitFor([&] { return signIn.state() == QLatin1String("done"); }), "the first plan");
+    require(signIn.spreading(), "the slow old copy is still in flight");
+    signIn.start();
+    require(!signIn.spreading(), "a new attempt stops the old token's copies");
+    require(waitFor([&] { return signIn.state() == QLatin1String("signedIn"); }), "the new token");
+    require(recorded == QStringList{QStringLiteral("first@example.com@mac")},
+            "the stopped copy records nothing else");
+    QThread::msleep(100);
+    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    require(recorded == QStringList{QStringLiteral("first@example.com@mac")},
+            "the killed copy cannot adopt the new attempt");
+    signIn.cancel();
 }
 } // namespace
 
@@ -190,6 +426,9 @@ int main(int argc, char** argv) {
     try {
         plansRecordThisMac();
         signsInAnyAccount();
+        keepsTokensWholeAndNamedSafely();
+        rejectsMalformedHelperOutputAndUnsafeNames();
+        stopsOldCopiesBeforeANewAttempt();
     } catch (const std::exception& error) {
         std::cerr << "plan_sign_in_test: " << error.what() << '\n';
         return 1;

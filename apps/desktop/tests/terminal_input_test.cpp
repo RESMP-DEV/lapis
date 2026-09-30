@@ -1151,6 +1151,14 @@ void selection_and_scroll() {
     settle();
     QGuiApplication::clipboard()->setText(QStringLiteral("before"));
     mouse(QEvent::MouseButtonPress, surface.cellRect(0, 0).center(), Qt::LeftButton);
+    mouse(QEvent::MouseMove, surface.cellRect(2, 0).center(), Qt::NoButton);
+    const auto during_drag = surface.cellRect(2, 0).center();
+    QMouseEvent other_release(QEvent::MouseButtonRelease, during_drag,
+                              surface.mapToScene(during_drag), surface.mapToGlobal(during_drag),
+                              Qt::RightButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&surface, &other_release);
+    require(QGuiApplication::clipboard()->text() == QStringLiteral("before"),
+            "Another button release copied a left-button drag prematurely");
     mouse(QEvent::MouseMove, surface.cellRect(3, 0).center(), Qt::NoButton);
     require(QGuiApplication::clipboard()->text() == QStringLiteral("before"),
             "A selection was copied before the drag ended");

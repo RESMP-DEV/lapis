@@ -36,10 +36,12 @@ It starts Claude Code's own sign-in and opens its link in your default browser,
 copies it, and keeps it shown with **Open again** in case a try goes wrong. Sign
 in there with the account to add, then type that account's email and press
 Return. lapis keeps the token Claude Code prints (owner-only, never shown),
-copies it over ssh to every host in your ssh config that takes it, and records
-the plan, or those machines for an existing plan with that email, so Claude Code
-agents on this Mac and on those machines can use it. The panel names any machine
-it could not reach. Escape ends a sign-in that has not finished. Codex plans are
+and records the plan only after that token is stored. New plans start on this
+Mac. Refreshing an existing plan also copies it to that plan's explicitly listed
+`machines`, with at most 64 destinations per attempt. An unrelated ssh-config
+entry never receives the credential. Each replacement is atomic; incomplete
+remote copies preserve the previous token. The panel names failures. Escape
+ends an unfinished sign-in, and a new attempt retires older copies. Codex plans are
 still added with the script below.
 
 `scripts/lapis_accounts.py` fills the section too:

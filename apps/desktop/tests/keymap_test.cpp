@@ -966,6 +966,99 @@ void config_reloads_when_edited_elsewhere() {
             "alert choices are written beside the rest of the config");
 }
 
+void added_plans_preserve_account_identity() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "private plan config");
+    const QDir root(directory.path());
+    const auto path = write_config(root, R"({"accounts":{"claude":[
+        {"name":"alice-example","email":"alice@example.com","machines":["old-host"]},
+        {"name":"first","email":"same@example.net","machines":["old-host"]},
+        {"name":"second","email":"same@example.net","machines":["another-host"]}
+    ]}})");
+    KeyMap keymap;
+    keymap.setSourcePathForTesting(path);
+    require(keymap.load(), "load plans");
+    const auto add = [&](const QString& email, const QString& machine = QString()) {
+        return keymap.addPlanMachine(
+            {.cli = QStringLiteral("claude"), .email = email, .machine = machine});
+    };
+    require(add(QStringLiteral("alice@example.org")) == QStringLiteral("alice-example-2"),
+            "colliding derived name allocates a new plan");
+    auto plans = read_config(path)
+                     .value(QStringLiteral("accounts"))
+                     .toObject()
+                     .value(QStringLiteral("claude"))
+                     .toArray();
+    require(plans.at(0).toObject().value(QStringLiteral("email")) ==
+                    QStringLiteral("alice@example.com") &&
+                plans.at(0).toObject().value(QStringLiteral("machines")).toArray() ==
+                    QJsonArray{QStringLiteral("old-host")},
+            "unrelated existing plan is unchanged");
+    require(add(QStringLiteral(" SAME@example.net "), QStringLiteral("new-host")) ==
+                QStringLiteral("first"),
+            "duplicate email consistently uses first effective plan");
+    plans = read_config(path)
+                .value(QStringLiteral("accounts"))
+                .toObject()
+                .value(QStringLiteral("claude"))
+                .toArray();
+    require(plans.at(1)
+                    .toObject()
+                    .value(QStringLiteral("machines"))
+                    .toArray()
+                    .contains(QStringLiteral("new-host")) &&
+                !plans.at(2)
+                     .toObject()
+                     .value(QStringLiteral("machines"))
+                     .toArray()
+                     .contains(QStringLiteral("new-host")),
+            "returned plan and persisted machine refer to the same account");
+    // Another writer reserves the next name before this KeyMap receives a reload.
+    auto changed = read_config(path);
+    auto accounts = changed.value(QStringLiteral("accounts")).toObject();
+    plans.append(QJsonObject{{QStringLiteral("name"), QStringLiteral("alice-example-3")},
+                             {QStringLiteral("email"), QStringLiteral("else@example.net")}});
+    accounts.insert(QStringLiteral("claude"), plans);
+    changed.insert(QStringLiteral("accounts"), accounts);
+    static_cast<void>(write_config(root, QJsonDocument(changed).toJson()));
+    require(add(QStringLiteral("alice@example.edu")) == QStringLiteral("alice-example-4"),
+            "allocation uses current on-disk names rather than stale loaded state");
+    const auto before = read_config(path);
+    require(keymap.addPlanMachine({.cli = QStringLiteral("claude"),
+                                   .email = QStringLiteral("alice@example.com"),
+                                   .machine = QStringLiteral("new-host"),
+                                   .expectedName = QStringLiteral("wrong-plan")})
+                    .isEmpty() &&
+                read_config(path) == before,
+            "an asynchronous copy cannot advertise a different plan than it delivered");
+    bool prepared = false;
+    QString failed_write;
+    require(keymap.addPlanMachine({.cli = QStringLiteral("claude"),
+                                   .email = QStringLiteral("failure@example.net"),
+                                   .machine = {}},
+                                  &failed_write,
+                                  [&](const QString& name, QString* reason) {
+                                      prepared = name == QStringLiteral("failure-example") &&
+                                                 read_config(path) == before;
+                                      *reason = QStringLiteral("fixture credential write failed");
+                                      return false;
+                                  })
+                    .isEmpty() &&
+                prepared && read_config(path) == before &&
+                failed_write.contains(QStringLiteral("fixture credential write failed")),
+            "credential preparation precedes config commit and failure publishes no availability");
+    require(add(QStringLiteral("bad-email")).isEmpty() && read_config(path) == before,
+            "invalid identity cannot mutate config");
+    static_cast<void>(write_config(root, R"({"accounts":{"claude":"malformed"}})"));
+    require(add(QStringLiteral("valid@example.net")).isEmpty() &&
+                read_config(path)
+                        .value(QStringLiteral("accounts"))
+                        .toObject()
+                        .value(QStringLiteral("claude"))
+                        .toString() == QStringLiteral("malformed"),
+            "malformed account collection is preserved");
+}
+
 int main(int argc, char** argv) {
     QCoreApplication application(argc, argv);
     try {
@@ -992,6 +1085,7 @@ int main(int argc, char** argv) {
         terminal_font_persists_and_rolls_back();
         remote_settings_are_transactional();
         config_reloads_when_edited_elsewhere();
+        added_plans_preserve_account_identity();
     } catch (const std::exception& error) {
         std::cerr << "keymap_test: " << error.what() << '\n';
         return 1;

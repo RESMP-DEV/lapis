@@ -13,6 +13,7 @@
 #include <QJsonValue>
 #include <QKeySequence>
 #include <QSaveFile>
+#include <QSet>
 #include <QSignalBlocker>
 #include <QVariantMap>
 #include <algorithm>
@@ -238,29 +239,70 @@ constexpr std::array<Theme, 7> kThemes = {{
 
 constexpr qsizetype kMaximumFontFamilyLength = 128;
 
-// Adds `adding` to the plan it names (by name or email) in lapis.json's
-// "accounts", or a new plan; "local" stands for this Mac.
-struct PlanMachine {
+// Allocate from the fresh file read by persist(), not an earlier UI snapshot.
+// A matching email keeps its first effective plan; names alone never identify
+// an account. Raw names are reserved too, so malformed siblings are untouched.
+struct PlanUpdate {
     QString cli;
     QString name;
     QString email;
     QString machine;
 };
-void merge_plan_machine(QJsonObject& root, const PlanMachine& adding) {
-    auto accounts = root.value(QStringLiteral("accounts")).toObject();
-    auto plans = accounts.value(adding.cli).toArray();
-    const auto machine = adding.machine.isEmpty() ? QStringLiteral("local") : adding.machine;
+qsizetype existing_plan(const AccountsConfig& effective, const QJsonArray& plans,
+                        PlanUpdate& adding) {
+    for (const auto& plan : effective.accounts)
+        if (plan.cli == adding.cli && plan.email == adding.email) {
+            adding.name = plan.name;
+            break;
+        }
     qsizetype found = -1;
-    for (qsizetype i = 0; i < plans.size() && found < 0; ++i) {
-        const auto plan = plans.at(i).toObject();
-        if (plan.value(QStringLiteral("name")).toString() == adding.name ||
-            plan.value(QStringLiteral("email")).toString().toLower() == adding.email)
-            found = i;
+    if (!adding.name.isEmpty()) {
+        for (qsizetype i = 0; i < plans.size(); ++i) {
+            const auto plan = plans.at(i).toObject();
+            if (plan.value(QStringLiteral("name")).toString().trimmed() == adding.name &&
+                plan.value(QStringLiteral("email")).toString().trimmed().toLower() ==
+                    adding.email) {
+                found = i;
+                break;
+            }
+        }
     }
+    return found;
+}
+QString merge_plan_machine(QJsonObject& root, PlanUpdate& adding) {
+    const auto section = root.value(QStringLiteral("accounts"));
+    if (!section.isUndefined() && !section.isObject())
+        return QStringLiteral("accounts must be an object; left unchanged");
+    auto accounts = section.toObject();
+    const auto values = accounts.value(adding.cli);
+    if (!values.isUndefined() && !values.isArray())
+        return QStringLiteral("account plans must be an array; left unchanged");
+    auto plans = values.toArray();
+    const auto effective = parse_accounts(accounts);
+    const auto found = existing_plan(effective, plans, adding);
+    if (found < 0) {
+        if (effective.accounts.size() >= 64)
+            return QStringLiteral("at most 64 account plans can be used; left unchanged");
+        QSet<QString> reserved;
+        for (const auto& value : plans)
+            reserved.insert(value.toObject().value(QStringLiteral("name")).toString().trimmed());
+        const auto base = plan_name_for(adding.email);
+        adding.name = base;
+        for (qsizetype suffix = 2; reserved.contains(adding.name); ++suffix) {
+            const auto ending = QLatin1Char('-') + QString::number(suffix);
+            adding.name = base.left(64 - ending.size()) + ending;
+        }
+    }
+    if (adding.name == QLatin1String(".") || adding.name == QLatin1String(".."))
+        return QStringLiteral("account plan name cannot be a dot path; left unchanged");
     auto plan =
         found < 0 ? QJsonObject{{QStringLiteral("name"), adding.name}} : plans.at(found).toObject();
     plan.insert(QStringLiteral("email"), adding.email);
-    auto machines = plan.value(QStringLiteral("machines")).toArray();
+    const auto current = plan.value(QStringLiteral("machines"));
+    if (!current.isUndefined() && !current.isNull() && !current.isArray())
+        return QStringLiteral("plan machines must be an array; left unchanged");
+    auto machines = current.toArray();
+    const auto machine = adding.machine.isEmpty() ? QStringLiteral("local") : adding.machine;
     if (!machines.contains(QJsonValue(machine)))
         machines.append(machine);
     plan.insert(QStringLiteral("machines"), machines);
@@ -270,6 +312,7 @@ void merge_plan_machine(QJsonObject& root, const PlanMachine& adding) {
         plans.replace(found, plan);
     accounts.insert(adding.cli, plans);
     root.insert(QStringLiteral("accounts"), accounts);
+    return {};
 }
 void append_diagnostic(QString* diagnostic, const QString& message) {
     *diagnostic = diagnostic->isEmpty() ? message : *diagnostic + '\n' + message;
@@ -1024,19 +1067,17 @@ bool KeyMap::save_without_tentative_change() {
 
 bool KeyMap::save() { return persist(); }
 
-bool KeyMap::persist() {
-    const auto fail = [this](const QString& reason) {
-        diagnostic_ = QStringLiteral("Could not save %1: %2").arg(source_path_, reason);
-        qWarning().noquote() << "lapis config:" << diagnostic_;
-        emit changed();
+namespace {
+bool read_config_for_update(const QString& path, QJsonObject& root, QString* reason) {
+    const auto fail = [reason](const QString& why) {
+        *reason = why;
         return false;
     };
     QString path_reason;
-    if (!config_path_is_regular(source_path_, &path_reason))
+    if (!config_path_is_regular(path, &path_reason))
         return fail(path_reason);
-    QJsonObject root;
-    if (QFileInfo::exists(source_path_)) {
-        QFile existing(source_path_);
+    if (QFileInfo::exists(path)) {
+        QFile existing(path);
         if (!existing.open(QIODevice::ReadOnly))
             return fail(existing.errorString());
         if (existing.size() > kMaximumConfigBytes)
@@ -1054,6 +1095,21 @@ bool KeyMap::persist() {
                 QStringLiteral("existing config is not a valid JSON object; left unchanged"));
         root = document.object();
     }
+    return true;
+}
+} // namespace
+
+bool KeyMap::persist() {
+    const auto fail = [this](const QString& reason) {
+        diagnostic_ = QStringLiteral("Could not save %1: %2").arg(source_path_, reason);
+        qWarning().noquote() << "lapis config:" << diagnostic_;
+        emit changed();
+        return false;
+    };
+    QJsonObject root;
+    QString read_reason;
+    if (!read_config_for_update(source_path_, root, &read_reason))
+        return fail(read_reason);
     root.insert(QStringLiteral("layout"), layoutName());
     root.insert(QStringLiteral("theme"), theme_);
     root.insert(QStringLiteral("density"), densityName());
@@ -1082,9 +1138,15 @@ bool KeyMap::persist() {
     QJsonObject usage = root.value(QStringLiteral("usage")).toObject();
     usage.insert(QStringLiteral("show"), show_usage_);
     root.insert(QStringLiteral("usage"), usage);
-    if (adding_plan_)
-        merge_plan_machine(root, {adding_plan_->cli, adding_plan_->name, adding_plan_->email,
-                                  adding_plan_->machine});
+    if (adding_plan_) {
+        PlanUpdate adding{adding_plan_->cli, {}, adding_plan_->email, adding_plan_->machine};
+        if (const auto error = merge_plan_machine(root, adding); !error.isEmpty())
+            return fail(error);
+        if (!adding_plan_->expectedName.isEmpty() && adding_plan_->expectedName != adding.name)
+            return fail(
+                QStringLiteral("account plan identity changed before recording this machine"));
+        adding_plan_->name = adding.name;
+    }
     if (!root.contains(QStringLiteral("version")))
         root.insert(QStringLiteral("version"), 1);
     QByteArray contents = format_config(root) + '\n';
@@ -1092,6 +1154,12 @@ bool KeyMap::persist() {
         contents = QJsonDocument(root).toJson(QJsonDocument::Compact) + '\n';
     if (contents.size() > kMaximumConfigBytes)
         return fail(QStringLiteral("updated config exceeds 1 MiB; left unchanged"));
+    if (adding_plan_ && prepare_plan_) {
+        QString reason;
+        if (!prepare_plan_(adding_plan_->name, &reason))
+            return fail(reason.isEmpty() ? QStringLiteral("credential could not be stored")
+                                         : reason);
+    }
     QSaveFile file(source_path_);
     if (!file.open(QIODevice::WriteOnly))
         return fail(file.errorString());
@@ -1105,20 +1173,40 @@ bool KeyMap::persist() {
     return true;
 }
 
-QString KeyMap::addPlanMachine(const PlanCredential& credential, QString* reason) {
-    const auto& cli = credential.cli;
+QString KeyMap::addPlanMachine(const PlanCredential& credential, QString* reason,
+                               PreparePlan prepare) {
+    if (adding_plan_) {
+        if (reason)
+            *reason = QStringLiteral("a plan update is already in progress");
+        return {};
+    }
     const auto lowered = credential.email.trimmed().toLower();
+    const auto machine =
+        credential.machine == QLatin1String("local") ? QString() : credential.machine;
+    static const QRegularExpression email(QStringLiteral(R"(^[^@\s]+@[^@\s]+\.[^@\s]+$)"));
+    static const QRegularExpression host(QStringLiteral(R"(^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$)"));
+    if ((credential.cli != QLatin1String("claude") && credential.cli != QLatin1String("codex")) ||
+        lowered.size() > 254 || !email.match(lowered).hasMatch() ||
+        (!machine.isEmpty() && !host.match(machine).hasMatch())) {
+        if (reason)
+            *reason = QStringLiteral("invalid account CLI, email or machine");
+        return {};
+    }
+    adding_plan_ = PlanMachine{credential.cli, {}, lowered, machine, credential.expectedName};
+    prepare_plan_ = std::move(prepare);
+    bool saved = false;
+    {
+        const QSignalBlocker blocker(this);
+        saved = persist();
+    }
     QString name;
-    for (const auto& account : accounts_.accounts)
-        if (account.cli == cli && account.email == lowered)
-            name = account.name;
-    if (name.isEmpty())
-        name = plan_name_for(lowered);
-    adding_plan_ = PlanMachine{cli, name, lowered, credential.machine};
-    const bool saved = persist();
+    if (adding_plan_)
+        name = adding_plan_->name;
     adding_plan_.reset();
+    prepare_plan_ = {};
+    emit changed();
     if (!saved) {
-        if (reason != nullptr)
+        if (reason)
             *reason = diagnostic_;
         return {};
     }
