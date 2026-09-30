@@ -19,8 +19,10 @@
     {
       "gate": "R2",
       "kind": "source-verified contract gap",
-      "source": "services/session/src/session_service.cpp::write_input and PR43 LiveConnection::sendText",
-      "result": "The client queue precheck and service PTY admission are different boundaries. Successful empty-queue probes do not establish whole-transfer completion under service backlog or disconnection."
+      "source": "services/session/src/session_service.cpp::write_input at the recorded baseline; apps/desktop/src/live_connection.cpp::LiveConnection::sendText at the recorded PR43 head",
+      "result": "The client queue precheck and service PTY admission are different boundaries. Successful empty-queue probes do not establish whole-transfer completion under service backlog or disconnection.",
+      "client_revision": "19baa20a9c097ade9163b2fe8b88633c2560c2b8",
+      "client_source_sha256": "2a1e4eb875590b9fa41a39a6837c91af4c7f694e8469f17b492776dfb2981c47"
     },
     {
       "gate": "R3",
@@ -106,6 +108,7 @@
   "documents_at": "d21f25d49e3fec1663edf1a7f8e5c9160c44f584",
   "followup": {
     "supervisor": "One persistent per-user launchd-owned supervisor at login; GUI/CLI attach without ownership handoff. Existing RunAtLoad helper exits at handoff and cannot safely gain KeepAlive unchanged. No new daemon is implemented here.",
-    "validation": "Document hash map is tied to documents_at; inventory uses uniform object values; scoped linux-gui command restored."
+    "validation": "Document hash map is tied to documents_at; inventory uses uniform object values; scoped linux-gui command restored.",
+    "citation_clarification": "September 30: LiveConnection::sendText exists at PR43 head 19baa20 (line 586), while baseline 61a87e5 has SessionPreview::sendText forwarding to LiveConnection::send. These are distinct audited revisions; the R2 result and original date remain unchanged."
   }
 }

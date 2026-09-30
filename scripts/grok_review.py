@@ -234,7 +234,8 @@ def run_process(
                     elif len(output[key.data]) + len(chunk) > max_output:
                         raise ReviewError(
                             f"{command[0]} {key.data} exceeds {max_output} bytes; "
-                            "the diff or helper diagnostics are too large for automatic review"
+                            "the diff or helper diagnostics are too large for automatic review; "
+                            "reduce the review input or diagnostic output"
                         )
                     else:
                         output[key.data].extend(chunk)
@@ -862,6 +863,43 @@ def watch(repository, publish):
         store_state(repository, state)
 
 
+def stop_job() -> None:
+    result = run_process(["launchctl", "bootout", f"gui/{os.getuid()}/{LABEL}"])
+    message = result.stderr.strip()
+    missing = result.returncode in (3, 113) and any(
+        text in message.lower()
+        for text in ("no such process", "could not find service")
+    )
+    if result.returncode and not missing:
+        raise ReviewError(f"launchctl bootout failed: {message[-400:]}")
+
+
+def write_registration(contents: bytes) -> None:
+    temporary = None
+    try:
+        PLIST.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=PLIST.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(contents)
+        temporary.replace(PLIST)
+    except OSError as error:
+        detail = f"could not write startup registration: {error}"
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError as cleanup:
+                detail += f"; temporary-file cleanup also failed: {cleanup}"
+        raise ReviewError(detail) from error
+
+
+def remove_registration() -> str | None:
+    try:
+        PLIST.unlink(missing_ok=True)
+    except OSError as error:
+        return f"could not remove startup registration: {error}"
+    return None
+
+
 def install(repository, publish):
     tools = [shutil.which(name) for name in ("grok", "gh", "git")]
     if None in tools:
@@ -869,48 +907,79 @@ def install(repository, publish):
     path = os.pathsep.join(
         dict.fromkeys([str(Path(tool).parent) for tool in tools] + ["/usr/bin", "/bin"])
     )
-    PLIST.parent.mkdir(parents=True, exist_ok=True)
-    PLIST.write_bytes(
-        plistlib.dumps(
-            {
-                "Label": LABEL,
-                "ProgramArguments": [
-                    sys.executable,
-                    str(Path(__file__).resolve()),
-                    "--repo",
-                    repository,
-                    "--model",
-                    MODEL,
-                    "watch",
-                ]
-                + (["--post"] if publish else []),
-                "StartInterval": INTERVAL,
-                "RunAtLoad": True,
-                "ProcessType": "Background",
-                "LowPriorityIO": True,
-                "EnvironmentVariables": {"PATH": path, "HOME": str(Path.home())},
-                "StandardOutPath": str(LOG),
-                "StandardErrorPath": str(LOG),
-            }
-        )
+    contents = plistlib.dumps(
+        {
+            "Label": LABEL,
+            "ProgramArguments": [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--repo",
+                repository,
+                "--model",
+                MODEL,
+                "watch",
+            ]
+            + (["--post"] if publish else []),
+            "StartInterval": INTERVAL,
+            "RunAtLoad": True,
+            "ProcessType": "Background",
+            "LowPriorityIO": True,
+            "EnvironmentVariables": {"PATH": path, "HOME": str(Path.home())},
+            "StandardOutPath": str(LOG),
+            "StandardErrorPath": str(LOG),
+        }
     )
+    try:
+        previous = PLIST.read_bytes() if PLIST.exists() else None
+    except OSError as error:
+        raise ReviewError(
+            f"could not read existing startup registration: {error}"
+        ) from error
+    # A failed stop must not replace the configuration of a still-running job.
+    stop_job()
+    write_registration(contents)
     domain = f"gui/{os.getuid()}"
-    run(["launchctl", "bootout", f"{domain}/{LABEL}"], check=False)
-    run(["launchctl", "bootstrap", domain, str(PLIST)])
+    try:
+        run(["launchctl", "bootstrap", domain, str(PLIST)])
+    except ReviewError as error:
+        try:
+            if previous is None:
+                cleanup = remove_registration()
+                if cleanup:
+                    raise ReviewError(cleanup)
+            else:
+                write_registration(previous)
+        except ReviewError as cleanup:
+            raise ReviewError(
+                f"{error}; registration recovery failed: {cleanup}"
+            ) from error
+        recovered = (
+            "removed" if previous is None else "restored to its previous contents"
+        )
+        raise ReviewError(
+            f"{error}; startup registration {recovered}; running job state is unverified"
+        ) from error
     print(
         f"installed {PLIST} ({'posting' if publish else 'saving'} reviews); log {LOG}"
     )
 
 
-def uninstall():
+def uninstall() -> None:
+    stopped = None
     try:
-        run(["launchctl", "bootout", f"gui/{os.getuid()}/{LABEL}"], check=False)
+        stop_job()
     except ReviewError as error:
-        PLIST.unlink(missing_ok=True)
-        raise ReviewError(
-            f"Startup registration removed, but the running job may need stopping: {error}"
-        ) from error
-    PLIST.unlink(missing_ok=True)
+        stopped = error
+    cleanup = remove_registration()
+    if stopped or cleanup:
+        messages = []
+        if stopped:
+            messages.append(f"running job may need stopping: {stopped}")
+        if cleanup:
+            messages.append(cleanup)
+        else:
+            messages.insert(0, "Startup registration removed")
+        raise ReviewError("; ".join(messages)) from stopped
     print("removed")
 
 
