@@ -284,12 +284,16 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
                       QPointer<QQuickWindow>& shown) {
     namespace platform = lapis::desktop::platform;
     using lapis::desktop::Chime;
+    auto sounds = std::make_shared<lapis::desktop::ChimeSounds>();
+    sounds->configure(keymap);
     alerts.emplace(
         workspace, keymap,
-        [](Chime chime) { lapis::desktop::play_sound(lapis::desktop::chime_wav(chime)); },
+        [&keymap, sounds](Chime chime) { sounds->play(chime, keymap, lapis::desktop::play_sound); },
         [&workspace, &shown](const lapis::desktop::SessionPreview* item) {
             return shown && shown->isActive() && workspace.focusedSession() == item;
         });
+    QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &*alerts,
+                     [sounds, &keymap] { sounds->configure(keymap); });
     notifier.emplace(
         workspace, keymap,
         [](const QString& id, const QString& title, const QString& body) {

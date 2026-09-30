@@ -1,0 +1,99 @@
+{
+  "source_revision": "e508618481ef831110b6f5f732a9b6ed3a2651d3",
+  "platform": "macOS 26.7.1 arm64",
+  "scope": "Custom chime selection, background regular-file loading, runtime diagnostics, native generated-WAV decoding. No audible playback.",
+  "source_sha256": {
+    "apps/desktop/CMakeLists.txt": "7eac181a36909f10e7531b2dd52411fcf5b48dd25cad0c8f98f015a1d2df608a",
+    "apps/desktop/src/alerts.cpp": "4c24bde58ac429390d05064ad74ba55bf9d59641be33cfe6993dc9025caed0dd",
+    "apps/desktop/src/alerts.hpp": "2ca2429e011413a159b262f18204147559d23a37b49f53e15477a7ce01d1939b",
+    "apps/desktop/src/chime_sounds.cpp": "617b03b03e53f977d834c8025401f70064c198007cd735f5eb85335ddde5ebc3",
+    "apps/desktop/src/chime_sounds.hpp": "7c7ffdb22fc1bdcf8f330af4a05f050d7ebf5d279960a6a5c4cc2f6ad52d8e90",
+    "apps/desktop/src/keymap.cpp": "357ac2210f1c3824cff97381bd5a4023d252cb12cd0b04e1d78e7861e894d97f",
+    "apps/desktop/src/keymap.hpp": "4399c050c7628b79ecd2f79fe29aa5403c981d950bafbc193be9b1f3f4ef0024",
+    "apps/desktop/src/main.cpp": "3d544360af25539297793ad645ac08e08c971605ab874554031c87e60c6da25e",
+    "apps/desktop/src/platform/chime_file.cpp": "302fd27d70797f993f59508b0eab89da33a89b8b6521a64b9dda07ccbd1bbccb",
+    "apps/desktop/src/platform/chime_file.hpp": "0feb1d772f1250ff004947b850122cfe55b4ba69ed618f7f09b9701093f584fe",
+    "apps/desktop/src/platform_preferences.hpp": "c5af9dc6069bbce25b4877f5ea0942601c47ba5844bc8ba8a646e547f39ae59a",
+    "apps/desktop/src/platform_preferences.mm": "9daf1c7674ca47f6363e2e2b6a6a4ba4e3948d68e53e641adf18649cc4278215",
+    "apps/desktop/tests/sound_decode_test.mm": "4eb1b83868c11acab3aca315a5228dd22de3af2133c3dd3d7709efa662c7d2a4",
+    "apps/desktop/tests/workspace_test.cpp": "290a9b2f634623dcf8151665d9b19efa3ec940f6f4fc1438e9831f78865d3677",
+    "docs/architecture.md": "290052b858510f5dab58acca4d8f5f669c679972463a0a69cdd02584c3d07cac",
+    "docs/config.md": "f5bae204062a0b1a3c44786897650889e86190532aaf5649f339336b7efd1ca8",
+    "docs/status.md": "c4bd57c11af1ea414bdf07184d110194a275b62a990da051815e0185299566bb"
+  },
+  "checks": [
+    {
+      "command": "cmake --build build/desktop --target lapis_desktop lapis_workspace_tests lapis_sound_decode_tests -j6",
+      "result": "pass"
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_workspace_tests --case chimes",
+      "result": "pass",
+      "coverage": [
+        "one shared production cue",
+        "file edit/deletion/create recovery",
+        "permission-only recovery",
+        "same-size edit with restored mtime",
+        "FIFO rejection without blocked open",
+        "4 MiB cap and malformed config",
+        "tilde/relative paths",
+        "explicit vs borrowed gain",
+        "decode-failure fallback",
+        "failed fallback diagnostic and recovery"
+      ]
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R '^sound-decode$' --no-tests=error --output-on-failure",
+      "result": "pass",
+      "seconds": 0.03,
+      "coverage": "NSSound decoding and duration of both actual generated WAVs; invalid bytes rejected; no play call"
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R '^(workspace|keymap)$' --no-tests=error --output-on-failure",
+      "result": "pass",
+      "tests": 2,
+      "seconds": 49.94,
+      "reuse": "Parent full-suite pass on same assembled alert/config implementation before descriptor reader and fallback-output diagnostic refinements. Final focused cases cover those refinements."
+    },
+    {
+      "command": "ASAN_OPTIONS=detect_leaks=0 build/desktop-asan/apps/desktop/lapis_workspace_tests --case chimes",
+      "result": "pass after rebuilding target",
+      "reuse": "Final descriptor/fallback behavior exercised before an explicit default initializer for an already aggregate-initialized job ticket and a comment correction."
+    },
+    {
+      "command": "build/desktop-tsan/apps/desktop/lapis_workspace_tests --case chimes",
+      "result": "pass after rebuilding target; no warnings or suppressions",
+      "reuse": "Same narrow initializer/comment delta as address/undefined sanitizer run."
+    },
+    {
+      "command": "clang-tidy -p build/desktop <affected translation units>",
+      "result": "pass",
+      "translation_units": 5,
+      "reuse": "Additional three earlier affected main/alerts/keymap TUs passed on unchanged source; final run covers loader, sound selection, native implementation and tests."
+    },
+    {
+      "command": "cppcheck --project=<filtered compile database> --library=qt -DQ_MOC_INCLUDE(x)= --enable=warning,performance,portability --error-exitcode=1 --inline-suppr --template=gcc",
+      "result": "pass",
+      "translation_units": 6
+    },
+    {
+      "command": "uv run --no-project python scripts/lapis.py quality",
+      "result": "pass"
+    },
+    {
+      "command": "clang-format --dry-run --Werror <changed C++ and Objective-C++ files>; git diff --check",
+      "result": "pass"
+    }
+  ],
+  "review": {
+    "independent": "FlashX inspected dirty assembled implementation at 556e5b9; final report inspected by coordinator. Three reported file-loading/cache/diagnostic gaps repaired with focused regressions.",
+    "original": "Kilo, Gemini, Grok and Kimi substantive reviews at 8b61143; all current inline findings dispositioned."
+  },
+  "limits": [
+    "No audible speaker output or alternate-format qualification.",
+    "Eight native cache entries and 16 MiB encoded-byte budget do not measure opaque decoded memory.",
+    "Network filesystem stalls remain background I/O; this is not network-volume latency qualification.",
+    "macOS only; Linux audio stub remains unavailable.",
+    "Vendor Qt/AppKit are not sanitizer-instrumented."
+  ]
+}

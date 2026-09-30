@@ -351,7 +351,15 @@ namespace {
 }
 } // namespace
 
+void KeyMap::setChimeDiagnostic(const QString& diagnostic) {
+    if (chime_diagnostic_ == diagnostic)
+        return;
+    chime_diagnostic_ = diagnostic;
+    emit diagnosticChanged();
+}
+
 KeyMap::KeyMap(QObject* parent) : QObject(parent) {
+    connect(this, &KeyMap::changed, this, &KeyMap::diagnosticChanged);
     apply_defaults();
     source_path_ = default_source_path();
     // Editors and agents often replace the file rather than write in place,
@@ -537,6 +545,8 @@ void KeyMap::apply_defaults() {
     alert_sound_ = true;
     finish_sound_ = true;
     alert_repeat_ = 3;
+    alert_sound_file_.clear();
+    finish_sound_file_.clear();
     notify_ = true;
     keep_awake_ = true;
     editor_.clear();
@@ -697,6 +707,33 @@ void KeyMap::load_alerts(const QJsonObject& root) {
     finish_sound_ = alerts.value(QStringLiteral("finished")).toBool(true);
     alert_repeat_ = std::clamp(alerts.value(QStringLiteral("repeat")).toInt(3), 1, 10);
     notify_ = alerts.value(QStringLiteral("notify")).toBool(true);
+    // "~/" is the home folder and a relative path starts beside lapis.json.
+    // File checks and reads belong to ChimeSounds' bounded background work.
+    const auto sound_file = [this, &alerts](const QString& key) {
+        const QJsonValue value = alerts.value(key);
+        if (value.isUndefined() || value.isNull())
+            return QString();
+        if (!value.isString()) {
+            append_diagnostic(
+                &diagnostic_,
+                QStringLiteral("alerts.%1 must be a path string; playing the built-in chime")
+                    .arg(key));
+            return QString();
+        }
+        auto path = value.toString().trimmed();
+        if (path.size() > 4096) {
+            append_diagnostic(&diagnostic_, QStringLiteral("alerts.%1 path is too long").arg(key));
+            return QString();
+        }
+        if (path.isEmpty())
+            return path;
+        if (path.startsWith(QLatin1String("~/")))
+            path = QDir::home().filePath(path.mid(2));
+        path = QDir::cleanPath(QFileInfo(source_path_).dir().absoluteFilePath(path));
+        return path;
+    };
+    alert_sound_file_ = sound_file(QStringLiteral("soundFile"));
+    finish_sound_file_ = sound_file(QStringLiteral("finishedFile"));
     keep_awake_ = root.value(QStringLiteral("keepAwake")).toBool(true);
     editor_ = root.value(QStringLiteral("editor")).toString().left(1024);
 }

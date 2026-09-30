@@ -21,6 +21,8 @@ add_library(lapis_desktop_view STATIC
     src/harness_catalog.cpp src/harness_catalog.hpp
     src/workspace_control.cpp src/workspace_control.hpp
     src/alerts.cpp src/alerts.hpp
+    src/chime_sounds.cpp src/chime_sounds.hpp
+    src/platform/chime_file.cpp src/platform/chime_file.hpp
     src/agent_search.cpp src/agent_search.hpp
     src/conversation_index.cpp src/conversation_index.hpp
     src/terminals.cpp src/terminals.hpp
@@ -184,6 +186,12 @@ if(BUILD_TESTING)
     target_compile_definitions(lapis_workspace_tests PRIVATE
         LAPIS_DESKTOP_PATH="$<TARGET_FILE:lapis_desktop>")
     add_test(NAME workspace COMMAND lapis_workspace_tests)
+    if(APPLE)
+        add_executable(lapis_sound_decode_tests tests/sound_decode_test.mm)
+        target_link_libraries(lapis_sound_decode_tests PRIVATE lapis_project_options lapis_desktop_view)
+        add_test(NAME sound-decode COMMAND lapis_sound_decode_tests)
+        set_tests_properties(sound-decode PROPERTIES TIMEOUT 20)
+    endif()
     set_tests_properties(workspace PROPERTIES TIMEOUT 120)
     add_executable(lapis_live_connection_tests tests/live_connection_test.cpp)
     target_link_libraries(lapis_live_connection_tests PRIVATE lapis_project_options lapis_desktop_view)
