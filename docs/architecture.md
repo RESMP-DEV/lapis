@@ -98,6 +98,7 @@ for ownership, shared contracts and integration checks across large changes.
 | Service language | C++20 around Ghostty's C API | C++20 consumer exercised on both target platforms; no Rust linkage required |
 | Transport | Version 6 local framing with session/epoch/generation identity, readiness, history paging, attention messages and retained workspace entries | Automatic service recovery remains deferred |
 | Codex mode | Managed ordinary TUI with a dedicated service-owned backend and observer; desktop responses qualified in Milestone 2 | Milestone 3 qualifies routing across two independent sessions; other binaries and request kinds need separate evidence |
+| Web surfaces | CEF 8037 (Chromium 154) pinned candidate for service-owned, CLI-drivable web views; September 29 design only | [Web surfaces section](#web-surfaces-september-29) owns the engine gate, wire contract, injection determinism and import consent |
 
 The [research receipt](../evidence/terminal-research.json) retains pinned upstream
 sources. Contour is the closest structural reference; WezTerm supplies service/GUI
@@ -3205,6 +3206,7 @@ planned; they are not implied by Milestone 3 passing.
 | --- | --- | --- |
 | 4: scale and responsiveness | Working multi-session desktop; verification owner | Controlled 32-session output/TUI workload, p50/p95/p99 input/switch/frame results, memory growth and idle CPU/GPU; distinguish synthetic replay from real agents |
 | 5: independent adapter and platform completion | Stable adapter capability contract; separate adapter/platform owners | Second CLI independently exercises observation/response/reconciliation; macOS and named Linux backends have actual lifecycle, native input and rendering evidence |
+| 6: service-owned web surfaces | Design only; later work following the R1/R4 service-birth and release contracts | Headless CLI loop, GUI compositing, attention gating, import consent and 32-view load evidence per the [web-surface checkpoints](#web-surface-checkpoint-ladder) |
 
 Dependency notices, a complete bundled inventory/SBOM and redistribution obligations
 must be closed before publishing binaries; the Mac app's are collected above. This release requirement is independent
@@ -3684,6 +3686,379 @@ Still open: the Claude qualification scripts pin `SUPPORTED_VERSION` 2.1.280
 and refuse newer CLIs. Their fixtures drive a GLM model through a local model
 router, so the bump waits for a run on a machine with that router.
 
+### Web surfaces (September 29)
+
+lapis supervises agents whose work is half terminal and half web, and the web
+half currently runs through external browser tooling whose pain is structural,
+not incidental: browser processes owned by MCP servers the supervisor cannot
+see, profile locks that serialize concurrent agents, orphaned browser
+processes and gigabytes of leaked temp profiles, launch timeouts under
+tool-call deadlines, and element references that invalidate on every page
+change. This section records the architecture for lapis-owned web surfaces:
+web views as first-class, service-owned objects beside terminal sessions,
+driven by agents through a local CLI, with Greasemonkey-style deterministic
+injection as the reliability core and explicit user consent for anything that
+touches credentials. The design consolidates four research streams (repo
+integration map, embeddable-engine landscape, agent control contract, prior
+art in developer tools) plus a session-import stream; sources and verification
+commands are retained in the [web research
+receipt](../evidence/web-surface-research.json). Nothing below is implemented;
+the [checkpoint ladder](#web-surface-checkpoint-ladder) defines the observable
+finish lines, and passing one checkpoint is not completion of the section.
+R1/R4 remain the first delivery slice. W0 may investigate the engine after the
+R1 service-birth contract is settled; this proposal does not authorize a web
+rollout ahead of persistent session and package qualification.
+
+Declarative registration is the useful userscript precedent: install a
+service-owned bootstrap for matching documents instead of relying on an agent
+to inject it after each load. An isolated world separates JavaScript globals;
+it does not hide shared DOM mutations or make page content trustworthy. Full
+document navigation, same-document SPA routing, renderer replacement and
+bfcache restoration have different lifecycles and need distinct W1 fixtures.
+The host observes navigation/target events and revalidates snapshots. A
+main-world hook, if a pinned engine needs one, is page-visible and advisory,
+not an isolated or unclobberable source of truth.
+
+#### Scope and product shape
+
+- A web surface is a service-owned live object with a stable lapis identity,
+  like a terminal session: it has a URL/history state, an engine lifetime, an
+  attention stream and a view lifetime independent of those. GUI restart never
+  destroys it; an explicit user close does.
+- Surfaces are headless-first. A view exists and is fully drivable with no
+  window at all (agents use the web without any GUI); the stage, tiles and
+  preview strip render a surface when the user opens one. This is the same
+  detach/reattach shape as terminal services.
+- The agent-facing surface is a CLI (`lapis web ...`) with `--json` output,
+  meaningful exit codes and no ports, processes or profiles named by the
+  caller. No MCP server is created for this capability; the transport class
+  that makes MCP browser tools flaky is exactly what is being removed.
+- Non-goals: lapis is not a general browser (no bookmarks, download manager
+  UI or browsing chrome beyond supervision needs), does not replace the user's
+  browser for interactive use, does not instrument service workers in v1, and
+  claims no Linux web-surface support until separately qualified.
+
+#### Engine decision and pinning
+
+| Engine | Verdict | Deciding factor |
+| --- | --- | --- |
+| CEF (Chromium Embedded Framework) | Selected candidate from this survey | Public offscreen paint/input APIs and in-process DevTools methods fit the proposed service host. W0 must exercise those APIs and the macOS frame path; their presence is not runtime qualification. |
+| WKWebView | Display candidate; full agent use unqualified | Public user scripts and snapshots exist. This survey did not prove the continuous-frame and headless-input contracts this service needs. Do not turn that missing evidence into a claim that macOS input integration is impossible. |
+| Qt WebEngine 6.11 | Alternative host requiring its own probe | Direct QML embedding would couple lifetime to the desktop. A separately supervised Qt engine host may avoid that coupling, but its headless, frame and input paths remain unqualified. |
+| Playwright WebKit / Servo | Not selected for this slice | Playwright WebKit is not an embedding API for an existing WKWebView; this does not exclude Playwright's Chromium CDP attach support. Servo needs site-compatibility and embedding evidence before reconsideration. |
+
+The provisional CEF candidate is recorded like a dependency proposal. W0 must
+fetch it, compute an immutable artifact digest, inspect its SDK requirements
+and exercise it before establishing the runtime pin. The distribution index
+was checked again on September 30: stable branch 8037, Chromium
+154.0.8037.58,
+`cef_binary_154.0.32+g682c378+chromium-154.0.8037.58_macosarm64_minimal.tar.bz2`,
+132,224,904 bytes (about 126.1 MiB). Its published SHA-1 is retained in the
+receipt as index evidence; no archive was downloaded or executed in this review.
+CEF's BSD license does not clear the bundled Chromium dependencies: notices,
+complete inventory/SBOM and redistribution obligations must be reviewed before
+publishing binaries. An unsuccessful CEF probe requires a reviewed alternative
+that meets the same lifetime contract; a GUI-bound fallback is not a production
+substitute.
+
+#### Process and service model
+
+A proposed sibling component `services/web/` owns the engine, with public
+headers under `include/lapis/web/`, a `lapis_web_service` binary, transport
+under `src/transport/` and tests under `tests/`. Its process birth and restart
+belong to the [persistent supervisor](#persistent-supervisor-direction-september-29),
+not a detached child of the GUI. The R1/R4 registration, disabled-state,
+update/uninstall and recovery rules apply. Reuse the session platform's
+process-group guard for descendants; that guard alone does not escape a GUI
+coalition.
+
+One service hosts one CEF process tree and many independent `view_id` resources.
+Each view requests a separate request context. Imported-credential views use
+in-memory contexts in v1; runtime artifact directories are not permission to
+persist browser credential stores. Durable profiles require a separate opt-in
+retention/encryption contract. Cookie, storage and service-worker separation
+are W4 requirements to test, not properties proven by choosing directories.
+The supervisor remains the registry's single writer; adding an entry kind requires a versioned persistence/migration decision
+before W1/W2. Existing terminal wire v6 is unchanged.
+
+An owning agent's `session_id` binds authority to a view; it is not the view's
+identity. Session exit or delegation revocation disables that actor's control
+without silently closing the view. GUI reconnect attaches to the same live view.
+Web-service restart advances the service epoch and reconciles saved view records;
+a restored page is not the same live renderer. In-memory credentials require
+explicit sign-in/import again after engine loss. Reconnect cannot replay an old
+approval. `close --view` closes only that view; stopping the shared service is a
+separate supervisor operation and must not be implied by closing one card.
+
+#### Wire contract: web protocol v1
+
+The terminal protocol stays untouched (v6 is cell-typed end to end and its
+acceptance must not be re-opened). Web surfaces get their own sibling
+transport, `web_protocol.hpp`, version 1, on a private local socket with the
+same identity/epoch handshake discipline as session endpoints:
+
+- GUI channel: view lifecycle, frame delivery (see below), cursor, navigation
+  and injection-health events, plus attention messages that reuse the
+  attention framing already defined for sessions. Backpressure mirrors the
+  snapshot/ready shape: one replaceable frame in flight per view, a slow GUI
+  never blocks the engine. Apply the [resource and pacing policy](#resource-and-pacing-policy):
+  stage views publish onto the frame clock and preview-only views consume the
+  lower 250 ms feed.
+- CLI channel: peer credentials establish the OS user, not which same-user
+  agent owns a view. Creation/listing uses a session-scoped capability;
+  existing-view commands use a revocable capability bound to session, view,
+  epoch and permitted operations. Cross-view delegation
+  requires an explicit attention decision. W1 tests a wrong capability from
+  the correct OS user and revocation/reconnect; this is not an OS sandbox
+  against arbitrary same-user native code.
+- CEF control uses its in-process `ExecuteDevToolsMethod` and
+  `AddDevToolsMessageObserver` APIs. Branch 8037 headers explicitly permit
+  them without a remote-debugging session. Keep the remote-debugging TCP port
+  disabled so a discoverable endpoint cannot bypass the broker. W0 must prove
+  the required methods/events work in the candidate runtime.
+
+#### GUI compositing path
+
+The first path to qualify is CEF offscreen rendering with
+`OnPaint` BGRA buffers and dirty-rect region uploads into a `WebSurface`
+scene-graph item beside `TerminalSurface`, with the same immutable
+render-state handoff to the render thread the terminal uses. It assumes
+nothing about GPU interop and must be exercised under the desktop's actual
+Vulkan/MoltenVK configuration. Dirty rects limit uploaded regions; they do not
+prove bounds on total browser CPU/GPU work or establish idle cost.
+
+The promotion target is shared-texture delivery: `OnAcceleratedPaint` hands
+the service an IOSurface the GUI could import directly into a Metal-backed
+texture. That path is behind a measured decision gate, not an assumption:
+Qt 6.11.2's installed `qsgtexture_platform.h` declares both Metal and Vulkan
+native-texture entry points (confirmed September 30), but declarations do not
+prove IOSurface import into the Vulkan-through-MoltenVK scene graph. The W0
+probe must establish whether a zero-copy path exists here at all, then
+compare frame times, input-to-presentation latency and CPU against the BGRA
+baseline at stage rates before any promotion. A middle option (running the
+web surface's compositing on a Metal-backed layer while the terminal stays
+Vulkan) is explicitly rejected for v1: one window, one backend, no mixed
+scene graphs.
+
+Tiles, the stage and the preview strip branch by content kind: a web surface
+tiles like a terminal, takes focus under the same keyboard-ownership policy,
+and its preview card renders throttled frames. Previews never take input and
+never resize a view; view sizing follows the stage's latest-wins semantics
+exactly as PTY resize does, with hidden views parked at their last geometry.
+
+#### The agent CLI contract
+
+`lapis web` verbs: `status`, `open --url [--match pattern...]`, `navigate
+(--url | --back | --forward | --reload)`, `snapshot [--diff]`, `click --ref`,
+`type --ref --text`, `fill --ref --value`, `fill-form --json`, `press --key`,
+`scroll --ref --dy`, `wait (--text | --ref | --idle)`, `screenshot --out`,
+`events --follow` (NDJSON), `network --since`, `download --ref --out`,
+`upload --ref --paths`, `close --view`. `eval` and raw `cdp` are reserved for a
+separately reviewed privileged mode and are unavailable in v1. Request/reply
+commands emit one JSON object; `events --follow` emits one envelope per NDJSON
+line. The envelope is `{v, view, session, epoch, seq, url, injection, status,
+refs, approval, error}`; progress goes to stderr. Network output is allowlisted
+metadata, excluding bodies and credential headers. URL echoes omit query and
+fragment values by default.
+
+Filesystem verbs are constrained by the binding's approved upload/output roots.
+Relative paths resolve from the session workspace; absolute paths are allowed
+only inside those roots. Resolve and open through anchored directory/file
+descriptors, reject symlink escapes and non-regular inputs, bound counts/bytes,
+and require explicit overwrite permission. An upload decision binds the opened
+source, destination origin and operation; a download's suggested filename cannot
+choose an arbitrary host path. W1/W3 fixtures cover traversal, symlink replacement,
+existing output files and changed inputs between approval and execution.
+
+Exit codes: 0 ok; 2 usage; 3 unknown view/ref; 4 stale ref (payload carries
+what changed and a refresh hint); 5 timeout; 6 approval pending or declined
+(distinguished in the payload); 7 view busy (user owns input); 8 injection
+degraded; 130 interrupted.
+
+Refs are service-revalidated hints scoped to a view, service epoch and navigation
+generation, including soft SPA route changes. They carry a content anchor (role,
+accessible name and parent-chain context), a semantic target fingerprint and a
+snapshot hash. The hash records provenance, not permission or a required match
+to every later whole-page snapshot. Within the same navigation generation a
+unique target with unchanged semantics can execute with `moved: true` after a
+layout change. A changed origin/generation, changed target semantics, ambiguity
+or absence returns exit 4 and a refresh hint.
+
+Approval-bound actions additionally freeze the resolved target and normalized
+arguments at request time, then validate them when consuming the one-shot
+decision. Re-resolving a moved ref never transfers an old approval to a new
+document or target. Snapshots merge compact accessibility/DOM observations;
+screenshots remain a separate verification channel. If that representation
+cannot address a page, return explicit unsupported/degraded state with a refresh
+or manual-interaction path. V1 does not escape into unrestricted scripting.
+
+The event stream (`web.view.v1.*`) covers epoch started/ended, navigation
+started/committed/settled, injection health transitions, snapshot ready,
+user input observed, attention requested (login, captcha, paywall,
+download-requested, permission-prompt, beforeunload, submit-needs-approval),
+approval requested/resolved, and reconciliation completed. Events carry
+`(view, session, epoch, seq)` with the same gap-detection and
+stale-response-gating rules as attention events.
+
+#### Injection and determinism
+
+V1 injects only the service-owned bootstrap. Arbitrary user/agent userscripts
+need a separate capability and side-effect contract. Register the bootstrap
+through the engine's DevTools API in each relevant target/frame and named
+isolated world, and verify acknowledgement. Target creation, renderer replacement
+and reconnect trigger registration reconciliation; a view-level registration
+alone is not proof of out-of-process iframe coverage.
+
+lapis owns URL matching and idempotence. Use host navigation/target events and
+snapshot differences for SPA transitions. Isolated-world replacement of
+`history.pushState` does not intercept the page's main-world function. Any
+necessary main-world hook is observable and tamperable, so it remains advisory.
+W1 covers soft routes, crossorigin/OOPIF documents, `about:blank`/`srcdoc`,
+renderer replacement and bfcache restores. Heartbeats distinguish verified
+bootstrap readiness from missing or suspended observation. Expected hidden-page
+throttling is not proof of failure, and silence never proves health.
+
+#### Input, attention and approval
+
+Agent input goes through trusted engine input synthesis, never synthetic DOM
+events, and is gated by the keyboard-ownership policy translated to web: if
+the user is interacting with a visible view (typing, IME composition,
+selection, drag, held keys), agent writes are refused with exit 7 until the
+view is quiet, and no agent action ever steals OS focus or moves lapis
+focus. Surfacing a view never approves anything.
+
+Risk classes never execute on the action path: credential/password fields,
+form submission, downloads, file uploads, payment indicators, `beforeunload`
+dialogs and clipboard writes return exit 6 with an approval request that
+enters the attention queue as an adapter source (`adapter_id` `web`, already
+supported by the attention contract), carries a decision token, and retires
+exactly that request on an explicit user decision. Decisions bind the view,
+document/connection epoch, resolved target and action arguments, expire on
+invalidation, and cannot be replayed. Unrestricted eval/CDP could bypass this
+policy and read credentials, so neither is part of v1. Page classification is
+advisory evidence about an action, not a guarantee of arbitrary site semantics;
+W3 must specify conservative handling of unknown actions before enabling them.
+
+All page content is untrusted input. Page text can contain instructions
+(prompt injection); it can raise attention requests through classification,
+never trigger actions. Domain allowlists for agent-initiated navigation are a
+per-session capability with the documented caveat that JavaScript redirects
+can still leave the list; allowlist presence is never advertised as a
+containment boundary.
+
+#### Session import: cookies and browser profiles
+
+The user's problem this solves: "use my logged-in session in this view"
+without retyping credentials into an agent-visible surface. The boundary is
+the same one the [secret-prompts
+section](#secret-prompts-keychain-fill-and-touch-id) draws for terminals:
+lapis brokers credential transfer without adding a credential-read API for
+agents. The managed-channel invariants are:
+
+- Importer/control APIs expose allowlisted metadata, never cookie/storage
+  values, derived keys, credential headers or sensitive field values. Values
+  necessarily reach the destination engine's appropriate browser/network/renderer
+  processes. Raw eval/CDP and arbitrary userscripts are unavailable in v1.
+- This is not a guarantee that an arbitrary authenticated page cannot display
+  or transform a secret in its DOM, network traffic or pixels. Snapshots and
+  screenshots remain untrusted page observations. W4 tests the specified
+  control/import channels with known fixture secrets and documents residual
+  page-content limits instead of claiming universal output redaction.
+- Import starts with an explicit user decision naming the source profile,
+  selected origins and destination view, before opening protected stores or
+  decrypting values. Use the card or Commands review surface; no current
+  Requests button is implied. An OS Keychain prompt is separate consent, not
+  a substitute for this choice. There is no silent scheduled re-import.
+- Request contexts and storage roots are intended to isolate views. W4 must
+  verify cookies, localStorage and worker/cache boundaries, including revocation
+  and destruction, before claiming isolation.
+
+Import sources, in adoption order: a Playwright `storageState` JSON file (the
+interchange format, no decryption, the CI and test path); Chromium-family
+browsers on macOS; Firefox (`cookies.sqlite`, plaintext, WAL siblings copied);
+Safari last (the `cook` binary format under the app container, readable only
+with Full Disk Access). The proposal is to implement Chromium decryption in-repo after verifying the
+source-version schema, rather than relying on an unqualified importer. The
+surveyed format uses `v10` AES-128-CBC under a
+PBKDF2-HMAC-SHA1 key from the browser's `"<Brand> Safe Storage"` Keychain
+item, and since the August 2024 schema change the decrypted plaintext is
+prefixed with a 32-byte SHA256 of the host key that must be verified and
+stripped, which is exactly where unmaintained importers corrupt modern
+profiles. Exporting from the user's running Chrome over CDP is not a source:
+Chrome 136 ignores debug ports on the default profile precisely because they
+were the top cookie-exfiltration vector, so the honest flows are lapis's
+importer, a dedicated sign-in browser with its own data directory, or a
+user-provided storageState file.
+
+Injection ordering is load-bearing: cookies land via `Storage.setCookies`
+scoped to the destination view's browser context before the first navigation
+is issued, and localStorage is seeded through the same document-start
+registration hook the bootstrap uses (CDP has no offline localStorage write;
+the page-facing `DOMStorage` domain only reaches live pages). Whole-profile
+directory copying is rejected with source-verified reasons: Chromium migrates
+or razes profile data it considers newer than the engine, and live
+LevelDB/SQLite copies can tear; a view only ever receives the decrypted
+cookie subset plus explicit localStorage entries, and CHIPS-partitioned rows
+are skipped by default.
+
+Import outcomes are reported honestly. A cookie database is not a complete
+snapshot of a browser's session: memory-only cookies, session-restore stores,
+settings and source version can change what is recoverable. Import may succeed
+and still leave the destination logged out; W4 must measure each supported
+source rather than promise complete transfer. Sites that bind cookies to TLS fingerprints or user agents
+can re-challenge after transfer; that is surfaced as a view state, and the
+fix is the user completing the challenge once inside the view, never a
+silent retry. The source-by-source brief (schemas, decryption parameters,
+live-read strategies, CDP field mappings, and the empirical probes including
+the Keychain ACL prompt behavior under lapis's own code signing) is retained
+in the [research receipt](../evidence/web-surface-research.json); W4 runs
+those probes on this machine before implementation commits to them.
+
+#### Resource and pacing policy
+
+One engine tree hosts all views; per-view cost is the measurement target, with
+the 32-view controlled load of Milestone 4's shape extended to web surfaces in
+W5 before any scale claim. Views with no frame consumers are told `WasHidden`; retained network/state
+behavior and actual idle cost remain measurements. A preview-only consumer
+requests the lower frame cadence instead, while a staged view follows the
+presentation clock. Do not fully hide a view and simultaneously promise live
+preview frames from it. Bounded non-credential artifacts live under `runtime/web/<view>/`; W4 must
+prove that the in-memory profile setting does not create persistent credential
+stores. Per-view/global budgets evict cold artifacts before interactive state,
+and downloads remain per-view operations behind approval. Frame publishing is rate-limited publish-to-publish everywhere:
+intervals measured from the last processed update, the deadline presenting the
+newest state after only the remaining wait, and presentation riding the frame
+clock.
+
+#### Web-surface checkpoint ladder
+
+| Checkpoint | Content | Gate |
+| --- | --- | --- |
+| W0: engine probe | R1 service-birth contract agreed; candidate CEF build fetched, hashed and qualified; offscreen smoke on this machine (headless `OnPaint` to PNG); IOSurface-to-scene-graph import probe under the desktop's Vulkan/MoltenVK configuration; BGRA dirty-rect baseline with CPU/frame-cost numbers | Receipt `evidence/web-engine-probe.json`: frames produced, sizes, measured costs, interop verdict; a failed interop probe keeps BGRA as the qualified path with the decision recorded |
+| W1: headless slice | `lapis_web_service` with one view; CLI `open/navigate/snapshot/click/wait/status`; bootstrap injection with heartbeat; JSON envelope and exit codes; `scripts/check_web_cli.py` drives the real service over wire v1 like `check_cli_launch.py` drives sessions | A scripted agent flow against fixture local pages (including SPA, OOPIF/renderer replacement and bfcache cases under `tools/qa/`) passes; injection-health oracle catches a deliberately broken bootstrap |
+| W2: GUI compositing | `WebSurface` item; stage tile and preview card; BGRA path; input routing and focus gating; ui-preview fixture integration | Typing, IME and selection work in a live web view under the keyboard-ownership tests; previews never take input or resize a view; the existing terminal latency probes do not regress |
+| W3: attention and refs | `adapter_id` `web` into the attention system; approval classes with decision tokens; ref re-resolution with stale diffs; reconciliation after service restart | A login-prompt fixture raises attention; a risky action blocks until an explicit decision; a killed service reconciles on reconnect; `scripts/check_web_attention.py` passes |
+| W4: import and isolation | storageState plus one Chromium-family source; consent flow with Keychain prompt; per-view isolation; credential redaction | User-consented import logs into a fixture site; fixture credentials stay out of importer/control output and emitted artifacts; raw eval/CDP remain unavailable; storage and worker isolation tests pass across views, with page-content limits recorded |
+| W5: load and qualification | 32 concurrent views under controlled load; memory, latency and frame receipts; dependency notices, inventory/SBOM and pin record; the [status table](status.md) | p50/p95/p99 action and frame results, memory growth and idle cost recorded; redistribution notices closed before any binary ships |
+
+The ladder is ordered and non-collapsing: W2 does not start the GUI before W1
+passes headless, and no checkpoint's passing claim extends to the next.
+
+#### Open questions and watch items
+
+- CEF maintenance and security updates: verify primary release/support evidence
+  at each pin decision; unsupported governance rumors are not release gates.
+- CDP churn: the Storage/DOMStorage domain transition must be re-pinned
+  against the pinned CEF at W4, not read from current docs.
+- macOS releases: the Tauri record shows macOS point releases breaking
+  webview assumptions overnight (macOS 26 blocked cross-scheme subresource
+  loads); the W-checkpoints re-run their probes on OS updates like every
+  other platform boundary.
+- Transferability of imported sessions (fingerprint binding) is an empirical
+  rate to measure in W4, not a guarantee to document.
+- Qt WebEngine and WKWebView remain alternatives needing their own service,
+  frame and input qualification. Neither silently substitutes for a failed CEF gate.
+
 ## Contracts to preserve
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal
@@ -3737,6 +4112,16 @@ hidden panels while retaining their warm state and consuming output; throttle
 previews and let static scenes sleep. Scaled previews do not
 resize PTYs. Preserve shaping, wide cells, IME, clipboard, selection and
 accessibility. Live objects do not guarantee physical RAM residency.
+
+**Web surfaces and credentials.** A web view has its own stable resource ID;
+agent-session bindings authorize control rather than define its lifetime. The
+R1 supervisor launches the shared engine service outside the GUI coalition.
+Refs are re-resolved by that service, and approval tokens bind the current
+document, target and action. Imported credentials require user consent before
+store access and remain unavailable through managed importer/control APIs.
+V1 omits unrestricted eval/CDP and arbitrary userscripts. Page content and
+rendered pixels are untrusted observations, not universally secret-free data.
+Per-view storage isolation remains a qualification gate.
 
 The later 32-session experiment records workload/output rates, display rate,
 p50/p95/p99 input/switch latency and frame times, memory growth and idle CPU/GPU
