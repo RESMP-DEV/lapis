@@ -5,6 +5,8 @@ Installed under harness names (kimi, grok, opencode, ...) on a QA-only PATH.
 Commands typed at its prompt exercise terminal and lifecycle behavior:
 
   slow    print progress for 20 seconds, then return to the prompt
+  busy    print a numbered line every 1.5 seconds until ^C interrupts it,
+          then report how far it got and return to the prompt
   flood   print 20000 long lines as fast as possible
   count   print 120 numbered lines (scrollback for phone history tests)
   size ID report the actual PTY grid with a caller-provided observation ID
@@ -96,6 +98,29 @@ def run(command, line):
         for step in range(20):
             say(f"working {step + 1}/20")
             time.sleep(1)
+    elif command == "busy":
+        # The ^C workload: the PTY's line discipline turns the interrupt
+        # byte into SIGINT for this process, so the handler below is the
+        # thing a command bar's ^C chip must reach. Counting and reporting
+        # keeps the assertion observable instead of assumed. One line per
+        # 1.5 s, not faster: uiautomator cannot dump a window that redraws
+        # every frame, so a denser cadence blinds the phone-side checks to
+        # the very output they must observe.
+        printed = 0
+
+        def interrupted(number, frame):
+            raise KeyboardInterrupt
+
+        previous = signal.signal(signal.SIGINT, interrupted)
+        try:
+            while True:
+                printed += 1
+                say(f"busy {printed}")
+                time.sleep(1.5)
+        except KeyboardInterrupt:
+            say(f"busy interrupted after {printed} lines")
+        finally:
+            signal.signal(signal.SIGINT, previous)
     elif command == "flood":
         for number in range(20000):
             write(f"flood {number:05d} " + "x" * 90 + "\n")

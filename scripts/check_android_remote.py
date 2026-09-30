@@ -20,8 +20,9 @@ client (lapis_remote.WireSession) attached the way the desktop is, which
 must see the phone's input, answer it, and never be closed by it.
 
 Checks: list, open, sync, draft (type without Enter), scrollback, resize
-(`wm size`), wheel (drag reaches a full-screen program), background (home
-and return), crash scan. Screenshots land
+(`wm size`), wheel (drag reaches a full-screen program), interrupt (^C chip
+stops a running program), background (home and return), snippets (add, run,
+survive a process restart), crash scan. Screenshots land
 under build/android/remote-screens/<stamp>/ and a JSON receipt under
 build/android/.
 
@@ -251,6 +252,38 @@ def send_line(device, text):
     device.tap_node(id="send")
 
 
+def screen_width(device):
+    """The panel width an override (a resize check) or the physical panel gives."""
+    lines = device.shell("wm size").splitlines()
+    line = next((part for part in lines if part.startswith("Override")), None) or next(
+        (part for part in lines if part.startswith("Physical")), None
+    )
+    if line is None:
+        raise android_ctl.DeviceError("wm size reported no panel size")
+    return int(line.split(":")[1].strip().split("x")[0])
+
+
+def reveal(device, target_id, max_swipes=8):
+    """Swipe the command bar's scrolled strip left until the target chip is
+    actually on screen. Rows in the compact bar compose every chip, so the
+    dump reports off-screen bounds; tapping those coordinates taps nothing."""
+    width = screen_width(device)
+    for _ in range(max_swipes):
+        node = device.find(id=target_id)
+        if node is not None:
+            left, _, right, _ = node["bounds"]
+            if left >= 0 and right <= width:
+                return True
+        bar = device.find(id="command-bar")
+        if bar is None:
+            return False
+        _, top, _, bottom = bar["bounds"]
+        row_y = top + (bottom - top) // 4
+        device.swipe(width - 80, row_y, 80, row_y, 250)
+        time.sleep(0.4)
+    return False
+
+
 def fixture(run):
     """The registry, services, and loopback gateway; returns (agents, gateway
     process) with the listing already answering."""
@@ -459,6 +492,15 @@ def checks(device, mac, screens):
                 break
         if not found:
             return "scrolling never reached the archived marker"
+        # The drag that scrolled older surrendered the terminal's
+        # follow-bottom anchor (correct app behavior: output must not yank
+        # the view out from under the reader). Scroll back down to the live
+        # bottom so later checks see new output — the harness's scroll is a
+        # drag too, so landing on the last row restores following.
+        for _ in range(16):
+            device.scroll("newer", 4)
+            if "count 120" in device.terminal_text():
+                break
         shot("05-scrollback")
         return None
 
@@ -519,6 +561,25 @@ def checks(device, mac, screens):
         shot("08-wheel-delivered")
         return None
 
+    def check_interrupt():
+        # The milestone C finish line: ^C through the bar's chord chip must
+        # interrupt a running program (the PTY turns the byte into SIGINT),
+        # not just be assumed to. The busy loop reports how far it got, and
+        # the agent must still answer afterwards.
+        send_line(device, "busy")
+        if not wait_terminal(device, "busy 3", timeout=20):
+            return "the busy program never started"
+        if not reveal(device, "key-ctrl-c"):
+            return "the ^C chip never scrolled into view"
+        device.tap_node(id="key-ctrl-c")
+        if not wait_terminal(device, "busy interrupted after", timeout=15):
+            return "the ^C chord never interrupted the busy program"
+        send_line(device, "after interrupt")
+        if not wait_terminal(device, "echo: after interrupt"):
+            return "the agent did not answer after the interrupt"
+        shot("09-interrupt")
+        return None
+
     def check_background():
         device.key("HOME")
         time.sleep(1.0)
@@ -530,7 +591,45 @@ def checks(device, mac, screens):
             return "typing after returning from the background failed"
         if mac.closed is not None:
             return f"backgrounding closed the Mac client: {mac.closed}"
-        shot("09-background")
+        shot("10-background")
+        return None
+
+    def check_snippets():
+        # Snippet lifecycle: added through the editor, sent as paste+Enter
+        # (the fake agent echoes the line back), and still there after
+        # process death (DataStore) — no gateway sync involved anywhere.
+        device.tap_node(id="snippets-add")
+        if device.wait(id="snippet-new", timeout=10) is None:
+            return "the snippet editor never opened"
+        device.tap_node(id="snippet-new")
+        device.type_text("git status")
+        device.tap_node(id="snippet-add")
+        device.tap_node(id="snippet-done")
+        chip = device.wait(id="snippet-0", timeout=10)
+        if chip is None:
+            return "the added snippet chip never appeared"
+        if chip.get("text") != "git status":
+            return f"the chip says {chip.get('text')!r}, not the saved snippet"
+        shot("11-snippet-added")
+        device.tap_node(id="snippet-0")
+        if not wait_terminal(device, "echo: git status"):
+            return "tapping the snippet never ran it"
+        # Process death must not lose the list: force-stop and a plain
+        # relaunch (no resetCache) restores it from DataStore.
+        device.stop()
+        time.sleep(1.0)
+        device.launch()
+        if device.wait(text="echo agent", timeout=25) is None:
+            return "the workspace never came back after the restart"
+        device.tap_node(text="echo agent")
+        if device.wait(id="terminal", timeout=15) is None:
+            return "the stage did not reopen after the restart"
+        chip = device.wait(id="snippet-0", timeout=10)
+        if chip is None:
+            return "the snippet did not survive the restart"
+        if chip.get("text") != "git status":
+            return "the restored chip has the wrong text"
+        shot("12-snippet-restored")
         return None
 
     def check_crash():
@@ -547,7 +646,9 @@ def checks(device, mac, screens):
         "scrollback": check_scrollback,
         "resize": check_resize,
         "wheel": check_wheel,
+        "interrupt": check_interrupt,
         "background": check_background,
+        "snippets": check_snippets,
         "crash": check_crash,
     }
 
@@ -555,6 +656,11 @@ def checks(device, mac, screens):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--only", action="append", help="check name; repeat several")
+    parser.add_argument(
+        "--serial",
+        help="adb serial to drive; default is the first attached device, so an "
+        "unexpected emulator can steal the run — name the device explicitly",
+    )
     parser.add_argument(
         "--no-install", action="store_true", help="reuse the installed APK"
     )
@@ -589,7 +695,11 @@ def main():
     if not attached:
         print("no adb device attached; connect one and rerun", file=sys.stderr)
         return 1
-    device = android_ctl.Device(serial=attached[0])
+    serial = arguments.serial
+    if serial is not None and serial not in attached:
+        print(f"--serial {serial} is not an attached device", file=sys.stderr)
+        return 1
+    device = android_ctl.Device(serial=serial or attached[0])
 
     if not arguments.no_install or not device.state().get("app_version"):
         if not install_apk(device, allow_build=not arguments.no_install):
