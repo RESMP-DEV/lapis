@@ -234,7 +234,7 @@ def run_process(
                     elif len(output[key.data]) + len(chunk) > max_output:
                         raise ReviewError(
                             f"{command[0]} {key.data} exceeds {max_output} bytes; "
-                            "reduce the review input or diagnostic output"
+                            "the diff or helper diagnostics are too large for automatic review"
                         )
                     else:
                         output[key.data].extend(chunk)
@@ -903,7 +903,13 @@ def install(repository, publish):
 
 
 def uninstall():
-    run(["launchctl", "bootout", f"gui/{os.getuid()}/{LABEL}"], check=False)
+    try:
+        run(["launchctl", "bootout", f"gui/{os.getuid()}/{LABEL}"], check=False)
+    except ReviewError as error:
+        PLIST.unlink(missing_ok=True)
+        raise ReviewError(
+            f"Startup registration removed, but the running job may need stopping: {error}"
+        ) from error
     PLIST.unlink(missing_ok=True)
     print("removed")
 
