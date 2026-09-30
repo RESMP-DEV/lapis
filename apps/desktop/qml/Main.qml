@@ -272,6 +272,11 @@ ApplicationWindow {
         searchDialog.open()
     }
     readonly property bool conversationsAvailable: typeof conversations !== "undefined" && conversations !== null
+    readonly property bool planSignInAvailable: typeof planSignIn !== "undefined" && planSignIn !== null
+    function openPlanSignIn() {
+        if (!interactionArmed || dialogsVisible() || !planSignInAvailable) return
+        planSignInDialog.open()
+    }
     function openResumeDialog() {
         if (!interactionArmed || dialogsVisible() || !conversationsAvailable) return
         resumeDialog.open()
@@ -456,6 +461,7 @@ ApplicationWindow {
         // Claude Code and Codex plans (accounts in lapis.json): which one this
         // agent runs on, and a move to the one with the most room.
         const plan = hasAgent ? workspace.agentAccount(agent.sessionId) : ""
+        add("addPlan", qsTr("Add a Claude Code plan (sign in any account)"), "", planSignInAvailable, qsTr("Not available here"), () => window.openPlanSignIn())
         add("switchPlan", plan.length > 0 ? qsTr("Switch plan (on %1)").arg(plan) : qsTr("Switch plan"), "", hasAgent && workspace.canSwitchAccount(agent.sessionId), qsTr("No other Claude Code or Codex plan has room for this agent"), () => workspace.switchAccount(agent.sessionId))
         // A running CLI keeps the version it started with.
         add("updateTab", qsTr("Update this tab's CLI and reload it"), "", hasAgent && agent.live && workspace.canUpdateAgent(agent.sessionId), hasAgent ? qsTr("lapis cannot update this agent's CLI") : needAgent, () => workspace.updateAndReloadAgent(agent.sessionId))
@@ -585,7 +591,7 @@ ApplicationWindow {
     }
 
     function dialogsVisible() {
-        return commandsDialog.visible || searchDialog.visible || resumeDialog.visible || terminalPicker.visible || usageDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
+        return commandsDialog.visible || searchDialog.visible || resumeDialog.visible || planSignInDialog.visible || terminalPicker.visible || usageDialog.visible || settingsDialog.visible || attentionDialog.visible || agentDialog.visible
                 || closeAgentDialog.visible || categoryDialog.visible || renameAgentDialog.visible
     }
 
@@ -2104,6 +2110,126 @@ ApplicationWindow {
                         selected: true
                         onClicked: window.commitNewAgent()
                     }
+                }
+            }
+        }
+    }
+
+    // Commands > "Add a Claude Code plan": Claude Code's sign-in link, opened in
+    // the default browser, copied and kept here until an account signs in with
+    // it, and that account's email (Return records it). The plan then goes to
+    // its configured machines. Escape ends a sign-in that has not finished.
+    StageDialog {
+        id: planSignInDialog
+        objectName: "planSignInDialog"
+        width: Math.min(620, Math.max(288, window.width - 28))
+        height: Math.min(window.height - 32, signInForm.implicitHeight + topPadding + bottomPadding)
+        readonly property var engine: window.planSignInAvailable ? planSignIn : null
+        readonly property string state: engine ? engine.state : "idle"
+        readonly property bool working: state === "starting" || state === "waiting" || state === "signedIn"
+        onOpened: {
+            signInEmail.text = ""
+            if (engine)
+                engine.start()
+            Qt.callLater(function() { signInEmail.forceActiveFocus() })
+        }
+        onClosed: {
+            if (engine && working)
+                engine.cancel()
+            preview.deferTerminalFocus()
+        }
+
+        contentItem: ColumnLayout {
+            id: signInForm
+            spacing: 12
+            PlainLabel {
+                Layout.fillWidth: true
+                text: qsTr("Add a Claude Code plan")
+                color: window.textColor
+                font.pixelSize: window.chromeFont + 1
+                font.bold: true
+            }
+            PlainLabel {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                color: planSignInDialog.state === "failed" ? window.faultColor : window.mutedTextColor
+                text: {
+                    const engine = planSignInDialog.engine
+                    switch (planSignInDialog.state) {
+                    case "starting": return qsTr("Starting Claude Code's sign-in…")
+                    case "waiting": return qsTr("Opened in your browser and copied. Sign in with the account to add, then type its email here and press Return. The link stays here for another try.")
+                    case "signedIn": return engine.message.length > 0 ? engine.message : qsTr("Signed in. Type the account's email and press Return.")
+                    case "done": return engine.message + (engine.spreading ? "" : " " + qsTr("Claude Code agents there can use it when their plans are full."))
+                    case "failed": return qsTr("Sign-in failed: %1").arg(engine.message)
+                    default: return ""
+                    }
+                }
+            }
+            TextArea {
+                objectName: "planSignInLink"
+                Layout.fillWidth: true
+                visible: planSignInDialog.engine !== null && planSignInDialog.engine.link.length > 0
+                         && planSignInDialog.state !== "done"
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.WrapAnywhere
+                textFormat: TextEdit.PlainText
+                text: planSignInDialog.engine ? planSignInDialog.engine.link : ""
+                color: window.mutedTextColor
+                font.family: window.monoFamily
+                font.pixelSize: window.readoutFont
+                background: Rectangle {
+                    color: window.backgroundColor
+                    radius: window.chromeRadius
+                    border.color: window.borderColor
+                }
+            }
+            TextField {
+                id: signInEmail
+                objectName: "planSignInEmail"
+                Layout.fillWidth: true
+                visible: planSignInDialog.state !== "done" && planSignInDialog.state !== "failed"
+                placeholderText: qsTr("Email of the account you sign in with")
+                color: window.textColor
+                placeholderTextColor: window.mutedTextColor
+                selectByMouse: true
+                maximumLength: 254
+                font.pixelSize: window.chromeFont
+                inputMethodHints: Qt.ImhEmailCharactersOnly | Qt.ImhNoAutoUppercase
+                background: Rectangle {
+                    color: window.backgroundColor
+                    radius: window.chromeRadius
+                    border.color: signInEmail.activeFocus ? window.focusedBorderColor : window.borderColor
+                }
+                onAccepted: if (planSignInDialog.engine) planSignInDialog.engine.setEmail(text)
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: 8
+                CommandButton {
+                    objectName: "planSignInOpen"
+                    visible: planSignInDialog.working
+                    enabled: planSignInDialog.engine !== null && planSignInDialog.engine.link.length > 0
+                    text: qsTr("Open again")
+                    onClicked: planSignInDialog.engine.openLink()
+                }
+                CommandButton {
+                    objectName: "planSignInCopy"
+                    visible: planSignInDialog.working
+                    enabled: planSignInDialog.engine !== null && planSignInDialog.engine.link.length > 0
+                    text: qsTr("Copy link")
+                    onClicked: planSignInDialog.engine.copyLink()
+                }
+                CommandButton {
+                    visible: planSignInDialog.state === "failed"
+                    text: qsTr("Try again")
+                    onClicked: planSignInDialog.engine.start()
+                }
+                CommandButton {
+                    objectName: "planSignInClose"
+                    text: planSignInDialog.working ? qsTr("Cancel") : qsTr("Close")
+                    hint: "Esc"
+                    onClicked: planSignInDialog.close()
                 }
             }
         }

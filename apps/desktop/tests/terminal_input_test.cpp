@@ -1040,7 +1040,8 @@ void long_pastes() {
     require(peer.read().kind == wire::Kind::paste_request, "Pending paste request missing");
     peer.socket->abort();
     until([&] { return !refusals.isEmpty(); });
-    require(refusals.back().contains(QStringLiteral("unknown")) && !f.document.inputReady(),
+    require(!refusals.empty() && refusals.back().contains(QStringLiteral("unknown")) &&
+                !f.document.inputReady(),
             "Lost paste receipt must report uncertainty without replay");
 }
 
@@ -1096,6 +1097,8 @@ void selection_and_scroll() {
                           Qt::NoModifier);
         QCoreApplication::sendEvent(&surface, &event);
     };
+    // Selecting copies, so the system clipboard is restored afterwards.
+    const lapis::desktop::test::ClipboardBackup clipboard;
     // A cropped preview must map visible coordinates to the same terminal row
     // as the renderer, even when the minimum scale prevents fitting all rows.
     const auto ordinary_size = surface.size();
@@ -1147,11 +1150,24 @@ void selection_and_scroll() {
     peer.send(wire::Kind::snapshot,
               wire::encode_snapshot_message({{f.identity, 1}, 4, f.terminal.snapshot()}));
     settle();
+    QGuiApplication::clipboard()->setText(QStringLiteral("before"));
     mouse(QEvent::MouseButtonPress, surface.cellRect(0, 0).center(), Qt::LeftButton);
+    mouse(QEvent::MouseMove, surface.cellRect(2, 0).center(), Qt::NoButton);
+    const auto during_drag = surface.cellRect(2, 0).center();
+    QMouseEvent other_release(QEvent::MouseButtonRelease, during_drag,
+                              surface.mapToScene(during_drag), surface.mapToGlobal(during_drag),
+                              Qt::RightButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&surface, &other_release);
+    require(QGuiApplication::clipboard()->text() == QStringLiteral("before"),
+            "Another button release copied a left-button drag prematurely");
     mouse(QEvent::MouseMove, surface.cellRect(3, 0).center(), Qt::NoButton);
+    require(QGuiApplication::clipboard()->text() == QStringLiteral("before"),
+            "A selection was copied before the drag ended");
     mouse(QEvent::MouseButtonRelease, surface.cellRect(3, 0).center(), Qt::LeftButton);
     require(surface.selectedText() == QStringLiteral("scre"), "Drag did not select the row");
-    const lapis::desktop::test::ClipboardBackup clipboard;
+    require(QGuiApplication::clipboard()->text() == QStringLiteral("scre"),
+            "Releasing a drag did not copy its selection");
+    QGuiApplication::clipboard()->setText(QStringLiteral("before"));
 #ifdef Q_OS_MACOS
     const Qt::KeyboardModifiers copy_modifiers = Qt::MetaModifier;
 #else
