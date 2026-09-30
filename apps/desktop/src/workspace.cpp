@@ -163,21 +163,12 @@ QStringList modeArguments(const QString& harness, const QString& mode) {
 }
 // The options with which a CLI's own arguments choose its approval mode, as
 // `harnessArguments` might spell them (`--permission-mode=plan` counts too).
-constexpr std::array<std::pair<const char*, const char*>, 14> mode_options{{
-    {"claude", "--permission-mode"},
+// Spellings accepted by the CLIs in addition to the mode_flags output.
+constexpr std::array<std::pair<const char*, const char*>, 4> mode_aliases{{
     {"claude", "--dangerously-skip-permissions"},
-    {"codex", "-a"},
-    {"codex", "--ask-for-approval"},
-    {"codex", "--dangerously-bypass-approvals-and-sandbox"},
-    {"codex", "--full-auto"},
-    {"grok", "--permission-mode"},
     {"grok", "--dangerously-skip-permissions"},
-    {"kimi", "--yolo"},
-    {"kimi", "--auto"},
-    {"omp", "--approval-mode"},
-    {"opencode", "--auto"},
-    {"agy", "--mode"},
-    {"agy", "--dangerously-skip-permissions"},
+    {"codex", "--ask-for-approval"},
+    {"codex", "--full-auto"},
 }};
 } // namespace
 
@@ -187,18 +178,26 @@ QString launch_mode(const AgentRequest& request, const QStringList& configured,
     if (!request.mode.isEmpty())
         return request.mode;
     for (const auto& argument : configured) {
+        if (argument == QLatin1String("--"))
+            break;
         const auto option = argument.section(QLatin1Char('='), 0, 0);
-        for (const auto& [harness, name] : mode_options)
+        for (const auto& entry : mode_flags)
+            if (request.harness == QLatin1String(entry.harness) && entry.flags.front() &&
+                option == QString::fromLatin1(entry.flags.front()).section(QLatin1Char('='), 0, 0))
+                return {};
+        for (const auto& [harness, name] : mode_aliases)
             if (request.harness == QLatin1String(harness) && option == QLatin1String(name))
                 return {};
     }
-    // As the forms choose: the preferred mode, else the nearest the CLI
-    // offers, less access first.
+    // Modeless requests may use a supported lower mode, but must not gain
+    // more access than the configured preference just because a mode is absent.
     constexpr std::array order{"edits", "auto", "full"};
     const QString preferred = fallback.isEmpty() ? QStringLiteral("full") : fallback;
     const auto at = static_cast<int>(
         std::find(order.begin(), order.end(), preferred.toStdString()) - order.begin());
-    for (const int index : {at, at - 1, at - 2, at + 1, at + 2})
+    if (at == static_cast<int>(order.size()))
+        return {};
+    for (const int index : {at, at - 1, at - 2})
         if (index >= 0 && index < static_cast<int>(order.size()) &&
             !modeArguments(request.harness, QLatin1String(order[static_cast<std::size_t>(index)]))
                  .isEmpty())
@@ -773,9 +772,8 @@ void Workspace::watch(SessionPreview* item) {
             });
 }
 int Workspace::attentionAgents() const {
-    return static_cast<int>(std::count_if(sessions_.begin(), sessions_.end(), [](const auto& item) {
-        return item->unseen();
-    }));
+    return static_cast<int>(std::count_if(sessions_.begin(), sessions_.end(),
+                                          [](const auto& item) { return item->unseen(); }));
 }
 QVariantList Workspace::categories() const {
     QVariantList result;
@@ -1398,11 +1396,16 @@ std::optional<session::LaunchSpec> Workspace::agentLaunch(const AgentRequest& re
     // conversation to resume.
     const auto approval =
         launch_mode(request, harness_arguments_.value(request.harness), agent_defaults_.mode);
-    auto arguments = harness->defaultArguments() + harness_arguments_.value(request.harness) +
-                     harness->modelArguments(request.model) +
-                     modeArguments(request.harness, approval);
+    auto arguments = harness->defaultArguments() + harness_arguments_.value(request.harness);
+    auto generated =
+        harness->modelArguments(request.model) + modeArguments(request.harness, approval);
     if (!request.resume.isEmpty())
-        arguments += QStringList{harness->resumeOption, request.resume};
+        generated += QStringList{harness->resumeOption, request.resume};
+    const auto literal = arguments.indexOf(QStringLiteral("--"));
+    if (literal < 0)
+        arguments += generated;
+    else
+        arguments = arguments.first(literal) + generated + arguments.sliced(literal);
     if (!request.machine.isEmpty()) {
         std::optional<session::LaunchSpec> launch;
         const auto refusal = remoteLaunch(request, harness->command, arguments, launch);
