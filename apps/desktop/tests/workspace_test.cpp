@@ -699,8 +699,19 @@ void modelessAgentsGetTheDefaultMode() {
             "no mode: newAgent.mode");
     require(launch_mode(asked("omp"), {}, QStringLiteral("auto")) == QLatin1String("edits"),
             "a CLI without the default takes the nearest, less access first");
-    require(launch_mode(asked("opencode"), {}, QStringLiteral("edits")) == QLatin1String("full"),
-            "or more access when it has nothing less");
+    require(launch_mode(asked("opencode"), {}, QStringLiteral("edits")).isEmpty(),
+            "an unavailable conservative mode must not grant full access");
+    require(launch_mode(asked("kimi"), {}, QStringLiteral("edits")).isEmpty(),
+            "modeless requests cannot escalate to a higher supported mode");
+    require(launch_mode(asked("claude"), {}, QStringLiteral("unknown")).isEmpty(),
+            "unknown preferences do not become full access");
+    require(launch_mode(asked("claude"),
+                        {QStringLiteral("--"), QStringLiteral("--permission-mode")},
+                        QStringLiteral("edits")) == QLatin1String("edits"),
+            "a literal prompt token must not suppress the configured permission mode");
+    require(launch_mode(asked("codex"), {QStringLiteral("-s"), QStringLiteral("read-only")},
+                        QStringLiteral("edits")) == QLatin1String("edits"),
+            "sandbox selection is separate from approval mode");
     for (const auto* configured :
          {"--permission-mode=acceptEdits", "--permission-mode", "--dangerously-skip-permissions"})
         require(launch_mode(asked("claude"), {QString::fromLatin1(configured)}, {}).isEmpty(),
@@ -2898,6 +2909,30 @@ void resumingAConversationStartsItsCli() {
             require(workspace.closeSession(closing), "close the stand-in agents");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "the stand-in agents close");
+        workspace.setHarnessArguments(
+            {{QStringLiteral("grok"),
+              {QStringLiteral("--"), QStringLiteral("--permission-mode")}}});
+        lapis::desktop::AgentDefaults defaults;
+        defaults.mode = QStringLiteral("edits");
+        workspace.setAgentDefaults(defaults);
+        require(workspace.resumeAgent(project, QStringLiteral("literal"), QStringLiteral("grok"),
+                                      QStringLiteral("conv-literal")),
+                "a modeless resume with literal configured arguments starts");
+        auto* literal = workspace.focusedSession();
+        require(literal != nullptr && waitFor(
+                                          [literal] {
+                                              return literal->inputReady() &&
+                                                     screenText(literal->snapshot())
+                                                         .remove(QLatin1Char('\n'))
+                                                         .contains(QStringLiteral(
+                                                             "--permission-mode acceptEdits -r "
+                                                             "conv-literal -- --permission-mode"));
+                                          },
+                                          10000),
+                "generated mode and resume flags must precede literal prompt arguments");
+        require(workspace.closeSession(literal->sessionId()), "close the literal-argument fixture");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the literal-argument fixture closes");
     }
     qputenv("PATH", path);
 }

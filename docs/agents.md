@@ -21,10 +21,12 @@
    OpenCode no Accept edits) uses its nearest, less access first.
 
 An agent asked for without a mode (from the phone, or a resumed conversation)
-gets the same default, or the nearest mode that CLI offers. Since Claude Code
-2.1.284 (2.1.283 on third-party providers) no flag means auto mode rather than
-asking, so lapis always passes one, unless your `harnessArguments` already
-choose a mode.
+uses `newAgent.mode`, or Full access when that setting is absent. If the CLI
+cannot offer a configured mode, lapis can choose a less-permissive mode but does
+not automatically grant a higher one; unknown preferences add no mode flag.
+Explicit request modes win. Claude Code 2.1.283–2.1.285 changed no-mode defaults
+across providers and entry points, so lapis passes the selected supported mode,
+unless your `harnessArguments` already choose a mode.
 
 The next agent starts with the same CLI, mode and model. Everything else stays in
 each CLI's own config. lapis adds no flags of its own; to add yours to every new
