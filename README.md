@@ -8,7 +8,8 @@ terminal. You group agents into categories, watch every agent's latest lines in
 a strip under the one you are working with, and jump straight to whichever needs
 you. Each agent runs in its own session service, so closing or updating lapis
 normally leaves it running (macOS 27 adds [conditions](docs/install.md#updates)),
-and after a reboot lapis restarts it where it was.
+and one whose service is gone (after a crash or a power cut) starts again in its
+card, resuming its conversation where its CLI can.
 
 It is built for speed first: switching agents and typing should feel instant on
 an Apple silicon Mac with a high-refresh display.
@@ -18,7 +19,8 @@ an Apple silicon Mac with a high-refresh display.
 Get `lapis-macos-arm64.dmg` from the
 [latest release](https://github.com/RESMP-DEV/lapis/releases/latest), open it
 and drag lapis to Applications. It needs an Apple silicon Mac with macOS 14 or
-later, uses the agent CLIs you already have installed, and updates itself. See
+later, uses the agent CLIs you already have installed, and offers updates as
+they are released. See
 [install](docs/install.md) for what it keeps where and how upgrades work.
 
 ## A quick tour

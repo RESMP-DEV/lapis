@@ -29,7 +29,8 @@ The form's **Machine** row offers this Mac and the hosts in your ssh config (lef
 and right arrows, while up and down choose the CLI). On another machine the agent
 runs over ssh in that machine's `newAgent` folder, else its home, in its login
 shell. When such a Claude Code agent's connection drops (the Mac changed
-networks or slept), lapis reconnects it and it resumes its conversation.
+networks or slept), lapis reconnects it and it resumes its conversation. The
+**+** under the last category opens the same form, machines included.
 
 A new tab shows the CLI's mark and a home-relative folder such as `~/dev/lapis`;
 agents in the same folder are numbered. An agent still named after its folder
@@ -78,9 +79,11 @@ minutes per CLI. The card reads **Updating Claude…** until the agent starts on
 the new version, and results go to `runtime/harness-updates.log`. Codex is the
 exception: lapis observes only Codex builds it has qualified, so it keeps that
 build and starts Codex with its update prompt off
-(`check_for_update_on_startup=false`). Pass `--no-harness-updates` to keep a
-chosen installation unchanged. Queued agents wait until the updater and its
-installer have stopped.
+(`check_for_update_on_startup=false`). Starting a supported CLI explicitly
+uses the same update queue; reconnecting and discovering agents do not. Pass
+`--no-harness-updates` to keep a chosen installation unchanged. Queued agents
+wait until the updater and its installer have stopped, and restarting a queued
+agent cannot skip that wait.
 
 A running agent keeps the version it started with. **Update this tab's CLI and
 reload it** and **Update Claude Code and reload its tabs** in Commands run the

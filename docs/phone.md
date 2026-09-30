@@ -70,8 +70,8 @@ vertical drag turns the wheel.
 The **+** at the top offers a new agent, **Resume conversation** (the Mac's
 latest Claude Code and Codex conversations, searchable, each resumed as a new
 agent in its folder), **Terminal** (a plain shell on the Mac or one of its ssh
-machines) or a new category. Open terminals are listed above the agents and
-swipe away the same way.
+machines) or a new category, added on the Mac without moving its window. Open
+terminals are listed above the agents and swipe away the same way.
 
 A new agent from the phone: pick the machine (this Mac, or an ssh host from your
 ssh config and shell history, reachable and most used first), the CLI, the
@@ -81,7 +81,8 @@ category on the Mac, then on the phone once it runs. The folder starts at
 machine), then the ten folders where you have started the most agents, then the
 machine's folders to browse, or a search by a few letters. The lists and each
 agent's screen are fetched in the background, so opening the sheet or an agent
-does not wait. Starting agents needs lapis on the Mac: an open window, or the
+does not wait. An agent shown on the Mac keeps the stage. Starting agents needs
+lapis on the Mac: an open window, or the
 login helper from [agents](agents.md#after-a-reboot).
 
 Swiping an agent right (or a long press) offers **Rename**; left offers
