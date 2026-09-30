@@ -1,0 +1,115 @@
+{
+  "source_revision": "bf50593729a4057566f671ad591a35a58fce9e80",
+  "platform": "macOS 26.7.1 arm64",
+  "scope": "Native C++ account/session handling with real local helper and shell fixtures, background Qt UI and software captures. No real OAuth login, token consumption, remote SSH host or provider call.",
+  "source_sha256": {
+    "apps/desktop/CMakeLists.txt": "924113b1d16170104a2de06b3b2439e2806bd5a7e8d799c40324c4ba76d4d6db",
+    "apps/desktop/qml/Main.qml": "9c107de44dcf3de259b3495b3b807dcfeb04e5cfbe0c354dd91a62bef8c48f0a",
+    "apps/desktop/src/keymap.cpp": "0b47128ff40ecbaceb86fb2bd60acde2adaf9af812d7c09b50a801ffb853a12c",
+    "apps/desktop/src/keymap.hpp": "99cd913dee7ed6e06c5e7130ec58406c5cc58031e6eff2758803aa4065f6df9d",
+    "apps/desktop/src/main.cpp": "0f794204acc017dd9dd36f0a9c2e49feb40071270028166a9d6fdbfa2f28b7ab",
+    "apps/desktop/src/plan_sign_in.cpp": "96dfd2dba526e7d4d49773df1d43139805e03a313a63ebef1ee216a54f46c56d",
+    "apps/desktop/src/plan_sign_in.hpp": "874a318b330ddb626a27f087fb4e7a7c40756c35cb9afdcb59bf8cc45e9927df",
+    "apps/desktop/src/plan_sign_in.py": "91db568d45963a0b96fae8eba36d98e1b9472ef7d139f1ba69e3b4a919f93e61",
+    "apps/desktop/src/plan_sign_in_script.hpp.in": "a23b92f2eecade569e72a96db859360afc50c26c7c9971f73c6b3a23451b1851",
+    "apps/desktop/src/terminal_surface.cpp": "6c8e72dcaffa3ef10bc11281a94a98123c1e99a3a712e4ea1d26f0591e87977b",
+    "apps/desktop/src/ui_preview.cpp": "f71368734449c37fd92b54ed41c0b8e64d43083b9a1bf2c613d64c1b7f9084b1",
+    "apps/desktop/src/ui_preview.hpp": "efdd7efa2ab204473a7498b4237fd848d0ea1f4a41c5164ad6bb3701becabd46",
+    "apps/desktop/tests/keymap_test.cpp": "e89fa8515e46b805db24d14650db717e2c154cda931cb406813129764c962731",
+    "apps/desktop/tests/plan_sign_in_test.cpp": "9325cb7c3820e7e177ed615a7ccf10bb0b16bc656f6432a1ee3e07baae28309b",
+    "apps/desktop/tests/terminal_input_test.cpp": "a95b5412eac6a447d8f8b5f5ec85aa981a6c9fc2e0860de71f34ccb1cecb142d",
+    "apps/desktop/tests/ui_preview_test.cpp": "594154ad8304d9c8b9d1d344e7401927f272b997dde8bdfccd71855cac319cc3",
+    "docs/architecture.md": "940c750a9d8356699ada1dd4232597121f392396ebf457871b23677a9685d444",
+    "docs/keys.md": "467cf5ec1d928c42f8c851cc7412a3356d72249c3d9215358111ca0fc4d50fd1",
+    "docs/usage.md": "82ffd20c34f07f89739046358c8150e6e31e8e2716fea5a1a598d3393b0b9a73",
+    "scripts/tests/test_plan_sign_in.py": "7d1d833e735342e603ac18e96ac2e362a82f710d9d0d11b0074561e6582649ce"
+  },
+  "checks": [
+    {
+      "command": "cmake --build build/desktop --target lapis_desktop lapis_plan_sign_in_tests lapis_keymap_tests lapis_terminal_input_tests lapis_ui_preview_tests -j6",
+      "result": "pass after main integration; final source desktop/sign-in rebuild also passed"
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R '^(plan-sign-in|keymap)$' --no-tests=error --output-on-failure",
+      "result": "pass",
+      "seconds": 11.61,
+      "reuse": "Final sign-in-only rerun includes late destructor cleanup. KeyMap implementation unchanged except the behavior-preserving lock-path helper extraction, already covered by this normal run."
+    },
+    {
+      "command": "uv run --no-project python -m unittest discover -s scripts/tests -p test_plan_sign_in.py",
+      "result": "pass",
+      "tests": 8,
+      "coverage": [
+        "delimited and EOF token completion",
+        "no token-prefix acceptance during a long output pause",
+        "exec failure",
+        "SIGTERM cleanup",
+        "helper SIGKILL kills its separately-sessioned PTY process group",
+        "bounded validated link handling"
+      ]
+    },
+    {
+      "command": "ASAN_OPTIONS=detect_leaks=0 ctest --test-dir build/desktop-asan -R '^plan-sign-in$' --no-tests=error --output-on-failure",
+      "result": "pass",
+      "seconds": 8.15,
+      "reuse": "Final native lifecycle including destructor cleanup; subsequent changes are fixture const qualification, Python-test cleanup and bounded browser-link shim, covered by final focused Python/normal runs."
+    },
+    {
+      "command": "ctest --test-dir build/desktop-tsan -R '^plan-sign-in$' --no-tests=error --output-on-failure",
+      "result": "pass with no warnings or suppressions",
+      "seconds": 17.04,
+      "reuse": "Same native source/reuse scope as ASan."
+    },
+    {
+      "result": "pass in each instrumented build",
+      "reuse": "Shared writer lock, fresh-file naming and credential-before-config behavior; later extraction of the unchanged lock-path expression has normal coverage.",
+      "commands": [
+        "ASAN_OPTIONS=detect_leaks=0 ctest --test-dir build/desktop-asan -R '^(plan-sign-in|keymap)$' --no-tests=error --output-on-failure",
+        "ctest --test-dir build/desktop-tsan -R '^(plan-sign-in|keymap)$' --no-tests=error --output-on-failure"
+      ]
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_ui_preview_tests --background --shortcuts-only",
+      "result": "pass"
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_ui_preview_tests --background",
+      "result": "pass",
+      "seconds": 19.546,
+      "captures": 31,
+      "reuse": "QML and layout unchanged by subsequent helper/cleanup/test refinements."
+    },
+    {
+      "command": "build/desktop/apps/desktop/lapis_terminal_input_tests --background",
+      "result": "pass; also passed in desktop-asan and desktop-tsan",
+      "scope": "Qt selection, clipboard, paste, IME events, links and focus logic, not native OS input or GPU qualification"
+    },
+    {
+      "command": "clang-tidy -p build/desktop <affected TUs>; cppcheck <filtered compilation database>; clang-format --dry-run --Werror <changed C++ files>; git diff --check",
+      "result": "pass",
+      "translation_units": 9
+    },
+    {
+      "command": "uv run --no-project python scripts/lapis.py quality",
+      "result": "pass",
+      "python_tests": 331,
+      "reuse": "Later Python test-harness cleanup and bounded opener shim have fresh scoped Ruff and 8-test coverage; unrelated Python modules and protocols are unchanged."
+    }
+  ],
+  "visual": {
+    "path": "evidence/plan-sign-in-dialog.png",
+    "sha256": "4ebc7d03a1ea08e9282d9ba6b9a80eb1a89b4045c1f69ade3121d7cdd91b3670",
+    "review": "Software-rendered fixture inspected; dialog labels, link, email and controls are visible. No native window interaction."
+  },
+  "review": {
+    "original": "Kilo, Gemini, Grok and Nemotron findings at d06c83f were triaged.",
+    "independent": "FlashX native source review at 0410a34 found no native runtime defect and two test-evidence gaps; both were repaired and exercised. Worker helper reports/diffs were inspected; coordinator replaced the separate-session guardian with a child-group anchor."
+  },
+  "limits": [
+    "No fresh real credential or remote-host qualification; all accounts and tokens are private fixtures.",
+    "No native AppKit, system IME/pasteboard or GPU qualification added by these background checks.",
+    "Third-party Qt is uninstrumented.",
+    "External editors that do not honor the config lock remain outside cooperating-writer serialization.",
+    "Abrupt machine loss can leave private staging data; it is never registered as a usable plan."
+  ]
+}
