@@ -294,8 +294,11 @@ void SessionPreview::setActivity(const QString& activity) {
     emit snapshotChanged();
 }
 bool SessionPreview::sendText(const QByteArray& bytes, bool paste) {
-    if (history_active_ || history_request_pending_ || !live_)
+    if (history_active_ || history_request_pending_ || !live_) {
+        setActivity(QStringLiteral(
+            "Input was not sent: no live connection or history reconciliation is pending"));
         return false;
+    }
     if (paste && live_->supportsPasteTransactions())
         return live_->sendPaste(bytes) != 0;
     if (paste && bytes.size() > wire::max_input_bytes) {
@@ -309,8 +312,11 @@ quint64 SessionPreview::sendPasteAndSubmit(const QByteArray& bytes) {
     return requestPaste(bytes, true);
 }
 quint64 SessionPreview::requestPaste(const QByteArray& bytes, bool submit) {
-    if (!live_ || history_active_ || history_request_pending_)
+    if (!live_ || history_active_ || history_request_pending_) {
+        setActivity(QStringLiteral(
+            "Paste was not sent: no live connection or history reconciliation is pending"));
         return 0;
+    }
     return live_->sendPaste(bytes, submit);
 }
 bool SessionPreview::terminate() {
