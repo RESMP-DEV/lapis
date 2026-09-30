@@ -32,8 +32,14 @@ QString background_work(const QJsonObject& object) {
     if (!object.contains(QStringLiteral("background_tasks")) &&
         !object.contains(QStringLiteral("session_crons")))
         return QStringLiteral("legacy");
-    const auto tasks = object.value(QStringLiteral("background_tasks"));
-    const auto wakeups = object.value(QStringLiteral("session_crons"));
+    // An omitted list is empty; only a present value of another JSON kind is
+    // schema drift. This preserves finished-turn behavior for one-sided Stops.
+    const auto tasks = object.contains(QStringLiteral("background_tasks"))
+                           ? object.value(QStringLiteral("background_tasks"))
+                           : QJsonValue{QJsonArray{}};
+    const auto wakeups = object.contains(QStringLiteral("session_crons"))
+                             ? object.value(QStringLiteral("session_crons"))
+                             : QJsonValue{QJsonArray{}};
     if (!tasks.isArray() || !wakeups.isArray())
         return QStringLiteral("unknown");
     const auto active = active_tasks(tasks.toArray());
@@ -88,7 +94,7 @@ int run_hook_relay(const QString& socket, const QString& nonce) noexcept {
                 event.insert(key, object.value(key));
         const auto in_flight = background_work(object);
         if (!in_flight.isNull())
-            event.insert(relay_derived_fields.front().toString(), in_flight);
+            event.insert(relay_in_flight_field.toString(), in_flight);
         QJsonObject frame{{"nonce", nonce}, {"event", event}};
         const auto data = QJsonDocument(frame).toJson(QJsonDocument::Compact) + '\n';
         if (data.size() > relay_frame_limit || deadline.hasExpired())

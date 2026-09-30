@@ -15,14 +15,13 @@ inline constexpr qsizetype relay_frame_limit = qsizetype{16} * 1024;
 // relay. Possession of the private socket nonce remains the trust boundary;
 // field placement is not authentication. Both lists retain the existing event
 // wire shape. `legacy` means omitted lists; `unknown` means schema drift.
+inline constexpr QStringView relay_in_flight_field{u"in_flight"};
 inline constexpr std::array<QStringView, 8> relay_identity_fields{
     QStringView{u"hook_event_name"}, QStringView{u"notification_type"}, QStringView{u"prompt_id"},
     QStringView{u"reason"},          QStringView{u"session_id"},        QStringView{u"source"},
     QStringView{u"tool_name"},       QStringView{u"tool_use_id"},
 };
-inline constexpr std::array<QStringView, 1> relay_derived_fields{
-    QStringView{u"in_flight"},
-};
+inline constexpr std::array<QStringView, 1> relay_derived_fields{relay_in_flight_field};
 
 int run_hook_relay(const QString& socket, const QString& nonce) noexcept;
 
