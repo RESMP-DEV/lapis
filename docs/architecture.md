@@ -2881,8 +2881,12 @@ saved conversations after login; no daemon preserves a running process across
 machine reboot.
 
 The existing login item is a starting point, not that supervisor contract.
-`dev.lapis.desktop.restore.plist` has `RunAtLoad`, invokes the desktop binary
-with `--restore-agents --serve`, and has no keep-alive policy. The headless
+The [repository template](../apps/desktop/macos/dev.lapis.desktop.restore.plist)
+and the `install()` generator in [restore_at_login.py](../scripts/restore_at_login.py)
+both use `RunAtLoad`, invoke the desktop binary with `--restore-agents --serve`,
+and omit `KeepAlive`. The generator writes
+`~/Library/LaunchAgents/dev.lapis.desktop.restore.plist`; inspect that generated
+job as well as the template when qualifying an installation. The headless
 workspace currently hands control to the GUI and exits when the GUI opens.
 Making that job restart forever without changing the handoff would create a
 restart/ownership loop. Move the ownership boundary before enabling persistence.
