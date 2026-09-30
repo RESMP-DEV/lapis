@@ -5,6 +5,7 @@
 #include "desktop_actions.hpp"
 #include "keymap.hpp"
 #include "next_prompt.hpp"
+#include "plan_sign_in.hpp"
 #include "platform_desktop.hpp"
 #include "platform_preferences.hpp"
 #include "shell_environment.hpp"
@@ -18,6 +19,7 @@
 
 #include "launch_spec.hpp"
 
+#include <QClipboard>
 #include <QCommandLineParser>
 #include <QDebug>
 #include <QDir>
@@ -469,6 +471,27 @@ void follow_usage_setting(lapis::desktop::Usage& usage, const lapis::desktop::Ke
 
 // Predicts what the person will type next to an agent that finished a turn,
 // while the setting is on and only in the real workspace (see NextPrompt).
+// Command+Shift+P "Add a Claude Code plan": signs in any account and keeps
+// its token for sessions on this Mac.
+QObject* keep_plan_sign_in(std::optional<lapis::desktop::PlanSignIn>& kept,
+                           lapis::desktop::KeyMap& keymap, bool isolated) {
+    if (isolated)
+        return nullptr;
+    return &kept.emplace(
+        [](const QString& name) {
+            return name == QLatin1String("claude") ? lapis::desktop::harness_program(name)
+                                                   : QStandardPaths::findExecutable(name);
+        },
+        [](const QString& text) { QGuiApplication::clipboard()->setText(text); },
+        [&keymap](const QString& email, QString* reason) {
+            return keymap.addPlanMachine(
+                {.cli = QStringLiteral("claude"), .email = email, .machine = {}}, reason);
+        },
+        lapis::desktop::PlanSignIn::Places{
+            .helper = QDir(lapis::desktop::data_directory())
+                          .filePath(QStringLiteral("runtime/plan_sign_in.py")),
+            .accounts = QDir::homePath() + QStringLiteral("/.lapis/accounts")});
+}
 QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
                           lapis::desktop::Workspace& workspace,
                           const lapis::desktop::KeyMap& keymap, bool isolated) {
@@ -743,6 +766,8 @@ int main(int argc, char** argv) {
         }
         std::optional<NextPrompt> nextPrompt;
         QObject* const nextForQml = keep_next_prompt(nextPrompt, workspace, keymap, isolated);
+        std::optional<lapis::desktop::PlanSignIn> planSignIn;
+        QObject* const signInForQml = keep_plan_sign_in(planSignIn, keymap, isolated);
         const auto conversations = conversation_index(workspace);
         if (!isolated) {
             follow_conversation_titles(workspace, *conversations);
@@ -759,6 +784,7 @@ int main(int argc, char** argv) {
                                    .conversations = conversations.get(),
                                    .terminals = terminals.get(),
                                    .nextPrompt = nextForQml,
+                                   .planSignIn = signInForQml,
                                    .persistGeometry = !isolated && !options.launch &&
                                                       options.endpoint.isEmpty() &&
                                                       !parser.isSet(QStringLiteral("capture")),

@@ -1,6 +1,7 @@
 #include "agent_search.hpp"
 #include "conversation_index.hpp"
 #include "keymap.hpp"
+#include "plan_sign_in.hpp"
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include "terminals.hpp"
@@ -15,6 +16,7 @@
 #include <QQmlProperty>
 #include <QQuickStyle>
 #include <QSet>
+#include <QStandardPaths>
 #include <QThread>
 
 #include <QClipboard>
@@ -1711,6 +1713,32 @@ void capture_step(QQuickWindow& window, const char* name) {
         CHECK(window.grabWindow().save(path + QString::fromLatin1(name) + QStringLiteral(".png")));
 }
 
+// Commands > "Add a Claude Code plan" shows Claude Code's sign-in link, copied,
+// with a field for the account's email; closing it ends the sign-in.
+void check_plan_sign_in(QQuickWindow& window, lapis::desktop::PlanSignIn& signIn,
+                        const QStringList& copied) {
+    CHECK(QMetaObject::invokeMethod(&window, "openPlanSignIn"));
+    auto* dialog = window.findChild<QObject*>(QStringLiteral("planSignInDialog"));
+    CHECK(dialog != nullptr);
+    wait_popup(*dialog, true);
+    QElapsedTimer waited;
+    waited.start();
+    while (signIn.state() != QLatin1String("waiting") && waited.elapsed() < 10000)
+        pump(20);
+    CHECK(signIn.state() == QLatin1String("waiting"));
+    pump(60);
+    auto* link = find_visual(window.contentItem(), QStringLiteral("planSignInLink"));
+    CHECK(link != nullptr && link->isVisible() &&
+          link->property("text").toString() == signIn.link() &&
+          copied == QStringList{signIn.link()});
+    auto* email = find_visual(window.contentItem(), QStringLiteral("planSignInEmail"));
+    CHECK(email != nullptr && email->hasActiveFocus());
+    capture_step(window, "plan-sign-in");
+    CHECK(QMetaObject::invokeMethod(dialog, "close"));
+    wait_popup(*dialog, false);
+    CHECK(signIn.state() == QLatin1String("idle"));
+}
+
 void check_agent_search(QQuickWindow& window, lapis::desktop::Workspace& workspace,
                         const lapis::desktop::KeyMap& keymap,
                         lapis::desktop::TerminalSurface& terminal) {
@@ -2113,6 +2141,26 @@ int run_strip_ui_tests() {
     Terminals terminals(config.filePath(QStringLiteral("runtime")),
                         config.filePath(QStringLiteral("ssh_config")));
     terminals.setShellForTesting(config.filePath(QStringLiteral("shell")));
+    // A stand-in `claude setup-token` that "opens" its sign-in link and waits.
+    const auto claude = config.filePath(QStringLiteral("setup-token-claude"));
+    {
+        QFile script(claude);
+        CHECK(script.open(QIODevice::WriteOnly));
+        script.write("#!/bin/sh\nopen 'https://claude.com/cai/oauth/authorize?code=true&"
+                     "client_id=lapis-test&redirect_uri=http%3A%2F%2Flocalhost%3A1%2Fcallback&"
+                     "scope=user%3Ainference&state=test'\nsleep 60\n");
+        CHECK(
+            QFile::setPermissions(claude, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner));
+    }
+    QStringList copied;
+    PlanSignIn signIn(
+        [&claude](const QString& name) {
+            return name == QLatin1String("claude") ? claude : QStandardPaths::findExecutable(name);
+        },
+        [&copied](const QString& text) { copied << text; },
+        [](const QString&, QString*) { return QString(); },
+        {.helper = config.filePath(QStringLiteral("runtime/plan_sign_in.py")),
+         .accounts = config.filePath(QStringLiteral("accounts"))});
     UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),
@@ -2120,7 +2168,8 @@ int run_strip_ui_tests() {
                                   .agentSearch = &search,
                                   .usage = usage.get(),
                                   .conversations = &conversations,
-                                  .terminals = &terminals});
+                                  .terminals = &terminals,
+                                  .planSignIn = &signIn});
     CHECK(preview.load());
     auto* window = preview.window();
     window->resize(1400, 960);
@@ -2330,6 +2379,7 @@ int run_strip_ui_tests() {
     workspace.setSshConfigForTesting(config.filePath(QStringLiteral("ssh_config")));
     check_new_agent_machine(*window, keymap);
     check_usage(*window, *usage, keymap, *terminal);
+    check_plan_sign_in(*window, signIn, copied);
     CHECK(preview.diagnostics().isEmpty());
     return EXIT_SUCCESS;
 }

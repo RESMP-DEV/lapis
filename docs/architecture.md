@@ -3331,6 +3331,28 @@ fills after authoritative idle (but not output quiet or unknown status), with it
 conversation, and a switch asked for. `scripts/tests/test_lapis_accounts.py`
 covers the helper's config merge, token masking and real stand-in exec failures.
 Missing executables and unsuccessful setup-token exits retain their actual cause.
+
+**Signing a plan in from lapis (September 29).** OMP's own Anthropic logins
+cannot carry a plan to Claude Code: they are short-lived OAuth access tokens
+that OMP refreshes, and a second refresher would rotate OMP's refresh token out
+from under it (on the author's machines every one had failed to refresh and
+been disabled for eleven days). So **Add a Claude Code plan** runs
+`claude setup-token` itself: `plan_sign_in.py`, compiled in like the other
+helpers, gives it a terminal of its own with `open` and `$BROWSER` replaced by a
+script that records the link, so the person chooses the browser and the account.
+The link is copied and shown; Claude Code's localhost callback receives the
+sign-in, and the helper writes the token it prints, owner-only, to
+`accounts/claude/.signing-in.token` and says only `signedIn`. `PlanSignIn` then
+records the plan through `KeyMap::addPlanMachine`: the plan with that email
+gains `local` among its `machines`, else a new plan is named from the email
+(`someone@example.com` becomes `someone-example`), and the token is renamed to
+the plan's name. The token's scope is `user:inference` only, so it cannot name
+its account; the person types the email. Cancelling ends the helper with
+SIGTERM, which ends Claude Code's sign-in and leaves no token. Still to do:
+Codex (`codex login --device-auth` in a plan home, as the script does), other
+CLIs, and copying the token to other machines. `plan-sign-in` and
+`test_plan_sign_in.py` drive stand-in CLIs; the helper was also run against
+Claude Code 2.1.285 up to its link.
 ### Update a CLI, then reload (September 28)
 
 A running agent keeps the CLI version it started with, and the start-time

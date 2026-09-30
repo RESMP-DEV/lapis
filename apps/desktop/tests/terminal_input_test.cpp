@@ -1096,6 +1096,8 @@ void selection_and_scroll() {
                           Qt::NoModifier);
         QCoreApplication::sendEvent(&surface, &event);
     };
+    // Selecting copies, so the system clipboard is restored afterwards.
+    const lapis::desktop::test::ClipboardBackup clipboard;
     // A cropped preview must map visible coordinates to the same terminal row
     // as the renderer, even when the minimum scale prevents fitting all rows.
     const auto ordinary_size = surface.size();
@@ -1147,11 +1149,16 @@ void selection_and_scroll() {
     peer.send(wire::Kind::snapshot,
               wire::encode_snapshot_message({{f.identity, 1}, 4, f.terminal.snapshot()}));
     settle();
+    QGuiApplication::clipboard()->setText(QStringLiteral("before"));
     mouse(QEvent::MouseButtonPress, surface.cellRect(0, 0).center(), Qt::LeftButton);
     mouse(QEvent::MouseMove, surface.cellRect(3, 0).center(), Qt::NoButton);
+    require(QGuiApplication::clipboard()->text() == QStringLiteral("before"),
+            "A selection was copied before the drag ended");
     mouse(QEvent::MouseButtonRelease, surface.cellRect(3, 0).center(), Qt::LeftButton);
     require(surface.selectedText() == QStringLiteral("scre"), "Drag did not select the row");
-    const lapis::desktop::test::ClipboardBackup clipboard;
+    require(QGuiApplication::clipboard()->text() == QStringLiteral("scre"),
+            "Releasing a drag did not copy its selection");
+    QGuiApplication::clipboard()->setText(QStringLiteral("before"));
 #ifdef Q_OS_MACOS
     const Qt::KeyboardModifiers copy_modifiers = Qt::MetaModifier;
 #else

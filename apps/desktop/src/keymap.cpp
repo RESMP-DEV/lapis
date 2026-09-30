@@ -1,5 +1,6 @@
 #include "keymap.hpp"
 #include "app_paths.hpp"
+#include "plan_sign_in.hpp"
 
 #include <QDebug>
 #include <QDir>
@@ -237,6 +238,39 @@ constexpr std::array<Theme, 7> kThemes = {{
 
 constexpr qsizetype kMaximumFontFamilyLength = 128;
 
+// Adds `adding` to the plan it names (by name or email) in lapis.json's
+// "accounts", or a new plan; "local" stands for this Mac.
+struct PlanMachine {
+    QString cli;
+    QString name;
+    QString email;
+    QString machine;
+};
+void merge_plan_machine(QJsonObject& root, const PlanMachine& adding) {
+    auto accounts = root.value(QStringLiteral("accounts")).toObject();
+    auto plans = accounts.value(adding.cli).toArray();
+    const auto machine = adding.machine.isEmpty() ? QStringLiteral("local") : adding.machine;
+    qsizetype found = -1;
+    for (qsizetype i = 0; i < plans.size() && found < 0; ++i) {
+        const auto plan = plans.at(i).toObject();
+        if (plan.value(QStringLiteral("name")).toString() == adding.name ||
+            plan.value(QStringLiteral("email")).toString().toLower() == adding.email)
+            found = i;
+    }
+    auto plan =
+        found < 0 ? QJsonObject{{QStringLiteral("name"), adding.name}} : plans.at(found).toObject();
+    plan.insert(QStringLiteral("email"), adding.email);
+    auto machines = plan.value(QStringLiteral("machines")).toArray();
+    if (!machines.contains(QJsonValue(machine)))
+        machines.append(machine);
+    plan.insert(QStringLiteral("machines"), machines);
+    if (found < 0)
+        plans.append(plan);
+    else
+        plans.replace(found, plan);
+    accounts.insert(adding.cli, plans);
+    root.insert(QStringLiteral("accounts"), accounts);
+}
 void append_diagnostic(QString* diagnostic, const QString& message) {
     *diagnostic = diagnostic->isEmpty() ? message : *diagnostic + '\n' + message;
 }
@@ -1048,6 +1082,9 @@ bool KeyMap::persist() {
     QJsonObject usage = root.value(QStringLiteral("usage")).toObject();
     usage.insert(QStringLiteral("show"), show_usage_);
     root.insert(QStringLiteral("usage"), usage);
+    if (adding_plan_)
+        merge_plan_machine(root, {adding_plan_->cli, adding_plan_->name, adding_plan_->email,
+                                  adding_plan_->machine});
     if (!root.contains(QStringLiteral("version")))
         root.insert(QStringLiteral("version"), 1);
     QByteArray contents = format_config(root) + '\n';
@@ -1061,10 +1098,31 @@ bool KeyMap::persist() {
     if (file.write(contents) != contents.size() || !file.commit())
         return fail(file.errorString());
     known_contents_ = std::move(contents);
+    accounts_ = parse_accounts(root.value(QStringLiteral("accounts")));
     watch();
     diagnostic_.clear();
     emit changed();
     return true;
+}
+
+QString KeyMap::addPlanMachine(const PlanCredential& credential, QString* reason) {
+    const auto& cli = credential.cli;
+    const auto lowered = credential.email.trimmed().toLower();
+    QString name;
+    for (const auto& account : accounts_.accounts)
+        if (account.cli == cli && account.email == lowered)
+            name = account.name;
+    if (name.isEmpty())
+        name = plan_name_for(lowered);
+    adding_plan_ = PlanMachine{cli, name, lowered, credential.machine};
+    const bool saved = persist();
+    adding_plan_.reset();
+    if (!saved) {
+        if (reason != nullptr)
+            *reason = diagnostic_;
+        return {};
+    }
+    return name;
 }
 
 bool KeyMap::setAlertSound(bool on) {
