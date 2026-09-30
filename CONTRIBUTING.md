@@ -918,6 +918,13 @@ output directory when diagnosing a rerun.
 
 ### Selecting checks and reusing results
 
+For launch-mode defaults and generated resume arguments, run
+`build/desktop/apps/desktop/lapis_workspace_tests --case launch-policy` after
+building that target. The same selector works in the desktop-enabled sanitizer
+builds. It runs the existing mode and real-service argv cases without repeating
+unrelated workspace timing, history and updater cases; the full workspace suite
+continues to include them.
+
 For history UI iteration after a desktop build, run
 `build/desktop/apps/desktop/lapis_ui_preview_tests --background --history-only`.
 This selects the real-service history/resize fixture without repeating unrelated

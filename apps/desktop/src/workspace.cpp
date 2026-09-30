@@ -161,15 +161,27 @@ QStringList modeArguments(const QString& harness, const QString& mode) {
         }
     return {};
 }
-// The options with which a CLI's own arguments choose its approval mode, as
-// `harnessArguments` might spell them (`--permission-mode=plan` counts too).
-// Spellings accepted by the CLIs in addition to the mode_flags output.
-constexpr std::array<std::pair<const char*, const char*>, 4> mode_aliases{{
-    {"claude", "--dangerously-skip-permissions"},
-    {"grok", "--dangerously-skip-permissions"},
-    {"codex", "--ask-for-approval"},
-    {"codex", "--full-auto"},
-}};
+// Additional accepted spellings beyond the option tokens in mode_flags.
+constexpr std::array mode_aliases{
+    std::pair{"claude", "--dangerously-skip-permissions"},
+    std::pair{"grok", "--dangerously-skip-permissions"},
+    std::pair{"codex", "--ask-for-approval"},
+    std::pair{"codex", "--sandbox"},
+    std::pair{"codex", "--full-auto"},
+};
+bool configuredModeOption(const QString& harness, const QString& option) {
+    for (const auto& entry : mode_flags) {
+        if (harness != QLatin1String(entry.harness))
+            continue;
+        for (const auto* flag : entry.flags)
+            if (flag && flag[0] == '-' &&
+                option == QString::fromLatin1(flag).section(QLatin1Char('='), 0, 0))
+                return true;
+    }
+    return std::any_of(mode_aliases.cbegin(), mode_aliases.cend(), [&](const auto& alias) {
+        return harness == QLatin1String(alias.first) && option == QLatin1String(alias.second);
+    });
+}
 } // namespace
 
 // See workspace.hpp.
@@ -181,13 +193,8 @@ QString launch_mode(const AgentRequest& request, const QStringList& configured,
         if (argument == QLatin1String("--"))
             break;
         const auto option = argument.section(QLatin1Char('='), 0, 0);
-        for (const auto& entry : mode_flags)
-            if (request.harness == QLatin1String(entry.harness) && entry.flags.front() &&
-                option == QString::fromLatin1(entry.flags.front()).section(QLatin1Char('='), 0, 0))
-                return {};
-        for (const auto& [harness, name] : mode_aliases)
-            if (request.harness == QLatin1String(harness) && option == QLatin1String(name))
-                return {};
+        if (configuredModeOption(request.harness, option))
+            return {};
     }
     // Modeless requests may use a supported lower mode, but must not gain
     // more access than the configured preference just because a mode is absent.
@@ -1383,8 +1390,8 @@ QVariantMap Workspace::agentDefaults() const {
             {QStringLiteral("mode"), agent_defaults_.mode},
             {QStringLiteral("machines"), machines}};
 }
-std::optional<session::LaunchSpec> Workspace::agentLaunch(const AgentRequest& request) {
-    const auto refuse = [this](const QString& message) -> std::optional<session::LaunchSpec> {
+std::optional<Workspace::ResumeLaunch> Workspace::agentLaunch(const AgentRequest& request) {
+    const auto refuse = [this](const QString& message) -> std::optional<ResumeLaunch> {
         fail(message);
         return std::nullopt;
     };
@@ -1413,6 +1420,9 @@ std::optional<session::LaunchSpec> Workspace::agentLaunch(const AgentRequest& re
     if (!request.resume.isEmpty())
         generated += QStringList{harness->resumeOption, request.resume};
     const auto literal = arguments.indexOf(QStringLiteral("--"));
+    const auto insertion = literal < 0 ? arguments.size() : literal;
+    const auto resume_index =
+        request.resume.isEmpty() ? -1 : static_cast<int>(insertion + generated.size() - 2);
     if (literal < 0)
         arguments += generated;
     else
@@ -1420,7 +1430,9 @@ std::optional<session::LaunchSpec> Workspace::agentLaunch(const AgentRequest& re
     if (!request.machine.isEmpty()) {
         std::optional<session::LaunchSpec> launch;
         const auto refusal = remoteLaunch(request, harness->command, arguments, launch);
-        return refusal.isEmpty() ? launch : refuse(refusal);
+        if (!refusal.isEmpty())
+            return refuse(refusal);
+        return launch ? std::optional<ResumeLaunch>(ResumeLaunch{*launch}) : std::nullopt;
     }
     const QString project =
         directory == QStringLiteral("~") || directory.startsWith(QStringLiteral("~/"))
@@ -1436,7 +1448,8 @@ std::optional<session::LaunchSpec> Workspace::agentLaunch(const AgentRequest& re
     // Codex and Claude Code have service-side observers; other CLIs run as
     // plain terminal agents.
     const auto mode = launchMode(*harness);
-    return session::validate_launch({program, arguments, project, {100, 30}, mode});
+    return ResumeLaunch{session::validate_launch({program, arguments, project, {100, 30}, mode}),
+                        resume_index, request.resume};
 }
 QString Workspace::startAgent(const AgentRequest& request) {
     if (!mutableRegistry())
@@ -1453,7 +1466,8 @@ QString Workspace::startAgent(const AgentRequest& request) {
         const auto launch = agentLaunch(request);
         if (!launch)
             return {};
-        return launchAgent(request, *launch);
+        return launchAgent(request, launch->launch, launch->managed_resume_index,
+                           launch->managed_resume_identity);
     } catch (const std::exception& error) {
         return failed(QString::fromUtf8(error.what()));
     }
@@ -1476,16 +1490,8 @@ QString Workspace::launchAgent(const AgentRequest& request, const session::Launc
         agent.managed_resume_index = managed_resume_index;
         agent.managed_resume_identity = managed_resume_identity;
         agent.named = request.named;
-        // A resumed conversation is lapis's pair: a later restart follows the
-        // conversation wherever it goes, as a restored agent's does.
-        if (!request.resume.isEmpty() && request.machine.isEmpty()) {
-            const auto at = launch.arguments.lastIndexOf(resumeOption(request.harness));
-            if (at >= 0 && at + 1 < launch.arguments.size() &&
-                launch.arguments.at(at + 1) == request.resume) {
-                agent.managed_resume_index = static_cast<int>(at);
-                agent.managed_resume_identity = request.resume;
-            }
-        }
+        // Provenance came from construction, never a search through literal
+        // prompt arguments that happen to repeat the resume option.
         item->setStatusSource(statusSource(agent));
         if (!applyAccount(agent, *item))
             return {};

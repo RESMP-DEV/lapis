@@ -711,8 +711,17 @@ void modelessAgentsGetTheDefaultMode() {
                         QStringLiteral("edits")) == QLatin1String("edits"),
             "a literal prompt token must not suppress the configured permission mode");
     require(launch_mode(asked("codex"), {QStringLiteral("-s"), QStringLiteral("read-only")},
+                        QStringLiteral("edits"))
+                .isEmpty(),
+            "a configured read-only sandbox suppresses generated mode/sandbox flags");
+    require(
+        launch_mode(asked("codex"), {QStringLiteral("--sandbox=read-only")}, QStringLiteral("full"))
+            .isEmpty(),
+        "the long sandbox option cannot be overwritten by a default full-access mode");
+    require(launch_mode(asked("codex"),
+                        {QStringLiteral("--label"), QStringLiteral("workspace-write")},
                         QStringLiteral("edits")) == QLatin1String("edits"),
-            "sandbox selection is separate from approval mode");
+            "an ordinary value is not mistaken for an emitted option");
     for (const auto* configured :
          {"--permission-mode=acceptEdits", "--permission-mode", "--dangerously-skip-permissions"})
         require(launch_mode(asked("claude"), {QString::fromLatin1(configured)}, {}).isEmpty(),
@@ -2832,6 +2841,12 @@ void resumingAConversationStartsItsCli() {
     options.storagePath = root.filePath(QStringLiteral("workspace.json"));
     {
         Workspace workspace(WorkspaceMode::live, options);
+        const auto close_owned = qScopeGuard([&] {
+            for (const auto& value : workspace.sessions())
+                if (auto* item = value.value<lapis::desktop::SessionPreview*>())
+                    static_cast<void>(workspace.closeSession(item->sessionId()));
+            static_cast<void>(waitFor([&] { return workspace.sessions().isEmpty(); }, 10000));
+        });
         require(!workspace.resumeAgent(project, QStringLiteral("x"), QStringLiteral("grok"),
                                        QStringLiteral("-rf")),
                 "an option is never taken for a conversation");
@@ -2956,7 +2971,8 @@ void resumingAConversationStartsItsCli() {
                 "the stand-in agents close");
         workspace.setHarnessArguments(
             {{QStringLiteral("grok"),
-              {QStringLiteral("--"), QStringLiteral("--permission-mode")}}});
+              {QStringLiteral("--"), QStringLiteral("-r"), QStringLiteral("conv-literal"),
+               QStringLiteral("--permission-mode")}}});
         lapis::desktop::AgentDefaults defaults;
         defaults.mode = QStringLiteral("edits");
         workspace.setAgentDefaults(defaults);
@@ -2964,17 +2980,36 @@ void resumingAConversationStartsItsCli() {
                                       QStringLiteral("conv-literal")),
                 "a modeless resume with literal configured arguments starts");
         auto* literal = workspace.focusedSession();
-        require(literal != nullptr && waitFor(
-                                          [literal] {
-                                              return literal->inputReady() &&
-                                                     screenText(literal->snapshot())
-                                                         .remove(QLatin1Char('\n'))
-                                                         .contains(QStringLiteral(
-                                                             "--permission-mode acceptEdits -r "
-                                                             "conv-literal -- --permission-mode"));
-                                          },
-                                          10000),
+        require(literal != nullptr &&
+                    waitFor(
+                        [literal] {
+                            return literal->inputReady() &&
+                                   screenText(literal->snapshot())
+                                       .remove(QLatin1Char('\n'))
+                                       .contains(QStringLiteral(
+                                           "--permission-mode acceptEdits -r "
+                                           "conv-literal -- -r conv-literal --permission-mode"));
+                        },
+                        10000),
                 "generated mode and resume flags must precede literal prompt arguments");
+        QFile registry(workspace.storagePath());
+        require(registry.open(QIODevice::ReadOnly), "read managed resume provenance");
+        const auto saved_launches = QJsonDocument::fromJson(registry.readAll())
+                                        .object()
+                                        .value(QStringLiteral("agents"))
+                                        .toArray();
+        require(saved_launches.size() == 1, "one resumed agent is recorded");
+        const auto saved_agent = saved_launches.first().toObject();
+        const auto saved_arguments = saved_agent.value(QStringLiteral("arguments")).toArray();
+        const auto index = saved_agent.value(QStringLiteral("managedResume"))
+                               .toObject()
+                               .value(QStringLiteral("index"))
+                               .toInt(-1);
+        require(index >= 0 && index + 2 < saved_arguments.size() &&
+                    saved_arguments.at(index) == QLatin1String("-r") &&
+                    saved_arguments.at(index + 1) == QLatin1String("conv-literal") &&
+                    saved_arguments.at(index + 2) == QLatin1String("--"),
+                "managed resume index refers to the generated pair before the literal tail");
         require(workspace.closeSession(literal->sessionId()), "close the literal-argument fixture");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "the literal-argument fixture closes");
@@ -5081,15 +5116,17 @@ int main(int argc, char** argv) {
     QCoreApplication::setApplicationName(QStringLiteral("lapis"));
     try {
         if (argc > 1) {
-            require(argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--case") &&
-                        (QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options") ||
-                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("accounts") ||
-                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("startup-defaults") ||
-                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload") ||
-                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater") ||
-                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes")),
-                    "Usage: lapis_workspace_tests [--case "
-                    "remote-options|accounts|reload|updater|startup-defaults|chimes]");
+            require(
+                argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--case") &&
+                    (QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("accounts") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("startup-defaults") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("launch-policy") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes")),
+                "Usage: lapis_workspace_tests [--case "
+                "remote-options|accounts|reload|updater|startup-defaults|launch-policy|chimes]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("accounts")) {
                 incompleteCodexHomeNeverStartsAnAgent();
@@ -5099,6 +5136,9 @@ int main(int argc, char** argv) {
                 remoteClaudeReconnectsToItsConversation();
             } else if (selected == QStringLiteral("startup-defaults")) {
                 savedGrokDefaultsPreserveLaunchOwnership();
+            } else if (selected == QStringLiteral("launch-policy")) {
+                modelessAgentsGetTheDefaultMode();
+                resumingAConversationStartsItsCli();
             } else if (selected == QStringLiteral("updater")) {
                 updaterLifecycle();
                 updaterOutputIsDrainedWithABoundedTail();

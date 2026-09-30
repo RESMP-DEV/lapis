@@ -81,7 +81,20 @@ bool validState(const QJsonObject& state) {
         if (!value.isString() || value.toString().isEmpty() || value.toString().size() > 512)
             return false;
     }
-    return !QUuid(pending.value(QStringLiteral("operation")).toString()).isNull();
+    const auto credit = pending.value(QStringLiteral("credit")).toString();
+    return !QUuid(pending.value(QStringLiteral("operation")).toString()).isNull() &&
+           credit.size() <= 256 &&
+           std::none_of(credit.cbegin(), credit.cend(), [](QChar c) { return c.isSpace(); });
+}
+QString reportReason(const QJsonObject& account, const QString& fallback) {
+    QStringList details;
+    for (const auto* name : {"error", "reason", "detail"}) {
+        const auto text = account.value(QLatin1String(name)).toString().trimmed().left(512);
+        if (!text.isEmpty() && !details.contains(text))
+            details << text;
+    }
+    return details.isEmpty() ? fallback
+                             : fallback + QStringLiteral(": ") + details.join(QStringLiteral("; "));
 }
 QJsonObject unexpiredAttempts(const QJsonObject& state) {
     const auto now = QDateTime::currentMSecsSinceEpoch();
@@ -432,7 +445,8 @@ void LimitResets::prepared(const std::shared_ptr<Run>& run, const QJsonObject& a
     if (!account.value(QStringLiteral("error")).toString().isEmpty() || email.isEmpty() ||
         account_id.isEmpty() ||
         (!run->target.email.isEmpty() && email != run->target.email.toLower())) {
-        refuse(run, QStringLiteral("selected plan identity could not be verified"));
+        refuse(run, reportReason(account,
+                                 QStringLiteral("selected plan identity could not be verified")));
         return;
     }
     if (!loadAccountState(run, account_id))
@@ -550,7 +564,9 @@ void LimitResets::completed(const std::shared_ptr<Run>& run, const QJsonObject& 
         return;
     }
     if (!consumed && !settled && !refused) {
-        refuse(run, QStringLiteral("reset outcome is unknown; it will not be submitted again"));
+        refuse(run, reportReason(account,
+                                 QStringLiteral(
+                                     "reset outcome is unknown; it will not be submitted again")));
         return;
     }
     auto attempts = unexpiredAttempts(run->state);
@@ -602,7 +618,7 @@ void LimitResets::persisted(const std::shared_ptr<Run>& run, AfterWrite next,
             result == QLatin1String("settled")
                 ? QStringLiteral(
                       "the previous credit is no longer available; no new reset was requested")
-                : QStringLiteral("the reset was refused"));
+                : reportReason(run->receipt, QStringLiteral("the reset was refused")));
 }
 
 } // namespace lapis::desktop
