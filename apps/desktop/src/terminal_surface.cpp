@@ -671,7 +671,8 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
     // render thread gets owned immutable values through an explicit C++ handoff.
     auto frame = std::make_shared<RenderState>();
     frame->preedit = preedit_;
-    frame->suggestion = suggestion_;
+    frame->suggestion =
+        document_ && document_->attentionPending() ? QString() : suggestion_;
     frame->viewport = size();
     frame->font_family = use_system_font_ ? QString() : resolved_font_family_;
     frame->font_pixel_size = font_pixel_size_;
@@ -1506,7 +1507,9 @@ bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
     const auto modifiers = event.modifiers() & ~Qt::KeypadModifier;
     const bool tab = event.key() == Qt::Key_Tab && modifiers == Qt::NoModifier;
     const bool fill = event.key() == Qt::Key_Tab && modifiers == Qt::AltModifier;
-    if (!suggestion_.isEmpty() && (tab || fill)) {
+    // Never over a request: Return in a permission dialog would answer it.
+    const bool offered = !suggestion_.isEmpty() && !document_->attentionPending();
+    if (offered && (tab || fill)) {
         const int typed_first = typed_while_offered_;
         if (!pasteText(suggestion_))
             return true;

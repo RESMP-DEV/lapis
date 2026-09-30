@@ -3228,8 +3228,9 @@ logs every guess to measure that threshold.
   priors.
 - **How it is offered.** `TerminalSurface.suggestion` draws the guess dim after
   the cursor, covering the rest of the row but its last two cells so a CLI's
-  own suggestion does not show through, and only while the agent is finished,
-  idle or waiting. With `tabFlow` (a Claude Code or Codex agent while guessing
+  own suggestion does not show through, and only while the agent is finished
+  or idle: never over a pending request, since Return in a permission dialog
+  would answer it (the view also refuses to send one then). With `tabFlow` (a Claude Code or Codex agent while guessing
   is on), Tab types it as a paste and sends Return 150 ms later, as the phone
   does; Option-Tab only types it. Typing does not withdraw it: the person may
   start their own prompt, prefer the guess, clear with Command-Delete and press

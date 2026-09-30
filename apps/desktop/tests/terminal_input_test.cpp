@@ -832,6 +832,18 @@ void suggestions() {
                 used.back() == std::pair{true, 3},
             "Tab after typing did not send it, counting three keys typed first");
 
+    // A pending request (a permission dialog) is never answered by Tab: the
+    // suggestion is not sent, and Tab moves on instead.
+    surface.setSuggestion(QStringLiteral("yes do it"));
+    require(f.document.addPreviewRequest(QStringLiteral("r1"), QStringLiteral("rm -rf")),
+            "Fixture request was not added");
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    settle();
+    require(frames(0).empty() && next == 2 && surface.suggestion() == QLatin1String("yes do it"),
+            "Tab answered a pending request with the suggestion");
+    require(f.document.resolvePreviewRequest(QStringLiteral("r1")), "Fixture request stayed");
+    surface.setSuggestion({});
+
     // Option-Tab only types it; Tab after typing is the program's.
     surface.setSuggestion(QStringLiteral("rerun it"));
     press(Qt::Key_Tab, Qt::AltModifier, QStringLiteral("\t"));
@@ -841,7 +853,7 @@ void suggestions() {
             "Option-Tab did not only type the suggestion");
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
-    require(is_key(typed[0], lapis::session::TerminalKey::tab) && next == 1,
+    require(is_key(typed[0], lapis::session::TerminalKey::tab) && next == 2,
             "Tab after typing did not reach the agent");
 }
 
