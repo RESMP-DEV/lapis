@@ -57,7 +57,10 @@ Admission does not guarantee the CLI consumed it before a crash. The log
 rotates at 4 MiB and retains one previous file; helper output is bounded and
 raw error output is never copied into the log.
 Evaluation reports missing conversations, pending answers and failed calls
-separately. Missing judge results are excluded from quality scores. Provider or
+separately. Missing judge results are excluded from quality scores; `grading`
+reports how many judgments were requested, how many succeeded and their coverage.
+Scores describe only successfully graded predictions, so read them with that
+coverage. Provider or
 authentication failures stop the attempt; only a malformed answer is retried.
 
 ```sh

@@ -77,6 +77,13 @@ void standIns(const QDir& root) {
                 "make a stand-in executable");
 }
 
+QString fixtureProgram(const QDir& root, const QString& name) {
+    if (name == QLatin1String("claude") &&
+        QFileInfo::exists(root.filePath(QStringLiteral("no-claude"))))
+        return {};
+    return root.filePath(QStringLiteral("bin/") + name);
+}
+
 void settingsReadFromTheConfig() {
     const auto defaults = lapis::desktop::parse_next_prompt(QJsonValue());
     require(defaults == NextPromptSettings{} && !defaults.automatic &&
@@ -174,8 +181,7 @@ void predictsAndOffers() {
             return std::nullopt;
         },
         [] { return QJsonArray{QJsonObject{{QStringLiteral("title"), QStringLiteral("gpu")}}}; },
-        [&root](const QString& name) { return root.filePath(QStringLiteral("bin/") + name); },
-        {root.path(), log});
+        [&root](const QString& name) { return fixtureProgram(root, name); }, {root.path(), log});
     int changes = 0;
     QObject::connect(&next, &NextPrompt::changed, [&changes] { ++changes; });
     const auto script = root.filePath(QStringLiteral("next_prompt.py"));
@@ -312,6 +318,7 @@ void predictsAndOffers() {
     require(!QFileInfo::exists(root.filePath(QStringLiteral("context.args"))),
             "past the hourly cap nothing runs");
     // A prediction that fails is recorded with its stage and reason.
+    const auto valid_context = read(root.filePath(QStringLiteral("context.reply")));
     write(root.filePath(QStringLiteral("context.reply")), R"({"error": "no transcript"})");
     next.setSettings(on(60));
     next.turnFinished(QStringLiteral("a"));
@@ -330,8 +337,21 @@ void predictsAndOffers() {
     next.turnFinished(QStringLiteral("a"));
     require(waitFor([&] { return events(log).size() > before_private_failure; }),
             "arbitrary helper failures are recorded");
-    require(events(log).last().value(QStringLiteral("error")) == QLatin1String("helper failed"),
-            "raw helper output must not be persisted in the failure log");
+    require(events(log).last().value(QStringLiteral("error")) == QLatin1String("helper failed") &&
+                !(read(log) + read(log + QStringLiteral(".1")))
+                     .contains("private path and transcript must not become a log category"),
+            "no field in any persisted record contains the private failure input");
+    write(root.filePath(QStringLiteral("context.reply")), valid_context);
+    write(root.filePath(QStringLiteral("no-claude")), "yes");
+    const auto before_missing_cli = events(log).size();
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] { return events(log).size() > before_missing_cli; }),
+            "missing prediction CLI recorded");
+    require(events(log).last().value(QStringLiteral("error")) ==
+                    QLatin1String("no Claude Code CLI on this Mac") &&
+                events(log).last().value(QStringLiteral("stage")) == QLatin1String("predict"),
+            "the missing Claude CLI retains its actionable category");
+    QFile::remove(root.filePath(QStringLiteral("no-claude")));
     write(root.filePath(QStringLiteral("context.reply")),
           QByteArray(qsizetype{1024} * 1024 + 1, 'x'));
     const auto before_overflow = events(log).size();

@@ -3650,6 +3650,22 @@ logs every guess to measure that threshold.
   can retry a malformed answer once, so the cap does not count provider requests
   one-for-one.
 
+Presentation callbacks retain an independent immutable-frame handoff, never the
+terminal item. Its binding epoch rejects callbacks from an old window; teardown
+retires it before the item disappears. Impression observation is a queued
+single-shot connection armed only for an unseen eligible offer, with at most one
+pending observation per view. Empty previews and already-seen offers enqueue no
+per-frame GUI work. `frameSwapped` is the presentation proxy used by this policy,
+not a measurement of pixel-visible latency. A rebind must present the current
+offer in the new window before Tab can submit it whole.
+
+Prediction failures preserve bounded categories, including a missing Claude CLI;
+raw provider diagnostics remain outside the private acceptance log. Evaluation
+reports include requested and successful judgments and their coverage. Quality
+metrics are conditional on successful grading; a missing judgment is neither a
+correct nor an incorrect prediction. Malformed log stage values are reported as
+unknown instead of interrupting the report.
+
 `scripts/next_prompt_eval.py replay` then repeated the test on 60 prompts typed
 since September 1, half on the Mac and half on the Linux test host, across
 Claude Code and Codex: one of three guesses was sendable for 10% and had the
