@@ -45,6 +45,7 @@
 
 #if defined(Q_OS_UNIX)
 #include <sys/signal.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -1982,6 +1983,8 @@ exec sleep 600
         require(here != nullptr && shows(here, "plan own") &&
                     workspace.agentAccount(here->sessionId()) == QStringLiteral("mine"),
                 "it runs on this Mac's own sign-in");
+        require(workspace.agentPlanCredential(here->sessionId()).isEmpty(),
+                "an own sign-in has no visiting credential override");
         require(workspace.createAgent(QStringLiteral("~/far"), QStringLiteral("far"), claude, {},
                                       {}, QStringLiteral("devbox")),
                 "a Claude agent on another machine");
@@ -2008,6 +2011,8 @@ exec sleep 600
         require(next != nullptr && shows(next, "plan token-for-spare") &&
                     workspace.agentAccount(next->sessionId()) == QStringLiteral("spare"),
                 "a new session takes the plan with room, its token in the environment");
+        require(workspace.agentPlanCredential(next->sessionId()) == token.fileName(),
+                "reset and launch use the same configured credential root");
 
         require(waitFor([&] { return far->inputReady(); }, 10000), "remote input is ready");
         // Drive the output estimate explicitly: instrumented transports may
@@ -2058,6 +2063,9 @@ exec sleep 600
                         conversation.match(first).captured(1) &&
                     workspace.agentAccount(far_id) == QStringLiteral("spare"),
                 "it reads the kept token there and resumes the same conversation");
+        require(workspace.agentPlanCredential(far_id) ==
+                    QStringLiteral("~/.lapis/accounts/claude/spare.token"),
+                "remote credential lookup retains the remote user's home");
 
         workspace.setAccountLoads({});
         require(
@@ -3455,6 +3463,13 @@ void alertsChimeWhileAnAgentWaits() {
         return std::count(played.begin(), played.end(), lapis::desktop::Chime::needsYou);
     };
     request(true);
+    // Production requests intentionally share the one finished-turn cue.
+    emit workspace.turnFinished(&agent);
+    waitFor([] { return false; }, 300);
+    require(played == std::vector<lapis::desktop::Chime>{lapis::desktop::Chime::finished},
+            "a production request keeps the shared single chime");
+    played.clear();
+    // The legacy explicit signal still has its existing repeat contract.
     emit workspace.agentNeedsYou(&agent);
     require(needs() == 1, "a request chimes at once");
     waitFor([] { return false; }, 700);
@@ -3541,6 +3556,136 @@ void alertsChimeWhileAnAgentWaits() {
             peak, static_cast<qint16>(std::abs(qFromLittleEndian<qint16>(wav.constData() + i))));
     require(qFromLittleEndian<qint16>(wav.constData() + 44) == 0 && peak > 8000 && peak < 8500,
             "it starts from silence and peaks near -12 dBFS");
+}
+
+// A chosen sound file replaces a chime and is read again when it changes; a
+// finished turn without its own file plays the same one at half volume, and a
+// missing file is named when the config loads and plays the taps.
+void chimesPlayChosenFiles() {
+    using lapis::desktop::Chime;
+    using lapis::desktop::ChimeSound;
+    QTemporaryDir directory;
+    require(directory.isValid(), "sounds directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto write = [&root](const QString& name, const QByteArray& bytes) {
+        QFile file(root.filePath(name));
+        require(file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                    file.write(bytes) == bytes.size(),
+                "write sound fixture");
+    };
+    write(QStringLiteral("ding.wav"), "RIFF-ding");
+    write(QStringLiteral("lapis.json"), R"({"version":1,"alerts":{"soundFile":"ding.wav"}})");
+    lapis::desktop::KeyMap keymap;
+    keymap.setSourcePathForTesting(root.filePath(QStringLiteral("lapis.json")));
+    lapis::desktop::ChimeSounds sounds;
+    const auto ready = [&](Chime chime, const QByteArray& bytes) {
+        return waitFor([&] { return sounds.sound(chime, keymap).bytes == bytes; }, 10000);
+    };
+    const auto diagnosed = [&](Chime chime, const QString& text) {
+        return waitFor(
+            [&] {
+                static_cast<void>(sounds.sound(chime, keymap));
+                return keymap.diagnostic().contains(text);
+            },
+            10000);
+    };
+    require(keymap.load() && keymap.alertSoundFile() == root.filePath(QStringLiteral("ding.wav")),
+            "relative sound path resolves without file I/O on the GUI thread");
+    require(ready(Chime::needsYou, "RIFF-ding"), "background file load completes");
+    require(sounds.sound(Chime::finished, keymap).volume == 0.5F,
+            "the shared cue borrows soundFile at half volume");
+    std::vector<ChimeSound> attempted;
+    sounds.play(Chime::finished, keymap, [&](const ChimeSound& clip) {
+        attempted.push_back(clip);
+        return clip.path.isEmpty();
+    });
+    require(attempted.size() == 2 && attempted[0].volume == 0.5F && attempted[1].volume == 1.0F &&
+                attempted[1].bytes == lapis::desktop::chime_wav(Chime::finished),
+            "decode failure uses the synthesized cue at its own gain, not double attenuation");
+    require(diagnosed(Chime::finished, QStringLiteral("could not be played")),
+            "playback failure is visible");
+    sounds.play(Chime::finished, keymap, [](const ChimeSound&) { return true; });
+    require(waitFor([&] { return keymap.diagnostic().isEmpty(); }, 10000),
+            "playback recovery clears its diagnostic");
+    sounds.play(Chime::finished, keymap, [](const ChimeSound&) { return false; });
+    require(diagnosed(Chime::finished, QStringLiteral("playback is unavailable")),
+            "a failed synthesized fallback is visible too");
+    sounds.play(Chime::finished, keymap, [](const ChimeSound&) { return true; });
+    require(waitFor([&] { return keymap.diagnostic().isEmpty(); }, 10000),
+            "successful output clears the fallback failure");
+    const auto modified = QFileInfo(root.filePath(QStringLiteral("ding.wav"))).lastModified();
+    write(QStringLiteral("ding.wav"), "RIFF-ping");
+    QFile preserved(root.filePath(QStringLiteral("ding.wav")));
+    require(preserved.open(QIODevice::ReadWrite) &&
+                preserved.setFileTime(modified, QFileDevice::FileModificationTime),
+            "preserve mtime while replacing same-size content");
+    preserved.close();
+    require(ready(Chime::needsYou, "RIFF-ping"),
+            "descriptor change time invalidates a metadata-preserving edit");
+    write(QStringLiteral("ding.wav"), "RIFF-ding, edited");
+    require(ready(Chime::needsYou, "RIFF-ding, edited"),
+            "edited bytes replace the cached version asynchronously");
+
+    write(QStringLiteral("low.wav"), "RIFF-low");
+    write(QStringLiteral("lapis.json"),
+          R"({"version":1,"alerts":{"soundFile":"gone.wav","finishedFile":"low.wav"}})");
+    require(keymap.load() && diagnosed(Chime::needsYou, QStringLiteral("gone.wav")),
+            "missing file diagnostic arrives from the loader");
+    require(ready(Chime::finished, "RIFF-low") &&
+                sounds.sound(Chime::finished, keymap).volume == 1.0F,
+            "an explicit finishedFile uses its own volume");
+    write(QStringLiteral("gone.wav"), "RIFF-created");
+    require(ready(Chime::needsYou, "RIFF-created") &&
+                waitFor([&] { return keymap.diagnostic().isEmpty(); }, 10000),
+            "creating a file clears stale diagnostics without reloading configuration");
+    require(QFile::remove(root.filePath(QStringLiteral("gone.wav"))), "remove configured file");
+    require(diagnosed(Chime::needsYou, QStringLiteral("not found")) &&
+                sounds.sound(Chime::needsYou, keymap).bytes ==
+                    lapis::desktop::chime_wav(Chime::needsYou),
+            "deletion is reported and falls back");
+
+    write(QStringLiteral("lapis.json"), R"({"version":1,"alerts":{"soundFile":"ding.wav"}})");
+    require(keymap.load() && ready(Chime::needsYou, "RIFF-ding, edited"), "restore readable file");
+    const auto permissions = QFile::permissions(root.filePath(QStringLiteral("ding.wav")));
+    require(QFile::setPermissions(root.filePath(QStringLiteral("ding.wav")), {}),
+            "revoke fixture permissions");
+    require(diagnosed(Chime::needsYou, QStringLiteral("not readable")),
+            "permission change invalidates a cached read");
+    require(QFile::setPermissions(root.filePath(QStringLiteral("ding.wav")), permissions),
+            "restore fixture permissions");
+    require(ready(Chime::needsYou, "RIFF-ding, edited"),
+            "permission-only recovery retries without a size/mtime change");
+
+    const auto relative = QDir::home().relativeFilePath(root.filePath(QStringLiteral("ding.wav")));
+    const QJsonObject home_config{
+        {QStringLiteral("alerts"),
+         QJsonObject{{QStringLiteral("soundFile"), QStringLiteral("~/") + relative}}}};
+    write(QStringLiteral("lapis.json"), QJsonDocument(home_config).toJson());
+    require(keymap.load() && keymap.alertSoundFile() == root.filePath(QStringLiteral("ding.wav")),
+            "tilde expansion works without changing the process HOME");
+    write(QStringLiteral("lapis.json"),
+          R"({"version":1,"alerts":{"soundFile":"ding.wav","finishedFile":"gone.wav"}})");
+    require(keymap.load() && diagnosed(Chime::finished, QStringLiteral("gone.wav")) &&
+                sounds.sound(Chime::finished, keymap).bytes ==
+                    lapis::desktop::chime_wav(Chime::finished),
+            "an unavailable explicit finishedFile never borrows the other clip");
+    QFile big(root.filePath(QStringLiteral("big.wav")));
+    require(big.open(QIODevice::WriteOnly) &&
+                big.resize(lapis::desktop::ChimeSounds::kMaxFileBytes + 1),
+            "oversized fixture");
+    big.close();
+    write(QStringLiteral("lapis.json"), R"({"version":1,"alerts":{"soundFile":"big.wav"}})");
+    require(keymap.load() && diagnosed(Chime::needsYou, QStringLiteral("over 4 MiB")),
+            "oversized file is diagnosed asynchronously");
+    write(QStringLiteral("lapis.json"), R"({"version":1,"alerts":{"soundFile":12}})");
+    require(keymap.load() && keymap.diagnostic().contains(QStringLiteral("path string")),
+            "malformed setting is diagnosed immediately");
+    const auto fifo = root.filePath(QStringLiteral("pipe.wav"));
+    require(::mkfifo(QFile::encodeName(fifo).constData(), 0600) == 0,
+            "create special-file fixture");
+    write(QStringLiteral("lapis.json"), R"({"version":1,"alerts":{"soundFile":"pipe.wav"}})");
+    require(keymap.load() && diagnosed(Chime::needsYou, QStringLiteral("not a regular file")),
+            "nonblocking descriptor validation rejects a FIFO without losing a worker");
 }
 
 // A new agent's CLI updates itself first, so the agent never opens on an
@@ -4941,9 +5086,10 @@ int main(int argc, char** argv) {
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("accounts") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("startup-defaults") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload") ||
-                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater")),
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes")),
                     "Usage: lapis_workspace_tests [--case "
-                    "remote-options|accounts|reload|updater|startup-defaults]");
+                    "remote-options|accounts|reload|updater|startup-defaults|chimes]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("accounts")) {
                 incompleteCodexHomeNeverStartsAnAgent();
@@ -4960,6 +5106,9 @@ int main(int argc, char** argv) {
                 updateReloadsAgentsAfterTheirCli();
                 startupAndManualUpdatesShareOneInstaller();
                 skippedClaudeUpdateReportsTheCurrentOperation();
+            } else if (selected == QStringLiteral("chimes")) {
+                alertsChimeWhileAnAgentWaits();
+                chimesPlayChosenFiles();
             } else {
                 reloadStartsAgentsAgain();
                 reloadFailuresRemainRetryable();
@@ -5036,6 +5185,7 @@ int main(int argc, char** argv) {
         unseenAgentsDecodeNothing();
         windowTakesTheWorkspaceFromTheHost();
         alertsChimeWhileAnAgentWaits();
+        chimesPlayChosenFiles();
         phoneSizeYieldsToTheDesktop();
         std::cout << "workspace categories, identity, persistence, status and closing passed\n";
         return 0;

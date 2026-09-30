@@ -34,7 +34,8 @@ they are released. See
 - **Jump to what needs you** with Command-J (the next) or Command-L (the latest),
   even from another app with Command-Option-L. Chimes and notifications say when.
 - **Plan usage** for every CLI you are signed in to, on this Mac and your other
-  machines, with several plans shared across sessions. [Usage](docs/usage.md)
+  machines, with several plans shared across sessions and configurable saved limit resets.
+  [Usage](docs/usage.md)
 - **Your phone** shows and drives the same agents. [Phone](docs/phone.md)
 - **Suggestions** guess your next prompt for each agent; Tab sends it and moves
   on to the next agent that needs you. [Suggestions](docs/suggestions.md)

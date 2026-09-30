@@ -449,6 +449,8 @@ class Workspace final : public QObject {
     // Where an agent is: its category's name, its ssh machine (or ""), and
     // its folder as the card shows it ("~/x", or "host:~/x" over ssh).
     Q_INVOKABLE [[nodiscard]] QVariantMap agentPlace(const QString& id) const;
+    // The machines ("" for this Mac) where agents of these CLIs run.
+    [[nodiscard]] QStringList machinesRunning(const QStringList& harnesses) const;
     void setAgentDefaults(const AgentDefaults& defaults) { agent_defaults_ = defaults; }
     // Where the new-agent forms' model lists come from; lapis keeps it.
     void setHarnessModels(const HarnessModels* models) { harness_models_ = models; }
@@ -471,6 +473,10 @@ class Workspace final : public QObject {
     void setAccountLoads(QHash<QString, AccountLoad> loads);
     // The plan an agent runs on; empty for its machine's own sign-in.
     Q_INVOKABLE [[nodiscard]] QString agentAccount(const QString& id) const;
+    // Where the credential lapis gave the agent's plan is kept on the agent's
+    // machine: a Claude Code token file or a Codex home ("~/" on another
+    // machine). Empty when the agent uses its machine's own sign-in.
+    [[nodiscard]] QString agentPlanCredential(const QString& id) const;
     Q_INVOKABLE [[nodiscard]] bool canSwitchAccount(const QString& id) const;
     // Starts the agent again on the plan with the most room besides its own.
     Q_INVOKABLE bool switchAccount(const QString& id);

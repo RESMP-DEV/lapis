@@ -1768,6 +1768,22 @@ Decisions from these runs:
   still answers a Codex request through its adapter. The needs-you chime
   settings (`alertSound`, `alertRepeat`) and `Alerts::needsYou` are unused and
   due for removal with the phone's matching settings.
+- Custom sound files preserve that shared finished cue. `ChimeSounds` owns
+  asynchronous file loading separately from `Alerts` attention policy: at most
+  two configured paths and two in-flight checks, with coalesced latest-path
+  selection. GUI calls use completed cache data or the synthesized fallback;
+  filesystem stat/open/read never run in the alert callback. Runtime diagnostics
+  have their own KeyMap signal so a file-status update does not reload settings.
+  The loader opens nonblocking, validates the open descriptor as a regular file,
+  and compares device/inode, size and nanosecond modification/change times before
+  and after reading. Missing, unreadable or changing files retry on a later check;
+  special files cannot occupy a worker waiting for a pipe writer.
+  The macOS playback cache has explicit eight-entry and 16 MiB encoded-data
+  budgets; this is not a claim about opaque decoded-buffer memory. A new cue
+  stops the previous one. Decoder failure preserves the built-in cue's gain;
+  failure of that fallback also produces a visible diagnostic. Native NSSound
+  decoding of both generated WAVs is tested without playing audio; audible output,
+  other formats and decoded-memory usage remain separate qualification work.
 - `nextAttention` (Command-J) is the manual half of the attention queue: it walks
   categories and strips from the selected agent to the next unseen one.
   `latestAttention` (Command-L) takes the unseen agent whose mark is newest
@@ -3413,6 +3429,77 @@ has answered for it loses every agent. An install waits for the old window to
 exit and a few seconds more before touching the bundle. Sparkle replaces the
 bundle only after the app has exited, so it can race BTM the first time lapis
 quits on a Mac with no BTM entry for it yet; that is not yet measured.
+
+### Saved limit resets (September 29)
+
+The reset controller targets the account actually selected for a Claude Code or
+Codex session. `Workspace::agentAccount()` supplies the configured plan; its
+home uses the machine sign-in, while a visiting plan uses only that plan's setup
+token or Codex home. The workspace supplies the exact credential location through
+`agentPlanCredential()`, including custom roots, rather than deriving a second
+path in the reset controller. Missing credentials or a changed provider identity
+refuse the operation. Local Claude keychain data travels on stdin and never silently falls
+back to a different credential file.
+
+The helper retains the restore/salvage policy from OMP: restore when a window is
+at least 99.9% used, remains blocked for `minBlockedMinutes`, and the selected
+credit clears every exhausted window while retaining `keepCredits`; salvage an
+expiring credit within `salvageHours` when a covered weekly window is at least
+one-quarter used. Model-specific weekly windows remain in the coverage check.
+The weekly Claude session reset clears only the five-hour window. Its identity
+includes the weekly boundary, so a future week's credit is a different credit.
+The numeric defaults are 60 minutes, zero reserve and 12 hours. lapis's automatic
+mode defaults on; this is a lapis policy choice, not OMP's ask-first behavior.
+
+`LimitResets` uses an explicit prepare/consume/reconcile protocol:
+
+1. `--prepare` reads one selected account and reports an eligible credit and
+   policy action without consuming it.
+2. The main machine records that exact credit, verified account email and provider account/organization ID, and a
+   fresh operation UUID in a private journal. The file and parent directory are
+   synchronized off the GUI thread before a consume helper can start. Failed
+   persistence cannot authorize a consume. A per-account process lock covers the
+   complete operation; manual and automatic checks share it. Journals and locks
+   are keyed by CLI and provider account ID, so aliases and different machines
+   using one account share its pending operation after read-only discovery.
+3. The consume re-reads only that credit and rechecks both the email and provider ID. Its
+   receipt must match the admitted account, operation and credit. Missing provider IDs
+   refuse admission rather than falling back to email-only identity. An explicit
+   success or definite refusal retires the pending record.
+4. A lost reply, timeout, malformed result or crash leaves the operation pending.
+   The next run uses `--reconcile-only`, never another consume. An available
+   credit remains uncertain; a complete listing proving it absent, consumed or
+   expired settles the record without claiming a confirmed reset. Failed or
+   partial listings remain unknown. No provider idempotency guarantee is assumed,
+   including for the Claude session-reset endpoint with no known request-ID field.
+
+Journals live in the private runtime `limit-resets/` directory, one per account
+target, at most 256 targets and 64 KiB per file. Each retains at most 128 recent
+settled/refused attempt keys with finite retention. Under capacity pressure,
+only recognized version-2 journals with no pending operation and no unexpired
+attempts are reclaimed, under their process locks. New-file admission has its
+own lock, so concurrent hosts cannot exceed the file cap. Pending uncertainty,
+corrupt state and older journal versions are preserved; unsupported versions
+refuse further work rather than guessing an identity or silently migrating it. Helpers have a three-minute deadline, a 1 MiB stdout bound,
+a 64 KiB stderr bound and process-group cleanup; at most eight targets run at
+once. Automatic checks run one minute after enabling and then every five
+minutes. A shared admission timestamp prevents multiple hosts or aliases from
+submitting automatic resets inside the same five-minute account interval.
+Settings updates retain that cadence; disabling cancels the initial
+check and prevents a prepared automatic operation from being submitted.
+
+The controller currently belongs to the workspace host. The persistent
+supervisor described above should own this scheduling in its later vertical
+slice; this change does not install that daemon. Its journal already protects
+host restarts. The existing launch-account fallback gap in R3 remains separate
+from this reset admission repair.
+
+The C++ fixture runs the actual embedded Python helper with provider stand-ins
+and checks journal admission, process locking, restart/no-replay, malformed
+state, account changes and local/remote routing. Python cases cover provider
+normalization, weekly coverage and per-plan credentials. No real reset was spent
+for these checks. Real account/keychain and package qualification remain distinct
+from this behavioral evidence.
 
 ### Predicting the next prompt (September 29)
 

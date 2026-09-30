@@ -28,19 +28,34 @@ key bindings and appearance it holds these:
 folder, the approval mode (`edits`, `auto` or `full`), models to offer, and, per
 machine in `machines`, a folder that differs. See [agents](agents.md).
 
-`harnessArguments` adds your own flags to every new agent of a CLI. lapis adds
-none itself, and shell aliases do not apply because lapis starts the executable
-directly.
+`harnessArguments` adds your own flags to every new agent of a CLI, alongside
+lapis's selected model, approval mode and resume options. Configured approval
+flags take precedence for a request with no explicit mode. Shell aliases do not
+apply because lapis starts the executable directly.
 
 ## Alerts
 
-An agent that needs you chimes (two rising taps), and again every few seconds
-while the request waits and you are looking elsewhere, up to `repeat` times. A
-Codex or Claude turn that ends out of view chimes once, quietly (`finished`).
-While lapis is in the background the same moments post a notification
-(`notify`), titled with the agent and naming its CLI ("Claude finished a
-turn"); clicking it shows the agent. Appearance has the switches and a Play
-button for each.
+An unseen completed turn or request plays one quiet cue when `alerts.finished`
+is enabled. Requests use the same cue and background notification; custom sound
+files do not restore repeating request chimes. Appearance has one switch and
+Play button for the shared cue, plus the background-notification switch.
+
+Use `alerts.finishedFile` for your own sound. When it is unset, `alerts.soundFile`
+is used at half volume. An explicitly set but unavailable `finishedFile` falls
+back to the built-in finished cue rather than borrowing a different file.
+
+```json
+"alerts": {"finishedFile": "~/.lapis/sounds/done.wav", "finished": true, "notify": true}
+```
+
+Paths may start with `~/`; relative paths start beside `lapis.json`. Files are
+limited to 4 MiB. Checks and reads run in the background, and the current cached
+sound or the built-in cue plays while a check is pending. Edits, deletion and
+permission changes are picked up asynchronously. File and playback diagnostics
+update without reloading the configuration. On macOS, a file the playback layer
+cannot use falls back to the built-in cue at its normal gain. Format and native
+playback qualification are recorded in [status](status.md). If the built-in cue
+also cannot play, the diagnostic reports that chime playback is unavailable.
 
 ## The rest
 
@@ -48,6 +63,6 @@ button for each.
   Code, Zed, Windsurf and Sublime Text installed).
 - `keepAwake` keeps the Mac from sleeping while it is plugged in, so the phone
   can reach it.
-- `usage` and `accounts` are described in [usage](usage.md).
+- `usage`, `accounts` and `limitResets` are described in [usage](usage.md).
 - `nextPrompt` turns on guessed next prompts; see [suggestions](suggestions.md).
 - Key bindings are listed in [keys](keys.md); Appearance shows and edits them.
