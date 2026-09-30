@@ -158,7 +158,8 @@ private fun KeyChip(key: CommandKey, enabled: Boolean, onInput: (Input) -> Unit)
         modifier = Modifier
             .testTag(key.testTag)
             .chipLook(enabled)
-            .clickable(enabled = enabled) { onInput(key.payload) },
+            .clickable(enabled = enabled) { onInput(key.payload) }
+            .chipPadding(),
     )
 }
 
@@ -187,7 +188,8 @@ private fun SnippetChip(
             .combinedClickable(
                 onClick = { if (enabled) onRun() },
                 onLongClick = onEdit,
-            ),
+            )
+            .chipPadding(),
     )
 }
 
@@ -200,7 +202,8 @@ private fun AddChip(onEdit: () -> Unit) {
         modifier = Modifier
             .testTag("snippets-add")
             .chipLook(enabled = true)
-            .clickable { onEdit() },
+            .clickable { onEdit() }
+            .chipPadding(),
     )
 }
 
@@ -213,4 +216,8 @@ private fun Modifier.chipLook(enabled: Boolean): Modifier = this
         },
     )
     .border(1.dp, LapisColors.edge, RoundedCornerShape(8.dp))
-    .padding(horizontal = 10.dp, vertical = 5.dp)
+
+// Applied after the click modifier, never before: padding wraps what follows
+// it, so padding outside the clickable would inset the tap target to the
+// glyph and leave the visible chip border dead to touches.
+private fun Modifier.chipPadding(): Modifier = this.padding(horizontal = 10.dp, vertical = 5.dp)

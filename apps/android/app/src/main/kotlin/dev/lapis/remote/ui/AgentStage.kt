@@ -122,12 +122,6 @@ fun AgentStage(
     val sessionSize by session.size.collectAsStateWithLifecycle()
 
     var fontSize by remember { mutableStateOf(fontSizeOverride ?: DEFAULT_FONT_SIZE) }
-    LaunchedEffect(settings, fontSizeOverride) {
-        if (fontSizeOverride == null) {
-            fontSize = settings.getString(FONT_SIZE_KEY)?.toFloatOrNull()
-                ?.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE) ?: DEFAULT_FONT_SIZE
-        }
-    }
 
     // The command bar's visibility and snippet list are phone-local state
     // under the same settings seam; the bar is on until turned off. Both
@@ -137,9 +131,22 @@ fun AgentStage(
     val snippetStore = remember(settings) { SnippetStore(settings) }
     var commandBarEnabled by rememberSaveable { mutableStateOf(true) }
     var snippets by rememberSaveable { mutableStateOf(listOf<String>()) }
-    LaunchedEffect(settings) {
+
+    // Saved settings land after first composition: DataStore reads are
+    // async where iOS UserDefaults is synchronous. fit() must wait for
+    // them, or the session opens at the default font and bar visibility
+    // and resizes a moment later when the saved values apply. One effect
+    // reads everything and flips the gate once, so the first open happens
+    // at the geometry the user actually configured.
+    var settingsLoaded by remember { mutableStateOf(false) }
+    LaunchedEffect(settings, fontSizeOverride) {
+        if (fontSizeOverride == null) {
+            fontSize = settings.getString(FONT_SIZE_KEY)?.toFloatOrNull()
+                ?.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE) ?: DEFAULT_FONT_SIZE
+        }
         commandBarEnabled = settings.getString(COMMAND_BAR_KEY)?.toBooleanStrictOrNull() ?: true
         snippets = snippetStore.load()
+        settingsLoaded = true
     }
 
     fun setSnippets(next: List<String>) {
@@ -225,6 +232,9 @@ fun AgentStage(
     }
 
     fun fit(force: Boolean = false) {
+        // Until the saved settings land, the geometry is the default's, not
+        // the user's; opening now means a resize the moment they apply.
+        if (!settingsLoaded) return
         if (stageSize.width <= 0 || stageSize.height <= 0) return
         val grid = metrics.grid(stageSize.width.toFloat(), stageSize.height.toFloat())
         val current = session.size.value
@@ -244,7 +254,10 @@ fun AgentStage(
         }
     }
 
-    LaunchedEffect(session, stageSize) { fit() }
+    // settingsLoaded is a key: the gate itself releases fit() when the
+    // saved values have applied, including when the stage size never
+    // changed (saved state equal to the defaults).
+    LaunchedEffect(session, stageSize, settingsLoaded) { fit() }
     LaunchedEffect(session, fontSize) { fit(force = true) }
 
     fun setFontSize(value: Float) {
