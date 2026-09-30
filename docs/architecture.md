@@ -3736,6 +3736,27 @@ Still open: the Claude qualification scripts pin `SUPPORTED_VERSION` 2.1.280
 and refuse newer CLIs. Their fixtures drive a GLM model through a local model
 router, so the bump waits for a run on a machine with that router.
 
+### Update pacing audit (September 28)
+
+The local timer audit distinguished publish-to-publish rate limits from settle
+debounces and fixed timeout deadlines. Its contributor rule is now recorded in
+`AGENTS.md`: after a quiet interval, process immediately; during a burst, wait
+only the remainder and process the newest state. Visible changes remain aligned
+with frame presentation. The service snapshot publisher and terminal preview
+already use this pattern on main; their former whole-interval delay must not be
+reintroduced when older branches are consolidated.
+
+Two remaining findings were rechecked against main `c0f2037` on September 30:
+
+| Site | Current gap | Bounded follow-up and evidence |
+| --- | --- | --- |
+| `services/session/src/session_service.cpp`, `schedule_attention()` | Starts a full 16 ms attention timer after a quiet interval. | Measure from the last attention publication and wait only the remainder; verify the first eligible update is published without the full-window delay and sustained changes retain the newest state. |
+| `apps/ios/Lapis/Models.swift`, `followNewHistory` | Starts a full one-second sleep for newly archived history, including after idle. | Measure from the last newer-history attempt and retain generation/cancellation guards; extend the existing Foundation lifecycle probe to distinguish immediate idle recovery from bounded sustained catch-up. |
+
+These are source findings under the operational responsiveness work, not new
+latency measurements. Keep their completion evidence distinct from the earlier
+terminal echo measurements and the R1/R4 install and recovery qualification.
+
 ### Web surfaces (September 29)
 
 lapis supervises agents whose work is half terminal and half web, and the web
