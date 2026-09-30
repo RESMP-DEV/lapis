@@ -45,7 +45,7 @@
   ],
   "source_sha256": {
     "apps/desktop/qml/Main.qml": "5ff43300422e57ebcedbc26f9849de40762d3a8c79a040b68625f92aed2d3372",
-    "apps/desktop/src/live_connection.cpp": "132b285f339026e9a004f7072c617bc11f6b07a686b91290d0f6310c1abf545f",
+    "apps/desktop/src/live_connection.cpp": "a799f28595840ae5ea4495e68452c4a823935feea57a42af8e8cdf8c3467283e",
     "apps/desktop/src/live_connection.hpp": "622e9b95e3f2f2e6a5d862529e0f51baf1585b90f0eb41963501f09e2657ac8b",
     "apps/desktop/src/terminal_surface.cpp": "d67200fd7279309e17438e71b7213a947dffb168cd1e58dcc62e2be6ca465b62",
     "apps/desktop/src/workspace.hpp": "36fdb107f0dd6c7236571346e999f7cec5ad4aced2ff13a47243e55ac418d114",
@@ -63,6 +63,8 @@
   },
   "followup": {
     "contract": "The service independently refuses paste-plus-Return while normalized requests are pending. requestPaste exposes the correlated transaction for both send and fill consumers.",
-    "checks": "Normal, ASan/UBSan and TSan real-service admission reruns passed after the submit guard; normal service clang-tidy passed. Consumer pending-request refusal is exercised by the next-prompt input fixture."
-  }
+    "checks": "Normal, ASan/UBSan and TSan real-service admission reruns passed after the submit guard; normal service clang-tidy passed. Consumer pending-request refusal is exercised by the next-prompt input fixture.",
+    "review_fixes": "Fresh refusal reason on every early sendText/requestPaste failure; source hashes explicitly tied to source_revision after the main merge. Normal live-connection rerun passed."
+  },
+  "source_revision": "9258f74ad646b1794f1eb1e8a35e0ebc8684aaf5"
 }
