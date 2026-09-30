@@ -970,7 +970,8 @@ void suggestions() {
     press(Qt::Key_C, Qt::MetaModifier, QStringLiteral("c"));
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
-    require(paste_is(typed[0], "status?", true) && used.back() == std::pair{true, 3},
+    require(paste_is(typed[0], "status?", true) && !used.empty() &&
+                used.back() == std::pair{true, 3},
             "Tab after typing did not send it, counting three keys typed first");
 
     // The Enter belongs to the same admitted operation; later typing cannot
@@ -989,8 +990,8 @@ void suggestions() {
     surface.setSuggestion(QStringLiteral("not yet drawn"));
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
-    require(paste_is(typed[0], "not yet drawn", false) && used.back() == std::pair{false, 0} &&
-                nothing_sent(),
+    require(paste_is(typed[0], "not yet drawn", false) && !used.empty() &&
+                used.back() == std::pair{false, 0} && nothing_sent(),
             "An unpresented suggestion was submitted");
 
     // A suggestion that does not show whole is only typed, for the person to
@@ -1005,8 +1006,8 @@ void suggestions() {
     f.document.applySnapshot(expanded.snapshot());
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
-    require(paste_is(typed[0], longer.toUtf8(), false) && used.back() == std::pair{false, 0} &&
-                nothing_sent(),
+    require(paste_is(typed[0], longer.toUtf8(), false) && !used.empty() &&
+                used.back() == std::pair{false, 0} && nothing_sent(),
             "A suggestion not shown whole was sent");
 
     // A pending request (a permission dialog) is never answered by Tab: the
@@ -1030,7 +1031,7 @@ void suggestions() {
     surface.setSuggestion(QStringLiteral("rerun it"));
     press(Qt::Key_Tab, Qt::AltModifier, QStringLiteral("\t"));
     typed = frames(1);
-    require(typed.size() == 1 && paste_is(typed[0], "rerun it", false) &&
+    require(typed.size() == 1 && paste_is(typed[0], "rerun it", false) && !used.empty() &&
                 used.back() == std::pair{false, 0},
             "Option-Tab did not only type the suggestion");
     const int after_fill = calls();
