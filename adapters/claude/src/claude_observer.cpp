@@ -493,7 +493,7 @@ class Observer::Impl {
     QString base_diagnostic_{
         QStringLiteral("Waiting for a Claude session hook; hooks may be disabled")};
     QString background_diagnostic_;
-    QString diagnostic_{QStringLiteral("Waiting for a Claude session hook; hooks may be disabled")};
+    QString diagnostic_{base_diagnostic_};
     std::uint32_t connection_overflows_{};
     std::uint64_t sequence_{};
     bool notification_pending_{};

@@ -9,7 +9,10 @@
     "adapter_extension_point": "attention::State is constructed with (session_id, adapter_id); a web surface can register as a new adapter source without contract changes. attention.hpp:63 on main f9ab786 (:61 on the surveyed branch tree).",
     "terminal_wire_protocol": "Version 6, cell-typed end to end (TerminalSnapshot over local socket; GUI rasterizes via QSGTextNode; no texture or image channel exists). services/session/src/transport/local_protocol.hpp:9.",
     "process_model": "Existing session services are detached per agent, but the macOS 27 investigation invalidates GUI-detached spawning as a durability guarantee. Web-service birth and registry ownership depend on the R1/R4 persistent launchd supervisor.",
-    "join_precedent": "AttachMode::join with bounded views (phone gateway) is the structural precedent for additional attachment kinds."
+    "join_precedent": "AttachMode::join with bounded views (phone gateway) is the structural precedent for additional attachment kinds.",
+    "survey_branch": "fix/quality-correctness",
+    "integration_branch": "docs/web-surface-architecture",
+    "branch_semantics": "The method records the original survey tree, not the branch carrying later integration or review repairs."
   },
   "engine_landscape": {
     "verified_from": "Surveyed documentation plus distribution metadata; no engine runtime was exercised. September 30 review also fetched the candidate branch cef_browser.h for in-process DevTools API declarations.",
@@ -162,7 +165,7 @@
     }
   },
   "review_validation": {
-    "source_revision": "98509ef77ed113023f7d5ccf4abd45f9950c7b6e",
+    "source_revision": "e3d095bf2f1f035429879568af611ccef8f0f1b8",
     "base_main": "82f77af2b7da566884940cfd4637a1de2329c14a",
     "architecture_sha256": "08d382f5888379b9039d197f8efbffc309f7458e5659f08be5fcc4e6e971fe81",
     "checks": [
@@ -173,6 +176,10 @@
       "Installed Qt 6.11.2 Metal/Vulkan native-texture declarations inspected"
     ],
     "compiled_checks": "Not run: this PR changes only architecture and its research receipt; compiled main inputs are unchanged.",
-    "reviewer_status": "Independent FlashX and Kilo completed with findings; repaired in this branch. Codex cloud review unavailable due explicit quota, no retry before next local day. Optional follow-ups do not replace runtime qualification."
-  }
+    "reviewer_status": "Independent FlashX and Kilo completed with findings; repaired in this branch. Codex cloud review unavailable due explicit quota, no retry before next local day. Optional follow-ups do not replace runtime qualification.",
+    "validation_base_revision": "98509ef77ed113023f7d5ccf4abd45f9950c7b6e",
+    "source_state": "Checks ran on the working tree based on validation_base_revision; the recorded architecture_sha256 exactly matches the architecture committed at source_revision. The earlier review_corrections.reviewed_revision is the independent review input, not a claim that later repairs were already present."
+  },
+  "last_updated": "2026-09-30",
+  "date_semantics": "date is the initial survey date; checked_again, review_corrections.date and last_updated identify later observations and clarifications."
 }

@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocalSocket>
+#include <QObject>
 #include <QProcess>
 #include <QTimer>
 #include <array>
@@ -300,6 +301,10 @@ void one_sided_stops_and_diagnostic_recovery() {
     Fixture crons_only;
     crons_only.begin();
     auto crons_stop = event("Stop");
+    crons_stop.insert("session_crons", QJsonArray{QJsonObject{{"id", "wake-1"}}});
+    crons_only.raw(QJsonDocument(crons_stop).toJson(QJsonDocument::Compact));
+    require(crons_only.state.activity() == attention::Activity::working);
+    require(crons_only.observer.diagnostic() == baseline);
     crons_stop.insert("session_crons", QJsonArray{});
     crons_only.raw(QJsonDocument(crons_stop).toJson(QJsonDocument::Compact));
     require(crons_only.state.activity() == attention::Activity::turn_completed);
@@ -310,18 +315,27 @@ void one_sided_stops_and_diagnostic_recovery() {
     // instruction survives the clear.
     Fixture recovered;
     recovered.begin();
+    QCoreApplication::processEvents();
+    QString published_diagnostic;
+    QObject publication_owner;
+    QObject::connect(&recovered.observer, &lapis::claude::Observer::changed, &publication_owner,
+                     [&] { published_diagnostic = recovered.observer.diagnostic(); });
     auto drifted = event("Stop");
     drifted.insert("background_tasks", QJsonObject{{"status", "running"}});
     recovered.raw(QJsonDocument(drifted).toJson(QJsonDocument::Compact));
+    QCoreApplication::processEvents();
     require(recovered.state.activity() == attention::Activity::working);
     require(recovered.observer.diagnostic().contains(baseline) &&
             recovered.observer.diagnostic().contains(
                 QLatin1String("Claude background-work schema is unavailable")));
+    require(published_diagnostic == recovered.observer.diagnostic());
     auto finished = event("Stop");
     finished.insert("background_tasks", QJsonArray{});
     recovered.raw(QJsonDocument(finished).toJson(QJsonDocument::Compact));
+    QCoreApplication::processEvents();
     require(recovered.state.activity() == attention::Activity::turn_completed);
     require(recovered.observer.diagnostic() == baseline);
+    require(published_diagnostic == baseline);
 
     // An older relay's omitted lists replace the transient schema message;
     // they do not hide the standing terminal-only instruction.

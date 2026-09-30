@@ -39,7 +39,7 @@
     },
     {
       "command": "uv run --no-project python scripts/check_cli_launch.py --build-dir build/desktop --case paste-admission",
-      "result": "pass; actual service/PTTY atomic admission, whole-operation refusal, ordered Return, joined client and fragmented frame",
+      "result": "pass; actual service/PTY atomic admission, whole-operation refusal, ordered Return, joined client and fragmented frame",
       "max_paste_bytes": 983040,
       "pty_sha256": "9bad860c28327b72cddde69c4c79a5aab200318894dcb424cd0e893bc90d413f"
     },
