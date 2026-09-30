@@ -10,17 +10,18 @@ namespace lapis::claude {
 inline constexpr int relay_deadline_ms = 1000;
 inline constexpr qsizetype relay_frame_limit = qsizetype{16} * 1024;
 
-// The relay and observer form one authenticated metadata wire contract. Keep the
-// deadline, frame bound and forwarded identity fields together so neither side
-// can drift. The server deliberately uses the relay deadline without an extra
-// margin; its timer starts later, at accept, so the relay expires first.
-// `in_flight` is the relay's own count, never copied from the hook: at Stop,
-// how many background tasks and session wakeups (Claude Code's
-// `background_tasks` and `session_crons`) will start another turn.
-inline constexpr std::array<QStringView, 9> relay_identity_fields{
-    QStringView{u"hook_event_name"}, QStringView{u"session_id"},  QStringView{u"prompt_id"},
-    QStringView{u"tool_name"},       QStringView{u"tool_use_id"}, QStringView{u"notification_type"},
-    QStringView{u"source"},          QStringView{u"reason"},      QStringView{u"in_flight"},
+// Shared metadata contract. Source fields may be copied from Claude; derived
+// fields are accepted by the authenticated observer but computed only by the
+// relay. Possession of the private socket nonce remains the trust boundary;
+// field placement is not authentication. Both lists retain the existing event
+// wire shape. `legacy` means omitted lists; `unknown` means schema drift.
+inline constexpr std::array<QStringView, 8> relay_identity_fields{
+    QStringView{u"hook_event_name"}, QStringView{u"notification_type"}, QStringView{u"prompt_id"},
+    QStringView{u"reason"},          QStringView{u"session_id"},        QStringView{u"source"},
+    QStringView{u"tool_name"},       QStringView{u"tool_use_id"},
+};
+inline constexpr std::array<QStringView, 1> relay_derived_fields{
+    QStringView{u"in_flight"},
 };
 
 int run_hook_relay(const QString& socket, const QString& nonce) noexcept;

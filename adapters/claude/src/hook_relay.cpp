@@ -1,17 +1,48 @@
 #include "hook_relay.hpp"
 #include <QDeadlineTimer>
-#include <QJsonDocument>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
+#include <algorithm>
 #include <array>
 #include <cerrno>
+#include <optional>
 #include <poll.h>
 #include <unistd.h>
 
 namespace lapis::claude {
 namespace {
 constexpr qsizetype input_limit = qsizetype{1024} * 1024;
+std::optional<int> active_tasks(const QJsonArray& tasks) {
+    int count{};
+    for (const auto& task : tasks) {
+        const auto status = task.toObject().value(QStringLiteral("status")).toString();
+        if (status == QLatin1String("running") || status == QLatin1String("pending"))
+            ++count;
+        else if (status != QLatin1String("completed") && status != QLatin1String("failed") &&
+                 status != QLatin1String("killed") && status != QLatin1String("cancelled"))
+            return std::nullopt;
+    }
+    return count;
+}
+QString background_work(const QJsonObject& object) {
+    if (object.value(QStringLiteral("hook_event_name")) != QLatin1String("Stop"))
+        return {};
+    if (!object.contains(QStringLiteral("background_tasks")) &&
+        !object.contains(QStringLiteral("session_crons")))
+        return QStringLiteral("legacy");
+    const auto tasks = object.value(QStringLiteral("background_tasks"));
+    const auto wakeups = object.value(QStringLiteral("session_crons"));
+    if (!tasks.isArray() || !wakeups.isArray())
+        return QStringLiteral("unknown");
+    const auto active = active_tasks(tasks.toArray());
+    const auto crons = wakeups.toArray();
+    const bool valid_crons = std::all_of(crons.begin(), crons.end(),
+                                         [](const QJsonValue& cron) { return cron.isObject(); });
+    return active && valid_crons ? QString::number(*active + crons.size())
+                                 : QStringLiteral("unknown");
+}
 bool read_input(QByteArray& input, QDeadlineTimer& deadline) {
     std::array<char, 16384> chunk{};
     while (!deadline.hasExpired()) {
@@ -55,16 +86,11 @@ int run_hook_relay(const QString& socket, const QString& nonce) noexcept {
         for (const auto& key : relay_identity_fields)
             if (object.contains(key))
                 event.insert(key, object.value(key));
-        event.remove(QStringLiteral("in_flight"));
-        const auto tasks = object.value(QStringLiteral("background_tasks"));
-        const auto wakeups = object.value(QStringLiteral("session_crons"));
-        if (object.value(QStringLiteral("hook_event_name")) == QLatin1String("Stop") &&
-            (tasks.isArray() || wakeups.isArray()))
-            event.insert(QStringLiteral("in_flight"),
-                         QString::number(tasks.toArray().size() + wakeups.toArray().size()));
-        const auto data = QJsonDocument(QJsonObject{{"nonce", nonce}, {"event", event}})
-                              .toJson(QJsonDocument::Compact) +
-                          '\n';
+        const auto in_flight = background_work(object);
+        if (!in_flight.isNull())
+            event.insert(relay_derived_fields.front().toString(), in_flight);
+        QJsonObject frame{{"nonce", nonce}, {"event", event}};
+        const auto data = QJsonDocument(frame).toJson(QJsonDocument::Compact) + '\n';
         if (data.size() > relay_frame_limit || deadline.hasExpired())
             return 0;
         QLocalSocket connection;

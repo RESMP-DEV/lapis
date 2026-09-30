@@ -43,8 +43,12 @@ QString quote(QString value) {
 }
 bool valid_event(const QJsonObject& event) {
     for (auto it = event.begin(); it != event.end(); ++it)
-        if (std::none_of(relay_identity_fields.begin(), relay_identity_fields.end(),
-                         [key = it.key()](const auto& field) { return key.compare(field) == 0; }) ||
+        if ((std::none_of(
+                 relay_identity_fields.begin(), relay_identity_fields.end(),
+                 [key = it.key()](const auto& field) { return key.compare(field) == 0; }) &&
+             std::none_of(
+                 relay_derived_fields.begin(), relay_derived_fields.end(),
+                 [key = it.key()](const auto& field) { return key.compare(field) == 0; })) ||
             !it.value().isString() || it.value().toString().toUtf8().size() > 256 ||
             it.value().toString().contains(QChar::Null))
             return false;
@@ -68,12 +72,7 @@ class Observer::Impl {
         QObject::connect(&server_, &QLocalServer::newConnection, &server_, [this] { accept(); });
         paused_.setSingleShot(true);
         paused_.setInterval(Observer::paused_turn_ms);
-        QObject::connect(&paused_, &QTimer::timeout, &server_, [this] {
-            if (stopped_ || failed_ || completed_ || !state_.ready())
-                return;
-            finish_turn();
-            notify();
-        });
+        QObject::connect(&paused_, &QTimer::timeout, &server_, [this] { background_timeout(); });
     }
     ~Impl() { close(); }
     void notify() {
@@ -323,6 +322,24 @@ class Observer::Impl {
         completed_ = true;
         applied(state_.activity(next(), attention::Activity::turn_completed));
     }
+    void pause_turn() {
+        // A paused turn is not blocked on these notices; its own background work
+        // must retire them at the next prompt or the bounded completion below.
+        clear();
+        // Duplicate Stop hooks cannot extend a timeout deadline.
+        if (!failed_ && !paused_.isActive())
+            paused_.start();
+    }
+    void background_timeout() {
+        if (stopped_ || failed_ || completed_)
+            return;
+        if (!state_.ready()) {
+            loss(QStringLiteral("Claude paused-turn deadline was unobservable"));
+            return;
+        }
+        finish_turn();
+        notify();
+    }
     void new_prompt(const QString& prompt) {
         if (prompt.isEmpty()) {
             loss(QStringLiteral("Claude prompt boundary has no identity"));
@@ -377,19 +394,43 @@ class Observer::Impl {
             details_.erase(id);
         }
     }
+    void stop_turn(const QJsonObject& event) {
+        if (completed_)
+            return;
+        const auto in_flight = event.value("in_flight").toString(QStringLiteral("legacy"));
+        if (in_flight == QLatin1String("legacy")) {
+            diagnostic_ = QStringLiteral(
+                "Claude does not report background work; finished-turn observation is legacy");
+            finish_turn();
+            notify();
+            return;
+        }
+        if (in_flight == QLatin1String("unknown")) {
+            diagnostic_ = QStringLiteral(
+                "Claude background-work schema is unavailable; using the pause fallback");
+            pause_turn();
+            return;
+        }
+        // Background tasks or wakeups the agent started will begin its
+        // next turn themselves: the agent is still at work, not waiting
+        // for the person, unless no turn follows in time.
+        bool valid_count = false;
+        const auto count = in_flight.toInt(&valid_count);
+        if (!valid_count || count < 0) {
+            loss(QStringLiteral("Malformed Claude background-work count"));
+            return;
+        }
+        diagnostic_.clear();
+        if (count > 0) {
+            pause_turn();
+            return;
+        }
+        finish_turn();
+    }
     void turn_event(const QJsonObject& event) {
         const auto name = event.value("hook_event_name").toString();
         if (name == QLatin1String("Stop")) {
-            if (completed_)
-                return;
-            // Background tasks or wakeups the agent started will begin its
-            // next turn themselves: the agent is still at work, not waiting
-            // for the person, unless no turn follows in time.
-            if (event.value("in_flight").toString().toInt() > 0) {
-                paused_.start();
-                return;
-            }
-            finish_turn();
+            stop_turn(event);
         } else if (name == QLatin1String("Notification") &&
                    event.value("notification_type") == QLatin1String("idle_prompt")) {
             // Idle notices are one deterministic notice per prompt. After the
