@@ -1,0 +1,35 @@
+{
+ "schema_version": 1,
+ "recorded_at": "2026-09-30T01:55:00+00:00",
+ "platform": "darwin",
+ "scope": "Milestone B server-side verification of the Android companion client against a live session stack: gateway admission over the real overlay path, SSE stream, typed input into a real Codex TUI, resize re-grid, archived-history paging and jump, capability gates, and wheel delivery. On-device (cover screen) verification is pending the phone joining the overlay network.",
+ "base_revision": "87999470a043",
+ "branch": "feature/android-stage",
+ "harness": {
+  "recipe": "Mirror of scripts/check_restore.py: disposable /tmp runtime, scripts/fake_models.py as the model backend (no quota spend), one real Codex TUI agent in managed mode booted with `lapis_desktop --restore-agents`, plus tools/qa/fake_agent.py installed as a second agent for primary-screen history fixtures. lapis_desktop and lapis_session_service built from this worktree at the revision above (Ghostty prefix reused from the validated pinned build).",
+  "gateway": "apps/remote/lapis_remote.py from this worktree, run by the existing dev.lapis.remote LaunchAgent with --registry pointed at the disposable workspace; admission exercised through the Mac's ZeroTier address with Host header and peer address both admitted by the joined private network.",
+  "teardown": "build/mb-verify/mb-teardown.sh restores the LaunchAgent's original arguments and removes the runtime."
+ },
+ "phone": {
+  "install": "debug APK installed over adb on the Z Fold (SM-F966U); install Success",
+  "launch": "MainActivity starts; workspace screen renders with the expected offline banner ('The Mac did not answer...') because the phone is not yet on the overlay; no crashes in logcat",
+  "screenshot": "ignored build/mb-verify/mb-phone-launch.png",
+  "pending": "ZeroTier app present on the phone but no network joined and no VPN active; on-device live verification blocked on the phone-side join plus member authorization in ZeroTier Central"
+ },
+ "server_checks": {
+  "admission": "GET /api/health 200 with Host set to the Mac's overlay address and X-Lapis-Client: android; loopback probes are refused by design (421 Unknown host on the Host check)",
+  "listing": "GET /api/agents lists both agents running (codex TUI + stand-in)",
+  "attach_and_stream": "SSE stream delivers event: attached (shared true, wheel capability advertised for the alternate-screen program) followed by frame events; 816 frames observed in one 110 s attachment, revisions advancing",
+  "typing": "POST /api/agents/{id}/input with paste+enter reached the real Codex TUI; the fake model completed the turn and the reply rendered in subsequent frames",
+  "resize": "input resize [100,30] and [72,40] re-grid the live TUI; frames report the new columns/rows",
+  "history_paging": "stand-in agent with 3x `count` (360 numbered lines): default history returns page 15, 7 rows, place {total 342, offset 335, rows 7, scrubbable true}; ?at=50 jump returns page 3, 24 rows at offset 48",
+  "history_gates": "alternate-screen Codex TUI correctly reports empty archive end:true ('No more archived history') and refuses ?at= with 'This agent's service cannot jump'; the harvest threshold (min(256, 32768/columns) rows of primary-screen backscroll) explains why short Codex turns archive nothing",
+  "wheel": "input wheel [-3,40,10] delivered to the full-screen program; it reported SGR mouse events ('mouse got 3 events, first ESC[<65;41;11M')",
+  "artifacts": "ignored build/mb-verify/: stream-*.txt, kimi-*.json, history-*.json, codex-wheel*.txt, gateway and helper logs"
+ },
+ "limitations": [
+  "Phone-side live typing/resize/scrollback on the cover screen not yet exercised at recording time; since covered on the loopback path by evidence/android-milestone-b-device.json (overlay join still pending)",
+  "Concurrent attach from phone plus curl not yet tested; single-attachment verification only. Note: the gateway supersedes a previous SSE stream for the same agent, so a parallel curl observer retires the phone's pump; do not watch a live phone attachment with a second stream.",
+  "Mac-side 'stay in sync' observed only via the attach event's shared flag and a single stream client"
+ ]
+}

@@ -1,0 +1,46 @@
+{
+ "schema_version": 1,
+ "recorded_at": "2026-09-30T10:46:00+00:00",
+ "platform": "android",
+ "scope": "Milestone B on-device verification of the Android companion client: the agent stage (AgentSession + terminal renderer + composer + history paging) exercised live on the phone's cover screen through the ADB loopback harness, with a Mac-side WireSession attached to the same services to prove both clients stay in sync.",
+ "base_revision": "87999470a043",
+ "branch": "feature/android-stage",
+ "verified_commits": {
+  "app": "0719ec7 (feat: stage a live agent on the Android client)",
+  "harness": "69ac9fd (feat: add an ADB control harness for the Android client)"
+ },
+ "device": {
+  "hardware": "Samsung Z Fold SM-F966U over USB, debug APK (dev.lapis.remote)",
+  "display": "Cover display active for all runs: display 0 at 1080x2520, state ON; inner display 1 at 1968x2184, state OFF (device folded). Milestone B's finish line names the cover screen.",
+  "transport": "adb reverse tcp:7351 to the fixture gateway; the gateway runs with --allow-local so the loopback peer is admitted. No overlay membership is exercised by this gate."
+ },
+ "harness": {
+  "command": "uv run --no-project python scripts/check_android_remote.py",
+  "recipe": "Disposable fake_agent services (echo/second/parked) registered in a temp workspace, apps/remote/lapis_remote.py bound to 127.0.0.1:7351 with --allow-local and a tailscale fixture, reached from the phone through adb reverse; a MacClient WireSession attaches as a second viewer. The app is driven through tools/qa/android_ctl.py (uiautomator node tree, taps, text injection) and asserts on the terminal's accessibility description, mirroring the iOS harness's accessibilityValue reads.",
+  "teardown": "The script tears down services, gateway, and the adb reverse tunnel unless --keep is passed."
+ },
+ "checks": {
+  "list": "Workspace screen lists the fixture agents by category",
+  "open": "Agent stage opens and streams; first frames render",
+  "sync": "Text typed on the phone reaches the agent; the Mac-side session observes the phone's ping and its pong renders on the phone (mac_saw_phone true)",
+  "draft": "A typed draft without Enter stays pending on the prompt line and is preserved through composer interaction; the check then clears and submits the draft so later checks start from a clean prompt",
+  "scrollback": "count fixture pages history; scrolling up loads older rows and the numbered content is readable in the accessibility description",
+  "resize": "App-driven layout and a wm size override both re-grid the agent; frames report 56x50, 56x52 and 37x27 grids from an initial 100x30",
+  "background": "App backgrounded and returned without losing the stream or the terminal view; the Mac side never retired the phone's view (mac_closed_by null)",
+  "crash": "Process-liveness and dropbox crash scan clean at the end of the run"
+ },
+ "result": {
+  "receipt": "build/android/remote-check.json: checks [list, open, sync, draft, scrollback, resize, background, crash], failed [], mac_saw_phone true, mac_closed_by null, grids [100x30, 37x27, 56x50, 56x52]",
+  "runs": "Full suite green twice: once on the instrumented diagnostic build during root-causing and once on the final clean build; unit checks 67/67 in scripts/check_android.py and 12/12 in scripts/tests/test_android_ctl.py",
+  "screens": "ignored build/android/remote-screens/<run>/ (workspace, stage, sync, draft, scrollback, resize, background steps); screenshots contain fixture terminal content only and are not committed"
+ },
+ "defects_found_and_fixed": [
+  "Terminal accessibility text was a plain field read inside the Compose semantics block, so same-line edits (an agent overwriting its own prompt line) reached the accessibility tree only when a scroll or structural change invalidated the node. TalkBack and uiautomator reads were stale while rendering was correct. Fixed by making the history cache's accessible text snapshot state (0719ec7); semantics now re-apply on every change."
+ ],
+ "limitations": [
+  "The live agent is the fake_agent fixture (deterministic PTY program), not a real Codex CLI; it rides the same service/PTY/SSE path, and server-side verification against a real Codex TUI is recorded in evidence/android-milestone-b-server.json. The on-device real-CLI run is folded into the milestone A/D overlay gates so it exercises the production transport rather than adb reverse.",
+  "Transport is the adb-reverse loopback, not Tailscale/ZeroTier; overlay admission on the device is milestone A/D's gate (phone has not joined the private network).",
+  "All runs were on the cover display; fold/unfold re-grid behavior is milestone D's gate.",
+  "Input was injected text (paste semantics) rather than the soft keyboard's IME path; IME composition on Android is not yet exercised."
+ ]
+}
