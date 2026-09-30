@@ -109,6 +109,11 @@ def parse_dump(xml_text: str) -> list[dict]:
         if bounds is None:
             continue
         node = {"bounds": list(bounds), "clickable": element.get("clickable") == "true"}
+        # Switches and checkables expose their state only here; the settings
+        # toggle check reads it to avoid tapping blind.
+        checked = element.get("checked")
+        if checked is not None:
+            node["checked"] = checked == "true"
         for key, attribute in (
             ("id", "resource-id"),
             ("text", "text"),
@@ -419,7 +424,7 @@ class Device:
         font: float | None = None,
         reset_cache: bool = False,
         fresh: bool = False,
-        command_bar: bool = True,
+        command_bar: bool | None = True,
     ) -> None:
         if fresh:
             self.stop()
@@ -431,11 +436,11 @@ class Device:
         if reset_cache:
             command += " --ez resetCache true"
         # A string extra, matching the app's getString seam (a --ez boolean
-        # extra reads back null through getString). Every harness launch
-        # pins the bar on so a missing command-bar node in a run is a
-        # product regression, never a stored-setting question.
-        if command_bar:
-            command += " --es commandBarEnabled true"
+        # extra reads back null through getString). None honors the stored
+        # setting; True/False force the bar's visibility for the whole
+        # process, so a harness run never depends on device state.
+        if command_bar is not None:
+            command += f" --es commandBarEnabled {'true' if command_bar else 'false'}"
         self.shell(command)
 
     def stop(self) -> None:
@@ -539,6 +544,12 @@ def build_parser() -> argparse.ArgumentParser:
     launch.add_argument("--font", type=float)
     launch.add_argument("--reset-cache", action="store_true")
     launch.add_argument("--fresh", action="store_true", help="force-stop first")
+    launch.add_argument(
+        "--command-bar",
+        choices=["on", "off", "store"],
+        default="on",
+        help="force the command bar on or off for this launch, or honor the stored setting",
+    )
 
     sub.add_parser("stop", help="force-stop the app")
 
@@ -622,6 +633,7 @@ def main(argv: list[str] | None = None) -> int:
                 font=args.font,
                 reset_cache=args.reset_cache,
                 fresh=args.fresh,
+                command_bar={"on": True, "off": False, "store": None}[args.command_bar],
             )
         elif args.verb == "stop":
             device.stop()

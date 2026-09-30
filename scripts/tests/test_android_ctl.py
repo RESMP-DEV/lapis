@@ -16,14 +16,15 @@ DUMP = """<?xml version='1.0' encoding='UTF-8'?>
         clickable="false" />
   <node index="1" text="echo agent" resource-id="agent-echo agent"
         class="android.view.View" package="dev.lapis.remote" content-desc=""
-        bounds="[16,200][892,280]" clickable="true" />
+        bounds="[16,200][892,280]" clickable="true" checked="true" />
   <node index="2" text="" resource-id="terminal" class="android.view.View"
         package="dev.lapis.remote"
         content-desc="&#8250; ping from phone&#10;echo: ping from phone"
         bounds="[0,120][908,2000]" clickable="false" />
   <node index="3" text="Settings" resource-id="settings"
         class="android.widget.TextView" package="dev.lapis.remote"
-        content-desc="" bounds="[700,80][860,140]" clickable="false" />
+        content-desc="" bounds="[700,80][860,140]" clickable="false"
+        checked="false" />
   <node index="4" text="echo agent" resource-id="" class="android.widget.TextView"
         package="dev.lapis.remote" content-desc="" bounds="[80,220][700,260]"
         clickable="false" />
@@ -60,6 +61,9 @@ class DumpTest(unittest.TestCase):
         self.assertNotIn("desc", by_id["settings"])
         self.assertEqual(by_id["settings"]["text"], "Settings")
         self.assertTrue(by_id["agent-echo agent"]["clickable"])
+        self.assertTrue(by_id["agent-echo agent"]["checked"])
+        self.assertFalse(by_id["settings"]["checked"])
+        self.assertNotIn("checked", by_id["terminal"])
 
     def test_select_by_exact_id_text_and_desc(self):
         self.assertEqual(len(android_ctl.select(self.nodes, id="terminal")), 1)
@@ -219,8 +223,10 @@ class LaunchExtrasTest(unittest.TestCase):
         self.assertIn("--es terminalFontSize 12", sent[1])
         self.assertIn("--es commandBarEnabled true", sent[1])
         device.launch(command_bar=False)
-        self.assertNotIn("commandBarEnabled", sent[2])
+        self.assertIn("--es commandBarEnabled false", sent[2])
         self.assertNotIn("gatewayHost", sent[2])
+        device.launch(command_bar=None)
+        self.assertNotIn("commandBarEnabled", sent[3])
 
 
 if __name__ == "__main__":

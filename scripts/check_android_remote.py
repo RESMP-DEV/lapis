@@ -800,6 +800,68 @@ def checks(device, mac, screens):
         shot("12-snippet-restored")
         return None
 
+    def check_settings_toggle():
+        # The Settings switch's one device-visible effect: hide and show
+        # the bar through the stored setting. Runs on a plain launch (no
+        # commandBarEnabled extra) so no override masks the setting — every
+        # other launch in this suite forces the bar on.
+        def set_switch(on):
+            device.tap_node(id="settings")
+            switch = device.wait(id="command-bar-setting", timeout=10)
+            if switch is None:
+                return "the command bar switch never appeared"
+            # Read the state instead of tapping blind, so the check is
+            # deterministic whatever a previous run or manual session left.
+            if switch.get("checked") != on:
+                device.tap_node(id="command-bar-setting")
+                time.sleep(0.4)
+            device.tap_node(text="Done")
+            if device.wait(id="settings", timeout=10) is None:
+                return "Done never returned to the workspace list"
+            return None
+
+        def open_stage(expect_bar):
+            device.tap_node(text="echo agent")
+            if device.wait(id="terminal", timeout=15) is None:
+                return "the stage did not open"
+            # The setting read lands a moment after composition, so poll
+            # for the bar to settle rather than sampling once.
+            deadline = time.monotonic() + 3
+            present = device.find(id="command-bar") is not None
+            while present != expect_bar and time.monotonic() < deadline:
+                time.sleep(0.2)
+                present = device.find(id="command-bar") is not None
+            if present != expect_bar:
+                return (
+                    f"the command bar is {'visible' if present else 'absent'} "
+                    f"but the setting says {'on' if expect_bar else 'off'}"
+                )
+            return None
+
+        device.launch(fresh=True, command_bar=None)
+        if device.wait(text="echo agent", timeout=25) is None:
+            return "the workspace list never came back"
+        # From a known-on state: the read path shows the bar...
+        problem = set_switch(True)
+        if problem is not None:
+            return problem
+        problem = open_stage(expect_bar=True)
+        if problem is not None:
+            return problem
+        shot("13-bar-shown")
+        # ...and hiding it through Settings removes it on the next entry.
+        device.tap_node(id="back")
+        problem = set_switch(False)
+        if problem is not None:
+            return problem
+        problem = open_stage(expect_bar=False)
+        if problem is not None:
+            return problem
+        shot("14-bar-hidden")
+        # Leave the setting on for the next run.
+        device.tap_node(id="back")
+        return set_switch(True)
+
     def check_crash():
         crashes = device.crash_lines()
         if crashes:
@@ -817,6 +879,7 @@ def checks(device, mac, screens):
         "interrupt": check_interrupt,
         "background": check_background,
         "snippets": check_snippets,
+        "settings_toggle": check_settings_toggle,
         "crash": check_crash,
     }
 
