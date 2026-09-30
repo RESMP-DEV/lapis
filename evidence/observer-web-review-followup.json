@@ -1,0 +1,70 @@
+{
+  "source_revision": "55d7dfc32431c7d4ec740ea38ab757702c48e75e",
+  "platform": "macOS 26.7.1 arm64",
+  "scope": "Ten late PR54/55 findings: observer notification evidence and optional-list contract; web candidate/URL and historical-receipt clarity.",
+  "source_sha256": {
+    "adapters/claude/src/claude_observer.cpp": "2d8a8778409a6ed638173710983895b7af901f88cb760318a7d89979bf46a77d",
+    "adapters/claude/tests/claude_observer_test.cpp": "dcb36425cda4a8e16d070b8bdcc87dc402508088eecd5a300d579ff9290036a9",
+    "docs/architecture.md": "12393080e5aa5f3b9d7946f0f004cacb8328b7dbaa2bb28c638374a03b57a575",
+    "evidence/presentation-review-followup.json": "206d4002212f517a08a880e2a5d3ec6f5933964f32389c0d0094aa579f85cdd6",
+    "evidence/web-surface-research.json": "8c536140b8c2ce9e76b3c0e771e51f24550f3d829e5f26caa00dd82dc64f3d3a"
+  },
+  "checks": [
+    {
+      "command": "cmake --build build/<desktop|desktop-asan|desktop-tsan> --target lapis_claude_observer_tests lapis_session_service -j4",
+      "result": "pass in all three configurations"
+    },
+    {
+      "command": "ctest --test-dir build/<configuration> -R '^claude-observer$' --no-tests=error --output-on-failure",
+      "result": "pass, no sanitizer reports or new suppressions",
+      "seconds": {
+        "desktop": 4.11,
+        "desktop-asan": 11.82,
+        "desktop-tsan": 124.53
+      }
+    },
+    {
+      "command": "clang-tidy -p build/desktop adapters/claude/src/claude_observer.cpp adapters/claude/tests/claude_observer_test.cpp",
+      "result": "pass"
+    },
+    {
+      "command": "cppcheck --project=<two-TU filtered compilation database> --library=qt -DQ_MOC_INCLUDE(x)= --enable=warning,performance,portability --error-exitcode=1 --inline-suppr --template=gcc",
+      "result": "pass"
+    },
+    {
+      "command": "clang-format --dry-run --Werror <two changed C++ files>; git diff --check",
+      "result": "pass"
+    },
+    {
+      "command": "Parse research/evidence JSON; verify architecture relative paths/anchors; hash historical architecture with git show",
+      "result": "pass; research architecture hash exactly matches e3d095bf2f1f035429879568af611ccef8f0f1b8"
+    }
+  ],
+  "findings": [
+    "Unknown-schema Stop already reaches dispatcher notify; regression now observes the changed signal and captured diagnostic, including recovery. No duplicate notification added.",
+    "A crons-only nonempty list pauses; a subsequent empty list completes the same turn. Absent optional sibling semantics remain unchanged.",
+    "Current lifecycle/transport status is preserved independently of transient background schema status; no extra immutable banner is promised.",
+    "Initial composed diagnostic derives from the base field instead of duplicating its literal.",
+    "CEF technology summary now says provisional candidate, runtime pin awaits W0.",
+    "Managed URL echoes unconditionally omit query/fragment values in proposed v1; arbitrary page DOM/pixels remain a separate boundary.",
+    "Research receipt identifies the exact committed content matching its digest, retains the pre-commit base and earlier review input separately, and explains observation dates and branches."
+  ],
+  "review": {
+    "source_reviews": {
+      "54": "e3d095bf2f1f035429879568af611ccef8f0f1b8",
+      "55": "45f7f11466ca6c710e871ca9c03749fdce7ef6ef"
+    },
+    "coverage": "Substantive Kilo findings on PR54/55; coordinator traced each call path, inspected the combined repair and verified the focused cases. These are bounded responses to those reviews, not expanded feature implementation.",
+    "worker": "A follow-up FlashX worker received repeated provider429 responses and emitted no edits/tool result. Its session was preserved and the coordinator completed the scoped work. No worker completion or approval is claimed."
+  },
+  "reuse": {
+    "python": "No Python source or test changes. Reuse the PR57 335-test quality pass plus PR58 39 affected reset/sign-in cases and Ruff, with their original revisions in the linked evidence.",
+    "desktop": "No terminal input, rendering or QML changes. PR57/58 desktop and background evidence remains unchanged.",
+    "source_state": "Compiled/tested source matches the merged branch at 7eb77d0; the subsequent 55d7dfc corrects a PTY label in an earlier receipt only."
+  },
+  "limits": [
+    "No new web engine, daemon, credential import, native GUI or live provider qualification.",
+    "Vendor libraries remain uninstrumented; sanitizer timings are not release performance.",
+    "Historical research observations remain dated; documentation checks do not replace W0/W4 runtime qualification."
+  ]
+}
