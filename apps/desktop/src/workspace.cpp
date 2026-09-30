@@ -569,23 +569,33 @@ bool Workspace::latestAttention() {
             latest = item.get();
     return latest != nullptr && selectSession(latest->sessionId());
 }
-bool Workspace::nextPriorityAttention(const QStringList& ready) {
-    const auto waiting = [&ready](const SessionPreview& item) {
-        const auto kind = item.statusKind();
-        return item.unseen() || item.attentionPending() ||
-               (ready.contains(item.sessionId()) &&
-                (kind == QLatin1String("finished") || kind == QLatin1String("idle") ||
-                 kind == QLatin1String("waiting")));
-    };
+bool Workspace::nextPriorityAttention(const QVariantMap& ready) {
     const auto rank = [&ready](const SessionPreview& item) {
-        return std::pair{ready.contains(item.sessionId()) ? 0 : 1, item.neededAtMs()};
+        const auto guess = ready.find(item.sessionId());
+        const auto kind = item.statusKind();
+        const bool waiting_for_prompt =
+            kind == QLatin1String("finished") || kind == QLatin1String("idle");
+        int tier = -1;
+        if (guess != ready.end() && waiting_for_prompt && !guess->toBool())
+            tier = 0;
+        else if (item.unseen() || item.attentionPending())
+            tier = 1;
+        else if (guess != ready.end() && waiting_for_prompt)
+            tier = 2;
+        return std::pair{tier, item.neededAtMs()};
     };
     const SessionPreview* best = nullptr;
+    std::pair<int, qint64> best_rank{};
     const auto* const focused = focusedSession();
-    for (const auto& item : sessions_)
-        if (item.get() != focused && waiting(*item) &&
-            (best == nullptr || rank(*item) < rank(*best)))
+    for (const auto& item : sessions_) {
+        const auto candidate = rank(*item);
+        if (item.get() == focused || candidate.first < 0)
+            continue;
+        if (best == nullptr || candidate < best_rank) {
             best = item.get();
+            best_rank = candidate;
+        }
+    }
     return best != nullptr && selectSession(best->sessionId());
 }
 bool SessionPreview::addPreviewRequest(const QString& id, const QString& reason) {
@@ -965,16 +975,21 @@ bool Workspace::followConversationTitle(const QString& id, QStringView title) {
 }
 QHash<QString, QString> Workspace::agentConversations() const {
     QHash<QString, QString> conversations;
-    for (auto entry = agents_.cbegin(); entry != agents_.cend(); ++entry) {
-        // The observer's (or, for other CLIs, the hook's) record follows /new
-        // and /resume; a resumed agent without one yet has lapis's pair.
-        const auto record = session::read_resume_record(entry->endpoint);
-        if (record && record->agent == entry->harness && resumable(*record, entry->harness))
-            conversations.insert(entry.key(), record->session_id);
-        else if (!entry->managed_resume_identity.isEmpty())
-            conversations.insert(entry.key(), entry->managed_resume_identity);
-    }
+    for (auto entry = agents_.cbegin(); entry != agents_.cend(); ++entry)
+        if (const auto id = agentConversation(entry.key()); !id.isEmpty())
+            conversations.insert(entry.key(), id);
     return conversations;
+}
+QString Workspace::agentConversation(const QString& id) const {
+    const auto entry = agents_.constFind(id);
+    if (entry == agents_.cend())
+        return {};
+    // The observer's (or, for other CLIs, the hook's) record follows /new
+    // and /resume; a resumed agent without one yet has lapis's pair.
+    const auto record = session::read_resume_record(entry->endpoint);
+    if (record && record->agent == entry->harness && resumable(*record, entry->harness))
+        return record->session_id;
+    return entry->managed_resume_identity;
 }
 bool Workspace::moveSession(const QString& id, const QString& categoryId) {
     if (!mutableRegistry())

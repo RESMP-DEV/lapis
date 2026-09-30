@@ -11,6 +11,7 @@
 #include <QProcess>
 #include <QString>
 #include <QStringList>
+#include <QVariantMap>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -87,8 +88,10 @@ class NextPrompt final : public QObject {
     void turnFinished(const QString& id);
     // The suggestion offered for the agent, or empty.
     Q_INVOKABLE [[nodiscard]] QString suggestion(const QString& id) const;
-    // The agents with a suggestion offered.
-    Q_INVOKABLE [[nodiscard]] QStringList readyAgents() const;
+    // The agents with a suggestion offered, each true once it was seen.
+    Q_INVOKABLE [[nodiscard]] QVariantMap readyAgents() const;
+    // The id of the offer shown for the agent, or empty.
+    Q_INVOKABLE [[nodiscard]] QString offerKey(const QString& id) const;
     // The suggestion is on screen in the active window: an impression.
     Q_INVOKABLE void seen(const QString& id);
     // The person took it: typed into the agent, and `sent` when submitted;
@@ -120,7 +123,7 @@ class NextPrompt final : public QObject {
     void start(const QString& id, quint64 generation, const QString& program,
                const QStringList& arguments, const QByteArray& input, Stage stage,
                const std::function<void(const QJsonObject&)>& done);
-    void failed(const QString& id, Stage stage, const QString& why);
+    void failed(const QString& id, const Agent& agent, Stage stage, const QString& why);
     void predict(const QString& id, quint64 generation, const QJsonObject& context);
     void offer(const QString& id, const Agent& agent, const QJsonObject& context,
                const QJsonObject& answer);
@@ -141,6 +144,7 @@ class NextPrompt final : public QObject {
     std::deque<qint64> started_; // for maxPerHour
     QElapsedTimer clock_;
     quint64 generation_{};
+    QString run_; // this launch, in offer ids
     quint64 offers_made_{};
     int revision_{};
 };

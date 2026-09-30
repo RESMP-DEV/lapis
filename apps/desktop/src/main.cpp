@@ -477,6 +477,12 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
     if (isolated)
         return nullptr;
     const QDir data(lapis::desktop::data_directory());
+    // The log lives in the private, ignored runtime folder; one kept beside it
+    // by an earlier build moves there.
+    const auto log = data.filePath(QStringLiteral("runtime/next_prompt.jsonl"));
+    if (const auto earlier = data.filePath(QStringLiteral("next_prompt.jsonl"));
+        QFileInfo::exists(earlier) && !QFileInfo::exists(log))
+        QFile::rename(earlier, log);
     auto& next = kept.emplace(
         [&workspace](const QString& id) -> std::optional<NextPrompt::Agent> {
             const auto* item = workspace.session(id);
@@ -490,7 +496,7 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
             return NextPrompt::Agent{machine,
                                      folder,
                                      item->harnessId(),
-                                     workspace.agentConversations().value(id),
+                                     workspace.agentConversation(id),
                                      item->title(),
                                      place.value(QStringLiteral("category")).toString(),
                                      lapis::desktop::terminal_screen_text(item->snapshot())};
@@ -499,6 +505,8 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
             QJsonArray agents;
             for (const auto& value : workspace.sessions()) {
                 const auto* item = value.value<SessionPreview*>();
+                if (item == nullptr)
+                    continue;
                 agents.append(QJsonObject{
                     {QStringLiteral("title"), item->title()},
                     {QStringLiteral("category"), workspace.agentPlace(item->sessionId())
@@ -510,8 +518,7 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
             return agents;
         },
         [](const QString& name) { return QStandardPaths::findExecutable(name); },
-        NextPrompt::Files{data.filePath(QStringLiteral("runtime")),
-                          data.filePath(QStringLiteral("next_prompt.jsonl"))});
+        NextPrompt::Files{data.filePath(QStringLiteral("runtime")), log});
     const auto follow = [&next, &keymap] { next.setSettings(keymap.nextPrompt()); };
     follow();
     QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &next, follow);

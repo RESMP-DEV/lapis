@@ -3227,32 +3227,39 @@ logs every guess to measure that threshold.
   on that machine in the last six hours, the time, and `~/.claude/CLAUDE.md` as
   priors.
 - **How it is offered.** `TerminalSurface.suggestion` draws the guess dim after
-  the cursor, covering the rest of the row but its last two cells so a CLI's
-  own suggestion does not show through, and only while the agent is finished
+  the cursor, covering only what it draws, and only while the agent is finished
   or idle: never over a pending request, since Return in a permission dialog
-  would answer it (the view also refuses to send one then). With `tabFlow` (a Claude Code or Codex agent while guessing
-  is on), Tab types it as a paste and sends Return 150 ms later, as the phone
-  does; Option-Tab only types it. Typing does not withdraw it: the person may
-  start their own prompt, prefer the guess, clear with Command-Delete and press
-  Tab, so typing is counted, not taken as a refusal. With nothing offered and
-  nothing typed since arriving, Tab asks `Workspace::nextPriorityAttention` for
-  the next agent: one with a guess waiting first, then the longest waiting
-  (neededAtMs) of those with an unseen turn or a request. Tab keeps its meaning
-  after typing (completion, Codex's queue) and everywhere without the flow
-  (shells, and CLIs such as OpenCode that switch modes with Tab). Surfacing
-  never sends: the person's key does, keeping "surfacing never approves" when
-  agent output could steer a guess.
-- **What it keeps.** `~/.lapis/next_prompt.jsonl` (owner-only, one JSON object
-  a line, `v` 2) gives every guess an offer id (`<agent>:<n>`) and records
-  `predicted` (candidates, probabilities, category, threshold, whether
-  offered), `seen` (first on screen in the active window: the impression),
-  `used` (Tab or Option-Tab, keys typed first, milliseconds after seen) and
-  `withdrawn` (replaced by the next turn's guess, or the setting turned off,
-  and whether it had been seen), plus `failed` (the stage, context or predict,
-  and the reason) and `skipped` (the hourly cap), so every finished turn it was
-  asked about is accounted for. Acceptance is used over seen: a guess never
-  on screen, or one replaced before the person came, is not a refusal.
-  `scripts/next_prompt_eval.py log` reports it by category and confidence;
+  would answer it (the view also refuses to send one then). With `tabFlow` (a
+  Claude Code or Codex agent while guessing is on), Tab sends a guess that
+  shows whole: a paste, then Return 150 ms later to the agent that got the
+  paste even if Tab moved on, unless the person typed to it first. A longer or
+  multi-line guess is only typed, as Option-Tab always does, so nothing unseen
+  is submitted. Typing does not withdraw a guess; keys typed first are counted.
+  With nothing offered and nothing typed since arriving, Tab calls QML's
+  `tabAway`, which asks `Workspace::nextPriorityAttention` for a guess not yet
+  seen, then an unseen turn or a request, then a guess already seen (the longest
+  waiting within each, so Tab cannot bounce between two guesses while another
+  agent waits); when nothing waits, Tab goes to the program. Tab keeps its
+  meaning after typing (completion, Codex's queue) and without the flow (shells,
+  and CLIs such as OpenCode that switch modes with Tab). Surfacing never sends:
+  the person's key does, keeping "surfacing never approves" when agent output
+  could steer a guess. The model's prompt puts screens, transcripts and titles
+  in blocks fenced with a random tag the text cannot close, and says their
+  contents are material, not instructions.
+- **What it keeps.** `runtime/next_prompt.jsonl` in the data folder
+  (owner-only, one JSON object a line, `v` 2; an earlier build's log beside the
+  folder moves in) gives every guess an offer id (`<agent>:<launch>.<n>`,
+  unique across launches) and records `predicted` (candidates, probabilities,
+  category, threshold, whether offered), `seen` (first on screen in the active
+  window, once per offer even when two offers share their words: the
+  impression), `used` (Tab or Option-Tab, keys typed first, milliseconds after
+  seen) and `withdrawn` (replaced by the next turn's guess, or the setting turned
+  off, and whether it had been seen), plus `failed` (the stage, context or
+  predict, and the reason, with the home folder shown as `~`) and `skipped` (the
+  hourly cap, which counts model calls). Turns of CLIs lapis does not guess for
+  record nothing. Acceptance is used over seen: a guess never on screen, or one
+  replaced before the person came, is not a refusal. `scripts/next_prompt_eval.py
+  log` reports it by category and confidence with the attempts behind it;
   `--judge` grades the guesses seen but not used against the prompt typed
   instead (read from the transcript by conversation and prompt number);
   `replay` repeats the pilot on any machine's transcripts and sweeps the

@@ -5,7 +5,7 @@
 and on any `--machine` over ssh), has the model predict each from only the
 conversation before it, and has a judge compare the guesses with what was
 actually typed. `log` does the same for lapis's own predictions
-(~/.lapis/next_prompt.jsonl): what was offered, used or dismissed, and how the
+(~/.lapis/runtime/next_prompt.jsonl): what was offered, used or dismissed, and how the
 offers compare with what came next. Both use the helper lapis runs,
 apps/desktop/src/next_prompt.py, so they measure what lapis does.
 
@@ -15,6 +15,7 @@ prompts, which never belong in the repository.
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from collections import defaultdict
@@ -46,21 +47,32 @@ THRESHOLDS = (0.0, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 
 def on_machine(machine, arguments):
     """The helper's JSON answer, run here or on `machine` with itself on stdin."""
-    if not machine:
-        command = [sys.executable, str(HELPER), *arguments]
-        run = subprocess.run(command, capture_output=True, text=True, timeout=900)
-    else:
-        remote = "python3 - " + " ".join(
-            "'" + a.replace("'", "'\\''") + "'" for a in arguments
-        )
-        command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-T", "--"]
-        run = subprocess.run(
-            command + [machine, remote],
-            input=HELPER.read_text(),
-            capture_output=True,
-            text=True,
-            timeout=900,
-        )
+    try:
+        if not machine:
+            command = [sys.executable, str(HELPER), *arguments]
+            run = subprocess.run(command, capture_output=True, text=True, timeout=900)
+        else:
+            remote = "python3 - " + " ".join(
+                "'" + a.replace("'", "'\\''") + "'" for a in arguments
+            )
+            command = [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-T",
+                "--",
+            ]
+            run = subprocess.run(
+                command + [machine, remote],
+                input=HELPER.read_text(),
+                capture_output=True,
+                text=True,
+                timeout=900,
+            )
+    except subprocess.TimeoutExpired:
+        return {"error": "timed out"}
     try:
         return json.loads(run.stdout)
     except ValueError:
@@ -84,8 +96,12 @@ def judge(items, model):
             )
             for item in chunk
         ]
-        text, _ = next_prompt.ask(JUDGE, "\n\n".join(blocks), model, timeout=600)
-        return json.loads(text[text.index("{") : text.rindex("}") + 1])["grades"]
+        try:
+            text, _ = next_prompt.ask(JUDGE, "\n\n".join(blocks), model, timeout=600)
+            return json.loads(text[text.index("{") : text.rindex("}") + 1])["grades"]
+        except (ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired) as error:
+            print("judge batch failed: {}".format(error), file=sys.stderr)
+            return []
 
     chunks = [items[i : i + 8] for i in range(0, len(items), 8)]
     with ThreadPoolExecutor(4) as pool:
@@ -256,9 +272,8 @@ def acceptance(events):
     failures = defaultdict(int)
     for e in events:
         if e.get("event") == "failed":
-            failures[
-                "{}: {}".format(e.get("stage", "?"), str(e.get("error", ""))[:80])
-            ] += 1
+            reason = re.sub(r"[0-9]+", "#", str(e.get("error", "")))[:60]
+            failures["{}: {}".format(e.get("stage", "?"), reason)] += 1
     shown = [o for o in offers.values() if o.get("shown")]
     seen = [o for o in shown if o["seen"]]
     used = [o for o in seen if o["used"]]
@@ -284,6 +299,14 @@ def acceptance(events):
         "seen_not_used": sum(1 for o in seen if not o["used"]),
         "offered_never_seen": sum(1 for o in shown if not o["seen"]),
         "median_ms_to_use": waits[len(waits) // 2] if waits else None,
+        "attempts": sum(
+            1 for e in events if e.get("event") in ("predicted", "failed", "skipped")
+        ),
+        "legacy_records": sum(
+            1
+            for e in events
+            if not e.get("offer") and e.get("event") in ("used", "dismissed")
+        ),
         "failed": dict(sorted(failures.items(), key=lambda kv: -kv[1])),
         "skipped": sum(1 for e in events if e.get("event") == "skipped"),
         "by_category": {},
@@ -323,7 +346,9 @@ def log(arguments):
     # Offers seen but not used, graded against what was typed instead.
     graded = []
     for number, o in enumerate(offers.values()):
-        if not (o.get("shown") and o["seen"] and not o["used"]):
+        if not (
+            o.get("shown") and o["seen"] and not o["used"] and o.get("conversation")
+        ):
             continue
         answer = on_machine(
             o["machine"],
@@ -391,7 +416,7 @@ def main(argv=None):
     log_mode = modes.add_parser(
         "log", help="lapis's own predictions and what came of them"
     )
-    log_mode.add_argument("--log", default="~/.lapis/next_prompt.jsonl")
+    log_mode.add_argument("--log", default="~/.lapis/runtime/next_prompt.jsonl")
     log_mode.add_argument(
         "--judge", action="store_true", help="grade offers seen but not used"
     )

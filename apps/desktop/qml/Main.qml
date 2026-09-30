@@ -3285,9 +3285,9 @@ ApplicationWindow {
                         if (predicting)
                             nextPrompt.used(document.sessionId, sent, typedFirst)
                     }
-                    onNextAgentRequested: {
-                        if (predicting)
-                            workspace.nextPriorityAttention(nextPrompt.readyAgents())
+                    suggestionKey: suggestion.length > 0 ? nextPrompt.offerKey(document.sessionId) : ""
+                    tabAway: function() {
+                        return predicting && workspace.nextPriorityAttention(nextPrompt.readyAgents())
                     }
                     // New and restarted agents start at this grid, not resized
                     // just after they drew.
