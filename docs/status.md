@@ -8,9 +8,12 @@ components land, from code and tests, and keep receipts as dated observations.
 ## Rollout
 
 The next delivery target is a dependable macOS Apple Silicon early-access
-release. The [rollout gates](architecture.md#broader-macos-rollout-readiness-september-29)
-prioritize process survival, input integrity, account identity, verified upgrades
-and operational bounds before more integrations. Source checks, daily use and
+release. The [production delivery order](architecture.md#production-delivery-order-september-30)
+prioritizes a consolidated candidate, independent process ownership and verified
+upgrades, input/account integrity, then workload and support qualification before
+more integrations. The first workload target is eight local sessions; it is not
+yet a measured capacity claim. Controlled 32-session qualification precedes wider
+workload claims and further feature expansion. Source checks, daily use and
 the published app are distinct evidence: the latest v0.5.0 release targets
 `0ec13cb`, not every fix now on main. Support claims follow the OS, CLI versions
 and artifact actually exercised.
@@ -39,7 +42,7 @@ acceptance are recorded in [the evidence](../evidence/agent-workspace.json) and
 | Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
 | Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect, `/clear` continuation and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
 | iPhone app (prototype) | Gateway on the Mac over Tailscale or ZeroTier, admitting the owner's iOS or Android devices or members of its private ZeroTier networks; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; the phone joins beside the desktop so both stay in sync (services started by this build); starting an agent in a category from the phone through the Mac's lapis; a terminal on the Mac from the phone, and the resume list; renaming, ordering and removing categories, moving and restarting agents, and the Mac's awake, alert and usage settings from the phone; UI tests in the iOS 26.5 Simulator against real services and the real windowless lapis host with a Mac-side client attached, fake agents, and real Codex and Claude Code on a fake model; installed and used on an iPhone 17 Pro | Agents started before sync are taken over instead; no structured requests or push notifications; starting agents needs a lapis window or the login helper running |
-| Mac app package | Qt 6.11.2 built with Vulkan (arm64, macOS 14 or later) with MoltenVK loaded directly; signed with the hardened runtime and notarized; Sparkle 2.10.0 updates signed with an EdDSA key and fed from the latest release; a login item for keeping agents running; release checks for architecture, minimum macOS, links outside the bundle, identifying strings, the update key, the bundled MoltenVK on an M4 Max, the windowless host and a launchd start taking the login shell's PATH; 0.1.0 opened and used with a live agent by a person | An update installed through Sparkle (the first comes with the release after 0.2.0); notifications, the login item and the Finder and editor actions not yet exercised by a check on a Mac; macOS 14 and 15 untested |
+| Mac app package | Qt 6.11.2 built with Vulkan (arm64, macOS 14 or later) with MoltenVK loaded directly; signed with the hardened runtime and notarized; Sparkle 2.10.0 updates signed with an EdDSA key and fed from the latest release; a restore/start-at-login helper, not an independently supervised process owner; release checks for architecture, minimum macOS, links outside the bundle, identifying strings, the update key, the bundled MoltenVK on an M4 Max, the windowless host and a launchd start taking the login shell's PATH; 0.1.0 opened and used with a live agent by a person | An installed Sparkle update, independent service birth and actual login/reboot qualification; notifications, the login helper and the Finder and editor actions not yet exercised by a check on a Mac; macOS 14 and 15 untested |
 | Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals; [installed binary qualification](../evidence/codex-binary-update.json) | Broader binary and request-kind qualification |
 
 ## Evidence
