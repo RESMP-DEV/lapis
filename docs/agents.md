@@ -27,7 +27,10 @@ cannot offer a configured mode, lapis can choose a less-permissive mode but does
 not automatically grant a higher one; unknown preferences add no mode flag.
 Explicit request modes win. Claude Code 2.1.283–2.1.285 changed no-mode defaults
 across providers and entry points, so lapis passes the selected supported mode,
-unless your `harnessArguments` already choose a mode.
+unless your `harnessArguments` already choose a mode. For Codex this includes an
+explicit `--sandbox`, so a configured `--sandbox read-only` is preserved when a
+request omits its mode. Literal arguments after `--` do not choose launch modes
+or replace the generated conversation-resume argument.
 
 The next agent starts with the same CLI, mode and model. Everything else stays in
 each CLI's own config. lapis adds no flags of its own; to add yours to every new

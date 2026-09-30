@@ -68,7 +68,9 @@ constexpr qint64 kMaximumTokenBytes = qint64{64} * 1024;
 // a short diagnostic, with any credential shape masked.
 [[nodiscard]] QString copyReason(const QByteArray& output, const QString& fallback) {
     static const QRegularExpression token(QStringLiteral("sk-ant-oat01-[A-Za-z0-9_-]+"));
-    auto text = QString::fromUtf8(output.right(4096));
+    // Mask the complete retained prefix before selecting a diagnostic line;
+    // taking a tail first can strip the identifying prefix off a credential.
+    auto text = QString::fromUtf8(output);
     text.replace(token, QStringLiteral("[token]"));
     const auto lines = text.split(QRegularExpression(R"(\r?\n)"), Qt::SkipEmptyParts);
     for (auto line = lines.rbegin(); line != lines.rend(); ++line) {
@@ -400,7 +402,7 @@ void PlanSignIn::copyTo(const CopyLaunch& launch) {
         const auto bytes = process->readAllStandardOutput();
         auto copy = copying_.find(machine);
         if (copy != copying_.end() && copy->process == process && copy->attempt == attempt_)
-            copy->output = (copy->output + bytes).right(qsizetype{16} * 1024);
+            copy->output = (copy->output + bytes).left(qsizetype{16} * 1024);
     });
     const auto done = [this, machine, process](bool ok) {
         const auto copy = copying_.value(machine);

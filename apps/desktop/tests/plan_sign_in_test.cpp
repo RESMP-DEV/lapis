@@ -115,6 +115,11 @@ if host == "gone":
     print("fixture connection refused", file=sys.stderr)
     raise SystemExit(255)
 data = sys.stdin.buffer.read()
+if host in {"noisy", "overflow"}:
+    diagnostic = (data.strip() + b"x" * 4060 if host == "noisy"
+                  else b"sk-ant-oat01-" + b"B" * 20000)
+    sys.stderr.buffer.write(diagnostic + b"\n")
+    raise SystemExit(255)
 if host == "devbox":
     (root / "ssh.args").write_text("\n".join(sys.argv[1:]))
     (root / "ssh.stdin").write_bytes(data)
@@ -161,7 +166,8 @@ raise SystemExit(subprocess.run(["/bin/sh", "-c", command], input=data).returnco
          .machines =
              [](const QString&) {
                  return QStringList{QStringLiteral("devbox"), QStringLiteral("gone"),
-                                    QStringLiteral("short"), QStringLiteral("unrecorded")};
+                                    QStringLiteral("short"),  QStringLiteral("unrecorded"),
+                                    QStringLiteral("noisy"),  QStringLiteral("overflow")};
              }},
         {.helper = root.filePath(QStringLiteral("runtime/plan_sign_in.py")),
          .accounts = root.filePath(QStringLiteral("accounts"))});
@@ -199,6 +205,9 @@ raise SystemExit(subprocess.run(["/bin/sh", "-c", command], input=data).returnco
     require(signIn.message().contains(QStringLiteral("Copy failed:")) &&
                 signIn.message().contains(QStringLiteral("gone")),
             "a machine whose transfer failed is named");
+    require(signIn.message().contains(QStringLiteral("[token]")) &&
+                !signIn.message().contains(QString(16, QLatin1Char('B'))),
+            "bounded copy diagnostics cannot expose a token suffix after truncation");
     require(signIn.message().contains(QStringLiteral("Copied but not recorded: unrecorded")) &&
                 read(root.filePath(QStringLiteral(
                     "remote/unrecorded/accounts/claude/work.token"))) == token() + '\n',
@@ -350,8 +359,7 @@ void keepsTokensWholeAndNamedSafely() {
         signIn.start();
         require(waitFor([&] { return signIn.state() == QLatin1String("signedIn"); }),
                 "the replacement fixture produces its staging token");
-        // The helper restores its folder while writing the pending token; take
-        // that permission away only after signedIn to isolate token commit.
+        // Revoke access after staging to isolate the final token commit.
         if (!directoryWritable)
             ::chmod(QFile::encodeName(accounts.filePath(QStringLiteral("claude"))).constData(),
                     0500);
