@@ -1,0 +1,29 @@
+{
+  "baseline": "61a87e56e68dab12506feb7334c173a2e2e527f6",
+  "scope": "Late PR38 helper-loop and lifecycle review fixes; no provider inference or LaunchAgent changes.",
+  "findings": {
+    "PRRT_kwDOUfkyeM6m_agU": "launchctl install/uninstall now use the bounded runner; stand-in test covers all three calls.",
+    "PRRT_kwDOUfkyeM6m_aga": "Unsupported internal schema types and arrays without item schemas raise ReviewError.",
+    "PRRT_kwDOUfkyeM6m_agh": "Nonblocking read/write readiness races retry without dropping buffered input. Existing real process I/O test injects both BlockingIOError paths and preserves exact output.",
+    "PRRT_kwDOUfkyeM6m_agk": "Keep both streams bounded; overflow identifies the stream and suggests reducing input/diagnostics. A huge stderr stream must not bypass bounds.",
+    "PRRT_kwDOUfkyeM6m_agp": "Retain narrow account-quota terms; generic token limits can be per-request. Existing credential and token-limit cases prevent false account-wide pauses. New provider-specific phrasings need live contract evidence."
+  },
+  "validation": [
+    {
+      "command": "uv run --no-project python -m unittest discover -s scripts/tests -p test_grok_review.py -v",
+      "result": "PASS: 23 existing tests extended; no duplicate fixture/test added."
+    },
+    {
+      "command": "uv run --no-project python scripts/lapis.py quality",
+      "result": "PASS: 276 tests, seven unrelated skips; Python suite 14.876 seconds. Ruff format/lint and diff checks passed."
+    }
+  ],
+  "source_sha256": {
+    "scripts/grok_review.py": "90aa50f692aad8ad1942525fe9325f7dbb7aeb12db819c5bb63b3d6ac2b0ca9b",
+    "scripts/tests/test_grok_review.py": "82d30d3d6e25c9e7b6d437076c4ce3fca6a3960b17085e78ade8ad061b8cc1d7"
+  },
+  "limitations": [
+    "Controlled stand-ins and child processes prove local failure behavior, not a completed provider review.",
+    "No real LaunchAgent installed, removed or restarted."
+  ]
+}
