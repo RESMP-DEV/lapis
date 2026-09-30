@@ -20,7 +20,8 @@ client (lapis_remote.WireSession) attached the way the desktop is, which
 must see the phone's input, answer it, and never be closed by it.
 
 Checks: list, open, sync, draft (type without Enter), scrollback, resize
-(`wm size`), background (home and return), crash scan. Screenshots land
+(`wm size`), wheel (drag reaches a full-screen program), background (home
+and return), crash scan. Screenshots land
 under build/android/remote-screens/<stamp>/ and a JSON receipt under
 build/android/.
 
@@ -52,9 +53,15 @@ sys.path.insert(0, str(ROOT / "apps" / "remote"))
 sys.path.insert(0, str(ROOT / "tools" / "qa"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import android_ctl  # noqa: E402
-import check_android  # noqa: E402
-import lapis_remote  # noqa: E402
+try:
+    import android_ctl  # noqa: E402
+    import check_android  # noqa: E402
+    import lapis_remote  # noqa: E402
+except ModuleNotFoundError as missing:
+    # A missing sibling module is an environment gap (the SDK/JDK/Gradle
+    # probes live in check_android), not a failed check: skip, exit 3.
+    print(f"missing module {missing.name}; skipping (exit 3)", file=sys.stderr)
+    sys.exit(3)
 
 SERVICE = ROOT / "build" / "desktop" / "services" / "session" / "lapis_session_service"
 APK = (
@@ -132,9 +139,18 @@ class Run:
         # socket or the fixture interpreter, never a path mention (the iOS
         # check's rule: a shebang script appears after its interpreter in ps).
         fake = str(ROOT / "tools" / "qa" / "fake_agent.py")
-        for row in subprocess.run(
-            ["ps", "-axo", "pid=,command="], capture_output=True, text=True
-        ).stdout.splitlines():
+        try:
+            ps_output = subprocess.run(
+                ["ps", "-axo", "pid=,command="],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            ).stdout
+        except subprocess.TimeoutExpired:
+            # A wedged ps must not hang teardown on top of everything else;
+            # sweep what we can from the process table we already got.
+            ps_output = ""
+        for row in ps_output.splitlines():
             fields = row.split(None, 1)
             if len(fields) != 2:
                 continue
@@ -199,9 +215,11 @@ class MacClient(threading.Thread):
                 if not self.stopping.is_set():
                     self.closed = str(error)
                 return
-            except (ValueError, KeyError) as error:
-                # A frame the renderer cannot digest must surface as a closed
-                # client in the receipt, not die silently in this thread.
+            except Exception as error:
+                # Anything else — a frame the renderer cannot digest (TypeError,
+                # IndexError, ...) or an unexpected library failure — must
+                # surface as a closed client in the receipt, not die silently
+                # in this thread.
                 if not self.stopping.is_set():
                     self.closed = f"malformed frame: {error}"
                 return
@@ -606,7 +624,9 @@ def main():
 
         saw_phone = mac.saw_phone
         closed_by = mac.closed
-        grids = sorted(f"{columns}x{rows}" for columns, rows in mac.sizes)
+        # Snapshot before sorting: the client thread is still attached and
+        # adds sizes as frames arrive; sorting a live set would race it.
+        grids = sorted(f"{columns}x{rows}" for columns, rows in list(mac.sizes))
         receipt = {
             "checks": chosen,
             "failed": [name for name, _ in failed],

@@ -88,7 +88,7 @@ fun WorkspaceScreen(
     refreshing: Boolean,
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenAgent: (Agent) -> Unit = {},
+    onOpenAgent: (Agent) -> Unit,
 ) {
     Scaffold(
         containerColor = LapisColors.background,

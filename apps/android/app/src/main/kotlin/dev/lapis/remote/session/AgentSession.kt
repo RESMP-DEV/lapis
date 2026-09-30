@@ -11,6 +11,7 @@ import dev.lapis.remote.gateway.StreamEvent
 import dev.lapis.remote.gateway.StreamStatus
 import dev.lapis.remote.platform.describe
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineScope
@@ -537,7 +538,11 @@ data class HistoryChunk(
 
 /** The last screen seen of each agent, shown at once when it is opened again while the live screen connects. */
 object ScreenCache {
-    private var frames: Map<String, Pair<ScreenFrame, Long>> = emptyMap()
+    // Main-confined by construction: the session scope is Main.immediate and
+    // the debug wipe comes from onCreate. A concurrent map keeps the store
+    // free of per-frame copies and makes the confinement cheap to keep if a
+    // future caller widens the dispatch.
+    private val frames = ConcurrentHashMap<String, Pair<ScreenFrame, Long>>()
 
     fun frame(agent: String): ScreenFrame? = frames[agent]?.first
 
@@ -545,10 +550,10 @@ object ScreenCache {
         frames[agent]?.let { (now - it.second) / 1_000_000_000.0 } ?: Double.POSITIVE_INFINITY
 
     fun store(agent: String, frame: ScreenFrame) {
-        frames = frames + (agent to (frame to System.nanoTime()))
+        frames[agent] = frame to System.nanoTime()
     }
 
     fun clearAll() {
-        frames = emptyMap()
+        frames.clear()
     }
 }

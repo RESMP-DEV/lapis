@@ -28,10 +28,15 @@ class TerminalMetrics(
                 typeface = android.graphics.Typeface.MONOSPACE
                 textSize = fontSize
             }
+            // Leading included, as the Swift port's font.lineHeight: the
+            // text layout's height carries it, so the cell must too or text
+            // rows drift low against box-drawn neighbors on faces that ship
+            // non-zero leading.
+            val metrics = paint.fontMetrics
             return TerminalMetrics(
                 fontSize = fontSize,
                 cellWidth = paint.measureText("M"),
-                lineHeight = ceil(paint.fontMetrics.descent - paint.fontMetrics.ascent),
+                lineHeight = ceil(metrics.descent - metrics.ascent + metrics.leading),
             )
         }
     }

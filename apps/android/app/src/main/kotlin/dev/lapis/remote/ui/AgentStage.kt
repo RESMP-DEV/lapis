@@ -39,7 +39,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -100,7 +100,6 @@ fun AgentStage(
 ) {
     val host by repository.host.collectAsStateWithLifecycle()
     val gateway = remember(host) { repository.gatewayFor(host) }
-    val scope = rememberCoroutineScope()
     // An application-lived scope, not rememberCoroutineScope(): that one is
     // cancelled before DisposableEffect.onDispose runs, so the session's jobs
     // would already be dead when close() goes to retire them.
@@ -138,6 +137,34 @@ fun AgentStage(
     val keyboardShown = WindowInsets.isImeVisible
     val composerFocus = remember { FocusRequester() }
 
+    // Stable lambdas so TerminalScreen and Banner stay skippable; a fresh
+    // lambda on every composition would recompose them each frame.
+    val loadOlder: suspend () -> Unit = remember(session) { { session.loadOlder() } }
+    val onReopen = remember(session) { { columns: Int, rows: Int -> session.open(columns, rows) } }
+
+    // Reopen at the geometry the stage has now, not the size the dying
+    // attachment last reported: a fold or rotation between close and reopen
+    // would otherwise resurrect the stale grid. The keyboard-only rule of
+    // fit() applies here too — the IME shrinks the padded stage, and a
+    // reopen with the keyboard up must not shrink the row count.
+    val reopenGrid: AgentSession.Grid? = remember(stageSize, metrics, keyboardShown, composing, sessionSize) {
+        if (stageSize.width > 0 && stageSize.height > 0) {
+            val fit = metrics.grid(stageSize.width.toFloat(), stageSize.height.toFloat())
+            // A local of the delegated state read: only a val smart-casts.
+            val size = sessionSize
+            AgentSession.Grid(
+                fit.columns,
+                when {
+                    (keyboardShown || composing) && size != null && size.columns == fit.columns -> size.rows
+                    else -> fit.rows
+                },
+            )
+        } else {
+            sessionSize
+        }
+    }
+    val currentReopenGrid by rememberUpdatedState(reopenGrid)
+
     // Leave the agent while in the background; pick it up again on return.
     // Agents never die with the app; only the attachment comes and goes.
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -147,16 +174,20 @@ fun AgentStage(
             when (event) {
                 Lifecycle.Event.ON_STOP -> {
                     backgrounded = true
+                    // The composer's focus state cannot outlive the stop:
+                    // fit() would otherwise keep classifying resizes as
+                    // keyboard-only for a keyboard nobody is using.
+                    composing = false
                     session.close()
                 }
                 Lifecycle.Event.ON_START -> {
                     if (backgrounded) {
                         backgrounded = false
-                        val size = session.size.value
                         val current = session.state.value
                         val reopen = current !is AgentSession.State.Closed || current.reopen
-                        if (size != null && reopen) {
-                            session.open(size.columns, size.rows)
+                        val grid = currentReopenGrid
+                        if (grid != null && reopen) {
+                            session.open(grid.columns, grid.rows)
                         }
                     }
                 }
@@ -193,9 +224,11 @@ fun AgentStage(
     fun setFontSize(value: Float) {
         fontSize = value
         // A launch override wins for this run only, matching iOS: it applies
-        // in memory and is never written back to settings.
+        // in memory and is never written back to settings. The write runs on
+        // the application-lived session scope so leaving the stage mid-edit
+        // cannot cancel it.
         if (fontSizeOverride == null) {
-            scope.launch { settings.putString(FONT_SIZE_KEY, value.toString()) }
+            sessionScope.launch { settings.putString(FONT_SIZE_KEY, value.toString()) }
         }
     }
 
@@ -211,20 +244,6 @@ fun AgentStage(
                 TextButton(onClick = { session.clearNotice() }) { Text("OK") }
             },
         )
-    }
-
-    // Stable lambdas so TerminalScreen and Banner stay skippable; a fresh
-    // lambda on every composition would recompose them each frame.
-    val loadOlder: suspend () -> Unit = remember(session) { { session.loadOlder() } }
-    val onReopen = remember(session) { { columns: Int, rows: Int -> session.open(columns, rows) } }
-    // Reopen at the geometry the stage has now, not the size the dying
-    // attachment last reported: a fold or rotation between close and reopen
-    // would otherwise resurrect the stale grid.
-    val reopenGrid: AgentSession.Grid? = if (stageSize.width > 0 && stageSize.height > 0) {
-        metrics.grid(stageSize.width.toFloat(), stageSize.height.toFloat())
-            .let { AgentSession.Grid(it.columns, it.rows) }
-    } else {
-        sessionSize
     }
 
     Scaffold(

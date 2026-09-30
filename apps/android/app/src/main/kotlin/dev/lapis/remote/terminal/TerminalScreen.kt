@@ -1,5 +1,7 @@
 package dev.lapis.remote.terminal
 
+import android.icu.lang.UCharacter
+import android.icu.lang.UProperty
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -27,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -54,6 +57,7 @@ import androidx.compose.ui.unit.sp
 import dev.lapis.remote.gateway.Run
 import dev.lapis.remote.gateway.ScreenFrame
 import dev.lapis.remote.session.HistoryChunk
+import java.text.BreakIterator
 import java.util.UUID
 import kotlin.math.max
 
@@ -67,6 +71,43 @@ fun terminalColor(hex: String?): Color? {
         blue = (value and 0xFF).toInt() / 255f,
     )
 }
+
+/** Symbols that are text by default but also have an emoji form, such as
+ *  Claude Code's ⏺ before each message or ⏸, keep the text form the Mac's
+ *  terminal draws, one cell wide: Android would otherwise draw them as emoji
+ *  tiles two cells wide. A program asking for the emoji (U+FE0F) keeps it.
+ *  Port of `textPresentation` in TerminalScreen.swift. */
+internal fun textPresentation(string: String): String {
+    if (string.all { it.code <= 0x7F }) return string
+    val iterator = graphemeIterator.get()
+    iterator.setText(string)
+    val shown = StringBuilder(string.length)
+    var start = iterator.first()
+    var end = iterator.next()
+    while (end != BreakIterator.DONE) {
+        val cluster = string.substring(start, end)
+        shown.append(cluster)
+        // Single-scalar clusters only: a cluster that already carries a
+        // variation selector or joins a sequence has chosen its form.
+        if (cluster.length == cluster.codePointCount(0, cluster.length)) {
+            val codePoint = cluster.codePointAt(0)
+            if (emojiCapableText(codePoint)) shown.appendCodePoint(0xFE0E)
+        }
+        start = end
+        end = iterator.next()
+    }
+    iterator.setText("")
+    return shown.toString()
+}
+
+private val graphemeIterator = ThreadLocal.withInitial<BreakIterator> {
+    BreakIterator.getCharacterInstance()
+}
+
+private fun emojiCapableText(codePoint: Int): Boolean =
+    codePoint > 0x7F &&
+        UCharacter.getIntPropertyValue(codePoint, UProperty.EMOJI) == 1 &&
+        UCharacter.getIntPropertyValue(codePoint, UProperty.EMOJI_PRESENTATION) == 0
 
 /**
  * One terminal row. Backgrounds fill the whole row height and each run sits
@@ -172,7 +213,8 @@ private fun DrawScope.drawStretch(
     fontSize: TextUnit,
     measurer: androidx.compose.ui.text.TextMeasurer,
 ) {
-    if (string.isEmpty() || string.all { it == ' ' }) return
+    val shown = textPresentation(string)
+    if (shown.isEmpty() || shown.all { it == ' ' }) return
     val decoration = when {
         flags and Run.UNDERLINE != 0 && flags and Run.STRIKE != 0 ->
             TextDecoration.combine(listOf(TextDecoration.Underline, TextDecoration.LineThrough))
@@ -181,7 +223,7 @@ private fun DrawScope.drawStretch(
         else -> null
     }
     val layout = measurer.measure(
-        AnnotatedString(string),
+        AnnotatedString(shown),
         TextStyle(
             fontFamily = FontFamily.Monospace,
             fontSize = fontSize,
@@ -253,13 +295,37 @@ fun TerminalScreen(
     // Never while the finger is down: output arriving mid-drag must not yank
     // the anchor out from under it. Re-keyed on `dragging` so a revision that
     // landed during the drag still bottom-aligns once it ends at the bottom.
-    LaunchedEffect(frame?.revision, cache.rows.size, liveRows.size, viewportHeight, dragging) {
-        if (followBottom && !dragging && listState.layoutInfo.totalItemsCount > 0) {
+    // viewportHeight is 0 before the first layout; scrolling then would push
+    // the last row past the top for one frame until the real height arrives.
+    // Keyed on fullScreen too: leaving a wheel-taking program re-anchors even
+    // if revisions ever repeat across the transition. requestScrollToItem
+    // takes effect at the next remeasure, before new rows are placed, so the
+    // anchor lands without the one-frame offset a post-layout scroll shows.
+    LaunchedEffect(frame?.revision, cache.rows.size, liveRows.size, viewportHeight, dragging, fullScreen) {
+        if (followBottom && !dragging && viewportHeight > 0 &&
+            listState.layoutInfo.totalItemsCount > 0
+        ) {
             val last = listState.layoutInfo.totalItemsCount - 1
-            // Bottom-align the last row: scrollToItem puts a row's top at the
-            // viewport top, so push it down by the empty space it would leave.
-            listState.scrollToItem(last, scrollOffset = metrics.lineHeight.toInt() - viewportHeight)
+            // Bottom-align the last row: the offset moves the row's top up
+            // from the viewport top, so the negative value here leaves
+            // exactly the last row's height visible at the bottom.
+            listState.requestScrollToItem(last, metrics.lineHeight.toInt() - viewportHeight)
         }
+    }
+
+    // A fling keeps scrolling after the finger lifts, so the drag-end
+    // evaluation above can miss the list settling at the bottom; re-anchor
+    // whenever any scroll (drag, fling, programmatic) comes to rest there.
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }
+            .collect { inProgress ->
+                if (!inProgress) {
+                    val info = listState.layoutInfo
+                    val last = info.visibleItemsInfo.lastOrNull()
+                    followBottom = last != null && last.index >= info.totalItemsCount - 1 &&
+                        last.offset + last.size <= info.viewportEndOffset + metrics.lineHeight
+                }
+            }
     }
 
     // Within a screen of the top, the page before loads; each page moves the
@@ -295,8 +361,11 @@ fun TerminalScreen(
                 // The visible text is the element's description, as the
                 // iOS accessibilityValue: TalkBack reads the screen and
                 // uiautomator (text and content-desc only) exposes it to
-                // device automation.
-                contentDescription = cache.accessibleText.ifBlank { "Agent screen" }
+                // device automation. A wheel-taking program hides the
+                // archive, so only its screen is read then.
+                contentDescription = (
+                    if (fullScreen) frame?.text.orEmpty() else cache.accessibleText
+                    ).ifBlank { "Agent screen" }
             }
             .pointerInput(fullScreen, metrics.cellWidth, metrics.lineHeight, fitColumns, viewportWidth, onWheel) {
                 if (!fullScreen || onWheel == null) return@pointerInput
@@ -314,10 +383,13 @@ fun TerminalScreen(
                     totalDy += dy
                     val notches = (totalDy / (metrics.lineHeight * 2)).toInt()
                     if (notches == wheelSent) return@detectVerticalDragGestures
+                    // Both branches center their rows, and the Compose stage
+                    // carries no side padding, so the drawing's left edge is
+                    // exactly `left`; the iOS port's 4pt pad does not exist
+                    // here and must not shift the reported column.
                     val content = fitColumns * metrics.cellWidth
                     val left = (viewportWidth - content) / 2f
-                    val pad = with(density) { 4.dp.toPx() }
-                    val column = ((start.x - left - pad) / metrics.cellWidth).toInt()
+                    val column = ((start.x - left) / metrics.cellWidth).toInt()
                     val row = (start.y / metrics.lineHeight).toInt()
                     val frameNow = frame ?: return@detectVerticalDragGestures
                     onWheel(
@@ -332,8 +404,14 @@ fun TerminalScreen(
         // A wheel-taking program shows one fixed screen that fits the stage;
         // a plain column keeps the phone's scroll machinery (scrollable,
         // overscroll stretch) from consuming the drag the program wants.
+        // Centered like the LazyColumn branch so the screen does not shift
+        // when the program takes the wheel, and the wheel math's centered
+        // origin stays the drawing's origin.
         if (fullScreen) {
-            Column(Modifier.fillMaxSize()) {
+            Column(
+                Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
                 for (row in liveRows) {
                     TerminalRow(row.runs, row.columns, metrics, foreground, background)
                 }

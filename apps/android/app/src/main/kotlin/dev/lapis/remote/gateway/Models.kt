@@ -311,13 +311,17 @@ data class Input(
         fun key(key: Key, shift: Boolean = false): Input =
             Input(key = key.wire, modifiers = if (shift) 1 else 0)
 
-        /** Wheel notches, column, row, clamped to the gateway's bounds. */
-        fun wheel(notches: Int, column: Int, row: Int): Input = Input(
-            wheel = listOf(
-                notches.coerceIn(-64, 64),
-                column.coerceIn(0, 0xFFFF),
-                row.coerceIn(0, 0xFFFF),
-            ),
-        )
+        /** Wheel notches, column, row, clamped to the gateway's bounds. The
+         *  gateway refuses zero notches, so a zero never becomes a request. */
+        fun wheel(notches: Int, column: Int, row: Int): Input {
+            require(notches != 0, { "wheel notches must not be zero" })
+            return Input(
+                wheel = listOf(
+                    notches.coerceIn(-64, 64),
+                    column.coerceIn(0, 0xFFFF),
+                    row.coerceIn(0, 0xFFFF),
+                ),
+            )
+        }
     }
 }

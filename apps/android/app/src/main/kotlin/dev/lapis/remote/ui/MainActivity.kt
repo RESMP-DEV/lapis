@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -35,6 +36,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 /** Owns the workspace repository so it survives activity recreation. */
 class LapisApplication : Application() {
@@ -94,9 +96,13 @@ class MainActivity : ComponentActivity() {
         if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) == 0) return
         val owner = application as LapisApplication
         if (launch.getBooleanExtra("resetCache", false)) {
-            // Before the lazy repository ever reads the directory; the disk
-            // walk runs off the main thread and restore() waits for it.
+            // Finish the wipe before anything reads the cache directory again:
+            // setHost below decodes the cached listing on its own IO job and
+            // would otherwise race the delete and publish stale state. The
+            // directory is small, so the main-thread wait is short and only
+            // ever paid on a debug launch.
             owner.resetJob = owner.wipeCacheAsync()
+            runBlocking { owner.resetJob?.join() }
         }
         launch.getStringExtra("gatewayHost")?.let { host ->
             owner.repository.setHost(host)
@@ -157,8 +163,17 @@ private fun LapisApp(repository: WorkspaceRepository, app: LapisApplication) {
         // A listing that loaded without the agent means it is gone (exited or
         // taken back by the Mac): drop the remembered id instead of silently
         // reopening the stage when a later refresh happens to list it again.
+        // One miss is tolerated: the first refresh after a reconnect can be a
+        // partial listing, and yanking the user off the stage on it would be
+        // worse than one poll's stale surface. remembered, not a local: the
+        // counter must survive the recompositions between two polls.
+        var openMisses by remember { mutableStateOf(0) }
         LaunchedEffect(listing, openAgentId) {
-            if (listing != null && openAgentId != null && openAgent == null) openAgentId = null
+            if (listing == null || openAgentId == null || openAgent != null) {
+                openMisses = 0
+            } else if (++openMisses >= 2) {
+                openAgentId = null
+            }
         }
         if (openAgent != null) {
             AgentStage(

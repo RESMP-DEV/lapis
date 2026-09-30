@@ -8,7 +8,7 @@ ids) first, so scripts do not depend on pixel coordinates:
 
     python3 tools/qa/android_ctl.py launch --host 127.0.0.1:7351 --fresh
     python3 tools/qa/android_ctl.py wait --text "echo agent" --timeout 20
-    python3 tools/qa/android_ctl.py tap --id "agent-echo agent"
+    python3 tools/qa/android_ctl.py tap --text "echo agent"
     python3 tools/qa/android_ctl.py tap --id composer
     python3 tools/qa/android_ctl.py text "hello from the phone"
     python3 tools/qa/android_ctl.py tap --id send
@@ -204,7 +204,9 @@ class Device:
                 xml_text = Path(name).read_text(errors="replace")
             finally:
                 Path(name).unlink(missing_ok=True)
-            self.shell(f"rm {DUMP_REMOTE}")
+                # Also when the pull failed: a leftover on /sdcard lingers
+                # past a crashed run and could be mistaken for a fresh dump.
+                self.shell(f"rm {DUMP_REMOTE}")
             return parse_dump(xml_text)
         raise DeviceError("unreachable")
 
@@ -289,10 +291,16 @@ class Device:
         # An override (a test's `wm size WxH`) wins over the physical panel;
         # it is reported on its own line after the physical one.
         lines = size.splitlines()
+        # Each candidate separately: next()'s default expression evaluates
+        # eagerly, so a nested default would raise StopIteration on a dump
+        # that has an Override but no Physical line before finding either.
         line = next(
-            (part for part in lines if part.startswith("Override")),
-            next(part for part in lines if part.startswith("Physical")),
-        )
+            (part for part in lines if part.startswith("Override")), None
+        ) or next((part for part in lines if part.startswith("Physical")), None)
+        if line is None:
+            raise DeviceError(
+                f"wm size reported neither override nor physical: {size.strip()!r}"
+            )
         width, height = (int(value) for value in line.split(":")[1].strip().split("x"))
         spans = []
         x = width // 2
@@ -318,8 +326,10 @@ class Device:
         # Samsung pollutes `exec-out screencap` stdout with warnings; the
         # /sdcard file plus pull is clean.
         self.shell(f"screencap -p {SHOT_REMOTE}")
-        self.run("pull", SHOT_REMOTE, str(out))
-        self.shell(f"rm {SHOT_REMOTE}")
+        try:
+            self.run("pull", SHOT_REMOTE, str(out))
+        finally:
+            self.shell(f"rm {SHOT_REMOTE}")
         return out
 
     # -- App lifecycle ------------------------------------------------------
