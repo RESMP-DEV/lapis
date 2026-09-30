@@ -21,7 +21,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -177,7 +177,12 @@ private val snippetTextStyle = TextStyle(
     fontFamily = FontFamily.Monospace,
 )
 
-private val SnippetListSaver = listSaver<List<String>, String>(
-    save = { it },
-    restore = { it },
+// Not listSaver: it maps an empty list to null on save (verified
+// empirically against the library), and rememberSaveable reads null as
+// "nothing saved", so an editor emptied of every row would silently
+// restore the committed list on a fold/unfold recreation, losing the
+// deletions. A plain Saver always returns a value, empty included.
+internal val SnippetListSaver = Saver<List<String>, ArrayList<String>>(
+    save = { ArrayList(it) },
+    restore = { it.toList() },
 )
