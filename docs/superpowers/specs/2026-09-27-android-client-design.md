@@ -1,6 +1,9 @@
 # lapis Android client design
 
-Date: 2026-09-27. Status: in execution on `feature/android-client`. The
+Date: 2026-09-27. Status: in execution on `feature/android-stage` (cut from
+origin/main at 87999470a043 after the earlier scaffold consolidated through
+the android-local and android-tools merges; supersedes the pushed
+`feature/android-client` head). The
 gateway changes (Android admission, ZeroTier overlay) and iOS transport
 compatibility are implemented and checked; milestone A's Android scaffold is
 code-complete with JVM tests, pending overlay device verification (the phone
