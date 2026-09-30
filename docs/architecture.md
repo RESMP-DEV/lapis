@@ -2870,6 +2870,30 @@ requirements are still part of the shipped surface; a missing capability must be
 stated honestly. Preserve implemented features and their separate qualification
 rows rather than deleting them to make the release checklist smaller.
 
+#### Release triage of new survey directions (September 30)
+
+The t3code and oh-my-pi findings are retained below with their original source
+receipts. They refine the release order rather than starting a second roadmap.
+Difficulty and release relevance are separate: use the
+[task-sizing procedure](../CONTRIBUTING.md#task-sizing-and-independent-prs) to
+dispatch independent work, and use R1–R5 to decide what enters the candidate.
+
+| Placement | Work from the surveys and current defects | Scope and finish line |
+| --- | --- | --- |
+| Release path, parallel repairs | R1/R4 independent process birth and artifact provenance; R3 selected-account refusal; desktop preview/attention pacing; preserving output through pressure and final drain | Keep the existing service owners and v6 compatibility. Prove byte order, child lifetime, bounded teardown and immediate eligible updates with focused real-PTY/background checks. Raise transient headroom with measured output and memory evidence rather than copying a comparator's small queue defaults. These patches can be separate PRs; the candidate still needs assembled/native acceptance. |
+| Independent polish PRs | Documentation consistency, diagnosable errors, runtime/version provenance, and companion-only scheduling fixes | A bounded D1/D2 task may be implemented, checked and opened as its own ready PR by a worker under the contributor procedure. It can wait for review independently. Include it in the release only if its scope and checks fit the candidate; an unrelated open PR is not a release blocker. |
+| Next adapter checkpoint | Claude's native control lane informed by the Agent SDK study, followed by the qualified per-session runtime modes and stage-inline decisions | Preserve authentication while owning the permission-rule layer, stable conversation identity and once-scoped decisions. The user-configurable full-access default is a recorded product direction, not a change applied to current hook-only sessions. Link the reported SDK probe to a durable version-pinned receipt before claiming the route is qualified. |
+| After reliability and scale | Ordered status presentation, project roll-ups, checkpoint diffs, computed git actions, advisory emission guards and adaptive rendering additions | Implement as separable features with their own acceptance. Advisory suppression cannot hide decision-capable requests; UI actions do not silently approve agent work. Measure the existing renderer before adding adaptive scheduling. |
+| Evidence bank, no current wiring | ACP candidate, service-owned web views, new provider-routing abstractions and comparator runtime/framework ports | ACP still needs explicit adoption and lifecycle/permission/replay qualification. Web remains behind service birth, package and engine gates. Provider fallback belongs to its owning router, not a duplicate lapis implementation. |
+
+The first release-polish batch therefore consists of account refusal, package
+provenance, update pacing and output retention, with a parallel supervisor
+contract investigation. The supervisor implementation depends on agreeing the
+single-writer and update-location contract; independent repairs do not wait for
+that investigation to finish. [Status](status.md) and the task/PR receipts record
+what actually lands. This table assigns work; it does not claim those patches
+or the surveys are implemented or qualified.
+
 #### Minimum supported slice
 
 Start with an explicitly labelled macOS Apple Silicon early-access release:
@@ -2904,7 +2928,7 @@ scopes; contributors continue to share feature ownership.
 | R2, input integrity | **Implemented repair; candidate acceptance remains.** PR #43 and its integrated follow-ups provide negotiated service-owned paste admission and correlated results. Next-prompt submission uses that contract and presented-frame ownership. Existing source, real-PTY and background/sanitizer receipts remain revision-scoped. | Preserve the current implementation through consolidation; do not rebuild the old chunked, socket-only path. Keep mode-dependent encoding in the service, attachment/epoch checks, explicit refusal and interrupted-delivery reporting. | Reuse unaffected focused evidence, then exercise the assembled candidate with a full PTY queue, slow reader, disconnect, bracketed-mode change and focus/IME transitions, including the side shell. Compare actual PTY bytes and matching bracket markers. Native macOS presentation and package acceptance remain separate from background Qt results. |
 | R3, account identity | **Remaining remote launch defect; reset repairs merged.** Local `Workspace::applyAccount` refuses missing visiting-plan credentials. `withRemoteAccount` still permits a remote launch to use the machine sign-in when selected credentials are unavailable, while the registry records the chosen plan. PR #40 and follow-ups repaired reset identity/admission/reconciliation paths; their tests do not qualify real provider consumption. | Preserve chosen account identity through launch, usage and optional reset operations. Refuse the remote mismatch before replacing a healthy session, or keep that unqualified path outside the candidate. Retain stable durable operation identity and no replay after uncertain delivery. | Reuse existing credential/provider stand-ins for missing/unreadable credentials, malformed responses, exhausted model windows, timeout after acceptance and restart before reply persistence. Verify the actual selected account with a read-only operation on each advertised route. Real reset consumption is not a routine-test requirement or a prerequisite for the local-only slice. |
 | R4, release and upgrade provenance | **Acceptance and enforcement gaps.** `package_macos.py release` validates the DMG staple and checks that current HEAD exists on a remote; it does not bind the staged app/DMG to that HEAD, version and qualification result. The latest published v0.5.0 targets `0ec13cb`, a separate release tree from this audit's main. | Produce one immutable package manifest linking source tree/dirty status, app version, toolchain/dependency pins, bundled notices/SBOM, app and DMG hashes, appcast signature and validation. Refuse publishing stale/mismatched artifacts. Exercise installation and the Sparkle transition, including recoverable registry/history migration and a documented recovery/rollback path. Keep signing-key recovery outside the repository. | Run the existing `package_macos.py verify --notarized` on the exact staged artifact, then verify the downloaded asset and appcast. Qualify Finder launch in a fresh user environment without developer tools or pre-existing BTM state; install an update with live sessions; recover after a failed update/migration. Record source and artifact digests together. Do not relabel source tests or the old 0.2.0 signature receipt as v0.5.0 acceptance. |
-| R5, operational bounds and support | **Coverage gaps and source-level pressure risks.** Gateway listing waits and then probes services serially under `ThreadingHTTPServer`; it has no total client/listing budget. Desktop decode and attention pacing plus companion history catch-up remain tracked only in the [pacing audit](#update-pacing-audit-september-28). Older native UI/Metal and sanitizer receipts retain platform and scope limits. | Bound active clients, queued work, history/log retention and cancellation, protecting local input under output or optional remote pressure. Add package/runtime diagnostics and a user-controlled redacted support export to the existing CLI; developer `doctor` currently checks dependency/build readiness only. | Use the candidate workload and sustained soak defined above, then Milestone 4. Include dead endpoints/disconnected clients for any advertised gateway surface. Record limits, degradation and resource/input tails. Qualify native rendering on the candidate and assess existing sanitizer evidence against changed source; a background Qt pass alone is not GPU acceptance. |
+| R5, operational bounds and support | **Coverage gaps and source-level pressure risks.** The configured gateway path waits up to eight seconds, then probes services serially at up to 0.3 seconds each, against the iOS list client's 15-second request timeout. These are source-configured bounds, not a measured latency distribution. `ThreadingHTTPServer` has no total client/listing budget. Desktop decode and attention pacing plus companion history catch-up remain tracked only in the [pacing audit](#update-pacing-audit-september-28). Older native UI/Metal and sanitizer receipts retain platform and scope limits. | Bound active clients, queued work, history/log retention and cancellation, protecting local input under output or optional remote pressure. Add package/runtime diagnostics and a user-controlled redacted support export to the existing CLI; developer `doctor` currently checks dependency/build readiness only. | Use the candidate workload and sustained soak defined above, then Milestone 4. Include dead endpoints/disconnected clients for any advertised gateway surface. Record limits, degradation and resource/input tails. Qualify native rendering on the candidate and assess existing sanitizer evidence against changed source; a background Qt pass alone is not GPU acceptance. |
 
 R2's source repair does not close R1, R3 or native GPU/package acceptance.
 Use the production delivery order above to combine these gates. A companion
@@ -2981,9 +3005,9 @@ repaired operation identity, service paste admission and presented-frame
 submission contracts; source acceptance remains distinct from package/native
 qualification. Suggestions and automatic reset consumption remain optional.
 
-The current open PRs are #60 (documentation), #61 (Android stage/tooling) and
-#62 (Claude changelog tooling). Direct-context, background-input tooling and
-attention-journal integration also remain in local work. Keep their source and
+Companion, direct-context and developer-tooling work can progress in independent
+PRs without holding up the local candidate. Journal and lifecycle changes join
+the release only when their required contracts and checks are complete. Keep their source and
 receipts attributable while consolidating; the candidate's feature set, not the
 number of unfinished branches or optional bot responses, determines inclusion.
 The live work record and GitHub own later review status, so do not retain another
@@ -3041,8 +3065,8 @@ observable finish line before it is claimed.
 
 #### Feature backlog after rollout reliability
 
-The [September 29 rollout gates](#broader-macos-rollout-readiness-september-29)
-take priority over these new capabilities. This table preserves the feature
+The [production delivery order](#production-delivery-order-september-30)
+takes priority over these new capabilities. This table preserves the feature
 ordering once the supported daily-use slice is reliable.
 
 | Order | Batch | Gate |
@@ -3165,7 +3189,7 @@ client-request methods and 84 server notifications around lapis's ten.
 
 | Order | Surface | What it adds | Gate before claiming it |
 | --- | --- | --- | --- |
-| 1 | Claude decision hooks | `PermissionRequest` accepts an answer: a `command` or `http` hook may return a `decision` object (`behavior` `allow`/`deny`, `updatedInput`, `updatedPermissions`, `interrupt`), confirmed by the installed binary's own validation strings and documented for print mode; exit code 2 alone does nothing for this event. The relay lapis already runs can therefore upgrade from advisory to authoritative without owning Claude's stdin. This changes that session's approval policy, so it is an explicit per-session opt-in mode, never a default, global or silent installation. | Live disposable-session qualification in the [Claude hook procedure](#claude-code-hooks-an-observation-only-extension) style: a real permission request answered through the relay, matching tool execution or denial, turn continuation, reconnect behavior, and the decision schema re-pinned against the installed version; then relax the adapter's observation-only declaration in the same reviewed change. |
+| 1 | Claude decision hooks | `PermissionRequest` accepts an answer: a `command` or `http` hook may return a `decision` object (`behavior` `allow`/`deny`, `updatedInput`, `updatedPermissions`, `interrupt`), confirmed by the installed binary's own validation strings and documented for print mode; exit code 2 alone does nothing for this event. The relay lapis already runs can therefore upgrade from advisory to authoritative without owning Claude's stdin. This changes that session's approval policy and needs an explicit runtime-mode contract. The [September 30 direction](#t3code-survey-outcomes-september-30) permits a user-configurable full-access default only on a qualified decision-capable route; it does not authorize a global or silent hook installation. | Live disposable-session qualification in the [Claude hook procedure](#claude-code-hooks-an-observation-only-extension) style: a real permission request answered through the relay, matching tool execution or denial, turn continuation, reconnect behavior, and the decision schema re-pinned against the installed version; then relax the adapter's observation-only declaration in the same reviewed change. |
 | 2 | Codex native hooks | The Claude-style hooks engine is upstream-stable and default-on: 12 events (`PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `SubagentStart`, `SubagentStop`, `Stop`, `Interrupt`), declared per config layer in `hooks.json` or inline `[hooks]`, with trust hashes and `command`/`mcp_tool` handlers. `PermissionRequest` handlers decide before the guardian and the user, with the resolution recorded as sourced from the hook, and `Stop` can force continuation under its own loop guard. Because the engine lives in core Session it covers ordinary TUI sessions, which have no structured attention today, and hook runs surface over app-server as `hook/started`/`hook/completed`. | Requalify a current binary by the [documented procedure](../CONTRIBUTING.md#codex-attention-qualification) first (the pin is 0.155.1; upstream stable is 0.157.1), then qualify dispatch, payload and return semantics live on disposable sessions, including the trust flow, before mapping events onto advisory or decision kinds. The investigation's "native hooks remain unqualified" stands until then. |
 | 3 | Claude background sessions | `claude --bg` keeps a session alive across GUI restarts, and `claude agents`, `attach`, `logs`, `stop\|kill`, `respawn` and `rm` manage those sessions; `--session-id` lets lapis own the identity, and `--resume` also accepts a transcript path. Transcripts and `sessions-index.json` under `~/.claude/projects/` make sessions enumerable without running Claude. | Moving the child from lapis's PTY into Claude's daemon conflicts with the service-owned process contract as written, so this needs its own reviewed contract, a distinct session mode like managed Codex, and live detach/reattach/stop evidence. Reading the transcript index for discovery is the safe first slice and needs no contract change. |
 | 4 | Codex app-server expansion | Around lapis's ten methods the registry now carries 170 client methods and 84 server notifications: `turn/steer` and `turn/interrupt`, `thread/queue/*`, `thread/tokenUsage/updated` and `account/rateLimits/updated`, item streaming with `item/commandExecution/outputDelta` and `terminalInteraction` (live preview content without a terminal resize), `thread/increment_elicitation`/`thread/decrement_elicitation` (pauses turn-timeout accounting while an approval UI holds a request), reasoning and plan deltas, `fs/watch`, and `command/exec` PTY sessions. The `error` notification now carries `will_retry`. `thread/rollback` was removed upstream (0.156.0); lapis never called it. | Same requalification gate as order 2, then adopt by capability cluster in separate reviewable slices with replay plus live evidence, preserving the exclusive-thread-queue reconciliation contract the resume/read boundary depends on. |
@@ -3239,6 +3263,132 @@ the owning adapter document.
 - The automation direction is URL scheme and Services first, App Intents
   second, a full API as a strategic decision with its own review. Listing it
   here is not authorization to build it.
+
+### t3code survey outcomes (September 30)
+
+A September 30 survey read pingdotgg/t3code at revision `c2fa9fc9` (MIT,
+`t3` CLI 0.0.44) end to end. It is the same product category as lapis — a
+bring-your-own-subscription control surface for installed CLI agents — built
+on opposite bets: a TypeScript monorepo with one web UI served to Electron,
+browser and React Native, Codex via app-server, Claude Code via the Claude
+Agent SDK, three agents via Agent Client Protocol, and terminal VT parsing
+client-side in the same vendored Ghostty library lapis pins. Findings and
+cross-checks are retained in the [survey
+receipt](../evidence/t3code-survey.json). Nothing in this section is
+implemented by this survey; each row carries its gate and follows the
+[release triage](#release-triage-of-new-survey-directions-september-30).
+
+Not adopted, with reasons recorded so they are not re-litigated: the
+Electron/web-renderer path (it forgoes the native GPU terminal advantage that
+is lapis's differentiator); coupling to t3's server protocol (an unstable
+0.0.x contract under closed governance); nesting t3 under lapis (supervising
+a supervisor adds nothing); and the contents of t3's `AGENTS.md` (an ops
+manual grown by a repo whose contributors
+are agents around the clock; lapis's instruction file stays context and
+contracts). Agent Client Protocol is excluded by the same default —
+cross-tool protocol adapters churn and drop in practice, and lapis keeps
+independent, verified per-CLI adapters with PTY supervision — but that
+exclusion is under active re-examination (September 30, via the oh-my-pi
+investigation), and any adoption would still pass the full adapter
+qualification gate before a capability is claimed.
+
+Adopted as UX directions, each optional per surface and gated:
+
+| Feature | Direction | Gate |
+| --- | --- | --- |
+| Per-turn checkpoint diffs | Hidden-git-ref checkpoints captured at turn boundaries (never new commits), so a diff surface can scope to "latest turn" or "turn N" independent of the user's own edits; composes with adapter-sourced turn marks | Capture triggers only on adapter-declared turn boundaries; restore and diff verified against live sessions; no history rewrite; bounded refs per session with eviction |
+| Ordered status grammar | One severity order across strip, cards and Requests (pending approval, awaiting input, working, plan ready, completed-unseen), consistent colors, pulse only while active, duty-cycled stepped animation instead of per-vsync repaint | Deterministic mapping from existing attention kinds; animation budget honored (no continuously repainting effects); reduced-motion respected per the existing contracts |
+| Project roll-up grouping | Optional grouping of sessions within a category by working repository, with a worst-status roll-up indicator on the collapsed header answering "what needs me" at a glance | Category ownership and stable session positions unchanged; grouping is a presentation layer over existing session records |
+| Computed single git verb | One contextual card action computed from repository state (commit; commit and push; commit, push and open PR; pull; publish), with an explanatory disabled state instead of a menu | An explicit user action only; it never approves or answers an agent request; reuses the card menu's editor integration |
+| Stage-inline approvals | When the stage holds the requesting session, permission requests and free-form questions render with numbered-option answers (single keystroke) beside the transcript | Keyboard-ownership rules unchanged; decisions route through the originating adapter per the attention contract; options carry the source confidence already required of requests |
+
+Two product directions are recorded here because dependent work will branch
+from them. First, a per-session runtime mode (supervised, auto-accept-edits,
+auto, full-access) with a user-configurable default of full-access: it
+requires a decision-capable route to exist first — Codex app-server approval
+answering for structured sessions, and Claude through the Agent SDK route
+below. This supersedes the September 27 survey's unconditional default
+restriction; implementation must update the adapter capability declaration
+alongside the runtime policy. Where a decision-capable
+surface is shared, auto-approval must use once-scoped grants so it cannot
+widen stored permissions (t3's OpenCode adapter is the reference). Modes gate
+prompts, not capability, and adapters without a decision surface keep asking.
+Second, privacy stance: any future telemetry ships off by default with a
+persistent settable toggle, and an identity, if one is ever needed, is a
+random per-install value — never a hash of a provider account (t3's
+default-on PostHog with account-derived identifiers is the recorded
+counterexample).
+
+Two maintenance notes close the survey. The Ghostty pin comparison found
+lapis's existing discipline (hash-pinned source archive, pinned toolchain,
+configure-time receipt gate) already stronger than t3's commit pin plus
+drift test; the one borrow worth taking is embedding a version string in the
+built library so diagnostics self-report the exact VT revision. And the
+Claude Agent SDK evaluation completed its three streams on September 30
+(package contract, live probe on disposable sessions, integration map). The
+evidence supports a native route: the SDK is a thin spawn-plus-NDJSON
+control-protocol layer whose shipped types are the protocol spec, decisions
+flow through `can_use_tool` control requests whose answers are honored
+(allow against the real tool input; deny delivered to the model as an error
+result with the turn continuing unless `interrupt` is set), and
+`permission_suggestions` carry per-rule destinations (`session` for
+once-scoped grants). Two traps are recorded for the implementing change:
+the spawned session inherits user settings by default, so a user allow-rule
+silently bypasses the decision route entirely — the session service must own
+the permission-rule surface through the settings layer while preserving
+auth sources, since `settingSources: []` also drops `apiKeyHelper`
+credentials — and each query spawns a fresh CLI process whose conversation
+identity is stable only through `--session-id`/`--resume`. Adoption still
+requires the adapter qualification procedure and a prioritization decision;
+nothing here is implemented. The stored t3code receipt predates the reported
+completed SDK evaluation and still labels it in flight. Consolidate the
+version-pinned probe receipt before using that result as adapter acceptance.
+
+
+### oh-my-pi survey outcomes (September 30)
+
+A September 30 survey read can1357/oh-my-pi at revision `9532eb39ca` (MIT,
+omp 18.4.4) across eight subsystem areas, checked the load-bearing findings
+against lapis's own code paths, and drove a live `omp acp` process as a
+JSON-RPC client through a complete permission loop against a loopback mock
+provider. Findings, per-area verdicts and the probe results are retained in
+the [survey receipt](../evidence/oh-my-pi-survey.json). Nothing in this
+section is implemented by the survey; each row carries its gate and follows
+the [release triage](#release-triage-of-new-survey-directions-september-30).
+
+The survey's center of gravity is optimization under the zero-compromises
+posture: spend memory and machine so supervised agents never feel lapis,
+and bound only what must be bounded. Not adopted, with reasons recorded so
+they are not re-litigated: omp's frugal flow-control defaults (bounded
+reader queues sized for single-session laptops — lapis already has the
+pause-reader mechanics, and this section raises the budgets instead of
+lowering them); the snapcompact/mnemopi/handoff context stack (LLM-context
+economics owned by the supervised CLIs); the extension/marketplace surface
+(Bun in-process, unsandboxed); the auth broker/gateway (a multi-host fleet
+problem); the per-turn advisor model (a cost model a many-agent supervisor
+did not choose); the TUI resize/CPR and terminal-capability machinery (moot
+behind one pinned GPU-owned grid); and the collab link-sharing design (a
+comparator for any future browser-guest surface, not a current need).
+
+| Direction | What | Gate |
+| --- | --- | --- |
+| Raised transient output budgets | Raise the 64 KiB pending-output queue to MiB-class and re-time the per-pass parse chunking with a measurement, keeping the existing pause-reader path as the last resort for genuine sink exhaustion (history quota or disk full) | Rides the Q10 measured-allocation batch; sustained-output fixtures show no child-visible stall with bounded service memory |
+| Overflow-branch hardening | The pending-output overflow check stops the session today; make it pause-and-wait so an internal wiring surprise can never kill the agent | Regression fixture reaches the overflow path and observes recovery, not session death |
+| Teardown drain discrimination | Distinguish a slow consumer from a stuck one before abandoning the final PTY output drain (omp `await_pty_output_drain` is the reference) | Final-drain bounds preserved; a wedged consumer cannot hang teardown; fixtures cover both cases |
+| Update-pacing augmentations | After the applicable current pacing-audit gaps close: an adaptive frame-cost floor (next paint gated by last end plus last cost), an output-backlog gate (defer only while the consumer's write queue is full), input grace scoped to interrupt keys, and demand-armed ticks so time-derived presentation (pulses, chime repeats) arms timers only while something time-derived is painted | First-of-burst freshness unchanged — the update-pacing contract holds; injected-clock tests per mechanism; reduced-motion respected |
+| Advisory emission guard | With the triggers batch: content-normalized suppression across distinct request IDs, a per-window announcement budget with overflow reported, and escalation-only re-announcement, scoped strictly to observation-only notices (empty choice lists); decision-capable requests are never suppressed | Deterministic reducer tests with the injected clock; a distinct pending request is never hidden; trigger fixtures show bounded queue growth under repeated matches |
+| Web-surface consumption invariant | In the W1 frame queues: consume eagerly into bounded state and pause the source only when the durable sink is exhausted, never because the GUI is behind | The W1 check script gains a slow-GUI fixture that never stalls the engine beyond sink exhaustion; publishing follows the update-pacing contract |
+| ACP evidence bank | The live probe confirmed the server's happy path (fail-closed permissions, replay-based reconcile, strictly NDJSON stdio) and banked its edges: silent exit-0 death on one malformed stdin line; failures funnel to `-32603` with `data.details` strings; a second same-session prompt cancels-and-replaces; provider-config rejection is a log-only warning that silently reroutes to discovery; `allow_always` caches per tool name per session; no epochs or sequence numbers | Any future ACP adapter designs for these edges, keeps the service owning the child process in a managed-session shape, and passes the full adapter qualification gate before a capability is claimed; it remains the recorded Milestone 5 vehicle candidate behind the decision routes |
+
+Two corroborations close the survey. omp's render scheduler independently
+derived the policy this document codifies as the update-pacing contract,
+including the same first-of-burst failure mode addressed by the render
+throttle and snapshot publisher; preview decoding is a separate open gap; and both sibling surveys (oh-my-pi and t3code)
+pin Ghostty VT, keep hidden sessions consuming output, and route through
+verified per-CLI adapters — the haul is mostly refinements because the
+foundations were set early. The [pacing audit](#update-pacing-audit-september-28)
+owns the current gaps, including preview decoding, attention publication and
+companion history catch-up; this survey does not duplicate their completion state.
 
 ### Following milestones
 
