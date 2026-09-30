@@ -335,7 +335,8 @@ Claude Code's own prompt suggestions may show beneath; set
 `promptSuggestionEnabled` to false in its settings to leave only lapis's. Every
 guess is kept, owner-only, in `~/.lapis/next_prompt.jsonl`, with when it was on
 screen, whether Tab or Option-Tab used it, how many keys you typed first and how
-long you took, or that the next turn replaced it unused.
+long you took, or that the next turn replaced it unused; a prediction that
+failed (and why) or was skipped at the hourly cap is kept too.
 `scripts/next_prompt_eval.py log` turns that into the acceptance rate (of the
 guesses you saw, the share you used), by category and confidence; `--judge`
 compares the ones you passed over with what you typed instead, and `replay

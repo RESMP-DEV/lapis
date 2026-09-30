@@ -253,6 +253,12 @@ def acceptance(events):
             offer["used"] = e
         elif kind == "withdrawn":
             offer["withdrawn"] = e.get("reason")
+    failures = defaultdict(int)
+    for e in events:
+        if e.get("event") == "failed":
+            failures[
+                "{}: {}".format(e.get("stage", "?"), str(e.get("error", ""))[:80])
+            ] += 1
     shown = [o for o in offers.values() if o.get("shown")]
     seen = [o for o in shown if o["seen"]]
     used = [o for o in seen if o["used"]]
@@ -278,6 +284,8 @@ def acceptance(events):
         "seen_not_used": sum(1 for o in seen if not o["used"]),
         "offered_never_seen": sum(1 for o in shown if not o["seen"]),
         "median_ms_to_use": waits[len(waits) // 2] if waits else None,
+        "failed": dict(sorted(failures.items(), key=lambda kv: -kv[1])),
+        "skipped": sum(1 for e in events if e.get("event") == "skipped"),
         "by_category": {},
         "by_confidence": [],
     }

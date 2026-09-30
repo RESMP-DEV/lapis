@@ -324,6 +324,9 @@ class AcceptanceTests(unittest.TestCase):
             predicted("b:3", 0.5),
             {"event": "withdrawn", "offer": "b:3", "reason": "new_turn", "seen": False},
             predicted("c:4", 0.2, shown=False),
+            {"event": "failed", "stage": "context", "error": "no transcript"},
+            {"event": "failed", "stage": "context", "error": "no transcript"},
+            {"event": "skipped", "reason": "hourly_cap"},
         ]
         _, report = next_prompt_eval.acceptance(events)
         self.assertEqual(
@@ -343,6 +346,9 @@ class AcceptanceTests(unittest.TestCase):
         )
         self.assertEqual(
             report["by_category"]["approve"], {"seen": 1, "acceptance": 1.0}
+        )
+        self.assertEqual(
+            (report["failed"], report["skipped"]), ({"context: no transcript": 2}, 1)
         )
         at_half = [
             row for row in report["by_confidence"] if row["min_confidence"] == 0.5

@@ -3247,7 +3247,9 @@ logs every guess to measure that threshold.
   offered), `seen` (first on screen in the active window: the impression),
   `used` (Tab or Option-Tab, keys typed first, milliseconds after seen) and
   `withdrawn` (replaced by the next turn's guess, or the setting turned off,
-  and whether it had been seen). Acceptance is used over seen: a guess never
+  and whether it had been seen), plus `failed` (the stage, context or predict,
+  and the reason) and `skipped` (the hourly cap), so every finished turn it was
+  asked about is accounted for. Acceptance is used over seen: a guess never
   on screen, or one replaced before the person came, is not a refusal.
   `scripts/next_prompt_eval.py log` reports it by category and confidence;
   `--judge` grades the guesses seen but not used against the prompt typed

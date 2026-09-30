@@ -124,7 +124,10 @@ void NextPrompt::turnFinished(const QString& id) {
     while (!started_.empty() && now - started_.front() > kHourMs)
         started_.pop_front();
     if (std::cmp_greater_equal(started_.size(), settings_.maxPerHour)) {
-        qInfo().noquote() << "Next prompt: skipped; at" << settings_.maxPerHour << "an hour";
+        record({{QStringLiteral("event"), QStringLiteral("skipped")},
+                {QStringLiteral("agent"), id},
+                {QStringLiteral("reason"), QStringLiteral("hourly_cap")},
+                {QStringLiteral("max_per_hour"), settings_.maxPerHour}});
         return;
     }
     started_.push_back(now);
@@ -141,7 +144,7 @@ void NextPrompt::turnFinished(const QString& id) {
     };
     if (agent->machine.isEmpty()) {
         start(id, generation, program_(QStringLiteral("python3")),
-              QStringList{script_path_} + words, {}, kContextTimeoutMs, done);
+              QStringList{script_path_} + words, {}, Stage::context, done);
         return;
     }
     // The helper goes on stdin, so nothing is left on the other machine.
@@ -153,17 +156,17 @@ void NextPrompt::turnFinished(const QString& id) {
            QStringLiteral("ConnectTimeout=10"), QStringLiteral("-o"),
            QStringLiteral("ControlPath=none"), QStringLiteral("-T"), QStringLiteral("--"),
            agent->machine, remote.join(QLatin1Char(' '))},
-          kNextPromptScript, kContextTimeoutMs, done);
+          kNextPromptScript, Stage::context, done);
 }
 
 void NextPrompt::start(const QString& id, quint64 generation, const QString& program,
-                       const QStringList& arguments, const QByteArray& input, int timeout_ms,
+                       const QStringList& arguments, const QByteArray& input, Stage stage,
                        const std::function<void(const QJsonObject&)>& done) {
     auto* process = new QProcess(this);
     running_[id].process = process;
     process->setProgram(program);
     process->setArguments(arguments);
-    const auto finish = [this, id, generation, process, done] {
+    const auto finish = [this, id, generation, process, stage, done] {
         process->deleteLater();
         if (!current(id, generation) || running_.value(id).process != process)
             return;
@@ -174,7 +177,8 @@ void NextPrompt::start(const QString& id, quint64 generation, const QString& pro
                 answer.isEmpty()
                     ? QString::fromUtf8(process->readAllStandardError()).simplified().right(200)
                     : answer.value(QStringLiteral("error")).toString();
-            qInfo().noquote() << "Next prompt: none for" << id << why;
+            failed(id, stage,
+                   why.isEmpty() ? QStringLiteral("no answer (timed out or ended)") : why);
             return;
         }
         done(answer);
@@ -184,7 +188,8 @@ void NextPrompt::start(const QString& id, quint64 generation, const QString& pro
         if (error == QProcess::FailedToStart)
             finish();
     });
-    QTimer::singleShot(timeout_ms, process, [process] { process->kill(); });
+    QTimer::singleShot(stage == Stage::predict ? kPredictTimeoutMs : kContextTimeoutMs, process,
+                       [process] { process->kill(); });
     process->start();
     process->write(input);
     process->closeWriteChannel();
@@ -194,7 +199,7 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
     const auto claude = program_(QStringLiteral("claude"));
     if (claude.isEmpty()) {
         running_.remove(id);
-        qInfo() << "Next prompt: no Claude Code CLI on this Mac";
+        failed(id, Stage::predict, QStringLiteral("no Claude Code CLI on this Mac"));
         return;
     }
     const auto agent = running_.value(id).agent;
@@ -213,7 +218,7 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
     if (!settings_.effort.isEmpty())
         arguments << QStringLiteral("--effort") << settings_.effort;
     start(id, generation, program_(QStringLiteral("python3")), arguments, line(bundle),
-          kPredictTimeoutMs, [this, id, agent, context](const QJsonObject& answer) {
+          Stage::predict, [this, id, agent, context](const QJsonObject& answer) {
               running_.remove(id);
               offer(id, agent, context, answer);
           });
@@ -249,6 +254,19 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
 }
 
 QString NextPrompt::suggestion(const QString& id) const { return offers_.value(id).text; }
+
+// A prediction that came to nothing is recorded too, with the stage and why:
+// the log accounts for every finished turn it was asked about.
+void NextPrompt::failed(const QString& id, Stage stage, const QString& why) {
+    const auto agent = lookup_(id);
+    record({{QStringLiteral("event"), QStringLiteral("failed")},
+            {QStringLiteral("agent"), id},
+            {QStringLiteral("machine"), agent ? agent->machine : QString()},
+            {QStringLiteral("cli"), agent ? agent->cli : QString()},
+            {QStringLiteral("stage"),
+             stage == Stage::predict ? QStringLiteral("predict") : QStringLiteral("context")},
+            {QStringLiteral("error"), why.left(300)}});
+}
 
 QStringList NextPrompt::readyAgents() const { return offers_.keys(); }
 

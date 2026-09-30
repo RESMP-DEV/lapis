@@ -247,7 +247,11 @@ void predictsAndOffers() {
     next.setSettings(on(3));
     next.turnFinished(QStringLiteral("a"));
     require(next.suggestion(QStringLiteral("a")).isEmpty(), "the next turn withdraws the offer");
-    const auto withdrawn = events(log).last();
+    const auto tail = events(log);
+    const auto withdrawn = tail.at(tail.size() - 2);
+    require(tail.last().value(QStringLiteral("event")) == QLatin1String("skipped") &&
+                tail.last().value(QStringLiteral("reason")) == QLatin1String("hourly_cap"),
+            "a turn past the hourly cap is recorded as skipped");
     require(withdrawn.value(QStringLiteral("event")) == QLatin1String("withdrawn") &&
                 withdrawn.value(QStringLiteral("reason")) == QLatin1String("new_turn") &&
                 withdrawn.value(QStringLiteral("seen")).toBool() &&
@@ -257,6 +261,19 @@ void predictsAndOffers() {
     static_cast<void>(waitFor([] { return false; }, 300));
     require(!QFileInfo::exists(root.filePath(QStringLiteral("context.args"))),
             "past the hourly cap nothing runs");
+    // A prediction that fails is recorded with its stage and reason.
+    write(root.filePath(QStringLiteral("context.reply")), R"({"error": "no transcript"})");
+    next.setSettings(on(60));
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] {
+                return events(log).last().value(QStringLiteral("event")) == QLatin1String("failed");
+            }),
+            "a failed prediction is recorded");
+    const auto failure = events(log).last();
+    require(failure.value(QStringLiteral("stage")) == QLatin1String("context") &&
+                failure.value(QStringLiteral("error")) == QLatin1String("no transcript") &&
+                failure.value(QStringLiteral("cli")) == QLatin1String("claude"),
+            "with where and why it failed");
     next.setSettings({});
     require(!next.enabled(), "off");
     require(next.suggestion(QStringLiteral("a")).isEmpty(), "turning it off withdraws offers");
