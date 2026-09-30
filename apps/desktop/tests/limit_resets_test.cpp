@@ -1,4 +1,5 @@
 #include "limit_resets.hpp"
+#include "platform/reset_journal.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -9,10 +10,13 @@
 #include <QJsonObject>
 #include <QLockFile>
 #include <QTemporaryDir>
+#include <QThreadPool>
 
+#include <condition_variable>
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 
 using lapis::desktop::LimitResets;
@@ -66,6 +70,9 @@ module = types.ModuleType('tested_reset_helper')
 exec(compile(source, 'embedded_limit_resets.py', 'exec'), module.__dict__)
 class Account:
     def __init__(self, *unused):
+        self.org, self.account = 'fixture-org', 'fixture-account'
+        if phase != 'prepare' and (root/'change-account-id').exists():
+            self.org, self.account = 'another-org', 'another-account'
         self.email = 'plan@example.test'
         if (root/'wrong-account').exists() or (phase != 'prepare' and (root/'change-account').exists()):
             self.email = 'different@example.test'
@@ -98,6 +105,7 @@ struct Fixture {
     QVector<LimitResets::AgentTarget> targets;
     QStringList spent, declined, uncertain;
     int credential_reads{};
+    std::function<void()> before_credentials;
     std::unique_ptr<LimitResets> controller;
 
     Fixture() {
@@ -123,6 +131,8 @@ struct Fixture {
             [this](const QString& id) { return targets.at(id.toInt()); },
             [this](const QString& name) { return root.filePath(QStringLiteral("bin/") + name); },
             [this] {
+                if (before_credentials)
+                    before_credentials();
                 ++credential_reads;
                 return QByteArray(R"({"claudeAiOauth":{"accessToken":"fixture"}})");
             },
@@ -217,6 +227,17 @@ void interruptedConsumeReconcilesWithoutReplay() {
     require(QJsonDocument::fromJson(read(f.journal())).object().value("pending").toObject() ==
                 original,
             "uncertain identity never expires or changes");
+    for (const auto* marker : {"change-account", "change-account-id"}) {
+        const auto before = f.uncertain.size();
+        write(f.root.filePath(QLatin1String(marker)), "yes");
+        f.controller->useNow(QStringLiteral("0"));
+        require(waitFor([&] { return f.uncertain.size() == before + 1; }),
+                "identity change during reconciliation stays uncertain");
+        require(QJsonDocument::fromJson(read(f.journal())).object().value("pending").toObject() ==
+                    original,
+                "a reconciliation refusal cannot retire the original operation");
+        QFile::remove(f.root.filePath(QLatin1String(marker)));
+    }
     write(f.root.filePath(QStringLiteral("settled")), "yes");
     f.controller->useNow(QStringLiteral("0"));
     require(waitFor([&] { return !f.declined.isEmpty(); }),
@@ -230,7 +251,8 @@ void interruptedConsumeReconcilesWithoutReplay() {
 }
 
 void journalAndIdentityFailuresRefuseBeforeConsume() {
-    for (const auto* marker : {"block-state", "wrong-account", "change-account"}) {
+    for (const auto* marker :
+         {"block-state", "wrong-account", "change-account", "change-account-id"}) {
         Fixture f;
         write(f.root.filePath(QLatin1String(marker)), "yes");
         f.start();
@@ -248,7 +270,8 @@ void journalAndIdentityFailuresRefuseBeforeConsume() {
     require(waitFor([&] { return !f.uncertain.isEmpty(); }), "create pending fixture");
     const auto path = f.journal();
     f.controller.reset();
-    write(path, R"({"v":1,"attempts":{},"pending":{"credit":"broken"}})");
+    write(path,
+          R"({"v":2,"format":"lapis-reset-journal","attempts":{},"pending":{"credit":"broken"}})");
     const auto count = f.calls().size();
     f.start();
     f.controller->useNow(QStringLiteral("0"));
@@ -297,6 +320,69 @@ void configuredTargetsUseTheirOwnRoutes() {
         }
     }
 }
+
+void journalCapacityReclaimsOnlyExpiredClosedRecords() {
+    using namespace lapis::desktop::platform;
+    for (const bool all_pending : {false, true}) {
+        Fixture f;
+        f.start();
+        const QDir folder(f.root.filePath(QStringLiteral("runtime/limit-resets")));
+        const QJsonObject closed{
+            {QStringLiteral("v"), reset_journal_version},
+            {QStringLiteral("format"), QStringLiteral("lapis-reset-journal")},
+            {QStringLiteral("attempts"), QJsonObject{{QStringLiteral("old"), 0}}}};
+        for (int i = 0; i < reset_journal_max_files; ++i) {
+            auto state = closed;
+            if (all_pending || i == 0)
+                state.insert(QStringLiteral("pending"),
+                             QJsonObject{{QStringLiteral("credit"), QStringLiteral("unknown")}});
+            write(folder.filePath(QString::number(i) + QStringLiteral(".json")),
+                  QJsonDocument(state).toJson(QJsonDocument::Compact));
+        }
+        f.controller->useNow(QStringLiteral("0"));
+        require(waitFor([&] { return !f.spent.isEmpty() || !f.declined.isEmpty(); }),
+                "capacity admission completes");
+        require(QFile::exists(folder.filePath(QStringLiteral("0.json"))) &&
+                    folder.entryList({QStringLiteral("*.json")}, QDir::Files).size() ==
+                        reset_journal_max_files,
+                "pending records are retained and the file bound holds");
+        require(all_pending ? f.spent.isEmpty() && f.calls().size() == 1 : f.spent.size() == 1,
+                "expired closed records make room; pending records never authorize eviction");
+    }
+}
+
+void closingDuringCredentialLookupCannotLaunchAHelper() {
+    struct Gate {
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool started{}, released{};
+    };
+    auto gate = std::make_shared<Gate>();
+    Fixture f;
+    f.targets[0].account.clear();
+    f.before_credentials = [gate] {
+        std::unique_lock lock(gate->mutex);
+        gate->started = true;
+        gate->changed.notify_all();
+        gate->changed.wait(lock, [&] { return gate->released; });
+    };
+    f.start();
+    f.controller->useNow(QStringLiteral("0"));
+    require(waitFor([&] {
+                const std::lock_guard lock(gate->mutex);
+                return gate->started;
+            }),
+            "credential lookup starts off the GUI thread");
+    f.controller.reset();
+    {
+        const std::lock_guard lock(gate->mutex);
+        gate->released = true;
+    }
+    gate->changed.notify_all();
+    require(QThreadPool::globalInstance()->waitForDone(5000), "credential task completes");
+    QCoreApplication::sendPostedEvents();
+    require(f.calls().isEmpty(), "a late credential result cannot start an orphan reset");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -307,6 +393,8 @@ int main(int argc, char** argv) {
         interruptedConsumeReconcilesWithoutReplay();
         journalAndIdentityFailuresRefuseBeforeConsume();
         configuredTargetsUseTheirOwnRoutes();
+        journalCapacityReclaimsOnlyExpiredClosedRecords();
+        closingDuringCredentialLookupCannotLaunchAHelper();
     } catch (const std::exception& error) {
         std::cerr << "limit_resets_test: " << error.what() << '\n';
         return 1;

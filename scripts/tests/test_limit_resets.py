@@ -109,6 +109,14 @@ class PlanTests(unittest.TestCase):
             plan({"seven_day": (0.9, NOW + HOUR)}, needs_wall)[:2],
             (None, "needs-limit"),
         )
+        model_window = {"seven_day_opus": (0.8, NOW + HOUR)}
+        self.assertIsNone(plan(model_window, expiring)[0])
+        self.assertEqual(
+            plan(model_window, credit(expires=NOW + HOUR, clears=["seven_day_opus"]))[
+                0
+            ],
+            "salvage",
+        )
 
     def test_unusable_missing_or_implausible_resets_are_left_alone(self):
         blocked = {"seven_day": (1.0, NOW + 2 * 24 * HOUR)}
@@ -202,6 +210,9 @@ class ReportTests(unittest.TestCase):
             (spend["program"], spend["clears"], spend["remaining"]),
             (limit_resets.JUNIPER, ["five_hour"], 1),
         )
+        old_id = spend["id"]
+        at_wall[limit_resets.JUNIPER]["weekly_resets_at"] = "2026-10-09T02:00:00+00:00"
+        self.assertNotEqual(limit_resets.claude_credit({}, at_wall)["id"], old_id)
         at_wall[limit_resets.JUNIPER]["arm"] = "control"
         self.assertIsNone(limit_resets.claude_credit({}, at_wall))
 
@@ -223,6 +234,7 @@ class ReportTests(unittest.TestCase):
     def test_the_sweep_reports_without_spending_unless_asked(self):
         class Account:
             cli = "claude"
+            org = "fixture-org"
             spent = []
 
             def __init__(self, given=None):
@@ -276,6 +288,7 @@ class ReportTests(unittest.TestCase):
 class TwoPhaseTests(unittest.TestCase):
     class Account:
         cli = "claude"
+        org = "fixture-org"
         spent = []
         reads = []
 
@@ -323,6 +336,30 @@ class TwoPhaseTests(unittest.TestCase):
     def setUp(self):
         self.Account.spent.clear()
         self.Account.reads.clear()
+
+    def test_codex_provider_identity_cannot_change_under_the_same_email(self):
+        arguments = self.arguments(prepare=True, now="codex")
+        del arguments.claude_plan
+        arguments.codex_plan = ""
+        with (
+            patch.object(limit_resets, "Codex", self.Account),
+            patch.object(self.Account, "cli", "codex"),
+            patch.object(self.Account, "account", "account-one", create=True),
+            patch.object(limit_resets.time, "time", return_value=NOW),
+        ):
+            prepared = limit_resets.sweep(arguments)["accounts"][0]
+            self.assertEqual(prepared["account_id"], "account-one")
+            arguments.prepare = False
+            arguments.operation = "18000000-0000-4000-8000-000000000099"
+            arguments.pending_credit = "launch"
+            arguments.expected_account_id = "account-two"
+            refused = limit_resets.sweep(arguments)["accounts"][0]
+            self.assertEqual((refused["result"], self.Account.spent), ("refused", []))
+            self.Account.account = ""
+            arguments.prepare = True
+            arguments.expected_account_id = ""
+            missing = limit_resets.sweep(arguments)["accounts"][0]
+            self.assertEqual((missing["result"], self.Account.spent), ("refused", []))
 
     def test_prepare_selects_and_never_spends(self):
         arguments = self.arguments(apply=True, now="claude", prepare=True)
@@ -468,6 +505,32 @@ class TwoPhaseTests(unittest.TestCase):
 
 
 class ProviderFieldTests(unittest.TestCase):
+    def test_failed_listing_cannot_settle_a_pending_credit(self):
+        claude = object.__new__(limit_resets.Claude)
+        claude.headers = {}
+        with patch.object(
+            limit_resets,
+            "request",
+            side_effect=[
+                (200, {limit_resets.CEDAR: {"eligible": False, "grants": []}}),
+                (503, {}),
+            ],
+        ):
+            with self.assertRaises(limit_resets.Unavailable):
+                claude.read(limit_resets.JUNIPER + ":123")
+        codex = object.__new__(limit_resets.Codex)
+        codex.headers = {}
+        with patch.object(
+            limit_resets,
+            "request",
+            side_effect=[
+                (200, {"email": "fixture@example.test"}),
+                (500, {"credits": []}),
+            ],
+        ):
+            with self.assertRaises(limit_resets.Unavailable):
+                codex.read("pending-credit")
+
     def test_malformed_fields_do_not_make_a_credit_or_window(self):
         usage = {
             "five_hour": {"utilization": True},
@@ -498,15 +561,18 @@ class ProviderFieldTests(unittest.TestCase):
                 {"id": "consumed", "status": "consumed"},
                 {"id": "soon", "expires_at": NOW + HOUR},
                 {"id": "later", "expires_at": NOW + 2 * HOUR},
+                {"id": "expired", "status": "available", "expires_at": NOW - 1},
             ]
         }
-        credits = limit_resets.codex_credits(listing)
+        with patch.object(limit_resets.time, "time", return_value=NOW):
+            credits = limit_resets.codex_credits(listing)
         self.assertEqual(
-            [item["id"] for item in credits], ["soon", "later", "consumed"]
+            [item["id"] for item in credits], ["soon", "later", "expired", "consumed"]
         )
         self.assertEqual(
             [item["id"] for item in credits if item["available"]], ["soon", "later"]
         )
+        self.assertEqual(credits[0]["remaining"], 2)
 
     def test_named_visiting_claude_refuses_instead_of_using_host_sign_in(self):
         called = []

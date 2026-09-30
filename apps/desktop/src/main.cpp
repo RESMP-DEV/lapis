@@ -458,6 +458,30 @@ QString usage_program(const QString& id) {
 // Saved Claude Code and Codex limit resets, spent as OMP does, with each
 // machine's own sign-in; lapis says when it spends one or cannot.
 // Only the real workspace spends resets; the object QML sees, or null.
+lapis::desktop::LimitResets::AgentTarget reset_target(const lapis::desktop::Workspace& workspace,
+                                                      const lapis::desktop::KeyMap& keymap,
+                                                      const QString& id) {
+    lapis::desktop::LimitResets::AgentTarget result;
+    const auto* item = workspace.session(id);
+    if (item == nullptr)
+        return result;
+    result.machine = workspace.agentPlace(id).value(QStringLiteral("machine")).toString();
+    result.cli = item->harnessId();
+    result.account = workspace.agentAccount(id);
+    if (!result.account.isEmpty()) {
+        result.refusal = QStringLiteral("the selected plan is no longer configured");
+        for (const auto& account : keymap.accounts().accounts)
+            if (account.cli == result.cli && account.name == result.account) {
+                result.home = account.home;
+                result.hasHome = account.hasHome;
+                result.email = account.email;
+                result.refusal.clear();
+                break;
+            }
+    }
+    return result;
+}
+
 QObject* keep_limit_resets(std::optional<lapis::desktop::LimitResets>& kept,
                            const lapis::desktop::Workspace& workspace,
                            const lapis::desktop::KeyMap& keymap, bool isolated) {
@@ -465,25 +489,7 @@ QObject* keep_limit_resets(std::optional<lapis::desktop::LimitResets>& kept,
     if (isolated)
         return nullptr;
     const auto target = [&workspace, &keymap](const QString& id) {
-        LimitResets::AgentTarget result;
-        const auto* item = workspace.session(id);
-        if (item == nullptr)
-            return result;
-        result.machine = workspace.agentPlace(id).value(QStringLiteral("machine")).toString();
-        result.cli = item->harnessId();
-        result.account = workspace.agentAccount(id);
-        if (!result.account.isEmpty()) {
-            result.refusal = QStringLiteral("the selected plan is no longer configured");
-            for (const auto& account : keymap.accounts().accounts)
-                if (account.cli == result.cli && account.name == result.account) {
-                    result.home = account.home;
-                    result.hasHome = account.hasHome;
-                    result.email = account.email;
-                    result.refusal.clear();
-                    break;
-                }
-        }
-        return result;
+        return reset_target(workspace, keymap, id);
     };
     auto& resets = kept.emplace(
         [&workspace, target] {

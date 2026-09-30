@@ -224,10 +224,11 @@ def claude_credits(usage, at_wall):
         isinstance(juniper, dict)
         and juniper.get("eligible")
         and juniper.get("arm") == "reset"
+        and parse_time(juniper.get("weekly_resets_at")) is not None
     ):
         credits.append(
             {
-                "id": JUNIPER,
+                "id": f"{JUNIPER}:{parse_time(juniper['weekly_resets_at']):.0f}",
                 "program": JUNIPER,
                 "title": "Claude session limit reset",
                 "clears": ["five_hour"],
@@ -289,19 +290,24 @@ class Claude:
         if credit_id is not None:
             cedar = usage.get(CEDAR)
             grants = cedar.get("grants") if isinstance(cedar, dict) else None
-            malformed = (
-                isinstance(cedar, dict)
-                and cedar.get("eligible")
-                and (
-                    not isinstance(grants, list)
-                    or any(
-                        not isinstance(grant, dict)
-                        or not isinstance(grant.get("id"), str)
-                        or not grant.get("id")
-                        for grant in grants
+            if credit_id.startswith(JUNIPER + ":"):
+                juniper = (at_wall or {}).get(JUNIPER)
+                malformed = (
+                    status != 200
+                    or not isinstance(juniper, dict)
+                    or (
+                        juniper.get("eligible")
+                        and juniper.get("arm") == "reset"
+                        and parse_time(juniper.get("weekly_resets_at")) is None
                     )
                 )
-            )
+            else:
+                malformed = not isinstance(grants, list) or any(
+                    not isinstance(grant, dict)
+                    or not isinstance(grant.get("id"), str)
+                    or not grant.get("id")
+                    for grant in grants
+                )
             if malformed:
                 raise Unavailable("malformed Claude credit listing")
             exact = next((item for item in credits if item["id"] == credit_id), None)
@@ -331,6 +337,8 @@ class Claude:
             body,
             25,
         )
+        if status != 200:
+            return f"http_{status}"
         result = payload.get("result") if isinstance(payload, dict) else None
         return result or f"http_{status}"
 
@@ -350,6 +358,7 @@ def codex_credits(listing):
             continue
         status = str(item.get("status") or "available")
         expires = parse_time(item.get("expires_at"))
+        available = status == "available" and (expires is None or expires > time.time())
         credits.append(
             {
                 "id": credit_id,
@@ -358,16 +367,20 @@ def codex_credits(listing):
                 # A saved reset clears the account's chat limits generally.
                 "clears": list(MAX_REMAINING),
                 "expires": expires,
-                "remaining": 1 if status == "available" else 0,
-                "usable": status == "available",
+                "remaining": 1 if available else 0,
+                "usable": available,
                 "requires_limit": False,
-                "available": status == "available",
+                "available": available,
                 "status": status,
             }
         )
     credits.sort(
         key=lambda item: (not item["available"], item["expires"] or float("inf"))
     )
+    remaining = sum(item["available"] for item in credits)
+    for item in credits:
+        if item["available"]:
+            item["remaining"] = remaining
     return credits
 
 
@@ -431,6 +444,8 @@ class Codex:
         status, listing = request(
             f"{CODEX_API}/wham/rate-limit-reset-credits", self.headers
         )
+        if status != 200:
+            raise Unavailable(f"credit listing: HTTP {status}")
         credits = codex_credits(listing)
         if credit_id is not None:
             raw = listing.get("credits") if isinstance(listing, dict) else None
@@ -470,6 +485,8 @@ class Codex:
         status, payload = request(
             f"{CODEX_API}/wham/rate-limit-reset-credits/consume", self.headers, body, 25
         )
+        if status != 200:
+            return f"http_{status}"
         code = payload.get("code") if isinstance(payload, dict) else None
         return code or ("reset" if status == 200 else f"http_{status}")
 
@@ -514,7 +531,9 @@ def plan(cli, email, windows, credit, now, settings, attempted, force=False):
             else ("restore", "blocked", key)
         )
     weekly_values = [
-        used for name, (used, _) in windows.items() if name.startswith("seven_day")
+        used
+        for name, (used, _) in windows.items()
+        if name.startswith("seven_day") and name in credit["clears"]
     ]
     weekly_used = max(weekly_values, default=0.0)
     horizon = settings["salvage_hours"] * HOUR
@@ -590,10 +609,20 @@ class IdentityMismatch(RuntimeError):
     """Credentials changed between preparation and the attempted operation."""
 
 
-def read_account(account, credit_id=None, expected_email=""):
+def provider_identity(account):
+    field = "account" if account.cli == "codex" else "org"
+    value = getattr(account, field, "")
+    if not isinstance(value, str) or not value or len(value) > 256:
+        raise IdentityMismatch("provider account identity is unavailable")
+    return value
+
+
+def read_account(account, credit_id=None, expected_email="", expected_account=""):
     result = account.read() if credit_id is None else account.read(credit_id)
     if expected_email and str(account.email).lower() != expected_email:
         raise IdentityMismatch("selected account identity changed")
+    if expected_account and provider_identity(account) != expected_account:
+        raise IdentityMismatch("provider account identity changed")
     return result
 
 
@@ -630,6 +659,7 @@ def sweep(arguments):
     operation = getattr(arguments, "operation", "") or ""
     pending_credit = getattr(arguments, "pending_credit", "") or ""
     expected_email = (getattr(arguments, "expected_email", "") or "").strip().lower()
+    expected_id = getattr(arguments, "expected_account_id", "") or ""
     prepare = bool(getattr(arguments, "prepare", False))
     reconcile = bool(getattr(arguments, "reconcile_only", False))
     wants_spend = prepare is False and (arguments.apply or arguments.now is not None)
@@ -671,7 +701,9 @@ def sweep(arguments):
         try:
             given = json.loads(sys.stdin.readline())
         except ValueError:
-            given = None
+            given = {}
+        if not isinstance(given, dict):
+            given = {}
 
     accounts = []
     for kind, selected_plan, plan_home in targets:
@@ -692,9 +724,14 @@ def sweep(arguments):
                 )
 
             if not prepare and not reconcile and not wants_spend:
-                windows, credit = read_account(account, expected_email=expected_email)
+                windows, credit = read_account(
+                    account, expected_email=expected_email, expected_account=expected_id
+                )
                 report.update(
                     email=account.email,
+                    account_id=provider_identity(account)
+                    if prepare or reconcile or wants_spend
+                    else "",
                     windows={
                         name: {"used": round(used, 3), "resets": at}
                         for name, (used, at) in windows.items()
@@ -719,7 +756,7 @@ def sweep(arguments):
             if reconcile:
                 try:
                     windows, exact = read_account(
-                        account, pending_credit, expected_email
+                        account, pending_credit, expected_email, expected_id
                     )
                 except Unavailable as error:
                     report.update(
@@ -734,6 +771,9 @@ def sweep(arguments):
                     continue
                 report.update(
                     email=account.email,
+                    account_id=provider_identity(account)
+                    if prepare or reconcile or wants_spend
+                    else "",
                     windows={
                         name: {"used": round(used, 3), "resets": at}
                         for name, (used, at) in windows.items()
@@ -771,9 +811,14 @@ def sweep(arguments):
                 continue
 
             if prepare:
-                windows, credit = read_account(account, expected_email=expected_email)
+                windows, credit = read_account(
+                    account, expected_email=expected_email, expected_account=expected_id
+                )
                 report.update(
                     email=account.email,
+                    account_id=provider_identity(account)
+                    if prepare or reconcile or wants_spend
+                    else "",
                     windows={
                         name: {"used": round(used, 3), "resets": at}
                         for name, (used, at) in windows.items()
@@ -799,11 +844,12 @@ def sweep(arguments):
                     report["attempt"] = key
                 continue
 
-            # Consume is intentionally policy-blind once a credit was selected
-            # and persisted: reconciliation comes first, and only that exact
-            # credit may be used.
+            # Reconciliation has its own read-only path above. A first consume
+            # still targets only the persisted credit and checks current policy.
             try:
-                windows, exact = read_account(account, pending_credit, expected_email)
+                windows, exact = read_account(
+                    account, pending_credit, expected_email, expected_id
+                )
             except Unavailable as error:
                 report.update(
                     outcome_unknown(
@@ -817,6 +863,9 @@ def sweep(arguments):
                 continue
             report.update(
                 email=account.email,
+                account_id=provider_identity(account)
+                if prepare or reconcile or wants_spend
+                else "",
                 windows={
                     name: {"used": round(used, 3), "resets": at}
                     for name, (used, at) in windows.items()
@@ -852,6 +901,21 @@ def sweep(arguments):
             if not (arguments.apply or arguments.now == kind.cli):
                 report.update(refusal(kind.cli, "spending requires --apply or --now"))
                 continue
+            if arguments.now != kind.cli:
+                action, reason, _ = plan(
+                    kind.cli,
+                    account.email,
+                    windows,
+                    exact,
+                    time.time(),
+                    settings,
+                    attempted,
+                )
+                if not action:
+                    report.update(
+                        refusal(kind.cli, f"credit is no longer eligible: {reason}")
+                    )
+                    continue
 
             report["attempt"] = f"consume|{operation}|{exact['id']}"
             report["credit_id"] = exact["id"]
@@ -952,6 +1016,9 @@ def main(argv=None):
     parser.add_argument("--machine", default="local")
     parser.add_argument("--operation", help="stable identity for this consume attempt")
     parser.add_argument("--pending-credit", help="credit tied to --operation")
+    parser.add_argument(
+        "--expected-account-id", help="provider account ID from preparation"
+    )
     parser.add_argument(
         "--expected-email", help="verified account identity from preparation"
     )

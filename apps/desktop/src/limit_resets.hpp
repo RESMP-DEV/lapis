@@ -66,6 +66,7 @@ class LimitResets final : public QObject {
 
   private:
     enum class Phase : std::uint8_t { prepare, consume, reconcile };
+    enum class AfterWrite : std::uint8_t { admitted, cancelled, completed };
     struct Run;
     void run(AgentTarget target, bool asked);
     bool loadState(const std::shared_ptr<Run>& run);
@@ -74,8 +75,8 @@ class LimitResets final : public QObject {
     void finish(const std::shared_ptr<Run>& run);
     void prepared(const std::shared_ptr<Run>& run, const QJsonObject& account);
     void completed(const std::shared_ptr<Run>& run, const QJsonObject& account);
-    void persist(const std::shared_ptr<Run>& run, const QJsonObject& state,
-                 const std::function<void()>& done);
+    void persist(const std::shared_ptr<Run>& run, const QJsonObject& state, AfterWrite next);
+    void persisted(const std::shared_ptr<Run>& run, AfterWrite next, const QJsonObject& previous);
     void refuse(const std::shared_ptr<Run>& run, const QString& reason);
     [[nodiscard]] QStringList arguments(const Run& run) const;
     [[nodiscard]] bool current(const std::shared_ptr<Run>& run) const;
@@ -88,6 +89,7 @@ class LimitResets final : public QObject {
     bool helper_ready_{};
     LimitResetSettings settings_;
     QTimer timer_;
+    QTimer first_sweep_;
     QHash<QString, std::shared_ptr<Run>> running_;
     QSet<QString> uncertain_notified_;
 };

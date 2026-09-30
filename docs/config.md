@@ -28,9 +28,10 @@ key bindings and appearance it holds these:
 folder, the approval mode (`edits`, `auto` or `full`), models to offer, and, per
 machine in `machines`, a folder that differs. See [agents](agents.md).
 
-`harnessArguments` adds your own flags to every new agent of a CLI. lapis adds
-none itself, and shell aliases do not apply because lapis starts the executable
-directly.
+`harnessArguments` adds your own flags to every new agent of a CLI, alongside
+lapis's selected model, approval mode and resume options. Configured approval
+flags take precedence for a request with no explicit mode. Shell aliases do not
+apply because lapis starts the executable directly.
 
 ## Alerts
 
@@ -48,6 +49,6 @@ button for each.
   Code, Zed, Windsurf and Sublime Text installed).
 - `keepAwake` keeps the Mac from sleeping while it is plugged in, so the phone
   can reach it.
-- `usage` and `accounts` are described in [usage](usage.md).
+- `usage`, `accounts` and `limitResets` are described in [usage](usage.md).
 - `nextPrompt` turns on guessed next prompts; see [suggestions](suggestions.md).
 - Key bindings are listed in [keys](keys.md); Appearance shows and edits them.

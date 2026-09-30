@@ -3391,43 +3391,71 @@ exit and a few seconds more before touching the bundle. Sparkle replaces the
 bundle only after the app has exited, so it can race BTM the first time lapis
 quits on a Mac with no BTM entry for it yet; that is not yet measured.
 
-### Saved limit resets, spent as OMP spends them (September 29)
+### Saved limit resets (September 29)
 
-Claude accounts hold resets to spend later: a saved grant (program
-`cedar_ember`, the "Reset for free" button on claude.ai and Claude Desktop, such
-as the Opus 5.5 launch reset valid to October 22) and a weekly session reset
-(`juniper_tide`, offered only at the wall; Claude Code's `/limit-reset`). The
-Help Center says the button is not in Claude Code, but that a reset applies to
-the whole account. Codex accounts bank resets too. OMP spends both through the
-accounts' own OAuth tokens, and lapis now does the same with the sign-in each
-CLI keeps on each machine: `GET /api/oauth/usage?cedar_ember=1&skip_spend=1`
-(then `?at_wall=1`) and `POST /api/organizations/{org}/reset_rate_limits` for
-Claude; `GET /wham/usage`, `GET /wham/rate-limit-reset-credits` and `POST
-.../consume` for Codex.
+The reset controller targets the account actually selected for a Claude Code or
+Codex session. `Workspace::agentAccount()` supplies the configured plan; its
+home uses the machine sign-in, while a visiting plan uses only that plan's setup
+token or Codex home. Missing credentials or a changed provider email refuse the
+operation. Local Claude keychain data travels on stdin and never silently falls
+back to a different credential file.
 
-`src/limit_resets.py`, compiled in as text like `count_tokens.py`, holds the
-rules, ported from OMP's planners with its defaults. Restore: a window at
-99.9 percent or more whose latest reset is at least `minBlockedMinutes` away, a
-selected reset that clears every exhausted window (the session reset only a
-five-hour block), and `keepCredits` in reserve. Salvage: a reset expiring within
-`salvageHours` with the weekly window at least a quarter used, ignoring the
-reserve. Each attempt has a key of account, reset, count and blocked windows or
-expiry, and is not tried again; a throttle, a lost answer or `nothing_to_reset`
-is retried after an hour. After spending, the helper reads the account again and
-reports whether it took (modelctl's confirm step). `LimitResets` runs it every
-five minutes on each machine with Claude Code or Codex agents: on this Mac with
-`python3`, and elsewhere by ssh with the helper on stdin (`BatchMode`, its own
-connection), where it reads that machine's `~/.claude/.credentials.json` and
-`~/.codex/auth.json`. On the Mac Claude Code keeps its sign-in in the keychain;
-lapis reads that item itself, off the main thread (the first read waits for
-macOS's permission prompt, which then names lapis rather than a general tool),
-and passes it to the helper as one line on stdin, never on a command line.
+The helper retains the restore/salvage policy from OMP: restore when a window is
+at least 99.9% used, remains blocked for `minBlockedMinutes`, and the selected
+credit clears every exhausted window while retaining `keepCredits`; salvage an
+expiring credit within `salvageHours` when a covered weekly window is at least
+one-quarter used. Model-specific weekly windows remain in the coverage check.
+The weekly Claude session reset clears only the five-hour window. Its identity
+includes the weekly boundary, so a future week's credit is a different credit.
+The numeric defaults are 60 minutes, zero reserve and 12 hours. lapis's automatic
+mode defaults on; this is a lapis policy choice, not OMP's ask-first behavior.
 
-A live read on September 28 found one account with its launch reset spent, one
-with it unspent at 88 percent weekly use, and one Codex account with a banked
-reset. `test_limit_resets.py` covers the rules and report parsing;
-`lapis_limit_resets_tests` drives the sweep through stand-ins for python3 and ssh.
-Not yet exercised: a real spend, and the keychain prompt on a Mac.
+`LimitResets` uses an explicit prepare/consume/reconcile protocol:
+
+1. `--prepare` reads one selected account and reports an eligible credit and
+   policy action without consuming it.
+2. The main machine records that exact credit, verified account email and provider account/organization ID, and a
+   fresh operation UUID in a private journal. The file and parent directory are
+   synchronized off the GUI thread before a consume helper can start. Failed
+   persistence cannot authorize a consume. A per-account process lock covers the
+   complete operation; manual and automatic checks share it.
+3. The consume re-reads only that credit and rechecks both the email and provider ID. Its
+   receipt must match the admitted account, operation and credit. Missing provider IDs
+   refuse admission rather than falling back to email-only identity. An explicit
+   success or definite refusal retires the pending record.
+4. A lost reply, timeout, malformed result or crash leaves the operation pending.
+   The next run uses `--reconcile-only`, never another consume. An available
+   credit remains uncertain; a complete listing proving it absent, consumed or
+   expired settles the record without claiming a confirmed reset. Failed or
+   partial listings remain unknown. No provider idempotency guarantee is assumed,
+   including for the Claude session-reset endpoint with no known request-ID field.
+
+Journals live in the private runtime `limit-resets/` directory, one per account
+target, at most 256 targets and 64 KiB per file. Each retains at most 128 recent
+settled/refused attempt keys with finite retention. Under capacity pressure,
+only recognized version-2 journals with no pending operation and no unexpired
+attempts are reclaimed, under their process locks. New-file admission has its
+own lock, so concurrent hosts cannot exceed the file cap. Pending uncertainty,
+corrupt state and older journal versions are preserved; unsupported versions
+refuse further work rather than guessing an identity or silently migrating it. Helpers have a three-minute deadline, a 1 MiB stdout bound,
+a 64 KiB stderr bound and process-group cleanup; at most eight targets run at
+once. Automatic checks run one minute after enabling and then every five
+minutes. Settings updates retain that cadence; disabling cancels the initial
+check and prevents a prepared automatic operation from being submitted.
+
+The controller currently belongs to the workspace host. The persistent
+supervisor described above should own this scheduling in its later vertical
+slice; this change does not install that daemon. Its journal already protects
+host restarts. The existing launch-account fallback gap in R3 remains separate
+from this reset admission repair.
+
+The C++ fixture runs the actual embedded Python helper with provider stand-ins
+and checks journal admission, process locking, restart/no-replay, malformed
+state, account changes and local/remote routing. Python cases cover provider
+normalization, weekly coverage and per-plan credentials. No real reset was spent
+for these checks. Real account/keychain and package qualification remain distinct
+from this behavioral evidence.
+
 ### Predicting the next prompt (September 29)
 
 The goal is Cursor's Tab for prompts: when an agent finishes a turn, the prompt

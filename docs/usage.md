@@ -34,6 +34,9 @@ switches it. **Switch plan** in Commands moves an agent by hand.
 `scripts/lapis_accounts.py` fills the section:
 
 - `homes` records each machine's own sign-ins.
+- `sign-in` offers Claude plans missing a local setup token. Each token goes to
+  that plan's destinations and the usage hosts. `--to HOST ...` overrides them;
+  `--to` alone keeps it local. Invalid plans are skipped before authentication.
 - `add-claude NAME --email E` runs `claude setup-token` and keeps the token
   (owner-only) on this Mac and the usage machines.
 - `add-codex NAME --email E --on local devbox` signs Codex in to a home kept for
@@ -41,3 +44,28 @@ switches it. **Switch plan** in Commands moves an agent by hand.
 
 Credentials never appear on a command line: a remote session reads its plan's
 credential on its own machine.
+
+## Saved limit resets
+
+lapis can spend saved Claude Code and Codex resets for the plan selected by an
+agent. Automatic spending is on by default: checks start after one minute and
+repeat every five minutes. **Use a saved limit reset for this agent's plan** in
+Commands asks for one immediately, only for that CLI and plan.
+
+`limitResets` configures `auto` (true), `minBlockedMinutes` (60), `keepCredits`
+(0) and `salvageHours` (12). Set `{"limitResets": {"auto": false}}` for manual
+use only. Automatic restores require a sufficiently long block and coverage of
+every exhausted window; expiring credits can be salvaged when a covered weekly
+window is at least one-quarter used. A weekly session reset cannot clear an
+Opus/Sonnet weekly cap.
+
+Missing plan credentials or provider IDs, or an account mismatch, stop the
+operation; email alone is not an account identity. If its reply
+is lost, lapis reports an unknown outcome and checks the recorded credit without
+spending again. An expired or absent credit can settle that uncertainty; this is
+not reported as a newly spent reset. Expired, settled journals are reclaimed under capacity pressure; pending or
+unrecognized records are never evicted. Corrupt, full or unwritable journals
+refuse new operations. Keep the private runtime `limit-resets/` records when recovering
+or reinstalling; deleting a pending record discards the protection against replay.
+The [architecture contract](architecture.md#saved-limit-resets-september-29)
+describes these bounds and the remaining live qualification.

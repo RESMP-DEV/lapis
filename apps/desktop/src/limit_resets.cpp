@@ -21,6 +21,7 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <mutex>
 #include <utility>
 
 namespace lapis::desktop {
@@ -31,9 +32,49 @@ constexpr qint64 kRetryMs = qint64{60} * 60 * 1000;
 constexpr qint64 kSettledMs = qint64{30} * 24 * 60 * 60 * 1000;
 constexpr qsizetype kOutputLimit = qsizetype{1024} * 1024;
 constexpr qsizetype kErrorLimit = qsizetype{64} * 1024;
-constexpr int kJournalLimit = 256;
 constexpr int kConcurrentLimit = 8;
-constexpr int kAttemptLimit = 128;
+constexpr int kAttemptLimit = platform::reset_journal_max_attempts;
+
+// Qt's external queue implementation is not sanitizer-instrumented. Keep
+// callable publication explicit in C++ for both thread-pool and GUI dispatch;
+// no I/O or callback runs while this mutex is held. Destruction also acquires
+// the handoff, including when Qt cancels an event without invoking it.
+std::mutex task_publication;
+class PublishedTask final {
+  public:
+    explicit PublishedTask(std::function<void()> task) {
+        const std::lock_guard lock(task_publication);
+        task_ = std::move(task);
+    }
+    PublishedTask(const PublishedTask& other) {
+        const std::lock_guard lock(task_publication);
+        task_ = other.task_;
+    }
+    PublishedTask(PublishedTask&& other) noexcept {
+        const std::lock_guard lock(task_publication);
+        task_ = std::move(other.task_);
+    }
+    PublishedTask& operator=(const PublishedTask&) = delete;
+    PublishedTask& operator=(PublishedTask&&) = delete;
+    ~PublishedTask() {
+        std::function<void()> released;
+        {
+            const std::lock_guard lock(task_publication);
+            released = std::move(task_);
+        }
+    }
+    void operator()() {
+        std::function<void()> task;
+        {
+            const std::lock_guard lock(task_publication);
+            task = std::move(task_);
+        }
+        task();
+    }
+
+  private:
+    std::function<void()> task_;
+};
 
 bool supported(const QString& cli) {
     return cli == QLatin1String("claude") || cli == QLatin1String("codex");
@@ -57,7 +98,8 @@ QString why(const QString& decision) {
                                                 : QStringLiteral("asked");
 }
 bool validState(const QJsonObject& state) {
-    if (state.value(QStringLiteral("v")).toInt() != 1)
+    if (state.value(QStringLiteral("v")).toInt() != platform::reset_journal_version ||
+        state.value(QStringLiteral("format")) != QLatin1String("lapis-reset-journal"))
         return false;
     const auto attempts = state.value(QStringLiteral("attempts"));
     if (!attempts.isObject() || attempts.toObject().size() > kAttemptLimit)
@@ -68,7 +110,8 @@ bool validState(const QJsonObject& state) {
     if (!state.contains(QStringLiteral("pending")))
         return true;
     const auto pending = state.value(QStringLiteral("pending")).toObject();
-    for (const auto* field : {"operation", "credit", "attempt", "email", "decision"}) {
+    for (const auto* field :
+         {"operation", "credit", "attempt", "email", "account_id", "decision"}) {
         const auto value = pending.value(QLatin1String(field));
         if (!value.isString() || value.toString().isEmpty() || value.toString().size() > 512)
             return false;
@@ -93,6 +136,7 @@ struct LimitResets::Run {
     bool asked{};
     Phase phase{Phase::prepare};
     QJsonObject state;
+    QJsonObject receipt;
     std::unique_ptr<QLockFile> lock;
     QPointer<UpdaterProcess> process;
     QByteArray credentials;
@@ -144,6 +188,9 @@ LimitResets::LimitResets(Agents agents, Agent agent, Program program, Credential
         script.commit();
     timer_.setInterval(kSweepMs);
     connect(&timer_, &QTimer::timeout, this, &LimitResets::sweep);
+    first_sweep_.setSingleShot(true);
+    first_sweep_.setInterval(60 * 1000);
+    connect(&first_sweep_, &QTimer::timeout, this, &LimitResets::sweep);
     setSettings(settings_);
 }
 LimitResets::~LimitResets() {
@@ -153,14 +200,12 @@ LimitResets::~LimitResets() {
 }
 void LimitResets::setSettings(LimitResetSettings settings) {
     settings_ = settings;
-    if (!settings_.automatic)
+    if (!settings_.automatic) {
         timer_.stop();
-    else if (!timer_.isActive()) {
+        first_sweep_.stop();
+    } else if (!timer_.isActive()) {
         timer_.start();
-        QTimer::singleShot(60 * 1000, this, [this] {
-            if (settings_.automatic)
-                sweep();
-        });
+        first_sweep_.start();
     }
 }
 void LimitResets::sweep() {
@@ -232,7 +277,7 @@ bool LimitResets::loadState(const std::shared_ptr<Run>& pending) {
     if (state.exists()) {
         QJsonParseError error{};
         if (QFileInfo(state).isSymLink() || !state.open(QIODevice::ReadOnly) ||
-            state.size() > 65536) {
+            state.size() > platform::reset_journal_max_bytes) {
             refuse(pending, QStringLiteral("reset journal unreadable; no reset was requested"));
             return false;
         }
@@ -242,10 +287,6 @@ bool LimitResets::loadState(const std::shared_ptr<Run>& pending) {
             refuse(pending, QStringLiteral("reset journal invalid; no reset was requested"));
             return false;
         }
-    } else if (QDir(state_folder_).entryList({QStringLiteral("*.json")}, QDir::Files).size() >=
-               kJournalLimit) {
-        refuse(pending, QStringLiteral("reset journal capacity reached"));
-        return false;
     }
     return true;
 }
@@ -258,12 +299,11 @@ void LimitResets::readCredentials(const std::shared_ptr<Run>& pending) {
         return;
     }
     // Only immutable values cross threads; the guard is read on the GUI thread.
-    QThreadPool::globalInstance()->start([guard = QPointer<LimitResets>(this), pending,
-                                          read = credentials_] {
+    QThreadPool::globalInstance()->start(PublishedTask([guard = QPointer<LimitResets>(this),
+                                                        pending, read = credentials_] {
         const auto credentials = read();
         QMetaObject::invokeMethod(
-            QCoreApplication::instance(),
-            [guard, pending, credentials] {
+            QCoreApplication::instance(), PublishedTask([guard, pending, credentials] {
                 if (guard && guard->current(pending)) {
                     if (credentials.isEmpty()) {
                         guard->refuse(pending,
@@ -271,12 +311,19 @@ void LimitResets::readCredentials(const std::shared_ptr<Run>& pending) {
                                           "the local Claude Code keychain sign-in is unavailable"));
                         return;
                     }
-                    pending->credentials = credentials;
+                    const auto document = QJsonDocument::fromJson(credentials);
+                    if (!document.isObject()) {
+                        guard->refuse(
+                            pending,
+                            QStringLiteral("the keychain returned invalid credential data"));
+                        return;
+                    }
+                    pending->credentials = document.toJson(QJsonDocument::Compact);
                     guard->start(pending);
                 }
-            },
+            }),
             Qt::QueuedConnection);
-    });
+    }));
 }
 QStringList LimitResets::arguments(const Run& run) const {
     QStringList args;
@@ -306,7 +353,9 @@ QStringList LimitResets::arguments(const Run& run) const {
              << QStringLiteral("--pending-credit")
              << operation.value(QStringLiteral("credit")).toString()
              << QStringLiteral("--expected-email")
-             << operation.value(QStringLiteral("email")).toString();
+             << operation.value(QStringLiteral("email")).toString()
+             << QStringLiteral("--expected-account-id")
+             << operation.value(QStringLiteral("account_id")).toString();
         if (run.phase == Phase::reconcile)
             args << QStringLiteral("--reconcile-only");
     }
@@ -397,15 +446,21 @@ void LimitResets::finish(const std::shared_ptr<Run>& run) {
 }
 void LimitResets::prepared(const std::shared_ptr<Run>& run, const QJsonObject& account) {
     const auto email = account.value(QStringLiteral("email")).toString().toLower();
+    const auto account_id = account.value(QStringLiteral("account_id")).toString();
     auto pending = run->state.value(QStringLiteral("pending")).toObject();
     const auto expected = pending.isEmpty() ? run->target.email.toLower()
                                             : pending.value(QStringLiteral("email")).toString();
     if (!account.value(QStringLiteral("error")).toString().isEmpty() || email.isEmpty() ||
-        (!expected.isEmpty() && email != expected)) {
+        account_id.isEmpty() || (!expected.isEmpty() && email != expected)) {
         refuse(run, QStringLiteral("selected plan identity could not be verified"));
         return;
     }
     if (!pending.isEmpty()) {
+        if (pending.value(QStringLiteral("account_id")).toString() != account_id) {
+            refuse(run,
+                   QStringLiteral("the provider account no longer matches the pending operation"));
+            return;
+        }
         run->phase = Phase::reconcile;
         start(run);
         return;
@@ -429,50 +484,49 @@ void LimitResets::prepared(const std::shared_ptr<Run>& run, const QJsonObject& a
                {QStringLiteral("credit"), credit},
                {QStringLiteral("attempt"), key},
                {QStringLiteral("email"), email},
+               {QStringLiteral("account_id"), account_id},
                {QStringLiteral("decision"), decision}};
-    const QJsonObject state{{QStringLiteral("v"), 1},
+    const QJsonObject state{{QStringLiteral("v"), platform::reset_journal_version},
+                            {QStringLiteral("format"), QStringLiteral("lapis-reset-journal")},
                             {QStringLiteral("pending"), pending},
                             {QStringLiteral("attempts"), attempts}};
-    persist(run, state, [this, run] {
-        if (!run->asked && !settings_.automatic) {
-            auto cancelled = run->state;
-            cancelled.remove(QStringLiteral("pending"));
-            persist(run, cancelled, [this, run] {
-                refuse(run, QStringLiteral("automatic resets were disabled before submission"));
-            });
-            return;
-        }
-        run->phase = Phase::consume;
-        start(run);
-    });
+    persist(run, state, AfterWrite::admitted);
 }
+
 void LimitResets::persist(const std::shared_ptr<Run>& run, const QJsonObject& state,
-                          const std::function<void()>& done) {
+                          AfterWrite next) {
     if (!validState(state)) {
         refuse(run, QStringLiteral("invalid reset journal update; no further reset was requested"));
         return;
     }
     // Each target has its own file and only one active run. This serializes
     // writes for that account without blocking the GUI or unrelated accounts.
-    QThreadPool::globalInstance()->start([guard = QPointer<LimitResets>(this), run, state, done] {
-        const bool saved = platform::write_reset_journal(run->state_path, state);
+    QThreadPool::globalInstance()->start(PublishedTask([guard = QPointer<LimitResets>(this), run,
+                                                        state, next] {
+        const auto outcome = platform::write_reset_journal(run->state_path, state);
         QMetaObject::invokeMethod(
-            QCoreApplication::instance(),
-            [guard, run, state, done, saved] {
+            QCoreApplication::instance(), PublishedTask([guard, run, state, next, outcome] {
                 if (!guard || !guard->current(run))
                     return;
-                if (!saved) {
-                    guard->refuse(
-                        run,
-                        QStringLiteral(
-                            "reset journal could not be saved; no further reset was requested"));
+                if (outcome != platform::JournalWrite::saved) {
+                    const auto reason =
+                        outcome == platform::JournalWrite::full
+                            ? QStringLiteral(
+                                  "reset journal capacity is held by pending or recent operations")
+                        : outcome == platform::JournalWrite::busy
+                            ? QStringLiteral(
+                                  "reset journal admission is busy; no reset was requested")
+                            : QStringLiteral("reset journal could not be saved; no further reset "
+                                             "was requested");
+                    guard->refuse(run, reason);
                     return;
                 }
+                const auto previous = run->state.value(QStringLiteral("pending")).toObject();
                 run->state = state;
-                done();
-            },
+                guard->persisted(run, next, previous);
+            }),
             Qt::QueuedConnection);
-    });
+    }));
 }
 void LimitResets::completed(const std::shared_ptr<Run>& run, const QJsonObject& account) {
     const auto result = account.value(QStringLiteral("result")).toString();
@@ -489,7 +543,9 @@ void LimitResets::completed(const std::shared_ptr<Run>& run, const QJsonObject& 
                                   account.value(QStringLiteral("credit_id")).toString() !=
                                       operation.value(QStringLiteral("credit")).toString() ||
                                   account.value(QStringLiteral("email")).toString().toLower() !=
-                                      operation.value(QStringLiteral("email")).toString())) {
+                                      operation.value(QStringLiteral("email")).toString() ||
+                                  account.value(QStringLiteral("account_id")).toString() !=
+                                      operation.value(QStringLiteral("account_id")).toString())) {
         refuse(run, QStringLiteral("reset receipt identity does not match the admitted operation"));
         return;
     }
@@ -502,26 +558,49 @@ void LimitResets::completed(const std::shared_ptr<Run>& run, const QJsonObject& 
     attempts.insert(pending.value(QStringLiteral("attempt")).toString(),
                     static_cast<double>(QDateTime::currentMSecsSinceEpoch() +
                                         (refused ? kRetryMs : kSettledMs)));
-    const QJsonObject state{{QStringLiteral("v"), 1}, {QStringLiteral("attempts"), attempts}};
-    persist(run, state, [this, run, account, consumed, settled, pending] {
-        run->lock->unlock();
-        running_.remove(run->key);
-        uncertain_notified_.remove(run->key);
-        if (consumed)
-            emit spent(run->target.machine, run->target.cli,
-                       pending.value(QStringLiteral("email")).toString(),
-                       account.value(QStringLiteral("credit"))
-                           .toObject()
-                           .value(QStringLiteral("title"))
-                           .toString(),
-                       why(pending.value(QStringLiteral("decision")).toString()));
-        else if (run->asked)
-            emit declined(
-                run->target.machine, run->target.cli,
-                settled
-                    ? QStringLiteral(
-                          "the previous credit is no longer available; no new reset was requested")
-                    : QStringLiteral("the provider declined the reset"));
-    });
+    const QJsonObject state{{QStringLiteral("v"), platform::reset_journal_version},
+                            {QStringLiteral("format"), QStringLiteral("lapis-reset-journal")},
+                            {QStringLiteral("attempts"), attempts}};
+    run->receipt = account;
+    persist(run, state, AfterWrite::completed);
 }
+
+void LimitResets::persisted(const std::shared_ptr<Run>& run, AfterWrite next,
+                            const QJsonObject& previous) {
+    if (next == AfterWrite::admitted) {
+        if (!run->asked && !settings_.automatic) {
+            auto cancelled = run->state;
+            cancelled.remove(QStringLiteral("pending"));
+            persist(run, cancelled, AfterWrite::cancelled);
+            return;
+        }
+        run->phase = Phase::consume;
+        start(run);
+        return;
+    }
+    if (next == AfterWrite::cancelled) {
+        refuse(run, QStringLiteral("automatic resets were disabled before submission"));
+        return;
+    }
+    run->lock->unlock();
+    running_.remove(run->key);
+    uncertain_notified_.remove(run->key);
+    const auto result = run->receipt.value(QStringLiteral("result")).toString();
+    if (result == QLatin1String("reset"))
+        emit spent(run->target.machine, run->target.cli,
+                   previous.value(QStringLiteral("email")).toString(),
+                   run->receipt.value(QStringLiteral("credit"))
+                       .toObject()
+                       .value(QStringLiteral("title"))
+                       .toString(),
+                   why(previous.value(QStringLiteral("decision")).toString()));
+    else if (run->asked)
+        emit declined(
+            run->target.machine, run->target.cli,
+            result == QLatin1String("settled")
+                ? QStringLiteral(
+                      "the previous credit is no longer available; no new reset was requested")
+                : QStringLiteral("the reset was refused"));
+}
+
 } // namespace lapis::desktop
