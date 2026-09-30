@@ -105,7 +105,7 @@ class KeyMap final : public QObject {
     Q_PROPERTY(bool sidebarVisible READ sidebarVisible NOTIFY changed)
     // The strip of live agent previews under the stage.
     Q_PROPERTY(bool previewsVisible READ previewsVisible NOTIFY changed)
-    Q_PROPERTY(QString diagnostic READ diagnostic NOTIFY changed)
+    Q_PROPERTY(QString diagnostic READ diagnostic NOTIFY diagnosticChanged)
     Q_PROPERTY(QString sourcePath READ sourcePath NOTIFY changed)
     Q_PROPERTY(QVariantMap shortcutBindings READ shortcutBindings NOTIFY changed)
     // Empty means the platform's fixed-width system font. Availability is
@@ -146,7 +146,14 @@ class KeyMap final : public QObject {
         source_path_ = path;
         watch();
     }
-    [[nodiscard]] const QString& diagnostic() const { return diagnostic_; }
+    [[nodiscard]] QString diagnostic() const {
+        if (chime_diagnostic_.isEmpty())
+            return diagnostic_;
+        return diagnostic_.isEmpty() ? chime_diagnostic_
+                                     : diagnostic_ + QLatin1Char('\n') + chime_diagnostic_;
+    }
+    // GUI-thread runtime status, independent of configuration-change signals.
+    void setChimeDiagnostic(const QString& diagnostic);
 
     [[nodiscard]] QStringList sequences(const QString& action) const;
     [[nodiscard]] QVariantMap shortcutBindings() const;
@@ -251,6 +258,7 @@ class KeyMap final : public QObject {
 
   signals:
     void changed();
+    void diagnosticChanged();
 
   private:
     void apply_defaults();
@@ -271,6 +279,7 @@ class KeyMap final : public QObject {
     QHash<QString, QStringList> bindings_;
     QString source_path_;
     QString diagnostic_;
+    QString chime_diagnostic_;
     WorkspaceLayout layout_{WorkspaceLayout::Focus};
     CardDensity density_{CardDensity::Comfortable};
     QString theme_{QStringLiteral("lapis")};

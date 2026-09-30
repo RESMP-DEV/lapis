@@ -1,4 +1,5 @@
 #include "platform_preferences.hpp"
+#include "chime_sounds.hpp"
 #import <AppKit/AppKit.h>
 #include <QGuiApplication>
 #include <QQuickWindow>
@@ -62,35 +63,56 @@ void style_window_chrome(QQuickWindow& window) {
     if (@available(macOS 11.0, *))
         native.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
 }
-bool play_sound(const QByteArray& wav, float volume, const QString& cacheKey) {
-    // A bounded cache keeps one sound per recent synthesized or file version
-    // for reuse; a chime still playing starts over rather than overlapping
-    // itself. NSCache also bounds the memory if a user iterates on files.
-    static NSCache<id, NSSound*>* sounds = [[NSCache alloc] init];
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-      sounds.countLimit = 8;
-      sounds.totalCostLimit = 16 * 1024 * 1024;
-    });
-    NSData* data = [NSData dataWithBytes:wav.constData()
-                                  length:static_cast<NSUInteger>(wav.size())];
-    id key = cacheKey.isEmpty() ? static_cast<id>(data) : static_cast<id>(cacheKey.toNSString());
+bool play_sound(const ChimeSound& clip) {
+    if (clip.bytes.isEmpty() || clip.bytes.size() > ChimeSounds::kMaxFileBytes)
+        return false;
+    // GUI-thread cache with deterministic entry and encoded-byte budgets.
+    // Each dictionary/array retains its values under this file's MRC rules.
+    static NSMutableDictionary<id, NSSound*>* sounds = [[NSMutableDictionary alloc] init];
+    static NSMutableDictionary<id, NSNumber*>* costs = [[NSMutableDictionary alloc] init];
+    static NSMutableArray<id>* order = [[NSMutableArray alloc] init];
+    static NSUInteger retained = 0;
+    static NSSound* current = nil; // Retained independently until the next cue.
+    NSData* data = nil;
+    id key = nil;
+    if (clip.cacheKey.isEmpty()) {
+        data = [NSData dataWithBytes:clip.bytes.constData()
+                              length:static_cast<NSUInteger>(clip.bytes.size())];
+        key = data;
+    } else {
+        key = clip.cacheKey.toNSString();
+    }
     NSSound* sound = [sounds objectForKey:key];
     if (sound == nil) {
+        if (data == nil)
+            data = [NSData dataWithBytes:clip.bytes.constData()
+                                  length:static_cast<NSUInteger>(clip.bytes.size())];
         sound = [[[NSSound alloc] initWithData:data] autorelease];
-        if (sound == nil) {
-            if (cacheKey.isEmpty())
-                qWarning("NSSound did not decode %lld bytes of sound data",
-                         static_cast<long long>(wav.size()));
-            else
-                qWarning("NSSound did not decode sound file %s", qUtf8Printable(cacheKey));
+        if (sound == nil)
             return false;
+        const auto cost = static_cast<NSUInteger>(clip.bytes.size());
+        while (order.count > 0 &&
+               (order.count >= 8 || retained + cost > NSUInteger{16} * 1024 * 1024)) {
+            id oldest = [order objectAtIndex:0];
+            [[sounds objectForKey:oldest] stop];
+            retained -= [[costs objectForKey:oldest] unsignedIntegerValue];
+            [sounds removeObjectForKey:oldest];
+            [costs removeObjectForKey:oldest];
+            [order removeObjectAtIndex:0];
         }
-        [sounds setObject:sound forKey:key cost:static_cast<NSUInteger>(wav.size())];
+        [sounds setObject:sound forKey:key];
+        [costs setObject:@(cost) forKey:key];
+        retained += cost;
+    } else {
+        [order removeObject:key];
     }
+    [order addObject:key];
+    [current stop];
+    [current release];
+    current = [sound retain];
     [sound stop];
-    sound.volume = volume;
-    [sound play];
-    return true;
+    sound.volume = clip.volume;
+    return [sound play];
 }
+
 } // namespace lapis::desktop

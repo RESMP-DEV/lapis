@@ -1,5 +1,4 @@
 #include "keymap.hpp"
-#include "alerts.hpp"
 #include "app_paths.hpp"
 
 #include <QDebug>
@@ -352,7 +351,15 @@ namespace {
 }
 } // namespace
 
+void KeyMap::setChimeDiagnostic(const QString& diagnostic) {
+    if (chime_diagnostic_ == diagnostic)
+        return;
+    chime_diagnostic_ = diagnostic;
+    emit diagnosticChanged();
+}
+
 KeyMap::KeyMap(QObject* parent) : QObject(parent) {
+    connect(this, &KeyMap::changed, this, &KeyMap::diagnosticChanged);
     apply_defaults();
     source_path_ = default_source_path();
     // Editors and agents often replace the file rather than write in place,
@@ -700,9 +707,8 @@ void KeyMap::load_alerts(const QJsonObject& root) {
     finish_sound_ = alerts.value(QStringLiteral("finished")).toBool(true);
     alert_repeat_ = std::clamp(alerts.value(QStringLiteral("repeat")).toInt(3), 1, 10);
     notify_ = alerts.value(QStringLiteral("notify")).toBool(true);
-    // "~/" is the home folder and a relative path starts beside lapis.json. A
-    // path that is not a readable-sized file is named here; the chime then
-    // plays its taps.
+    // "~/" is the home folder and a relative path starts beside lapis.json.
+    // File checks and reads belong to ChimeSounds' bounded background work.
     const auto sound_file = [this, &alerts](const QString& key) {
         const QJsonValue value = alerts.value(key);
         if (value.isUndefined() || value.isNull())
@@ -714,22 +720,16 @@ void KeyMap::load_alerts(const QJsonObject& root) {
                     .arg(key));
             return QString();
         }
-        auto path = value.toString().trimmed().left(4096);
+        auto path = value.toString().trimmed();
+        if (path.size() > 4096) {
+            append_diagnostic(&diagnostic_, QStringLiteral("alerts.%1 path is too long").arg(key));
+            return QString();
+        }
         if (path.isEmpty())
             return path;
         if (path.startsWith(QLatin1String("~/")))
             path = QDir::home().filePath(path.mid(2));
         path = QDir::cleanPath(QFileInfo(source_path_).dir().absoluteFilePath(path));
-        const QFileInfo info(path);
-        if (!info.isFile())
-            append_diagnostic(&diagnostic_,
-                              QStringLiteral("alerts.%1 '%2' not found; playing the built-in chime")
-                                  .arg(key, path));
-        else if (info.size() > ChimeSounds::kMaxFileBytes)
-            append_diagnostic(
-                &diagnostic_,
-                QStringLiteral("alerts.%1 '%2' is over 4 MiB; playing the built-in chime")
-                    .arg(key, path));
         return path;
     };
     alert_sound_file_ = sound_file(QStringLiteral("soundFile"));

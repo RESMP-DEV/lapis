@@ -1,9 +1,7 @@
 #ifndef LAPIS_DESKTOP_ALERTS_HPP
 #define LAPIS_DESKTOP_ALERTS_HPP
-#include <QByteArray>
-#include <QDateTime>
+#include "chime_sounds.hpp"
 #include <QElapsedTimer>
-#include <QHash>
 #include <QObject>
 #include <QPointer>
 #include <QString>
@@ -17,48 +15,9 @@ class KeyMap;
 class SessionPreview;
 class Workspace;
 
-enum class Chime : std::uint8_t { needsYou, finished };
-
-// A chime as 16-bit mono WAV, synthesized so lapis ships no audio files: two
-// glassy taps, rising (E6 then A6) when an agent needs you, falling and
-// quieter when a turn has ended.
-[[nodiscard]] QByteArray chime_wav(Chime chime);
-
-// What a chime plays: WAV bytes, or those of any sound file the system reads,
-// at a volume from 0 to 1.
-struct ChimeSound {
-    QByteArray bytes;
-    float volume{1.0F};
-    // Identifies the file and its stamp for the platform cache; empty means
-    // the synthesized chime.
-    QString cacheKey;
-};
-
-// The configured sound files in place of the synthesized chimes: soundFile
-// when an agent needs you, finishedFile when a turn ends, else soundFile at
-// half volume (the taps' -12 and -18 dBFS). A file is read again only when it
-// changes; one that cannot be read, or is over 4 MiB, plays the taps.
-class ChimeSounds {
-  public:
-    static constexpr qint64 kMaxFileBytes = qint64{4} * 1024 * 1024;
-    [[nodiscard]] ChimeSound sound(Chime chime, const KeyMap& config);
-
-  private:
-    struct File {
-        QDateTime modified;
-        qint64 size{-1};
-        QByteArray bytes;
-        QString cacheKey;
-    };
-    [[nodiscard]] ChimeSound read(const QString& path);
-    QHash<QString, File> files_;
-};
-
-// When to chime. An agent that needs you (a new request) chimes at once and
-// again every few seconds while the request still waits and you are not
-// looking at that agent, up to the configured number of times: two taps, a
-// pause, two taps, like a Dock icon bouncing. A Codex or Claude turn that ends
-// out of view chimes once, quietly. At most one chime plays at a time.
+// Production requests and completed turns share one finished cue. The legacy
+// explicit needsYou signal retains its repeat behavior for existing callers;
+// it is not re-enabled by custom sound files.
 class Alerts final : public QObject {
     Q_OBJECT
   public:

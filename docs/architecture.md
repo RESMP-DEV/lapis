@@ -1745,6 +1745,22 @@ Decisions from these runs:
   still answers a Codex request through its adapter. The needs-you chime
   settings (`alertSound`, `alertRepeat`) and `Alerts::needsYou` are unused and
   due for removal with the phone's matching settings.
+- Custom sound files preserve that shared finished cue. `ChimeSounds` owns
+  asynchronous file loading separately from `Alerts` attention policy: at most
+  two configured paths and two in-flight checks, with coalesced latest-path
+  selection. GUI calls use completed cache data or the synthesized fallback;
+  filesystem stat/open/read never run in the alert callback. Runtime diagnostics
+  have their own KeyMap signal so a file-status update does not reload settings.
+  The loader opens nonblocking, validates the open descriptor as a regular file,
+  and compares device/inode, size and nanosecond modification/change times before
+  and after reading. Missing, unreadable or changing files retry on a later check;
+  special files cannot occupy a worker waiting for a pipe writer.
+  The macOS playback cache has explicit eight-entry and 16 MiB encoded-data
+  budgets; this is not a claim about opaque decoded-buffer memory. A new cue
+  stops the previous one. Decoder failure preserves the built-in cue's gain;
+  failure of that fallback also produces a visible diagnostic. Native NSSound
+  decoding of both generated WAVs is tested without playing audio; audible output,
+  other formats and decoded-memory usage remain separate qualification work.
 - `nextAttention` (Command-J) is the manual half of the attention queue: it walks
   categories and strips from the selected agent to the next unseen one.
   `latestAttention` (Command-L) takes the unseen agent whose mark is newest

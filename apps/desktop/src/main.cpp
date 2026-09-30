@@ -284,18 +284,16 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
                       QPointer<QQuickWindow>& shown) {
     namespace platform = lapis::desktop::platform;
     using lapis::desktop::Chime;
+    auto sounds = std::make_shared<lapis::desktop::ChimeSounds>();
+    sounds->configure(keymap);
     alerts.emplace(
         workspace, keymap,
-        [&keymap, sounds = lapis::desktop::ChimeSounds{}](Chime chime) mutable {
-            const auto sound = sounds.sound(chime, keymap);
-            if (!lapis::desktop::play_sound(sound.bytes, sound.volume, sound.cacheKey))
-                // There is no further fallback if even the synthesized WAV
-                // cannot be decoded; keep the explicit discard narrow.
-                (void)lapis::desktop::play_sound(lapis::desktop::chime_wav(chime), 1.0F, {});
-        },
+        [&keymap, sounds](Chime chime) { sounds->play(chime, keymap, lapis::desktop::play_sound); },
         [&workspace, &shown](const lapis::desktop::SessionPreview* item) {
             return shown && shown->isActive() && workspace.focusedSession() == item;
         });
+    QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &*alerts,
+                     [sounds, &keymap] { sounds->configure(keymap); });
     notifier.emplace(
         workspace, keymap,
         [](const QString& id, const QString& title, const QString& body) {
