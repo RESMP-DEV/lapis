@@ -192,6 +192,16 @@ def summarize(rows):
     return report
 
 
+def grading_coverage(requested: int, graded: int) -> dict[str, object]:
+    """Judge availability is coverage, not a prediction error or an accuracy score."""
+    return {
+        "requested": requested,
+        "graded": graded,
+        "coverage": round(graded / requested, 3) if requested else None,
+        "metrics_basis": "successfully graded predictions",
+    }
+
+
 def replay(arguments):
     items = []
     for machine in [""] + (arguments.machine or []):
@@ -268,6 +278,7 @@ def replay(arguments):
     report["predicted"] = len(graded)
     report["prediction_failures"] = len(items) - len(graded)
     report["judge_missing_grades"] = sum(g["id"] not in grades for g in graded)
+    report["grading"] = grading_coverage(len(graded), len(rows))
     report["model"] = arguments.model
     if graded:
         report["median_ms"] = sorted(g["ms"] for g in graded)[len(graded) // 2]
@@ -309,6 +320,7 @@ def acceptance(events):
         if e.get("event") == "failed":
             known = {
                 "no transcript",
+                "no Claude Code CLI on this Mac",
                 "invalid conversation id",
                 "timeout",
                 "output too large",
@@ -318,9 +330,10 @@ def acceptance(events):
             }
             raw = e.get("error")
             reason = raw if isinstance(raw, str) and raw in known else "helper failed"
+            raw_stage = e.get("stage")
             stage = (
-                e.get("stage")
-                if e.get("stage") in {"context", "predict"}
+                raw_stage
+                if isinstance(raw_stage, str) and raw_stage in {"context", "predict"}
                 else "unknown"
             )
             failures["{}: {}".format(stage, reason)] += 1
@@ -453,7 +466,9 @@ def log(arguments):
             if g["id"] in grades
         ]
         report["seen_not_used_graded"] = summarize(rows)
+        report["grading"] = grading_coverage(len(graded), len(rows))
         return report, rows
+    report["grading"] = grading_coverage(0, 0)
     return report, []
 
 
