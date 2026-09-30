@@ -1,0 +1,83 @@
+{
+  "source_revision": "59fe24d1c760cba07aae1467f7f3461cafe46f8b",
+  "platform": "macOS 26.7.1 arm64",
+  "scope": "Late PR44 presentation lifetime, impression delivery, real paste-request assertions and NextPrompt error/evaluation repairs; PublishedTask follow-up from PR40.",
+  "source_sha256": {
+    "apps/desktop/src/next_prompt.cpp": "db2d8941827276bc902d431f4005423c102998208d04b807843af643be63b3c5",
+    "apps/desktop/src/next_prompt.py": "fc919a9b51bb4e7dee76c072fd0de528e5508bbb53cc4fdced883d440b2bde0d",
+    "apps/desktop/src/platform/published_task.hpp": "7cea702011155a5a466085d0f0155ce72c24e05d24ddf146ae7a8d4e763cf464",
+    "apps/desktop/src/terminal_surface.cpp": "ed75bfad2aa599060278585d69f1403a60bb008c47ae05d5a6bd1c9792dcd733",
+    "apps/desktop/src/terminal_surface.hpp": "918e8c7cf944aef6ddecb58f1049af21864874baf23f99671782d7a2325fb7ed",
+    "apps/desktop/tests/next_prompt_test.cpp": "17c68346cc6b8b8fe9615577600e8b31f98ef5e200e3da8c7868df8a6806c56d",
+    "apps/desktop/tests/terminal_input_test.cpp": "b1f13996ef724603b0baaab8044b6afb67ca843c0a54532ee8b69db53cc718d7",
+    "docs/architecture.md": "e991c8f5d4eed0656235a2c225353be0372a39533717756bc506902e0ad783c9",
+    "docs/suggestions.md": "e84a40cce93cb49205010a6c1c53be618064c4932cf14e38efc1702e91dd399b",
+    "scripts/next_prompt_eval.py": "0626c38cc99a5da92bddedd789495cde3eab5e8c189ddbc3b0103351e54204dc",
+    "scripts/tests/test_next_prompt.py": "936621d5501866e2488f027f68805eea51d0610f09415fa56e2ca7aac5d226a0"
+  },
+  "checks": [
+    {
+      "command": "cmake --build build/<desktop|desktop-asan|desktop-tsan> --target lapis_desktop lapis_terminal_input_tests lapis_next_prompt_tests lapis_limit_resets_tests lapis_workspace_tests -j4",
+      "result": "pass for all three configurations"
+    },
+    {
+      "command": "ctest --test-dir build/<configuration> -R '^(next-prompt|limit-resets)$' --no-tests=error --output-on-failure",
+      "result": "2/2 pass per configuration",
+      "seconds": {
+        "desktop": 2.65,
+        "desktop-asan": 8.5,
+        "desktop-tsan": 37.8
+      }
+    },
+    {
+      "command": "build/<configuration>/apps/desktop/lapis_workspace_tests --case chimes",
+      "result": "pass in all three configurations; exercises another PublishedTask consumer"
+    },
+    {
+      "command": "build/<configuration>/apps/desktop/lapis_terminal_input_tests --background",
+      "result": "pass serially in normal, ASan/UBSan and TSan; no sanitizer reports or new suppressions"
+    },
+    {
+      "command": "uv run --no-project python scripts/check_cli_launch.py --build-dir build/desktop --case paste-admission",
+      "result": "pass; actual service/PTTY atomic admission, whole-operation refusal, ordered Return, joined client and fragmented frame",
+      "max_paste_bytes": 983040,
+      "pty_sha256": "9bad860c28327b72cddde69c4c79a5aab200318894dcb424cd0e893bc90d413f"
+    },
+    {
+      "command": "uv run --no-project python scripts/lapis.py quality",
+      "result": "pass; 335 tests in 27.470 seconds, Ruff lint and format"
+    },
+    {
+      "command": "clang-tidy -p build/desktop <four changed translation units>",
+      "result": "pass"
+    },
+    {
+      "command": "cppcheck --project=<four-TU filtered compilation database> --library=qt -DQ_MOC_INCLUDE(x)= --enable=warning,performance,portability --error-exitcode=1 --inline-suppr --template=gcc",
+      "result": "pass"
+    },
+    {
+      "command": "clang-format --dry-run --Werror <six changed C++ files>; git diff --check",
+      "result": "pass"
+    }
+  ],
+  "review": {
+    "reviewed_revision": "fc82b97f644e8603f8d87473a5cbf2a82627b210",
+    "reviewer": "GLM-5.3-FlashX, max reasoning, read-only local worker",
+    "result": "No concrete defects found in changed presentation/publication/NextPrompt boundaries; coordinator inspected report and combined diff.",
+    "later_changes": "59fe24d adds documentation and explicit nonempty guards before four test-vector back() assertions. Normal background input and static checks passed after these changes; production code is unchanged from sanitizer-reviewed source."
+  },
+  "coverage": [
+    "1000 frame signals with no offer enqueue no MetaCall work",
+    "1000 create/rebind/destroy loops during concurrent real Qt signal emission",
+    "old-window signal cannot authorize current-window submit",
+    "a newly presented offer can submit, whereas an unpresented or partial offer only fills",
+    "UI fixture records actual paste_request frames instead of fabricating paste/Enter frames",
+    "private-log and backup sentinel check, malformed stage handling, missing CLI category, nonzero structured CLI error, explicit grading coverage"
+  ],
+  "limits": [
+    "Background Qt/software rendering and signal-lifetime stress do not qualify native macOS IME or physical GPU presentation.",
+    "Vendor Qt remains uninstrumented; explicit release/acquire transfers cover application callable storage, not Qt internals.",
+    "No real provider request, account sign-in, reset consumption, native cursor/focus change or Codex desktop launch.",
+    "One-shot PublishedTask remains a one-shot contract, not a general repeated callback."
+  ]
+}
