@@ -1,0 +1,35 @@
+{
+  "baseline": "b5f10c13802e712d2a8014140ab2349914139f22",
+  "scope": "Follow-up to PR48: modeless permission-mode selection respects the configured access ceiling.",
+  "changes": [
+    "Unsupported conservative preferences can fall back only to a lower supported mode; unknown preferences add no permission flags.",
+    "Explicit request modes and configured approval options retain precedence.",
+    "Mode-option detection derives emitted option names from mode_flags; only alternate CLI spellings remain in a small alias table.",
+    "A literal separator stops mode-option detection; Codex sandbox selection is not mistaken for approval policy.",
+    "Updated the user and API contract, including the relevant Claude version range."
+  ],
+  "checks": [
+    {
+      "command": "cmake --build build/desktop --target lapis_workspace_tests; ctest --test-dir build/desktop -R ^workspace$ --no-tests=error --output-on-failure",
+      "result": "PASS: full workspace suite43.08s, with new conservative/unknown/literal/sandbox cases in the existing mode-selection test."
+    },
+    {
+      "command": "clang-tidy -p build/desktop apps/desktop/src/workspace.cpp; clang-format; git diff --check",
+      "result": "PASS."
+    },
+    {
+      "command": "uv run --no-project python scripts/lapis.py quality",
+      "result": "PASS:276 tests, Python suite22.584s."
+    }
+  ],
+  "source_sha256": {
+    "apps/desktop/src/workspace.cpp": "b04dc1881814079b5997a2e87d0e49d36e962799a1cefc000c2159508fab57c9",
+    "apps/desktop/src/workspace.hpp": "958e89a9f481ced037bf486a8ea111cf169d5a384063344adf82eb27f2958317",
+    "apps/desktop/tests/workspace_test.cpp": "f193c0ac0153f2692b04679f967ef4fc3e82f3cc9655c01240bbe93e0af80366",
+    "docs/agents.md": "427ccdf674a2a899e62f75347da3f6b07d82580880f34d671b352987a576f248"
+  },
+  "limits": [
+    "No live user agent mode or credentials changed; checks use existing controlled fixtures.",
+    "The normal Full access default when newAgent.mode is absent is unchanged."
+  ]
+}

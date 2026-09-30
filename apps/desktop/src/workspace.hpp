@@ -330,14 +330,11 @@ struct AgentRequest {
     QString resume;
 };
 
-// The approval mode a new agent starts in. One asked for without a mode (the
-// phone may leave it out) gets the one new agents default to, `fallback`
-// (newAgent.mode) else Full access, or the nearest the CLI offers, less access
-// first, as the forms choose: since Claude Code 2.1.284 (2.1.283 on
-// third-party providers) no flag means auto mode rather than asking.
-// Arguments configured for the CLI that already choose a mode win, however
-// spelled (`--permission-mode=plan` too); empty then, and for a CLI without
-// modes.
+// The approval mode a new agent starts in. A modeless request uses fallback
+// (newAgent.mode), or Full access if absent. Unsupported preferences may use
+// a lower mode, never a higher one; unknown preferences add no mode flags.
+// Explicit request modes and configured approval options retain precedence.
+// Claude Code 2.1.283-2.1.285 changed its no-mode behavior across entry points.
 [[nodiscard]] QString launch_mode(const AgentRequest& request, const QStringList& configured,
                                   const QString& fallback);
 
