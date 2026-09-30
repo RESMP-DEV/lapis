@@ -21,7 +21,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,8 +48,15 @@ fun SnippetEditorDialog(
     onDone: (List<String>) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var rows by remember(snippets) { mutableStateOf(snippets.toList()) }
-    var draft by remember { mutableStateOf("") }
+    // Saveable to match the saveable `editing` flag that reopens this
+    // dialog: a fold/unfold recreation keeps the editor open, so its
+    // in-progress rows and draft must survive too, not reset to the
+    // committed list. List needs an explicit saver; Bundle has no
+    // plain-List slot.
+    var rows by rememberSaveable(snippets, stateSaver = SnippetListSaver) {
+        mutableStateOf(snippets.toList())
+    }
+    var draft by rememberSaveable { mutableStateOf("") }
 
     fun move(index: Int, delta: Int) {
         rows = rows.toMutableList().also { it.add(index + delta, it.removeAt(index)) }
@@ -167,4 +175,9 @@ private val snippetTextStyle = TextStyle(
     color = Color.White,
     fontSize = 14.sp,
     fontFamily = FontFamily.Monospace,
+)
+
+private val SnippetListSaver = listSaver<List<String>, String>(
+    save = { it },
+    restore = { it },
 )
