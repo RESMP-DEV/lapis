@@ -3455,6 +3455,13 @@ void alertsChimeWhileAnAgentWaits() {
         return std::count(played.begin(), played.end(), lapis::desktop::Chime::needsYou);
     };
     request(true);
+    // Production requests intentionally share the one finished-turn cue.
+    emit workspace.turnFinished(&agent);
+    waitFor([] { return false; }, 300);
+    require(played == std::vector<lapis::desktop::Chime>{lapis::desktop::Chime::finished},
+            "a production request keeps the shared single chime");
+    played.clear();
+    // The legacy explicit signal still has its existing repeat contract.
     emit workspace.agentNeedsYou(&agent);
     require(needs() == 1, "a request chimes at once");
     waitFor([] { return false; }, 700);
@@ -3588,6 +3595,58 @@ void chimesPlayChosenFiles() {
             "a missing file plays the taps");
     require(low.bytes == "RIFF-low" && low.volume == 1.0F,
             "a finished turn's own file plays at full volume");
+
+    write(QStringLiteral("lapis.json"), R"({"version": 1, "alerts": {"soundFile": "ding.wav"}})");
+    require(keymap.load() && keymap.alertSoundFile() == root.filePath(QStringLiteral("ding.wav")),
+            "return to the readable alert file before its permission case");
+
+    // An unreadable or oversized file is not cached as empty or partial bytes.
+    QFile::Permissions readable = QFile::permissions(root.filePath(QStringLiteral("ding.wav")));
+    write(QStringLiteral("ding.wav"), "RIFF-ding, unreadable");
+    require(QFile::setPermissions(root.filePath(QStringLiteral("ding.wav")), {}),
+            "make the sound fixture unreadable");
+    require(sounds.sound(Chime::needsYou, keymap).bytes ==
+                lapis::desktop::chime_wav(Chime::needsYou),
+            "an unreadable file plays the taps");
+    require(QFile::setPermissions(root.filePath(QStringLiteral("ding.wav")), readable),
+            "restore the sound fixture");
+    const auto corrected = sounds.sound(Chime::needsYou, keymap);
+    require(corrected.bytes == "RIFF-ding, unreadable",
+            "a corrected read is retried without touching the file again");
+
+    const auto original_home = qgetenv("HOME");
+    const auto restore_home = qScopeGuard([&original_home] { qputenv("HOME", original_home); });
+    qputenv("HOME", QFile::encodeName(root.path()));
+    write(QStringLiteral("lapis.json"), R"({"version": 1, "alerts": {"soundFile": "~/ding.wav"}})");
+    require(keymap.load() && keymap.diagnostic().isEmpty() &&
+                keymap.alertSoundFile() == root.filePath(QStringLiteral("ding.wav")),
+            "~/ expands to the home sound file");
+
+    write(QStringLiteral("lapis.json"),
+          R"({"version": 1, "alerts": {"soundFile": "ding.wav", "finishedFile": "ding.wav"}})");
+    require(keymap.load() && keymap.finishSoundFile() == root.filePath(QStringLiteral("ding.wav")),
+            "the finished file is present before the missing-file case");
+    write(QStringLiteral("lapis.json"),
+          R"({"version": 1, "alerts": {"soundFile": "ding.wav", "finishedFile": "gone.wav"}})");
+    require(keymap.load() && keymap.diagnostic().contains(QStringLiteral("gone.wav")) &&
+                sounds.sound(Chime::finished, keymap).bytes ==
+                    lapis::desktop::chime_wav(Chime::finished),
+            "a missing finished file plays finished taps, not the alert file");
+
+    const qint64 oversized = lapis::desktop::ChimeSounds::kMaxFileBytes + 1;
+    QFile big(root.filePath(QStringLiteral("big.wav")));
+    require(big.open(QIODevice::WriteOnly), "write the oversized fixture");
+    require(big.resize(oversized), "reserve the oversized fixture");
+    big.close();
+    write(QStringLiteral("lapis.json"), R"({"version": 1, "alerts": {"soundFile": "big.wav"}})");
+    require(keymap.load() && keymap.diagnostic().contains(QStringLiteral("over 4 MiB")) &&
+                sounds.sound(Chime::needsYou, keymap).bytes ==
+                    lapis::desktop::chime_wav(Chime::needsYou),
+            "an oversized file is named and plays the taps");
+    write(QStringLiteral("lapis.json"), R"({"version": 1, "alerts": {"soundFile": 12}})");
+    require(keymap.load() && keymap.diagnostic().contains(QStringLiteral("path string")) &&
+                keymap.alertSoundFile().isEmpty(),
+            "a non-string sound path is named");
 }
 
 // A new agent's CLI updates itself first, so the agent never opens on an
@@ -4988,9 +5047,10 @@ int main(int argc, char** argv) {
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("accounts") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("startup-defaults") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload") ||
-                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater")),
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes")),
                     "Usage: lapis_workspace_tests [--case "
-                    "remote-options|accounts|reload|updater|startup-defaults]");
+                    "remote-options|accounts|reload|updater|startup-defaults|chimes]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("accounts")) {
                 incompleteCodexHomeNeverStartsAnAgent();
@@ -5007,6 +5067,9 @@ int main(int argc, char** argv) {
                 updateReloadsAgentsAfterTheirCli();
                 startupAndManualUpdatesShareOneInstaller();
                 skippedClaudeUpdateReportsTheCurrentOperation();
+            } else if (selected == QStringLiteral("chimes")) {
+                alertsChimeWhileAnAgentWaits();
+                chimesPlayChosenFiles();
             } else {
                 reloadStartsAgentsAgain();
                 reloadFailuresRemainRetryable();

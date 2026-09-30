@@ -29,6 +29,9 @@ enum class Chime : std::uint8_t { needsYou, finished };
 struct ChimeSound {
     QByteArray bytes;
     float volume{1.0F};
+    // Identifies the file and its stamp for the platform cache; empty means
+    // the synthesized chime.
+    QString cacheKey;
 };
 
 // The configured sound files in place of the synthesized chimes: soundFile
@@ -45,8 +48,9 @@ class ChimeSounds {
         QDateTime modified;
         qint64 size{-1};
         QByteArray bytes;
+        QString cacheKey;
     };
-    [[nodiscard]] QByteArray read(const QString& path);
+    [[nodiscard]] ChimeSound read(const QString& path);
     QHash<QString, File> files_;
 };
 

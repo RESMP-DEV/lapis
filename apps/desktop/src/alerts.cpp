@@ -84,12 +84,14 @@ ChimeSound ChimeSounds::sound(Chime chime, const KeyMap& config) {
     const bool borrowed = finished && own.isEmpty();
     const QString& path = borrowed ? config.alertSoundFile() : own;
     if (!path.isEmpty())
-        if (auto bytes = read(path); !bytes.isEmpty())
-            return {std::move(bytes), borrowed ? 0.5F : 1.0F};
-    return {chime_wav(chime)};
+        if (auto sound = read(path); !sound.bytes.isEmpty()) {
+            sound.volume = borrowed ? 0.5F : 1.0F;
+            return sound;
+        }
+    return {chime_wav(chime), 1.0F, {}};
 }
 
-QByteArray ChimeSounds::read(const QString& path) {
+ChimeSound ChimeSounds::read(const QString& path) {
     const QFileInfo info(path);
     if (!info.isFile() || info.size() > kMaxFileBytes) {
         files_.remove(path);
@@ -98,10 +100,22 @@ QByteArray ChimeSounds::read(const QString& path) {
     auto& file = files_[path];
     if (file.size != info.size() || file.modified != info.lastModified()) {
         QFile source(path);
-        file = {info.lastModified(), info.size(),
-                source.open(QIODevice::ReadOnly) ? source.read(kMaxFileBytes) : QByteArray()};
+        if (!source.open(QIODevice::ReadOnly)) {
+            files_.remove(path);
+            return {};
+        }
+        const QByteArray bytes = source.read(kMaxFileBytes);
+        // A short read is not the file that was measured. Leave no entry, so
+        // the next chime retries after a write or permission failure settles.
+        if (bytes.size() != info.size()) {
+            files_.remove(path);
+            return {};
+        }
+        file = {info.lastModified(), info.size(), bytes,
+                path + QLatin1Char('\n') + QString::number(info.size()) + QLatin1Char('\n') +
+                    QString::number(info.lastModified().toMSecsSinceEpoch())};
     }
-    return file.bytes;
+    return {file.bytes, 1.0F, file.cacheKey};
 }
 
 Alerts::Alerts(Workspace& workspace, const KeyMap& config, Player play, Looking looking,

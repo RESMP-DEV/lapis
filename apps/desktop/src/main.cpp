@@ -287,7 +287,10 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
         workspace, keymap,
         [&keymap, sounds = lapis::desktop::ChimeSounds{}](Chime chime) mutable {
             const auto sound = sounds.sound(chime, keymap);
-            lapis::desktop::play_sound(sound.bytes, sound.volume);
+            if (!lapis::desktop::play_sound(sound.bytes, sound.volume, sound.cacheKey))
+                // There is no further fallback if even the synthesized WAV
+                // cannot be decoded; keep the explicit discard narrow.
+                (void)lapis::desktop::play_sound(lapis::desktop::chime_wav(chime), 1.0F, {});
         },
         [&workspace, &shown](const lapis::desktop::SessionPreview* item) {
             return shown && shown->isActive() && workspace.focusedSession() == item;

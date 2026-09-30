@@ -62,23 +62,35 @@ void style_window_chrome(QQuickWindow& window) {
     if (@available(macOS 11.0, *))
         native.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
 }
-void play_sound(const QByteArray& wav, float volume) {
-    // One sound per distinct chime, kept for reuse; a chime still playing
-    // starts over rather than overlapping itself.
-    // This file uses manual reference counting. Retain the cache for the
-    // process lifetime; a convenience dictionary would die with its pool.
-    static NSMutableDictionary<NSData*, NSSound*>* sounds = [[NSMutableDictionary alloc] init];
+bool play_sound(const QByteArray& wav, float volume, const QString& cacheKey) {
+    // A bounded cache keeps one sound per recent synthesized or file version
+    // for reuse; a chime still playing starts over rather than overlapping
+    // itself. NSCache also bounds the memory if a user iterates on files.
+    static NSCache<id, NSSound*>* sounds = [[NSCache alloc] init];
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+      sounds.countLimit = 8;
+      sounds.totalCostLimit = 16 * 1024 * 1024;
+    });
     NSData* data = [NSData dataWithBytes:wav.constData()
                                   length:static_cast<NSUInteger>(wav.size())];
-    NSSound* sound = sounds[data];
+    id key = cacheKey.isEmpty() ? static_cast<id>(data) : static_cast<id>(cacheKey.toNSString());
+    NSSound* sound = [sounds objectForKey:key];
     if (sound == nil) {
         sound = [[[NSSound alloc] initWithData:data] autorelease];
-        if (sound == nil)
-            return;
-        sounds[data] = sound;
+        if (sound == nil) {
+            if (cacheKey.isEmpty())
+                qWarning("NSSound did not decode %lld bytes of sound data",
+                         static_cast<long long>(wav.size()));
+            else
+                qWarning("NSSound did not decode sound file %s", qUtf8Printable(cacheKey));
+            return false;
+        }
+        [sounds setObject:sound forKey:key cost:static_cast<NSUInteger>(wav.size())];
     }
     [sound stop];
     sound.volume = volume;
     [sound play];
+    return true;
 }
 } // namespace lapis::desktop

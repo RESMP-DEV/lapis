@@ -1,4 +1,5 @@
 #include "keymap.hpp"
+#include "alerts.hpp"
 #include "app_paths.hpp"
 
 #include <QDebug>
@@ -699,18 +700,35 @@ void KeyMap::load_alerts(const QJsonObject& root) {
     alert_repeat_ = std::clamp(alerts.value(QStringLiteral("repeat")).toInt(3), 1, 10);
     notify_ = alerts.value(QStringLiteral("notify")).toBool(true);
     // "~/" is the home folder and a relative path starts beside lapis.json. A
-    // missing file is named here; the chime then plays its taps.
+    // path that is not a readable-sized file is named here; the chime then
+    // plays its taps.
     const auto sound_file = [this, &alerts](const QString& key) {
-        auto path = alerts.value(key).toString().trimmed().left(4096);
+        const QJsonValue value = alerts.value(key);
+        if (value.isUndefined() || value.isNull())
+            return QString();
+        if (!value.isString()) {
+            append_diagnostic(
+                &diagnostic_,
+                QStringLiteral("alerts.%1 must be a path string; playing the built-in chime")
+                    .arg(key));
+            return QString();
+        }
+        auto path = value.toString().trimmed().left(4096);
         if (path.isEmpty())
             return path;
         if (path.startsWith(QLatin1String("~/")))
             path = QDir::home().filePath(path.mid(2));
         path = QDir::cleanPath(QFileInfo(source_path_).dir().absoluteFilePath(path));
-        if (!QFileInfo(path).isFile())
+        const QFileInfo info(path);
+        if (!info.isFile())
             append_diagnostic(&diagnostic_,
                               QStringLiteral("alerts.%1 '%2' not found; playing the built-in chime")
                                   .arg(key, path));
+        else if (info.size() > ChimeSounds::kMaxFileBytes)
+            append_diagnostic(
+                &diagnostic_,
+                QStringLiteral("alerts.%1 '%2' is over 4 MiB; playing the built-in chime")
+                    .arg(key, path));
         return path;
     };
     alert_sound_file_ = sound_file(QStringLiteral("soundFile"));
