@@ -394,15 +394,30 @@ class CommandTests(unittest.TestCase):
                         pass
             script = "import sys; data=sys.stdin.buffer.read(); sys.stdout.buffer.write(data); sys.stderr.write('diagnostic')"
             original_read, original_write = os.read, os.write
+            original_popen = grok_review.subprocess.Popen
+            owned = {"read": set(), "write": set()}
             blocked = set()
 
+            def capture_process(*args, **kwargs):
+                process = original_popen(*args, **kwargs)
+                owned["read"] = {process.stdout.fileno(), process.stderr.fileno()}
+                owned["write"] = {process.stdin.fileno()}
+                return process
+
             def once_unready(name, function, fd, value):
-                if not os.get_blocking(fd) and name not in blocked:
+                if (
+                    fd in owned[name]
+                    and not os.get_blocking(fd)
+                    and name not in blocked
+                ):
                     blocked.add(name)
                     raise BlockingIOError("fixture readiness changed")
                 return function(fd, value)
 
             with (
+                patch.object(
+                    grok_review.subprocess, "Popen", side_effect=capture_process
+                ),
                 patch.object(
                     grok_review.os,
                     "read",
@@ -640,7 +655,15 @@ class AdmissionTests(unittest.TestCase):
                 patch.object(
                     grok_review,
                     "run_process",
-                    return_value=grok_review.subprocess.CompletedProcess([], 0, "", ""),
+                    side_effect=[
+                        grok_review.subprocess.CompletedProcess(
+                            [], 1, "", "not loaded"
+                        ),
+                        grok_review.subprocess.CompletedProcess([], 0, "", ""),
+                        grok_review.subprocess.CompletedProcess(
+                            [], 1, "", "not loaded"
+                        ),
+                    ],
                 ) as launch,
                 patch.object(
                     sys,
@@ -663,7 +686,31 @@ class AdmissionTests(unittest.TestCase):
                 )
                 self.assertEqual(launch.call_count, 2)
                 grok_review.uninstall()
-                self.assertEqual(launch.call_count, 3)
+                domain = f"gui/{os.getuid()}"
+                self.assertEqual(
+                    [c.args[0] for c in launch.call_args_list],
+                    [
+                        ["launchctl", "bootout", f"{domain}/{grok_review.LABEL}"],
+                        ["launchctl", "bootstrap", domain, str(plist)],
+                        ["launchctl", "bootout", f"{domain}/{grok_review.LABEL}"],
+                    ],
+                )
+                self.assertFalse(plist.exists())
+                launch.side_effect = [
+                    grok_review.subprocess.CompletedProcess([], 1, "", "not loaded"),
+                    grok_review.subprocess.CompletedProcess(
+                        [], 1, "", "bootstrap refused"
+                    ),
+                ]
+                with self.assertRaisesRegex(
+                    grok_review.ReviewError, "bootstrap refused"
+                ):
+                    grok_review.install("fixture/repo", False)
+                launch.side_effect = grok_review.ReviewError("helper timeout")
+                with self.assertRaisesRegex(
+                    grok_review.ReviewError, "running job may need stopping"
+                ):
+                    grok_review.uninstall()
                 self.assertFalse(plist.exists())
 
     def test_only_repository_writers_are_admitted(self):
