@@ -5116,15 +5116,17 @@ int main(int argc, char** argv) {
     QCoreApplication::setApplicationName(QStringLiteral("lapis"));
     try {
         if (argc > 1) {
-            require(argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--case") &&
-                        (QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options") ||
-                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("accounts") ||
-                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("startup-defaults") ||
-                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload") ||
-                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater") ||
-                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes")),
-                    "Usage: lapis_workspace_tests [--case "
-                    "remote-options|accounts|reload|updater|startup-defaults|chimes]");
+            require(
+                argc == 3 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--case") &&
+                    (QString::fromLocal8Bit(argv[2]) == QStringLiteral("remote-options") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("accounts") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("startup-defaults") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("launch-policy") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("reload") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("updater") ||
+                     QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes")),
+                "Usage: lapis_workspace_tests [--case "
+                "remote-options|accounts|reload|updater|startup-defaults|launch-policy|chimes]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("accounts")) {
                 incompleteCodexHomeNeverStartsAnAgent();
@@ -5134,6 +5136,9 @@ int main(int argc, char** argv) {
                 remoteClaudeReconnectsToItsConversation();
             } else if (selected == QStringLiteral("startup-defaults")) {
                 savedGrokDefaultsPreserveLaunchOwnership();
+            } else if (selected == QStringLiteral("launch-policy")) {
+                modelessAgentsGetTheDefaultMode();
+                resumingAConversationStartsItsCli();
             } else if (selected == QStringLiteral("updater")) {
                 updaterLifecycle();
                 updaterOutputIsDrainedWithABoundedTail();
