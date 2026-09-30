@@ -68,5 +68,23 @@
     "Provider predictions, live remote transcript access, model acceptance quality and actual resets were not exercised by these stand-ins.",
     "Queue admission is not application consumption; uncertain delivery is never automatically replayed.",
     "An old service needs an operator-controlled upgrade/restart before suggestions can be admitted."
-  ]
+  ],
+  "python_followup": {
+    "source_revision": "cc171e04edb8d626f6fac43b3ba9fe2d0f140c4c",
+    "source_sha256": {
+      "apps/desktop/src/next_prompt.py": "40a901002b4e016cf9b963edd6da3396876a85080175458ba5c4f7308607d3ee",
+      "scripts/next_prompt_eval.py": "d29540bde511bac3cc6ccdc2239a0be73ba0fda894193d7926a6710aac3c6884",
+      "scripts/tests/test_next_prompt.py": "351d8cf3fb9ec3c0c0028632938c43c6599bf2088b431e1197a286835c720b34",
+      "docs/suggestions.md": "1473147f85aeeef2c2763a566f108fcc7b22625376b889e8b2f8df703c7d60c8"
+    },
+    "checks": [
+      "python3 -m unittest scripts.tests.test_next_prompt: 15 passed",
+      "python3 scripts/lapis.py quality: passed, 291 Python tests"
+    ],
+    "contracts": [
+      "Provider/auth/timeout failures stop without an immediate retry; only malformed prediction answers get one format-repair attempt.",
+      "Missing context and judge failures are counted separately; ungraded results never enter quality denominators.",
+      "Invalid judge rows are ignored as missing; test-owned temporary folders are removed on completion."
+    ]
+  }
 }
