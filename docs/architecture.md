@@ -3363,6 +3363,46 @@ exit and a few seconds more before touching the bundle. Sparkle replaces the
 bundle only after the app has exited, so it can race BTM the first time lapis
 quits on a Mac with no BTM entry for it yet; that is not yet measured.
 
+### Claude Code 2.1.281 to 2.1.285 (September 29)
+
+A changelog watcher opens an issue per Claude Code release with its lapis
+impact (#25, #26, #27, #34, #42). Reviewed against how lapis starts Claude:
+
+- **No mode now means auto mode.** 2.1.283 (third-party providers, telemetry off),
+  2.1.284 (every interactive session) and 2.1.285 (`claude -p` and the SDK)
+  start without a configured permission mode in auto mode instead of asking.
+  The Mac's forms always pass a mode (Full access by default, or
+  `newAgent.mode`), and restarts, reopens and splits reuse the flags an agent
+  started with, but an agent asked for without one (the phone can leave it out,
+  and `resumeAgent` takes it as optional) started with no flag. Now it gets the
+  forms' default, or the nearest mode that CLI offers as the forms choose,
+  unless the CLI's `harnessArguments` already choose one (by option name, so
+  `--permission-mode=plan` counts). lapis's
+  own `claude -p` calls (next-prompt guesses) run with tools off, so the
+  headless default does not reach them.
+- **Requests.** 2.1.281 asks before a recursive `rm` of command-substitution
+  output even in Full access, then denies after two minutes so unattended
+  sessions continue; these arrive through the permission hook like any request.
+  2.1.284's "Yes, but ask again next time" is an auto-mode answer; Claude
+  requests are answered in the terminal, so it needs no routing here. Nothing
+  lapis types for the person may answer a pending request; the next-prompt Tab
+  (#44) sends nothing while one is pending.
+- **Background commands stop after 30 minutes** (2.1.285) unless Claude asks
+  for up to two hours; `BASH_MAX_TIMEOUT_MS` raises the ceiling and
+  `BASH_DEFAULT_TIMEOUT_MS` the default for foreground and background alike.
+  Session ownership is unchanged: this is the CLI's policy for its own
+  children, documented for users in the README.
+- **Fixes lapis benefits from:** bracketed paste after a mode reset (2.1.282)
+  and fast type-ahead (2.1.283), which lapis's paste and Tab rely on; synchronous
+  hooks no longer hanging on a background child (2.1.285); and resume fixes for
+  interrupted tool calls, pending prompts and malformed compaction markers.
+- **Not applicable to how lapis starts Claude:** gateway, SDK, VS Code,
+  Bedrock/Vertex and custom `ANTHROPIC_BASE_URL` items.
+
+Still open: the Claude qualification scripts pin `SUPPORTED_VERSION` 2.1.280
+and refuse newer CLIs. Their fixtures drive a GLM model through a local model
+router, so the bump waits for a run on a machine with that router.
+
 ## Contracts to preserve
 
 **Session identity and backends.** Each session has a stable lapis ID. Terminal

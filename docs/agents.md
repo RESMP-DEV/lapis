@@ -20,6 +20,12 @@
    without the chosen mode (OMP, OpenCode and Antigravity have no Auto, Kimi and
    OpenCode no Accept edits) uses its nearest, less access first.
 
+An agent asked for without a mode (from the phone, or a resumed conversation)
+gets the same default, or the nearest mode that CLI offers. Since Claude Code
+2.1.284 (2.1.283 on third-party providers) no flag means auto mode rather than
+asking, so lapis always passes one, unless your `harnessArguments` already
+choose a mode.
+
 The next agent starts with the same CLI, mode and model. Everything else stays in
 each CLI's own config. lapis adds no flags of its own; to add yours to every new
 agent of a CLI, set `harnessArguments` (see [config](config.md)). Shell aliases
@@ -90,6 +96,14 @@ reload it** and **Update Claude Code and reload its tabs** in Commands run the
 update where each agent runs (over ssh, without a terminal or password prompt),
 once per CLI and machine, then reload those agents. They keep working
 meanwhile; an update that fails says why and leaves them running.
+
+## Long jobs
+
+Since Claude Code 2.1.285 a shell command Claude runs in the background stops
+after 30 minutes unless it asks for more, at most 2 hours (`BASH_MAX_TIMEOUT_MS`
+raises that ceiling). That is Claude Code's limit, not lapis's. Start a longer
+job detached (`nohup`, `setsid` or `tmux`, writing to a log the agent reads),
+which also outlives restarts, reloads and plan switches.
 
 ## Restart, reload, reopen
 
