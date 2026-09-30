@@ -679,6 +679,40 @@ void unseenFollowsTurnsAndSelection() {
     require(!workspace.nextAttention(), "nor does it draw the jump again");
 }
 
+// An agent asked for without a mode starts in the forms' default, or the
+// nearest mode its CLI offers, unless its configured arguments choose one.
+void modelessAgentsGetTheDefaultMode() {
+    using lapis::desktop::AgentRequest;
+    using lapis::desktop::launch_mode;
+    const auto asked = [](const char* harness, const char* mode = "") {
+        AgentRequest request;
+        request.harness = QString::fromLatin1(harness);
+        request.mode = QString::fromLatin1(mode);
+        return request;
+    };
+    require(launch_mode(asked("claude", "edits"), {}, QStringLiteral("full")) ==
+                QLatin1String("edits"),
+            "a mode asked for is kept");
+    require(launch_mode(asked("claude"), {}, {}) == QLatin1String("full"),
+            "no mode and no default: Full access");
+    require(launch_mode(asked("claude"), {}, QStringLiteral("auto")) == QLatin1String("auto"),
+            "no mode: newAgent.mode");
+    require(launch_mode(asked("omp"), {}, QStringLiteral("auto")) == QLatin1String("edits"),
+            "a CLI without the default takes the nearest, less access first");
+    require(launch_mode(asked("opencode"), {}, QStringLiteral("edits")) == QLatin1String("full"),
+            "or more access when it has nothing less");
+    for (const auto* configured :
+         {"--permission-mode=acceptEdits", "--permission-mode", "--dangerously-skip-permissions"})
+        require(launch_mode(asked("claude"), {QString::fromLatin1(configured)}, {}).isEmpty(),
+                "configured arguments that choose a mode win, however spelled");
+    require(launch_mode(asked("codex"), {QStringLiteral("--ask-for-approval=never")}, {}).isEmpty(),
+            "Codex's own approval option wins too");
+    require(launch_mode(asked("claude"), {QStringLiteral("--verbose")}, {}) ==
+                QLatin1String("full"),
+            "other configured arguments do not");
+    require(launch_mode(asked("shell"), {}, {}).isEmpty(), "a CLI without modes gets none");
+}
+
 // Command-L goes to the agent that most recently began to need you, then the
 // one before it.
 void latestAttentionGoesToTheNewest() {
@@ -4876,6 +4910,7 @@ int main(int argc, char** argv) {
         unknownRegistryVersionsAreRejected();
         unseenFollowsTurnsAndSelection();
         latestAttentionGoesToTheNewest();
+        modelessAgentsGetTheDefaultMode();
         claudeAgentsUseServiceAdapter();
         agentArgumentsPersist();
         directTileSelectionNormalizesAStaleTarget();

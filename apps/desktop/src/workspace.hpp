@@ -330,6 +330,17 @@ struct AgentRequest {
     QString resume;
 };
 
+// The approval mode a new agent starts in. One asked for without a mode (the
+// phone may leave it out) gets the one new agents default to, `fallback`
+// (newAgent.mode) else Full access, or the nearest the CLI offers, less access
+// first, as the forms choose: since Claude Code 2.1.284 (2.1.283 on
+// third-party providers) no flag means auto mode rather than asking.
+// Arguments configured for the CLI that already choose a mode win, however
+// spelled (`--permission-mode=plan` too); empty then, and for a CLI without
+// modes.
+[[nodiscard]] QString launch_mode(const AgentRequest& request, const QStringList& configured,
+                                  const QString& fallback);
+
 struct WorkspaceOptions {
     QString endpoint;
     std::optional<session::LaunchSpec> launch;

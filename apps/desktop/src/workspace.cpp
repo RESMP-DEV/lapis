@@ -161,23 +161,52 @@ QStringList modeArguments(const QString& harness, const QString& mode) {
         }
     return {};
 }
-// The mode a new agent starts in. One asked for without a mode (the phone may
-// leave it out) gets the one new agents default to, the config's else Full
-// access, as the Mac's forms do: since Claude Code 2.1.284 no mode means auto
-// mode, not asking. Arguments configured for the CLI that already set a mode
-// win.
+// The options with which a CLI's own arguments choose its approval mode, as
+// `harnessArguments` might spell them (`--permission-mode=plan` counts too).
+constexpr std::array<std::pair<const char*, const char*>, 14> mode_options{{
+    {"claude", "--permission-mode"},
+    {"claude", "--dangerously-skip-permissions"},
+    {"codex", "-a"},
+    {"codex", "--ask-for-approval"},
+    {"codex", "--dangerously-bypass-approvals-and-sandbox"},
+    {"codex", "--full-auto"},
+    {"grok", "--permission-mode"},
+    {"grok", "--dangerously-skip-permissions"},
+    {"kimi", "--yolo"},
+    {"kimi", "--auto"},
+    {"omp", "--approval-mode"},
+    {"opencode", "--auto"},
+    {"agy", "--mode"},
+    {"agy", "--dangerously-skip-permissions"},
+}};
+} // namespace
+
+// See workspace.hpp.
 QString launch_mode(const AgentRequest& request, const QStringList& configured,
                     const QString& fallback) {
     if (!request.mode.isEmpty())
         return request.mode;
-    for (const auto& entry : mode_flags)
-        if (request.harness == QLatin1String(entry.harness))
-            for (const auto* flag : entry.flags)
-                if (flag != nullptr && flag[0] == '-' && configured.contains(QLatin1String(flag)))
-                    return {};
-    const QString mode = fallback.isEmpty() ? QStringLiteral("full") : fallback;
-    return modeArguments(request.harness, mode).isEmpty() ? QString() : mode;
+    for (const auto& argument : configured) {
+        const auto option = argument.section(QLatin1Char('='), 0, 0);
+        for (const auto& [harness, name] : mode_options)
+            if (request.harness == QLatin1String(harness) && option == QLatin1String(name))
+                return {};
+    }
+    // As the forms choose: the preferred mode, else the nearest the CLI
+    // offers, less access first.
+    constexpr std::array order{"edits", "auto", "full"};
+    const QString preferred = fallback.isEmpty() ? QStringLiteral("full") : fallback;
+    const auto at = static_cast<int>(
+        std::find(order.begin(), order.end(), preferred.toStdString()) - order.begin());
+    for (const int index : {at, at - 1, at - 2, at + 1, at + 2})
+        if (index >= 0 && index < static_cast<int>(order.size()) &&
+            !modeArguments(request.harness, QLatin1String(order[static_cast<std::size_t>(index)]))
+                 .isEmpty())
+            return QLatin1String(order[static_cast<std::size_t>(index)]);
+    return {};
 }
+
+namespace {
 QVariantList harnessModes(const QString& harness) {
     QVariantList modes;
     for (const auto& [mode, name] : mode_names)

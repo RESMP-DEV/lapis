@@ -181,8 +181,9 @@ their config, recent models and roles), and one of three approval modes:
 Accept edits, Auto or Full access (the first time, Full access, or
 `newAgent.mode`), each passed as that CLI's own flag. An agent asked for
 without a mode (from the phone, or a resumed conversation) gets that same
-default: since Claude Code 2.1.284 no flag means auto mode rather than asking,
-so lapis always passes one, unless `harnessArguments` already sets one. The mode
+default, or the nearest one that CLI offers: since Claude Code 2.1.284 (2.1.283
+on third-party providers) no flag means auto mode rather than asking, so lapis
+always passes one, unless `harnessArguments` already sets one. The mode
 stays when the CLI changes; a CLI without it (OMP, OpenCode and Antigravity
 have no Auto, Kimi and OpenCode no Accept edits) uses its nearest, less access
 first. The next agent starts with the same CLI, mode and model. Everything else

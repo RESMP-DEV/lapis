@@ -3375,7 +3375,9 @@ impact (#25, #26, #27, #34, #42). Reviewed against how lapis starts Claude:
   `newAgent.mode`), and restarts, reopens and splits reuse the flags an agent
   started with, but an agent asked for without one (the phone can leave it out,
   and `resumeAgent` takes it as optional) started with no flag. Now it gets the
-  forms' default, unless the CLI's `harnessArguments` already set a mode. lapis's
+  forms' default, or the nearest mode that CLI offers as the forms choose,
+  unless the CLI's `harnessArguments` already choose one (by option name, so
+  `--permission-mode=plan` counts). lapis's
   own `claude -p` calls (next-prompt guesses) run with tools off, so the
   headless default does not reach them.
 - **Requests.** 2.1.281 asks before a recursive `rm` of command-substitution
