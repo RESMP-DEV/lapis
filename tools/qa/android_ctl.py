@@ -419,6 +419,7 @@ class Device:
         font: float | None = None,
         reset_cache: bool = False,
         fresh: bool = False,
+        command_bar: bool = True,
     ) -> None:
         if fresh:
             self.stop()
@@ -429,6 +430,12 @@ class Device:
             command += f" --es terminalFontSize {font}"
         if reset_cache:
             command += " --ez resetCache true"
+        # A string extra, matching the app's getString seam (a --ez boolean
+        # extra reads back null through getString). Every harness launch
+        # pins the bar on so a missing command-bar node in a run is a
+        # product regression, never a stored-setting question.
+        if command_bar:
+            command += " --es commandBarEnabled true"
         self.shell(command)
 
     def stop(self) -> None:

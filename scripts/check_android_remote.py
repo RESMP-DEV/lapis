@@ -497,13 +497,13 @@ def checks(device, mac, screens):
         device.screenshot(screens / f"{name}.png")
 
     def bar_absent():
-        # SKIPPED-prefixed like the wedged messages below: a setting the
-        # harness cannot flip is a precondition the check cannot run
-        # through, not a product failure, and the runner's classifier
-        # routes by this prefix.
+        # The harness launch forces the bar on (the commandBarEnabled
+        # extra overrides the stored setting, like the font-size extra), so
+        # a missing bar is a product regression, not a runnable-state
+        # precondition: fail it; there is no skip case.
         if device.find(id="command-bar") is None:
             return (
-                "SKIPPED: the command bar is disabled in settings; enable it and rerun"
+                "the command bar did not compose although the launch extra forced it on"
             )
         return None
 

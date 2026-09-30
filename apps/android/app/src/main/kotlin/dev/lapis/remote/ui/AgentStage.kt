@@ -98,6 +98,7 @@ fun AgentStage(
     settings: KeyValueStore,
     sessionScope: CoroutineScope,
     fontSizeOverride: Float?,
+    commandBarOverride: Boolean? = null,
     onBack: () -> Unit,
 ) {
     val host by repository.host.collectAsStateWithLifecycle()
@@ -127,9 +128,11 @@ fun AgentStage(
     // under the same settings seam; the bar is on until turned off. Both
     // are saveable so a fold/unfold (activity recreation) shows the saved
     // values immediately instead of flashing defaults until the DataStore
-    // read completes.
+    // read completes. A debug launch may override the bar's visibility in
+    // memory: the device harness always forces the bar on, so a missing
+    // bar in a harness run is a regression, never a setting question.
     val snippetStore = remember(settings) { SnippetStore(settings) }
-    var commandBarEnabled by rememberSaveable { mutableStateOf(true) }
+    var commandBarEnabled by rememberSaveable { mutableStateOf(commandBarOverride ?: true) }
     var snippets by rememberSaveable { mutableStateOf(listOf<String>()) }
 
     // Saved settings land after first composition: DataStore reads are
@@ -149,7 +152,9 @@ fun AgentStage(
                 fontSize = settings.getString(FONT_SIZE_KEY)?.toFloatOrNull()
                     ?.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE) ?: DEFAULT_FONT_SIZE
             }
-            commandBarEnabled = settings.getString(COMMAND_BAR_KEY)?.toBooleanStrictOrNull() ?: true
+            commandBarEnabled = commandBarOverride
+                ?: settings.getString(COMMAND_BAR_KEY)?.toBooleanStrictOrNull()
+                ?: true
             snippets = snippetStore.load()
         } finally {
             // A stage that never opens is a worse failure than one that

@@ -199,5 +199,29 @@ class ImeShownTest(unittest.TestCase):
         self.assertIsInstance(raised.exception, android_ctl.DeviceError)
 
 
+class LaunchExtrasTest(unittest.TestCase):
+    def test_launch_forces_the_command_bar_on_by_default(self):
+        # The harness must never depend on the stored setting: every launch
+        # pins the bar on, so a missing command-bar node in a run is a
+        # product regression rather than a runnable-state question.
+        device = android_ctl.Device.__new__(android_ctl.Device)
+        device.package = "dev.lapis.remote"
+        sent: list[str] = []
+
+        def record(command, timeout=30):
+            sent.append(command)
+            return ""
+
+        device.shell = record
+        device.launch(host="127.0.0.1:7351", font=12, fresh=True)
+        self.assertEqual(len(sent), 2)  # fresh's force-stop, then the start
+        self.assertIn("--es gatewayHost '127.0.0.1:7351'", sent[1])
+        self.assertIn("--es terminalFontSize 12", sent[1])
+        self.assertIn("--es commandBarEnabled true", sent[1])
+        device.launch(command_bar=False)
+        self.assertNotIn("commandBarEnabled", sent[2])
+        self.assertNotIn("gatewayHost", sent[2])
+
+
 if __name__ == "__main__":
     unittest.main()

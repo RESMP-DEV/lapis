@@ -62,6 +62,13 @@ class LapisApplication : Application() {
     /** Debug-launch terminal font size: in memory only, never persisted. */
     internal var fontSizeOverride: Float? = null
 
+    /**
+     * Debug-launch command bar visibility: in memory only, never persisted.
+     * The device harness forces the bar on so its checks never depend on the
+     * stored setting; null means honor the setting.
+     */
+    internal var commandBarOverride: Boolean? = null
+
     internal fun wipeCacheAsync(): Job {
         ScreenCache.clearAll()
         return appScope.launch(Dispatchers.IO) { File(filesDir, "cache").deleteRecursively() }
@@ -86,11 +93,12 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Debug-build launch overrides, the port of the iOS UI tests'
+     * Debug-launch overrides, the port of the iOS UI tests'
      * launchArguments (`-gatewayHost`, `-terminalFontSize`, `-resetCache`):
      * `am start --es gatewayHost 127.0.0.1:7351 --ez resetCache true` points a
      * debuggable build at a test gateway without touching the Settings UI.
-     * Release builds ignore the extras entirely.
+     * `--es commandBarEnabled true` forces the command bar on for the device
+     * harness. Release builds ignore the extras entirely.
      */
     private fun applyLaunchOverrides(launch: Intent) {
         if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) == 0) return
@@ -109,6 +117,10 @@ class MainActivity : ComponentActivity() {
         }
         launch.getStringExtra("terminalFontSize")?.toFloatOrNull()?.let { size ->
             owner.fontSizeOverride = size.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE)
+        }
+        launch.getStringExtra("commandBarEnabled")?.let { raw ->
+            // A garbage value parses to null: no override, honor the setting.
+            owner.commandBarOverride = raw.toBooleanStrictOrNull()
         }
     }
 }
@@ -184,6 +196,7 @@ private fun LapisApp(repository: WorkspaceRepository, app: LapisApplication) {
                 settings = app.settings,
                 sessionScope = app.sessionScope,
                 fontSizeOverride = app.fontSizeOverride,
+                commandBarOverride = app.commandBarOverride,
                 onBack = { openAgentId = null },
             )
         } else {
