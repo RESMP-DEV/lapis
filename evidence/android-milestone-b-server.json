@@ -28,7 +28,7 @@
   "artifacts": "ignored build/mb-verify/: stream-*.txt, kimi-*.json, history-*.json, codex-wheel*.txt, gateway and helper logs"
  },
  "limitations": [
-  "Phone-side live typing/resize/scrollback on the cover screen not yet exercised at recording time; since covered on the loopback path by evidence/android-milestone-b-device.json (overlay join still pending)",
+  "Point-in-time wording (recorded 2026-09-30T01:55Z, before the loopback harness existed): phone-side live typing/resize/scrollback on the cover screen was not yet exercised at recording time. Result: covered on the loopback path by evidence/android-milestone-b-device.json; the overlay join itself is still pending.",
   "Concurrent attach from phone plus curl not yet tested; single-attachment verification only. Note: the gateway supersedes a previous SSE stream for the same agent, so a parallel curl observer retires the phone's pump; do not watch a live phone attachment with a second stream.",
   "Mac-side 'stay in sync' observed only via the attach event's shared flag and a single stream client"
  ]

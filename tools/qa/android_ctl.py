@@ -286,8 +286,12 @@ class Device:
         """Fling inside the terminal (or screen center) toward older content
         (finger down) or newer (finger up); returns each gesture's span."""
         size = self.shell("wm size")
+        # An override (a test's `wm size WxH`) wins over the physical panel;
+        # it is reported on its own line after the physical one.
+        lines = size.splitlines()
         line = next(
-            part for part in size.splitlines() if "Override" in part or ":" in part
+            (part for part in lines if part.startswith("Override")),
+            next(part for part in lines if part.startswith("Physical")),
         )
         width, height = (int(value) for value in line.split(":")[1].strip().split("x"))
         spans = []
@@ -560,17 +564,23 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             print(value)
         elif args.verb == "wm":
-            print(device.shell("wm " + " ".join(args.args)))
-        elif args.verb == "gfx":
             print(
-                device.shell(f"dumpsys gfxinfo {device.package} " + " ".join(args.args))
+                device.shell("wm " + " ".join(shell_quote(part) for part in args.args))
             )
+        elif args.verb == "gfx":
+            quoted = " ".join(shell_quote(part) for part in args.args)
+            print(device.shell(f"dumpsys gfxinfo {device.package} " + quoted))
         return 0
     except DeviceError as error:
         print(str(error), file=sys.stderr)
         return 2
     except subprocess.TimeoutExpired:
         print("adb timed out", file=sys.stderr)
+        return 2
+    except Exception as error:
+        # The documented contract: 0 answered, 1 answered no, 2 tool failure.
+        # An unexpected error is a tool failure, not a traceback and exit 1.
+        print(f"{type(error).__name__}: {error}", file=sys.stderr)
         return 2
 
 

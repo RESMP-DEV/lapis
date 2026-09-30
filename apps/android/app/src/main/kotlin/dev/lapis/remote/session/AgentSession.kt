@@ -129,6 +129,8 @@ class AgentSession(
         _state.value = State.Connecting
         _history.value = emptyList()
         _historyEnd.value = false
+        _historyTotal.value = 0
+        _scrubbable.value = false
         _gapAfter.value = false
         _jumpedTo.value = null
         pendingJumpFraction = null
@@ -296,12 +298,14 @@ class AgentSession(
         _loadingHistory.value = true
         try {
             performLoadOlder(generation)
-            if (connectionGeneration != generation) return
-            runPendingJump(generation)
         } finally {
             // A replacement already cleared this flag for the new attachment.
             if (connectionGeneration == generation) _loadingHistory.value = false
         }
+        if (connectionGeneration != generation) return
+        // After the flag clears, not before: a pending jump stored by jump()
+        // while this load ran must find _loadingHistory false or it is dropped.
+        runPendingJump(generation)
     }
 
     /** While history is shown, pages archived since it loaded are appended so it stays contiguous with the live screen (after a jump, only on asking). */
@@ -332,18 +336,18 @@ class AgentSession(
         _loadingHistory.value = true
         try {
             performLoadNewer(newest, generation)
-            if (connectionGeneration != generation) return
-            runPendingJump(generation)
         } finally {
             if (connectionGeneration == generation) _loadingHistory.value = false
         }
+        if (connectionGeneration != generation) return
+        runPendingJump(generation)
     }
 
     /** Every kept row, as the last page said; the scrubber's scale. */
     private fun note(place: dev.lapis.remote.gateway.HistoryPage.Place?) {
         if (place == null) return
         _historyTotal.value = place.total
-        _scrubbable.value = _scrubbable.value || place.scrubbable
+        place.scrubbable?.let { announced -> _scrubbable.value = _scrubbable.value || announced }
     }
 
     /** Shows the page at [fraction] of everything kept (0 the oldest row), alone: older pages load above it as before, and the newer ones between it and the live screen when asked (closeGap). */
@@ -394,6 +398,16 @@ class AgentSession(
         jump(fraction)
     }
 
+    /** runCatching would also swallow the CancellationException that ends a
+     *  superseded load, reporting it as a normal failure. */
+    private suspend fun <T : Any> orNull(block: suspend () -> T): T? = try {
+        block()
+    } catch (cancel: CancellationException) {
+        throw cancel
+    } catch (error: Exception) {
+        null
+    }
+
     private suspend fun performLoadOlder(generation: UUID) {
         val gateway = gateway ?: return
         // While nothing is archived, ask at most once a second, but always
@@ -414,7 +428,7 @@ class AgentSession(
         while (gathered < 80 && attempts < 40) {
             if (connectionGeneration != generation || !currentCoroutineContext().isActive) return
             attempts += 1
-            val reply = runCatching { gateway.history(agent.id, before = before) }.getOrNull() ?: return
+            val reply = orNull { gateway.history(agent.id, before = before) } ?: return
             if (connectionGeneration != generation || !currentCoroutineContext().isActive) return
             if (reply.busy) {
                 delay(300)
@@ -446,7 +460,7 @@ class AgentSession(
         var cursor = after
         repeat(20) {
             if (connectionGeneration != generation || !currentCoroutineContext().isActive) return
-            val reply = runCatching { gateway.history(agent.id, after = cursor) }.getOrNull() ?: return
+            val reply = orNull { gateway.history(agent.id, after = cursor) } ?: return
             if (reply.busy || reply.page == 0L) return
             val lines = reply.lines ?: return
             val columns = reply.columns ?: return
@@ -463,7 +477,7 @@ class AgentSession(
         val gateway = gateway ?: return
         val total = _historyTotal.value
         val row = (fraction.coerceIn(0.0, 1.0) * (total - 1).toDouble()).let { Math.round(it).toInt() }
-        val reply = runCatching { gateway.history(agent.id, at = row) }.getOrNull() ?: return
+        val reply = orNull { gateway.history(agent.id, at = row) } ?: return
         val lines = reply.lines ?: return
         val columns = reply.columns ?: return
         if (reply.page == 0L || connectionGeneration != generation || !currentCoroutineContext().isActive) return
@@ -483,7 +497,7 @@ class AgentSession(
         var cursor = after
         repeat(8) {
             if (connectionGeneration != generation || !currentCoroutineContext().isActive) return
-            val reply = runCatching { gateway.history(agent.id, after = cursor) }.getOrNull() ?: return
+            val reply = orNull { gateway.history(agent.id, after = cursor) } ?: return
             if (reply.busy) return
             if (connectionGeneration != generation || !currentCoroutineContext().isActive) return
             val lines = reply.lines

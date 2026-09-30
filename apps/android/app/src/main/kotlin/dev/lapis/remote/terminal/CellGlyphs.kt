@@ -64,18 +64,6 @@ private fun DrawScope.drawBlock(value: Int, cell: Rect, color: Color, scale: Flo
         0x2595 -> fill(w * 7 / 8, 0f, w / 8, h)
         else -> {
             // Quadrants: upper left, upper right, lower left, lower right.
-            val quadrants = mapOf(
-                0x2596 to listOf(false, false, true, false),
-                0x2597 to listOf(false, false, false, true),
-                0x2598 to listOf(true, false, false, false),
-                0x2599 to listOf(true, false, true, true),
-                0x259A to listOf(true, false, false, true),
-                0x259B to listOf(true, true, true, false),
-                0x259C to listOf(true, true, false, true),
-                0x259D to listOf(false, true, false, false),
-                0x259E to listOf(false, true, true, false),
-                0x259F to listOf(false, true, true, true),
-            )
             val (ul, ur, ll, lr) = quadrants[value] ?: return
             if (ul) fill(0f, 0f, w / 2, h / 2)
             if (ur) fill(w / 2, 0f, w / 2, h / 2)
@@ -84,6 +72,20 @@ private fun DrawScope.drawBlock(value: Int, cell: Rect, color: Color, scale: Flo
         }
     }
 }
+
+/** Quadrant blocks (U+2596–U+259F): upper left, upper right, lower left, lower right. */
+private val quadrants: Map<Int, List<Boolean>> = mapOf(
+    0x2596 to listOf(false, false, true, false),
+    0x2597 to listOf(false, false, false, true),
+    0x2598 to listOf(true, false, false, false),
+    0x2599 to listOf(true, false, true, true),
+    0x259A to listOf(true, false, false, true),
+    0x259B to listOf(true, true, true, false),
+    0x259C to listOf(true, true, false, true),
+    0x259D to listOf(false, true, false, false),
+    0x259E to listOf(false, true, true, false),
+    0x259F to listOf(false, true, true, true),
+)
 
 /** Arms up, right, down, left: 0 none, 1 light, 2 heavy, 3 double. */
 private class Arms(val up: Int, val right: Int, val down: Int, val left: Int)
@@ -125,18 +127,27 @@ private fun DrawScope.drawBox(arms: Arms, cell: Rect, color: Color, scale: Float
     fun horizontal(x0: Float, x1: Float, weight: Int) {
         if (weight == 0) return
         val t = thickness(weight)
-        val offsets = if (weight == 3) floatArrayOf(-t * 1.5f, t * 0.5f) else floatArrayOf(-t / 2)
-        for (offset in offsets) {
-            fill(Rect(min(x0, x1), cy + offset, max(x0, x1), cy + offset + t))
+        val left = min(x0, x1)
+        val right = max(x0, x1)
+        // Double lines get two strokes straddling the centre; light and heavy one.
+        if (weight == 3) {
+            fill(Rect(left, cy - t * 1.5f, right, cy - t * 0.5f))
+            fill(Rect(left, cy + t * 0.5f, right, cy + t * 1.5f))
+        } else {
+            fill(Rect(left, cy - t / 2, right, cy + t / 2))
         }
     }
 
     fun vertical(y0: Float, y1: Float, weight: Int) {
         if (weight == 0) return
         val t = thickness(weight)
-        val offsets = if (weight == 3) floatArrayOf(-t * 1.5f, t * 0.5f) else floatArrayOf(-t / 2)
-        for (offset in offsets) {
-            fill(Rect(cx + offset, min(y0, y1), cx + offset + t, max(y0, y1)))
+        val top = min(y0, y1)
+        val bottom = max(y0, y1)
+        if (weight == 3) {
+            fill(Rect(cx - t * 1.5f, top, cx - t * 0.5f, bottom))
+            fill(Rect(cx + t * 0.5f, top, cx + t * 1.5f, bottom))
+        } else {
+            fill(Rect(cx - t / 2, top, cx + t / 2, bottom))
         }
     }
 

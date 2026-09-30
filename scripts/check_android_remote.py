@@ -123,7 +123,10 @@ class Run:
             try:
                 process.wait(10)
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
         # Services own their agents in new sessions; match the exact runtime
         # socket or the fixture interpreter, never a path mention (the iOS
         # check's rule: a shebang script appears after its interpreter in ps).
@@ -165,34 +168,42 @@ class MacClient(threading.Thread):
         self.saw_phone = False
         self.closed = None
         self.sizes = set()
+        self.last_size = None
 
     def run(self):
         while not self.stopping.is_set():
             try:
                 received = self.session.receive(0.5)
+                if received is None:
+                    continue
+                kind, data = received
+                if kind == lapis_remote.STATUS:
+                    self.closed = lapis_remote.status_message(data)
+                    return
+                body = self.session.accept_snapshot(kind, data)
+                if body is None:
+                    continue
+                rendered = lapis_remote.render_snapshot(body)
+                self.sizes.add((rendered["columns"], rendered["rows"]))
+                self.last_size = (rendered["columns"], rendered["rows"])
+                if self.saw_phone:
+                    continue
+                screen = "\n".join(
+                    "".join(run[0] for run in line) for line in rendered["lines"]
+                )
+                if "echo: ping from phone" in screen:
+                    self.saw_phone = True
+                    self.session.text(b"pong from mac\r")
             except (OSError, EOFError, lapis_remote.GatewayError) as error:
                 if not self.stopping.is_set():
                     self.closed = str(error)
                 return
-            if received is None:
-                continue
-            kind, data = received
-            if kind == lapis_remote.STATUS:
-                self.closed = lapis_remote.status_message(data)
+            except (ValueError, KeyError) as error:
+                # A frame the renderer cannot digest must surface as a closed
+                # client in the receipt, not die silently in this thread.
+                if not self.stopping.is_set():
+                    self.closed = f"malformed frame: {error}"
                 return
-            body = self.session.accept_snapshot(kind, data)
-            if body is None:
-                continue
-            rendered = lapis_remote.render_snapshot(body)
-            self.sizes.add((rendered["columns"], rendered["rows"]))
-            if self.saw_phone:
-                continue
-            screen = "\n".join(
-                "".join(run[0] for run in line) for line in rendered["lines"]
-            )
-            if "echo: ping from phone" in screen:
-                self.saw_phone = True
-                self.session.text(b"pong from mac\r")
 
     def stop(self):
         self.stopping.set()
@@ -363,7 +374,9 @@ def checks(device, mac, screens):
         return None
 
     def check_open():
-        device.tap_node(id="agent-echo agent")
+        # By visible text, not the id tag: the card's tag is the agent id,
+        # which the harness does not know ahead of the listing.
+        device.tap_node(text="echo agent")
         if device.wait(id="terminal", timeout=15) is None:
             return "the terminal never appeared"
         if not wait_terminal(device, "lapis fake agent"):
@@ -398,12 +411,10 @@ def checks(device, mac, screens):
         if "echo: draft without enter" in device.terminal_text():
             return "the draft was submitted although Enter was never sent"
         shot("04-draft")
-        # Leave the prompt clean: clear the composer and submit the pending
-        # draft line, so later checks start from a fresh "› " prompt instead
-        # of concatenating onto this unsubmitted line.
-        device.tap_node(id="composer")
-        for _ in range(len("draft without enter")):
-            device.key("backspace")
+        # Leave the prompt clean. The composer is already empty (sending the
+        # type-without-Enter draft clears it), but the PTY's canonical buffer
+        # still holds the pending line: an Enter submits it, so later checks
+        # start from a fresh "› " prompt instead of concatenating onto it.
         send_line(device, "")
         if not wait_terminal(device, "echo: draft without enter"):
             return "the draft cleanup submit never echoed"
@@ -428,7 +439,12 @@ def checks(device, mac, screens):
         return None
 
     def check_resize():
-        before = set(mac.sizes)
+        # The last frame's grid, not the set of grids ever seen: a reset that
+        # restores the phone's real panel returns to a size the set already
+        # holds, so only the ordered observation can see it come back.
+        default = mac.last_size
+        if default is None:
+            return "the Mac client never saw a frame before the resize check"
         size = device.shell("wm size")
         physical = next(
             line.split(":", 1)[1].strip()
@@ -439,16 +455,18 @@ def checks(device, mac, screens):
         device.shell(f"wm size {override}")
         try:
             time.sleep(2.0)
-            if mac.sizes == before:
+            if mac.last_size == default:
                 return f"the grid never changed after wm size {override}"
             if not wait_terminal(device, "count 120", timeout=15):
                 return "the terminal lost its content after the resize"
             shot("06-resized")
         finally:
             device.shell("wm size reset")
-        time.sleep(1.5)
-        if mac.sizes == before:
-            return "the grid never changed back after wm size reset"
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and mac.last_size != default:
+            time.sleep(0.5)
+        if mac.last_size != default:
+            return f"the grid never returned to {default[0]}x{default[1]} after wm size reset"
         return None
 
     def check_background():
@@ -501,11 +519,21 @@ def main():
         return SKIP_EXIT
 
     adb = str(sdk / "platform-tools" / "adb")
-    listed = subprocess.run([adb, "devices"], capture_output=True, text=True).stdout
+    try:
+        listed = subprocess.run(
+            [adb, "devices"], capture_output=True, text=True, timeout=30
+        ).stdout
+    except subprocess.TimeoutExpired:
+        print(
+            "adb devices timed out; restart the adb server and rerun", file=sys.stderr
+        )
+        return 1
     attached = [
-        line.split()[0]
+        fields[0]
         for line in listed.splitlines()[1:]
-        if line.strip() and line.split()[1] == "device"
+        # Two columns and state "device"; "adb server" chatter and
+        # unauthorized/offline rows do not count as attached.
+        if len(fields := line.split()) == 2 and fields[1] == "device"
     ]
     if not attached:
         print("no adb device attached; connect one and rerun", file=sys.stderr)
@@ -536,7 +564,12 @@ def main():
                 print(f"unknown check {name}", file=sys.stderr)
                 return 1
             print(f"[{name}]", flush=True)
-            problem = available[name]()
+            try:
+                problem = available[name]()
+            except Exception as error:
+                # A check that dies mid-gesture (device pulled, adb hung) is a
+                # failed check, not a lost receipt: record it and keep going.
+                problem = f"{type(error).__name__}: {error}"
             if problem is None:
                 print(f"[{name}] ok", flush=True)
             else:
@@ -546,18 +579,21 @@ def main():
         saw_phone = mac.saw_phone
         closed_by = mac.closed
         grids = sorted(f"{columns}x{rows}" for columns, rows in mac.sizes)
-        mac.stop()
-        mac = None
         receipt = {
             "checks": chosen,
             "failed": [name for name, _ in failed],
+            "failures": {name: problem for name, problem in failed},
             "mac_saw_phone": saw_phone,
             "mac_closed_by": closed_by,
             "grids": grids,
         }
         print(f"screens {screens}")
         print(f"Mac grids seen: {grids}")
+        # Written before the Mac client stops: teardown problems must not
+        # cost the run its evidence.
         (BUILD / "remote-check.json").write_text(json.dumps(receipt, indent=1) + "\n")
+        mac.stop()
+        mac = None
         return 1 if failed else 0
     finally:
         try:

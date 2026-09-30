@@ -13,9 +13,12 @@ object Wrap {
     /** One drawn row after reflow, with a stable identity across frames. */
     data class Row(val id: String, val runs: List<Run>, val columns: Int)
 
+    // BreakIterator is not thread-safe and not cheap; one per thread, reused.
+    private val iterator = ThreadLocal.withInitial<BreakIterator> { BreakIterator.getCharacterInstance() }
+
     /** Grapheme clusters, matching Swift's `String` elements. */
     fun characters(text: String): List<String> {
-        val boundaries = BreakIterator.getCharacterInstance()
+        val boundaries = iterator.get()
         boundaries.setText(text)
         val parts = ArrayList<String>()
         var start = boundaries.first()
@@ -52,9 +55,9 @@ object Wrap {
         var next = 0
         for (run in runs) {
             var column = run.column ?: next
-            val cells = run.width ?: characters(run.text).size
-            next = column + cells
             val characters = characters(run.text)
+            val cells = run.width ?: characters.size
+            next = column + cells
             // Wide characters: keep the run whole on the row it starts in.
             if (characters.size != cells) {
                 place(run, run.text, column, cells, limit, rows)

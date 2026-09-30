@@ -250,7 +250,8 @@ data class HistoryPage(
         val total: Int,
         val offset: Int,
         val rows: Int,
-        val scrubbable: Boolean,
+        /** Older gateways send none; absent means "unchanged from the last word". */
+        val scrubbable: Boolean? = null,
     )
 }
 
@@ -310,7 +311,13 @@ data class Input(
         fun key(key: Key, shift: Boolean = false): Input =
             Input(key = key.wire, modifiers = if (shift) 1 else 0)
 
-        fun wheel(notches: Int, column: Int, row: Int): Input =
-            Input(wheel = listOf(notches, column, row))
+        /** Wheel notches, column, row, clamped to the gateway's bounds. */
+        fun wheel(notches: Int, column: Int, row: Int): Input = Input(
+            wheel = listOf(
+                notches.coerceIn(-64, 64),
+                column.coerceIn(0, 0xFFFF),
+                row.coerceIn(0, 0xFFFF),
+            ),
+        )
     }
 }

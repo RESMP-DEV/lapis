@@ -3,10 +3,12 @@ package dev.lapis.remote.terminal
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -23,7 +25,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -41,6 +42,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.TextUnit
@@ -235,7 +237,7 @@ fun TerminalScreen(
         }
     }
 
-    LaunchedEffect(frame?.revision, cache.rows.size, liveRows.size) {
+    LaunchedEffect(frame?.revision, cache.rows.size, liveRows.size, viewportHeight) {
         if (followBottom && listState.layoutInfo.totalItemsCount > 0) {
             val last = listState.layoutInfo.totalItemsCount - 1
             // Bottom-align the last row: scrollToItem puts a row's top at the
@@ -250,7 +252,9 @@ fun TerminalScreen(
         derivedStateOf {
             val info = listState.layoutInfo
             val first = info.visibleItemsInfo.firstOrNull() ?: return@derivedStateOf false
-            first.index == 0 && first.offset < max(viewportHeight, 200 * density.density.toInt())
+            first.index == 0 && first.offset < with(density) {
+                max(viewportHeight, 200.dp.roundToPx())
+            }
         }
     }
     LaunchedEffect(nearTop) {
@@ -298,13 +302,21 @@ private fun HistoryEdge(historyEnd: Boolean, loadingHistory: Boolean) {
             "Start of history",
             color = Color(0.55f, 0.55f, 0.55f),
             style = TextStyle(fontSize = 11.sp, fontFamily = FontFamily.Monospace),
-            modifier = Modifier.padding(horizontal = 4.dp).height(24.dp),
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp)
+                .height(24.dp),
         )
     } else {
         // Only while a page loads; an empty archive shows nothing.
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 4.dp).height(24.dp),
+            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp)
+                .height(24.dp),
         ) {
             if (loadingHistory) {
                 CircularProgressIndicator(
@@ -345,7 +357,10 @@ private class HistoryCache {
             pages = ids
             this.width = width
             rows = history.flatMap { chunk ->
-                Wrap.rows(chunk.lines, chunk.columns, width, "h${chunk.page}")
+                // The cacheId, not the page number: pages can repeat across
+                // attachments and generations, and duplicate row keys crash
+                // the LazyColumn.
+                Wrap.rows(chunk.lines, chunk.columns, width, "h${chunk.cacheId}")
             }
             text = history.flatMap { it.lines }
                 .joinToString("\n") { line -> line.joinToString("") { it.text } }

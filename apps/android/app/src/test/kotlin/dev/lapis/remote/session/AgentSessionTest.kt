@@ -18,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -45,6 +46,15 @@ private class ScriptedTransport(
         inputGate.countDown()
     }
 
+    /** While true, each history GET waits for [releaseHistory]: the archive read is in flight. */
+    @Volatile
+    var stallHistory = false
+    private val historyGate = java.util.concurrent.CountDownLatch(1)
+
+    fun releaseHistory() {
+        historyGate.countDown()
+    }
+
     @Volatile
     private var open = true
 
@@ -56,6 +66,7 @@ private class ScriptedTransport(
                 "{}"
             }
             request.url.contains("/history") -> {
+                if (stallHistory) historyGate.await()
                 historyRequests += request.url
                 synchronized(historyAnswers) { historyAnswers.removeFirstOrNull() } ?: EMPTY_PAGE
             }
@@ -238,15 +249,23 @@ class AgentSessionTest {
 
     @Test
     fun reopeningAttachesAgainWithAFreshStream() {
-        val transport = ScriptedTransport(frameEvent(revision = 1), holdOpen = false)
+        val transport = ScriptedTransport(frameEvent(revision = 1), holdOpen = false).apply {
+            historyAnswers += page(9, rows = 81, offset = 100, total = 500, scrubbable = true)
+        }
         val session = session(transport)
         await("the closed state") { session.state.value is AgentSession.State.Closed }
+        await("the first attachment's scrubber") { session.scrubbable.value }
 
         transport.streamLines = frameEvent(revision = 2, text = "again")
         transport.holdOpen = true
         session.open(80, 24)
         await("the live state") { session.state.value == AgentSession.State.Live }
         await("the second frame") { session.frame.value?.text == "again" }
+        // The reopen reset: no scrubber, total, or rows carried over from the
+        // previous attachment until the new one announces its own.
+        assertEquals(false, session.scrubbable.value)
+        assertEquals(0, session.historyTotal.value)
+        assertEquals(emptyList(), session.history.value)
     }
 
     @Test
@@ -345,5 +364,32 @@ class AgentSessionTest {
         assertEquals(false, session.historyEnd.value)
         assertEquals(true, session.gapAfter.value)
         assertEquals(session.history.value.single().cacheId, session.jumpedTo.value)
+    }
+
+    @Test
+    fun aJumpArrivingMidLoadRunsWhenTheLoadClosesOut() {
+        val transport = ScriptedTransport(frameEvent(revision = 1)).apply {
+            historyAnswers += page(9, rows = 81, offset = 100, total = 500, scrubbable = true)
+            // The stalled load's page is full (80+ rows) so its gather loop
+            // stops there, leaving the scripted answer for the jump itself.
+            historyAnswers += page(5, rows = 81, offset = 200, total = 500, scrubbable = true)
+            historyAnswers += page(4, rows = 40, offset = 250, total = 500, scrubbable = true)
+        }
+        val session = live(transport)
+        await("the prefetch page") { session.history.value.isNotEmpty() }
+
+        // The next load stalls on the Mac; a jump arriving while it runs must
+        // be held, and must still run once the load clears the flag.
+        transport.stallHistory = true
+        scope.launch { session.loadOlder() }
+        await("the stalled load to open the flag") { session.loadingHistory.value }
+        runBlocking { session.jump(0.5) }
+        assertEquals(true, session.loadingHistory.value)
+
+        transport.releaseHistory()
+        await("the pending jump to land") { session.jumpedTo.value != null }
+        assertTrue(transport.historyRequests.any { it.endsWith("at=250") })
+        assertEquals(listOf(4L), session.history.value.map { it.page })
+        await("the loading flag to clear") { !session.loadingHistory.value }
     }
 }

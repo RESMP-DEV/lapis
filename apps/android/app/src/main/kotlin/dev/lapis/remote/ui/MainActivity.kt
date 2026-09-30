@@ -16,13 +16,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import dev.lapis.remote.platform.DataStoreSettings
 import dev.lapis.remote.session.DiskCache
@@ -30,6 +28,10 @@ import dev.lapis.remote.session.RepositoryFactory
 import dev.lapis.remote.session.ScreenCache
 import dev.lapis.remote.session.WorkspaceRepository
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -42,6 +44,25 @@ class LapisApplication : Application() {
             store = settings,
             cache = DiskCache(File(filesDir, "cache")),
         )
+    }
+
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /**
+     * Lives as long as the process, unlike rememberCoroutineScope(): agent
+     * sessions outlive the composable that showed them being torn down.
+     */
+    val sessionScope: CoroutineScope get() = appScope
+
+    /** A debug-launch cache wipe in flight; restore waits for it. */
+    internal var resetJob: Job? = null
+
+    /** Debug-launch terminal font size: in memory only, never persisted. */
+    internal var fontSizeOverride: Float? = null
+
+    internal fun wipeCacheAsync(): Job {
+        ScreenCache.clearAll()
+        return appScope.launch(Dispatchers.IO) { File(filesDir, "cache").deleteRecursively() }
     }
 }
 
@@ -56,7 +77,7 @@ class MainActivity : ComponentActivity() {
                 // Expose testTags as resource-ids so adb's uiautomator can
                 // find tagged controls; identifiers mirror the iOS app.
                 Box(Modifier.semantics { testTagsAsResourceId = true }) {
-                    LapisApp(repository)
+                    LapisApp(repository, application as LapisApplication)
                 }
             }
         }
@@ -73,21 +94,21 @@ class MainActivity : ComponentActivity() {
         if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) == 0) return
         val owner = application as LapisApplication
         if (launch.getBooleanExtra("resetCache", false)) {
-            // Before the lazy repository ever reads the directory.
-            ScreenCache.clearAll()
-            File(filesDir, "cache").deleteRecursively()
+            // Before the lazy repository ever reads the directory; the disk
+            // walk runs off the main thread and restore() waits for it.
+            owner.resetJob = owner.wipeCacheAsync()
         }
         launch.getStringExtra("gatewayHost")?.let { host ->
             owner.repository.setHost(host)
         }
         launch.getStringExtra("terminalFontSize")?.toFloatOrNull()?.let { size ->
-            lifecycleScope.launch { owner.settings.putString(FONT_SIZE_KEY, size.toString()) }
+            owner.fontSizeOverride = size.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE)
         }
     }
 }
 
 @Composable
-private fun LapisApp(repository: WorkspaceRepository) {
+private fun LapisApp(repository: WorkspaceRepository, app: LapisApplication) {
     val host by repository.host.collectAsStateWithLifecycle()
     val listing by repository.listing.collectAsStateWithLifecycle()
     val error by repository.error.collectAsStateWithLifecycle()
@@ -102,7 +123,9 @@ private fun LapisApp(repository: WorkspaceRepository) {
     // in the foreground, mirroring the iOS refresh loop (foreground only; no
     // background network by design). One effect, so the first poll always
     // uses the restored host; polling runs only while the app is started.
+    // A debug-launch cache wipe finishes before anything reads the cache.
     LaunchedEffect(repository) {
+        app.resetJob?.join()
         repository.restore()
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
@@ -131,11 +154,19 @@ private fun LapisApp(repository: WorkspaceRepository) {
         val openAgent = openAgentId?.let { id ->
             listing?.categories?.flatMap { it.agents }?.firstOrNull { it.id == id }
         }
-        if (openAgentId != null && openAgent != null) {
+        // A listing that loaded without the agent means it is gone (exited or
+        // taken back by the Mac): drop the remembered id instead of silently
+        // reopening the stage when a later refresh happens to list it again.
+        LaunchedEffect(listing, openAgentId) {
+            if (listing != null && openAgentId != null && openAgent == null) openAgentId = null
+        }
+        if (openAgent != null) {
             AgentStage(
                 agent = openAgent,
                 repository = repository,
-                settings = (LocalContext.current.applicationContext as LapisApplication).settings,
+                settings = app.settings,
+                sessionScope = app.sessionScope,
+                fontSizeOverride = app.fontSizeOverride,
                 onBack = { openAgentId = null },
             )
         } else {

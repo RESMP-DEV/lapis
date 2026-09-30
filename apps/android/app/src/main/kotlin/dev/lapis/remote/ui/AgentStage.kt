@@ -75,6 +75,7 @@ import dev.lapis.remote.terminal.TerminalMetrics
 import dev.lapis.remote.terminal.TerminalScreen
 import kotlin.math.max
 import kotlin.math.min
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 /**
@@ -93,15 +94,22 @@ fun AgentStage(
     agent: Agent,
     repository: WorkspaceRepository,
     settings: KeyValueStore,
+    sessionScope: CoroutineScope,
+    fontSizeOverride: Float?,
     onBack: () -> Unit,
 ) {
     val host by repository.host.collectAsStateWithLifecycle()
     val gateway = remember(host) { repository.gatewayFor(host) }
     val scope = rememberCoroutineScope()
-    val session = remember(agent.id, gateway) { AgentSession(agent, gateway, scope) }
+    // An application-lived scope, not rememberCoroutineScope(): that one is
+    // cancelled before DisposableEffect.onDispose runs, so the session's jobs
+    // would already be dead when close() goes to retire them.
+    val session = remember(agent.id, gateway) { AgentSession(agent, gateway, sessionScope) }
     DisposableEffect(session) {
         onDispose { session.close() }
     }
+    // The Mac may rename the agent mid-session; the session (keyed by id) stays.
+    LaunchedEffect(agent, session) { session.updateAgent(agent) }
 
     val state by session.state.collectAsStateWithLifecycle()
     val frame by session.frame.collectAsStateWithLifecycle()
@@ -112,9 +120,12 @@ fun AgentStage(
     val notice by session.notice.collectAsStateWithLifecycle()
     val sessionSize by session.size.collectAsStateWithLifecycle()
 
-    var fontSize by remember { mutableStateOf(12f) }
-    LaunchedEffect(settings) {
-        fontSize = settings.getString(FONT_SIZE_KEY)?.toFloatOrNull() ?: 12f
+    var fontSize by remember { mutableStateOf(fontSizeOverride ?: DEFAULT_FONT_SIZE) }
+    LaunchedEffect(settings, fontSizeOverride) {
+        if (fontSizeOverride == null) {
+            fontSize = settings.getString(FONT_SIZE_KEY)?.toFloatOrNull()
+                ?.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE) ?: DEFAULT_FONT_SIZE
+        }
     }
     val density = LocalDensity.current
     val metrics = remember(fontSize, density) {
@@ -165,20 +176,27 @@ fun AgentStage(
             return
         }
         // Focus can precede the keyboard insets, so an unchanged width with
-        // the composer active is a keyboard-only height change. Rotation and
-        // fold changes move the width: fit rows even with the keyboard shown.
-        val keyboardOnly = (keyboardShown || composing) && grid.columns == current.columns
+        // the composer active and the height shrinking is a keyboard-only
+        // change. A growing height fits rows even while composing: focus
+        // without a visible keyboard must never pin the grid short. Rotation
+        // and fold changes move the width: fit rows even with the keyboard.
+        val keyboardOnly = (keyboardShown || (composing && grid.rows < current.rows)) &&
+            grid.columns == current.columns
         if (force || grid.columns != current.columns || (!keyboardOnly && grid.rows != current.rows)) {
             session.resize(grid.columns, if (keyboardOnly) current.rows else grid.rows)
         }
     }
 
-    LaunchedEffect(stageSize) { fit() }
-    LaunchedEffect(fontSize) { fit(force = true) }
+    LaunchedEffect(session, stageSize) { fit() }
+    LaunchedEffect(session, fontSize) { fit(force = true) }
 
     fun setFontSize(value: Float) {
         fontSize = value
-        scope.launch { settings.putString(FONT_SIZE_KEY, value.toString()) }
+        // A launch override wins for this run only, matching iOS: it applies
+        // in memory and is never written back to settings.
+        if (fontSizeOverride == null) {
+            scope.launch { settings.putString(FONT_SIZE_KEY, value.toString()) }
+        }
     }
 
     var menuOpen by remember { mutableStateOf(false) }
@@ -193,6 +211,20 @@ fun AgentStage(
                 TextButton(onClick = { session.clearNotice() }) { Text("OK") }
             },
         )
+    }
+
+    // Stable lambdas so TerminalScreen and Banner stay skippable; a fresh
+    // lambda on every composition would recompose them each frame.
+    val loadOlder: suspend () -> Unit = remember(session) { { session.loadOlder() } }
+    val onReopen = remember(session) { { columns: Int, rows: Int -> session.open(columns, rows) } }
+    // Reopen at the geometry the stage has now, not the size the dying
+    // attachment last reported: a fold or rotation between close and reopen
+    // would otherwise resurrect the stale grid.
+    val reopenGrid: AgentSession.Grid? = if (stageSize.width > 0 && stageSize.height > 0) {
+        metrics.grid(stageSize.width.toFloat(), stageSize.height.toFloat())
+            .let { AgentSession.Grid(it.columns, it.rows) }
+    } else {
+        sessionSize
     }
 
     Scaffold(
@@ -219,14 +251,14 @@ fun AgentStage(
                             text = { Text("Larger text") },
                             onClick = {
                                 menuOpen = false
-                                setFontSize(min(fontSize + 1f, 20f))
+                                setFontSize(min(fontSize + 1f, MAX_FONT_SIZE))
                             },
                         )
                         DropdownMenuItem(
                             text = { Text("Smaller text") },
                             onClick = {
                                 menuOpen = false
-                                setFontSize(max(fontSize - 1f, 8f))
+                                setFontSize(max(fontSize - 1f, MIN_FONT_SIZE))
                             },
                         )
                     }
@@ -258,17 +290,12 @@ fun AgentStage(
                     history = history,
                     historyEnd = historyEnd,
                     loadingHistory = loadingHistory,
-                    fitColumns = metrics.grid(
-                        stageSize.width.toFloat(),
-                        stageSize.height.toFloat(),
-                    ).columns,
+                    fitColumns = reopenGrid?.columns ?: 80,
                     metrics = metrics,
-                    loadOlder = { session.loadOlder() },
+                    loadOlder = loadOlder,
                 )
             }
-            Banner(state, agent.title, shared, sessionSize) { columns, rows ->
-                session.open(columns, rows)
-            }
+            Banner(state, agent.title, shared, reopenGrid, onReopen)
             Composer(
                 draft = draft,
                 onDraft = { draft = it },
@@ -412,7 +439,7 @@ private val KeyboardGlyph by lazy {
     ).apply {
         addPath(
             pathData = addPathNodes("M3.5,7 h17 v10 h-17 z"),
-            stroke = androidx.compose.ui.graphics.SolidColor(Color.Black),
+            stroke = androidx.compose.ui.graphics.SolidColor(LapisColors.quiet),
             strokeLineWidth = 1.7f,
             strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round,
             strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round,
@@ -429,10 +456,14 @@ private val KeyboardGlyph by lazy {
         }
         addPath(
             pathData = addPathNodes(keys),
-            fill = androidx.compose.ui.graphics.SolidColor(Color.Black),
+            fill = androidx.compose.ui.graphics.SolidColor(LapisColors.quiet),
         )
     }.build()
 }
 
 /** DataStore key for the terminal font size, matching iOS "terminalFontSize". */
 internal const val FONT_SIZE_KEY = "terminalFontSize"
+
+private const val DEFAULT_FONT_SIZE = 12f
+internal const val MIN_FONT_SIZE = 8f
+internal const val MAX_FONT_SIZE = 20f

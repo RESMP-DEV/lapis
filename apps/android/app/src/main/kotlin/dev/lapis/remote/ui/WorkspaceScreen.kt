@@ -256,7 +256,9 @@ private fun AgentCard(agent: Agent, onClick: () -> Unit) {
         modifier = Modifier
             .padding(horizontal = 16.dp, vertical = 5.dp)
             .fillMaxWidth()
-            .testTag("agent-${agent.title}")
+            // The id, not the title: titles repeat (two agents named the
+            // same) and rename, which made uiautomator matches ambiguous.
+            .testTag("agent-${agent.id}")
             .clickable(onClick = onClick)
             .background(
                 Brush.verticalGradient(listOf(LapisColors.panel, LapisColors.panelDeep)),

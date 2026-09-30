@@ -12,9 +12,12 @@ renderer, composer, history paging) is implemented, unit-tested, and
 device-verified on the Z Fold cover screen with the fake-agent harness
 (`scripts/check_android_remote.py` over `adb reverse`): list, open, typing
 and Mac/phone sync, draft retention, scrollback paging, resize re-grid,
-background/return, and crash scan all green; the stand-in agent rides the
-same PTY/service path a real Codex agent would, with the live-CLI overlay
-run folded into the milestone A/D device gates. This file is the
+background/return, and crash scan all green. The live agent in those runs is
+the deterministic `fake_agent` fixture riding the same PTY/service path a
+real Codex agent would; no real Codex CLI session has been driven from the
+Android app yet. That live-CLI run is pending, folded into the milestone
+A/D overlay device gates so it exercises the production transport rather
+than adb reverse. This file is the
 working spec for the Android companion client. When the first milestone
 lands on a device, this content consolidates into `docs/architecture.md`
 and this file is removed, per the workspace rule that architecture.md is
