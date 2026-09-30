@@ -104,5 +104,87 @@ class KeycodeTest(unittest.TestCase):
         self.assertEqual(android_ctl.keycode("187"), "187")
 
 
+def canned_device(window_dump, activities_dump, ime_dump=None):
+    """A Device whose shell() answers canned dumpsys output, so the
+    lock/IME probes run against build-variant dumps without hardware."""
+    device = android_ctl.Device.__new__(android_ctl.Device)
+    replies = {
+        "dumpsys window": window_dump,
+        "dumpsys activity activities": activities_dump,
+    }
+    if ime_dump is not None:
+        replies["dumpsys input_method"] = ime_dump
+    device.shell = lambda command: replies.get(command, "")
+    return device
+
+
+class LockedTest(unittest.TestCase):
+    # Rounds 7-9 made locked() a chain of build-specific string probes;
+    # these cases pin each signal shape the parser is known to meet.
+    def test_keyguard_flag_alone_means_locked(self):
+        device = canned_device("isKeyguardShowing=true", "irrelevant")
+        self.assertTrue(device.locked())
+
+    def test_dream_flag_alone_means_locked(self):
+        device = canned_device("mDreamingLockscreen=true", "irrelevant")
+        self.assertTrue(device.locked())
+
+    def test_aosp_resumed_marker_catches_camel_case_dialer(self):
+        device = canned_device(
+            "isKeyguardShowing=false mDreamingLockscreen=false",
+            "  topResumedActivity=ActivityRecord{1f u0 "
+            "com.android.phone/.EmergencyCallActivity t9}",
+        )
+        self.assertTrue(device.locked())
+
+    def test_one_ui_resumed_lines_catch_the_dialer(self):
+        device = canned_device(
+            "isKeyguardShowing=false",
+            "  Resumed activities in task display areas (from top to bottom):\n"
+            "    Resumed: ActivityRecord{565 u0 com.sec.android.app."
+            "emergencydialer/emergencydialer.view.EmergencyDialerActivity t7}\n"
+            "  ResumedActivity: ActivityRecord{565 u0 com.sec.android.app."
+            "emergencydialer/emergencydialer.view.EmergencyDialerActivity t7}",
+        )
+        self.assertTrue(device.locked())
+
+    def test_emergency_text_outside_resumed_lines_reads_unlocked(self):
+        # The 300-char slice after a bare marker substring used to spill
+        # into per-task sections; a line-anchored match must not.
+        device = canned_device(
+            "isKeyguardShowing=false mDreamingLockscreen=false",
+            "  topResumedActivity=ActivityRecord{2 u0 dev.lapis.remote/.MainActivity t3}\n"
+            "  ...permission android.permission.FOREGROUND_EMERGENCY unrelated",
+        )
+        self.assertFalse(device.locked())
+
+    def test_unlocked_app_and_missing_fields_read_unlocked(self):
+        device = canned_device(
+            "isKeyguardShowing=false mDreamingLockscreen=false",
+            "  topResumedActivity=ActivityRecord{2 u0 dev.lapis.remote/.MainActivity t3}",
+        )
+        self.assertFalse(device.locked())
+        stripped = canned_device("some other output", "short")
+        self.assertFalse(stripped.locked())
+
+
+class ImeShownTest(unittest.TestCase):
+    def test_shown_and_hidden_read_from_the_field(self):
+        shown = canned_device(None, None, "mInputShown=true mInputView=null")
+        self.assertTrue(shown.ime_shown())
+        hidden = canned_device(None, None, "mInputShown=false")
+        self.assertFalse(hidden.ime_shown())
+
+    def test_missing_field_raises_skipped_not_device_error(self):
+        # The runner classifies Skipped before DeviceError and uses the
+        # bare message; the prefix contract is what routes the check into
+        # the receipt's skipped bucket instead of its failed bucket.
+        device = canned_device(None, None, "no ime state here")
+        with self.assertRaises(android_ctl.Skipped) as raised:
+            device.ime_shown()
+        self.assertTrue(str(raised.exception).startswith("SKIPPED:"))
+        self.assertIsInstance(raised.exception, android_ctl.DeviceError)
+
+
 if __name__ == "__main__":
     unittest.main()
