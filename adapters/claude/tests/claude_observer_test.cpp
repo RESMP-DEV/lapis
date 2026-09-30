@@ -282,6 +282,91 @@ void connection_overflow_is_observable() {
     require(f.state.ready() && f.state.pending().contains(std::string{"after-overload"}));
 }
 
+void one_sided_stops_and_diagnostic_recovery() {
+    const QString baseline =
+        QStringLiteral("Claude hooks observe attention only; answer in the terminal");
+
+    // Either list alone is valid. An omitted sibling is empty, not unknown,
+    // so a genuinely finished turn does not incur the pause deadline.
+    Fixture tasks_only;
+    tasks_only.begin();
+    require(tasks_only.observer.diagnostic() == baseline);
+    auto tasks_stop = event("Stop");
+    tasks_stop.insert("background_tasks", QJsonArray{});
+    tasks_only.raw(QJsonDocument(tasks_stop).toJson(QJsonDocument::Compact));
+    require(tasks_only.state.activity() == attention::Activity::turn_completed);
+    require(tasks_only.observer.diagnostic() == baseline);
+
+    Fixture crons_only;
+    crons_only.begin();
+    auto crons_stop = event("Stop");
+    crons_stop.insert("session_crons", QJsonArray{});
+    crons_only.raw(QJsonDocument(crons_stop).toJson(QJsonDocument::Compact));
+    require(crons_only.state.activity() == attention::Activity::turn_completed);
+    require(crons_only.observer.diagnostic() == baseline);
+
+    // A present non-array remains schema drift, and a later valid count
+    // retires only that background diagnostic. The standing terminal-only
+    // instruction survives the clear.
+    Fixture recovered;
+    recovered.begin();
+    auto drifted = event("Stop");
+    drifted.insert("background_tasks", QJsonObject{{"status", "running"}});
+    recovered.raw(QJsonDocument(drifted).toJson(QJsonDocument::Compact));
+    require(recovered.state.activity() == attention::Activity::working);
+    require(recovered.observer.diagnostic().contains(baseline) &&
+            recovered.observer.diagnostic().contains(
+                QLatin1String("Claude background-work schema is unavailable")));
+    auto finished = event("Stop");
+    finished.insert("background_tasks", QJsonArray{});
+    recovered.raw(QJsonDocument(finished).toJson(QJsonDocument::Compact));
+    require(recovered.state.activity() == attention::Activity::turn_completed);
+    require(recovered.observer.diagnostic() == baseline);
+
+    // An older relay's omitted lists replace the transient schema message;
+    // they do not hide the standing terminal-only instruction.
+    Fixture legacy;
+    legacy.begin();
+    legacy.send(event("Stop"), QStringLiteral("unknown"));
+    legacy.raw(QJsonDocument(event("Stop")).toJson(QJsonDocument::Compact));
+    require(legacy.state.activity() == attention::Activity::turn_completed);
+    require(legacy.observer.diagnostic().contains(baseline) &&
+            legacy.observer.diagnostic().contains(QLatin1String("observation is legacy")) &&
+            !legacy.observer.diagnostic().contains(QLatin1String("schema is unavailable")));
+
+    // The same scoped recovery applies to diagnostics from another observer
+    // subsystem, rather than restoring one hard-coded baseline.
+    Fixture interrupted;
+    interrupted.begin();
+    std::array<QLocalSocket, 8> clients;
+    for (auto& client : clients) {
+        client.connectToServer(interrupted.socket);
+        require(client.waitForConnected(1000));
+        QCoreApplication::processEvents();
+    }
+    QLocalSocket overflow;
+    overflow.connectToServer(interrupted.socket);
+    require(overflow.waitForConnected(1000));
+    QCoreApplication::processEvents();
+    const QString transport_diagnostic = interrupted.observer.diagnostic();
+    require(transport_diagnostic.contains(
+        QLatin1String("Claude hook connection limit exceeded (at least 1)")));
+
+    overflow.disconnectFromServer();
+    for (auto& client : clients)
+        client.disconnectFromServer();
+    QCoreApplication::processEvents();
+    interrupted.raw(QJsonDocument(drifted).toJson(QJsonDocument::Compact));
+    require(interrupted.state.activity() == attention::Activity::working);
+    require(interrupted.observer.diagnostic().contains(transport_diagnostic) &&
+            interrupted.observer.diagnostic().contains(
+                QLatin1String("Claude background-work schema is unavailable")));
+
+    interrupted.raw(QJsonDocument(finished).toJson(QJsonDocument::Compact));
+    require(interrupted.state.activity() == attention::Activity::turn_completed);
+    require(interrupted.observer.diagnostic() == transport_diagnostic);
+}
+
 // A Stop with background tasks or wakeups in flight is a paused turn: the
 // agent's own work starts its next turn (a new prompt), and only a Stop with
 // nothing in flight, or a pause no turn follows, finishes it.
@@ -467,6 +552,7 @@ int main(int argc, char** argv) {
         completed_tool_bounds();
         completed_tools_reset_at_prompt_epoch();
         connection_overflow_is_observable();
+        one_sided_stops_and_diagnostic_recovery();
         session_replacement();
         background_work_pauses_the_turn();
         privacy_bounds_and_transport();

@@ -1249,22 +1249,23 @@ input lists `background_tasks` (in-flight background shells and agents) and
 from "paused waiting for background work to wake it". The relay forwards only
 the count of running/pending tasks plus scheduled wakeups, as its own
 `in_flight` event field (a claimed value from the hook is dropped). The source
-copy allowlist and derived fields are separate; the private socket nonce is
-the writer trust boundary. This retains the existing relay frame shape. A `Stop` with work in flight leaves the agent working, so no
-finished-turn chime or notification fires; the task's notification arrives as
-a new prompt (a `UserPromptSubmit` with a fresh `prompt_id`, observed live) and
-that turn's `Stop` with nothing in flight finishes it. Pausing retires that
-turn's notices. A paused turn with no new prompt within ten minutes (a server
-left running, say) finishes then; duplicate Stop hooks never extend this deadline.
-Malformed background lists or unknown task statuses report schema unavailability
-and use the bounded pause fallback. An unobservable deadline reports lost
-synchronization rather than silently discarding the turn. On
-September 29, the author's analysis of one day of transcripts found that
-2,003 of 4,097 turn endings with a subsequent event were followed by a
-background-task notification rather than a user prompt. This dated observation
-explains why finished-turn pings arrived while agents were still iterating; it
-is not a new runtime measurement of this adapter change. Older Claude Code, without these fields, behaves as
-before.
+copy allowlist and derived fields are separate; the private socket nonce is the
+writer trust boundary. This retains the existing relay frame shape. A `Stop`
+with work in flight leaves the agent working, so no finished-turn chime or
+notification fires; the task's notification arrives as a new prompt (a
+`UserPromptSubmit` with a fresh `prompt_id`, observed live) and that turn's
+`Stop` with nothing in flight finishes it. Pausing retires that turn's notices.
+A paused turn with no new prompt within ten minutes (a server left running,
+say) finishes then; duplicate Stop hooks never extend this deadline. Malformed
+background lists or unknown task statuses report schema unavailability and use
+the bounded pause fallback. An unobservable deadline reports lost
+synchronization rather than silently discarding the turn. On September 29, the
+author's analysis of one day of transcripts found that 2,003 of 4,097 turn
+endings with a subsequent event were followed by a background-task notification
+rather than a user prompt. This dated observation explains why finished-turn
+pings arrived while agents were still iterating; it is not a new runtime
+measurement of this adapter change. Older Claude Code, without these fields,
+behaves as before.
 
 `SessionEnd` retires the conversation's notices without closing the service-owned
 listener. A subsequent `SessionStart` with a fresh source identity begins a new

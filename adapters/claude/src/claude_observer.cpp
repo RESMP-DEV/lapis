@@ -102,7 +102,9 @@ class Observer::Impl {
         paused_.stop();
         close();
         state_.disconnect();
-        diagnostic_ = QStringLiteral("Claude hook observation stopped");
+        background_diagnostic_.clear();
+        base_diagnostic_ = QStringLiteral("Claude hook observation stopped");
+        update_diagnostic();
         notify();
     }
     void connection_overflow() {
@@ -111,10 +113,11 @@ class Observer::Impl {
         if (failed_ || connection_overflows_ == connection_overflow_report_limit)
             return;
         ++connection_overflows_;
-        diagnostic_ =
+        base_diagnostic_ =
             QStringLiteral(
                 "Claude hook connection limit exceeded (at least %1); hooks may be missing")
                 .arg(connection_overflows_);
+        update_diagnostic();
         notify();
     }
     QStringList launch(const QStringList& original, const QString& executable) {
@@ -194,7 +197,9 @@ class Observer::Impl {
     }
     void loss(const QString& message) {
         state_.overflow();
-        diagnostic_ = message + QStringLiteral("; restart the session to restore observation");
+        background_diagnostic_.clear();
+        base_diagnostic_ = message + QStringLiteral("; restart the session to restore observation");
+        update_diagnostic();
         failed_ = true;
         notify();
     }
@@ -210,7 +215,10 @@ class Observer::Impl {
         sequence_ = 1;
         if (!applied(state_.begin_observation({state_.epoch(), sequence_}, now())))
             return;
-        diagnostic_ = QStringLiteral("Claude hooks observe attention only; answer in the terminal");
+        base_diagnostic_ =
+            QStringLiteral("Claude hooks observe attention only; answer in the terminal");
+        background_diagnostic_.clear();
+        update_diagnostic();
     }
     void clear() {
         std::vector<attention::RequestId> ids;
@@ -300,7 +308,10 @@ class Observer::Impl {
             // /clear ends a conversation, not the service-owned Claude process.
             // Only a fresh SessionStart may bind its replacement; delayed old
             // hooks cannot resurrect the retired conversation.
-            diagnostic_ = QStringLiteral("Claude session ended; waiting for a new session hook");
+            base_diagnostic_ =
+                QStringLiteral("Claude session ended; waiting for a new session hook");
+            background_diagnostic_.clear();
+            update_diagnostic();
             notify();
             return;
         }
@@ -397,17 +408,20 @@ class Observer::Impl {
     void stop_turn(const QJsonObject& event) {
         if (completed_)
             return;
-        const auto in_flight = event.value("in_flight").toString(QStringLiteral("legacy"));
+        const auto in_flight =
+            event.value(relay_in_flight_field.toString()).toString(QStringLiteral("legacy"));
         if (in_flight == QLatin1String("legacy")) {
-            diagnostic_ = QStringLiteral(
+            background_diagnostic_ = QStringLiteral(
                 "Claude does not report background work; finished-turn observation is legacy");
+            update_diagnostic();
             finish_turn();
             notify();
             return;
         }
         if (in_flight == QLatin1String("unknown")) {
-            diagnostic_ = QStringLiteral(
+            background_diagnostic_ = QStringLiteral(
                 "Claude background-work schema is unavailable; using the pause fallback");
+            update_diagnostic();
             pause_turn();
             return;
         }
@@ -420,7 +434,11 @@ class Observer::Impl {
             loss(QStringLiteral("Malformed Claude background-work count"));
             return;
         }
-        diagnostic_.clear();
+        // A count proves that the schema-aware relay observed this Stop. Retire
+        // only the transient background diagnostic; lifecycle and transport
+        // diagnostics remain visible until their own condition changes.
+        background_diagnostic_.clear();
+        update_diagnostic();
         if (count > 0) {
             pause_turn();
             return;
@@ -472,6 +490,9 @@ class Observer::Impl {
     QSet<QString> retired_sources_;
     QSet<QString> completed_tools_;
     std::map<attention::RequestId, QJsonObject> details_;
+    QString base_diagnostic_{
+        QStringLiteral("Waiting for a Claude session hook; hooks may be disabled")};
+    QString background_diagnostic_;
     QString diagnostic_{QStringLiteral("Waiting for a Claude session hook; hooks may be disabled")};
     std::uint32_t connection_overflows_{};
     std::uint64_t sequence_{};
@@ -481,6 +502,12 @@ class Observer::Impl {
     bool completed_{};
     bool awaiting_start_{};
     QTimer paused_;
+
+    void update_diagnostic() {
+        diagnostic_ = background_diagnostic_.isEmpty()
+                          ? base_diagnostic_
+                          : base_diagnostic_ + QLatin1Char('\n') + background_diagnostic_;
+    }
 };
 Observer::Observer(attention::State& state, QObject* parent)
     : QObject(parent), impl_(std::make_unique<Impl>(state, *this)) {}
