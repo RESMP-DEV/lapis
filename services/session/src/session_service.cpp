@@ -246,8 +246,11 @@ class SessionService final : public QObject {
     }
     void schedule_attention() {
         if (attention_state() && attention_dirty_ && client_ && ready_ && !stopping_ &&
-            !attention_timer_.isActive())
-            attention_timer_.start();
+            !attention_timer_.isActive()) {
+            const auto since =
+                last_attention_publish_.isValid() ? last_attention_publish_.elapsed() : frame_ms;
+            attention_timer_.start(since >= frame_ms ? 0 : static_cast<int>(frame_ms - since));
+        }
     }
     void publish_attention() {
         const auto* state = attention_state();
@@ -280,6 +283,7 @@ class SessionService final : public QObject {
             if (destination->bytesToWrite() + bytes.size() > wire::max_frame_bytes ||
                 destination->write(bytes) != bytes.size())
                 throw std::runtime_error("Attention output queue unavailable");
+            last_attention_publish_.start();
             attention_dirty_ = false;
         } catch (const std::exception& error) {
             if (client_ == destination && attachment_ == owner) {
@@ -1447,6 +1451,7 @@ class SessionService final : public QObject {
     QTimer timer_;
     QElapsedTimer last_publish_;
     static constexpr qint64 frame_ms = 16;
+    QElapsedTimer last_attention_publish_;
     QTimer ack_timer_;
     quint64 generation_{};
     quint64 snapshot_sequence_{};

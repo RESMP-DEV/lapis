@@ -748,6 +748,131 @@ def _case_actions(build, runtime, artifacts, desktop_enabled, codex=None):
             outcomes.append(name)
         return {"backend_exit_cases": outcomes, "raw_stderr_excluded": True}
 
+    def attention_publication_pacing():
+        """Real service IPC, with an unqualified disposable Codex source."""
+        from check_service_attention import decision as make_attention_decision
+
+        executable = runtime / "attention-pacing-codex"
+        executable.write_text(
+            f"#!{sys.executable}\n"
+            "import os,socket,sys,time\n"
+            "from pathlib import Path\n"
+            "if sys.argv[1]=='app-server':\n"
+            " time.sleep(.02)\n"
+            " endpoint=sys.argv[3].removeprefix('unix://')\n"
+            " server=socket.socket(socket.AF_UNIX)\n"
+            " server.bind(endpoint)\n"
+            " Path(endpoint+'.bound').touch()\n"
+            " Path(endpoint+'.pid').write_text(str(os.getpid()))\n"
+            " server.listen()\n"
+            " while True:\n"
+            "  connection,_=server.accept();connection.close()\n"
+            "else:\n"
+            " endpoint=sys.argv[2].removeprefix('unix://')\n"
+            " deadline=time.monotonic()+5\n"
+            " while not Path(endpoint).exists() and time.monotonic()<deadline:\n"
+            "  time.sleep(.01)\n"
+            " client=socket.socket(socket.AF_UNIX)\n"
+            " client.connect(endpoint);client.close()\n"
+            " print('READY',flush=True)\n"
+            " for line in sys.stdin: print('ECHO:'+line.strip(),flush=True)\n"
+        )
+        executable.chmod(0o700)
+        service = Service(
+            binary,
+            runtime,
+            artifacts,
+            "attention-pacing",
+            str(executable),
+            [],
+            runtime,
+            codex=True,
+        )
+
+        def read_attention(client, timeout=WAIT):
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                try:
+                    kind, data = client.receive(max(0.01, deadline - time.monotonic()))
+                except FrameDeadline:
+                    continue
+                require(
+                    kind in (SNAPSHOT, ATTENTION_SNAPSHOT),
+                    "Unexpected frame while reading attention pacing",
+                )
+                if kind == ATTENTION_SNAPSHOT:
+                    require(
+                        data[4:44] == client.attachment,
+                        f"Attention attachment mismatch: {client.attachment.hex()} != {data[4:44].hex()}",
+                    )
+                    require(
+                        struct.unpack_from(">I", data)[0] == VERSION,
+                        "Attention version mismatch",
+                    )
+                    offset = 44 + 3
+                    offset += 1
+                    epoch = struct.unpack_from(">Q", data, offset)[0]
+                    offset += 8
+                    length = struct.unpack_from(">I", data, offset)[0]
+                    offset += 4
+                    diagnostic = data[offset : offset + length].decode()
+                    offset += length
+                    count = struct.unpack_from(">I", data, offset)[0]
+                    return {
+                        "connected": bool(data[45]),
+                        "ready": bool(data[46]),
+                        "epoch": epoch,
+                        "diagnostic": diagnostic,
+                        "requests": count,
+                    }
+            raise CheckError("Attention publication deadline expired")
+
+        try:
+            deadline = time.monotonic() + WAIT
+            marker = Path(str(service.endpoint) + ".codex.bound")
+            while not marker.exists():
+                require(time.monotonic() < deadline, "Attention fixture never bound")
+                time.sleep(0.01)
+            with service.connect() as client:
+                initial = read_attention(client)
+                require(
+                    initial["requests"] == 0,
+                    "Unqualified source did not publish initial attention",
+                )
+                # Two stale-source decisions arrive during one 16 ms service
+                # pacing window. Terminating the source immediately supplies a
+                # distinguishable newest state for that same deadline.
+                for revision in (1, 2):
+                    client.send(
+                        ATTENTION_DECISION,
+                        make_attention_decision(
+                            {
+                                "epoch": max(1, initial["epoch"]),
+                                "id": 1,
+                                "revision": revision,
+                            },
+                            "allow",
+                        ),
+                    )
+                pid = int(Path(str(service.endpoint) + ".codex.pid").read_text())
+                os.kill(pid, signal.SIGTERM)
+                latest = read_attention(client)
+                require(
+                    "Codex server exited" in latest["diagnostic"],
+                    f"Deadline kept an older state: {latest['diagnostic']}",
+                )
+                try:
+                    client.receive(0.04)
+                except (FrameDeadline, TimeoutError):
+                    pass
+                else:
+                    raise CheckError(
+                        "One burst produced a second attention publication"
+                    )
+            return {"attention_burst_publications": 1, "newest_state": "source-exit"}
+        finally:
+            service.stop()
+
     def delayed_codex_listener():
         # This disposable executable is deliberately unqualified: terminal startup
         # still works, while structured attention remains disabled.
@@ -1471,6 +1596,11 @@ with open(sys.argv[1], 'wb', buffering=0) as output:
         (
             "Codex backend exit diagnostics exclude private stderr",
             codex_backend_exit,
+            None,
+        ),
+        (
+            "attention bursts publish the newest state at the pacing deadline",
+            attention_publication_pacing,
             None,
         ),
         (

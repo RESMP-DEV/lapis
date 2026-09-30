@@ -75,14 +75,23 @@ void SessionPreview::offerSnapshot(QByteArray encoded) {
         decodeWaiting();
         if (!history_active_)
             emit snapshotChanged();
-    } else if (!decode_timer_.isActive()) {
-        // The first screen opens the window; later ones share its decode.
-        decode_timer_.start(*viewers_.begin());
+        return;
+    }
+    if (!decode_timer_.isActive()) {
+        // The first eligible screen opens the window now; later screens share
+        // the remaining part of the viewer interval. Replacing waiting_ keeps
+        // only the newest state of a burst for that deadline.
+        const auto since = last_decode_.isValid() ? last_decode_.elapsed() : *viewers_.begin();
+        const auto remaining = *viewers_.begin() - static_cast<int>(since);
+        decode_timer_.start(std::max(0, remaining));
     }
 }
 bool SessionPreview::decodeWaiting() const {
     if (!waiting_)
         return false;
+    // A decode attempt paces the next one even when that newest screen is
+    // unreadable; otherwise malformed bursts would retry without a deadline.
+    last_decode_.start();
     auto encoded = std::move(*waiting_);
     waiting_.reset();
     try {
@@ -99,6 +108,8 @@ bool SessionPreview::decodeWaiting() const {
 }
 void SessionPreview::addViewer(int interval_ms) {
     const bool first = viewers_.empty();
+    if (first)
+        last_decode_.invalidate();
     viewers_.insert(std::max(0, interval_ms));
     if (first && decodeWaiting() && !history_active_)
         emit snapshotChanged();

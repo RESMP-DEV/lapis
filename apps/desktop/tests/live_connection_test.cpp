@@ -254,6 +254,63 @@ void history_browsing_and_input_gating() {
             "Canceled history reply disconnected a usable session");
 }
 
+// An idle viewer decodes the first eligible screen immediately. While the
+// viewer interval is already open, a burst replaces the pending screen and one
+// deadline publishes only its newest state. Hidden viewers store but never
+// decode; showing the card resumes immediately with that latest state.
+void preview_decode_is_idle_first_and_burst_newest() {
+    Fixture f;
+    std::optional<lapis::session::TerminalSnapshot> published;
+    QObject::connect(&f.document, &SessionPreview::snapshotChanged, &f.document,
+                     [&] { published = f.document.snapshot(); });
+    const auto offer = [&](const char* text) {
+        lapis::session::Terminal terminal{{4, 2}};
+        terminal.feed(text);
+        f.document.offerSnapshot(wire::encode_snapshot(terminal.snapshot()));
+    };
+    f.document.addViewer(250);
+    offer("aaa");
+    until([&] { return f.document.decodedScreens() == 1; });
+    require(published && first_row(*published) == "aaa", "Idle preview decoded the wrong screen");
+    settle();
+    require(f.document.decodedScreens() == 1, "A single idle screen decoded more than once");
+    require(published && first_row(*published) == "aaa", "Idle preview decoded the wrong screen");
+
+    // Process short-lived events but stop before the decode deadline.
+    QElapsedTimer quiet;
+    quiet.start();
+    while (quiet.elapsed() < 30) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 2);
+        QThread::msleep(2);
+    }
+    offer("bbb");
+    offer("ccc");
+    require(f.document.decodedScreens() == 1,
+            "A burst decoded before its remaining viewer interval");
+    require(published && first_row(*published) == "aaa",
+            "A burst republished before its remaining viewer interval");
+
+    until([&] { return f.document.decodedScreens() == 2; });
+    require(published && first_row(*published) == "ccc",
+            "The decode deadline did not publish the newest burst screen");
+    settle();
+    require(f.document.decodedScreens() == 2, "The burst decoded more than its newest state");
+
+    f.document.removeViewer(250);
+    offer("ddd");
+    quiet.restart();
+    while (quiet.elapsed() < 40) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 2);
+        QThread::msleep(2);
+    }
+    require(f.document.decodedScreens() == 2, "A hidden preview decoded its suspended screen");
+    f.document.addViewer(250);
+    require(f.document.decodedScreens() == 3,
+            "Showing a preview did not decode its newest suspended screen");
+    require(published && first_row(*published) == "ddd",
+            "A resumed preview did not show the newest suspended screen");
+}
+
 void history_capability_tracks_current_page() {
     Fixture f;
     f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
@@ -889,6 +946,7 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
         handshake_and_reconnect();
+        preview_decode_is_idle_first_and_burst_newest();
         history_browsing_and_input_gating();
         stale_reconnect_and_history_errors();
         history_capability_tracks_current_page();
