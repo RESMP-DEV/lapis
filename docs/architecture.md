@@ -1,7 +1,7 @@
 # Architecture and near-term plan
 
 This is the single implementation plan for lapis. See the
-[current status](../README.md#current-status) for what has been implemented and exercised.
+[current status](status.md) for what has been implemented and exercised.
 macOS is the active target, and the signed Mac app is now the working daily
 environment; the [pseudo-production section](#pseudo-production-direction-and-integration-spread-september-27)
 below owns the current work order and re-weights the remaining milestones.
@@ -356,7 +356,7 @@ optional checks once the affected behavior passes.
 ### Persistent terminal acceptance
 
 The explicit launch slice is implemented. Current exercise status is in the
-[README](../README.md#current-status), with a
+[status](status.md), with a
 [sanitized receipt](../evidence/cli-launch.json). The macOS acceptance below is
 complete; the [assembled receipt](../evidence/milestone-one.json) records its scope.
 Visual review of the earlier UI refinements remains pending.
@@ -901,7 +901,7 @@ Preserving the ordinary CLI interface is the product preference. A shared-server
 route is eligible only if live evidence establishes event delivery, response
 ownership and reconciliation for that same TUI session. A method in an exported
 schema or an empty list from another server cannot establish those capabilities.
-The [Codex investigation](../adapters/codex/README.md#next-qualification) owns the
+The [Codex investigation](../adapters/codex/README.md#requalifying-a-codex-binary) owns the
 probe details and capability matrix.
 
 Hooks that only notify are useful partial integration. Keep answers in the
@@ -2974,8 +2974,8 @@ these tables, not the parity statements.
 Splits and tiling, window arrangements with process restore, request-aware
 notifications, undo-close and the command palette are already at parity or
 better. Rectangular and multi-click selection, link hover feedback and
-terminal accessibility remain tracked terminal-fidelity gaps in the README
-status table; this re-ordering does not change their queue. The valuable
+terminal accessibility remain tracked terminal-fidelity gaps in the
+[status](status.md) table; this re-ordering does not change their queue. The valuable
 deltas are attention reach and ergonomics:
 
 | Feature | Direction | Acceptance |
@@ -3160,7 +3160,7 @@ planned; they are not implied by Milestone 3 passing.
 
 Dependency notices, a complete bundled inventory/SBOM and redistribution obligations
 must be closed before publishing binaries; the Mac app's are collected above. This release requirement is independent
-of a local milestone passing. Keep current implementation status in the README;
+of a local milestone passing. Keep current implementation status in [status](status.md);
 the tables here define work order and acceptance only.
 
 ### The silk cabochon icon (September 28)
@@ -3418,8 +3418,10 @@ logs every guess to measure that threshold.
   or idle: never over a pending request, since Return in a permission dialog
   would answer it (the view also refuses to send one then). With `tabFlow` (a
   Claude Code or Codex agent while guessing is on), Tab sends a guess that
-  shows whole: a paste, then Return 150 ms later to the agent that got the
-  paste even if Tab moved on, unless the person typed to it first. A longer or
+  shows whole: to a service with paste transactions as one paste request with
+  submit, so the service queues the paste and its Return together; to an older
+  service as a paste, then Return 150 ms later to the agent that got it even if
+  Tab moved on, unless the person typed to it first. A longer or
   multi-line guess is only typed, as Option-Tab always does, so nothing unseen
   is submitted. Typing does not withdraw a guess; keys typed first are counted.
   With nothing offered and nothing typed since arriving, Tab calls QML's
@@ -3470,6 +3472,46 @@ Claude Code 2.1.285 has its own prompt suggestions (on unless
 guess covers them but does not turn them off. Past transcripts do not record
 lapis's state, so the replay cannot measure what the other agents' state adds;
 the log can.
+
+### Claude Code 2.1.281 to 2.1.285 (September 29)
+
+A changelog watcher opens an issue per Claude Code release with its lapis
+impact (#25, #26, #27, #34, #42). Reviewed against how lapis starts Claude:
+
+- **No mode now means auto mode.** 2.1.283 (third-party providers, telemetry off),
+  2.1.284 (every interactive session) and 2.1.285 (`claude -p` and the SDK)
+  start without a configured permission mode in auto mode instead of asking.
+  The Mac's forms always pass a mode (Full access by default, or
+  `newAgent.mode`), and restarts, reopens and splits reuse the flags an agent
+  started with, but an agent asked for without one (the phone can leave it out,
+  and `resumeAgent` takes it as optional) started with no flag. Now it gets the
+  forms' default, or the nearest mode that CLI offers as the forms choose,
+  unless the CLI's `harnessArguments` already choose one (by option name, so
+  `--permission-mode=plan` counts). lapis's
+  own `claude -p` calls (next-prompt guesses) run with tools off, so the
+  headless default does not reach them.
+- **Requests.** 2.1.281 asks before a recursive `rm` of command-substitution
+  output even in Full access, then denies after two minutes so unattended
+  sessions continue; these arrive through the permission hook like any request.
+  2.1.284's "Yes, but ask again next time" is an auto-mode answer; Claude
+  requests are answered in the terminal, so it needs no routing here. Nothing
+  lapis types for the person may answer a pending request; the next-prompt Tab
+  (#44) sends nothing while one is pending.
+- **Background commands stop after 30 minutes** (2.1.285) unless Claude asks
+  for up to two hours; `BASH_MAX_TIMEOUT_MS` raises the ceiling and
+  `BASH_DEFAULT_TIMEOUT_MS` the default for foreground and background alike.
+  Session ownership is unchanged: this is the CLI's policy for its own
+  children, documented for users in [agents](agents.md#long-jobs).
+- **Fixes lapis benefits from:** bracketed paste after a mode reset (2.1.282)
+  and fast type-ahead (2.1.283), which lapis's paste and Tab rely on; synchronous
+  hooks no longer hanging on a background child (2.1.285); and resume fixes for
+  interrupted tool calls, pending prompts and malformed compaction markers.
+- **Not applicable to how lapis starts Claude:** gateway, SDK, VS Code,
+  Bedrock/Vertex and custom `ANTHROPIC_BASE_URL` items.
+
+Still open: the Claude qualification scripts pin `SUPPORTED_VERSION` 2.1.280
+and refuse newer CLIs. Their fixtures drive a GLM model through a local model
+router, so the bump waits for a run on a machine with that router.
 
 ## Contracts to preserve
 
