@@ -75,8 +75,14 @@ class WorkspaceRepository(
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing
 
+    /** A gateway for [host], for surfaces beyond the listing (the stage's session); null when the host does not normalize. */
+    fun gatewayFor(host: String): LapisGateway? = sources.gateway(host)
+
     /** Restores the persisted host (and through it, the cached listing) at launch. */
     suspend fun restore() {
+        // An explicitly set host (a debug launch override) wins over the
+        // persisted one; its async save may not have landed yet.
+        if (_host.value.isNotEmpty()) return
         val saved = store.getString(HOST_KEY) ?: return
         setHost(saved)
     }

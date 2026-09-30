@@ -3,7 +3,15 @@
 Date: 2026-09-27. Status: in execution on `feature/android-client`. The
 gateway changes (Android admission, ZeroTier overlay) and iOS transport
 compatibility are implemented and checked; milestone A's Android scaffold is
-code-complete with JVM tests, pending device verification. This file is the
+code-complete with JVM tests, pending overlay device verification (the phone
+must join the private network). Milestone B (AgentSession, terminal
+renderer, composer, history paging) is implemented, unit-tested, and
+device-verified on the Z Fold cover screen with the fake-agent harness
+(`scripts/check_android_remote.py` over `adb reverse`): list, open, typing
+and Mac/phone sync, draft retention, scrollback paging, resize re-grid,
+background/return, and crash scan all green; the stand-in agent rides the
+same PTY/service path a real Codex agent would, with the live-CLI overlay
+run folded into the milestone A/D device gates. This file is the
 working spec for the Android companion client. When the first milestone
 lands on a device, this content consolidates into `docs/architecture.md`
 and this file is removed, per the workspace rule that architecture.md is
