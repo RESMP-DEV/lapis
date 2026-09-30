@@ -34,6 +34,7 @@ SDK, Gradle, JDK 17+, desktop build, or APK with --no-install).
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -469,6 +470,32 @@ def checks(device, mac, screens):
             return f"the grid never returned to {default[0]}x{default[1]} after wm size reset"
         return None
 
+    def check_wheel():
+        # A full-screen program that reports the mouse takes the wheel: the
+        # drag must reach the program (SGR wheel events) instead of scrolling
+        # the phone's archive, and the program ends mouse mode on the first
+        # event and says what arrived.
+        send_line(device, "mouse")
+        if not wait_terminal(device, "mouse ready", timeout=20):
+            return "the mouse program never announced itself"
+        shot("07-wheel-mode")
+        # Sending leaves the composer focused and the keyboard up; the
+        # keyboard window then covers the drag's start point, so the app
+        # never sees the gesture. BACK is the dismiss key (ESC is not).
+        device.key("BACK")
+        time.sleep(0.8)
+        device.scroll("newer", 3)
+        if not wait_terminal(device, "mouse got", timeout=30):
+            return "the drag never produced a wheel event the program saw"
+        # "first ESC[<64;…" means real events arrived; "ESCnothing" means none.
+        # Judge the newest result line: the archive keeps earlier arms, and
+        # their text would answer for this one.
+        results = re.findall(r"mouse got[^\n|]*", device.terminal_text())
+        if not results or "ESC[<" not in results[-1]:
+            return "the program saw zero wheel events from the drag"
+        shot("08-wheel-delivered")
+        return None
+
     def check_background():
         device.key("HOME")
         time.sleep(1.0)
@@ -480,7 +507,7 @@ def checks(device, mac, screens):
             return "typing after returning from the background failed"
         if mac.closed is not None:
             return f"backgrounding closed the Mac client: {mac.closed}"
-        shot("07-background")
+        shot("09-background")
         return None
 
     def check_crash():
@@ -496,6 +523,7 @@ def checks(device, mac, screens):
         "draft": check_draft,
         "scrollback": check_scrollback,
         "resize": check_resize,
+        "wheel": check_wheel,
         "background": check_background,
         "crash": check_crash,
     }

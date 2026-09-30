@@ -293,6 +293,11 @@ fun AgentStage(
                     fitColumns = reopenGrid?.columns ?: 80,
                     metrics = metrics,
                     loadOlder = loadOlder,
+                    onWheel = remember(session) {
+                        { notches: Int, column: Int, row: Int ->
+                            session.send(Input.wheel(notches, column, row))
+                        }
+                    },
                 )
             }
             Banner(state, agent.title, shared, reopenGrid, onReopen)

@@ -2,9 +2,11 @@ package dev.lapis.remote.terminal
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,6 +33,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -211,34 +214,47 @@ fun TerminalScreen(
     fitColumns: Int,
     metrics: TerminalMetrics,
     loadOlder: suspend () -> Unit,
+    onWheel: ((notches: Int, column: Int, row: Int) -> Unit)? = null,
 ) {
     val cache = remember { HistoryCache() }
     cache.prepare(history, fitColumns, frame?.text ?: "")
     val liveRows = frame?.let { Wrap.rows(it.lines, it.columns, fitColumns, "live") } ?: emptyList()
     val background = terminalColor(frame?.background) ?: Color.Black
     val foreground = terminalColor(frame?.foreground) ?: Color.White
+    // A full-screen program that takes the wheel shows only its screen: a
+    // drag scrolls the program through onWheel, not the archive above it.
+    val fullScreen = frame?.wheel == true
     val listState = rememberLazyListState()
     val density = LocalDensity.current
 
+    var viewportWidth by remember { mutableStateOf(0) }
     var viewportHeight by remember { mutableStateOf(0) }
     var followBottom by remember { mutableStateOf(true) }
+    var dragging by remember { mutableStateOf(false) }
 
     // Follow-bottom starts on (the iOS default anchor is the bottom) and only
     // the user's own drag can give it up, at the moment the drag ends; growth
     // or programmatic scrolls never unstick it.
     LaunchedEffect(listState) {
         listState.interactionSource.interactions.collect { interaction ->
-            if (interaction is DragInteraction.Stop || interaction is DragInteraction.Cancel) {
-                val info = listState.layoutInfo
-                val last = info.visibleItemsInfo.lastOrNull()
-                followBottom = last != null && last.index >= info.totalItemsCount - 1 &&
-                    last.offset + last.size <= info.viewportEndOffset + metrics.lineHeight
+            when (interaction) {
+                is DragInteraction.Start -> dragging = true
+                is DragInteraction.Stop, is DragInteraction.Cancel -> {
+                    dragging = false
+                    val info = listState.layoutInfo
+                    val last = info.visibleItemsInfo.lastOrNull()
+                    followBottom = last != null && last.index >= info.totalItemsCount - 1 &&
+                        last.offset + last.size <= info.viewportEndOffset + metrics.lineHeight
+                }
             }
         }
     }
 
-    LaunchedEffect(frame?.revision, cache.rows.size, liveRows.size, viewportHeight) {
-        if (followBottom && listState.layoutInfo.totalItemsCount > 0) {
+    // Never while the finger is down: output arriving mid-drag must not yank
+    // the anchor out from under it. Re-keyed on `dragging` so a revision that
+    // landed during the drag still bottom-aligns once it ends at the bottom.
+    LaunchedEffect(frame?.revision, cache.rows.size, liveRows.size, viewportHeight, dragging) {
+        if (followBottom && !dragging && listState.layoutInfo.totalItemsCount > 0) {
             val last = listState.layoutInfo.totalItemsCount - 1
             // Bottom-align the last row: scrollToItem puts a row's top at the
             // viewport top, so push it down by the empty space it would leave.
@@ -247,7 +263,8 @@ fun TerminalScreen(
     }
 
     // Within a screen of the top, the page before loads; each page moves the
-    // top away again, so history loads as it is read.
+    // top away again, so history loads as it is read. Hidden while a
+    // wheel-taking program shows: loading the archive changes nothing visible.
     val nearTop by remember(listState) {
         derivedStateOf {
             val info = listState.layoutInfo
@@ -258,37 +275,84 @@ fun TerminalScreen(
         }
     }
     LaunchedEffect(nearTop) {
-        if (nearTop) loadOlder()
+        if (nearTop && !fullScreen) loadOlder()
     }
     // Output may have archived rows while the top is in view.
     LaunchedEffect(frame?.revision) {
-        if (nearTop && history.isEmpty()) loadOlder()
+        if (nearTop && !fullScreen && history.isEmpty()) loadOlder()
     }
 
-    Box(Modifier.fillMaxSize().background(background)) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .onSizeChanged { viewportHeight = it.height }
-                .semantics {
-                    testTag = "terminal"
-                    // The visible text is the element's description, as the
-                    // iOS accessibilityValue: TalkBack reads the screen and
-                    // uiautomator (text and content-desc only) exposes it to
-                    // device automation.
-                    contentDescription = cache.accessibleText.ifBlank { "Agent screen" }
-                },
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            if (frame != null) {
-                item(key = "edge") { HistoryEdge(historyEnd, loadingHistory) }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(background)
+            .onSizeChanged {
+                viewportWidth = it.width
+                viewportHeight = it.height
             }
-            items(cache.rows, key = { it.id }) { row ->
-                TerminalRow(row.runs, row.columns, metrics, foreground, background)
+            .semantics {
+                testTag = "terminal"
+                // The visible text is the element's description, as the
+                // iOS accessibilityValue: TalkBack reads the screen and
+                // uiautomator (text and content-desc only) exposes it to
+                // device automation.
+                contentDescription = cache.accessibleText.ifBlank { "Agent screen" }
             }
-            items(liveRows, key = { it.id }) { row ->
-                TerminalRow(row.runs, row.columns, metrics, foreground, background)
+            .pointerInput(fullScreen, metrics.cellWidth, metrics.lineHeight, fitColumns, viewportWidth, onWheel) {
+                if (!fullScreen || onWheel == null) return@pointerInput
+                // The iOS turnWheel: a notch for every two rows dragged, sent
+                // as deltas from the cell where the gesture started.
+                var wheelSent = 0
+                var totalDy = 0f
+                var start = Offset.Zero
+                detectVerticalDragGestures(
+                    onDragStart = { offset -> start = offset },
+                    onDragEnd = { wheelSent = 0; totalDy = 0f },
+                    onDragCancel = { wheelSent = 0; totalDy = 0f },
+                ) { change, dy ->
+                    change.consume()
+                    totalDy += dy
+                    val notches = (totalDy / (metrics.lineHeight * 2)).toInt()
+                    if (notches == wheelSent) return@detectVerticalDragGestures
+                    val content = fitColumns * metrics.cellWidth
+                    val left = (viewportWidth - content) / 2f
+                    val pad = with(density) { 4.dp.toPx() }
+                    val column = ((start.x - left - pad) / metrics.cellWidth).toInt()
+                    val row = (start.y / metrics.lineHeight).toInt()
+                    val frameNow = frame ?: return@detectVerticalDragGestures
+                    onWheel(
+                        notches - wheelSent,
+                        column.coerceIn(0, (frameNow.columns - 1).coerceAtLeast(0)),
+                        row.coerceIn(0, (frameNow.rows - 1).coerceAtLeast(0)),
+                    )
+                    wheelSent = notches
+                }
+            },
+    ) {
+        // A wheel-taking program shows one fixed screen that fits the stage;
+        // a plain column keeps the phone's scroll machinery (scrollable,
+        // overscroll stretch) from consuming the drag the program wants.
+        if (fullScreen) {
+            Column(Modifier.fillMaxSize()) {
+                for (row in liveRows) {
+                    TerminalRow(row.runs, row.columns, metrics, foreground, background)
+                }
+            }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                if (frame != null) {
+                    item(key = "edge") { HistoryEdge(historyEnd, loadingHistory) }
+                }
+                items(cache.rows, key = { it.id }) { row ->
+                    TerminalRow(row.runs, row.columns, metrics, foreground, background)
+                }
+                items(liveRows, key = { it.id }) { row ->
+                    TerminalRow(row.runs, row.columns, metrics, foreground, background)
+                }
             }
         }
     }
