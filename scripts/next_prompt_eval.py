@@ -17,7 +17,7 @@ import argparse
 import json
 import subprocess
 import sys
-from collections import Counter, defaultdict
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -223,6 +223,84 @@ def replay(arguments):
     return report, rows
 
 
+def acceptance(events):
+    """Offers by id from lapis's log, and the rates that matter: of the offers
+    seen on screen, how many were used (sent with Tab, or typed with
+    Option-Tab), how many after typing first, and how fast."""
+    offers = {}
+    for e in events:
+        key = e.get("offer")
+        if not key:
+            continue
+        offer = offers.setdefault(key, {"seen": False, "used": None, "withdrawn": None})
+        kind = e.get("event")
+        if kind == "predicted":
+            candidates = e.get("candidates") or [{}]
+            offer.update(
+                shown=bool(e.get("shown")),
+                p=float(candidates[0].get("p", 0) or 0),
+                category=e.get("category") or "other",
+                machine=e.get("machine", ""),
+                cli=e.get("cli", "claude"),
+                conversation=e.get("conversation", ""),
+                turn=e.get("turn", 0),
+                candidates=candidates,
+            )
+        elif kind == "seen":
+            offer["seen"] = True
+        elif kind == "used":
+            offer["seen"] = True
+            offer["used"] = e
+        elif kind == "withdrawn":
+            offer["withdrawn"] = e.get("reason")
+    shown = [o for o in offers.values() if o.get("shown")]
+    seen = [o for o in shown if o["seen"]]
+    used = [o for o in seen if o["used"]]
+
+    def rate(part, whole):
+        return round(len(part) / len(whole), 3) if whole else None
+
+    waits = sorted(
+        o["used"].get("ms_after_seen", -1)
+        for o in used
+        if o["used"].get("ms_after_seen", -1) >= 0
+    )
+    report = {
+        "predicted": sum(1 for o in offers.values() if "shown" in o),
+        "offered": len(shown),
+        "seen": len(seen),
+        "used": len(used),
+        "acceptance": rate(used, seen),
+        "sent_with_tab": sum(1 for o in used if o["used"].get("sent")),
+        "typed_first_then_used": sum(
+            1 for o in used if o["used"].get("typed_first", 0) > 0
+        ),
+        "seen_not_used": sum(1 for o in seen if not o["used"]),
+        "offered_never_seen": sum(1 for o in shown if not o["seen"]),
+        "median_ms_to_use": waits[len(waits) // 2] if waits else None,
+        "by_category": {},
+        "by_confidence": [],
+    }
+    groups = defaultdict(list)
+    for o in seen:
+        groups[o["category"]].append(o)
+    for category, part in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        report["by_category"][category] = {
+            "seen": len(part),
+            "acceptance": rate([o for o in part if o["used"]], part),
+        }
+    for low in THRESHOLDS:
+        part = [o for o in seen if o["p"] >= low]
+        report["by_confidence"].append(
+            {
+                "min_confidence": low,
+                "seen": len(part),
+                "acceptance": rate([o for o in part if o["used"]], part),
+            }
+        )
+    return offers, report
+
+
 def log(arguments):
     events = []
     path = Path(arguments.log).expanduser()
@@ -231,37 +309,24 @@ def log(arguments):
             events.append(json.loads(line))
         except ValueError:
             continue
-    predicted = [e for e in events if e.get("event") == "predicted"]
-    outcome = {}
-    for e in events:
-        if e.get("event") in ("used", "dismissed"):
-            outcome[(e.get("conversation"), e.get("turn"))] = (
-                "sent"
-                if e.get("sent")
-                else "typed"
-                if e["event"] == "used"
-                else "dismissed"
-            )
-    counts = Counter()
+    offers, report = acceptance(events)
+    if not arguments.judge:
+        return report, []
+    # Offers seen but not used, graded against what was typed instead.
     graded = []
-    for number, e in enumerate(predicted):
-        counts["predicted"] += 1
-        counts["shown"] += bool(e.get("shown"))
-        took = outcome.get((e.get("conversation"), e.get("turn")))
-        if took:
-            counts[took] += 1
-        if not arguments.judge or not e.get("candidates"):
+    for number, o in enumerate(offers.values()):
+        if not (o.get("shown") and o["seen"] and not o["used"]):
             continue
         answer = on_machine(
-            e.get("machine", ""),
+            o["machine"],
             [
                 "actual",
                 "--cli",
-                e.get("cli", "claude"),
+                o["cli"],
                 "--conversation",
-                e.get("conversation", ""),
+                o["conversation"],
                 "--turn",
-                str(e.get("turn", 0)),
+                str(o["turn"]),
             ],
         )
         if answer.get("text"):
@@ -270,23 +335,22 @@ def log(arguments):
                     "id": number,
                     "last": "",
                     "actual": answer["text"],
-                    "candidates": e["candidates"],
-                    "shown": bool(e.get("shown")),
+                    "candidates": o["candidates"],
+                    "p": o["p"],
                 }
             )
-    report = {"events": dict(counts)}
     if graded:
         grades = judge(graded, arguments.judge_model)
         rows = [
             {
                 "words": len(g["actual"].split()),
                 "category": grades.get(g["id"], {}).get("category", "other"),
-                "p": g["candidates"][0]["p"],
+                "p": g["p"],
                 "scores": grades.get(g["id"], {}).get("scores", []),
             }
             for g in graded
         ]
-        report["graded"] = summarize(rows)
+        report["seen_not_used_graded"] = summarize(rows)
         return report, rows
     return report, []
 
@@ -321,7 +385,7 @@ def main(argv=None):
     )
     log_mode.add_argument("--log", default="~/.lapis/next_prompt.jsonl")
     log_mode.add_argument(
-        "--judge", action="store_true", help="grade offers against actuals"
+        "--judge", action="store_true", help="grade offers seen but not used"
     )
     arguments = parser.parse_args(argv)
     report, rows = (replay if arguments.mode == "replay" else log)(arguments)

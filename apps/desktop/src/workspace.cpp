@@ -569,6 +569,25 @@ bool Workspace::latestAttention() {
             latest = item.get();
     return latest != nullptr && selectSession(latest->sessionId());
 }
+bool Workspace::nextPriorityAttention(const QStringList& ready) {
+    const auto waiting = [&ready](const SessionPreview& item) {
+        const auto kind = item.statusKind();
+        return item.unseen() || item.attentionPending() ||
+               (ready.contains(item.sessionId()) &&
+                (kind == QLatin1String("finished") || kind == QLatin1String("idle") ||
+                 kind == QLatin1String("waiting")));
+    };
+    const auto rank = [&ready](const SessionPreview& item) {
+        return std::pair{ready.contains(item.sessionId()) ? 0 : 1, item.neededAtMs()};
+    };
+    const SessionPreview* best = nullptr;
+    const auto* const focused = focusedSession();
+    for (const auto& item : sessions_)
+        if (item.get() != focused && waiting(*item) &&
+            (best == nullptr || rank(*item) < rank(*best)))
+            best = item.get();
+    return best != nullptr && selectSession(best->sessionId());
+}
 bool SessionPreview::addPreviewRequest(const QString& id, const QString& reason) {
     if (id.isEmpty() || id.size() > 64 || reason.size() > 256 || requests_.contains(id) ||
         requests_.size() >= 8)

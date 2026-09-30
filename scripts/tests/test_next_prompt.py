@@ -292,5 +292,63 @@ class ModelTests(unittest.TestCase):
         )
 
 
+class AcceptanceTests(unittest.TestCase):
+    """The acceptance rate counts offers seen on screen, not every guess."""
+
+    def test_offers_seen_used_typed_first_and_never_seen(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        def predicted(key, p, shown=True, category="approve"):
+            return {
+                "event": "predicted",
+                "offer": key,
+                "shown": shown,
+                "category": category,
+                "candidates": [{"text": "go", "p": p}],
+            }
+
+        events = [
+            predicted("a:1", 0.8),
+            {"event": "seen", "offer": "a:1"},
+            {
+                "event": "used",
+                "offer": "a:1",
+                "sent": True,
+                "typed_first": 3,
+                "ms_after_seen": 900,
+            },
+            predicted("a:2", 0.45, category="status"),
+            {"event": "seen", "offer": "a:2"},
+            {"event": "withdrawn", "offer": "a:2", "reason": "new_turn", "seen": True},
+            predicted("b:3", 0.5),
+            {"event": "withdrawn", "offer": "b:3", "reason": "new_turn", "seen": False},
+            predicted("c:4", 0.2, shown=False),
+        ]
+        _, report = next_prompt_eval.acceptance(events)
+        self.assertEqual(
+            (report["predicted"], report["offered"], report["seen"], report["used"]),
+            (4, 3, 2, 1),
+        )
+        self.assertEqual(report["acceptance"], 0.5)
+        self.assertEqual(
+            (
+                report["sent_with_tab"],
+                report["typed_first_then_used"],
+                report["seen_not_used"],
+                report["offered_never_seen"],
+                report["median_ms_to_use"],
+            ),
+            (1, 1, 1, 1, 900),
+        )
+        self.assertEqual(
+            report["by_category"]["approve"], {"seen": 1, "acceptance": 1.0}
+        )
+        at_half = [
+            row for row in report["by_confidence"] if row["min_confidence"] == 0.5
+        ][0]
+        self.assertEqual((at_half["seen"], at_half["acceptance"]), (1, 1.0))
+
+
 if __name__ == "__main__":
     unittest.main()

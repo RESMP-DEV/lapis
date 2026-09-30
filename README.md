@@ -323,15 +323,23 @@ it runs (over ssh for another machine) and asks a model on this Mac, through
 the Claude Code CLI and the plan it is signed in to (never an API key), with
 your `~/.claude/CLAUDE.md`, the agent's screen, every other agent's state and
 your latest prompts elsewhere. A guess at least `minConfidence` likely (0.4)
-shows dim after the agent's cursor: Tab types it, Command-Return types and
-sends it, and any other key withdraws it. Nothing is sent without one of those
-keys. `model` (`claude-opus-5-5`), `effort` and `maxPerHour` (60) are the other
-settings. Each call spends plan usage. Claude Code's own prompt suggestions may
-show beneath; set `promptSuggestionEnabled` to false in its settings to leave
-only lapis's. Every guess and what became of it is kept, owner-only, in
-`~/.lapis/next_prompt.jsonl`; `scripts/next_prompt_eval.py log --judge` compares
-them with what you typed, and `replay --machine HOST` measures the same
-prediction on past transcripts.
+shows dim after the agent's cursor. Tab sends it (types it and presses Return),
+Option-Tab only types it, and typing leaves it there, so you can start your own,
+clear it with Command-Delete and still take the guess with Tab. With nothing
+offered and nothing typed, Tab moves to the next agent that needs you: one with a
+guess first, then the one waiting longest. So you can Tab through the agents all
+day. Tab keeps its usual meaning in shells and in CLIs lapis does not guess for.
+Nothing is sent without one of those keys. `model` (`claude-opus-5-5`), `effort`
+and `maxPerHour` (60) are the other settings. Each call spends plan usage.
+Claude Code's own prompt suggestions may show beneath; set
+`promptSuggestionEnabled` to false in its settings to leave only lapis's. Every
+guess is kept, owner-only, in `~/.lapis/next_prompt.jsonl`, with when it was on
+screen, whether Tab or Option-Tab used it, how many keys you typed first and how
+long you took, or that the next turn replaced it unused.
+`scripts/next_prompt_eval.py log` turns that into the acceptance rate (of the
+guesses you saw, the share you used), by category and confidence; `--judge`
+compares the ones you passed over with what you typed instead, and `replay
+--machine HOST` measures the same prediction on past transcripts.
 
 On the Mac, closing the window (its close button, Command-Shift-W, or Command-W
 with no agent left) only hides it:

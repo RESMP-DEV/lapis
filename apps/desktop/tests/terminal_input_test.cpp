@@ -724,8 +724,10 @@ void command_links_open() {
             "A valid encoded replacement-character filename did not open");
     require(text_frames(peer).isEmpty(), "Command-click sent input to the agent");
 }
-// A next prompt offered at the cursor: drawn there, typed by Tab, typed and
-// submitted by Command-Return, and withdrawn by any other key the agent gets.
+// A next prompt offered at the cursor, with the Tab flow on: drawn there and
+// seen once; Tab sends it, Option-Tab only types it; typing keeps it and is
+// counted; and Tab with nothing offered and nothing typed asks for the next
+// agent, while Tab after typing goes to the agent.
 void suggestions() {
     Fixture f;
     QQuickWindow window;
@@ -756,12 +758,15 @@ void suggestions() {
               wire::encode_snapshot_message({{f.identity, 1}, 2, wide.snapshot()}));
     until([&] { return f.document.snapshot().size.columns == 40; });
     settle();
-    std::vector<bool> used;
-    int dismissed = 0;
+    std::vector<std::pair<bool, int>> used;
+    int seen = 0;
+    int next = 0;
     QObject::connect(&surface, &lapis::desktop::TerminalSurface::suggestionUsed,
-                     [&used](bool sent) { used.push_back(sent); });
-    QObject::connect(&surface, &lapis::desktop::TerminalSurface::suggestionDismissed,
-                     [&dismissed] { ++dismissed; });
+                     [&used](bool sent, int typed) { used.emplace_back(sent, typed); });
+    QObject::connect(&surface, &lapis::desktop::TerminalSurface::suggestionSeen,
+                     [&seen] { ++seen; });
+    QObject::connect(&surface, &lapis::desktop::TerminalSurface::nextAgentRequested,
+                     [&next] { ++next; });
     const auto frames = [&peer](std::size_t count) {
         std::vector<wire::Frame> found;
         until([&] {
@@ -777,44 +782,67 @@ void suggestions() {
     const auto payload = [](const wire::Frame& frame) {
         return wire::decode_control(frame.payload).payload;
     };
+    const auto is_key = [&payload](const wire::Frame& frame, lapis::session::TerminalKey key) {
+        return frame.kind == wire::Kind::key &&
+               static_cast<unsigned char>(payload(frame).at(0)) == static_cast<unsigned char>(key);
+    };
     const auto press = [&surface](int key, Qt::KeyboardModifiers modifiers, const QString& text) {
         QKeyEvent event(QEvent::KeyPress, key, modifiers, text);
         QCoreApplication::sendEvent(&surface, &event);
     };
 
+    // Without the Tab flow (a shell, or a CLI lapis does not guess for) Tab
+    // is the program's.
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    auto typed = frames(1);
+    require(is_key(typed[0], lapis::session::TerminalKey::tab) && next == 0,
+            "Tab was taken without the Tab flow");
+    surface.setTabFlow(true);
+
     const auto plain = window.grabWindow();
     surface.setSuggestion(QStringLiteral("go now"));
     settle();
     require(window.grabWindow() != plain, "The suggestion was not drawn");
+    require(seen == 1, "The suggestion on screen was not reported seen");
 
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
-    auto typed = frames(1);
-    require(typed.size() == 1 && typed[0].kind == wire::Kind::paste &&
-                payload(typed[0]) == QByteArray("go now"),
-            "Tab did not type the suggestion as a paste");
-    require(used == std::vector<bool>{false} && surface.suggestion().isEmpty(),
-            "Tab did not use up the suggestion");
-
-    surface.setSuggestion(QStringLiteral("status?"));
-    press(Qt::Key_Return, Qt::MetaModifier, QStringLiteral("\r"));
     typed = frames(2);
-    require(typed.size() == 2 && typed[0].kind == wire::Kind::paste &&
-                payload(typed[0]) == QByteArray("status?") && typed[1].kind == wire::Kind::key &&
-                static_cast<unsigned char>(payload(typed[1]).at(0)) ==
-                    static_cast<unsigned char>(lapis::session::TerminalKey::enter),
-            "Command-Return did not type and submit the suggestion");
-    require(used == std::vector<bool>{false, true}, "Command-Return was not reported as sent");
+    require(typed[0].kind == wire::Kind::paste && payload(typed[0]) == QByteArray("go now") &&
+                is_key(typed[1], lapis::session::TerminalKey::enter),
+            "Tab did not type and send the suggestion");
+    require(used == std::vector<std::pair<bool, int>>{{true, 0}} && surface.suggestion().isEmpty(),
+            "Tab was not reported as sent");
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    settle();
+    require(next == 1 && frames(0).empty(), "The second Tab did not ask for the next agent");
 
-    surface.setSuggestion(QStringLiteral("go"));
+    // Typing is not a refusal: the suggestion stays, and what was typed first
+    // (here "no", then Command-Delete) is counted when Tab takes it.
+    surface.setSuggestion(QStringLiteral("status?"));
+    press(Qt::Key_N, Qt::NoModifier, QStringLiteral("n"));
+    press(Qt::Key_O, Qt::NoModifier, QStringLiteral("o"));
+    press(Qt::Key_Backspace, Qt::MetaModifier, {});
+    typed = frames(3);
+    require(surface.suggestion() == QLatin1String("status?"), "Typing withdrew the suggestion");
     press(Qt::Key_C, Qt::MetaModifier, QStringLiteral("c"));
-    require(surface.suggestion() == QLatin1String("go") && dismissed == 0,
-            "A Command shortcut withdrew the suggestion");
-    press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(2);
+    require(payload(typed[0]) == QByteArray("status?") &&
+                is_key(typed[1], lapis::session::TerminalKey::enter) &&
+                used.back() == std::pair{true, 3},
+            "Tab after typing did not send it, counting three keys typed first");
+
+    // Option-Tab only types it; Tab after typing is the program's.
+    surface.setSuggestion(QStringLiteral("rerun it"));
+    press(Qt::Key_Tab, Qt::AltModifier, QStringLiteral("\t"));
     typed = frames(1);
-    require(typed.size() == 1 && payload(typed[0]) == QByteArray("x"),
-            "Typing past a suggestion did not reach the agent");
-    require(dismissed == 1 && surface.suggestion().isEmpty() && used.size() == 2,
-            "Typing past a suggestion did not withdraw it");
+    require(typed.size() == 1 && payload(typed[0]) == QByteArray("rerun it") &&
+                used.back() == std::pair{false, 0},
+            "Option-Tab did not only type the suggestion");
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(is_key(typed[0], lapis::session::TerminalKey::tab) && next == 1,
+            "Tab after typing did not reach the agent");
 }
 
 // Dragging selects screen text and double-clicking selects a word. The copy

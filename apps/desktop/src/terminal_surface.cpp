@@ -137,7 +137,7 @@ constexpr auto kLinkKey = Qt::Key_Meta;
 constexpr auto kLinkModifier = Qt::ControlModifier;
 constexpr auto kLinkKey = Qt::Key_Control;
 #endif
-// A suggestion sent with Command-Return is submitted once its paste settled.
+// A suggestion sent with Tab is submitted once its paste settled.
 constexpr int kSubmitAfterPasteMs = 150;
 
 void add_rectangle(QSGNode& node, const QRectF& bounds, const QColor& value) {
@@ -437,7 +437,7 @@ void add_suggestion(QSGNode& overlays, QQuickWindow& window,
         return;
     const QFontMetricsF metrics(font);
     const qreal room = (last - first) * cell_width;
-    const QString keys = QStringLiteral("  ⇥ ⌘↩");
+    const QString keys = QStringLiteral("  \u21e5");
     const qreal keys_width = room > 24 * cell_width ? metrics.horizontalAdvance(keys) : 0;
     QString text = suggestion.trimmed().section(QLatin1Char('\n'), 0, 0);
     if (text.size() < suggestion.trimmed().size())
@@ -758,6 +758,7 @@ void TerminalSurface::bindWindow(QQuickWindow* current) {
             } else {
                 updateInputContext(Qt::ImEnabled | Qt::ImCursorRectangle);
                 claimSize();
+                reportSeen();
             }
         });
 }
@@ -808,6 +809,7 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     if (document_)
         disconnect(document_, nullptr, this, nullptr);
     document_ = document;
+    typed_since_arrival_ = false;
     wheel_remainder_ = 0;
     pixel_remainder_ = 0;
     selecting_ = false;
@@ -1464,38 +1466,72 @@ void TerminalSurface::setSuggestion(const QString& suggestion) {
     if (suggestion_ == suggestion)
         return;
     suggestion_ = suggestion;
+    typed_while_offered_ = 0;
     emit suggestionChanged();
     publishFrame(false);
+    reportSeen();
 }
 
-// Tab types the offered suggestion, and Command-Return also submits it once
-// the paste has settled, as the phone does. Any other key that reaches the
-// agent withdraws it; Command shortcuts do not.
+void TerminalSurface::setTabFlow(bool enabled) {
+    if (tab_flow_ == enabled)
+        return;
+    tab_flow_ = enabled;
+    emit tabFlowChanged();
+}
+
+// A suggestion counts as seen once it is on screen in the active window.
+void TerminalSurface::reportSeen() {
+    if (suggestion_.isEmpty() || seen_ == suggestion_ || !isVisible() || !window() ||
+        !window()->isActive())
+        return;
+    seen_ = suggestion_;
+    emit suggestionSeen();
+}
+
+void TerminalSurface::noteTyped() {
+    typed_since_arrival_ = true;
+    if (!suggestion_.isEmpty())
+        ++typed_while_offered_;
+}
+
+// With the Tab flow on (an agent lapis guesses for), Tab sends the offered
+// suggestion: typed as a paste, then Return once it settled, as the phone
+// does. Option-Tab only types it. With nothing offered and nothing typed
+// since arriving, Tab asks for the next agent that needs you. Typing keeps
+// the suggestion: it stays until used or replaced, and what was typed first
+// is counted.
 bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
-    if (suggestion_.isEmpty() || modifier_key(event.key()))
+    if (!tab_flow_ || modifier_key(event.key()))
         return false;
     const auto modifiers = event.modifiers() & ~Qt::KeypadModifier;
-    const bool enter = event.key() == Qt::Key_Return || event.key() == Qt::Key_Enter;
-    const bool send = enter && modifiers == Qt::MetaModifier;
-    if (!send && !(event.key() == Qt::Key_Tab && modifiers == Qt::NoModifier)) {
-        if (!modifiers.testFlag(Qt::MetaModifier)) {
-            setSuggestion({});
-            emit suggestionDismissed();
+    const bool tab = event.key() == Qt::Key_Tab && modifiers == Qt::NoModifier;
+    const bool fill = event.key() == Qt::Key_Tab && modifiers == Qt::AltModifier;
+    if (!suggestion_.isEmpty() && (tab || fill)) {
+        const int typed_first = typed_while_offered_;
+        if (!pasteText(suggestion_))
+            return true;
+        setSuggestion({});
+        typed_since_arrival_ = !tab;
+        if (tab) {
+            const QPointer<SessionPreview> owner = document_;
+            QTimer::singleShot(kSubmitAfterPasteMs, this, [this, owner] {
+                if (owner && document_ == owner && acceptsTerminalInput())
+                    document_->sendKey(session::TerminalKey::enter, {});
+            });
         }
-        return false;
-    }
-    if (!pasteText(suggestion_))
+        emit suggestionUsed(tab, typed_first);
         return true;
-    setSuggestion({});
-    if (send) {
-        const QPointer<SessionPreview> owner = document_;
-        QTimer::singleShot(kSubmitAfterPasteMs, this, [this, owner] {
-            if (owner && document_ == owner && acceptsTerminalInput())
-                document_->sendKey(session::TerminalKey::enter, {});
-        });
     }
-    emit suggestionUsed(send);
-    return true;
+    if (tab && !typed_since_arrival_) {
+        emit nextAgentRequested();
+        return true;
+    }
+    // Keys that reach the agent, including Command-Delete and friends.
+    if (!modifiers.testFlag(Qt::MetaModifier) || event.key() == Qt::Key_Backspace ||
+        event.key() == Qt::Key_Delete || event.key() == Qt::Key_Left ||
+        event.key() == Qt::Key_Right)
+        noteTyped();
+    return false;
 }
 
 bool TerminalSurface::pasteText(const QString& text) {
@@ -1790,6 +1826,7 @@ void TerminalSurface::keyPressEvent(QKeyEvent* event) {
     if (composition_state_ == CompositionState::stale)
         composition_state_ = CompositionState::idle;
     if (event->matches(QKeySequence::Paste)) {
+        noteTyped();
         const QString text = QGuiApplication::clipboard()->text();
         static_cast<void>(pasteText(text));
         event->accept();
@@ -1924,6 +1961,7 @@ void TerminalSurface::inputMethodEvent(QInputMethodEvent* event) {
             event->ignore();
             return;
         }
+        noteTyped();
         document_->sendText(event->commitString().toUtf8());
     }
     if (composition_epoch != ime_epoch_) {

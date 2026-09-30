@@ -10,6 +10,8 @@
 #include <QPointer>
 #include <QProcess>
 #include <QString>
+#include <QStringList>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <optional>
@@ -41,16 +43,18 @@ struct NextPromptSettings {
 // (next_prompt.py) reads the conversation where the agent runs, then a model
 // on this Mac sees it with the person's standing instructions, the agent's
 // screen and every other agent's state. A guess at least `minConfidence`
-// likely is offered, dim at the agent's cursor; Tab types it and
-// Command-Return sends it. Nothing is ever sent without that key.
+// likely is offered, dim at the agent's cursor; Tab sends it and Option-Tab
+// only types it (see TerminalSurface). Nothing is sent without those keys.
 //
-// Every prediction and what became of it goes to a private log (JSON lines,
-// owner-only), which scripts/next_prompt_eval.py joins with what the person
-// actually typed: the measure of this, and the data for a model of one's own.
+// Every prediction and what became of it (seen, used, replaced) goes to a
+// private log (JSON lines, owner-only), which scripts/next_prompt_eval.py
+// turns into the acceptance rate and joins with what the person actually
+// typed: the measure of this, and the data for a model of one's own.
 class NextPrompt final : public QObject {
     Q_OBJECT
     // Changes with every suggestion offered or withdrawn, for QML bindings.
     Q_PROPERTY(int revision READ revision NOTIFY changed)
+    Q_PROPERTY(bool enabled READ enabled NOTIFY changed)
   public:
     struct Agent {
         QString machine;      // an ssh host; empty for this Mac
@@ -83,11 +87,16 @@ class NextPrompt final : public QObject {
     void turnFinished(const QString& id);
     // The suggestion offered for the agent, or empty.
     Q_INVOKABLE [[nodiscard]] QString suggestion(const QString& id) const;
-    // The person took it: typed into the agent, and `sent` when submitted.
-    Q_INVOKABLE void used(const QString& id, bool sent);
-    // The person typed something else.
-    Q_INVOKABLE void dismiss(const QString& id);
+    // The agents with a suggestion offered.
+    Q_INVOKABLE [[nodiscard]] QStringList readyAgents() const;
+    // The suggestion is on screen in the active window: an impression.
+    Q_INVOKABLE void seen(const QString& id);
+    // The person took it: typed into the agent, and `sent` when submitted;
+    // `typedFirst` keys went to the agent while it was offered. Typing is not
+    // a refusal: an offer stays until used or replaced by the next turn's.
+    Q_INVOKABLE void used(const QString& id, bool sent, int typedFirst);
     [[nodiscard]] int revision() const { return revision_; }
+    [[nodiscard]] bool enabled() const { return settings_.automatic; }
 
   signals:
     void changed();
@@ -99,17 +108,23 @@ class NextPrompt final : public QObject {
         QPointer<QProcess> process;
     };
     struct Offer {
+        QString key; // "<agent>:<n>", on each of its log records
         QString text;
         QString conversation;
         int turn{};
+        qint64 seen_ms{}; // when first on screen; 0 while unseen
     };
+    [[nodiscard]] static QJsonObject about(const Offer& offer, const QString& id);
     void start(const QString& id, quint64 generation, const QString& program,
                const QStringList& arguments, const QByteArray& input, int timeout_ms,
                const std::function<void(const QJsonObject&)>& done);
     void predict(const QString& id, quint64 generation, const QJsonObject& context);
     void offer(const QString& id, const Agent& agent, const QJsonObject& context,
                const QJsonObject& answer);
-    void withdraw(const QString& id);
+    // Why an offer went unused: the next turn's guess replaced it, or the
+    // setting was turned off.
+    enum class Withdrawal : std::uint8_t { next_turn, off };
+    void withdraw(const QString& id, Withdrawal why);
     void record(QJsonObject event) const;
     [[nodiscard]] bool current(const QString& id, quint64 generation) const;
     Lookup lookup_;
@@ -123,6 +138,7 @@ class NextPrompt final : public QObject {
     std::deque<qint64> started_; // for maxPerHour
     QElapsedTimer clock_;
     quint64 generation_{};
+    quint64 offers_made_{};
     int revision_{};
 };
 

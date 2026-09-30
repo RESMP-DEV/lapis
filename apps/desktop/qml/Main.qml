@@ -3267,19 +3267,26 @@ ApplicationWindow {
                                  && (preview.active || document.inputReady || document.historyActive)
                     focus: visible && window.visible && !window.inputBlocked && !window.sideTerminalOpen
                     // The next prompt lapis predicted for the agent, while it
-                    // waits for you: Tab types it, Command-Return sends it.
+                    // waits for you: Tab sends it (Option-Tab only types it), and
+                    // Tab with nothing offered moves to the next agent that
+                    // needs you, so a day can be spent pressing Tab.
                     readonly property bool predicting: typeof nextPrompt !== "undefined" && nextPrompt !== null
-                                                       && document !== null
+                                                       && nextPrompt.enabled && document !== null
+                    tabFlow: predicting && ["claude", "codex"].indexOf(document.harnessId) >= 0
                     suggestion: predicting && nextPrompt.revision >= 0 && !document.historyActive
                                 && ["finished", "idle", "waiting"].indexOf(document.statusKind) >= 0
                                 ? nextPrompt.suggestion(document.sessionId) : ""
-                    onSuggestionUsed: sent => {
+                    onSuggestionSeen: {
                         if (predicting)
-                            nextPrompt.used(document.sessionId, sent)
+                            nextPrompt.seen(document.sessionId)
                     }
-                    onSuggestionDismissed: {
+                    onSuggestionUsed: (sent, typedFirst) => {
                         if (predicting)
-                            nextPrompt.dismiss(document.sessionId)
+                            nextPrompt.used(document.sessionId, sent, typedFirst)
+                    }
+                    onNextAgentRequested: {
+                        if (predicting)
+                            workspace.nextPriorityAttention(nextPrompt.readyAgents())
                     }
                     // New and restarted agents start at this grid, not resized
                     // just after they drew.

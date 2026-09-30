@@ -21,6 +21,8 @@ constexpr int kContextTimeoutMs = 60 * 1000;
 constexpr int kPredictTimeoutMs = 180 * 1000;
 constexpr qint64 kHourMs = qint64{60} * 60 * 1000;
 constexpr int kScreenChars = 6000;
+// The log's record format: offer ids and seen/used/withdrawn events.
+constexpr int kLogVersion = 2;
 QString quoted(const QString& word) {
     return QLatin1Char('\'') + QString(word).replace(QLatin1Char('\''), QStringLiteral("'\\''")) +
            QLatin1Char('\'');
@@ -95,10 +97,15 @@ NextPrompt::~NextPrompt() {
 }
 
 void NextPrompt::setSettings(NextPromptSettings settings) {
+    const bool was = settings_.automatic;
     settings_ = std::move(settings);
     if (!settings_.automatic)
         for (const auto& id : offers_.keys())
-            withdraw(id);
+            withdraw(id, Withdrawal::off);
+    if (was != settings_.automatic) {
+        ++revision_;
+        emit changed();
+    }
 }
 
 bool NextPrompt::current(const QString& id, quint64 generation) const {
@@ -109,7 +116,7 @@ bool NextPrompt::current(const QString& id, quint64 generation) const {
 void NextPrompt::turnFinished(const QString& id) {
     if (!settings_.automatic)
         return;
-    withdraw(id);
+    withdraw(id, Withdrawal::next_turn);
     const auto agent = lookup_(id);
     if (!agent || (agent->cli != QLatin1String("claude") && agent->cli != QLatin1String("codex")))
         return;
@@ -220,54 +227,74 @@ void NextPrompt::offer(const QString& id, const Agent& agent, const QJsonObject&
     const bool shown = !text.isEmpty() &&
                        top.value(QStringLiteral("p")).toDouble() >= settings_.minConfidence &&
                        settings_.automatic;
-    const auto conversation = context.value(QStringLiteral("conversation")).toString();
-    const int turn = context.value(QStringLiteral("turn")).toInt();
-    record({{QStringLiteral("event"), QStringLiteral("predicted")},
-            {QStringLiteral("agent"), id},
-            {QStringLiteral("machine"), agent.machine},
-            {QStringLiteral("cli"), agent.cli},
-            {QStringLiteral("conversation"), conversation},
-            {QStringLiteral("turn"), turn},
-            {QStringLiteral("model"), settings_.model},
-            {QStringLiteral("category"), answer.value(QStringLiteral("category"))},
-            {QStringLiteral("candidates"), candidates},
-            {QStringLiteral("shown"), shown},
-            {QStringLiteral("ms"), answer.value(QStringLiteral("ms"))}});
+    const Offer made{QStringLiteral("%1:%2").arg(id).arg(++offers_made_), text,
+                     context.value(QStringLiteral("conversation")).toString(),
+                     context.value(QStringLiteral("turn")).toInt(), 0};
+    auto event = about(made, id);
+    event.insert(QStringLiteral("event"), QStringLiteral("predicted"));
+    event.insert(QStringLiteral("machine"), agent.machine);
+    event.insert(QStringLiteral("cli"), agent.cli);
+    event.insert(QStringLiteral("model"), settings_.model);
+    event.insert(QStringLiteral("category"), answer.value(QStringLiteral("category")));
+    event.insert(QStringLiteral("candidates"), candidates);
+    event.insert(QStringLiteral("shown"), shown);
+    event.insert(QStringLiteral("min_confidence"), settings_.minConfidence);
+    event.insert(QStringLiteral("ms"), answer.value(QStringLiteral("ms")));
+    record(event);
     if (!shown)
         return;
-    offers_.insert(id, {text, conversation, turn});
+    offers_.insert(id, made);
     ++revision_;
     emit changed();
 }
 
 QString NextPrompt::suggestion(const QString& id) const { return offers_.value(id).text; }
 
-void NextPrompt::used(const QString& id, bool sent) {
+QStringList NextPrompt::readyAgents() const { return offers_.keys(); }
+
+QJsonObject NextPrompt::about(const Offer& offer, const QString& id) {
+    return {{QStringLiteral("offer"), offer.key},
+            {QStringLiteral("agent"), id},
+            {QStringLiteral("conversation"), offer.conversation},
+            {QStringLiteral("turn"), offer.turn}};
+}
+
+void NextPrompt::seen(const QString& id) {
+    const auto offer = offers_.find(id);
+    if (offer == offers_.end() || offer->seen_ms != 0)
+        return;
+    offer->seen_ms = QDateTime::currentMSecsSinceEpoch();
+    auto event = about(*offer, id);
+    event.insert(QStringLiteral("event"), QStringLiteral("seen"));
+    record(event);
+}
+
+void NextPrompt::used(const QString& id, bool sent, int typed_first) {
     const auto offer = offers_.value(id);
     if (offer.text.isEmpty())
         return;
-    record({{QStringLiteral("event"), QStringLiteral("used")},
-            {QStringLiteral("agent"), id},
-            {QStringLiteral("conversation"), offer.conversation},
-            {QStringLiteral("turn"), offer.turn},
-            {QStringLiteral("sent"), sent}});
-    withdraw(id);
+    auto event = about(offer, id);
+    event.insert(QStringLiteral("event"), QStringLiteral("used"));
+    event.insert(QStringLiteral("sent"), sent);
+    event.insert(QStringLiteral("typed_first"), typed_first);
+    event.insert(QStringLiteral("ms_after_seen"),
+                 offer.seen_ms == 0 ? -1 : QDateTime::currentMSecsSinceEpoch() - offer.seen_ms);
+    record(event);
+    offers_.remove(id);
+    ++revision_;
+    emit changed();
 }
 
-void NextPrompt::dismiss(const QString& id) {
-    const auto offer = offers_.value(id);
+void NextPrompt::withdraw(const QString& id, Withdrawal why) {
+    const auto offer = offers_.take(id);
     if (offer.text.isEmpty())
         return;
-    record({{QStringLiteral("event"), QStringLiteral("dismissed")},
-            {QStringLiteral("agent"), id},
-            {QStringLiteral("conversation"), offer.conversation},
-            {QStringLiteral("turn"), offer.turn}});
-    withdraw(id);
-}
-
-void NextPrompt::withdraw(const QString& id) {
-    if (offers_.remove(id) == 0)
-        return;
+    auto event = about(offer, id);
+    event.insert(QStringLiteral("event"), QStringLiteral("withdrawn"));
+    event.insert(QStringLiteral("reason"),
+                 why == Withdrawal::off ? QStringLiteral("off") : QStringLiteral("new_turn"));
+    event.insert(QStringLiteral("seen"), offer.seen_ms != 0);
+    record(event);
     ++revision_;
     emit changed();
 }
@@ -275,6 +302,7 @@ void NextPrompt::withdraw(const QString& id) {
 void NextPrompt::record(QJsonObject event) const {
     if (log_path_.isEmpty())
         return;
+    event.insert(QStringLiteral("v"), kLogVersion);
     event.insert(QStringLiteral("t"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
     QFile file(log_path_);
     const bool created = !file.exists();

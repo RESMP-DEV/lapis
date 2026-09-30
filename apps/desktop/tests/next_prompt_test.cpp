@@ -147,6 +147,8 @@ void predictsAndOffers() {
             "nothing runs while the setting is off");
 
     next.setSettings(on(60, QStringLiteral("low")));
+    require(changes == 1 && next.enabled(), "turning it on is announced");
+    changes = 0;
     next.turnFinished(QStringLiteral("s"));
     next.turnFinished(QStringLiteral("a"));
     require(waitFor([&] { return !next.suggestion(QStringLiteral("a")).isEmpty(); }),
@@ -188,25 +190,39 @@ void predictsAndOffers() {
                 logged[0].value(QStringLiteral("shown")).toBool() &&
                 logged[0].value(QStringLiteral("turn")).toInt() == 7 &&
                 logged[0].value(QStringLiteral("conversation")) == QLatin1String("c1") &&
-                logged[0].value(QStringLiteral("candidates")).toArray().size() == 2,
+                logged[0].value(QStringLiteral("candidates")).toArray().size() == 2 &&
+                logged[0].value(QStringLiteral("offer")) == QLatin1String("a:1") &&
+                logged[0].value(QStringLiteral("v")).toInt() == 2,
             "the prediction is logged with where it belongs");
+    require(next.enabled() && next.readyAgents() == QStringList{QStringLiteral("a")},
+            "the agent is ready for Tab");
     const auto others = QFile::ReadGroup | QFile::WriteGroup | QFile::ExeGroup | QFile::ReadOther |
                         QFile::WriteOther | QFile::ExeOther;
     require((QFileInfo(log).permissions() & others) == 0, "and only its owner can read the log");
 
-    next.used(QStringLiteral("a"), true);
-    require(next.suggestion(QStringLiteral("a")).isEmpty(), "a used suggestion is gone");
+    next.seen(QStringLiteral("a"));
+    next.seen(QStringLiteral("a"));
+    next.used(QStringLiteral("a"), true, 5);
+    require(next.suggestion(QStringLiteral("a")).isEmpty() && next.readyAgents().isEmpty(),
+            "a used suggestion is gone");
     logged = events(log);
-    require(logged.last().value(QStringLiteral("event")) == QLatin1String("used") &&
-                logged.last().value(QStringLiteral("sent")).toBool() &&
-                logged.last().value(QStringLiteral("turn")).toInt() == 7,
-            "and its use is logged");
+    require(logged.size() == 3 &&
+                logged[1].value(QStringLiteral("event")) == QLatin1String("seen") &&
+                logged[1].value(QStringLiteral("offer")) == QLatin1String("a:1"),
+            "it was seen once");
+    require(logged[2].value(QStringLiteral("event")) == QLatin1String("used") &&
+                logged[2].value(QStringLiteral("offer")) == QLatin1String("a:1") &&
+                logged[2].value(QStringLiteral("sent")).toBool() &&
+                logged[2].value(QStringLiteral("typed_first")).toInt() == 5 &&
+                logged[2].value(QStringLiteral("ms_after_seen")).toInteger() >= 0 &&
+                logged[2].value(QStringLiteral("turn")).toInt() == 7,
+            "and its use, with what was typed first, is logged");
 
     // Another machine: its conversation is read there, with the helper on stdin.
     write(root.filePath(QStringLiteral("predict.reply")),
           R"({"category": "new", "candidates": [{"text": "rerun it on 8 GPUs", "p": 0.2}]})");
     next.turnFinished(QStringLiteral("b"));
-    require(waitFor([&] { return events(log).size() == 3; }), "the remote prediction is logged");
+    require(waitFor([&] { return events(log).size() == 4; }), "the remote prediction is logged");
     const auto ssh =
         QString::fromUtf8(read(root.filePath(QStringLiteral("ssh.args")))).split(QLatin1Char('\n'));
     require(
@@ -227,15 +243,22 @@ void predictsAndOffers() {
     require(
         waitFor([&] { return next.suggestion(QStringLiteral("a")) == QLatin1String("status?"); }),
         "offered again after the next turn");
+    next.seen(QStringLiteral("a"));
     next.setSettings(on(3));
     next.turnFinished(QStringLiteral("a"));
     require(next.suggestion(QStringLiteral("a")).isEmpty(), "the next turn withdraws the offer");
+    const auto withdrawn = events(log).last();
+    require(withdrawn.value(QStringLiteral("event")) == QLatin1String("withdrawn") &&
+                withdrawn.value(QStringLiteral("reason")) == QLatin1String("new_turn") &&
+                withdrawn.value(QStringLiteral("seen")).toBool() &&
+                withdrawn.value(QStringLiteral("offer")) == QLatin1String("a:3"),
+            "an offer seen but not used is recorded as replaced");
     QFile::remove(root.filePath(QStringLiteral("context.args")));
     static_cast<void>(waitFor([] { return false; }, 300));
     require(!QFileInfo::exists(root.filePath(QStringLiteral("context.args"))),
             "past the hourly cap nothing runs");
-    next.dismiss(QStringLiteral("a"));
     next.setSettings({});
+    require(!next.enabled(), "off");
     require(next.suggestion(QStringLiteral("a")).isEmpty(), "turning it off withdraws offers");
 }
 } // namespace

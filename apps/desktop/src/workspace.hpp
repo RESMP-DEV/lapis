@@ -503,6 +503,11 @@ class Workspace final : public QObject {
     // Selects the agent that most recently began to need you; again, the one
     // before it. False when none is waiting.
     Q_INVOKABLE bool latestAttention();
+    // Tab's next agent, in any category: of those that need you (a turn that
+    // finished unseen, a request, or a guessed next prompt in `ready` while it
+    // waits), one with a guess first, then the one waiting longest. False
+    // when none does.
+    Q_INVOKABLE bool nextPriorityAttention(const QStringList& ready);
     [[nodiscard]] QVariantList sessions() const;
     [[nodiscard]] int focusedIndex() const { return focused_index_; }
     [[nodiscard]] SessionPreview* focusedSession() const;

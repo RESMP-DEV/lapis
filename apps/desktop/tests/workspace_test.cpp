@@ -705,6 +705,38 @@ void latestAttentionGoesToTheNewest() {
     require(!workspace.latestAttention(), "and nothing once all were looked at");
 }
 
+// Tab's next agent: one with a guessed prompt ready first, then the one that
+// has waited longest; an agent at work is not waiting even with a guess.
+void tabGoesToTheReadyThenTheOldest() {
+    Workspace workspace(WorkspaceMode::preview);
+    require(workspace.selectSession(QStringLiteral("renderer")), "select renderer");
+    lapis::session::wire::AttentionSnapshot state;
+    state.available = state.connected = state.ready = true;
+    const auto finish = [&](const char* id) {
+        auto* item = workspace.session(QString::fromLatin1(id));
+        state.activity = lapis::session::attention::Activity::working;
+        item->applyAttention(state);
+        state.activity = lapis::session::attention::Activity::turn_completed;
+        item->applyAttention(state);
+        QThread::msleep(5);
+        return item;
+    };
+    auto* older = finish("agent");
+    auto* newer = finish("checks");
+    const QStringList ready{newer->sessionId()};
+    require(workspace.nextPriorityAttention(ready) && workspace.focusedSession() == newer,
+            "the agent with a guess goes first");
+    require(workspace.nextPriorityAttention(ready) && workspace.focusedSession() == older,
+            "then the one waiting longest");
+    require(workspace.nextPriorityAttention(ready) && workspace.focusedSession() == newer,
+            "a guess not yet used keeps its agent waiting");
+    require(workspace.selectSession(older->sessionId()), "back to the older one");
+    state.activity = lapis::session::attention::Activity::working;
+    newer->applyAttention(state);
+    require(!workspace.nextPriorityAttention(ready),
+            "nothing is waiting once the one with a guess is at work");
+}
+
 // Claude agents run under the service's Claude Code adapter and read their
 // status from its observer. Records saved before the adapter keep terminal
 // mode, the launch their running service was created with.
@@ -4869,6 +4901,7 @@ int main(int argc, char** argv) {
         unknownRegistryVersionsAreRejected();
         unseenFollowsTurnsAndSelection();
         latestAttentionGoesToTheNewest();
+        tabGoesToTheReadyThenTheOldest();
         claudeAgentsUseServiceAdapter();
         agentArgumentsPersist();
         directTileSelectionNormalizesAStaleTarget();
