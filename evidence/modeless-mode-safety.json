@@ -23,13 +23,18 @@
     }
   ],
   "source_sha256": {
-    "apps/desktop/src/workspace.cpp": "b04dc1881814079b5997a2e87d0e49d36e962799a1cefc000c2159508fab57c9",
+    "apps/desktop/src/workspace.cpp": "2644ded56e2237df80aaaf60780f388c2180e5d3a7bc4279cfb28e3bd8c7af7f",
     "apps/desktop/src/workspace.hpp": "958e89a9f481ced037bf486a8ea111cf169d5a384063344adf82eb27f2958317",
-    "apps/desktop/tests/workspace_test.cpp": "f193c0ac0153f2692b04679f967ef4fc3e82f3cc9655c01240bbe93e0af80366",
+    "apps/desktop/tests/workspace_test.cpp": "366e2d84d2ea4e9cd99ba47e67b24b54f48b9cf960b1be4bec1b51afcbbdef80",
     "docs/agents.md": "427ccdf674a2a899e62f75347da3f6b07d82580880f34d671b352987a576f248"
   },
   "limits": [
     "No live user agent mode or credentials changed; checks use existing controlled fixtures.",
     "The normal Full access default when newAgent.mode is absent is unchanged."
-  ]
+  ],
+  "source_revision": "b72802ad9e20538c4928032b59ff4e0b92374685",
+  "followup": {
+    "change": "Generated model, approval and resume options are inserted before the first literal separator.",
+    "validation": "The existing real stand-in CLI resume test now checks the resulting argv order. Workspace passed43.53s; workspace.cpp and its test clang-tidy passed. An initial fixture cleanup race was fixed by waiting for input readiness before closing the test child; the child was cleaned up."
+  }
 }
