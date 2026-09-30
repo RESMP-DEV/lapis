@@ -56,6 +56,9 @@ is kept too. A use is recorded only after the service admits its input.
 Admission does not guarantee the CLI consumed it before a crash. The log
 rotates at 4 MiB and retains one previous file; helper output is bounded and
 raw error output is never copied into the log.
+Evaluation reports missing conversations, pending answers and failed calls
+separately. Missing judge results are excluded from quality scores. Provider or
+authentication failures stop the attempt; only a malformed answer is retried.
 
 ```sh
 python3 scripts/next_prompt_eval.py log            # acceptance: of the guesses you saw, the share you used

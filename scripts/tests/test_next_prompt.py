@@ -3,7 +3,9 @@ model's prompt and answer, and the call it makes on the person's plan."""
 
 import json
 import os
+import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -58,6 +60,7 @@ class Homes(unittest.TestCase):
 
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="lapis-next-"))
+        self.addCleanup(shutil.rmtree, self.root)
         self.claude = self.root / "claude"
         self.codex = self.root / "codex"
         environment = patch.dict(
@@ -276,6 +279,7 @@ class ModelTests(unittest.TestCase):
 
     def test_the_model_runs_on_the_plan_with_tools_off(self):
         folder = Path(tempfile.mkdtemp(prefix="lapis-claude-"))
+        self.addCleanup(shutil.rmtree, folder)
         record = folder / "record.json"
         fake = folder / "claude"
         fake.write_text(
@@ -309,16 +313,79 @@ class ModelTests(unittest.TestCase):
 
     def test_a_failed_call_is_an_error_not_a_guess(self):
         folder = Path(tempfile.mkdtemp(prefix="lapis-claude-"))
+        self.addCleanup(shutil.rmtree, folder)
         fake = folder / "claude"
         fake.write_text("#!/bin/sh\necho 'not logged in' >&2\nexit 1\n")
         fake.chmod(0o700)
         self.assertIn(
             "not logged in", next_prompt.predict({}, "m", "", str(fake))["error"]
         )
+        for failure in (
+            RuntimeError("rate limited"),
+            OSError("missing CLI"),
+            subprocess.TimeoutExpired("stand-in", 1),
+        ):
+            with patch.object(next_prompt, "ask", side_effect=failure) as call:
+                self.assertIn("error", next_prompt.predict({}, "m"))
+                self.assertEqual(call.call_count, 1)
 
 
 class AcceptanceTests(unittest.TestCase):
     """The acceptance rate counts offers seen on screen, not every guess."""
+
+    def test_missing_evaluation_data_is_reported_not_scored(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import next_prompt_eval
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "events.jsonl"
+            events = []
+            for key in ("missing", "failed", "pending", "ungraded"):
+                events.extend(
+                    [
+                        {
+                            "event": "predicted",
+                            "offer": key,
+                            "shown": True,
+                            "conversation": "" if key == "missing" else key,
+                            "candidates": [{"text": "go", "p": 0.8}],
+                        },
+                        {"event": "seen", "offer": key},
+                    ]
+                )
+            write_lines(path, events)
+            arguments = next_prompt.argparse.Namespace(
+                log=str(path), judge=True, judge_model="stand-in"
+            )
+            with (
+                patch.object(
+                    next_prompt_eval,
+                    "on_machine",
+                    side_effect=[
+                        {"error": "timeout"},
+                        {"pending": True},
+                        {"text": "go"},
+                    ],
+                ),
+                patch.object(next_prompt_eval, "judge", return_value={}),
+            ):
+                report, rows = next_prompt_eval.log(arguments)
+            self.assertEqual(
+                report["judge_context"],
+                {
+                    "eligible": 4,
+                    "failed": 1,
+                    "pending": 1,
+                    "missing_conversation": 1,
+                },
+            )
+            self.assertEqual(report["judge_missing_grades"], 1)
+            self.assertEqual(report["seen_not_used_graded"], {"count": 0})
+            self.assertEqual(rows, [])
+        item = {"id": 1, "last": "", "actual": "go", "candidates": [{"text": "go"}]}
+        for response in ('{"grades":[{"id":1,"scores":null}]}', '{"grades":[null]}'):
+            with patch.object(next_prompt, "ask", return_value=(response, {})):
+                self.assertEqual(next_prompt_eval.judge([item], "stand-in"), {})
 
     def test_offers_seen_used_typed_first_and_never_seen(self):
         sys.path.insert(0, str(ROOT / "scripts"))

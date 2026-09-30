@@ -478,12 +478,16 @@ def ask(system, prompt, model, effort="", claude="claude", timeout=150):
         env=environment,
         cwd=tempfile.gettempdir(),
     )
+    if run.returncode != 0:
+        raise RuntimeError(run.stderr.strip()[-300:] or "CLI request failed")
     try:
         envelope = json.loads(run.stdout)
     except ValueError:
         raise RuntimeError(
             (run.stderr or run.stdout).strip()[-300:] or "no answer"
         ) from None
+    if not isinstance(envelope, dict):
+        raise RuntimeError("invalid CLI envelope")
     if envelope.get("is_error"):
         raise RuntimeError(str(envelope.get("result", "error"))[-300:])
     return envelope.get("result", ""), envelope
@@ -496,11 +500,16 @@ def predict(bundle, model, effort="", claude="claude"):
     for _ in range(2):
         try:
             text, envelope = ask(system, render(bundle), model, effort, claude)
+        except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
+            # Service/auth/transport failures are not format repair attempts.
+            # In particular, never immediately repeat a rate-limited call.
+            return {"error": str(error)}
+        try:
             result = parse(text)
             result["ms"] = int((time.time() - started) * 1000)
             result["cost"] = envelope.get("total_cost_usd", 0)
             return result
-        except (ValueError, KeyError, RuntimeError) as error:
+        except (ValueError, KeyError, TypeError, AttributeError) as error:
             last = error
     return {"error": str(last)}
 

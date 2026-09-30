@@ -97,8 +97,36 @@ def judge(items, model):
         ]
         try:
             text, _ = next_prompt.ask(JUDGE, "\n\n".join(blocks), model, timeout=600)
-            return json.loads(text[text.index("{") : text.rindex("}") + 1])["grades"]
-        except (ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired) as error:
+            grades = json.loads(text[text.index("{") : text.rindex("}") + 1])["grades"]
+            if not isinstance(grades, list):
+                raise ValueError("invalid judge grades")
+            expected = {item["id"]: len(item["candidates"]) for item in chunk}
+            valid = []
+            for grade in grades:
+                if not isinstance(grade, dict):
+                    continue
+                identifier = grade.get("id")
+                scores = grade.get("scores")
+                if (
+                    type(identifier) is int
+                    and identifier in expected
+                    and isinstance(scores, list)
+                    and len(scores) == expected[identifier]
+                    and all(
+                        type(score) is int and score in (0, 1, 2) for score in scores
+                    )
+                ):
+                    if grade.get("category") not in next_prompt.CATEGORIES:
+                        grade["category"] = "other"
+                    valid.append(grade)
+            return valid
+        except (
+            ValueError,
+            KeyError,
+            RuntimeError,
+            OSError,
+            subprocess.TimeoutExpired,
+        ) as error:
             print("judge batch failed: {}".format(error), file=sys.stderr)
             return []
 
@@ -218,7 +246,9 @@ def replay(arguments):
     grades = judge(graded, arguments.judge_model)
     rows = []
     for g in graded:
-        grade = grades.get(g["id"], {"scores": [], "category": "other"})
+        if g["id"] not in grades:
+            continue
+        grade = grades[g["id"]]
         row = {
             "words": len(g["actual"].split()),
             "category": grade.get("category", "other"),
@@ -232,6 +262,8 @@ def replay(arguments):
     report = summarize(rows)
     report["sampled"] = len(items)
     report["predicted"] = len(graded)
+    report["prediction_failures"] = len(items) - len(graded)
+    report["judge_missing_grades"] = sum(g["id"] not in grades for g in graded)
     report["model"] = arguments.model
     if graded:
         report["median_ms"] = sorted(g["ms"] for g in graded)[len(graded) // 2]
@@ -359,10 +391,19 @@ def log(arguments):
         return report, []
     # Offers seen but not used, graded against what was typed instead.
     graded = []
+    context_counts = {
+        "eligible": 0,
+        "failed": 0,
+        "pending": 0,
+        "missing_conversation": 0,
+    }
+    report["judge_context"] = context_counts
     for number, o in enumerate(offers.values()):
-        if not (
-            o.get("shown") and o["seen"] and not o["used"] and o.get("conversation")
-        ):
+        if not (o.get("shown") and o["seen"] and not o["used"]):
+            continue
+        context_counts["eligible"] += 1
+        if not o.get("conversation"):
+            context_counts["missing_conversation"] += 1
             continue
         answer = on_machine(
             o["machine"],
@@ -377,10 +418,13 @@ def log(arguments):
             ],
         )
         if answer.get("error"):
+            context_counts["failed"] += 1
             print(
                 "actual for {}: {}".format(o["conversation"], answer["error"]),
                 file=sys.stderr,
             )
+        elif not answer.get("text"):
+            context_counts["pending"] += 1
         if answer.get("text"):
             graded.append(
                 {
@@ -393,6 +437,7 @@ def log(arguments):
             )
     if graded:
         grades = judge(graded, arguments.judge_model)
+        report["judge_missing_grades"] = sum(g["id"] not in grades for g in graded)
         rows = [
             {
                 "words": len(g["actual"].split()),
@@ -401,6 +446,7 @@ def log(arguments):
                 "scores": grades.get(g["id"], {}).get("scores", []),
             }
             for g in graded
+            if g["id"] in grades
         ]
         report["seen_not_used_graded"] = summarize(rows)
         return report, rows
