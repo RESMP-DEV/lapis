@@ -2909,6 +2909,30 @@ void resumingAConversationStartsItsCli() {
             require(workspace.closeSession(closing), "close the stand-in agents");
         require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
                 "the stand-in agents close");
+        workspace.setHarnessArguments(
+            {{QStringLiteral("grok"),
+              {QStringLiteral("--"), QStringLiteral("--permission-mode")}}});
+        lapis::desktop::AgentDefaults defaults;
+        defaults.mode = QStringLiteral("edits");
+        workspace.setAgentDefaults(defaults);
+        require(workspace.resumeAgent(project, QStringLiteral("literal"), QStringLiteral("grok"),
+                                      QStringLiteral("conv-literal")),
+                "a modeless resume with literal configured arguments starts");
+        auto* literal = workspace.focusedSession();
+        require(literal != nullptr && waitFor(
+                                          [literal] {
+                                              return literal->inputReady() &&
+                                                     screenText(literal->snapshot())
+                                                         .remove(QLatin1Char('\n'))
+                                                         .contains(QStringLiteral(
+                                                             "--permission-mode acceptEdits -r "
+                                                             "conv-literal -- --permission-mode"));
+                                          },
+                                          10000),
+                "generated mode and resume flags must precede literal prompt arguments");
+        require(workspace.closeSession(literal->sessionId()), "close the literal-argument fixture");
+        require(waitFor([&workspace] { return workspace.sessions().isEmpty(); }, 10000),
+                "the literal-argument fixture closes");
     }
     qputenv("PATH", path);
 }

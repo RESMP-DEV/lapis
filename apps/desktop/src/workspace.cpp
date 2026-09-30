@@ -1362,11 +1362,16 @@ std::optional<session::LaunchSpec> Workspace::agentLaunch(const AgentRequest& re
     // conversation to resume.
     const auto approval =
         launch_mode(request, harness_arguments_.value(request.harness), agent_defaults_.mode);
-    auto arguments = harness->defaultArguments() + harness_arguments_.value(request.harness) +
-                     harness->modelArguments(request.model) +
-                     modeArguments(request.harness, approval);
+    auto arguments = harness->defaultArguments() + harness_arguments_.value(request.harness);
+    auto generated =
+        harness->modelArguments(request.model) + modeArguments(request.harness, approval);
     if (!request.resume.isEmpty())
-        arguments += QStringList{harness->resumeOption, request.resume};
+        generated += QStringList{harness->resumeOption, request.resume};
+    const auto literal = arguments.indexOf(QStringLiteral("--"));
+    if (literal < 0)
+        arguments += generated;
+    else
+        arguments = arguments.first(literal) + generated + arguments.sliced(literal);
     if (!request.machine.isEmpty()) {
         std::optional<session::LaunchSpec> launch;
         const auto refusal = remoteLaunch(request, harness->command, arguments, launch);
