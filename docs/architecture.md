@@ -3391,7 +3391,7 @@ impact (#25, #26, #27, #34, #42). Reviewed against how lapis starts Claude:
   for up to two hours; `BASH_MAX_TIMEOUT_MS` raises the ceiling and
   `BASH_DEFAULT_TIMEOUT_MS` the default for foreground and background alike.
   Session ownership is unchanged: this is the CLI's policy for its own
-  children, documented for users in the README.
+  children, documented for users in [agents](agents.md#long-jobs).
 - **Fixes lapis benefits from:** bracketed paste after a mode reset (2.1.282)
   and fast type-ahead (2.1.283), which lapis's paste and Tab rely on; synchronous
   hooks no longer hanging on a background child (2.1.285); and resume fixes for
