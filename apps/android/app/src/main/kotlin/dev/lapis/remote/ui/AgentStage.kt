@@ -73,6 +73,8 @@ import dev.lapis.remote.session.AgentSession
 import dev.lapis.remote.session.WorkspaceRepository
 import dev.lapis.remote.terminal.TerminalMetrics
 import dev.lapis.remote.terminal.TerminalScreen
+import dev.lapis.remote.ui.commandbar.CommandBar
+import dev.lapis.remote.ui.commandbar.SnippetStore
 import kotlin.math.max
 import kotlin.math.min
 import kotlinx.coroutines.CoroutineScope
@@ -126,6 +128,24 @@ fun AgentStage(
                 ?.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE) ?: DEFAULT_FONT_SIZE
         }
     }
+
+    // The command bar's visibility and snippet list are phone-local state
+    // under the same settings seam; the bar is on until turned off.
+    val snippetStore = remember(settings) { SnippetStore(settings) }
+    var commandBarEnabled by remember { mutableStateOf(true) }
+    var snippets by remember { mutableStateOf(listOf<String>()) }
+    LaunchedEffect(settings) {
+        commandBarEnabled = settings.getString(COMMAND_BAR_KEY)?.toBooleanStrictOrNull() ?: true
+        snippets = snippetStore.load()
+    }
+
+    fun setSnippets(next: List<String>) {
+        snippets = next
+        // The application-lived scope: leaving the stage (or the editor
+        // closing) must not cancel the persistence write.
+        sessionScope.launch { snippetStore.save(next) }
+    }
+
     val density = LocalDensity.current
     val metrics = remember(fontSize, density) {
         TerminalMetrics.system(with(density) { fontSize.sp.toPx() })
@@ -320,6 +340,16 @@ fun AgentStage(
                 )
             }
             Banner(state, agent.title, shared, reopenGrid, onReopen)
+            if (commandBarEnabled) {
+                CommandBar(
+                    live = isLive,
+                    snippets = snippets,
+                    onInput = remember(session) {
+                        { input: Input -> session.send(input) }
+                    },
+                    onSnippets = { next -> setSnippets(next) },
+                )
+            }
             Composer(
                 draft = draft,
                 onDraft = { draft = it },
@@ -487,6 +517,9 @@ private val KeyboardGlyph by lazy {
 
 /** DataStore key for the terminal font size, matching iOS "terminalFontSize". */
 internal const val FONT_SIZE_KEY = "terminalFontSize"
+
+/** DataStore key for the command bar's visibility, matching iOS "commandBarEnabled". */
+internal const val COMMAND_BAR_KEY = "commandBarEnabled"
 
 private const val DEFAULT_FONT_SIZE = 12f
 internal const val MIN_FONT_SIZE = 8f

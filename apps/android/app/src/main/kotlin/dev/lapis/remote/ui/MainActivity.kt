@@ -148,6 +148,8 @@ private fun LapisApp(repository: WorkspaceRepository, app: LapisApplication) {
     if (showSettings) {
         SettingsScreen(
             currentHost = host,
+            settings = app.settings,
+            scope = app.sessionScope,
             onDone = { saved ->
                 showSettings = false
                 repository.setHost(saved)
