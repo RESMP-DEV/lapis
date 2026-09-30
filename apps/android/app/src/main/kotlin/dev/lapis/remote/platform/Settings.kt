@@ -1,6 +1,7 @@
 package dev.lapis.remote.platform
 
 import android.content.Context
+import androidx.datastore.core.CorruptionException
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
@@ -22,11 +23,27 @@ class DataStoreSettings(context: Context) : KeyValueStore {
         produceFile = { context.preferencesDataStoreFile(FILE) },
     )
 
-    override suspend fun getString(key: String): String? =
+    // UserDefaults is best-effort storage: reads fall back to defaults and
+    // writes either land or do not, but neither ever takes the app down.
+    // DataStore instead throws IOException/CorruptionException on file
+    // errors, and an uncaught exception in a Main-dispatcher coroutine is a
+    // process kill — so the seam absorbs storage failures here, once, for
+    // every key (host, font size, snippets, command bar).
+
+    override suspend fun getString(key: String): String? = try {
         store.data.first()[stringPreferencesKey(key)]
+    } catch (_: IOException) {
+        null
+    } catch (_: CorruptionException) {
+        null
+    }
 
     override suspend fun putString(key: String, value: String) {
-        store.edit { preferences -> preferences[stringPreferencesKey(key)] = value }
+        try {
+            store.edit { preferences -> preferences[stringPreferencesKey(key)] = value }
+        } catch (_: IOException) {
+        } catch (_: CorruptionException) {
+        }
     }
 
     companion object {

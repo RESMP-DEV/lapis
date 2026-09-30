@@ -77,7 +77,11 @@ fun SnippetEditorDialog(
                         OutlinedTextField(
                             value = text,
                             onValueChange = { value ->
-                                rows = rows.toMutableList().also { it[index] = value }
+                                // Reject rather than truncate: typing simply
+                                // stops at the store's per-snippet bound.
+                                if (value.length <= SnippetStore.MAX_LENGTH) {
+                                    rows = rows.toMutableList().also { it[index] = value }
+                                }
                             },
                             modifier = Modifier
                                 .weight(1f)
@@ -118,7 +122,11 @@ fun SnippetEditorDialog(
                 ) {
                     OutlinedTextField(
                         value = draft,
-                        onValueChange = { draft = it },
+                        onValueChange = { value ->
+                            if (value.length <= SnippetStore.MAX_LENGTH) {
+                                draft = value
+                            }
+                        },
                         modifier = Modifier
                             .weight(1f)
                             .testTag("snippet-new"),
@@ -131,7 +139,9 @@ fun SnippetEditorDialog(
                             rows = rows + draft.trim()
                             draft = ""
                         },
-                        enabled = draft.isNotBlank(),
+                        // The count bound surfaces here instead of as a
+                        // silent drop when the list is saved.
+                        enabled = draft.isNotBlank() && rows.size < SnippetStore.MAX_SNIPPETS,
                         modifier = Modifier.testTag("snippet-add"),
                     ) { Text("Add") }
                 }

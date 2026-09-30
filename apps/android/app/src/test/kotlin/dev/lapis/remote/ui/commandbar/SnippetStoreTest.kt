@@ -66,4 +66,14 @@ class SnippetStoreTest {
             SnippetStore(memory).load(),
         )
     }
+
+    @Test
+    fun normalizeIsWhatSavePersistsAndLoadReturns() = runTest {
+        val raw = listOf("  a  ", "") + (1..100).map { "s$it" }
+        val memory = MemoryStore()
+        SnippetStore(memory).save(raw)
+        // The live bar assigns normalize() directly, so this equality is
+        // the invariant that display, persistence, and reload agree.
+        assertEquals(SnippetStore.normalize(raw), SnippetStore(memory).load())
+    }
 }

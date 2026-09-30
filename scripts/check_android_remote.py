@@ -496,11 +496,21 @@ def checks(device, mac, screens):
         # follow-bottom anchor (correct app behavior: output must not yank
         # the view out from under the reader). Scroll back down to the live
         # bottom so later checks see new output — the harness's scroll is a
-        # drag too, so landing on the last row restores following.
+        # drag too, so landing on the last row restores following. The
+        # prompt must be visible too: "count 120" also sits one row above
+        # the bottom, which is not yet the row that restores following.
+        restored = False
         for _ in range(16):
             device.scroll("newer", 4)
-            if "count 120" in device.terminal_text():
+            text = device.terminal_text()
+            # "›" alone is a weak anchor: every archived prompt carries it.
+            # The live bottom is where the prompt is the last visible row.
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            if "count 120" in text and lines and lines[-1].startswith("›"):
+                restored = True
                 break
+        if not restored:
+            return "scrolling never returned to the live bottom"
         shot("05-scrollback")
         return None
 
@@ -565,15 +575,34 @@ def checks(device, mac, screens):
         # The milestone C finish line: ^C through the bar's chord chip must
         # interrupt a running program (the PTY turns the byte into SIGINT),
         # not just be assumed to. The busy loop reports how far it got, and
-        # the agent must still answer afterwards.
+        # the agent must still answer afterwards. On any failure the busy
+        # loop still owns the foreground PTY (it survives the app's process
+        # death; the agent lives on the gateway side), so the exit paths
+        # best-effort-interrupt it — otherwise later checks type into a
+        # wedged terminal and fail with misleading messages.
         send_line(device, "busy")
-        if not wait_terminal(device, "busy 3", timeout=20):
-            return "the busy program never started"
-        if not reveal(device, "key-ctrl-c"):
-            return "the ^C chip never scrolled into view"
-        device.tap_node(id="key-ctrl-c")
-        if not wait_terminal(device, "busy interrupted after", timeout=15):
-            return "the ^C chord never interrupted the busy program"
+        interrupted = False
+        try:
+            if not wait_terminal(device, "busy 3", timeout=20):
+                return "the busy program never started (busy may still own the PTY)"
+            if not reveal(device, "key-ctrl-c"):
+                return (
+                    "the ^C chip never scrolled into view (busy may still own the PTY)"
+                )
+            device.tap_node(id="key-ctrl-c")
+            if not wait_terminal(device, "busy interrupted after", timeout=15):
+                return "the ^C chord never interrupted the busy program"
+            interrupted = True
+        finally:
+            if not interrupted:
+                # Best effort, and never at the cost of the real failure
+                # above: the chip is only tappable when it is on screen.
+                try:
+                    if device.find(id="key-ctrl-c") is not None:
+                        device.tap_node(id="key-ctrl-c")
+                        time.sleep(1.5)
+                except android_ctl.DeviceError:
+                    pass
         send_line(device, "after interrupt")
         if not wait_terminal(device, "echo: after interrupt"):
             return "the agent did not answer after the interrupt"
@@ -598,21 +627,33 @@ def checks(device, mac, screens):
         # Snippet lifecycle: added through the editor, sent as paste+Enter
         # (the fake agent echoes the line back), and still there after
         # process death (DataStore) — no gateway sync involved anywhere.
+        # The store survives everything this harness resets (resetCache
+        # wipes only caches; the fixture rebuilds only agents), so the
+        # precondition must be established here: clear the list through the
+        # editor and assert on a run-unique text, so stale entries from
+        # earlier runs can neither crowd the 24-snippet cap nor occupy
+        # index 0 under this check's feet.
+        snippet_text = f"git status {time.strftime('%H%M%S')}"
         device.tap_node(id="snippets-add")
         if device.wait(id="snippet-new", timeout=10) is None:
             return "the snippet editor never opened"
+        for _ in range(25):
+            if device.find(id="snippet-0-delete") is None:
+                break
+            device.tap_node(id="snippet-0-delete")
+            time.sleep(0.3)
+        else:
+            return "existing snippets never cleared"
         device.tap_node(id="snippet-new")
-        device.type_text("git status")
+        device.type_text(snippet_text)
         device.tap_node(id="snippet-add")
         device.tap_node(id="snippet-done")
-        chip = device.wait(id="snippet-0", timeout=10)
+        chip = device.wait(text=snippet_text, timeout=10)
         if chip is None:
             return "the added snippet chip never appeared"
-        if chip.get("text") != "git status":
-            return f"the chip says {chip.get('text')!r}, not the saved snippet"
         shot("11-snippet-added")
-        device.tap_node(id="snippet-0")
-        if not wait_terminal(device, "echo: git status"):
+        device.tap_node(text=snippet_text)
+        if not wait_terminal(device, f"echo: {snippet_text}"):
             return "tapping the snippet never ran it"
         # Process death must not lose the list: force-stop and a plain
         # relaunch (no resetCache) restores it from DataStore.
@@ -624,11 +665,9 @@ def checks(device, mac, screens):
         device.tap_node(text="echo agent")
         if device.wait(id="terminal", timeout=15) is None:
             return "the stage did not reopen after the restart"
-        chip = device.wait(id="snippet-0", timeout=10)
+        chip = device.wait(text=snippet_text, timeout=10)
         if chip is None:
             return "the snippet did not survive the restart"
-        if chip.get("text") != "git status":
-            return "the restored chip has the wrong text"
         shot("12-snippet-restored")
         return None
 

@@ -130,20 +130,26 @@ fun AgentStage(
     }
 
     // The command bar's visibility and snippet list are phone-local state
-    // under the same settings seam; the bar is on until turned off.
+    // under the same settings seam; the bar is on until turned off. Both
+    // are saveable so a fold/unfold (activity recreation) shows the saved
+    // values immediately instead of flashing defaults until the DataStore
+    // read completes.
     val snippetStore = remember(settings) { SnippetStore(settings) }
-    var commandBarEnabled by remember { mutableStateOf(true) }
-    var snippets by remember { mutableStateOf(listOf<String>()) }
+    var commandBarEnabled by rememberSaveable { mutableStateOf(true) }
+    var snippets by rememberSaveable { mutableStateOf(listOf<String>()) }
     LaunchedEffect(settings) {
         commandBarEnabled = settings.getString(COMMAND_BAR_KEY)?.toBooleanStrictOrNull() ?: true
         snippets = snippetStore.load()
     }
 
     fun setSnippets(next: List<String>) {
-        snippets = next
+        // The store's bounds apply to the live list too, so the bar shows
+        // exactly what a restart restores.
+        val bounded = SnippetStore.normalize(next)
+        snippets = bounded
         // The application-lived scope: leaving the stage (or the editor
         // closing) must not cancel the persistence write.
-        sessionScope.launch { snippetStore.save(next) }
+        sessionScope.launch { snippetStore.save(bounded) }
     }
 
     val density = LocalDensity.current

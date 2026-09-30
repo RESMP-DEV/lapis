@@ -19,15 +19,11 @@ class SnippetStore(private val store: KeyValueStore) {
         } catch (_: IllegalArgumentException) {
             return emptyList()
         }
-        return decoded.map { it.trim() }.filter { it.isNotEmpty() }.take(MAX_SNIPPETS)
+        return normalize(decoded)
     }
 
     suspend fun save(snippets: List<String>) {
-        val bounded = snippets
-            .map { it.trim().take(MAX_LENGTH) }
-            .filter { it.isNotEmpty() }
-            .take(MAX_SNIPPETS)
-        store.putString(KEY, json.encodeToString(bounded))
+        store.putString(KEY, json.encodeToString(normalize(snippets)))
     }
 
     companion object {
@@ -36,5 +32,13 @@ class SnippetStore(private val store: KeyValueStore) {
         const val MAX_SNIPPETS = 24
         const val MAX_LENGTH = 512
         private val json = Json { ignoreUnknownKeys = true }
+
+        /** The one bounds projection: what load() returns is exactly what
+         * save() persists and exactly what the bar displays, so the live
+         * chips can never diverge from what a restart restores. */
+        fun normalize(snippets: List<String>): List<String> = snippets
+            .map { it.trim().take(MAX_LENGTH) }
+            .filter { it.isNotEmpty() }
+            .take(MAX_SNIPPETS)
     }
 }

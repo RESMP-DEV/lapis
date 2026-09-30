@@ -19,7 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -28,6 +28,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.lapis.remote.gateway.Input
@@ -49,7 +50,9 @@ fun CommandBar(
     onSnippets: (List<String>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var editing by remember { mutableStateOf(false) }
+    // Saveable so a fold/unfold (activity recreation) cannot discard an
+    // open editor with uncommitted rows.
+    var editing by rememberSaveable { mutableStateOf(false) }
     Column(
         modifier
             .fillMaxWidth()
@@ -89,6 +92,7 @@ private fun KeyRow(live: Boolean, onInput: (Input) -> Unit, wide: Boolean) {
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 3.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             CommandBarKeys.fixed.forEach { key -> KeyChip(key, live, onInput) }
         }
@@ -132,6 +136,7 @@ private fun SnippetRow(
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 3.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) { content() }
     } else {
         Row(
@@ -170,6 +175,10 @@ private fun SnippetChip(
         snippet,
         color = if (enabled) LapisColors.accent else LapisColors.quiet,
         style = TextStyle(fontSize = 13.sp, fontFamily = FontFamily.Monospace),
+        // One line: a long snippet must not grow the row or wrap across
+        // the wide layout; the full text is what the editor shows.
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
         modifier = Modifier
             .testTag("snippet-$index")
             .chipLook(enabled)
