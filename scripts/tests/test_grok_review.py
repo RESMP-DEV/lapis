@@ -4,6 +4,7 @@ Grok run is judged, with a stand-in grok on PATH."""
 import json
 import os
 import plistlib
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -400,6 +401,15 @@ class CommandTests(unittest.TestCase):
 
             def capture_process(*args, **kwargs):
                 process = original_popen(*args, **kwargs)
+                self.assertIsNotNone(
+                    process.stdout, "this capture fixture requires stdout PIPE"
+                )
+                self.assertIsNotNone(
+                    process.stderr, "this capture fixture requires stderr PIPE"
+                )
+                self.assertIsNotNone(
+                    process.stdin, "this input fixture requires stdin PIPE"
+                )
                 owned["read"] = {process.stdout.fileno(), process.stderr.fileno()}
                 owned["write"] = {process.stdin.fileno()}
                 return process
@@ -657,11 +667,11 @@ class AdmissionTests(unittest.TestCase):
                     "run_process",
                     side_effect=[
                         grok_review.subprocess.CompletedProcess(
-                            [], 1, "", "not loaded"
+                            [], 3, "", "Boot-out failed: 3: No such process"
                         ),
                         grok_review.subprocess.CompletedProcess([], 0, "", ""),
                         grok_review.subprocess.CompletedProcess(
-                            [], 1, "", "not loaded"
+                            [], 3, "", "Boot-out failed: 3: No such process"
                         ),
                     ],
                 ) as launch,
@@ -697,7 +707,9 @@ class AdmissionTests(unittest.TestCase):
                 )
                 self.assertFalse(plist.exists())
                 launch.side_effect = [
-                    grok_review.subprocess.CompletedProcess([], 1, "", "not loaded"),
+                    grok_review.subprocess.CompletedProcess(
+                        [], 3, "", "Boot-out failed: 3: No such process"
+                    ),
                     grok_review.subprocess.CompletedProcess(
                         [], 1, "", "bootstrap refused"
                     ),
@@ -706,12 +718,93 @@ class AdmissionTests(unittest.TestCase):
                     grok_review.ReviewError, "bootstrap refused"
                 ):
                     grok_review.install("fixture/repo", False)
+                self.assertFalse(
+                    plist.exists(),
+                    "failed fresh install leaves no startup registration",
+                )
                 launch.side_effect = grok_review.ReviewError("helper timeout")
                 with self.assertRaisesRegex(
                     grok_review.ReviewError, "running job may need stopping"
                 ):
                     grok_review.uninstall()
                 self.assertFalse(plist.exists())
+
+    def test_failed_stop_preserves_existing_registration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plist = Path(directory) / "review.plist"
+            previous = plistlib.dumps(
+                {"Label": "previous", "ProgramArguments": ["old"]}
+            )
+            plist.write_bytes(previous)
+            with (
+                patch.object(grok_review, "PLIST", plist),
+                patch.object(
+                    grok_review.shutil, "which", return_value="/usr/bin/fixture"
+                ),
+                patch.object(
+                    grok_review,
+                    "run_process",
+                    return_value=subprocess.CompletedProcess(
+                        [], 5, "", "permission denied"
+                    ),
+                ) as launch,
+            ):
+                with self.assertRaisesRegex(
+                    grok_review.ReviewError, "permission denied"
+                ):
+                    grok_review.install("fixture/repo", False)
+                self.assertEqual(plist.read_bytes(), previous)
+                self.assertEqual(launch.call_count, 1)
+
+    def test_failed_bootstrap_restores_previous_registration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plist = Path(directory) / "review.plist"
+            previous = plistlib.dumps(
+                {"Label": "previous", "ProgramArguments": ["old"]}
+            )
+            plist.write_bytes(previous)
+            with (
+                patch.object(grok_review, "PLIST", plist),
+                patch.object(
+                    grok_review.shutil, "which", return_value="/usr/bin/fixture"
+                ),
+                patch.object(
+                    grok_review,
+                    "run_process",
+                    side_effect=[
+                        subprocess.CompletedProcess([], 0, "", ""),
+                        subprocess.CompletedProcess([], 1, "", "bootstrap refused"),
+                    ],
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    grok_review.ReviewError, "previous contents"
+                ):
+                    grok_review.install("fixture/repo", False)
+                self.assertEqual(plist.read_bytes(), previous)
+                self.assertEqual(list(plist.parent.iterdir()), [plist])
+
+    def test_uninstall_reports_stop_and_registration_failures_together(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plist = Path(directory) / "review.plist"
+            plist.write_text("preserved")
+            with (
+                patch.object(grok_review, "PLIST", plist),
+                patch.object(
+                    grok_review,
+                    "run_process",
+                    side_effect=grok_review.ReviewError("helper timeout"),
+                ),
+                patch.object(
+                    Path, "unlink", side_effect=PermissionError("fixture unlink denied")
+                ),
+            ):
+                with self.assertRaises(grok_review.ReviewError) as caught:
+                    grok_review.uninstall()
+                self.assertIn("helper timeout", str(caught.exception))
+                self.assertIn("fixture unlink denied", str(caught.exception))
+                self.assertNotIn("registration removed", str(caught.exception))
+            self.assertEqual(plist.read_text(), "preserved")
 
     def test_only_repository_writers_are_admitted(self):
         for permission in ("admin", "maintain", "write", "read", "triage", None):

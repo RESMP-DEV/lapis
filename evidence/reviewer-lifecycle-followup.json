@@ -1,0 +1,37 @@
+{
+  "source_revision": "79e3a68e42ade42926bd0ce1523f595a45b4af11",
+  "scope": "Late PR47 reviewer lifecycle/diagnostic fixes and PR46 source-citation clarification; no live service registration changed.",
+  "source_sha256": {
+    "docs/architecture.md": "65df787958a6d48b7802b4aa06074a1bb74b1de5115def6a1e58cf9e2b302de0",
+    "evidence/production-readiness-triage.json": "0bfeb1dd26a031e0ce8ca48c7595cb3d3c3e848e00bc90f43716fde06e8da69b",
+    "scripts/grok_review.py": "0448f2859359941f759d6726f21d052b748c190b036c0f0a7ae91a9a36884ad0",
+    "scripts/tests/test_grok_review.py": "275cb63c07a2b9066a4176dc7cab48ec25dd9089636573ed3ef8960c9d2eeec5"
+  },
+  "checks": [
+    {
+      "command": "ruff check --config ruff.toml scripts/grok_review.py scripts/tests/test_grok_review.py; ruff format --check --config ruff.toml scripts/grok_review.py scripts/tests/test_grok_review.py",
+      "result": "pass"
+    },
+    {
+      "command": "uv run --no-project python -m unittest discover -s scripts/tests -p test_grok_review.py",
+      "result": "pass",
+      "tests": 26,
+      "seconds": 0.818
+    },
+    {
+      "command": "git diff --check; JSON parse of evidence/production-readiness-triage.json",
+      "result": "pass"
+    },
+    {
+      "command": "Inspect the recorded PR43 source revision and restore generator/template",
+      "result": "LiveConnection::sendText exists at 19baa20, while baseline 61a87e5 differs. Both restore sources use RunAtLoad and omit KeepAlive."
+    }
+  ],
+  "reuse": "Unrelated Python/compiled inputs retain the prior quality baseline; the changed module has full focused tests and Ruff. Documentation-only citation changes require no native rebuild.",
+  "review": "Kilo late PR47 comments and PR46 source-anchor findings; preserved failure recovery and explicit unknown running-job state. PIPE assertions retain the fixture contract rather than silently skipping descriptor coverage.",
+  "limits": [
+    "No install/uninstall or launchctl state mutation was performed. Tests use temporary plists and a mocked runner.",
+    "A read-only absent-service launchctl print probe returned 113 with the missing-service marker; it is not a service installation test.",
+    "Failed bootstrap restores previous registration bytes but does not claim the previous job is running."
+  ]
+}
