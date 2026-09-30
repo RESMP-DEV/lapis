@@ -416,10 +416,18 @@ def fixture(run):
             )
             with urllib.request.urlopen(request, timeout=1) as response:
                 listing = json.load(response)
+            if not isinstance(listing, dict):
+                # Whatever answered is not this repo's gateway (the stale
+                # check exists precisely for a foreign owner on the port),
+                # so force it down the cannot-know-this-run's-ids path
+                # instead of crashing on a .get of a list or scalar.
+                listing = {}
             answered = [
                 item
                 for category in listing.get("categories", ())
+                if isinstance(category, dict)
                 for item in category.get("agents", ())
+                if isinstance(item, dict)
             ]
         except (OSError, ValueError):
             answered = None
@@ -861,7 +869,19 @@ def main():
         )
         return 1
     device = android_ctl.Device(serial=serial or attached[0])
-    if device.locked():
+    try:
+        phone_locked = device.locked()
+    except (android_ctl.DeviceError, subprocess.TimeoutExpired) as error:
+        # Mirror the adb-devices timeout handling above: this probe has no
+        # fixture to clean up, but a hung or failing adb should still report
+        # a named condition instead of a raw traceback.
+        print(
+            f"could not read the lock state ({type(error).__name__}: {error}); "
+            "restart the adb server and rerun",
+            file=sys.stderr,
+        )
+        return 1
+    if phone_locked:
         # The app launches behind the keyguard and its networking still
         # works, so a locked phone produces a full run of misleading
         # failures (missing composer, "command bar disabled in settings")
@@ -900,6 +920,11 @@ def main():
             print(f"[{name}]", flush=True)
             try:
                 problem = available[name]()
+            except android_ctl.Skipped as skip:
+                # A harness condition the check cannot run through (not a
+                # product failure): keep the bare "SKIPPED:" message so the
+                # classifier below records it as skipped instead of failed.
+                problem = str(skip)
             except Exception as error:
                 # A check that dies mid-gesture (device pulled, adb hung) is a
                 # failed check, not a lost receipt: record it and keep going.

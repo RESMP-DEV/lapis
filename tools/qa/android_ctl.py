@@ -157,6 +157,15 @@ class DeviceError(RuntimeError):
     pass
 
 
+class Skipped(DeviceError):
+    """A harness condition, not a product failure: the check could not run
+    (unreadable device state), so the receipt must record it as skipped.
+    The runner catches this before DeviceError and uses the bare message,
+    which starts with "SKIPPED:" to fit its existing classification."""
+
+    pass
+
+
 class Device:
     """One adb device; every shell line is one checked subprocess call."""
 
@@ -285,19 +294,32 @@ class Device:
         """Whether the keyguard (or its emergency dialer) is showing. A
         locked phone still launches the app behind the keyguard, so every
         UI check then fails with misleading messages (missing composer,
-        "command bar disabled") instead of the real cause. The emergency
-        dialer composes over the keyguard and clears mDreamingLockscreen
-        while the phone stays locked, so the foreground activity is
-        inspected too; build-specific fields that vanish read as
-        unlocked, preserving the pre-guard behavior."""
-        if "mDreamingLockscreen=true" in self.shell("dumpsys window"):
+        "command bar disabled") instead of the real cause. Two window
+        flags drive the decision: isKeyguardShowing is the purpose-built
+        keyguard signal, and the dreaming flag additionally catches
+        keyguard-adjacent overlays (both verified true on the target
+        build with the display on and off). The emergency dialer is a
+        real activity composing over the keyguard and can clear those
+        flags while the phone stays locked, so the resumed activity is
+        inspected too — matched per line (the 300-char slice after a
+        marker substring could spill into unrelated sections) and
+        case-insensitively (the components are CamelCase; this build
+        reports "Resumed:"/"ResumedActivity:" lines where AOSP logs
+        "topResumedActivity="). Build-specific fields that vanish read
+        as unlocked, preserving the pre-guard behavior."""
+        window = self.shell("dumpsys window")
+        if "isKeyguardShowing=true" in window or "mDreamingLockscreen=true" in window:
             return True
-        activities = self.shell("dumpsys activity activities")
-        marker = "topResumedActivity"
-        if marker not in activities:
-            return False
-        foreground = activities.split(marker, 1)[1][:300]
-        return "emergency" in foreground or "keyguard" in foreground
+        for line in self.shell("dumpsys activity activities").splitlines():
+            stripped = line.strip()
+            if not stripped.startswith(
+                ("topResumedActivity=", "ResumedActivity:", "Resumed:")
+            ):
+                continue
+            lowered = stripped.lower()
+            if "emergency" in lowered or "keyguard" in lowered:
+                return True
+        return False
 
     def ime_shown(self) -> bool:
         """Whether the on-screen keyboard is currently covering the stage.
@@ -306,11 +328,17 @@ class Device:
         dump that carries no IME state at all raises instead of silently
         reporting "hidden" — a renamed or trimmed field would otherwise skip
         the BACK press, leave the keyboard up, and blame the app for the
-        harness's blind scroll.
+        harness's blind scroll. Raised as Skipped with a "SKIPPED:" message:
+        the app was never exercised when the harness cannot read IME state,
+        so the receipt records a skipped check, not a product failure.
         """
         dump = self.shell("dumpsys input_method")
         if "mInputShown=" not in dump:
-            raise DeviceError("dumpsys input_method reported no IME state")
+            raise Skipped(
+                "SKIPPED: dumpsys input_method reported no IME state; "
+                "the keyboard state is unreadable, so the scroll cannot "
+                "be attempted"
+            )
         return "mInputShown=true" in dump
 
     def dismiss_ime(self) -> None:

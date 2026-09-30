@@ -40,7 +40,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -379,9 +378,18 @@ fun TerminalScreen(
                 val screenText = (
                     if (fullScreen) frame?.text.orEmpty() else cache.accessibleText
                     )
-                val stateLine = if (fullScreen) "" else if (followBottom) "Following live output. " else "Reading earlier output. "
-                stateDescription = stateLine.trim()
-                contentDescription = stateLine + screenText.ifBlank { "Agent screen" }
+                // The state stays in contentDescription (not a separate
+                // stateDescription): uiautomator's XML dump — the harness's
+                // only window into the accessibility tree — exposes text and
+                // content-desc only, and carrying the sentence in both
+                // properties would make TalkBack announce it twice per
+                // focus. Revisit only with a measured dump showing
+                // state-desc visible, moving the anchor with it.
+                contentDescription = (
+                    if (fullScreen) ""
+                    else if (followBottom) "Following live output. "
+                    else "Reading earlier output. "
+                    ) + screenText.ifBlank { "Agent screen" }
             }
             .pointerInput(fullScreen, metrics.cellWidth, metrics.lineHeight, fitColumns, viewportWidth, onWheel) {
                 if (!fullScreen || onWheel == null) return@pointerInput
