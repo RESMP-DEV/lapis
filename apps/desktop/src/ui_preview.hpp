@@ -35,6 +35,7 @@ struct UiPreviewOptions {
     QObject* desktop{};       // exposed to QML as `desktop`
     QObject* conversations{}; // exposed to QML as `conversations`
     QObject* terminals{};     // exposed to QML as `terminals`
+    QObject* limitResets{};   // exposed to QML as `limitResets`
     QObject* nextPrompt{};    // exposed to QML as `nextPrompt`
     QObject* planSignIn{};    // exposed to QML as `planSignIn`
     // Only the normal workspace restores user geometry; tests opt in with an isolated path.

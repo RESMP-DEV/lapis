@@ -21,6 +21,10 @@ class Observer final : public QObject {
     [[nodiscard]] QStringList launchArguments(const QStringList& original,
                                               const QString& serviceExecutable);
     void stop();
+    // How long a turn that ended with background work in flight waits for
+    // that work's next turn before it counts as finished.
+    static constexpr int paused_turn_ms = 10 * 60 * 1000;
+    void setPausedTurnMsForTesting(int ms);
   signals:
     // State changes immediately; notifications are coalesced on the event loop.
     // Receivers may stop or destroy the observer without reentering transport work.

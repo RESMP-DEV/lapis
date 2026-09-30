@@ -28,6 +28,8 @@ lapis::desktop::AccountsConfig sample() {
             {"name": "box", "email": "b@example.com", "home": "devbox", "machines": ["local"]},
             {"name": "spare", "email": "c@example.com", "machines": ["local", "-oProxyCommand=x"]},
             {"name": "bad name", "home": "local"},
+            {"name": ".", "home": "local"},
+            {"name": "..", "home": "local"},
             {"name": "mac", "home": "devbox"}],
         "codex": [{"name": "one", "email": "d@example.com", "home": "local"}]}})")
                           .object();

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location(
     "lapis_accounts", Path(__file__).resolve().parents[1] / "lapis_accounts.py"
@@ -51,6 +52,128 @@ class PlanTest(unittest.TestCase):
             saved = accounts.load_config(path)
             self.assertEqual(saved["theme"], "night")
             self.assertEqual(saved["accounts"]["codex"][0]["machines"], ["local"])
+
+
+class SignInTest(unittest.TestCase):
+    def test_sign_in_merges_after_real_token_write_with_malformed_siblings(self):
+        config = {
+            "theme": "night",
+            "accounts": {
+                "claude": [
+                    None,
+                    {"name": "bad", "email": None},
+                    {"name": "valid", "email": "valid@example.test", "machines": None},
+                ]
+            },
+        }
+        save = accounts.save_config
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "lapis.json"
+            with (
+                patch.object(accounts, "ACCOUNTS", root / "accounts"),
+                patch.object(accounts, "read_setup_token", return_value=TOKEN),
+                patch.object(
+                    accounts, "save_config", side_effect=lambda c: save(c, path)
+                ),
+            ):
+                accounts.command_sign_in(config, [], ask=lambda _: "")
+            self.assertTrue((root / "accounts/claude/valid.token").is_file())
+            saved = accounts.load_config(path)
+            self.assertEqual(saved["theme"], "night")
+            self.assertEqual(saved["accounts"]["claude"][-1]["machines"], ["local"])
+            self.assertIsNone(saved["accounts"]["claude"][0])
+
+    def test_validation_precedes_auth_and_destinations_are_per_plan(self):
+        config = {
+            "usage": {"machines": ["usage-host"]},
+            "accounts": {
+                "claude": [
+                    None,
+                    {"name": None},
+                    {"name": "../outside", "email": "a@example.test"},
+                    {"name": "missing-email", "email": None},
+                    {
+                        "name": "first",
+                        "email": "a@example.test",
+                        "home": "first-host",
+                        "machines": None,
+                    },
+                    {
+                        "name": "second",
+                        "email": "b@example.test",
+                        "machines": ["second-host"],
+                    },
+                ],
+                "codex": [{"name": "unrelated", "machines": ["codex-only"]}],
+            },
+        }
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.object(accounts, "ACCOUNTS", Path(folder)),
+            patch.object(accounts, "command_add_claude") as add,
+        ):
+            accounts.command_sign_in(config, ask=lambda _: "")
+            self.assertEqual(
+                [(call.args[1], call.args[3]) for call in add.call_args_list],
+                [
+                    ("first", ["usage-host", "first-host"]),
+                    ("second", ["usage-host", "second-host"]),
+                ],
+            )
+            add.reset_mock()
+            accounts.command_sign_in(config, [], ask=lambda _: "")
+            self.assertEqual([call.args[3] for call in add.call_args_list], [[], []])
+        with (
+            patch.object(accounts, "load_config", return_value=config),
+            patch.object(accounts, "command_sign_in") as sign_in,
+        ):
+            self.assertEqual(accounts.main(["sign-in"]), 0)
+            self.assertIsNone(sign_in.call_args.args[1])
+            self.assertEqual(accounts.main(["sign-in", "--to"]), 0)
+            self.assertEqual(sign_in.call_args.args[1], [])
+
+    def test_every_plan_without_a_token_is_offered_in_turn(self):
+        config = {
+            "usage": {"machines": ["devbox"]},
+            "accounts": {
+                "claude": [
+                    {"name": "first", "email": "a@example.com", "home": "local"},
+                    {"name": "second", "email": "b@example.com", "home": "gpubox"},
+                    {"name": "third", "email": "c@example.com", "home": "gpubox"},
+                ],
+                "codex": [
+                    {"name": "x", "email": "x@example.com", "machines": ["spare"]}
+                ],
+            },
+        }
+        self.assertEqual(
+            accounts.plan_machines(config, config["accounts"]["claude"][1]),
+            ["devbox", "gpubox"],
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "claude").mkdir()
+            (root / "claude" / "first.token").write_text("kept\n")
+            added, asked = [], []
+
+            def ask(prompt):
+                asked.append(prompt)
+                return "n" if "second" in prompt else ""
+
+            with (
+                patch.object(accounts, "ACCOUNTS", root),
+                patch.object(
+                    accounts,
+                    "command_add_claude",
+                    lambda config, name, email, hosts: added.append(
+                        (name, email, hosts)
+                    ),
+                ),
+            ):
+                accounts.command_sign_in(config, ["gpubox"], ask)
+        self.assertEqual(len(asked), 2)  # first already has a token
+        self.assertEqual(added, [("third", "c@example.com", ["gpubox"])])
 
 
 class TokenTest(unittest.TestCase):

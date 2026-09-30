@@ -4,6 +4,7 @@
 #include "conversation_index.hpp"
 #include "desktop_actions.hpp"
 #include "keymap.hpp"
+#include "limit_resets.hpp"
 #include "next_prompt.hpp"
 #include "plan_sign_in.hpp"
 #include "platform_desktop.hpp"
@@ -286,12 +287,16 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
                       QPointer<QQuickWindow>& shown) {
     namespace platform = lapis::desktop::platform;
     using lapis::desktop::Chime;
+    auto sounds = std::make_shared<lapis::desktop::ChimeSounds>();
+    sounds->configure(keymap);
     alerts.emplace(
         workspace, keymap,
-        [](Chime chime) { lapis::desktop::play_sound(lapis::desktop::chime_wav(chime)); },
+        [&keymap, sounds](Chime chime) { sounds->play(chime, keymap, lapis::desktop::play_sound); },
         [&workspace, &shown](const lapis::desktop::SessionPreview* item) {
             return shown && shown->isActive() && workspace.focusedSession() == item;
         });
+    QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &*alerts,
+                     [sounds, &keymap] { sounds->configure(keymap); });
     notifier.emplace(
         workspace, keymap,
         [](const QString& id, const QString& title, const QString& body) {
@@ -408,8 +413,11 @@ void route_terminal_keys(lapis::desktop::UiPreview& view, const lapis::desktop::
     });
 }
 // Command-Option-L from any app: lapis comes forward on the agent that most
-// recently needed you.
-void route_latest_attention(lapis::desktop::UiPreview& view, lapis::desktop::Workspace& workspace) {
+// recently needed you. Only the real workspace takes the key.
+void route_latest_attention(lapis::desktop::UiPreview& view, lapis::desktop::Workspace& workspace,
+                            bool isolated, const QCommandLineParser& parser) {
+    if (isolated || workspace.previewMode() || parser.isSet(QStringLiteral("capture")))
+        return;
     const bool taken = lapis::desktop::platform::on_latest_attention_key([&view, &workspace] {
         if (auto* window = view.window()) {
             window->show();
@@ -454,6 +462,100 @@ QString usage_program(const QString& id) {
 }
 // Usage asks the CLIs only while its setting is on, on the machines and in
 // the order the config names.
+// Saved Claude Code and Codex limit resets, spent as OMP does, with each
+// machine's own sign-in; lapis says when it spends one or cannot.
+// Only the real workspace spends resets; the object QML sees, or null.
+lapis::desktop::LimitResets::AgentTarget reset_target(const lapis::desktop::Workspace& workspace,
+                                                      const lapis::desktop::KeyMap& keymap,
+                                                      const QString& id) {
+    lapis::desktop::LimitResets::AgentTarget result;
+    const auto* item = workspace.session(id);
+    if (item == nullptr)
+        return result;
+    result.machine = workspace.agentPlace(id).value(QStringLiteral("machine")).toString();
+    result.cli = item->harnessId();
+    result.account = workspace.agentAccount(id);
+    result.credential = workspace.agentPlanCredential(id);
+    if (!result.account.isEmpty()) {
+        result.refusal = QStringLiteral("the selected plan is no longer configured");
+        for (const auto& account : keymap.accounts().accounts)
+            if (account.cli == result.cli && account.name == result.account) {
+                result.home = account.home;
+                result.hasHome = account.hasHome;
+                result.email = account.email;
+                result.refusal.clear();
+                break;
+            }
+    }
+    return result;
+}
+
+QObject* keep_limit_resets(std::optional<lapis::desktop::LimitResets>& kept,
+                           const lapis::desktop::Workspace& workspace,
+                           const lapis::desktop::KeyMap& keymap, bool isolated) {
+    using lapis::desktop::LimitResets;
+    if (isolated)
+        return nullptr;
+    const auto target = [&workspace, &keymap](const QString& id) {
+        return reset_target(workspace, keymap, id);
+    };
+    auto& resets = kept.emplace(
+        [&workspace, target] {
+            QVector<LimitResets::AgentTarget> result;
+            for (const auto& entry : workspace.sessions())
+                if (const auto* item = entry.value<lapis::desktop::SessionPreview*>())
+                    result.append(target(item->sessionId()));
+            return result;
+        },
+        target, [](const QString& id) { return QStandardPaths::findExecutable(id); },
+#ifdef Q_OS_MACOS
+        [] { return lapis::desktop::platform::claude_code_credentials(); },
+#else
+        LimitResets::Credentials{},
+#endif
+        QDir(lapis::desktop::data_directory()).filePath(QStringLiteral("runtime")));
+    const auto follow = [&resets, &keymap] { resets.setSettings(keymap.limitResets()); };
+    follow();
+    QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &resets, follow);
+    const auto cli = [](const QString& id) {
+        return id == QLatin1String("claude") ? QStringLiteral("Claude Code")
+                                             : QStringLiteral("Codex");
+    };
+    const auto place = [](const QString& machine) {
+        return machine.isEmpty() ? QStringLiteral("this Mac") : machine;
+    };
+    // The lambdas take the signals' own parameters.
+    // NOLINTBEGIN(bugprone-easily-swappable-parameters)
+    QObject::connect(&resets, &lapis::desktop::LimitResets::spent, &resets,
+                     [cli, place](const QString& machine, const QString& id, const QString& email,
+                                  const QString& title, const QString& why) {
+                         const QString reason = why == QLatin1String("blocked")
+                                                    ? QStringLiteral(" It was at its limit.")
+                                                : why == QLatin1String("expiring")
+                                                    ? QStringLiteral(" It was about to expire.")
+                                                    : QString();
+                         lapis::desktop::platform::post_notification(
+                             {}, QStringLiteral("Limit reset used"),
+                             QStringLiteral("%1 on %2 (%3): %4.%5")
+                                 .arg(cli(id), place(machine), email, title, reason));
+                     });
+    QObject::connect(
+        &resets, &lapis::desktop::LimitResets::declined, &resets,
+        [cli, place](const QString& machine, const QString& id, const QString& reason) {
+            lapis::desktop::platform::post_notification(
+                {}, QStringLiteral("No limit reset used"),
+                QStringLiteral("%1 on %2: %3").arg(cli(id), place(machine), reason));
+        });
+    QObject::connect(
+        &resets, &lapis::desktop::LimitResets::uncertain, &resets,
+        [cli, place](const QString& machine, const QString& id, const QString& reason) {
+            lapis::desktop::platform::post_notification(
+                {}, QStringLiteral("Limit reset outcome unknown"),
+                QStringLiteral("%1 on %2: %3").arg(cli(id), place(machine), reason));
+        });
+    // NOLINTEND(bugprone-easily-swappable-parameters)
+    return &resets;
+}
 void follow_usage_setting(lapis::desktop::Usage& usage, const lapis::desktop::KeyMap& keymap) {
     const auto show = [&usage, &keymap] {
         // Plans lapis hands out need their home machines' limits, even with
@@ -780,6 +882,8 @@ int main(int argc, char** argv) {
                 workspace.setAccountLoads(usage->accountLoads());
             });
         }
+        std::optional<LimitResets> limitResets;
+        QObject* const resetsForQml = keep_limit_resets(limitResets, workspace, keymap, isolated);
         std::optional<NextPrompt> nextPrompt;
         QObject* const nextForQml = keep_next_prompt(nextPrompt, workspace, keymap, isolated);
         std::optional<lapis::desktop::PlanSignIn> planSignIn;
@@ -799,6 +903,7 @@ int main(int argc, char** argv) {
                                    .desktop = &desktop,
                                    .conversations = conversations.get(),
                                    .terminals = terminals.get(),
+                                   .limitResets = resetsForQml,
                                    .nextPrompt = nextForQml,
                                    .planSignIn = signInForQml,
                                    .persistGeometry = !isolated && !options.launch &&
@@ -821,8 +926,7 @@ int main(int argc, char** argv) {
             return 1;
         shown = view.window();
         route_terminal_keys(view, keymap);
-        if (!isolated && !workspace.previewMode() && !parser.isSet(QStringLiteral("capture")))
-            route_latest_attention(view, workspace);
+        route_latest_attention(view, workspace, isolated, parser);
         view.window()->requestActivate();
         qInfo() << "UI preview:" << isolated
                 << "system reduced motion:" << view.systemReducedMotion();

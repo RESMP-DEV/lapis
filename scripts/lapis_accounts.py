@@ -16,8 +16,13 @@ keeps a credential for it:
 Usage:
   lapis_accounts.py list
   lapis_accounts.py homes [HOST ...]
+  lapis_accounts.py sign-in [--to HOST ...]
   lapis_accounts.py add-claude NAME --email EMAIL [--to HOST ...]
   lapis_accounts.py add-codex NAME --email EMAIL [--on local|HOST ...]
+
+`sign-in` goes through every listed Claude Code plan that has no token on this
+Mac yet, asking before each: one browser approval per plan, and the token is
+kept on every machine the plans name.
 
 Credentials never appear on a command line or in this script's output.
 """
@@ -115,7 +120,15 @@ def merge_plan(
         (
             p
             for p in plans
-            if p.get("name") == name or (email and p.get("email", "").lower() == email)
+            if isinstance(p, dict)
+            and (
+                p.get("name") == name
+                or (
+                    email
+                    and isinstance(p.get("email"), str)
+                    and p["email"].lower() == email
+                )
+            )
         ),
         None,
     )
@@ -126,7 +139,12 @@ def merge_plan(
         plan["email"] = email
     if home is not None and "home" not in plan:
         plan["home"] = home
-    held = [m for m in plan.get("machines", []) if isinstance(m, str)]
+    existing = plan.get("machines")
+    held = (
+        [m for m in existing if isinstance(m, str)]
+        if isinstance(existing, list)
+        else []
+    )
     for machine in kept:
         if machine not in held:
             held.append(machine)
@@ -338,6 +356,53 @@ def command_add_codex(config: dict, name: str, email: str, where: list[str]) -> 
     )
 
 
+def plan_machines(config: dict, plan: dict) -> list[str]:
+    """Usage hosts plus this Claude plan's own credential destinations."""
+    hosts = machines(config)[1:]
+    selected = plan.get("machines")
+    if selected is not None and not isinstance(selected, list):
+        print("skipping a malformed plan destination list")
+    selected = selected if isinstance(selected, list) else []
+    candidates = [plan["home"]] if plan.get("home") is not None else []
+    for host in [*candidates, *selected]:
+        if host == "" or host == LOCAL:
+            continue
+        if not isinstance(host, str) or not HOST.fullmatch(host):
+            print("skipping an invalid plan destination")
+            continue
+        if host not in hosts:
+            hosts.append(host)
+    return hosts
+
+
+def command_sign_in(config: dict, hosts: list[str] | None = None, ask=input) -> None:
+    section = config.get("accounts")
+    plans = section.get("claude") if isinstance(section, dict) else []
+    plans = plans if isinstance(plans, list) else []
+    waiting = []
+    for plan in plans:
+        if not isinstance(plan, dict):
+            print("skipping a malformed Claude Code plan")
+            continue
+        name, email = plan.get("name"), plan.get("email")
+        if not isinstance(name, str) or not NAME.fullmatch(name) or name in (".", ".."):
+            print("skipping a plan with an unusable name")
+            continue
+        if not isinstance(email, str) or not email.strip() or "@" not in email:
+            print(f"skipping {name}: plan has no usable email")
+            continue
+        if not (ACCOUNTS / "claude" / f"{name}.token").exists():
+            waiting.append((plan, name, email.strip()))
+    if not waiting:
+        print("No valid Claude Code plan needs a local token.")
+        return
+    for plan, name, email in waiting:
+        if ask(f"Sign in {name} ({email}) now? [Y/n] ").strip().lower() in ("n", "no"):
+            continue
+        destinations = hosts if hosts is not None else plan_machines(config, plan)
+        command_add_claude(config, name, email, destinations)
+
+
 def command_list(config: dict) -> None:
     section = config.get("accounts", {})
     print(f"Switch point: {section.get('switchAt', 95)}%")
@@ -358,6 +423,12 @@ def main(argv: list[str]) -> int:
     homes.add_argument(
         "hosts", nargs="*", help="machines besides this Mac (default: usage machines)"
     )
+    sign_in = commands.add_parser("sign-in")
+    sign_in.add_argument(
+        "--to",
+        nargs="*",
+        help="hosts for these tokens (default: each plan plus usage hosts; --to alone: local only)",
+    )
     claude = commands.add_parser("add-claude")
     claude.add_argument("name")
     claude.add_argument("--email", required=True)
@@ -373,7 +444,9 @@ def main(argv: list[str]) -> int:
     arguments = parser.parse_args(argv)
     try:
         config = load_config()
-        if getattr(arguments, "name", "") and not NAME.match(arguments.name):
+        if hasattr(arguments, "name") and (
+            not NAME.fullmatch(arguments.name) or arguments.name in (".", "..")
+        ):
             raise Failure("a plan name is letters, digits, '.', '_' or '-', at most 64")
         named = (getattr(arguments, "to", None) or []) + (
             getattr(arguments, "on", None) or []
@@ -385,6 +458,8 @@ def main(argv: list[str]) -> int:
             command_list(config)
         elif arguments.command == "homes":
             command_homes(config, arguments.hosts)
+        elif arguments.command == "sign-in":
+            command_sign_in(config, arguments.to)
         elif arguments.command == "add-claude":
             hosts = arguments.to if arguments.to is not None else machines(config)[1:]
             command_add_claude(config, arguments.name, arguments.email, hosts)

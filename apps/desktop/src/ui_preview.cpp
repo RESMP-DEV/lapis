@@ -488,7 +488,7 @@ void UiPreview::exposeObjects(QQmlContext& context) {
     context.setContextProperty(QStringLiteral("workspace"), &workspace_);
     context.setContextProperty(QStringLiteral("preview"), this);
     // QML reads `keymap.actionSequences(...)`. Absent keymap keeps the literals.
-    const std::array<std::pair<const char*, QObject*>, 9> optional{{
+    const std::array<std::pair<const char*, QObject*>, 10> optional{{
         {"keymap", options_.keymap},
         {"alerts", options_.alerts},
         {"agentSearch", options_.agentSearch},
@@ -496,6 +496,7 @@ void UiPreview::exposeObjects(QQmlContext& context) {
         {"desktop", options_.desktop},
         {"conversations", options_.conversations},
         {"terminals", options_.terminals},
+        {"limitResets", options_.limitResets},
         {"nextPrompt", options_.nextPrompt},
         {"planSignIn", options_.planSignIn},
     }};

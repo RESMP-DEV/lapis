@@ -52,7 +52,8 @@ AccountsConfig parse_accounts(const QJsonValue& value) {
                 .home = {},
                 .hasHome = object.contains(QStringLiteral("home")),
                 .machines = {}};
-            if (!name.match(account.name).hasMatch() || config.accounts.size() >= kMostAccounts ||
+            if (account.name == QLatin1String(".") || account.name == QLatin1String("..") ||
+                !name.match(account.name).hasMatch() || config.accounts.size() >= kMostAccounts ||
                 std::any_of(config.accounts.cbegin(), config.accounts.cend(),
                             [&account](const Account& other) {
                                 return other.cli == account.cli && other.name == account.name;

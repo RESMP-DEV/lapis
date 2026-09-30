@@ -85,14 +85,17 @@ struct Fixture {
             process.closeWriteChannel();
         finish(process);
     }
-    void send(const QJsonObject& source) {
+    void send(const QJsonObject& source, const QString& relay_count = {}) {
         QLocalSocket connection;
         connection.connectToServer(socket);
         if (!connection.waitForConnected(1000)) {
             require(!state.connected());
             return;
         }
-        const auto payload = QJsonDocument(QJsonObject{{"nonce", nonce}, {"event", source}})
+        auto copied = source;
+        if (!relay_count.isNull())
+            copied.insert("in_flight", relay_count);
+        const auto payload = QJsonDocument(QJsonObject{{"nonce", nonce}, {"event", copied}})
                                  .toJson(QJsonDocument::Compact) +
                              '\n';
         require(connection.write(payload) == payload.size());
@@ -279,6 +282,118 @@ void connection_overflow_is_observable() {
     require(f.state.ready() && f.state.pending().contains(std::string{"after-overload"}));
 }
 
+// A Stop with background tasks or wakeups in flight is a paused turn: the
+// agent's own work starts its next turn (a new prompt), and only a Stop with
+// nothing in flight, or a pause no turn follows, finishes it.
+void background_work_pauses_the_turn() {
+    Fixture f;
+    f.begin();
+    // Claude's own Stop payload filter admits only running/pending work. A
+    // retained completed task must not keep a completed turn waiting.
+    auto stale = event("Stop");
+    stale.insert("background_tasks",
+                 QJsonArray{QJsonObject{{"id", "old"}, {"status", "completed"}}});
+    stale.insert("session_crons", QJsonArray{});
+    f.raw(QJsonDocument(stale).toJson(QJsonDocument::Compact));
+    require(f.state.activity() == attention::Activity::turn_completed);
+
+    Fixture paused;
+    paused.begin();
+    paused.send(event("PermissionRequest", "Bash"));
+    require(paused.state.pending().size() == 1);
+    auto stop = event("Stop");
+    stop.insert("background_tasks", QJsonArray{QJsonObject{{"id", "b1"}, {"status", "running"}}});
+    stop.insert("session_crons", QJsonArray{});
+    paused.raw(QJsonDocument(stop).toJson(QJsonDocument::Compact));
+    require(paused.state.pending().empty()); // A paused turn is not asking for attention.
+    require(paused.state.activity() == attention::Activity::working);
+    paused.send(event("UserPromptSubmit", {}, {}, "turn-2")); // the task's notification
+    auto last = event("Stop", {}, {}, "turn-2");
+    last.insert("background_tasks", QJsonArray{});
+    last.insert("session_crons", QJsonArray{});
+    paused.raw(QJsonDocument(last).toJson(QJsonDocument::Compact));
+    require(paused.state.activity() == attention::Activity::turn_completed);
+
+    // A claimed count from the hook itself is ignored; the relay derives it.
+    Fixture forged;
+    forged.begin();
+    auto claimed = event("Stop");
+    claimed.insert("in_flight", "3");
+    forged.raw(QJsonDocument(claimed).toJson(QJsonDocument::Compact));
+    require(forged.state.activity() == attention::Activity::turn_completed);
+
+    // The socket nonce authenticates a writer; the observer accepts the relay's
+    // derived event field directly, retaining its existing wire contract.
+    Fixture direct;
+    direct.begin();
+    direct.send(claimed);
+    require(direct.state.ready() && direct.state.activity() == attention::Activity::working);
+    Fixture malformed;
+    malformed.begin();
+    malformed.send(event("Stop"), QStringLiteral("not-a-count"));
+    require(!malformed.state.ready() && malformed.observer.diagnostic().contains(QLatin1String(
+                                            "Malformed Claude background-work count")));
+
+    // One array replaced by another JSON kind is observable and conservative:
+    // it cannot invent an immediate completion, and the pause remains bounded.
+    Fixture drifted;
+    drifted.begin();
+    auto changed = event("Stop");
+    changed.insert("background_tasks", QJsonObject{{"status", "running"}});
+    changed.insert("session_crons", QJsonArray{});
+    drifted.raw(QJsonDocument(changed).toJson(QJsonDocument::Compact));
+    require(drifted.state.activity() == attention::Activity::working);
+    require(drifted.observer.diagnostic().contains(
+        QLatin1String("Claude background-work schema is unavailable")));
+
+    Fixture unknown_status;
+    unknown_status.begin();
+    auto novel = event("Stop");
+    novel.insert("background_tasks", QJsonArray{QJsonObject{{"status", "new-provider-state"}}});
+    novel.insert("session_crons", QJsonArray{});
+    unknown_status.raw(QJsonDocument(novel).toJson(QJsonDocument::Compact));
+    require(unknown_status.state.activity() == attention::Activity::working &&
+            unknown_status.observer.diagnostic().contains(QLatin1String("schema is unavailable")));
+
+    // A wakeup counts too, and a pause nothing follows still finishes.
+    Fixture waiting;
+    waiting.begin();
+    auto wakeup = event("Stop");
+    wakeup.insert("background_tasks", QJsonArray{});
+    wakeup.insert("session_crons", QJsonArray{QJsonObject{{"id", "c1"}}});
+    waiting.raw(QJsonDocument(wakeup).toJson(QJsonDocument::Compact));
+    require(waiting.state.activity() == attention::Activity::working);
+    // Start the short deadline after the relay child has exited; sanitizer
+    // startup cost is unrelated to the observer's duplicate handling.
+    waiting.observer.setPausedTurnMsForTesting(150);
+    QTimer duplicates;
+    int working_duplicates = 0;
+    QObject::connect(&duplicates, &QTimer::timeout, [&] {
+        if (waiting.state.activity() == attention::Activity::working)
+            ++working_duplicates;
+        waiting.send(event("Stop"), QStringLiteral("1"));
+    });
+    duplicates.start(10);
+    QEventLoop loop;
+    QTimer::singleShot(400, &loop, &QEventLoop::quit);
+    loop.exec();
+    duplicates.stop();
+    require(working_duplicates >= 2);
+    require(waiting.state.activity() == attention::Activity::turn_completed);
+
+    // If the shared attention state loses synchronization first, the deadline
+    // still produces an explicit terminal observation rather than silence.
+    Fixture unready;
+    unready.begin();
+    unready.raw(QJsonDocument(stop).toJson(QJsonDocument::Compact));
+    unready.state.overflow();
+    unready.observer.setPausedTurnMsForTesting(50);
+    QEventLoop lost;
+    QTimer::singleShot(200, &lost, &QEventLoop::quit);
+    lost.exec();
+    require(!unready.state.ready() && unready.observer.diagnostic().contains(QLatin1String(
+                                          "Claude paused-turn deadline was unobservable")));
+}
 void session_replacement() {
     Fixture f;
     f.begin();
@@ -353,6 +468,7 @@ int main(int argc, char** argv) {
         completed_tools_reset_at_prompt_epoch();
         connection_overflow_is_observable();
         session_replacement();
+        background_work_pauses_the_turn();
         privacy_bounds_and_transport();
         std::cout << "Claude live relay, identity, retirement, bounds, privacy and deadline cases "
                      "passed\n";

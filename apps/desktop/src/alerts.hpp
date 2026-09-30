@@ -1,6 +1,6 @@
 #ifndef LAPIS_DESKTOP_ALERTS_HPP
 #define LAPIS_DESKTOP_ALERTS_HPP
-#include <QByteArray>
+#include "chime_sounds.hpp"
 #include <QElapsedTimer>
 #include <QObject>
 #include <QPointer>
@@ -15,18 +15,9 @@ class KeyMap;
 class SessionPreview;
 class Workspace;
 
-enum class Chime : std::uint8_t { needsYou, finished };
-
-// A chime as 16-bit mono WAV, synthesized so lapis ships no audio files: two
-// glassy taps, rising (E6 then A6) when an agent needs you, falling and
-// quieter when a turn has ended.
-[[nodiscard]] QByteArray chime_wav(Chime chime);
-
-// When to chime. An agent that needs you (a new request) chimes at once and
-// again every few seconds while the request still waits and you are not
-// looking at that agent, up to the configured number of times: two taps, a
-// pause, two taps, like a Dock icon bouncing. A Codex or Claude turn that ends
-// out of view chimes once, quietly. At most one chime plays at a time.
+// Production requests and completed turns share one finished cue. The legacy
+// explicit needsYou signal retains its repeat behavior for existing callers;
+// it is not re-enabled by custom sound files.
 class Alerts final : public QObject {
     Q_OBJECT
   public:

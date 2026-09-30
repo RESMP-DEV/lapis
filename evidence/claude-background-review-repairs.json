@@ -1,0 +1,60 @@
+{
+  "source_revision": "bac6b880ef93fad5fc79ef8c57f9b3d875038bd4",
+  "platform": "macOS 26.7.1 arm64",
+  "scope": "Real local hook relay, observer, private Unix socket and deterministic event fixtures. No real Claude turn or provider request initiated.",
+  "source_sha256": {
+    "adapters/claude/CMakeLists.txt": "ef679260aedad219b3b6959ffd2d7bc7c33b111ba17f45abf9baa668903edada",
+    "adapters/claude/src/claude_observer.cpp": "43eec70ad8ef23588ca88492a717a8127546f4ce69cc498e5c071c9be57e12f0",
+    "adapters/claude/src/claude_observer.hpp": "6d997e70e6026ba3fae0951755809b3f7a6c1f48cdee32991e1c89c45b04d47c",
+    "adapters/claude/src/hook_relay.cpp": "61cd1a3d2274a3f487da468ab9beaf23f83c2d6c1607c5050689c7cbe2a437b5",
+    "adapters/claude/src/hook_relay.hpp": "c57449264d871f9f1e426164ca9eca0f09b35bb8ce65ffc68a6cb347b95f186c",
+    "adapters/claude/tests/claude_observer_test.cpp": "9ec660b8a8592998b9c15e49e67bf3ceb6dc25bf263e3954679da6eac50ff7c1",
+    "docs/architecture.md": "ed7745c27c283e14cd41ce6e2b9ed64fae18cc1a352e0981d1ba6a92b9600477"
+  },
+  "checks": [
+    {
+      "command": "cmake --build build/desktop --target lapis_session_service lapis_claude_observer_tests -j4",
+      "result": "pass after main integration"
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R '^claude-observer$' --no-tests=error --output-on-failure",
+      "result": "pass"
+    },
+    {
+      "command": "ASAN_OPTIONS=detect_leaks=0 ctest --test-dir build/desktop-asan -R '^claude-observer$' --no-tests=error --output-on-failure",
+      "result": "pass",
+      "seconds": 7.03,
+      "reuse": "Before behavior-preserving extraction of stop/count helpers and moving test-only short timers past subprocess startup; final normal and TSan runs cover that delta."
+    },
+    {
+      "command": "build/desktop-tsan/adapters/claude/lapis_claude_observer_tests",
+      "result": "pass, no sanitizer warnings or suppressions",
+      "seconds": 87.08,
+      "note": "Initial 60-second CTest budget expired. Only the thread-instrumented test budget is now 180 seconds; verified by CTest inventory. Production relay and pause deadlines are unchanged."
+    },
+    {
+      "command": "clang-tidy -p build/desktop <three affected translation units>; cppcheck <filtered compile database>; clang-format --dry-run --Werror <changed sources>; git diff --check",
+      "result": "pass"
+    },
+    {
+      "command": "uv run --no-project python scripts/lapis.py quality",
+      "result": "pass"
+    }
+  ],
+  "coverage": [
+    "completed task filtering; scheduled crons",
+    "legacy vs malformed/unknown background metadata diagnostics",
+    "direct authenticated event-field contract and relay-only source copying",
+    "pending notice retirement on Stop",
+    "new prompt supersedes paused turn",
+    "duplicate Stops cannot re-arm timeout",
+    "unready timeout becomes observable loss",
+    "existing identity, privacy, overflow and cancellation regressions"
+  ],
+  "review": "Kilo findings at 37ef85a; FlashX implementation report and diff inspected. Coordinator retained the original event envelope shape and clarified that the private nonce, not field placement, authenticates a writer.",
+  "limits": [
+    "Installed Claude 2.1.285 source inspection is schema evidence, not a new live provider observation.",
+    "The ten-minute fallback indicates a stopped turn after a bounded pause; it is not proof that every external task exited.",
+    "Vendor Qt is uninstrumented."
+  ]
+}
