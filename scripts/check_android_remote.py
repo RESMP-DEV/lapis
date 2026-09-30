@@ -299,9 +299,14 @@ def fixture(run):
             }
         )
     )
+    # execve splits the shebang on whitespace, so an interpreter path with a
+    # space in it would leave the kernel refusing the script; a runtime-local
+    # symlink keeps the shebang a single token on any host.
+    python_link = run.runtime / "python"
+    python_link.symlink_to(python)
     tailscale = run.runtime / "tailscale-fixture"
     tailscale.write_text(
-        f"#!{python}\n"
+        f"#!{python_link}\n"
         "import json, sys\n"
         "if sys.argv[1:] != ['status', '--json']: sys.exit(1)\n"
         "print(json.dumps({'Self': {'UserID': 1, 'TailscaleIPs': [], "
