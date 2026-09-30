@@ -6,17 +6,18 @@
 #include <QJsonValue>
 #include <QObject>
 #include <QPointer>
-#include <QProcess>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
+#include <QVector>
+#include <cstdint>
 #include <functional>
-#include <utility>
+#include <memory>
 
 namespace lapis::desktop {
+class UpdaterProcess;
 
-// {"limitResets": {"auto": true, "minBlockedMinutes": 60, "keepCredits": 0,
-// "salvageHours": 12}}: OMP's defaults.
 struct LimitResetSettings {
     bool automatic{true};
     double minBlockedMinutes{60};
@@ -26,26 +27,26 @@ struct LimitResetSettings {
 };
 [[nodiscard]] LimitResetSettings parse_limit_resets(const QJsonValue& value);
 
-// Spends saved Claude Code and Codex limit resets as OMP does, on each machine
-// where agents of those CLIs run, with the sign-in each CLI keeps there: every
-// five minutes, a reset that restores a long block or would expire unspent
-// (limit_resets.py holds the rules), and at once for an agent when
-// asked, as claude.ai's "Reset for free" does. A key the helper reports as
-// attempted is not tried again; one the account had nothing to reset for is
-// retried after an hour.
+// The main machine owns durable reset admission. Prepare is read-only; a
+// selected credit and operation are persisted before consume. An interrupted
+// consume is reconciled without automatically repeating the provider request.
 class LimitResets final : public QObject {
     Q_OBJECT
   public:
-    // The machines ("" for this Mac) running Claude Code or Codex agents.
-    using Machines = std::function<QStringList()>;
-    // An agent's machine and CLI ("claude" or "codex"); an empty CLI otherwise.
-    using Agent = std::function<std::pair<QString, QString>(const QString& id)>;
-    // The path of "python3" or "ssh" on this Mac.
+    struct AgentTarget {
+        QString machine;
+        QString cli;
+        QString account;
+        QString home;
+        bool hasHome{};
+        QString email;
+        QString refusal;
+    };
+    using Agents = std::function<QVector<AgentTarget>()>;
+    using Agent = std::function<AgentTarget(const QString& id)>;
     using Program = std::function<QString(const QString&)>;
-    // Claude Code's stored credentials on this Mac (its keychain item); may
-    // block on the system's permission prompt, so it runs off the main thread.
     using Credentials = std::function<QByteArray()>;
-    LimitResets(Machines machines, Agent agent, Program program, Credentials credentials,
+    LimitResets(Agents agents, Agent agent, Program program, Credentials credentials,
                 const QString& folder, QObject* parent = nullptr);
     ~LimitResets() override;
     LimitResets(const LimitResets&) = delete;
@@ -53,41 +54,42 @@ class LimitResets final : public QObject {
 
     void setSettings(LimitResetSettings settings);
     void setInterval(int ms) { timer_.setInterval(ms); }
-    // Runs a sweep now, on every machine with Claude Code or Codex agents.
     void sweep();
     Q_INVOKABLE [[nodiscard]] bool canUseNow(const QString& id) const;
-    // Spends the saved reset of the agent's plan, on its machine.
     Q_INVOKABLE void useNow(const QString& id);
 
   signals:
-    // A reset was spent; `why` is "blocked", "expiring" or "asked".
     void spent(const QString& machine, const QString& cli, const QString& email,
                const QString& title, const QString& why);
-    // A reset asked for could not be spent.
     void declined(const QString& machine, const QString& cli, const QString& reason);
+    void uncertain(const QString& machine, const QString& cli, const QString& reason);
 
   private:
-    // One run of the helper: on a machine ("" for this Mac), and for a CLI
-    // whose reset was asked for at once (empty in a sweep).
-    struct Check {
-        QString machine;
-        QString asked;
-    };
-    void run(const Check& check);
-    void start(const Check& check, const QByteArray& credentials);
-    void finish(const Check& check, QProcess* process);
-    void note(const Check& check, const QJsonObject& account, qint64 nowMs);
-    [[nodiscard]] QStringList arguments(const Check& check, bool withCredentials) const;
-    Machines machines_;
+    enum class Phase : std::uint8_t { prepare, consume, reconcile };
+    struct Run;
+    void run(AgentTarget target, bool asked);
+    bool loadState(const std::shared_ptr<Run>& run);
+    void readCredentials(const std::shared_ptr<Run>& run);
+    void start(const std::shared_ptr<Run>& run);
+    void finish(const std::shared_ptr<Run>& run);
+    void prepared(const std::shared_ptr<Run>& run, const QJsonObject& account);
+    void completed(const std::shared_ptr<Run>& run, const QJsonObject& account);
+    void persist(const std::shared_ptr<Run>& run, const QJsonObject& state,
+                 const std::function<void()>& done);
+    void refuse(const std::shared_ptr<Run>& run, const QString& reason);
+    [[nodiscard]] QStringList arguments(const Run& run) const;
+    [[nodiscard]] bool current(const std::shared_ptr<Run>& run) const;
+    Agents agents_;
     Agent agent_;
     Program program_;
     Credentials credentials_;
     QString script_path_;
+    QString state_folder_;
+    bool helper_ready_{};
     LimitResetSettings settings_;
     QTimer timer_;
-    QHash<QString, QPointer<QProcess>> running_;       // by machine
-    QHash<QString, QHash<QString, qint64>> attempted_; // machine -> key -> until (ms)
+    QHash<QString, std::shared_ptr<Run>> running_;
+    QSet<QString> uncertain_notified_;
 };
-
 } // namespace lapis::desktop
 #endif

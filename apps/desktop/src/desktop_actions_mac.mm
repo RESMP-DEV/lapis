@@ -101,11 +101,17 @@ QByteArray claude_code_credentials() {
     CFDictionarySetValue(query, kSecAttrService, CFSTR("Claude Code-credentials"));
     CFDictionarySetValue(query, kSecReturnData, kCFBooleanTrue);
     CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitOne);
+    CFDictionarySetValue(query, kSecAttrSynchronizable, kCFBooleanFalse);
     CFTypeRef found = nullptr;
     const OSStatus status = SecItemCopyMatching(query, &found);
     CFRelease(query);
-    if (status != errSecSuccess || found == nullptr)
+    if (status != errSecSuccess && status != errSecItemNotFound)
+        qWarning() << "Claude Code keychain lookup failed with status" << status;
+    if (status != errSecSuccess || found == nullptr || CFGetTypeID(found) != CFDataGetTypeID()) {
+        if (found != nullptr)
+            CFRelease(found);
         return {};
+    }
     const auto* data = static_cast<CFDataRef>(found);
     QByteArray stored(reinterpret_cast<const char*>(CFDataGetBytePtr(data)),
                       static_cast<qsizetype>(CFDataGetLength(data)));

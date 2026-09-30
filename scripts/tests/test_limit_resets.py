@@ -3,6 +3,7 @@ salvage rules, and reading the accounts' own reports."""
 
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -26,6 +27,7 @@ def credit(**changes):
         "remaining": 1,
         "usable": True,
         "requires_limit": False,
+        "available": True,
     }
     value.update(changes)
     return value
@@ -264,12 +266,298 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(codex["error"], "no Codex sign-in")
             arguments.apply = True
             report = limit_resets.sweep(arguments)
-            spent = report["accounts"][0]
-            self.assertEqual(
-                (Account.spent, spent["result"], spent["confirmed"]),
-                (["launch"], "reset", True),
+            self.assertEqual((report["phase"], Account.spent), ("refused", []))
+            self.assertTrue(
+                all(account["result"] == "refused" for account in report["accounts"])
             )
         json.dumps(report)
+
+
+class TwoPhaseTests(unittest.TestCase):
+    class Account:
+        cli = "claude"
+        spent = []
+        reads = []
+
+        def __init__(self, *args):
+            self.email = "someone@example.com"
+
+        def read(self, credit_id=None):
+            if self.spent:
+                return {"seven_day": (0.0, NOW + 7 * 24 * HOUR)}, None
+            self.reads.append(credit_id)
+            windows = {"seven_day": (1.0, NOW + 2 * 24 * HOUR)}
+            choices = [credit(), credit(id="other", title="Other")]
+            if credit_id is not None:
+                return windows, next(
+                    (item for item in choices if item["id"] == credit_id), None
+                )
+            return windows, choices[0]
+
+        @classmethod
+        def spend(cls, chosen, operation=None):
+            cls.spent.append((chosen["id"], operation))
+            return "reset"
+
+    @staticmethod
+    def arguments(**changes):
+        value = {
+            "min_blocked_minutes": 60,
+            "keep": 0,
+            "salvage_hours": 12,
+            "attempted": [],
+            "apply": False,
+            "now": None,
+            "claude_credentials_stdin": False,
+            "claude_plan": "",
+            "claude_plan_home": "local",
+            "machine": "local",
+            "operation": "",
+            "pending_credit": "",
+            "prepare": False,
+            "reconcile_only": False,
+        }
+        value.update(changes)
+        return limit_resets.argparse.Namespace(**value)
+
+    def setUp(self):
+        self.Account.spent.clear()
+        self.Account.reads.clear()
+
+    def test_prepare_selects_and_never_spends(self):
+        arguments = self.arguments(apply=True, now="claude", prepare=True)
+        with (
+            patch.object(limit_resets, "Claude", self.Account),
+            patch.object(limit_resets.time, "time", return_value=NOW),
+        ):
+            report = limit_resets.sweep(arguments)
+        self.assertEqual((report["phase"], self.Account.spent), ("prepared", []))
+        account = report["accounts"][0]
+        self.assertEqual(
+            (account["decision"], account["credit_id"]), ("prepared", "launch")
+        )
+        self.assertEqual(account["credit"]["id"], "launch")
+        self.assertTrue(account["attempt"].startswith("now|claude|"))
+
+    def test_consume_requires_persisted_identifiers(self):
+        arguments = self.arguments(apply=True, now="claude")
+        with (
+            patch.object(limit_resets, "Claude", self.Account),
+            patch.object(limit_resets.time, "time", return_value=NOW),
+        ):
+            report = limit_resets.sweep(arguments)
+        self.assertEqual((report["phase"], self.Account.spent), ("refused", []))
+        self.assertEqual(report["accounts"][0]["result"], "refused")
+        self.assertEqual(self.Account.reads, [])
+
+    def test_consume_targets_the_persisted_credit_exactly(self):
+        operation = "18000000-0000-4000-8000-000000000001"
+        arguments = self.arguments(
+            apply=True,
+            now="claude",
+            operation=operation,
+            pending_credit="other",
+        )
+        with (
+            patch.object(limit_resets, "Claude", self.Account),
+            patch.object(limit_resets.time, "time", return_value=NOW),
+        ):
+            report = limit_resets.sweep(arguments)
+        account = report["accounts"][0]
+        self.assertEqual(
+            (self.Account.spent, account["result"], account["confirmed"]),
+            ([("other", operation)], "reset", True),
+        )
+        self.assertEqual(self.Account.reads, ["other"])
+        request_id = limit_resets.Claude.consume_id(operation, {"id": "other"})
+        self.assertEqual(
+            limit_resets.Claude.consume_id(operation, {"id": "other"}), request_id
+        )
+
+    def test_transport_failure_is_unknown_and_keeps_the_operation(self):
+        def fail(self, chosen, operation=None):
+            raise limit_resets.Unavailable("network: interrupted")
+
+        operation = "18000000-0000-4000-8000-000000000002"
+        arguments = self.arguments(
+            apply=True,
+            now="claude",
+            operation=operation,
+            pending_credit="launch",
+        )
+        with (
+            patch.object(limit_resets, "Claude", self.Account),
+            patch.object(self.Account, "spend", fail),
+            patch.object(limit_resets.time, "time", return_value=NOW),
+        ):
+            report = limit_resets.sweep(arguments)
+        account = report["accounts"][0]
+        self.assertEqual(
+            (account["result"], account["operation"], account["credit_id"]),
+            ("outcome_unknown", operation, "launch"),
+        )
+        self.assertFalse(account["confirmed"])
+
+    def test_reconcile_only_never_replays_a_live_credit(self):
+        operation = "18000000-0000-4000-8000-000000000003"
+        arguments = self.arguments(
+            reconcile_only=True, operation=operation, pending_credit="launch"
+        )
+        with (
+            patch.object(limit_resets, "Claude", self.Account),
+            patch.object(limit_resets.time, "time", return_value=NOW),
+        ):
+            report = limit_resets.sweep(arguments)
+        account = report["accounts"][0]
+        self.assertEqual(
+            (report["phase"], account["result"], self.Account.spent),
+            ("reconciled", "outcome_unknown", []),
+        )
+        self.assertEqual(self.Account.reads, ["launch"])
+
+    def test_malformed_exact_listing_is_unknown_not_settled(self):
+        def malformed(self, credit_id=None):
+            raise limit_resets.Unavailable("malformed Claude credit listing")
+
+        operation = "18000000-0000-4000-8000-000000000005"
+        arguments = self.arguments(
+            reconcile_only=True, operation=operation, pending_credit="launch"
+        )
+        with (
+            patch.object(limit_resets, "Claude", self.Account),
+            patch.object(self.Account, "read", malformed),
+            patch.object(limit_resets.time, "time", return_value=NOW),
+        ):
+            report = limit_resets.sweep(arguments)
+        account = report["accounts"][0]
+        self.assertEqual(
+            (account["result"], account["confirmed"], self.Account.spent),
+            ("outcome_unknown", False, []),
+        )
+        self.assertIn("malformed", account["error"])
+
+    def test_absent_expired_and_consumed_settle_without_confirmation(self):
+        cases = (
+            (None, "credit is absent"),
+            (credit(expired=True), "credit expired"),
+            (credit(status="consumed"), "provider marked the credit consumed"),
+        )
+        for exact, reason in cases:
+            with self.subTest(reason=reason):
+                self.Account.spent.clear()
+
+                def read(self, credit_id=None):
+                    return {"seven_day": (1.0, NOW + HOUR)}, exact
+
+                operation = "18000000-0000-4000-8000-000000000004"
+                arguments = self.arguments(
+                    reconcile_only=True, operation=operation, pending_credit="launch"
+                )
+                with (
+                    patch.object(limit_resets, "Claude", self.Account),
+                    patch.object(self.Account, "read", read),
+                    patch.object(limit_resets.time, "time", return_value=NOW),
+                ):
+                    report = limit_resets.sweep(arguments)
+                account = report["accounts"][0]
+                self.assertEqual(
+                    (account["result"], account["confirmed"], self.Account.spent),
+                    ("settled", False, []),
+                )
+                self.assertEqual(account["reason"], reason)
+
+
+class ProviderFieldTests(unittest.TestCase):
+    def test_malformed_fields_do_not_make_a_credit_or_window(self):
+        usage = {
+            "five_hour": {"utilization": True},
+            "seven_day": {"utilization": "not a number"},
+            limit_resets.CEDAR: {
+                "eligible": True,
+                "next_grant_id": "good",
+                "grants": [
+                    {"resets_left": 1},
+                    {
+                        "id": "good",
+                        "resets_left": "not a number",
+                        "clears": "not a list",
+                        "usable_now": True,
+                    },
+                ],
+            },
+        }
+        self.assertEqual(limit_resets.claude_windows(usage), {})
+        credits = limit_resets.claude_credits(usage, None)
+        self.assertEqual([item["id"] for item in credits], ["good"])
+        self.assertEqual((credits[0]["remaining"], credits[0]["clears"]), (0, []))
+
+    def test_codex_normalizes_the_full_list_and_selects_only_available(self):
+        listing = {
+            "credits": [
+                {"id": None},
+                {"id": "consumed", "status": "consumed"},
+                {"id": "soon", "expires_at": NOW + HOUR},
+                {"id": "later", "expires_at": NOW + 2 * HOUR},
+            ]
+        }
+        credits = limit_resets.codex_credits(listing)
+        self.assertEqual(
+            [item["id"] for item in credits], ["soon", "later", "consumed"]
+        )
+        self.assertEqual(
+            [item["id"] for item in credits if item["available"]], ["soon", "later"]
+        )
+
+    def test_named_visiting_claude_refuses_instead_of_using_host_sign_in(self):
+        called = []
+
+        def refuse_request(*args, **kwargs):
+            called.append(args)
+            raise AssertionError("a missing visiting token must not query a provider")
+
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.object(
+                limit_resets.os.path,
+                "expanduser",
+                lambda path: path.replace("~", folder),
+            ),
+            patch.object(limit_resets, "request", refuse_request),
+        ):
+            with self.assertRaisesRegex(
+                limit_resets.Unavailable, "Claude plan visiting has no usable token"
+            ):
+                limit_resets.Claude(None, "visiting", "remote", "local")
+        self.assertEqual(called, [])
+
+    def test_named_visiting_codex_refuses_instead_of_using_host_sign_in(self):
+        called = []
+
+        def refuse_request(*args, **kwargs):
+            called.append(args)
+            raise AssertionError("a missing visiting login must not query a provider")
+
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.object(
+                limit_resets.os.path,
+                "expanduser",
+                lambda path: path.replace("~", folder),
+            ),
+            patch.object(limit_resets, "request", refuse_request),
+        ):
+            with self.assertRaisesRegex(
+                limit_resets.Unavailable, "Codex plan visiting has no usable login"
+            ):
+                limit_resets.Codex(None, "visiting", "remote", "local")
+        self.assertEqual(called, [])
+
+
+class CredentialTests(unittest.TestCase):
+    def test_zero_expiry_is_not_stale(self):
+        token = {"claudeAiOauth": {"accessToken": "given", "expiresAt": 0}}
+        with patch.dict(limit_resets.os.environ, {"CLAUDE_CONFIG_DIR": "/nonexistent"}):
+            self.assertEqual(limit_resets.claude_token(token), "given")
 
 
 if __name__ == "__main__":

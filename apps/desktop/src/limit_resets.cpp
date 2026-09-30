@@ -1,248 +1,527 @@
 #include "limit_resets.hpp"
 
 #include "limit_resets_script.hpp"
+#include "platform/reset_journal.hpp"
+#include "platform/updater_process.hpp"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QJsonObject>
+#include <QJsonParseError>
+#include <QLockFile>
 #include <QSaveFile>
+#include <QSet>
+#include <QThreadPool>
+#include <QUuid>
 
-#include <limits>
-#include <thread>
+#include <algorithm>
+#include <utility>
 
 namespace lapis::desktop {
 namespace {
 constexpr int kSweepMs = 5 * 60 * 1000;
-constexpr int kFirstSweepMs = 60 * 1000;
-constexpr int kHelperTimeoutMs = 90 * 1000;
-constexpr qint64 kRetryLaterMs = qint64{60} * 60 * 1000;
-const QStringList& agentClis() {
-    static const QStringList clis{QStringLiteral("claude"), QStringLiteral("codex")};
-    return clis;
+constexpr int kHelperTimeoutMs = 3 * 60 * 1000;
+constexpr qint64 kRetryMs = qint64{60} * 60 * 1000;
+constexpr qint64 kSettledMs = qint64{30} * 24 * 60 * 60 * 1000;
+constexpr qsizetype kOutputLimit = qsizetype{1024} * 1024;
+constexpr qsizetype kErrorLimit = qsizetype{64} * 1024;
+constexpr int kJournalLimit = 256;
+constexpr int kConcurrentLimit = 8;
+constexpr int kAttemptLimit = 128;
+
+bool supported(const QString& cli) {
+    return cli == QLatin1String("claude") || cli == QLatin1String("codex");
 }
 QString quoted(const QString& word) {
     return QLatin1Char('\'') + QString(word).replace(QLatin1Char('\''), QStringLiteral("'\\''")) +
            QLatin1Char('\'');
 }
+QString targetKey(const LimitResets::AgentTarget& target) {
+    const QJsonArray identity{target.machine, target.cli, target.account, target.home,
+                              target.hasHome};
+    return QString::fromLatin1(
+        QCryptographicHash::hash(QJsonDocument(identity).toJson(QJsonDocument::Compact),
+                                 QCryptographicHash::Sha256)
+            .toHex());
+}
 QString why(const QString& decision) {
     if (decision == QLatin1String("restore"))
         return QStringLiteral("blocked");
-    if (decision == QLatin1String("salvage"))
-        return QStringLiteral("expiring");
-    return QStringLiteral("asked");
+    return decision == QLatin1String("salvage") ? QStringLiteral("expiring")
+                                                : QStringLiteral("asked");
+}
+bool validState(const QJsonObject& state) {
+    if (state.value(QStringLiteral("v")).toInt() != 1)
+        return false;
+    const auto attempts = state.value(QStringLiteral("attempts"));
+    if (!attempts.isObject() || attempts.toObject().size() > kAttemptLimit)
+        return false;
+    for (const auto& value : attempts.toObject())
+        if (!value.isDouble() || value.toDouble() < 0)
+            return false;
+    if (!state.contains(QStringLiteral("pending")))
+        return true;
+    const auto pending = state.value(QStringLiteral("pending")).toObject();
+    for (const auto* field : {"operation", "credit", "attempt", "email", "decision"}) {
+        const auto value = pending.value(QLatin1String(field));
+        if (!value.isString() || value.toString().isEmpty() || value.toString().size() > 512)
+            return false;
+    }
+    return !QUuid(pending.value(QStringLiteral("operation")).toString()).isNull();
+}
+QJsonObject unexpiredAttempts(const QJsonObject& state) {
+    const auto now = QDateTime::currentMSecsSinceEpoch();
+    QJsonObject kept;
+    const auto attempts = state.value(QStringLiteral("attempts")).toObject();
+    for (auto it = attempts.begin(); it != attempts.end(); ++it)
+        if (it.value().toDouble() > static_cast<double>(now) && it.key().size() <= 512)
+            kept.insert(it.key(), it.value());
+    return kept;
 }
 } // namespace
+
+struct LimitResets::Run {
+    AgentTarget target;
+    QString key;
+    QString state_path;
+    bool asked{};
+    Phase phase{Phase::prepare};
+    QJsonObject state;
+    std::unique_ptr<QLockFile> lock;
+    QPointer<UpdaterProcess> process;
+    QByteArray credentials;
+    QByteArray output;
+    qsizetype error_bytes{};
+    bool oversized{};
+    bool timed_out{};
+
+    void drain() {
+        if (!process)
+            return;
+        const auto bytes = process->readAllStandardOutput();
+        error_bytes += process->readAllStandardError().size();
+        if (output.size() + bytes.size() > kOutputLimit || error_bytes > kErrorLimit)
+            oversized = true;
+        if (oversized)
+            process->stopGroup();
+        else
+            output.append(bytes);
+    }
+};
 
 LimitResetSettings parse_limit_resets(const QJsonValue& value) {
     LimitResetSettings settings;
     const auto object = value.toObject();
     if (object.value(QStringLiteral("auto")).isBool())
         settings.automatic = object.value(QStringLiteral("auto")).toBool();
-    if (const auto minutes = object.value(QStringLiteral("minBlockedMinutes")); minutes.isDouble())
-        settings.minBlockedMinutes = std::max(0.0, minutes.toDouble());
-    if (const auto keep = object.value(QStringLiteral("keepCredits")); keep.isDouble())
-        settings.keepCredits = std::max(0, keep.toInt());
-    if (const auto hours = object.value(QStringLiteral("salvageHours")); hours.isDouble())
-        settings.salvageHours = std::max(0.0, hours.toDouble());
+    if (const auto v = object.value(QStringLiteral("minBlockedMinutes")); v.isDouble())
+        settings.minBlockedMinutes = std::max(0.0, v.toDouble());
+    if (const auto v = object.value(QStringLiteral("keepCredits")); v.isDouble())
+        settings.keepCredits = std::max(0, v.toInt());
+    if (const auto v = object.value(QStringLiteral("salvageHours")); v.isDouble())
+        settings.salvageHours = std::max(0.0, v.toDouble());
     return settings;
 }
 
-LimitResets::LimitResets(Machines machines, Agent agent, Program program, Credentials credentials,
+LimitResets::LimitResets(Agents agents, Agent agent, Program program, Credentials credentials,
                          const QString& folder, QObject* parent)
-    : QObject(parent), machines_(std::move(machines)), agent_(std::move(agent)),
+    : QObject(parent), agents_(std::move(agents)), agent_(std::move(agent)),
       program_(std::move(program)), credentials_(std::move(credentials)),
-      script_path_(QDir(folder).filePath(QStringLiteral("limit_resets.py"))) {
+      script_path_(QDir(folder).filePath(QStringLiteral("limit_resets.py"))),
+      state_folder_(QDir(folder).filePath(QStringLiteral("limit-resets"))) {
+    QDir().mkpath(state_folder_, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
     QSaveFile script(script_path_);
-    if (script.open(QIODevice::WriteOnly)) {
-        script.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
-        script.write(kLimitResetsScript);
-        if (!script.commit())
-            qWarning() << "Limit resets: cannot write the helper:" << script.errorString();
-    }
+    helper_ready_ =
+        script.open(QIODevice::WriteOnly) &&
+        script.setPermissions(QFile::ReadOwner | QFile::WriteOwner) &&
+        script.write(kLimitResetsScript) == static_cast<qint64>(sizeof(kLimitResetsScript) - 1) &&
+        script.commit();
     timer_.setInterval(kSweepMs);
     connect(&timer_, &QTimer::timeout, this, &LimitResets::sweep);
     setSettings(settings_);
 }
-
 LimitResets::~LimitResets() {
-    for (const auto& process : std::as_const(running_))
-        if (process)
-            process->kill();
+    for (const auto& run : std::as_const(running_))
+        if (run->process)
+            run->process->stopGroup();
 }
-
 void LimitResets::setSettings(LimitResetSettings settings) {
     settings_ = settings;
-    if (!settings_.automatic) {
+    if (!settings_.automatic)
         timer_.stop();
-    } else if (!timer_.isActive()) {
+    else if (!timer_.isActive()) {
         timer_.start();
-        QTimer::singleShot(kFirstSweepMs, this, [this] {
+        QTimer::singleShot(60 * 1000, this, [this] {
             if (settings_.automatic)
                 sweep();
         });
     }
 }
-
 void LimitResets::sweep() {
-    for (const auto& machine : machines_())
-        run({machine, {}});
+    QSet<QString> seen;
+    for (const auto& target : agents_()) {
+        const auto key = targetKey(target);
+        if (!supported(target.cli) || seen.contains(key))
+            continue;
+        seen.insert(key);
+        run(target, false);
+    }
 }
-
-bool LimitResets::canUseNow(const QString& id) const {
-    return agentClis().contains(agent_(id).second);
-}
-
+bool LimitResets::canUseNow(const QString& id) const { return supported(agent_(id).cli); }
 void LimitResets::useNow(const QString& id) {
-    const auto [machine, cli] = agent_(id);
-    if (agentClis().contains(cli))
-        run({machine, cli});
+    auto target = agent_(id);
+    if (supported(target.cli))
+        run(std::move(target), true);
 }
-
-void LimitResets::run(const Check& check) {
-    if (running_.contains(check.machine)) {
-        if (!check.asked.isEmpty())
-            emit declined(check.machine, check.asked,
-                          QStringLiteral("a check is already running there; try again shortly"));
+bool LimitResets::current(const std::shared_ptr<Run>& run) const {
+    return running_.value(run->key) == run;
+}
+void LimitResets::refuse(const std::shared_ptr<Run>& run, const QString& reason) {
+    if (!current(run))
+        return;
+    if (run->lock)
+        run->lock->unlock();
+    running_.remove(run->key);
+    if (!run->state.value(QStringLiteral("pending")).toObject().isEmpty()) {
+        if (run->asked || !uncertain_notified_.contains(run->key)) {
+            uncertain_notified_.insert(run->key);
+            emit uncertain(run->target.machine, run->target.cli, reason);
+        }
+    } else if (run->asked)
+        emit declined(run->target.machine, run->target.cli, reason);
+    else
+        qWarning().noquote() << "Limit reset check:" << reason;
+}
+void LimitResets::run(AgentTarget target, bool asked) {
+    const auto key = targetKey(target);
+    if (running_.contains(key) || running_.size() >= kConcurrentLimit) {
+        if (asked)
+            emit declined(target.machine, target.cli,
+                          QStringLiteral("a reset check is already running"));
         return;
     }
-    running_.insert(check.machine, nullptr);
-    if (!check.machine.isEmpty() || !credentials_) {
-        start(check, {});
+    auto pending = std::make_shared<Run>();
+    pending->target = std::move(target);
+    pending->key = key;
+    pending->asked = asked;
+    pending->state_path = QDir(state_folder_).filePath(key + QStringLiteral(".json"));
+    running_.insert(key, pending);
+    pending->lock = std::make_unique<QLockFile>(pending->state_path + QStringLiteral(".lock"));
+    pending->lock->setStaleLockTime(0); // Age alone cannot expire a live reset operation.
+    if (!pending->lock->tryLock(0)) {
+        refuse(pending, QStringLiteral("the account reset journal is locked or unavailable"));
         return;
     }
-    // Reading the keychain can wait on the system's permission prompt.
-    const QPointer<LimitResets> self(this);
-    std::thread([self, check, read = credentials_] {
-        auto credentials = read();
+    if (!helper_ready_ || !pending->target.refusal.isEmpty()) {
+        refuse(pending, pending->target.refusal.isEmpty()
+                            ? QStringLiteral("reset helper unavailable")
+                            : pending->target.refusal);
+        return;
+    }
+    if (loadState(pending))
+        readCredentials(pending);
+}
+bool LimitResets::loadState(const std::shared_ptr<Run>& pending) {
+    QFile state(pending->state_path);
+    if (state.exists()) {
+        QJsonParseError error{};
+        if (QFileInfo(state).isSymLink() || !state.open(QIODevice::ReadOnly) ||
+            state.size() > 65536) {
+            refuse(pending, QStringLiteral("reset journal unreadable; no reset was requested"));
+            return false;
+        }
+        const auto doc = QJsonDocument::fromJson(state.readAll(), &error);
+        pending->state = doc.object();
+        if (error.error != QJsonParseError::NoError || !validState(pending->state)) {
+            refuse(pending, QStringLiteral("reset journal invalid; no reset was requested"));
+            return false;
+        }
+    } else if (QDir(state_folder_).entryList({QStringLiteral("*.json")}, QDir::Files).size() >=
+               kJournalLimit) {
+        refuse(pending, QStringLiteral("reset journal capacity reached"));
+        return false;
+    }
+    return true;
+}
+void LimitResets::readCredentials(const std::shared_ptr<Run>& pending) {
+    const auto& t = pending->target;
+    const bool ownClaude = t.machine.isEmpty() && t.cli == QLatin1String("claude") &&
+                           (t.account.isEmpty() || (t.hasHome && t.home.isEmpty()));
+    if (!ownClaude || !credentials_) {
+        start(pending);
+        return;
+    }
+    // Only immutable values cross threads; the guard is read on the GUI thread.
+    QThreadPool::globalInstance()->start([guard = QPointer<LimitResets>(this), pending,
+                                          read = credentials_] {
+        const auto credentials = read();
         QMetaObject::invokeMethod(
             QCoreApplication::instance(),
-            [self, check, credentials = std::move(credentials)] {
-                if (self)
-                    self->start(check, credentials);
+            [guard, pending, credentials] {
+                if (guard && guard->current(pending)) {
+                    if (credentials.isEmpty()) {
+                        guard->refuse(pending,
+                                      QStringLiteral(
+                                          "the local Claude Code keychain sign-in is unavailable"));
+                        return;
+                    }
+                    pending->credentials = credentials;
+                    guard->start(pending);
+                }
             },
             Qt::QueuedConnection);
-    }).detach();
+    });
 }
-
-QStringList LimitResets::arguments(const Check& check, bool withCredentials) const {
-    QStringList arguments;
-    if (settings_.automatic)
-        arguments << QStringLiteral("--apply");
-    if (!check.asked.isEmpty())
-        arguments << QStringLiteral("--now") << check.asked;
-    arguments << QStringLiteral("--min-blocked-minutes")
-              << QString::number(settings_.minBlockedMinutes) << QStringLiteral("--keep")
-              << QString::number(settings_.keepCredits) << QStringLiteral("--salvage-hours")
-              << QString::number(settings_.salvageHours);
-    const auto nowMs = QDateTime::currentMSecsSinceEpoch();
-    QStringList keys;
-    const auto attempted = attempted_.value(check.machine);
-    for (auto it = attempted.cbegin(); it != attempted.cend(); ++it)
-        if (it.value() > nowMs)
-            keys << it.key();
-    if (!keys.isEmpty())
-        arguments << QStringLiteral("--attempted") << keys;
-    if (withCredentials)
-        arguments << QStringLiteral("--claude-credentials-stdin");
-    return arguments;
+QStringList LimitResets::arguments(const Run& run) const {
+    QStringList args;
+    if (run.asked)
+        args << QStringLiteral("--now") << run.target.cli;
+    else if (settings_.automatic)
+        args << QStringLiteral("--apply");
+    args << QStringLiteral("--min-blocked-minutes") << QString::number(settings_.minBlockedMinutes)
+         << QStringLiteral("--keep") << QString::number(settings_.keepCredits)
+         << QStringLiteral("--salvage-hours") << QString::number(settings_.salvageHours);
+    args << (run.target.cli == QLatin1String("claude") ? QStringLiteral("--claude-plan")
+                                                       : QStringLiteral("--codex-plan"))
+         << run.target.account;
+    args << (run.target.cli == QLatin1String("claude") ? QStringLiteral("--claude-plan-home")
+                                                       : QStringLiteral("--codex-plan-home"))
+         << (run.target.hasHome
+                 ? (run.target.home.isEmpty() ? QStringLiteral("local") : run.target.home)
+                 : QString());
+    args << QStringLiteral("--machine")
+         << (run.target.machine.isEmpty() ? QStringLiteral("local") : run.target.machine);
+    if (run.phase == Phase::prepare)
+        args << QStringLiteral("--prepare");
+    else {
+        const auto operation = run.state.value(QStringLiteral("pending")).toObject();
+        args << QStringLiteral("--operation")
+             << operation.value(QStringLiteral("operation")).toString()
+             << QStringLiteral("--pending-credit")
+             << operation.value(QStringLiteral("credit")).toString()
+             << QStringLiteral("--expected-email")
+             << operation.value(QStringLiteral("email")).toString();
+        if (run.phase == Phase::reconcile)
+            args << QStringLiteral("--reconcile-only");
+    }
+    const auto attempts = unexpiredAttempts(run.state);
+    if (!attempts.isEmpty())
+        args << QStringLiteral("--attempted") << attempts.keys();
+    if (!run.credentials.isEmpty())
+        args << QStringLiteral("--claude-credentials-stdin");
+    return args;
 }
-
-void LimitResets::start(const Check& check, const QByteArray& credentials) {
-    auto* process = new QProcess(this);
-    running_.insert(check.machine, process);
+void LimitResets::start(const std::shared_ptr<Run>& run) {
+    if (!current(run))
+        return;
+    auto* process = new UpdaterProcess(this);
+    run->process = process;
+    run->output.clear();
+    run->error_bytes = 0;
+    run->oversized = false;
+    run->timed_out = false;
     QByteArray input;
-    if (check.machine.isEmpty()) {
+    if (run->target.machine.isEmpty()) {
         process->setProgram(program_(QStringLiteral("python3")));
-        process->setArguments(QStringList{script_path_} + arguments(check, !credentials.isEmpty()));
-        if (!credentials.isEmpty())
-            input = credentials.simplified() + '\n';
+        process->setArguments(QStringList{script_path_} + arguments(*run));
+        if (!run->credentials.isEmpty())
+            input = run->credentials.simplified() + '\n';
     } else {
-        // The helper goes on stdin, so nothing is left on the other machine.
         QStringList words{QStringLiteral("python3"), QStringLiteral("-")};
-        for (const auto& word : arguments(check, false))
+        for (const auto& word : arguments(*run))
             words << quoted(word);
         process->setProgram(program_(QStringLiteral("ssh")));
         process->setArguments({QStringLiteral("-o"), QStringLiteral("BatchMode=yes"),
                                QStringLiteral("-o"), QStringLiteral("ConnectTimeout=10"),
                                QStringLiteral("-o"), QStringLiteral("ControlPath=none"),
-                               QStringLiteral("-T"), QStringLiteral("--"), check.machine,
+                               QStringLiteral("-T"), QStringLiteral("--"), run->target.machine,
                                words.join(QLatin1Char(' '))});
         input = kLimitResetsScript;
     }
-    connect(process, &QProcess::finished, this, [this, check, process] { finish(check, process); });
+    const auto drain = [run, process] {
+        if (run->process == process)
+            run->drain();
+    };
+    connect(process, &QProcess::readyReadStandardOutput, process, drain);
+    connect(process, &QProcess::readyReadStandardError, process, drain);
+    connect(process, &QProcess::finished, this, [this, run, process] {
+        if (run->process == process)
+            finish(run);
+    });
     connect(process, &QProcess::errorOccurred, this,
-            [this, check, process](QProcess::ProcessError error) {
-                if (error == QProcess::FailedToStart)
-                    finish(check, process);
+            [this, run, process](QProcess::ProcessError error) {
+                if (run->process == process && error == QProcess::FailedToStart)
+                    finish(run);
             });
-    QTimer::singleShot(kHelperTimeoutMs, process, [process] { process->kill(); });
+    QTimer::singleShot(kHelperTimeoutMs, process, [run, process] {
+        if (run->process != process)
+            return;
+        run->timed_out = true;
+        if (run->process)
+            run->process->stopGroup();
+    });
     process->start();
     process->write(input);
     process->closeWriteChannel();
 }
-
-void LimitResets::finish(const Check& check, QProcess* process) {
-    if (running_.value(check.machine) != process)
+void LimitResets::finish(const std::shared_ptr<Run>& run) {
+    if (!current(run) || !run->process)
         return;
-    running_.remove(check.machine);
+    auto* process = run->process.data();
+    run->drain();
     process->deleteLater();
-    const auto report = QJsonDocument::fromJson(process->readAllStandardOutput()).object();
-    const auto accounts = report.value(QStringLiteral("accounts")).toArray();
-    if (accounts.isEmpty()) {
-        const auto where = check.machine.isEmpty() ? QStringLiteral("this Mac") : check.machine;
-        const auto detail =
-            QString::fromUtf8(process->readAllStandardError()).simplified().right(200);
-        qWarning().noquote() << "Limit resets: no report from" << where << detail;
-        if (!check.asked.isEmpty())
-            emit declined(check.machine, check.asked,
-                          QStringLiteral("lapis could not ask %1. %2").arg(where, detail));
+    QJsonParseError error{};
+    const auto document = QJsonDocument::fromJson(run->output, &error);
+    const auto accounts = document.object().value(QStringLiteral("accounts")).toArray();
+    if (run->oversized || run->timed_out || process->error() == QProcess::FailedToStart ||
+        process->exitCode() != 0 || error.error != QJsonParseError::NoError ||
+        accounts.size() != 1) {
+        refuse(run, QStringLiteral("reset helper failed; any pending outcome remains unknown"));
         return;
     }
-    const auto nowMs = QDateTime::currentMSecsSinceEpoch();
-    for (const auto& value : accounts)
-        note(check, value.toObject(), nowMs);
-}
-
-void LimitResets::note(const Check& check, const QJsonObject& account, qint64 nowMs) {
-    const auto where = check.machine.isEmpty() ? QStringLiteral("this Mac") : check.machine;
-    const auto cli = account.value(QStringLiteral("cli")).toString();
-    const auto decision = account.value(QStringLiteral("decision")).toString();
-    const auto result = account.value(QStringLiteral("result")).toString();
-    const auto key = account.value(QStringLiteral("attempt")).toString();
-    // Nothing to reset yet, a throttle or a lost answer is tried again later;
-    // any other answer settles the attempt.
-    const bool later =
-        result == QLatin1String("nothing_to_reset") || result == QLatin1String("rate_limited") ||
-        result == QLatin1String("http_429") || result.startsWith(QLatin1String("error: "));
-    if (!key.isEmpty() && !result.isEmpty())
-        attempted_[check.machine][key] =
-            later ? nowMs + kRetryLaterMs : std::numeric_limits<qint64>::max();
-    if (result == QLatin1String("reset")) {
-        const auto email = account.value(QStringLiteral("email")).toString();
-        const auto title = account.value(QStringLiteral("credit"))
-                               .toObject()
-                               .value(QStringLiteral("title"))
-                               .toString();
-        qInfo().noquote() << "Limit resets: spent" << title << "for" << cli << email << "on"
-                          << where
-                          << (account.value(QStringLiteral("confirmed")).toBool()
-                                  ? "(confirmed)"
-                                  : "(not yet reflected in its usage)");
-        emit spent(check.machine, cli, email, title, why(decision));
-    } else if (cli == check.asked) {
-        const auto error = account.value(QStringLiteral("error")).toString();
-        emit declined(check.machine, cli,
-                      !error.isEmpty()    ? error
-                      : !result.isEmpty() ? result
-                                          : decision);
-    } else if (!result.isEmpty()) {
-        qWarning().noquote() << "Limit resets:" << cli << "on" << where << "answered" << result;
+    const auto account = accounts.first().toObject();
+    if (account.value(QStringLiteral("cli")).toString() != run->target.cli) {
+        refuse(run, QStringLiteral("reset helper returned a different CLI"));
+        return;
     }
+    if (run->phase == Phase::prepare)
+        prepared(run, account);
+    else
+        completed(run, account);
 }
-
+void LimitResets::prepared(const std::shared_ptr<Run>& run, const QJsonObject& account) {
+    const auto email = account.value(QStringLiteral("email")).toString().toLower();
+    auto pending = run->state.value(QStringLiteral("pending")).toObject();
+    const auto expected = pending.isEmpty() ? run->target.email.toLower()
+                                            : pending.value(QStringLiteral("email")).toString();
+    if (!account.value(QStringLiteral("error")).toString().isEmpty() || email.isEmpty() ||
+        (!expected.isEmpty() && email != expected)) {
+        refuse(run, QStringLiteral("selected plan identity could not be verified"));
+        return;
+    }
+    if (!pending.isEmpty()) {
+        run->phase = Phase::reconcile;
+        start(run);
+        return;
+    }
+    const auto decision = account.value(QStringLiteral("action")).toString();
+    const auto key = account.value(QStringLiteral("attempt")).toString();
+    const auto credit = account.value(QStringLiteral("credit_id")).toString();
+    if (account.value(QStringLiteral("decision")) != QLatin1String("prepared") ||
+        (!run->asked && !settings_.automatic) || key.isEmpty() || credit.isEmpty() ||
+        (decision != QLatin1String("restore") && decision != QLatin1String("salvage") &&
+         decision != QLatin1String("now"))) {
+        refuse(run, decision.isEmpty() ? QStringLiteral("no eligible reset") : decision);
+        return;
+    }
+    const auto attempts = unexpiredAttempts(run->state);
+    if (attempts.size() >= kAttemptLimit || key.size() > 512 || credit.size() > 256) {
+        refuse(run, QStringLiteral("reset attempt capacity reached"));
+        return;
+    }
+    pending = {{QStringLiteral("operation"), QUuid::createUuid().toString(QUuid::WithoutBraces)},
+               {QStringLiteral("credit"), credit},
+               {QStringLiteral("attempt"), key},
+               {QStringLiteral("email"), email},
+               {QStringLiteral("decision"), decision}};
+    const QJsonObject state{{QStringLiteral("v"), 1},
+                            {QStringLiteral("pending"), pending},
+                            {QStringLiteral("attempts"), attempts}};
+    persist(run, state, [this, run] {
+        if (!run->asked && !settings_.automatic) {
+            auto cancelled = run->state;
+            cancelled.remove(QStringLiteral("pending"));
+            persist(run, cancelled, [this, run] {
+                refuse(run, QStringLiteral("automatic resets were disabled before submission"));
+            });
+            return;
+        }
+        run->phase = Phase::consume;
+        start(run);
+    });
+}
+void LimitResets::persist(const std::shared_ptr<Run>& run, const QJsonObject& state,
+                          const std::function<void()>& done) {
+    if (!validState(state)) {
+        refuse(run, QStringLiteral("invalid reset journal update; no further reset was requested"));
+        return;
+    }
+    // Each target has its own file and only one active run. This serializes
+    // writes for that account without blocking the GUI or unrelated accounts.
+    QThreadPool::globalInstance()->start([guard = QPointer<LimitResets>(this), run, state, done] {
+        const bool saved = platform::write_reset_journal(run->state_path, state);
+        QMetaObject::invokeMethod(
+            QCoreApplication::instance(),
+            [guard, run, state, done, saved] {
+                if (!guard || !guard->current(run))
+                    return;
+                if (!saved) {
+                    guard->refuse(
+                        run,
+                        QStringLiteral(
+                            "reset journal could not be saved; no further reset was requested"));
+                    return;
+                }
+                run->state = state;
+                done();
+            },
+            Qt::QueuedConnection);
+    });
+}
+void LimitResets::completed(const std::shared_ptr<Run>& run, const QJsonObject& account) {
+    const auto result = account.value(QStringLiteral("result")).toString();
+    const bool consumed = result == QLatin1String("reset");
+    const bool settled = result == QLatin1String("settled");
+    const bool refused =
+        run->phase == Phase::consume &&
+        (result == QLatin1String("refused") || result == QLatin1String("nothing_to_reset") ||
+         result == QLatin1String("rate_limited") || result == QLatin1String("http_429") ||
+         result == QLatin1String("http_401") || result == QLatin1String("http_403"));
+    const auto operation = run->state.value(QStringLiteral("pending")).toObject();
+    if ((consumed || settled) && (account.value(QStringLiteral("operation")).toString() !=
+                                      operation.value(QStringLiteral("operation")).toString() ||
+                                  account.value(QStringLiteral("credit_id")).toString() !=
+                                      operation.value(QStringLiteral("credit")).toString() ||
+                                  account.value(QStringLiteral("email")).toString().toLower() !=
+                                      operation.value(QStringLiteral("email")).toString())) {
+        refuse(run, QStringLiteral("reset receipt identity does not match the admitted operation"));
+        return;
+    }
+    if (!consumed && !settled && !refused) {
+        refuse(run, QStringLiteral("reset outcome is unknown; it will not be submitted again"));
+        return;
+    }
+    auto attempts = unexpiredAttempts(run->state);
+    const auto pending = run->state.value(QStringLiteral("pending")).toObject();
+    attempts.insert(pending.value(QStringLiteral("attempt")).toString(),
+                    static_cast<double>(QDateTime::currentMSecsSinceEpoch() +
+                                        (refused ? kRetryMs : kSettledMs)));
+    const QJsonObject state{{QStringLiteral("v"), 1}, {QStringLiteral("attempts"), attempts}};
+    persist(run, state, [this, run, account, consumed, settled, pending] {
+        run->lock->unlock();
+        running_.remove(run->key);
+        uncertain_notified_.remove(run->key);
+        if (consumed)
+            emit spent(run->target.machine, run->target.cli,
+                       pending.value(QStringLiteral("email")).toString(),
+                       account.value(QStringLiteral("credit"))
+                           .toObject()
+                           .value(QStringLiteral("title"))
+                           .toString(),
+                       why(pending.value(QStringLiteral("decision")).toString()));
+        else if (run->asked)
+            emit declined(
+                run->target.machine, run->target.cli,
+                settled
+                    ? QStringLiteral(
+                          "the previous credit is no longer available; no new reset was requested")
+                    : QStringLiteral("the provider declined the reset"));
+    });
+}
 } // namespace lapis::desktop

@@ -55,6 +55,55 @@ class PlanTest(unittest.TestCase):
 
 
 class SignInTest(unittest.TestCase):
+    def test_validation_precedes_auth_and_destinations_are_per_plan(self):
+        config = {
+            "usage": {"machines": ["usage-host"]},
+            "accounts": {
+                "claude": [
+                    None,
+                    {"name": None},
+                    {"name": "../outside", "email": "a@example.test"},
+                    {"name": "missing-email", "email": None},
+                    {
+                        "name": "first",
+                        "email": "a@example.test",
+                        "home": "first-host",
+                        "machines": None,
+                    },
+                    {
+                        "name": "second",
+                        "email": "b@example.test",
+                        "machines": ["second-host"],
+                    },
+                ],
+                "codex": [{"name": "unrelated", "machines": ["codex-only"]}],
+            },
+        }
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.object(accounts, "ACCOUNTS", Path(folder)),
+            patch.object(accounts, "command_add_claude") as add,
+        ):
+            accounts.command_sign_in(config, ask=lambda _: "")
+            self.assertEqual(
+                [(call.args[1], call.args[3]) for call in add.call_args_list],
+                [
+                    ("first", ["usage-host", "first-host"]),
+                    ("second", ["usage-host", "second-host"]),
+                ],
+            )
+            add.reset_mock()
+            accounts.command_sign_in(config, [], ask=lambda _: "")
+            self.assertEqual([call.args[3] for call in add.call_args_list], [[], []])
+        with (
+            patch.object(accounts, "load_config", return_value=config),
+            patch.object(accounts, "command_sign_in") as sign_in,
+        ):
+            self.assertEqual(accounts.main(["sign-in"]), 0)
+            self.assertIsNone(sign_in.call_args.args[1])
+            self.assertEqual(accounts.main(["sign-in", "--to"]), 0)
+            self.assertEqual(sign_in.call_args.args[1], [])
+
     def test_every_plan_without_a_token_is_offered_in_turn(self):
         config = {
             "usage": {"machines": ["devbox"]},
@@ -69,7 +118,10 @@ class SignInTest(unittest.TestCase):
                 ],
             },
         }
-        self.assertEqual(accounts.plan_machines(config), ["devbox", "gpubox", "spare"])
+        self.assertEqual(
+            accounts.plan_machines(config, config["accounts"]["claude"][1]),
+            ["devbox", "gpubox"],
+        )
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / "claude").mkdir()

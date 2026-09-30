@@ -461,16 +461,36 @@ QObject* keep_limit_resets(std::optional<lapis::desktop::LimitResets>& kept,
     using lapis::desktop::LimitResets;
     if (isolated)
         return nullptr;
+    const auto target = [&workspace, &keymap](const QString& id) {
+        LimitResets::AgentTarget result;
+        const auto* item = workspace.session(id);
+        if (item == nullptr)
+            return result;
+        result.machine = workspace.agentPlace(id).value(QStringLiteral("machine")).toString();
+        result.cli = item->harnessId();
+        result.account = workspace.agentAccount(id);
+        if (!result.account.isEmpty()) {
+            result.refusal = QStringLiteral("the selected plan is no longer configured");
+            for (const auto& account : keymap.accounts().accounts)
+                if (account.cli == result.cli && account.name == result.account) {
+                    result.home = account.home;
+                    result.hasHome = account.hasHome;
+                    result.email = account.email;
+                    result.refusal.clear();
+                    break;
+                }
+        }
+        return result;
+    };
     auto& resets = kept.emplace(
-        [&workspace] {
-            return workspace.machinesRunning({QStringLiteral("claude"), QStringLiteral("codex")});
+        [&workspace, target] {
+            QVector<LimitResets::AgentTarget> result;
+            for (const auto& entry : workspace.sessions())
+                if (const auto* item = entry.value<lapis::desktop::SessionPreview*>())
+                    result.append(target(item->sessionId()));
+            return result;
         },
-        [&workspace](const QString& id) {
-            const auto* item = workspace.session(id);
-            return std::pair{workspace.agentPlace(id).value(QStringLiteral("machine")).toString(),
-                             item != nullptr ? item->harnessId() : QString()};
-        },
-        [](const QString& id) { return QStandardPaths::findExecutable(id); },
+        target, [](const QString& id) { return QStandardPaths::findExecutable(id); },
 #ifdef Q_OS_MACOS
         [] { return lapis::desktop::platform::claude_code_credentials(); },
 #else
@@ -507,6 +527,13 @@ QObject* keep_limit_resets(std::optional<lapis::desktop::LimitResets>& kept,
         [cli, place](const QString& machine, const QString& id, const QString& reason) {
             lapis::desktop::platform::post_notification(
                 {}, QStringLiteral("No limit reset used"),
+                QStringLiteral("%1 on %2: %3").arg(cli(id), place(machine), reason));
+        });
+    QObject::connect(
+        &resets, &lapis::desktop::LimitResets::uncertain, &resets,
+        [cli, place](const QString& machine, const QString& id, const QString& reason) {
+            lapis::desktop::platform::post_notification(
+                {}, QStringLiteral("Limit reset outcome unknown"),
                 QStringLiteral("%1 on %2: %3").arg(cli(id), place(machine), reason));
         });
     // NOLINTEND(bugprone-easily-swappable-parameters)

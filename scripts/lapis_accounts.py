@@ -343,40 +343,48 @@ def command_add_codex(config: dict, name: str, email: str, where: list[str]) -> 
     )
 
 
-def plan_machines(config: dict) -> list[str]:
-    """The machines besides this Mac that the usage dashboard asks or a plan
-    names as its home or keeps a credential on."""
+def plan_machines(config: dict, plan: dict) -> list[str]:
+    """Usage hosts plus this Claude plan's own credential destinations."""
     hosts = machines(config)[1:]
-    for cli in ("claude", "codex"):
-        for plan in config.get("accounts", {}).get(cli, []):
-            for host in [plan.get("home"), *plan.get("machines", [])]:
-                if (
-                    isinstance(host, str)
-                    and host != LOCAL
-                    and HOST.match(host)
-                    and host not in hosts
-                ):
-                    hosts.append(host)
+    selected = plan.get("machines")
+    selected = selected if isinstance(selected, list) else []
+    for host in [plan.get("home"), *selected]:
+        if (
+            isinstance(host, str)
+            and host != LOCAL
+            and HOST.fullmatch(host)
+            and host not in hosts
+        ):
+            hosts.append(host)
     return hosts
 
 
-def command_sign_in(config: dict, hosts: list[str], ask=input) -> None:
-    waiting = [
-        plan
-        for plan in config.get("accounts", {}).get("claude", [])
-        if not (ACCOUNTS / "claude" / f"{plan.get('name')}.token").exists()
-    ]
-    if not waiting:
-        print("Every Claude Code plan already has a token on this Mac.")
-        return
-    for plan in waiting:
-        name, email = plan.get("name", ""), plan.get("email", "")
-        if not NAME.match(name):
-            print(f"skipping a plan with an unusable name: {name!r}")
+def command_sign_in(config: dict, hosts: list[str] | None = None, ask=input) -> None:
+    section = config.get("accounts")
+    plans = section.get("claude") if isinstance(section, dict) else []
+    plans = plans if isinstance(plans, list) else []
+    waiting = []
+    for plan in plans:
+        if not isinstance(plan, dict):
+            print("skipping a malformed Claude Code plan")
             continue
+        name, email = plan.get("name"), plan.get("email")
+        if not isinstance(name, str) or not NAME.fullmatch(name) or name in (".", ".."):
+            print("skipping a plan with an unusable name")
+            continue
+        if not isinstance(email, str) or not email.strip():
+            print(f"skipping {name}: plan has no usable email")
+            continue
+        if not (ACCOUNTS / "claude" / f"{name}.token").exists():
+            waiting.append((plan, name, email.strip()))
+    if not waiting:
+        print("No valid Claude Code plan needs a local token.")
+        return
+    for plan, name, email in waiting:
         if ask(f"Sign in {name} ({email}) now? [Y/n] ").strip().lower() in ("n", "no"):
             continue
-        command_add_claude(config, name, email, hosts)
+        destinations = hosts if hosts is not None else plan_machines(config, plan)
+        command_add_claude(config, name, email, destinations)
 
 
 def command_list(config: dict) -> None:
@@ -403,7 +411,7 @@ def main(argv: list[str]) -> int:
     sign_in.add_argument(
         "--to",
         nargs="*",
-        help="hosts to keep the tokens on (default: every plan's machines)",
+        help="hosts for these tokens (default: each plan plus usage hosts; --to alone: local only)",
     )
     claude = commands.add_parser("add-claude")
     claude.add_argument("name")
@@ -420,7 +428,9 @@ def main(argv: list[str]) -> int:
     arguments = parser.parse_args(argv)
     try:
         config = load_config()
-        if getattr(arguments, "name", "") and not NAME.match(arguments.name):
+        if hasattr(arguments, "name") and (
+            not NAME.fullmatch(arguments.name) or arguments.name in (".", "..")
+        ):
             raise Failure("a plan name is letters, digits, '.', '_' or '-', at most 64")
         named = (getattr(arguments, "to", None) or []) + (
             getattr(arguments, "on", None) or []
@@ -433,8 +443,7 @@ def main(argv: list[str]) -> int:
         elif arguments.command == "homes":
             command_homes(config, arguments.hosts)
         elif arguments.command == "sign-in":
-            hosts = arguments.to if arguments.to is not None else plan_machines(config)
-            command_sign_in(config, hosts)
+            command_sign_in(config, arguments.to)
         elif arguments.command == "add-claude":
             hosts = arguments.to if arguments.to is not None else machines(config)[1:]
             command_add_claude(config, arguments.name, arguments.email, hosts)

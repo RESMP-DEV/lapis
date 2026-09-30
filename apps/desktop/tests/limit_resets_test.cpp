@@ -1,34 +1,30 @@
-// LimitResets runs the reset helper on each machine with Claude Code or Codex
-// agents: here on this machine and on "devbox" through stand-ins for python3
-// and ssh that record what they were given and print a canned report.
 #include "limit_resets.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
-#include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLockFile>
 #include <QTemporaryDir>
-#include <QTimer>
 
+#include <functional>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
-#include <vector>
 
 using lapis::desktop::LimitResets;
-using lapis::desktop::LimitResetSettings;
-
 namespace {
 void require(bool condition, const char* message) {
     if (!condition)
         throw std::runtime_error(message);
 }
-bool waitFor(const std::function<bool()>& done, int ms = 10000) {
+bool waitFor(const std::function<bool()>& done) {
     QElapsedTimer clock;
     clock.start();
-    while (!done() && clock.elapsed() < ms)
+    while (!done() && clock.elapsed() < 10000)
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
     return done();
 }
@@ -36,133 +32,130 @@ QByteArray read(const QString& path) {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
-void write(const QString& path, const QByteArray& text) {
+void write(const QString& path, const QByteArray& bytes) {
     QFile file(path);
-    require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "write a fixture file");
-    file.write(text);
-}
-void standIn(const QDir& root, const QString& name, const QString& record) {
-    const auto path = root.filePath(QStringLiteral("bin/") + name);
-    write(path, QStringLiteral("#!/bin/sh\nprintf '%s\\n' \"$@\" > '%1.args'\ncat > '%1.stdin'\n"
-                               "cat '%1.reply'\n")
-                    .arg(root.filePath(record))
-                    .toUtf8());
-    require(QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
-            "make a stand-in executable");
+    require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "write fixture file");
+    require(file.write(bytes) == bytes.size(), "write complete fixture");
 }
 
-struct Spent {
-    QString machine, cli, email, title, why;
+// The helper is a real subprocess, but it only reads/writes this fixture. A
+// consume checks the on-disk journal itself before returning a fake receipt.
+constexpr auto helper = R"python(#!/usr/bin/env python3
+import io, json, os, pathlib, shlex, sys, time, types
+root = pathlib.Path(__file__).resolve().parent.parent
+raw = sys.argv[1:]
+input_text = sys.stdin.read()
+if pathlib.Path(__file__).name == 'ssh':
+    args, source = shlex.split(raw[-1])[2:], input_text
+else:
+    args, source = raw[1:], pathlib.Path(raw[0]).read_text()
+def flag(name, default=''):
+    return args[args.index(name)+1] if name in args else default
+phase = 'prepare' if '--prepare' in args else 'reconcile' if '--reconcile-only' in args else 'consume'
+operation, credit = flag('--operation'), flag('--pending-credit')
+states = list((root/'runtime'/'limit-resets').glob('*.json'))
+pending = [json.loads(p.read_text()).get('pending', {}) for p in states if p.is_file()]
+durable = any(p.get('operation') == operation and p.get('credit') == credit for p in pending)
+with (root/'calls.jsonl').open('a') as log:
+    log.write(json.dumps(dict(phase=phase, args=args, input=input_text, durable=durable))+'\n')
+if phase == 'prepare' and (root/'block-state').exists():
+    folder = root/'runtime'/'limit-resets'
+    folder.rename(root/'saved-ledger')
+    folder.write_text('not a directory')
+module = types.ModuleType('tested_reset_helper')
+exec(compile(source, 'embedded_limit_resets.py', 'exec'), module.__dict__)
+class Account:
+    def __init__(self, *unused):
+        self.email = 'plan@example.test'
+        if (root/'wrong-account').exists() or (phase != 'prepare' and (root/'change-account').exists()):
+            self.email = 'different@example.test'
+    def read(self, credit_id=None):
+        windows = {'five_hour': (1.0, time.time()+7200)}
+        if credit_id and (root/'settled').exists():
+            return windows, None
+        return windows, dict(id='credit-1', title='Fixture reset', program=module.CEDAR,
+            available=True, usable=True, remaining=3, expires=time.time()+7200,
+            clears=list(module.MAX_REMAINING), requires_limit=False, status='available')
+    def spend(self, exact, identifier):
+        assert durable and exact['id'] == credit and identifier == operation
+        with (root/'provider-calls').open('a') as log:
+            log.write(identifier+'\n')
+        if (root/'lose-reply').exists():
+            os._exit(0)
+        return 'reset'
+class Claude(Account):
+    cli = 'claude'
+class Codex(Account):
+    cli = 'codex'
+module.Claude, module.Codex = Claude, Codex
+sys.stdin = io.StringIO(input_text if pathlib.Path(__file__).name != 'ssh' else '')
+sys.exit(module.main(args))
+)python";
+
+struct Fixture {
+    QTemporaryDir directory;
+    QDir root{directory.path()};
+    QVector<LimitResets::AgentTarget> targets;
+    QStringList spent, declined, uncertain;
+    int credential_reads{};
+    std::unique_ptr<LimitResets> controller;
+
+    Fixture() {
+        require(directory.isValid() && root.mkpath(QStringLiteral("bin")), "fixture root");
+        for (const auto* program : {"python3", "ssh"}) {
+            const auto path = root.filePath(QStringLiteral("bin/") + QLatin1String(program));
+            write(path, helper);
+            require(
+                QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner),
+                "executable helper");
+        }
+        targets.append({{},
+                        QStringLiteral("claude"),
+                        QStringLiteral("visiting"),
+                        QStringLiteral("account-home"),
+                        true,
+                        QStringLiteral("plan@example.test"),
+                        {}});
+    }
+    void start() {
+        controller = std::make_unique<LimitResets>(
+            [this] { return targets; },
+            [this](const QString& id) { return targets.at(id.toInt()); },
+            [this](const QString& name) { return root.filePath(QStringLiteral("bin/") + name); },
+            [this] {
+                ++credential_reads;
+                return QByteArray(R"({"claudeAiOauth":{"accessToken":"fixture"}})");
+            },
+            root.filePath(QStringLiteral("runtime")));
+        controller->setSettings({.automatic = false});
+        QObject::connect(controller.get(), &LimitResets::spent,
+                         [this](const QString&, const QString& cli, const QString&, const QString&,
+                                const QString&) { spent << cli; });
+        QObject::connect(
+            controller.get(), &LimitResets::declined,
+            [this](const QString&, const QString&, const QString& reason) { declined << reason; });
+        QObject::connect(
+            controller.get(), &LimitResets::uncertain,
+            [this](const QString&, const QString&, const QString& reason) { uncertain << reason; });
+    }
+    [[nodiscard]] QList<QJsonObject> calls() const {
+        QList<QJsonObject> result;
+        for (const auto& line : read(root.filePath(QStringLiteral("calls.jsonl"))).split('\n'))
+            if (!line.isEmpty())
+                result.append(QJsonDocument::fromJson(line).object());
+        return result;
+    }
+    [[nodiscard]] QString journal() const {
+        const QDir folder(root.filePath(QStringLiteral("runtime/limit-resets")));
+        const auto files = folder.entryList({QStringLiteral("*.json")}, QDir::Files);
+        require(files.size() == 1, "one target journal");
+        return folder.filePath(files.first());
+    }
 };
-
-void sweepsEachMachineWithItsOwnSignIn() {
-    QTemporaryDir directory(QStringLiteral("/tmp/lapis-resets-XXXXXX"));
-    require(directory.isValid(), "fixture directory");
-    const QDir root(directory.path());
-    require(root.mkpath(QStringLiteral("bin")), "fixture bin");
-    standIn(root, QStringLiteral("python3"), QStringLiteral("local"));
-    standIn(root, QStringLiteral("ssh"), QStringLiteral("remote"));
-    write(root.filePath(QStringLiteral("local.reply")),
-          R"({"accounts": [{"cli": "claude", "email": "someone@example.com", "decision": "restore",
-              "attempt": "block|k", "result": "reset", "credit": {"title": "Launch reset"},
-              "confirmed": true}, {"cli": "codex", "error": "no Codex sign-in"}]})");
-    write(root.filePath(QStringLiteral("remote.reply")),
-          R"({"accounts": [{"cli": "codex", "decision": "not-needed"}]})");
-    const QByteArray stored = "{\"claudeAiOauth\":\n {\"accessToken\": \"t\"}}\n";
-    LimitResets resets(
-        [] { return QStringList{QString(), QStringLiteral("devbox")}; },
-        [](const QString& id) {
-            if (id == QLatin1String("a"))
-                return std::pair{QString(), QStringLiteral("claude")};
-            if (id == QLatin1String("b"))
-                return std::pair{QStringLiteral("devbox"), QStringLiteral("codex")};
-            return std::pair{QString(), QStringLiteral("shell")};
-        },
-        [&root](const QString& id) { return root.filePath(QStringLiteral("bin/") + id); },
-        [stored] { return stored; }, root.path());
-    resets.setSettings(
-        {.automatic = true, .minBlockedMinutes = 30, .keepCredits = 1, .salvageHours = 6});
-    std::vector<Spent> spent;
-    std::vector<QString> declined;
-    QObject::connect(&resets, &LimitResets::spent,
-                     [&spent](const QString& machine, const QString& cli, const QString& email,
-                              const QString& title, const QString& why) {
-                         spent.push_back({machine, cli, email, title, why});
-                     });
-    QObject::connect(&resets, &LimitResets::declined,
-                     [&declined](const QString&, const QString&, const QString& reason) {
-                         declined.push_back(reason);
-                     });
-    const auto script = root.filePath(QStringLiteral("limit_resets.py"));
-    require(read(script).contains("def plan("), "the helper is written beside the workspace");
-    const auto others = QFile::ReadGroup | QFile::WriteGroup | QFile::ExeGroup | QFile::ReadOther |
-                        QFile::WriteOther | QFile::ExeOther;
-    require((QFileInfo(script).permissions() & others) == 0, "and only its owner can read it");
-
-    resets.sweep();
-    require(waitFor([&] {
-                return spent.size() == 1 &&
-                       QFileInfo::exists(root.filePath(QStringLiteral("remote.args")));
-            }),
-            "both machines answer");
-    const auto local =
-        QString::fromUtf8(read(root.filePath(QStringLiteral("local.args")))).split('\n');
-    require(local.first() == script, "this Mac runs the helper file");
-    for (const auto* word : {"--apply", "--min-blocked-minutes", "30", "--keep", "1",
-                             "--salvage-hours", "6", "--claude-credentials-stdin"})
-        require(local.contains(QString::fromLatin1(word)),
-                "with the settings and its credentials flag");
-    require(read(root.filePath(QStringLiteral("local.stdin"))) == stored.simplified() + '\n',
-            "the keychain's sign-in goes on stdin as one line");
-    const auto remote =
-        QString::fromUtf8(read(root.filePath(QStringLiteral("remote.args")))).split('\n');
-    for (const auto* word : {"BatchMode=yes", "ControlPath=none", "-T", "devbox"})
-        require(remote.contains(QString::fromLatin1(word)),
-                "ssh runs without prompts on its own connection");
-    require(remote.at(remote.size() - 2).startsWith(QStringLiteral("python3 - '--apply'")) &&
-                !remote.at(remote.size() - 2).contains(QStringLiteral("credentials")),
-            "another machine reads its own sign-in");
-    require(read(root.filePath(QStringLiteral("remote.stdin"))).contains("def plan("),
-            "and gets the helper on stdin");
-    const auto& first = spent.front();
-    require(first.machine.isEmpty() && first.cli == QLatin1String("claude") &&
-                first.email == QLatin1String("someone@example.com") &&
-                first.title == QLatin1String("Launch reset") &&
-                first.why == QLatin1String("blocked"),
-            "a spent reset is reported with its account and reason");
-    require(declined.empty(), "nothing asked for, nothing declined");
-
-    QFile::remove(root.filePath(QStringLiteral("local.args")));
-    resets.sweep();
-    require(
-        waitFor([&] { return QFileInfo::exists(root.filePath(QStringLiteral("local.args"))); }) &&
-            waitFor([&] { return spent.size() == 2; }),
-        "a second sweep runs");
-    const auto again =
-        QString::fromUtf8(read(root.filePath(QStringLiteral("local.args")))).split('\n');
-    require(again.contains(QStringLiteral("--attempted")) &&
-                again.contains(QStringLiteral("block|k")),
-            "an attempted reset is not tried again");
-
-    write(root.filePath(QStringLiteral("local.reply")),
-          R"({"accounts": [{"cli": "claude", "decision": "no-credit"}]})");
-    require(resets.canUseNow(QStringLiteral("a")) && resets.canUseNow(QStringLiteral("b")) &&
-                !resets.canUseNow(QStringLiteral("s")),
-            "only Claude Code and Codex agents have resets");
-    resets.setSettings({.automatic = false});
-    resets.useNow(QStringLiteral("a"));
-    require(waitFor([&] { return declined.size() == 1; }), "an unavailable reset is declined");
-    require(declined.front() == QLatin1String("no-credit"), "with the helper's reason");
-    const auto asked =
-        QString::fromUtf8(read(root.filePath(QStringLiteral("local.args")))).split('\n');
-    require(asked.contains(QStringLiteral("--now")) && asked.contains(QStringLiteral("claude")) &&
-                !asked.contains(QStringLiteral("--apply")),
-            "asking spends only that CLI's reset, with automatic spending off");
-}
 
 void settingsReadFromTheConfig() {
     const auto defaults = lapis::desktop::parse_limit_resets(QJsonValue());
-    require(defaults == LimitResetSettings{}, "OMP's defaults without a setting");
+    require(defaults == lapis::desktop::LimitResetSettings{}, "lapis defaults without a setting");
     require(defaults.automatic && defaults.minBlockedMinutes == 60 && defaults.keepCredits == 0 &&
                 defaults.salvageHours == 12,
             "on, an hour, no reserve, twelve hours");
@@ -174,17 +167,149 @@ void settingsReadFromTheConfig() {
                 set.salvageHours == 24,
             "each field, with negatives clamped");
 }
+
+void admissionAndAccountIsolation() {
+    Fixture f;
+    f.start();
+    f.controller->useNow(QStringLiteral("0"));
+    f.controller->useNow(QStringLiteral("0"));
+    require(waitFor([&] { return f.spent.size() == 1; }), "prepared reset completes");
+    const auto calls = f.calls();
+    require(calls.size() == 2 && calls[0].value("phase") == QLatin1String("prepare") &&
+                calls[1].value("phase") == QLatin1String("consume") &&
+                calls[1].value("durable").toBool(),
+            "one prepare and one consume only after durable admission");
+    require(f.declined.size() == 1, "concurrent manual reset was refused");
+    require(f.credential_reads == 0, "a visiting plan must not read the machine keychain");
+    const auto args = calls[1].value("args").toArray();
+    require(args.contains(QStringLiteral("visiting")) &&
+                args.contains(QStringLiteral("account-home")) &&
+                args.contains(QStringLiteral("--expected-email")),
+            "selected plan and identity carried to consume");
+    require(
+        !QJsonDocument::fromJson(read(f.journal())).object().contains(QStringLiteral("pending")),
+        "successful receipt retires the pending operation");
+    QLockFile another_controller(f.journal() + QStringLiteral(".lock"));
+    require(another_controller.tryLock(0), "completed operation releases its process lock");
+    f.controller->useNow(QStringLiteral("0"));
+    require(f.declined.size() == 2 && f.calls().size() == 2,
+            "another controller's account lock prevents overlapping reset helpers");
+}
+
+void interruptedConsumeReconcilesWithoutReplay() {
+    Fixture f;
+    write(f.root.filePath(QStringLiteral("lose-reply")), "yes");
+    f.start();
+    f.controller->useNow(QStringLiteral("0"));
+    require(waitFor([&] { return f.uncertain.size() == 1; }),
+            "missing receipt reports uncertainty");
+    const auto original =
+        QJsonDocument::fromJson(read(f.journal())).object().value("pending").toObject();
+    require(!original.value("operation").toString().isEmpty(), "pending operation persisted");
+    f.controller.reset();
+    f.start();
+    f.controller->useNow(QStringLiteral("0"));
+    require(waitFor([&] { return f.uncertain.size() == 2; }),
+            "restart reconciles available credit conservatively");
+    auto calls = f.calls();
+    require(calls.size() == 4 && calls.last().value("phase") == QLatin1String("reconcile"),
+            "restart does not repeat consume");
+    require(QJsonDocument::fromJson(read(f.journal())).object().value("pending").toObject() ==
+                original,
+            "uncertain identity never expires or changes");
+    write(f.root.filePath(QStringLiteral("settled")), "yes");
+    f.controller->useNow(QStringLiteral("0"));
+    require(waitFor([&] { return !f.declined.isEmpty(); }),
+            "absent credit settles without claiming a new reset");
+    calls = f.calls();
+    int consumes = 0;
+    for (const auto& call : calls)
+        consumes += call.value("phase") == QLatin1String("consume");
+    require(consumes == 1 && f.spent.isEmpty(),
+            "uncertain and expired credits are never replayed or claimed spent");
+}
+
+void journalAndIdentityFailuresRefuseBeforeConsume() {
+    for (const auto* marker : {"block-state", "wrong-account", "change-account"}) {
+        Fixture f;
+        write(f.root.filePath(QLatin1String(marker)), "yes");
+        f.start();
+        f.controller->useNow(QStringLiteral("0"));
+        require(waitFor([&] { return !f.declined.isEmpty(); }), "failure is visible");
+        const auto calls = f.calls();
+        require(calls[0].value("phase") == QLatin1String("prepare") &&
+                    read(f.root.filePath(QStringLiteral("provider-calls"))).isEmpty(),
+                "storage or selected-account mismatch cannot call the provider consume");
+    }
+    Fixture f;
+    write(f.root.filePath(QStringLiteral("lose-reply")), "yes");
+    f.start();
+    f.controller->useNow(QStringLiteral("0"));
+    require(waitFor([&] { return !f.uncertain.isEmpty(); }), "create pending fixture");
+    const auto path = f.journal();
+    f.controller.reset();
+    write(path, R"({"v":1,"attempts":{},"pending":{"credit":"broken"}})");
+    const auto count = f.calls().size();
+    f.start();
+    f.controller->useNow(QStringLiteral("0"));
+    require(waitFor([&] { return f.uncertain.size() == 2; }),
+            "malformed pending state fails closed");
+    require(f.calls().size() == count, "invalid journal invokes no helper");
+}
+
+void configuredTargetsUseTheirOwnRoutes() {
+    Fixture f;
+    f.targets[0].account.clear();
+    f.targets[0].hasHome = false;
+    f.targets.append({QStringLiteral("fixture-host"),
+                      QStringLiteral("codex"),
+                      QStringLiteral("second-plan"),
+                      {},
+                      false,
+                      QStringLiteral("plan@example.test"),
+                      {}});
+    f.targets.append({{}, QStringLiteral("shell"), {}, {}, false, {}, {}});
+    f.start();
+    require(!f.controller->canUseNow(QStringLiteral("2")), "shells have no reset action");
+    f.controller->setSettings(
+        {.automatic = true, .minBlockedMinutes = 30, .keepCredits = 1, .salvageHours = 6});
+    f.controller->sweep();
+    require(waitFor([&] { return f.spent.size() == 2; }), "both selected account routes complete");
+    const auto calls = f.calls();
+    require(calls.size() == 4 && f.credential_reads == 1,
+            "one check per account and keychain only for the local own sign-in");
+    for (const auto& call : calls) {
+        const auto args = call.value("args").toArray();
+        require(args.contains(QStringLiteral("--keep")) && args.contains(QStringLiteral("1")) &&
+                    args.contains(QStringLiteral("30")),
+                "policy settings reach each target");
+        if (args.contains(QStringLiteral("--codex-plan"))) {
+            require(
+                args.contains(QStringLiteral("second-plan")) &&
+                    args.contains(QStringLiteral("fixture-host")) &&
+                    !args.contains(QStringLiteral("--claude-credentials-stdin")) &&
+                    call.value("input").toString().contains(QStringLiteral("def plan(")),
+                "remote target gets its selected plan and helper script, never local credentials");
+        } else {
+            require(call.value("input").toString() ==
+                        QLatin1String("{\"claudeAiOauth\":{\"accessToken\":\"fixture\"}}\n"),
+                    "local credentials travel only over stdin");
+        }
+    }
+}
 } // namespace
 
 int main(int argc, char** argv) {
-    QCoreApplication app(argc, argv);
+    QCoreApplication application(argc, argv);
     try {
         settingsReadFromTheConfig();
-        sweepsEachMachineWithItsOwnSignIn();
+        admissionAndAccountIsolation();
+        interruptedConsumeReconcilesWithoutReplay();
+        journalAndIdentityFailuresRefuseBeforeConsume();
+        configuredTargetsUseTheirOwnRoutes();
     } catch (const std::exception& error) {
         std::cerr << "limit_resets_test: " << error.what() << '\n';
         return 1;
     }
     std::cout << "limit_resets_test: PASS\n";
-    return 0;
 }

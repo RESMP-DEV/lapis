@@ -33,6 +33,7 @@ add_library(lapis_desktop_view STATIC
     src/keymap.cpp src/keymap.hpp
     src/live_connection.cpp src/live_connection.hpp
     src/platform/updater_process.cpp src/platform/updater_process.hpp
+    src/platform/reset_journal.cpp src/platform/reset_journal.hpp
     src/terminal_surface.cpp src/terminal_surface.hpp
     src/cell_shapes.cpp src/cell_shapes.hpp
     src/tile_layout.cpp src/tile_layout.hpp
