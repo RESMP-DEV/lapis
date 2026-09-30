@@ -42,6 +42,16 @@ While lapis is in the background the same moments post a notification
 turn"); clicking it shows the agent. Appearance has the switches and a Play
 button for each.
 
+`soundFile` plays a sound file of your own in place of the taps when an agent
+needs you, and `finishedFile` when a turn ends; without `finishedFile`, a
+finished turn plays `soundFile` at half volume. Any format macOS plays works
+(WAV, AIFF, CAF, MP3, M4A), up to 4 MiB. A path may start with `~/`, and a
+relative one starts beside `lapis.json`. A file that is missing plays the taps.
+
+```json
+"alerts": {"soundFile": "~/.lapis/sounds/ding.wav", "finishedFile": "~/.lapis/sounds/ding-low.wav"}
+```
+
 ## The rest
 
 - `editor` is the app that opens an agent's folder (else the first of Cursor, VS

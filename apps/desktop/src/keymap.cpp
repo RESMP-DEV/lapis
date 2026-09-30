@@ -537,6 +537,8 @@ void KeyMap::apply_defaults() {
     alert_sound_ = true;
     finish_sound_ = true;
     alert_repeat_ = 3;
+    alert_sound_file_.clear();
+    finish_sound_file_.clear();
     notify_ = true;
     keep_awake_ = true;
     editor_.clear();
@@ -696,6 +698,23 @@ void KeyMap::load_alerts(const QJsonObject& root) {
     finish_sound_ = alerts.value(QStringLiteral("finished")).toBool(true);
     alert_repeat_ = std::clamp(alerts.value(QStringLiteral("repeat")).toInt(3), 1, 10);
     notify_ = alerts.value(QStringLiteral("notify")).toBool(true);
+    // "~/" is the home folder and a relative path starts beside lapis.json. A
+    // missing file is named here; the chime then plays its taps.
+    const auto sound_file = [this, &alerts](const QString& key) {
+        auto path = alerts.value(key).toString().trimmed().left(4096);
+        if (path.isEmpty())
+            return path;
+        if (path.startsWith(QLatin1String("~/")))
+            path = QDir::home().filePath(path.mid(2));
+        path = QDir::cleanPath(QFileInfo(source_path_).dir().absoluteFilePath(path));
+        if (!QFileInfo(path).isFile())
+            append_diagnostic(&diagnostic_,
+                              QStringLiteral("alerts.%1 '%2' not found; playing the built-in chime")
+                                  .arg(key, path));
+        return path;
+    };
+    alert_sound_file_ = sound_file(QStringLiteral("soundFile"));
+    finish_sound_file_ = sound_file(QStringLiteral("finishedFile"));
     keep_awake_ = root.value(QStringLiteral("keepAwake")).toBool(true);
     editor_ = root.value(QStringLiteral("editor")).toString().left(1024);
 }

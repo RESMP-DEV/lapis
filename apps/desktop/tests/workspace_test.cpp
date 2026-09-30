@@ -3543,6 +3543,53 @@ void alertsChimeWhileAnAgentWaits() {
             "it starts from silence and peaks near -12 dBFS");
 }
 
+// A chosen sound file replaces a chime and is read again when it changes; a
+// finished turn without its own file plays the same one at half volume, and a
+// missing file is named when the config loads and plays the taps.
+void chimesPlayChosenFiles() {
+    using lapis::desktop::Chime;
+    QTemporaryDir directory;
+    require(directory.isValid(), "sounds directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto write = [&root](const QString& name, const QByteArray& bytes) {
+        QFile file(root.filePath(name));
+        require(file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size(),
+                "write the fixture file");
+    };
+    write(QStringLiteral("ding.wav"), "RIFF-ding");
+    write(QStringLiteral("lapis.json"), R"({"version": 1, "alerts": {"soundFile": "ding.wav"}})");
+    lapis::desktop::KeyMap keymap;
+    keymap.setSourcePathForTesting(root.filePath(QStringLiteral("lapis.json")));
+    require(keymap.load() && keymap.diagnostic().isEmpty() &&
+                keymap.alertSoundFile() == root.filePath(QStringLiteral("ding.wav")),
+            "a relative sound file starts beside lapis.json");
+    lapis::desktop::ChimeSounds sounds;
+    const auto needs = sounds.sound(Chime::needsYou, keymap);
+    const auto finished = sounds.sound(Chime::finished, keymap);
+    require(needs.bytes == "RIFF-ding" && needs.volume == 1.0F,
+            "an agent that needs you plays the file");
+    require(finished.bytes == "RIFF-ding" && finished.volume == 0.5F,
+            "a finished turn plays the same file at half volume");
+    write(QStringLiteral("ding.wav"), "RIFF-ding, edited");
+    require(sounds.sound(Chime::needsYou, keymap).bytes == "RIFF-ding, edited",
+            "an edited file is read again");
+
+    write(QStringLiteral("low.wav"), "RIFF-low");
+    write(QStringLiteral("lapis.json"),
+          QStringLiteral(
+              R"({"version": 1, "alerts": {"soundFile": "gone.wav", "finishedFile": "%1"}})")
+              .arg(root.filePath(QStringLiteral("low.wav")))
+              .toUtf8());
+    require(keymap.load() && keymap.diagnostic().contains(QStringLiteral("gone.wav")),
+            "a missing sound file is named");
+    const auto taps = sounds.sound(Chime::needsYou, keymap);
+    const auto low = sounds.sound(Chime::finished, keymap);
+    require(taps.bytes == lapis::desktop::chime_wav(Chime::needsYou) && taps.volume == 1.0F,
+            "a missing file plays the taps");
+    require(low.bytes == "RIFF-low" && low.volume == 1.0F,
+            "a finished turn's own file plays at full volume");
+}
+
 // A new agent's CLI updates itself first, so the agent never opens on an
 // update prompt; another agent within 30 minutes starts without updating.
 void harnessesUpdateBeforeNewAgents() {
@@ -5036,6 +5083,7 @@ int main(int argc, char** argv) {
         unseenAgentsDecodeNothing();
         windowTakesTheWorkspaceFromTheHost();
         alertsChimeWhileAnAgentWaits();
+        chimesPlayChosenFiles();
         phoneSizeYieldsToTheDesktop();
         std::cout << "workspace categories, identity, persistence, status and closing passed\n";
         return 0;

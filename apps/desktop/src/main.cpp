@@ -285,7 +285,10 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
     using lapis::desktop::Chime;
     alerts.emplace(
         workspace, keymap,
-        [](Chime chime) { lapis::desktop::play_sound(lapis::desktop::chime_wav(chime)); },
+        [&keymap, sounds = lapis::desktop::ChimeSounds{}](Chime chime) mutable {
+            const auto sound = sounds.sound(chime, keymap);
+            lapis::desktop::play_sound(sound.bytes, sound.volume);
+        },
         [&workspace, &shown](const lapis::desktop::SessionPreview* item) {
             return shown && shown->isActive() && workspace.focusedSession() == item;
         });

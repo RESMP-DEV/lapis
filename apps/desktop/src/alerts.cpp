@@ -3,6 +3,8 @@
 #include "keymap.hpp"
 #include "workspace.hpp"
 #include <QDataStream>
+#include <QFile>
+#include <QFileInfo>
 #include <QIODevice>
 #include <algorithm>
 #include <array>
@@ -74,6 +76,32 @@ QByteArray chime_wav(Chime chime) {
     if (chime == Chime::needsYou)
         return wav(synthesize({Tap{e6, 0.0, 1.0}, Tap{a6, 0.13, 1.0}}, -12.0));
     return wav(synthesize({Tap{a6, 0.0, 0.9}, Tap{e6, 0.13, 1.0}}, -18.0));
+}
+
+ChimeSound ChimeSounds::sound(Chime chime, const KeyMap& config) {
+    const bool finished = chime == Chime::finished;
+    const QString& own = finished ? config.finishSoundFile() : config.alertSoundFile();
+    const bool borrowed = finished && own.isEmpty();
+    const QString& path = borrowed ? config.alertSoundFile() : own;
+    if (!path.isEmpty())
+        if (auto bytes = read(path); !bytes.isEmpty())
+            return {std::move(bytes), borrowed ? 0.5F : 1.0F};
+    return {chime_wav(chime)};
+}
+
+QByteArray ChimeSounds::read(const QString& path) {
+    const QFileInfo info(path);
+    if (!info.isFile() || info.size() > kMaxFileBytes) {
+        files_.remove(path);
+        return {};
+    }
+    auto& file = files_[path];
+    if (file.size != info.size() || file.modified != info.lastModified()) {
+        QFile source(path);
+        file = {info.lastModified(), info.size(),
+                source.open(QIODevice::ReadOnly) ? source.read(kMaxFileBytes) : QByteArray()};
+    }
+    return file.bytes;
 }
 
 Alerts::Alerts(Workspace& workspace, const KeyMap& config, Player play, Looking looking,

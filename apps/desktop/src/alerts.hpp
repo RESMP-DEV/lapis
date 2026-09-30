@@ -1,7 +1,9 @@
 #ifndef LAPIS_DESKTOP_ALERTS_HPP
 #define LAPIS_DESKTOP_ALERTS_HPP
 #include <QByteArray>
+#include <QDateTime>
 #include <QElapsedTimer>
+#include <QHash>
 #include <QObject>
 #include <QPointer>
 #include <QString>
@@ -21,6 +23,32 @@ enum class Chime : std::uint8_t { needsYou, finished };
 // glassy taps, rising (E6 then A6) when an agent needs you, falling and
 // quieter when a turn has ended.
 [[nodiscard]] QByteArray chime_wav(Chime chime);
+
+// What a chime plays: WAV bytes, or those of any sound file the system reads,
+// at a volume from 0 to 1.
+struct ChimeSound {
+    QByteArray bytes;
+    float volume{1.0F};
+};
+
+// The configured sound files in place of the synthesized chimes: soundFile
+// when an agent needs you, finishedFile when a turn ends, else soundFile at
+// half volume (the taps' -12 and -18 dBFS). A file is read again only when it
+// changes; one that cannot be read, or is over 4 MiB, plays the taps.
+class ChimeSounds {
+  public:
+    static constexpr qint64 kMaxFileBytes = qint64{4} * 1024 * 1024;
+    [[nodiscard]] ChimeSound sound(Chime chime, const KeyMap& config);
+
+  private:
+    struct File {
+        QDateTime modified;
+        qint64 size{-1};
+        QByteArray bytes;
+    };
+    [[nodiscard]] QByteArray read(const QString& path);
+    QHash<QString, File> files_;
+};
 
 // When to chime. An agent that needs you (a new request) chimes at once and
 // again every few seconds while the request still waits and you are not

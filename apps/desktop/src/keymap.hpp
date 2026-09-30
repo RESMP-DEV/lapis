@@ -222,6 +222,10 @@ class KeyMap final : public QObject {
     [[nodiscard]] bool alertSound() const { return alert_sound_; }
     [[nodiscard]] bool finishSound() const { return finish_sound_; }
     [[nodiscard]] int alertRepeat() const { return alert_repeat_; }
+    // Sound files in place of the synthesized chimes (alerts.soundFile and
+    // alerts.finishedFile), as absolute paths; empty plays the taps.
+    [[nodiscard]] const QString& alertSoundFile() const { return alert_sound_file_; }
+    [[nodiscard]] const QString& finishSoundFile() const { return finish_sound_file_; }
     [[nodiscard]] bool notify() const { return notify_; }
     [[nodiscard]] const QString& editor() const { return editor_; }
     [[nodiscard]] bool keepAwake() const { return keep_awake_; }
@@ -277,6 +281,8 @@ class KeyMap final : public QObject {
     bool alert_sound_{true};
     bool finish_sound_{true};
     int alert_repeat_{3};
+    QString alert_sound_file_;
+    QString finish_sound_file_;
     bool keep_awake_{true};
     bool notify_{true};
     QString editor_;

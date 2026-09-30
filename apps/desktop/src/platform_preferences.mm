@@ -62,7 +62,7 @@ void style_window_chrome(QQuickWindow& window) {
     if (@available(macOS 11.0, *))
         native.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
 }
-void play_sound(const QByteArray& wav) {
+void play_sound(const QByteArray& wav, float volume) {
     // One sound per distinct chime, kept for reuse; a chime still playing
     // starts over rather than overlapping itself.
     // This file uses manual reference counting. Retain the cache for the
@@ -78,6 +78,7 @@ void play_sound(const QByteArray& wav) {
         sounds[data] = sound;
     }
     [sound stop];
+    sound.volume = volume;
     [sound play];
 }
 } // namespace lapis::desktop
