@@ -6,8 +6,9 @@ lapis is a Mac app for running many coding agents at once. Each agent (Claude
 Code, Codex, Grok, OpenCode, OMP, Kimi or Antigravity) gets its own live
 terminal. You group agents into categories, watch every agent's latest lines in
 a strip under the one you are working with, and jump straight to whichever needs
-you. Agents keep running when you close or update lapis, and come back after a
-restart.
+you. Each agent runs in its own session service, so closing or updating lapis
+normally leaves it running (macOS 27 adds [conditions](docs/install.md#updates)),
+and after a reboot lapis restarts it where it was.
 
 It is built for speed first: switching agents and typing should feel instant on
 an Apple silicon Mac with a high-refresh display.

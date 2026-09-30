@@ -881,7 +881,7 @@ Preserving the ordinary CLI interface is the product preference. A shared-server
 route is eligible only if live evidence establishes event delivery, response
 ownership and reconciliation for that same TUI session. A method in an exported
 schema or an empty list from another server cannot establish those capabilities.
-The [Codex investigation](../adapters/codex/README.md#next-qualification) owns the
+The [Codex investigation](../adapters/codex/README.md#requalifying-a-codex-binary) owns the
 probe details and capability matrix.
 
 Hooks that only notify are useful partial integration. Keep answers in the
