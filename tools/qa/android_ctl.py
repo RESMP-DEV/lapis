@@ -281,6 +281,29 @@ class Device:
     def key(self, name: str) -> None:
         self.shell(f"input keyevent {keycode(name)}")
 
+    def ime_shown(self) -> bool:
+        """Whether the on-screen keyboard is currently covering the stage."""
+        return "mInputShown=true" in self.shell("dumpsys input_method")
+
+    def dismiss_ime(self) -> None:
+        """Drop the on-screen keyboard a previous composer use left open.
+
+        The stage's imePadding shrinks the terminal to the strip above the
+        keyboard, so scroll gestures aimed at screen center land on the
+        keyboard and never reach the list. BACK dismisses only the keyboard
+        while it is shown; it is sent only under that condition and only
+        after dumpsys confirms, because a BACK with the keyboard already
+        down would navigate out of the stage.
+        """
+        if not self.ime_shown():
+            return
+        self.key("BACK")
+        for _ in range(10):
+            if not self.ime_shown():
+                return
+            time.sleep(0.3)
+        raise DeviceError("the on-screen keyboard did not dismiss")
+
     def swipe(self, x1: int, y1: int, x2: int, y2: int, ms: int = 300) -> None:
         self.shell(f"input swipe {x1} {y1} {x2} {y2} {ms}")
 

@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -66,11 +67,22 @@ fun SettingsScreen(
     var checking by rememberSaveable { mutableStateOf(false) }
     var result by rememberSaveable { mutableStateOf<String?>(null) }
     var commandBar by rememberSaveable { mutableStateOf(true) }
-    var commandBarLoaded by rememberSaveable { mutableStateOf(false) }
+    // Plain remember: a saveable gate is restored to true on recreation, which
+    // would re-enable the Switch before this composition's DataStore read
+    // lands. Matches AgentStage's settingsLoaded gate.
+    var commandBarLoaded by remember { mutableStateOf(false) }
 
     LaunchedEffect(settings) {
-        commandBar = settings.getString(COMMAND_BAR_KEY)?.toBooleanStrictOrNull() ?: true
-        commandBarLoaded = true
+        val loaded = settings.getString(COMMAND_BAR_KEY)?.toBooleanStrictOrNull() ?: true
+        // Skip the overwrite once loaded: a recreation mid-write would
+        // re-run this effect, and an in-flight read could still see the
+        // pre-write value and revert the user's just-made toggle. The
+        // flag is saveable, so the fold/unfold that recreated us does
+        // not retry and re-stomp the choice either.
+        if (!commandBarLoaded) {
+            commandBar = loaded
+            commandBarLoaded = true
+        }
     }
 
     LaunchedEffect(checking) {

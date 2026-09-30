@@ -367,10 +367,19 @@ fun TerminalScreen(
                 // iOS accessibilityValue: TalkBack reads the screen and
                 // uiautomator (text and content-desc only) exposes it to
                 // device automation. A wheel-taking program hides the
-                // archive, so only its screen is read then.
-                contentDescription = (
+                // archive, so only its screen is read then. The
+                // concatenated text is scroll-position-independent, so the
+                // description leads with the follow state — the one
+                // scroll-dependent fact — as a short spoken sentence:
+                // TalkBack announces whether the reader is at the live
+                // bottom, and the device harness gets a real anchor for
+                // "the drag surrendered follow" and "scrolling returned
+                // to the live bottom".
+                val screenText = (
                     if (fullScreen) frame?.text.orEmpty() else cache.accessibleText
-                    ).ifBlank { "Agent screen" }
+                    )
+                val stateLine = if (fullScreen) "" else if (followBottom) "Following live output. " else "Reading earlier output. "
+                contentDescription = stateLine + screenText.ifBlank { "Agent screen" }
             }
             .pointerInput(fullScreen, metrics.cellWidth, metrics.lineHeight, fitColumns, viewportWidth, onWheel) {
                 if (!fullScreen || onWheel == null) return@pointerInput

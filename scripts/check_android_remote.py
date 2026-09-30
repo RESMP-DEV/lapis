@@ -276,6 +276,15 @@ def reveal(device, target_id, max_swipes=8):
             if left >= 0 and right <= bar_right:
                 return True
             row_y = (top + bottom) // 2
+            if left < 0:
+                # The chip was carried past the row's left edge (the swipe
+                # ends with fling momentum), and a further leftward swipe
+                # only pushes it farther out — the containment test then
+                # can never pass again and the loop exhausts. Swipe back
+                # toward the row start instead.
+                device.swipe(80, row_y, bar_right - 80, row_y, 250)
+                time.sleep(0.4)
+                continue
         else:
             _, bar_top, _, bar_bottom = bar["bounds"]
             row_y = bar_top + (bar_bottom - bar_top) // 4
@@ -377,6 +386,20 @@ def fixture(run):
                 for category in listing["categories"]
                 for item in category["agents"]
             ):
+                exit_code = gateway.poll()
+                if exit_code is not None:
+                    # A stale gateway (an earlier --keep run) can still own
+                    # the port: this probe is then answered by that fixture,
+                    # the phone drives its agents while the Mac client
+                    # watches this run's silent ones, and every Mac-side
+                    # check fails against the wrong session. The bind
+                    # failure already killed this run's gateway, so say so
+                    # instead of validating against the wrong fixture.
+                    raise SystemExit(
+                        f"a stale gateway owns 127.0.0.1:{PORT} "
+                        f"(this run's exited {exit_code}); stop it and rerun; "
+                        f"see {run.logs / 'gateway.log'}"
+                    )
                 # The gateway's own normalization of the registry, with the
                 # mode field WireSession needs.
                 return lapis_remote.load_workspace(str(registry))["agents"], gateway
@@ -498,29 +521,36 @@ def checks(device, mac, screens):
         send_line(device, "count")
         if not wait_terminal(device, "count 120", timeout=30):
             return "the count output never finished"
+        # The composer submit leaves the keyboard open, and the stage's
+        # imePadding then shrinks the terminal to the strip above it —
+        # screen-center scroll gestures would land on the keyboard and
+        # never reach the list. A reader drops the keyboard to read.
+        device.dismiss_ime()
+        # The drag that scrolled older must surrender the terminal's
+        # follow-bottom anchor (correct app behavior: output must not yank
+        # the view out from under the reader). The accessibility text is a
+        # scroll-independent concatenation of history plus live frame, so
+        # no text anchor can observe scroll position; the real observable
+        # is the follow state the app speaks at the head of the terminal's
+        # description, which flips to "reading" only when the drag ends
+        # with the live bottom out of view.
         found = False
         for _ in range(16):
             device.scroll("older", 4)
-            if "echo: marker before count" in device.terminal_text():
+            if "Reading earlier output." in device.terminal_text():
                 found = True
                 break
         if not found:
-            return "scrolling never reached the archived marker"
-        # The drag that scrolled older surrendered the terminal's
-        # follow-bottom anchor (correct app behavior: output must not yank
-        # the view out from under the reader). Scroll back down to the live
-        # bottom so later checks see new output — the harness's scroll is a
-        # drag too, so landing on the last row restores following. The
-        # prompt must be visible too: "count 120" also sits one row above
-        # the bottom, which is not yet the row that restores following.
+            return "scrolling older never surrendered the follow-bottom anchor"
+        # Scroll back down so later checks see new output. The same state
+        # line is the anchor in reverse: the app reports following only
+        # when the last visible row is the live bottom — "count 120" one
+        # row above the prompt does not qualify, so the drag must land on
+        # the prompt itself.
         restored = False
         for _ in range(16):
             device.scroll("newer", 4)
-            text = device.terminal_text()
-            # "›" alone is a weak anchor: every archived prompt carries it.
-            # The live bottom is where the prompt is the last visible row.
-            lines = [line.strip() for line in text.splitlines() if line.strip()]
-            if "count 120" in text and lines and lines[-1].startswith("›"):
+            if "Following live output." in device.terminal_text():
                 restored = True
                 break
         if not restored:
@@ -618,12 +648,19 @@ def checks(device, mac, screens):
             if not interrupted:
                 wedged["busy"] = True
                 # Best effort, and never at the cost of the real failure
-                # above: the chip is only tappable when it is on screen.
+                # above. find() returns the chip even when its bounds are
+                # off-screen (uiautomator dumps every composed chip), and
+                # tapping off-screen coordinates is silently dropped — so
+                # re-reveal first; that is the branch that actually runs
+                # when the failure was the reveal itself.
                 try:
-                    if device.find(id="key-ctrl-c") is not None:
+                    if reveal(device, "key-ctrl-c"):
                         device.tap_node(id="key-ctrl-c")
                         time.sleep(1.5)
-                except android_ctl.DeviceError:
+                except Exception:
+                    # Best effort: any failure here (adb hung, device
+                    # pulled, subprocess timeout) must not replace the
+                    # real failure already recorded above.
                     pass
         send_line(device, "after interrupt")
         if not wait_terminal(device, "echo: after interrupt"):

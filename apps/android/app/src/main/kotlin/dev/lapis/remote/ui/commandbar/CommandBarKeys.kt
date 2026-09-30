@@ -46,9 +46,14 @@ object CommandBarKeys {
     /** Ctrl+letter is the bare control byte: the letter's code minus 0x40
      * (C=ETX 0x03, D=EOT 0x04, U=NAK 0x15, L=FF 0x0C, R=DC2 0x12,
      * Z=SUB 0x1A, W=ETB 0x17). Built arithmetically so the mapping rule
-     * itself lives in the source rather than seven opaque literals. */
-    private fun chord(letter: Char): Input =
-        Input(text = (letter.code - 0x40).toChar().toString())
+     * itself lives in the source rather than seven opaque literals.
+     * Guarded at the boundary: the arithmetic is only a C0 byte for
+     * 'A'..'Z', and any other letter would silently send the wrong
+     * character through to the gateway. */
+    private fun chord(letter: Char): Input {
+        require(letter in 'A'..'Z') { "Ctrl-chord letter must be A..Z, got '$letter'" }
+        return Input(text = (letter.code - 0x40).toChar().toString())
+    }
 
     /** A snippet runs as paste plus Enter in one POST, the same shape the
      * composer's submit uses; only `paste` is re-encoded (bracketed-paste

@@ -85,18 +85,24 @@ fun SnippetEditorDialog(
                         OutlinedTextField(
                             value = text,
                             onValueChange = { value ->
-                                // Reject rather than truncate: typing simply
-                                // stops at the store's per-snippet bound.
-                                if (value.length <= SnippetStore.MAX_LENGTH) {
+                                // Reject rather than truncate, counting the
+                                // trimmed form: normalize() persists the
+                                // trimmed text, so a snippet at the bound
+                                // must not visibly shrink on Done, and a
+                                // 512-char one with a leading space must
+                                // still be typeable.
+                                if (value.trim().length <= SnippetStore.MAX_LENGTH) {
                                     rows = rows.toMutableList().also { it[index] = value }
                                 }
                             },
                             // The bound is observable, so a rejected over-length
                             // paste reads as "the counter is stuck at the cap"
-                            // instead of as a dead field.
+                            // instead of as a dead field. The counter shows the
+                            // trimmed length — the count of characters Done
+                            // will actually persist.
                             supportingText = {
                                 Text(
-                                    "${text.length} / ${SnippetStore.MAX_LENGTH}",
+                                    "${text.trim().length} / ${SnippetStore.MAX_LENGTH}",
                                     color = LapisColors.quiet,
                                     style = TextStyle(fontSize = 11.sp, fontFamily = FontFamily.Monospace),
                                 )
@@ -141,13 +147,14 @@ fun SnippetEditorDialog(
                     OutlinedTextField(
                         value = draft,
                         onValueChange = { value ->
-                            if (value.length <= SnippetStore.MAX_LENGTH) {
+                            // Same trimmed-count rule as the row fields above.
+                            if (value.trim().length <= SnippetStore.MAX_LENGTH) {
                                 draft = value
                             }
                         },
                         supportingText = {
                             Text(
-                                "${draft.length} / ${SnippetStore.MAX_LENGTH}",
+                                "${draft.trim().length} / ${SnippetStore.MAX_LENGTH}",
                                 color = LapisColors.quiet,
                                 style = TextStyle(fontSize = 11.sp, fontFamily = FontFamily.Monospace),
                             )

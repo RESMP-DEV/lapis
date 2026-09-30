@@ -1,7 +1,6 @@
 package dev.lapis.remote.platform
 
 import android.content.Context
-import androidx.datastore.core.CorruptionException
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
@@ -33,8 +32,8 @@ class DataStoreSettings(context: Context) : KeyValueStore {
     override suspend fun getString(key: String): String? = try {
         store.data.first()[stringPreferencesKey(key)]
     } catch (_: IOException) {
-        null
-    } catch (_: CorruptionException) {
+        // CorruptionException is an IOException subclass, so this one catch
+        // covers both DataStore corruption and file read failures.
         null
     }
 
@@ -42,7 +41,6 @@ class DataStoreSettings(context: Context) : KeyValueStore {
         try {
             store.edit { preferences -> preferences[stringPreferencesKey(key)] = value }
         } catch (_: IOException) {
-        } catch (_: CorruptionException) {
         }
     }
 
