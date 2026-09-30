@@ -38,7 +38,11 @@ enum class Kind : quint8 {
     // notches (positive scrolls back), BE u16 column, BE u16 row. Services
     // before it reject the frame, so clients send it only when a snapshot
     // says the service accepts it (TerminalSnapshot::accepts_wheel).
-    wheel
+    wheel,
+    // Negotiated through AttachRequest::paste_transactions and Hello. One
+    // complete bounded paste is admitted to the service PTY queue as a unit.
+    paste_request,
+    paste_result
 };
 // A wheel payload's fields; encode_wheel/decode_wheel.
 struct Wheel {
@@ -67,13 +71,31 @@ struct AttachRequest {
     AttachMode mode{AttachMode::discover};
     QByteArray fingerprint;
     SessionIdentity expected;
-    bool hyperlinks{};      // Optional mode bit 0x80; legacy requests leave it clear.
-    bool attention_phase{}; // Optional capability bit 0x40; legacy requests leave it clear.
+    bool hyperlinks{};         // Optional mode bit 0x80; legacy requests leave it clear.
+    bool attention_phase{};    // Optional capability bit 0x40; legacy requests leave it clear.
+    bool paste_transactions{}; // Optional bit 0x20; old services reject it for fallback.
 };
 struct Hello {
     Attachment attachment;
     quint64 pid{};
+    bool paste_transactions{};
 };
+struct PasteRequest {
+    Attachment attachment;
+    quint64 request_id{};
+    bool submit{};
+    QByteArray text;
+};
+struct PasteResult {
+    Attachment attachment;
+    quint64 request_id{};
+    bool queued{}; // PTY queue admission, not application-level acknowledgement.
+    QString message;
+};
+[[nodiscard]] QByteArray encode_paste_request(const PasteRequest& request);
+[[nodiscard]] PasteRequest decode_paste_request(const QByteArray& payload);
+[[nodiscard]] QByteArray encode_paste_result(const PasteResult& result);
+[[nodiscard]] PasteResult decode_paste_result(const QByteArray& payload);
 struct SnapshotTiming {
     quint64 pty_read_ns{};
     quint64 parse_end_ns{};

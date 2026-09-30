@@ -179,6 +179,8 @@ class SessionPreview final : public QObject {
     // False when nothing was sent: no live connection, history showing, or
     // the input queue full.
     bool sendText(const QByteArray& bytes, bool paste = false);
+    // Requires service admission; pasteResult reports the eventual outcome.
+    quint64 sendPasteAndSubmit(const QByteArray& bytes);
     void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
     // A turn of the wheel for the program on the alternate screen, over a
     // viewport cell; only when its snapshot says the service accepts wheels.
@@ -235,6 +237,7 @@ class SessionPreview final : public QObject {
     void attentionChanged();
     void attentionArrived();
     void unseenChanged();
+    void pasteResult(quint64 requestId, bool queued, bool submit, const QString& message);
 
   private:
     std::unique_ptr<LiveConnection> live_;

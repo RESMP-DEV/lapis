@@ -609,9 +609,9 @@ class TerminalNode final : public QSGTransformNode {
 QString data_size(qsizetype bytes) {
     constexpr qsizetype kilobyte = 1024;
     if (bytes < kilobyte * kilobyte)
-        return QStringLiteral("%1 KB").arg((bytes + kilobyte - 1) / kilobyte);
+        return QStringLiteral("%1 KiB").arg((bytes + kilobyte - 1) / kilobyte);
     const auto tenths = (bytes * 10 + kilobyte * kilobyte - 1) / (kilobyte * kilobyte);
-    return QStringLiteral("%1 MB").arg(
+    return QStringLiteral("%1 MiB").arg(
         QLocale().toString(static_cast<double>(tenths) / 10, 'f', 1));
 }
 } // namespace
@@ -776,6 +776,11 @@ void TerminalSurface::setDocument(SessionPreview* document) {
     clearLink();
     if (document_) {
         connect(document_, &SessionPreview::snapshotChanged, this, &TerminalSurface::screenChanged);
+        connect(document_, &SessionPreview::pasteResult, this,
+                [this](quint64, bool queued, bool, const QString& message) {
+                    if (!queued)
+                        emit pasteRefused(message);
+                });
         connect(document_, &SessionPreview::connectionChanged, this, [this] {
             if (!document_ || !document_->inputReady()) {
                 ++ime_epoch_;
@@ -1449,7 +1454,7 @@ bool TerminalSurface::pasteText(const QString& text) {
         return false;
     clearSelection();
     if (!document_->sendText(bytes, true)) {
-        emit pasteRefused(tr("The paste did not reach the agent; try again in a moment."));
+        emit pasteRefused(document_->activity());
         return false;
     }
     return true;

@@ -120,9 +120,10 @@ struct Fixture {
                 "Wrong launch fingerprint");
         return request;
     }
-    void hello(Peer& peer, quint64 generation = 1) {
+    void hello(Peer& peer, quint64 generation = 1, bool paste_transactions = false) {
         generation_ = generation;
-        peer.send(wire::Kind::hello, wire::encode_hello({{identity, generation}, 123}));
+        peer.send(wire::Kind::hello,
+                  wire::encode_hello({{identity, generation}, 123, paste_transactions}));
         until([&] { return document.connectionState() == QStringLiteral("synchronizing"); });
         require(!document.inputReady(), "Hello enabled input before the screen");
     }
@@ -740,7 +741,7 @@ void long_pastes() {
     f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
     auto peer = f.accept();
     static_cast<void>(f.request(peer));
-    f.hello(peer);
+    f.hello(peer, 1, true);
     f.screen(peer);
     window.show();
     until([&] { return window.isExposed(); });
@@ -755,57 +756,59 @@ void long_pastes() {
     QStringList refusals;
     QObject::connect(&surface, &lapis::desktop::TerminalSurface::pasteRefused,
                      [&refusals](const QString& reason) { refusals << reason; });
-    const auto message_kinds = [&peer](qsizetype bytes) {
-        QByteArray text;
-        std::vector<wire::Kind> kinds;
-        until([&] {
-            peer.bytes += peer.socket->readAll();
-            wire::Frame frame;
-            while (wire::take_frame(peer.bytes, frame)) {
-                kinds.push_back(frame.kind);
-                text += wire::decode_control(frame.payload).payload;
-            }
-            return text.size() >= bytes;
-        });
-        return std::pair{text, kinds};
-    };
-
     QString transcript;
     while (transcript.toUtf8().size() <= 3 * wire::max_input_bytes)
         transcript += QStringLiteral("speaker 界: a line with an escape \x1b[31m in it\n");
     const auto utf8 = transcript.toUtf8();
-    const auto plain = lapis::session::encode_paste(
-        std::string_view(utf8.constData(), static_cast<std::size_t>(utf8.size())), false);
-    require(surface.pasteText(transcript), "A long paste was refused");
-    const auto [sent, kinds] = message_kinds(static_cast<qsizetype>(plain.size()));
-    require(sent == QByteArray(plain.data(), static_cast<qsizetype>(plain.size())),
-            "A long paste was not sent whole with returns for newlines");
-    require(
-        kinds.size() == 4 &&
-            std::ranges::all_of(kinds, [](wire::Kind kind) { return kind == wire::Kind::text; }),
-        "A long paste was not sent as text in pieces");
-
+    require(surface.pasteText(transcript), "Expected a supported long paste to be submitted");
+    auto packet = peer.read();
+    require(packet.kind == wire::Kind::paste_request, "A paste must be one complete request");
+    auto request = wire::decode_paste_request(packet.payload);
+    require(request.text == utf8 && !request.submit, "The desktop must retain raw paste bytes");
+    peer.send(wire::Kind::paste_result,
+              wire::encode_paste_result({request.attachment, request.request_id, true, {}}));
+    settle();
     f.terminal.feed("\x1b[?2004h");
     peer.send(wire::Kind::snapshot,
               wire::encode_snapshot_message({{f.identity, 1}, 2, f.terminal.snapshot()}));
     until([&] { return f.document.snapshot().bracketed_paste; });
-    const auto bracketed = lapis::session::encode_paste(
-        std::string_view(utf8.constData(), static_cast<std::size_t>(utf8.size())), true);
-    require(bracketed.starts_with("\x1b[200~") && bracketed.ends_with("\x1b[201~"),
-            "The fixture paste was not bracketed");
-    require(surface.pasteText(transcript), "A long bracketed paste was refused");
-    require(message_kinds(static_cast<qsizetype>(bracketed.size())).first ==
-                QByteArray(bracketed.data(), static_cast<qsizetype>(bracketed.size())),
-            "A long paste was not bracketed once around the whole text");
-
+    require(surface.pasteText(transcript),
+            "Expected raw long paste even with bracketed mode advertised");
+    packet = peer.read();
+    auto later = wire::decode_paste_request(packet.payload);
+    require(later.request_id > request.request_id && later.text == utf8,
+            "Each paste has a new ID and service-owned encoding");
+    peer.send(wire::Kind::paste_result,
+              wire::encode_paste_result({later.attachment, later.request_id, false,
+                                         QStringLiteral("fixture queue full")}));
+    until([&] { return !refusals.isEmpty(); });
+    require(refusals.back() == QStringLiteral("fixture queue full") && f.document.inputReady(),
+            "Service refusal must be visible without losing the connection");
+    const auto submit = f.document.sendPasteAndSubmit("go");
+    require(submit != 0, "Combined paste and submit needs an admitted request ID");
+    const auto combined = wire::decode_paste_request(peer.read().payload);
+    require(combined.submit && combined.request_id == submit && combined.text == "go",
+            "Submit belongs to the same paste request");
+    peer.send(wire::Kind::paste_result,
+              wire::encode_paste_result({combined.attachment, submit, true, {}}));
+    settle();
+    refusals.clear();
     const QString tooLong(static_cast<qsizetype>(wire::max_paste_bytes) + 1, QLatin1Char('x'));
-    require(!surface.pasteText(tooLong), "A paste longer than the service queues was accepted");
+    require(!surface.pasteText(tooLong), "An oversized paste was accepted");
     require(refusals.size() == 1 &&
-                refusals.front().startsWith(QStringLiteral("This paste is 961 KB; lapis pastes "
-                                                           "up to 960 KB at a time.")),
-            "A refused paste gave no reason");
+                refusals.front().startsWith(
+                    QStringLiteral("This paste is 961 KiB; lapis pastes up to 960 KiB at a time.")),
+            "Size refusal must state its real binary-byte limit");
     require(text_frames(peer).isEmpty(), "A refused paste sent part of itself");
     require(!surface.pasting(), "A refused paste kept input ownership");
+    refusals.clear();
+    require(surface.pasteText(QStringLiteral("pending")),
+            "Expected a pending paste before disconnect");
+    require(peer.read().kind == wire::Kind::paste_request, "Pending paste request missing");
+    peer.socket->abort();
+    until([&] { return !refusals.isEmpty(); });
+    require(refusals.back().contains(QStringLiteral("unknown")) && !f.document.inputReady(),
+            "Lost paste receipt must report uncertainty without replay");
 }
 
 // Dragging selects screen text and double-clicking selects a word. The copy

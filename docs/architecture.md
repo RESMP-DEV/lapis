@@ -418,10 +418,24 @@ qualification. A final output tail is bounded to 16 MiB after child exit.
 Snapshot-size limits detach the display with an explicit status while keeping the
 child alive; reattachment succeeds once its screen fits again. Socket ancestors
 must be trusted and not shared writable unless sticky, with an owner-only 0700
-immediate parent. A paste message stays bounded at 64 KiB. A longer paste, up to
-960 KiB, is encoded by the desktop with the same Ghostty paste encoder, in the
-bracketed-paste mode of the newest screen, and sent as consecutive text messages,
-all queued or none; services already running need no change (September 29).
+immediate parent. Legacy paste/control messages remain bounded at 64 KiB.
+The negotiated paste-transaction capability (attach bit 0x20, optional Hello
+capability word) enables one complete raw paste request up to 960 KiB. The service
+encodes it in its current terminal mode and admits the entire byte array to its
+PTY queue at once, including an optional trailing Enter. A correlated receipt
+confirms queue admission or rejection; it does not prove that the application
+processed the input. Partial frames never reach the PTY. A lost receipt or a
+child failure is reported as uncertain and never causes automatic replay.
+
+Request IDs increase within an attachment; stale identities and repeated IDs are
+rejected. The desktop bounds outstanding requests and reports timeout/disconnect
+without transferring the input to another session. Primary and joined views use
+the same admission path. Old v6 services reject the new attach bit; the desktop
+retries capability negotiation without starting a replacement service. It retains
+legacy small pastes and visibly refuses larger ones until that service is upgraded.
+The main terminal and side shell both show refusal/uncertainty notices. This
+replaces the earlier client-side chunking proposal, whose socket budget could not
+reserve capacity in the service's separate PTY queue.
 The service queues at most 1 MiB of PTY input for a slow reader, which bounds the
 total. A longer paste is still an atomic rejection, now stated over the terminal
 instead of only in the agent menu.

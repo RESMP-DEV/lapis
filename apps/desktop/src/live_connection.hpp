@@ -40,9 +40,10 @@ class LiveConnection final : public QObject {
     ~LiveConnection() override;
     void begin(session::wire::AttachMode mode);
     bool send(session::wire::Kind kind, const QByteArray& payload);
-    // Text longer than one message, in as many as it needs; all are queued or
-    // none is.
-    bool sendText(const QByteArray& text);
+    [[nodiscard]] bool supportsPasteTransactions() const { return paste_transactions_; }
+    // Nonzero is transport submission; pasteResult confirms PTY admission or
+    // reports rejection/uncertainty. Input is never replayed automatically.
+    quint64 sendPaste(const QByteArray& text, bool submit = false);
     void resize(session::TerminalSize size);
     // Takes the size back after another device (a joined phone) resized the
     // agent: sends this view's size again, once per size shown.
@@ -68,6 +69,7 @@ class LiveConnection final : public QObject {
     void acceptHistoryReply(session::wire::HistoryReply reply);
     void rememberCanceledHistoryRequest(quint64 request_id);
     void invalidateHistory();
+    void abandonPastes(const QString& reason);
     void persistIdentity();
     void clearDescriptorWrite();
     void finishSynchronization();
@@ -102,6 +104,9 @@ class LiveConnection final : public QObject {
     bool ready_{};
     bool failed_{true};
     bool capability_retry_{};
+    bool paste_transactions_{};
+    quint64 next_paste_id_{1};
+    QHash<quint64, bool> pending_pastes_;
     session::TerminalSize wanted_size_{100, 30};
     bool wanted_size_requested_{};
     session::TerminalSize shown_size_{};

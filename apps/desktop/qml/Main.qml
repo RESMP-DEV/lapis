@@ -4179,6 +4179,8 @@ ApplicationWindow {
     // The side terminal: over the stage's right half, above the agents.
     Rectangle {
         id: sidePanel
+        property string pasteReason: ""
+        Timer { id: sidePasteTimer; interval: 8000; onTriggered: sidePanel.pasteReason = "" }
         objectName: "sideTerminal"
         parent: stage
         z: 60
@@ -4203,6 +4205,11 @@ ApplicationWindow {
                 ToolTip.text: hoveredLink
                 ToolTip.delay: 250
                 objectName: "sideTerminalSurface"
+                onPasteRefused: (reason) => {
+                    sidePanel.pasteReason = reason
+                    sidePasteTimer.restart()
+                }
+                onDocumentChanged: sidePanel.pasteReason = ""
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 document: window.terminalsAvailable ? terminals.current : null
@@ -4222,6 +4229,14 @@ ApplicationWindow {
                 wrapMode: Text.WordWrap
                 color: window.mutedTextColor
                 text: window.terminalsAvailable && terminals.error.length > 0 ? terminals.error : qsTr("Starting a shell…")
+            }
+            PlainLabel {
+                objectName: "sidePasteRefusal"
+                visible: sidePanel.pasteReason.length > 0
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: window.faultColor
+                text: sidePanel.pasteReason
             }
         }
     }
