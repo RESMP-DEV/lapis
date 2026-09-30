@@ -1,0 +1,99 @@
+{
+  "source_revision": "6d6ed155bb7b36246ea35f7c1fb5f21257ace08d",
+  "integrated_contributor_head": "1a770d307769cb71654514f5c1807939c59c4c1a",
+  "platform": {
+    "os": "macOS",
+    "version": "26.7.1",
+    "architecture": "arm64"
+  },
+  "source_sha256": {
+    "apps/desktop/src/limit_resets.cpp": "37d70527c73d0d7bd42519c7b268dab28085564a25213ef73bbec118a2a9006b",
+    "apps/desktop/src/limit_resets.hpp": "64edcfcf53ba90c4c4ff2befbaf034834bac65bfda24d57f15965f037635f63d",
+    "apps/desktop/src/limit_resets.py": "162d64b895bf1dd9cacb61ca7cc13cbba43984e549e307671d3b8f74c22462fb",
+    "apps/desktop/src/platform/reset_journal.cpp": "3c1f4a74a62e0aef623dedcfa7fcb671bc10b8c879e495c9fcd9cc3bb480025e",
+    "apps/desktop/src/platform/reset_journal.hpp": "6a5ec6a86bdb7d06b2fae284f1ea6c5b0e9444976e2d95d5b6be087e9cd730d5",
+    "apps/desktop/src/platform/published_task.hpp": "ba1130df9b63dcb970b0670318afe9fe4a49af3a8bf42b10dc3436776cb8367a",
+    "apps/desktop/src/main.cpp": "dd17392cbacfdc95803008ffe940f9aeb53f0aff38717365432ea3749b1f4b57",
+    "apps/desktop/src/workspace.cpp": "07dc22ce752b03f089678be3ffae1cee014039a73a0f72f135cc62b0b9e00244",
+    "apps/desktop/src/accounts.cpp": "23059e9081da41130a1dbfe10d90712053b9e8343ccaed20fd4efe7afff7a892",
+    "apps/desktop/tests/limit_resets_test.cpp": "63093f18b2ee7f216aaa2b7cce1f47055b530a12f15d7afbe3788464a2200719",
+    "apps/desktop/tests/accounts_test.cpp": "9d716144a8751ccfd4c8dd454fde65a7bab72f3dabb5663005b8bd34dff431d2",
+    "scripts/lapis_accounts.py": "aa4d894c602d27a57b0739a42f3eb8b82356f38d4a05fdd8d36d282bf74dae59",
+    "scripts/tests/test_lapis_accounts.py": "7d2531529a111bdd95b1c0d75e5c75e8aa81c8b8b9e16bfbadcfbb9057fddf0c",
+    "scripts/tests/test_limit_resets.py": "67f922e90afb3d441494f9510ef0abe18291d3e6958afa73067c451e489d13ad"
+  },
+  "contracts": [
+    "Read-only preparation identifies the exact provider account and credit before private journal synchronization can authorize consume.",
+    "Canonical provider-account journals and locks are shared across transport hosts and plan aliases; unknown outcomes only reconcile and never replay.",
+    "Email and provider account/organization ID remain bound through consume/reconcile. Workspace-owned credential locations are authoritative; missing/invalid credentials never fall back.",
+    "New journal creation is serialized; expired settled journals can be reclaimed, while pending, corrupt and unsupported state remains preserved.",
+    "One-shot Qt queue captures use explicit release/acquire publication; filesystem synchronization and credential reads stay off the GUI thread.",
+    "Manual and automatic selections share per-account exclusion. Automatic submissions share a five-minute admission interval."
+  ],
+  "checks": [
+    {
+      "command": "cmake --build build/desktop --target lapis_desktop lapis_limit_resets_tests lapis_accounts_tests",
+      "result": "passed"
+    },
+    {
+      "command": "ctest --test-dir build/desktop -R \"^(limit-resets|accounts)$\" --no-tests=error --output-on-failure",
+      "result": "2/2 passed",
+      "seconds": 2.23
+    },
+    {
+      "command": "ctest --test-dir build/desktop-asan -R \"^limit-resets$\" --no-tests=error --output-on-failure",
+      "result": "passed; ASAN_OPTIONS=detect_leaks=0",
+      "seconds": 5.32
+    },
+    {
+      "command": "build/desktop-tsan/apps/desktop/lapis_limit_resets_tests",
+      "result": "passed with no TSan warnings and no added suppressions",
+      "seconds": 23.11
+    },
+    {
+      "command": "ctest --test-dir build/desktop-tsan --show-only=json-v1",
+      "result": "verified a 60-second fixture timeout, leaving overhead headroom; application deadlines are unchanged"
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "result": "passed, 323 Python tests"
+    },
+    {
+      "command": "clang-tidy -p build/desktop <eight affected translation units>",
+      "result": "passed"
+    },
+    {
+      "command": "cppcheck --project=<scoped compilation database> --library=qt --enable=warning,performance,portability --error-exitcode=1 --inline-suppr",
+      "result": "10 affected C++ translation units passed"
+    }
+  ],
+  "reuse": [
+    {
+      "source_revision": "cca36f2eb09b63171e02d76bc703a3fbc5012440",
+      "scope": "workspace and next-prompt integration, including the incoming workspace credential accessor",
+      "result": "assembled 3/3 CTest cases passed in45.69s; later reset-only repairs use focused checks, and dot-name validation has its accounts case"
+    },
+    {
+      "source_revision": "7ce8812",
+      "scope": "unchanged UI/QML integration",
+      "result": "all12 background capture/rejection scenarios passed; no subsequent visual behavior change in this PR"
+    }
+  ],
+  "review": {
+    "independent_review_revision": "6d63f9a0b6ac7ad9bed54487ac700a8a68e4dbf8",
+    "findings": [
+      "Provider IDs and journal reclamation repaired.",
+      "Reconciliation-refusal-retirement finding refuted by the consume-only guard and an exact identity-swap recovery regression."
+    ],
+    "subsequent_findings": [
+      "Concurrent contributor repairs were reconciled, retaining authoritative credential paths and useful tests.",
+      "The CodeRabbit out-of-diff malformed-sibling merge failure is fixed and tested through actual temporary token/config writes."
+    ]
+  },
+  "limitations": [
+    "No real credit was consumed and no real provider/keychain/SSH interaction was used by the fixtures.",
+    "The integration runs the actual embedded Python helper with provider stand-ins; it does not establish live provider idempotency.",
+    "No native GPU, foreground input or packaged application qualification is claimed.",
+    "The persistent supervisor remains an architecture plan; this PR does not install a daemon."
+  ]
+}
