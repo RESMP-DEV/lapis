@@ -1,0 +1,178 @@
+{
+  "receipt": "web-surface-research",
+  "date": "2026-09-29",
+  "scope": "Design-phase research and review for the proposed web-surface architecture. No web-engine runtime, credential transfer or application implementation was exercised. Earlier source-browser path/attribute observations are dated and do not qualify engine/import behavior; September 30 public metadata/header checks are recorded separately.",
+  "sanitization": "Generic filesystem templates and public source references only; no per-machine names, account IDs, credential values, private transcripts or user-specific absolute paths.",
+  "repository_baseline": {
+    "method": "Read-only exploration of a working tree on branch fix/quality-correctness on 2026-09-29; load-bearing claims re-verified against origin/main at f9ab786 before the docs/web-surface-architecture branch (attention State constructor, transport version 6, AttachMode::join, process-group guard note, check scripts).",
+    "no_existing_web_engine": "Zero occurrences of QWebEngine/WKWebView/CEF/WebKit in apps/, services/, adapters/, tools/ source and build files.",
+    "adapter_extension_point": "attention::State is constructed with (session_id, adapter_id); a web surface can register as a new adapter source without contract changes. attention.hpp:63 on main f9ab786 (:61 on the surveyed branch tree).",
+    "terminal_wire_protocol": "Version 6, cell-typed end to end (TerminalSnapshot over local socket; GUI rasterizes via QSGTextNode; no texture or image channel exists). services/session/src/transport/local_protocol.hpp:9.",
+    "process_model": "Existing session services are detached per agent, but the macOS 27 investigation invalidates GUI-detached spawning as a durability guarantee. Web-service birth and registry ownership depend on the R1/R4 persistent launchd supervisor.",
+    "join_precedent": "AttachMode::join with bounded views (phone gateway) is the structural precedent for additional attachment kinds."
+  },
+  "engine_landscape": {
+    "verified_from": "Surveyed documentation plus distribution metadata; no engine runtime was exercised. September 30 review also fetched the candidate branch cef_browser.h for in-process DevTools API declarations.",
+    "cef": {
+      "verdict": "Selected candidate from the survey. Its paint/input and in-process DevTools APIs fit the proposal; W0 must prove the required behavior, including macOS offscreen delivery.",
+      "injection": "No native userscript API; deterministic injection via CDP Page.addScriptToEvaluateOnNewDocument ('in every frame upon creation, before any frame script executes'), optionally in a named isolated world.",
+      "license": "CEF BSD terms plus independent Chromium third-party obligations; no blanket copyleft clearance. Inventory/SBOM and notices are release gates.",
+      "watch": "Verify maintenance/security-update support against primary release evidence at each pin decision; unsupported governance rumors are not gates."
+    },
+    "wkwebview": {
+      "verdict": "Display candidate; public user scripts and snapshots exist, but continuous frame delivery and headless input for this design were not qualified. Missing evidence does not prove those integrations impossible.",
+      "watch": "WKProcessPool deprecated in Safari 26.0 (September 2025); replacement process-sharing model undocumented."
+    },
+    "qt_webengine": {
+      "verdict": "Direct QML embedding couples lifetime to the desktop. A separate supervised Qt host is a possible alternative whose headless/frame/input contracts need a probe.",
+      "license": "Qt parts LGPLv3/GPL/commercial; bundled Chromium third-party includes LGPL 2.1 components."
+    },
+    "rejected": {
+      "playwright_webkit": "Not selected as an embedding API for an existing WKWebView. Playwright Chromium CDP attach support is a separate capability and is not excluded by this claim.",
+      "servo": "Not selected; site-compatibility and embedding claims require qualification rather than a survey-wide readiness verdict."
+    }
+  },
+  "cef_distribution_verification": {
+    "index_url": "https://cef-builds.spotifycdn.com/index.json",
+    "method": "Fetched the distribution index directly and enumerated macosarm64 entries (9.9 MB JSON, parsed locally).",
+    "result": "Candidate macosarm64 stable Chromium 154.0.8037.58 is present in the current index; minimal archive is 132224904 bytes (about 126.1 MiB).",
+    "significance": "Distribution metadata establishes an available candidate, not a runtime pin. W0 still needs archive fetch, independent digest, SDK/deployment inspection and runtime qualification.",
+    "checked_again": "2026-09-30",
+    "published_sha1": "2e9df1077c097e450d30f26804b7c4b1820da4e3"
+  },
+  "injection_determinism": {
+    "model": "Declarative service-owned bootstrap registration is the reliability precedent. JavaScript world isolation does not isolate the DOM, establish health or intercept main-world history APIs.",
+    "modern_equivalents": [
+      "CDP Page.addScriptToEvaluateOnNewDocument is a candidate target/frame registration mechanism. Renderer replacement, OOPIF attachment and reconnect require acknowledgement/reconciliation; persistence across those boundaries is a W1 test, not a survey guarantee.",
+      "WKUserScript atDocumentStart in a WKContentWorld: persists in the WKUserContentController and re-injects on every load.",
+      "QWebEngineScript DocumentCreation on a profile: applies to every page load in the profile.",
+      "Electron preload with contextIsolation: same per-new-document contract."
+    ],
+    "edge_cases": [
+      "Soft SPA routes do not create a new document. Use host navigation events and snapshot diffs; any required main-world history hook is page-visible, tamperable and advisory.",
+      "bfcache restores resume the same document; detect via pageshow persisted.",
+      "about:blank/srcdoc are new documents and can double-inject; scripts must be idempotent.",
+      "Service workers are never injected by these mechanisms; out of scope for v1.",
+      "lapis owns matching rules for its proposed bootstrap; native extension/userscript matching mechanisms are not ruled out across every engine."
+    ],
+    "citations": [
+      "https://chromedevtools.github.io/devtools-protocol/ (Page domain)",
+      "https://developer.apple.com/documentation/webkit/wkuserscriptinjectiontime",
+      "https://doc.qt.io/qt-6/qwebenginescript.html",
+      "https://www.electronjs.org/docs/latest/tutorial/context-isolation",
+      "https://wiki.greasespot.net/Metadata_Block",
+      "https://web.dev/articles/bfcache"
+    ]
+  },
+  "control_contract_basis": {
+    "pain_inventory_highlights": [
+      "Profile locks: 'A persistent profile can only be used by one browser instance at a time' (playwright-mcp README).",
+      "State leaks: orphaned Chrome at ppid=1 (chrome-devtools-mcp #2621); browser-use leaked 7741 temp dirs / 14 GB (#5422).",
+      "Launch flakiness under tool-call timeouts: chrome-devtools-mcp #1914, #2778, #2675; browser-use macOS keychain hang #5415.",
+      "Ref invalidation: refs valid only until the next page change (playwright.dev/mcp/snapshots).",
+      "No cleanup hook: agents cannot close the launched browser (chrome-devtools-mcp #484)."
+    ],
+    "capability_ranking": "Snapshot read, navigate, click, type/fill, wait, screenshot are the core loop; network interception and downloads are rare but exactly the risky classes needing approval gating.",
+    "snapshot_representation": "Refs carry a provenance snapshot hash, a semantic target fingerprint and view/epoch/navigation scope. Only unambiguous unchanged targets within the same navigation generation can move; approvals bind current target and arguments. Raw eval/CDP remain unavailable in v1."
+  },
+  "prior_art_verdicts": {
+    "embedded_vs_external": "Trust-driven split: real-login agents attach to external browsers (Claude in Chrome extension, Cline CDP attach); dev-state agents embed views (Cursor 2.0 in-editor browser, Windsurf Wave 10). lapis targets the embedded quadrant with a service-owned lifetime neither product has.",
+    "dead_ends": [
+      "Several surveyed tools prefer refs/index actions; this does not establish that all coordinate/vision approaches have been replaced.",
+      "VS Code Simple Browser as a platform: five years of unfixable gaps (no copy/paste #182011, no modals #185204, no video #289795) because it never got engine-level integration.",
+      "Zed embedded webview: wry-backed PR closed unmerged (zed-industries/zed#54433).",
+      "Electron <webview> preload injection as a determinism core: documented stability and security gaps."
+    ],
+    "multi_instance": "One engine tree with many contexts is the proposed measured baseline; profile locks require explicit sharing/isolation policy but do not by themselves prove that all alternatives are impossible.",
+    "macos_volatility": "wry #1778: macOS 26 blocked cross-scheme subresource loads overnight; custom-scheme designs need per-release probes."
+  },
+  "session_import": {
+    "status": "Design-phase source survey, not a fresh credential-read or transfer experiment. W4 must pin source schemas, context mapping, retention and platform authorization behavior.",
+    "architecture": "Explicit user consent for the source profile, selected origins and destination precedes protected-store access/decryption. Read a consistent source snapshot, validate, then inject through host-owned engine APIs into the destination in-memory context. Reimport is never scheduled silently.",
+    "chromium_family": {
+      "store": "~/Library/Application Support/<Vendor>/<App>/<Profile>/Cookies; SQLite schema v24 (kCurrentVersionNumber=24, sqlite_persistent_cookie_store.cc); rollback-journal (no WAL); copy Cookies plus Cookies-journal, or sqlite3_backup from a read-only connection.",
+      "encryption": "v10 || AES-128-CBC; key = PBKDF2-HMAC-SHA1(1003 iterations, password=<Brand> Safe Storage keychain item, salt 'saltysalt'); fixed IV of 16 space bytes. App-bound encryption (v20) is Windows-only; macOS unchanged in current main through Chromium 154-era code.",
+      "v24_trap": "The surveyed v24 source adds a host-key digest prefix that must be verified before accepting plaintext. Recheck the pinned source version and any importer version; do not infer current third-party library behavior from an old release date.",
+      "keychain_ux": "The prior survey reported an attributes-only Safe Storage lookup. That does not qualify secret access, ACL prompts, unlock state or persistent grants. W4 must measure actual operator-consented access under the application signing identity.",
+      "session_cookies": "Recoverability depends on source version, settings, memory-only data and session-restore state. A cookie DB is not a complete browser-session snapshot."
+    },
+    "firefox": {
+      "store": "cookies.sqlite is a surveyed source with version-dependent schema/journaling and originAttributes. Pin and snapshot it consistently; do not assume it includes all in-memory/session-restore cookies."
+    },
+    "safari": {
+      "store": "The survey reported the macOS 26 app-container Cookies.binarycookies path. Recheck format, access permissions and supported metadata after consent; transferability is unmeasured."
+    },
+    "cdp_export_dead_end": "Chrome 136+ (March 2025) ignores --remote-debugging-port/--remote-debugging-pipe on the default user-data-dir because remote debugging was the top cookie-exfiltration vector; export requires a dedicated user-data-dir. developer.chrome.com/blog/remote-debugging-port.",
+    "injection": "Storage.setCookies {cookies: Network.CookieParam[], browserContextId} browser-level before first navigation; map samesite -1->omit, 0->None, 1->Lax, 2->Strict; Chrome epoch conversion (us-11644473600000000)/1e6; __Host- cookies need url form with path / and no domain; partitionKey is now an object {topLevelSite, hasCrossSiteAncestor}. Network.setCookie(s) on the view's page target is the fallback if CEF's per-request-context browserContextId mapping is unclear (probe 5).",
+    "profile_copy_verdict": "Rejected: Chromium downgrade handling migrates/razes newer-profile data (user_data_downgrade.cc), per-DB meta version gates can raze cookie stores, Secure Preferences MACs bind to profile path/machine, and live LevelDB/SQLite copies can tear. Only the Cookies file (+journal) is ever read, and only from disk copies.",
+    "transferability": "No transfer success rate is established by this survey. W4 must report logged-in, challenged, partial and failed outcomes for the actual source/target pair.",
+    "security_constraints": [
+      "Importer/control APIs expose allowlisted metadata, never raw credentials, credential headers or derived keys. This is not universal redaction of arbitrary page DOM/pixels.",
+      "Consent precedes protected-store access and identifies source profile, selected origins and destination view. No silent re-import; revocation/destruction must be qualified.",
+      "V1 uses in-memory imported-credential contexts. Engine processes necessarily receive credentials; W4 must verify no persistent credential store and test cookie/storage/worker isolation.",
+      "Raw eval/CDP and arbitrary userscripts are unavailable in v1. Managed snapshot/network output and approval decisions need their own bounded allowlists and current-target validation."
+    ],
+    "empirical_probes_for_w4": [
+      "Keychain ACL probe under lapis's own code signing: dialog text, Always-Allow flow, deny-path OSStatus, per-browser service names.",
+      "Schema check on a disk copy of installed Chrome: meta version 24 plus v24 columns, no keychain needed.",
+      "v10 decryption round-trip: assert v10 prefix, plaintext[0:32] == sha256(host_key), strip; settles any Chrome 15x macOS encryption change empirically.",
+      "Live-read copy-vs-backup timing and row-count parity with the browser running (Chrome rollback-journal; Firefox WAL).",
+      "CEF 154 injection drill: Storage.setCookies with browserContextId, read-back, first-request authentication check, and whether each CefRequestContext maps to a distinct browserContextId.",
+      "Safari container read from non-FDA and FDA contexts to record the TCC boundary; per-profile cookie file enumeration.",
+      "Chrome 136 default-profile debug lockout reproduction (documents the CDP-export dead end)."
+    ],
+    "local_verifications_2026_09_29": [
+      "Chrome Default/Cookies exists; Cookies-journal present, no -wal.",
+      "Firefox Profiles directory exists.",
+      "Safari legacy ~/Library/Cookies/Cookies.binarycookies absent; container path present per the research stream's existence check."
+    ]
+  },
+  "unverified_or_open": [
+    "CEF macOS arm64 installed size and per-view memory: compressed size verified; installed footprint and 32-view cost need the W0/W5 measurements.",
+    "IOSurface import into the desktop's Vulkan/MoltenVK scene graph: unproven in this configuration; installed Qt native Metal/Vulkan texture declarations were verified September 30, but zero-copy interop still requires W0 runtime proof.",
+    "CDP Storage/DOMStorage domain transition: re-pin against the pinned CEF at W4.",
+    "Imported-session transferability under TLS/UA fingerprint binding: an empirical rate to measure in W4."
+  ],
+  "review_corrections": {
+    "date": "2026-09-30",
+    "reviewed_revision": "cd29f8c531b1c98d369b62f9f4c958035e5ce7f3",
+    "independent_review": "FlashX read-only review: service-birth, identity, isolation/SPA and raw-debug/credential contradictions; pin/isolation evidence and priority wording also repaired.",
+    "primary_source": {
+      "url": "https://raw.githubusercontent.com/chromiumembedded/cef/8037/include/cef_browser.h",
+      "sha256": "8429b3d0390fcbb9694368cdb51d8deebc9d038903c67d91dcfdde02aadf6ea7",
+      "observation": "ExecuteDevToolsMethod and AddDevToolsMessageObserver explicitly do not require an active DevTools frontend or remote-debugging session. Declarations only, not runtime proof."
+    },
+    "additional_contracts": [
+      "Keep remote-debugging TCP disabled; session/view capabilities add actor binding beyond peer UID.",
+      "One view close does not stop the shared engine; GUI and service restart have distinct semantics.",
+      "Streaming events use NDJSON envelopes; approval tokens bind document, target and action.",
+      "Preview-only views differ from fully hidden views; idle resource cost remains measured.",
+      "Filesystem commands bind approved roots and opened descriptors; traversal/symlink/overwrite and post-approval changes are explicit W1/W3 cases."
+    ],
+    "limits": "Documentation and metadata/header review only. No CEF archive/runtime, browser profile, credential values, Keychain grant or native UI accessed in this review.",
+    "local_header_observation": {
+      "date": "2026-09-30",
+      "component": "Qt 6.11.2 Quick qsgtexture_platform.h",
+      "sha256": "dfe469d19186ac778aae4be04b0a9f6f1288738cd5c275f919d6adac68f59eca",
+      "declarations": [
+        "QNativeInterface::QSGMetalTexture::fromNative",
+        "QNativeInterface::QSGVulkanTexture::fromNative"
+      ],
+      "scope": "Installed declarations only; no import, frame or GPU experiment performed."
+    }
+  },
+  "review_validation": {
+    "source_revision": "98509ef77ed113023f7d5ccf4abd45f9950c7b6e",
+    "base_main": "82f77af2b7da566884940cfd4637a1de2329c14a",
+    "architecture_sha256": "08d382f5888379b9039d197f8efbffc309f7458e5659f08be5fcc4e6e971fe81",
+    "checks": [
+      "Python JSON parse and final newline",
+      "Six new/referenced architecture anchors and four cited repository paths verified",
+      "git diff --check",
+      "Current CEF candidate index entry and native DevTools header fetched",
+      "Installed Qt 6.11.2 Metal/Vulkan native-texture declarations inspected"
+    ],
+    "compiled_checks": "Not run: this PR changes only architecture and its research receipt; compiled main inputs are unchanged.",
+    "reviewer_status": "Independent FlashX and Kilo completed with findings; repaired in this branch. Codex cloud review unavailable due explicit quota, no retry before next local day. Optional follow-ups do not replace runtime qualification."
+  }
+}
