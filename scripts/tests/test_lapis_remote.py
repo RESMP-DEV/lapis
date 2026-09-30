@@ -16,7 +16,6 @@ import tempfile
 import threading
 import time
 import unittest
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -654,7 +653,7 @@ class Server:
         if self.auth is None:
             self.auth = remote.TailnetAuth(allow_local=True, runner=fake_tailscale({}))
         remote.Handler.log_message = lambda *_: None
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), remote.Handler)
+        self.httpd = remote.BoundedHTTPServer(("127.0.0.1", 0), remote.Handler)
         self.httpd.daemon_threads = True
         self.port = self.httpd.server_address[1]
         remote.Handler.gateway = remote.Gateway(

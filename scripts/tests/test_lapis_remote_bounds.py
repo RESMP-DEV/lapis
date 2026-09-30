@@ -1,5 +1,11 @@
-"""Bounded remote-machine discovery and Tailnet identity admission."""
+"""Bounded remote-machine discovery, HTTP work, and Tailnet identity admission."""
 
+import http.client
+import json
+import shutil
+import socket
+import tempfile
+import time
 import subprocess
 import sys
 import threading
@@ -18,6 +24,310 @@ class FakeClock:
 
     def __call__(self):
         return self.now
+
+
+class ServiceProbeBoundsTests(unittest.TestCase):
+    def test_a_full_batch_probes_real_services_concurrently(self):
+        folder = Path(tempfile.mkdtemp(prefix="lapis-probes-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        live = folder / "live.sock"
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(str(live))
+        listener.listen()
+        self.addCleanup(listener.close)
+        targets = [str(live)] + [
+            str(folder / f"dead-{number}.sock") for number in range(16)
+        ]
+        original = remote.service_answers
+        release = threading.Event()
+        calls = []
+
+        def slow_service_answers(endpoint, timeout=0.3):
+            calls.append(endpoint)
+            if len(calls) == remote.MAX_LISTING_WORKERS:
+                release.set()
+            release.wait(5)
+            return original(endpoint, timeout)
+
+        with patch.object(remote, "service_answers", slow_service_answers):
+            began = time.monotonic()
+            answers = remote.run_bounded_probes(targets, deadline=time.monotonic() + 5)
+            elapsed = time.monotonic() - began
+
+        self.assertEqual(answers, [True] + [False] * 16)
+        self.assertEqual(set(calls), set(targets))
+        # Sixteen workers make this two rounds; serial calls would need 0.8s.
+        self.assertLess(elapsed, 0.55)
+
+    def test_an_oversized_batch_fails_without_starting_any_probe(self):
+        targets = [f"/tmp/not-a-service-{number}.sock" for number in range(65)]
+        calls = []
+
+        def observe(endpoint, timeout=0.3):
+            calls.append(endpoint)
+            return remote.service_answers(endpoint, timeout)
+
+        with patch.object(remote, "service_answers", observe):
+            self.assertIsNone(
+                remote.run_bounded_probes(targets, deadline=time.monotonic() + 5)
+            )
+        self.assertEqual(calls, [])
+
+    def test_a_slow_service_probe_returns_transient_not_stopped(self):
+        folder = Path(tempfile.mkdtemp(prefix="lapis-slow-probe-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        target = folder / "slow.sock"
+        original = remote.service_answers
+
+        def slow_service_answers(endpoint, timeout=0.3):
+            threading.Event().wait(timeout)
+            return original(endpoint, timeout)
+
+        with patch.object(remote, "service_answers", slow_service_answers):
+            self.assertIsNone(
+                remote.run_bounded_probes(
+                    [str(target)], deadline=time.monotonic() + 0.02
+                )
+            )
+
+
+class GatewayHTTPBoundsTests(unittest.TestCase):
+    def test_dead_and_live_services_produce_a_complete_listing(self):
+        with LiveGateway() as server:
+            directory = server.directory
+            agents = []
+            for number in range(32):
+                identifier = f"agent-{number}"
+                agents.append(
+                    {
+                        "id": identifier,
+                        "title": identifier,
+                        "category": "work",
+                        "harness": "codex",
+                        "directory": str(directory),
+                        "program": "codex",
+                        "arguments": [],
+                        "endpoint": str(directory / f"{identifier}.sock"),
+                    }
+                )
+            server.registry.write_text(
+                json.dumps(
+                    {
+                        "activeCategory": "work",
+                        "categories": [{"id": "work", "name": "Work"}],
+                        "agents": agents,
+                    }
+                )
+            )
+            live = directory / "agent-0.sock"
+            listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            listener.bind(str(live))
+            listener.listen()
+            self.addCleanup(listener.close)
+
+            began = time.monotonic()
+            status, listed = server.request("GET", "/api/agents")
+
+            self.assertEqual(status, 200)
+            self.assertEqual(len(listed["categories"][0]["agents"]), 32)
+            self.assertEqual(
+                [item["running"] for item in listed["categories"][0]["agents"]],
+                [True] + [False] * 31,
+            )
+            self.assertLess(time.monotonic() - began, 2)
+
+    def test_a_late_service_probe_is_an_explicit_transient_failure(self):
+        with LiveGateway() as server:
+            original = remote.service_answers
+
+            def slow_service_answers(endpoint, timeout=0.3):
+                threading.Event().wait(timeout)
+                return original(endpoint, timeout)
+
+            with (
+                patch.object(remote, "LISTING_DEADLINE", 0.08),
+                patch.object(remote, "service_answers", slow_service_answers),
+            ):
+                began = time.monotonic()
+                status, refused = server.request("GET", "/api/agents")
+            elapsed = time.monotonic() - began
+
+        self.assertEqual(status, 503)
+        self.assertEqual(refused, {"error": remote.LISTING_TIMEOUT_MESSAGE})
+        self.assertLess(elapsed, 1.0)
+
+    def test_connection_saturation_fails_promptly_with_bounded_threads(self):
+        class BlockingHandler(remote.Handler):
+            admitted_handlers = None
+            release = None
+
+            def admitted(self):
+                if not super().admitted():
+                    return False
+                self.admitted_handlers.release()
+                assert self.release.wait(5), "fixture release timeout"
+                return True
+
+            def log_message(self, format, *args):
+                pass
+
+        limit = remote.BoundedHTTPServer.MAX_CONNECTIONS
+        BlockingHandler.admitted_handlers = threading.Semaphore(0)
+        BlockingHandler.release = threading.Event()
+        replies = []
+
+        with LiveGateway(BlockingHandler) as server:
+            for _ in range(limit):
+                connection = server.connection()
+                connection.request(
+                    "GET", "/api/health", headers={"X-Lapis-Client": "ios"}
+                )
+
+                def collect(item=connection):
+                    response = item.getresponse()
+                    replies.append((response.status, response.read()))
+                    item.close()
+
+                threading.Thread(target=collect, daemon=True).start()
+            for _ in range(limit):
+                assert BlockingHandler.admitted_handlers.acquire(timeout=10)
+            began = time.monotonic()
+            status, busy = server.request("GET", "/api/health")
+            elapsed = time.monotonic() - began
+            BlockingHandler.release.set()
+            while len(replies) < limit:
+                self.assertLess(time.monotonic() - began, 10)
+                time.sleep(0.01)
+            while server.httpd.active_connections._value < limit:
+                self.assertLess(time.monotonic() - began, 10)
+                time.sleep(0.01)
+            connection_count = server.httpd.active_connections._value
+
+        self.assertEqual(status, 503)
+        self.assertEqual(busy, {"error": remote.HTTP_BUSY_MESSAGE})
+        self.assertLess(elapsed, 1.0)
+        self.assertEqual(
+            [response_status for response_status, _ in replies], [200] * limit
+        )
+        self.assertEqual(connection_count, limit)
+
+    def test_a_disconnected_long_poll_releases_its_connection(self):
+        with LiveGateway() as server:
+            _, listed = server.request("GET", "/api/agents")
+            connection = server.connection(timeout=5)
+            connection.request(
+                "GET",
+                f"/api/agents?after={listed['version']}",
+                headers={"X-Lapis-Client": "ios"},
+            )
+            connection.close()
+
+            began = time.monotonic()
+            while server.httpd.active_connections._value < server.httpd.MAX_CONNECTIONS:
+                self.assertLess(time.monotonic() - began, 2)
+                time.sleep(0.01)
+
+        self.assertLess(time.monotonic() - began, 2)
+
+
+def local_tailscale():
+    """Admit loopback without touching the machine's real Tailnet."""
+
+    def runner(command):
+        if command[1] == "status":
+            return {
+                "Self": {
+                    "UserID": 7,
+                    "TailscaleIPs": ["100.64.0.1"],
+                    "DNSName": "gateway.test.",
+                },
+                "User": {"7": {"LoginName": "owner@example.invalid"}},
+            }
+        return {
+            "UserProfile": {"LoginName": "owner@example.invalid"},
+            "Node": {"Hostinfo": {"OS": "ios"}},
+        }
+
+    return runner
+
+
+def workspace_registry(directory, *, agents=1):
+    """A desktop registry whose agent sockets are private test endpoints."""
+    entries = []
+    for number in range(agents):
+        identifier = f"agent-{number}"
+        entries.append(
+            {
+                "id": identifier,
+                "title": identifier,
+                "category": "work",
+                "harness": "codex",
+                "directory": str(directory),
+                "program": "codex",
+                "arguments": [],
+                "endpoint": str(directory / f"{identifier}.sock"),
+            }
+        )
+    registry = directory / "workspace.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "activeCategory": "work",
+                "categories": [{"id": "work", "name": "Work"}],
+                "agents": entries,
+            }
+        )
+    )
+    return registry
+
+
+class LiveGateway:
+    """A real loopback gateway with loopback-only admission."""
+
+    def __init__(self, handler_class=remote.Handler):
+        self.handler_class = handler_class
+
+    def __enter__(self):
+        self.directory = Path(tempfile.mkdtemp(prefix="lapis-bounds-"))
+        self.registry = workspace_registry(self.directory, agents=1)
+        self.auth = remote.TailnetAuth(allow_local=True, runner=local_tailscale())
+        gateway = remote.Gateway(
+            self.registry, self.auth, 0, folders=object(), machines=object()
+        )
+        self.httpd = remote.BoundedHTTPServer(("127.0.0.1", 0), self.handler_class)
+        gateway.port = self.httpd.server_address[1]
+        self.httpd.daemon_threads = True
+        remote.Handler.gateway = gateway
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(5)
+        shutil.rmtree(self.directory, True)
+
+    @property
+    def gateway(self):
+        return remote.Handler.gateway
+
+    def connection(self, timeout=5):
+        return http.client.HTTPConnection(
+            "127.0.0.1", self.httpd.server_address[1], timeout=timeout
+        )
+
+    def request(self, method, path, headers=None):
+        connection = self.connection()
+        connection.request(
+            method,
+            path,
+            headers={"X-Lapis-Client": "ios", **(headers or {})},
+        )
+        response = connection.getresponse()
+        body = response.read()
+        connection.close()
+        return response.status, json.loads(body) if body else None
 
 
 def folder(machine, marker):

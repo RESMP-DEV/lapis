@@ -46,6 +46,7 @@ import sys
 import threading
 import time
 import uuid
+import weakref
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -55,6 +56,11 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PORT = 7349
 CLIENT_HEADER = "X-Lapis-Client"
 GATEWAY_VERSION = 1
+
+# Bound the gateway itself, not just its request bodies. Sixteen connections
+# leave room for one terminal stream and concurrent settings and listing calls;
+# a seventeenth gets an immediate busy reply instead of an unbounded thread.
+MAX_HTTP_CONNECTIONS = 16
 
 # Wire protocol v6 (services/session/src/transport/local_protocol.hpp).
 WIRE_VERSION = 6
@@ -117,6 +123,84 @@ class DesktopUnavailable(GatewayError):
     """No lapis window or windowless host owns the workspace."""
 
 
+class BoundedHTTPServer(ThreadingHTTPServer):
+    """A per-process admission gate for connection handler threads.
+
+    The slot is held for the whole request, including keep-alive and a terminal
+    stream. Reserving before dispatch means an attack cannot use handler work
+    or thread creation to get past the limit; the accept thread answers and
+    closes the excess connection directly.
+    """
+
+    MAX_CONNECTIONS = MAX_HTTP_CONNECTIONS
+    # A full cap may arrive in a burst; accept it rather than dropping at the
+    # listen queue before the explicit busy reply can be sent.
+    request_queue_size = MAX_HTTP_CONNECTIONS + 16
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.active_connections = threading.BoundedSemaphore(self.MAX_CONNECTIONS)
+        self.active_requests = weakref.WeakSet()
+
+    def process_request(self, request, client_address):
+        if not self.active_connections.acquire(blocking=False):
+            try:
+                body = json.dumps({"error": HTTP_BUSY_MESSAGE}).encode()
+                request.sendall(
+                    b"HTTP/1.1 503 Service Unavailable\r\n"
+                    b"Content-Type: application/json\r\n"
+                    b"Cache-Control: no-store\r\n"
+                    b"Connection: close\r\n"
+                    b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+                )
+            except OSError:
+                pass  # A departing client does not need the busy notice.
+            self.shutdown_request(request)
+            return
+        self.active_requests.add(request)
+        super().process_request(request, client_address)
+
+    def shutdown_request(self, request):
+        was_active = request in self.active_requests
+        self.active_requests.discard(request)
+        if was_active:
+            self.active_connections.release()
+        super().shutdown_request(request)
+
+
+def run_bounded_probes(targets, *, deadline):
+    """Probe every target in parallel, or return None when the operation is late.
+
+    A result is either complete or absent: a timed-out socket cannot be called
+    stopped, and a target past the batch limit is never silently dropped.
+    """
+    if len(targets) > MAX_LISTING_AGENTS:
+        return None
+    worker_count = min(MAX_LISTING_WORKERS, max(1, len(targets)))
+    pool = concurrent.futures.ThreadPoolExecutor(
+        max_workers=worker_count, thread_name_prefix="lapis-service-probe"
+    )
+    try:
+        futures = [
+            pool.submit(service_answers, endpoint, timeout=SERVICE_PROBE_TIMEOUT)
+            for endpoint in targets
+        ]
+        answers = []
+        for future in futures:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            try:
+                answers.append(future.result(timeout=remaining))
+            except concurrent.futures.TimeoutError:
+                return None
+        return answers
+    finally:
+        # Cancellation keeps a late listing from waiting for queued probes;
+        # each started probe remains bounded by its own socket timeout.
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def require(condition, message):
     if not condition:
         raise GatewayError(message)
@@ -146,6 +230,21 @@ def fingerprint(program, arguments, directory, mode):
 # waits for the desktop to change it, so a change on the Mac (a category
 # moved, say) reaches the phone at once rather than at its next poll.
 LISTING_WAIT = 8.0
+# The phone allows 15 seconds for a listing. Leave the rest for Tailscale and
+# the client. The 8-second long wait, the registry read, and a full batch of
+# bounded socket probes (0.3 seconds in at most two rounds) fit inside this.
+LISTING_DEADLINE = 10.0
+SERVICE_PROBE_TIMEOUT = 0.3
+# Registry agents are desktop-owned local endpoints. A bounded batch avoids a
+# pathological registry turning every phone into an unbounded probe fan-out.
+MAX_LISTING_AGENTS = 64
+MAX_LISTING_WORKERS = 16
+# Four listings may probe at once; further requests are told to try again.
+MAX_LISTINGS_IN_FLIGHT = 4
+LISTING_BUSY_MESSAGE = "Too many agents are being listed; try again"
+LISTING_TIMEOUT_MESSAGE = "Agents did not finish loading; try again"
+LISTING_TOO_MANY_MESSAGE = "Too many agents to list safely; try again"
+HTTP_BUSY_MESSAGE = "Gateway is busy; try again"
 
 
 def registry_version(path):
@@ -1929,6 +2028,7 @@ class Gateway:
         self.folders = folders or FolderIndex(self.registry)
         self.machines = machines or MachineList(self.registry)
         self.remote = RemoteFolders()
+        self.listings = threading.BoundedSemaphore(MAX_LISTINGS_IN_FLIGHT)
 
     def workspace(self):
         return load_workspace(self.registry)
@@ -2134,13 +2234,26 @@ class Handler(BaseHTTPRequestHandler):
         # version is read before the registry, so it can only be older than
         # what is sent and never hides a change.
         after = parse_qs(urlsplit(self.path).query).get("after", [""])[0]
-        deadline = time.monotonic() + LISTING_WAIT
-        while (
-            after
-            and registry_version(self.gateway.registry) == after
-            and time.monotonic() < deadline
-        ):
-            time.sleep(0.2)
+        deadline = time.monotonic() + LISTING_DEADLINE
+        wait_deadline = min(deadline, time.monotonic() + LISTING_WAIT)
+        # A sleeping request watches its socket, so a phone that goes away does
+        # not leave a full long-wait slot behind.
+        while after and registry_version(self.gateway.registry) == after:
+            remaining = min(0.2, wait_deadline - time.monotonic())
+            if remaining <= 0:
+                break
+            time.sleep(remaining)
+            if self.phone_left():
+                return
+        if not self.gateway.listings.acquire(blocking=False):
+            self.fail(HTTPStatus.SERVICE_UNAVAILABLE, LISTING_BUSY_MESSAGE)
+            return
+        try:
+            self.build_listing(deadline)
+        finally:
+            self.gateway.listings.release()
+
+    def build_listing(self, deadline):
         version = registry_version(self.gateway.registry)
         try:
             workspace = self.gateway.workspace()
@@ -2150,6 +2263,16 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         categories = []
+        if len(workspace["agents"]) > MAX_LISTING_AGENTS:
+            self.fail(HTTPStatus.SERVICE_UNAVAILABLE, LISTING_TOO_MANY_MESSAGE)
+            return
+        probes = run_bounded_probes(
+            [agent["endpoint"] for agent in workspace["agents"]], deadline=deadline
+        )
+        if probes is None:
+            self.fail(HTTPStatus.SERVICE_UNAVAILABLE, LISTING_TIMEOUT_MESSAGE)
+            return
+        probe = iter(probes)
         for category in workspace["categories"]:
             agents = [
                 {
@@ -2159,7 +2282,7 @@ class Handler(BaseHTTPRequestHandler):
                     "directory": agent["directory"],
                     "machine": display_place(agent)[0],
                     "place": display_place(agent)[1],
-                    "running": service_answers(agent["endpoint"]),
+                    "running": next(probe),
                     "onPhone": self.gateway.session(agent["id"]) is not None,
                 }
                 for agent in workspace["agents"]
@@ -2799,7 +2922,7 @@ def serve(args):
                 bind = "0.0.0.0"
             else:
                 bind = tailscale_address(args.tailscale)
-            server = ThreadingHTTPServer((bind, args.port), Handler)
+            server = BoundedHTTPServer((bind, args.port), Handler)
             break
         except (OSError, subprocess.SubprocessError, KeyError, ValueError) as error:
             # Tailscale may still be starting after login.
