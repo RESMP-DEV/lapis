@@ -218,6 +218,8 @@ class TerminalSurface : public QQuickItem {
     void applyFont();
     [[nodiscard]] QFont cellFont() const;
     void bindWindow(QQuickWindow* current);
+    void armSuggestionObservation();
+    void cancelSuggestionObservation();
     void publishFrame(bool snapshot_changed);
     void updateInputContext(Qt::InputMethodQueries queries);
     void resetInputContext();
@@ -240,14 +242,15 @@ class TerminalSurface : public QQuickItem {
     void commandKey(QKeyEvent& event);
     void scrollProgram(int steps, QPoint cell);
     struct RenderState;
-    mutable std::mutex render_mutex_;
-    std::shared_ptr<const RenderState> render_state_;
-    std::shared_ptr<const RenderState> painted_state_;
-    std::shared_ptr<const RenderState> presented_state_;
+    struct FrameHandoff;
+    // Render callbacks own this independently of the item and validate its epoch.
+    std::shared_ptr<FrameHandoff> handoff_;
     QPointer<SessionPreview> document_;
     QMetaObject::Connection window_active_connection_;
     QMetaObject::Connection window_visible_connection_;
     QMetaObject::Connection suggestion_frame_connection_;
+    std::uint64_t suggestion_watch_ticket_{};
+    bool suggestion_watch_pending_{};
     QMetaObject::Connection presentation_connection_;
     // The agent this view is showing, registered as its viewer while this
     // view and its window are visible, so unseen agents' screens stay encoded.

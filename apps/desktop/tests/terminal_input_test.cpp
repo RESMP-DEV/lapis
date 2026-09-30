@@ -38,6 +38,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -741,17 +742,9 @@ std::vector<wire::Frame> suggestion_operations(Peer& peer, std::size_t count) {
                 peer.send(
                     wire::Kind::paste_result,
                     wire::encode_paste_result({request.attachment, request.request_id, true, {}}));
-                // Expose the admitted logical operations to this UI test.
-                // The actual service byte ordering is covered by paste-admission.
-                found.push_back(
-                    {wire::Kind::paste, wire::encode_control({request.attachment, request.text})});
-                if (request.submit)
-                    found.push_back(
-                        {wire::Kind::key,
-                         wire::encode_control(
-                             {request.attachment,
-                              QByteArray(1, static_cast<char>(lapis::session::TerminalKey::enter)) +
-                                  QByteArray(1, char{0})})});
+                // Keep the actual request, including submit and its identity.
+                // This fixture never fabricates a paste or Return frame.
+                found.push_back(frame);
             } else if (frame.kind != wire::Kind::resize) {
                 found.push_back(frame);
             }
@@ -762,9 +755,63 @@ std::vector<wire::Frame> suggestion_operations(Peer& peer, std::size_t count) {
     return found;
 }
 
+QRect pixelDifferenceBounds(const QImage& first, const QImage& second) {
+    require(first.size() == second.size(), "Compared frames have different dimensions");
+    QRect changed;
+    for (int y = 0; y < first.height(); ++y)
+        for (int x = 0; x < first.width(); ++x)
+            if (first.pixel(x, y) != second.pixel(x, y))
+                changed |= QRect(x, y, 1, 1);
+    return changed;
+}
+
+// These emitted signals exercise the real connection/lifetime boundary, not
+// GPU presentation. suggestions() below separately waits for actual rendering.
+void presentation_callback_lifetime() {
+    class CountedSurface final : public lapis::desktop::TerminalSurface {
+      public:
+        using TerminalSurface::TerminalSurface;
+        int meta_calls{};
+
+      protected:
+        bool event(QEvent* event) override {
+            if (event->type() == QEvent::MetaCall)
+                ++meta_calls;
+            return TerminalSurface::event(event);
+        }
+    };
+    QQuickWindow first, second;
+    {
+        CountedSurface quiet(first.contentItem());
+        QCoreApplication::sendPostedEvents(&quiet, QEvent::MetaCall);
+        quiet.meta_calls = 0;
+        std::jthread producer([&] {
+            for (int i = 0; i < 1000; ++i)
+                emit first.frameSwapped();
+        });
+        producer.join();
+        QCoreApplication::sendPostedEvents(&quiet, QEvent::MetaCall);
+        require(quiet.meta_calls == 0, "A surface without an offer queued work for every frame");
+    }
+    std::jthread producer([&](const std::stop_token& stop) {
+        while (!stop.stop_requested()) {
+            emit first.frameSwapped();
+            emit second.frameSwapped();
+            std::this_thread::yield();
+        }
+    });
+    for (int i = 0; i < 1000; ++i) {
+        auto item = std::make_unique<lapis::desktop::TerminalSurface>(first.contentItem());
+        item->setParentItem(second.contentItem());
+        item.reset();
+    }
+    producer.request_stop();
+    producer.join();
+}
+
 void suggestions() {
     Fixture f;
-    QQuickWindow window;
+    QQuickWindow window, rebound;
     window.setGeometry(100, 100, 640, 360);
     lapis::desktop::TerminalSurface surface(window.contentItem());
     surface.setSize(QSizeF(640, 360));
@@ -821,7 +868,15 @@ void suggestions() {
         return frames(0).empty();
     };
     const auto payload = [](const wire::Frame& frame) {
-        return wire::decode_control(frame.payload).payload;
+        return frame.kind == wire::Kind::paste_request
+                   ? wire::decode_paste_request(frame.payload).text
+                   : wire::decode_control(frame.payload).payload;
+    };
+    const auto paste_is = [](const wire::Frame& frame, const QByteArray& text, bool submit) {
+        if (frame.kind != wire::Kind::paste_request)
+            return false;
+        const auto request = wire::decode_paste_request(frame.payload);
+        return request.text == text && request.submit == submit;
     };
     const auto is_key = [&payload](const wire::Frame& frame, lapis::session::TerminalKey key) {
         return frame.kind == wire::Kind::key &&
@@ -846,21 +901,47 @@ void suggestions() {
     surface.setSuggestion(QStringLiteral("go now"));
     settle();
     const auto shown = window.grabWindow();
-    QRect changed;
-    for (int y = 0; y < shown.height(); ++y)
-        for (int x = 0; x < shown.width(); ++x)
-            if (shown.pixel(x, y) != plain.pixel(x, y))
-                changed |= QRect(x, y, 1, 1);
+    const auto changed = pixelDifferenceBounds(plain, shown);
     require(!changed.isEmpty() && changed.height() <= shown.height() / 4 &&
                 changed.left() > shown.width() / 40,
             "The suggestion was not drawn on the cursor's row after the cursor");
     require(seen == 1, "The suggestion on screen was not reported seen");
 
+    // Rebinding invalidates the old window's evidence. Probe public Tab before
+    // a draw, then use a new offer's seen event to await actual presentation.
+    rebound.setGeometry(100, 100, 640, 360);
+    rebound.show();
+    lapis::desktop::test::activate_test_window(rebound);
+    until([&] { return rebound.isActive() && rebound.isExposed(); });
+    surface.setParentItem(rebound.contentItem());
+    surface.forceActiveFocus();
+    emit window.frameSwapped(); // A stale sender must not authorize the new binding.
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
-    typed = frames(2);
-    require(typed[0].kind == wire::Kind::paste && payload(typed[0]) == QByteArray("go now") &&
-                is_key(typed[1], lapis::session::TerminalKey::enter),
-            "Tab did not type and send the suggestion");
+    typed = frames(1);
+    require(paste_is(typed[0], "go now", false),
+            "The previous window authorized an unpresented rebound suggestion");
+    surface.setSuggestionKey(QStringLiteral("rebind:b"));
+    surface.setSuggestion(QStringLiteral("go now"));
+    rebound.update();
+    until([&] { return seen == 2; });
+    require(!rebound.grabWindow().isNull(), "Rebound scene graph produced no frame");
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(paste_is(typed[0], "go now", true),
+            "The new window's presented suggestion could not be submitted");
+    surface.setParentItem(window.contentItem());
+    rebound.hide();
+    lapis::desktop::test::activate_test_window(window);
+    surface.forceActiveFocus();
+    surface.setSuggestionKey(QStringLiteral("rebind:a"));
+    surface.setSuggestion(QStringLiteral("go now"));
+    window.update();
+    until([&] { return window.isActive() && surface.hasActiveFocus() && seen == 3; });
+    used.clear();
+
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(paste_is(typed[0], "go now", true), "Tab did not type and send the suggestion");
     require(used == std::vector<std::pair<bool, int>>{{true, 0}} && surface.suggestion().isEmpty(),
             "Tab was not reported as sent");
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
@@ -875,7 +956,7 @@ void suggestions() {
     surface.setSuggestionKey(QStringLiteral("a:2"));
     surface.setSuggestion(QStringLiteral("go now"));
     settle();
-    require(seen == 2, "A new offer with the same words was not seen again");
+    require(seen == 4, "A new offer with the same words was not seen again");
 
     // Typing is not a refusal: the suggestion stays, and what was typed first
     // (here "no", then Command-Delete) is counted when Tab takes it.
@@ -888,10 +969,8 @@ void suggestions() {
     require(surface.suggestion() == QLatin1String("status?"), "Typing withdrew the suggestion");
     press(Qt::Key_C, Qt::MetaModifier, QStringLiteral("c"));
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
-    typed = frames(2);
-    require(payload(typed[0]) == QByteArray("status?") &&
-                is_key(typed[1], lapis::session::TerminalKey::enter) &&
-                used.back() == std::pair{true, 3},
+    typed = frames(1);
+    require(paste_is(typed[0], "status?", true) && used.back() == std::pair{true, 3},
             "Tab after typing did not send it, counting three keys typed first");
 
     // The Enter belongs to the same admitted operation; later typing cannot
@@ -900,19 +979,18 @@ void suggestions() {
     settle();
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     press(Qt::Key_S, Qt::NoModifier, QStringLiteral("s"));
-    typed = frames(3);
-    require(payload(typed[0]) == QByteArray("rerun") &&
-                is_key(typed[1], lapis::session::TerminalKey::enter) &&
-                payload(typed[2]) == QByteArray("s") && nothing_sent(),
-            "Later typing was interleaved before the admitted Enter");
+    typed = frames(2);
+    require(paste_is(typed[0], "rerun", true) && payload(typed[1]) == QByteArray("s") &&
+                nothing_sent(),
+            "Later typing was interleaved before the paste-and-submit request");
 
     // A fresh offer has not been presented yet: Tab may fill it, but must not
     // submit text the person could not have read in a completed frame.
     surface.setSuggestion(QStringLiteral("not yet drawn"));
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
-    require(payload(typed[0]) == QByteArray("not yet drawn") &&
-                used.back() == std::pair{false, 0} && nothing_sent(),
+    require(paste_is(typed[0], "not yet drawn", false) && used.back() == std::pair{false, 0} &&
+                nothing_sent(),
             "An unpresented suggestion was submitted");
 
     // A suggestion that does not show whole is only typed, for the person to
@@ -927,7 +1005,7 @@ void suggestions() {
     f.document.applySnapshot(expanded.snapshot());
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     typed = frames(1);
-    require(payload(typed[0]) == longer.toUtf8() && used.back() == std::pair{false, 0} &&
+    require(paste_is(typed[0], longer.toUtf8(), false) && used.back() == std::pair{false, 0} &&
                 nothing_sent(),
             "A suggestion not shown whole was sent");
 
@@ -952,7 +1030,7 @@ void suggestions() {
     surface.setSuggestion(QStringLiteral("rerun it"));
     press(Qt::Key_Tab, Qt::AltModifier, QStringLiteral("\t"));
     typed = frames(1);
-    require(typed.size() == 1 && payload(typed[0]) == QByteArray("rerun it") &&
+    require(typed.size() == 1 && paste_is(typed[0], "rerun it", false) &&
                 used.back() == std::pair{false, 0},
             "Option-Tab did not only type the suggestion");
     const int after_fill = calls();
@@ -1265,6 +1343,7 @@ int main(int argc, char** argv) {
         require(background == (QGuiApplication::platformName() == QStringLiteral("offscreen")),
                 "Offscreen input tests require explicit --background mode");
         input_contract(background);
+        presentation_callback_lifetime();
         suggestions();
         long_pastes();
         selection_and_scroll();
