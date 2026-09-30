@@ -35,9 +35,11 @@ class SnippetStore(private val store: KeyValueStore) {
 
         /** The one bounds projection: what load() returns is exactly what
          * save() persists and exactly what the bar displays, so the live
-         * chips can never diverge from what a restart restores. */
+         * chips can never diverge from what a restart restores. The final
+         * trimEnd keeps it idempotent: truncation can otherwise cut right
+         * before whitespace and leave a tail that a reload would strip. */
         fun normalize(snippets: List<String>): List<String> = snippets
-            .map { it.trim().take(MAX_LENGTH) }
+            .map { it.trim().take(MAX_LENGTH).trimEnd() }
             .filter { it.isNotEmpty() }
             .take(MAX_SNIPPETS)
     }

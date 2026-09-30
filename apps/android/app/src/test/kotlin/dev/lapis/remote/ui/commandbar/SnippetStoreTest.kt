@@ -69,11 +69,19 @@ class SnippetStoreTest {
 
     @Test
     fun normalizeIsWhatSavePersistsAndLoadReturns() = runTest {
-        val raw = listOf("  a  ", "") + (1..100).map { "s$it" }
+        // The truncation-boundary entry is the non-obvious one: cutting at
+        // MAX_LENGTH right before whitespace used to leave a trailing
+        // space that a reload's trim would strip, so the live list and the
+        // reloaded list disagreed by one character.
+        val boundary = "a".repeat(SnippetStore.MAX_LENGTH - 1) + " b"
+        val raw = listOf("  a  ", "", boundary) + (1..100).map { "s$it" }
         val memory = MemoryStore()
         SnippetStore(memory).save(raw)
         // The live bar assigns normalize() directly, so this equality is
         // the invariant that display, persistence, and reload agree.
         assertEquals(SnippetStore.normalize(raw), SnippetStore(memory).load())
+        // And normalize is idempotent: applying it twice changes nothing,
+        // which is what save-then-load amounts to.
+        assertEquals(SnippetStore.normalize(raw), SnippetStore.normalize(SnippetStore.normalize(raw)))
     }
 }
