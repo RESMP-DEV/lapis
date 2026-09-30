@@ -956,7 +956,7 @@ void long_pastes() {
     surface.setInteractive(true);
     f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
     auto peer = f.accept();
-    require(f.request(peer).paste_transactions, "The desktop did not offer paste transactions");
+    static_cast<void>(f.request(peer));
     f.hello(peer, 1, true);
     f.screen(peer);
     window.show();
@@ -969,12 +969,44 @@ void long_pastes() {
         return surface.hasActiveFocus();
     });
     static_cast<void>(text_frames(peer));
-    require(f.document.takesPasteSubmit(), "A service with transactions was not used for submit");
-    lapis::session::Terminal wide{{40, 4}};
-    wide.feed("> ");
+    QStringList refusals;
+    QObject::connect(&surface, &lapis::desktop::TerminalSurface::pasteRefused,
+                     [&refusals](const QString& reason) { refusals << reason; });
+    QString transcript;
+    while (transcript.toUtf8().size() <= 3 * wire::max_input_bytes)
+        transcript += QStringLiteral("speaker 界: a line with an escape \x1b[31m in it\n");
+    const auto utf8 = transcript.toUtf8();
+    require(surface.pasteText(transcript), "Expected a supported long paste to be submitted");
+    auto packet = peer.read();
+    require(packet.kind == wire::Kind::paste_request, "A paste must be one complete request");
+    auto request = wire::decode_paste_request(packet.payload);
+    require(request.text == utf8 && !request.submit, "The desktop must retain raw paste bytes");
+    peer.send(wire::Kind::paste_result,
+              wire::encode_paste_result({request.attachment, request.request_id, true, {}}));
+    settle();
+    f.terminal.feed("\x1b[?2004h");
     peer.send(wire::Kind::snapshot,
-              wire::encode_snapshot_message({{f.identity, 1}, 2, wide.snapshot()}));
-    until([&] { return f.document.snapshot().size.columns == 40; });
+              wire::encode_snapshot_message({{f.identity, 1}, 2, f.terminal.snapshot()}));
+    until([&] { return f.document.snapshot().bracketed_paste; });
+    require(surface.pasteText(transcript),
+            "Expected raw long paste even with bracketed mode advertised");
+    packet = peer.read();
+    auto later = wire::decode_paste_request(packet.payload);
+    require(later.request_id > request.request_id && later.text == utf8,
+            "Each paste has a new ID and service-owned encoding");
+    peer.send(wire::Kind::paste_result,
+              wire::encode_paste_result({later.attachment, later.request_id, false,
+                                         QStringLiteral("fixture queue full")}));
+    until([&] { return !refusals.isEmpty(); });
+    require(refusals.back() == QStringLiteral("fixture queue full") && f.document.inputReady(),
+            "Service refusal must be visible without losing the connection");
+    const auto submit = f.document.sendPasteAndSubmit("go");
+    require(submit != 0, "Combined paste and submit needs an admitted request ID");
+    const auto combined = wire::decode_paste_request(peer.read().payload);
+    require(combined.submit && combined.request_id == submit && combined.text == "go",
+            "Submit belongs to the same paste request");
+    peer.send(wire::Kind::paste_result,
+              wire::encode_paste_result({combined.attachment, submit, true, {}}));
     settle();
     refusals.clear();
     const QString tooLong(static_cast<qsizetype>(wire::max_paste_bytes) + 1, QLatin1Char('x'));
