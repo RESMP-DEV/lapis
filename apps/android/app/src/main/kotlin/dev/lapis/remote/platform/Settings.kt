@@ -1,7 +1,9 @@
 package dev.lapis.remote.platform
 
 import android.content.Context
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
@@ -18,8 +20,15 @@ interface KeyValueStore {
 
 /** DataStore-backed settings (the Android port of iOS UserDefaults). */
 class DataStoreSettings(context: Context) : KeyValueStore {
+    // Without the corruption handler, one unreadable file poisons the store
+    // forever: every later read and write throws CorruptionException, so
+    // persistence stays dead until the app's data is cleared. Replacing the
+    // corrupt file with empty preferences loses the stored settings once —
+    // the same defaults the absorption below already returns — and the next
+    // write recreates the file.
     private val store = PreferenceDataStoreFactory.create(
         produceFile = { context.preferencesDataStoreFile(FILE) },
+        corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
     )
 
     // UserDefaults is best-effort storage: reads fall back to defaults and

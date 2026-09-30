@@ -281,9 +281,37 @@ class Device:
     def key(self, name: str) -> None:
         self.shell(f"input keyevent {keycode(name)}")
 
+    def locked(self) -> bool:
+        """Whether the keyguard (or its emergency dialer) is showing. A
+        locked phone still launches the app behind the keyguard, so every
+        UI check then fails with misleading messages (missing composer,
+        "command bar disabled") instead of the real cause. The emergency
+        dialer composes over the keyguard and clears mDreamingLockscreen
+        while the phone stays locked, so the foreground activity is
+        inspected too; build-specific fields that vanish read as
+        unlocked, preserving the pre-guard behavior."""
+        if "mDreamingLockscreen=true" in self.shell("dumpsys window"):
+            return True
+        activities = self.shell("dumpsys activity activities")
+        marker = "topResumedActivity"
+        if marker not in activities:
+            return False
+        foreground = activities.split(marker, 1)[1][:300]
+        return "emergency" in foreground or "keyguard" in foreground
+
     def ime_shown(self) -> bool:
-        """Whether the on-screen keyboard is currently covering the stage."""
-        return "mInputShown=true" in self.shell("dumpsys input_method")
+        """Whether the on-screen keyboard is currently covering the stage.
+
+        Fails closed: `mInputShown` is a build-specific dumpsys field, so a
+        dump that carries no IME state at all raises instead of silently
+        reporting "hidden" — a renamed or trimmed field would otherwise skip
+        the BACK press, leave the keyboard up, and blame the app for the
+        harness's blind scroll.
+        """
+        dump = self.shell("dumpsys input_method")
+        if "mInputShown=" not in dump:
+            raise DeviceError("dumpsys input_method reported no IME state")
+        return "mInputShown=true" in dump
 
     def dismiss_ime(self) -> None:
         """Drop the on-screen keyboard a previous composer use left open.

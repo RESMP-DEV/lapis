@@ -67,22 +67,21 @@ fun SettingsScreen(
     var checking by rememberSaveable { mutableStateOf(false) }
     var result by rememberSaveable { mutableStateOf<String?>(null) }
     var commandBar by rememberSaveable { mutableStateOf(true) }
-    // Plain remember: a saveable gate is restored to true on recreation, which
-    // would re-enable the Switch before this composition's DataStore read
-    // lands. Matches AgentStage's settingsLoaded gate.
-    var commandBarLoaded by remember { mutableStateOf(false) }
+    // Two flags with opposite lifetimes. loadedOnce is saveable: after a
+    // recreation it restores to true and skips the read below, so a read
+    // racing a just-made toggle's write can never assign the pre-write
+    // value over the restored (correct) switch state. readLanded is plain
+    // remember: it resets on recreation and keeps the Switch disabled
+    // until this composition's read actually finishes.
+    var loadedOnce by rememberSaveable { mutableStateOf(false) }
+    var readLanded by remember { mutableStateOf(false) }
 
     LaunchedEffect(settings) {
-        val loaded = settings.getString(COMMAND_BAR_KEY)?.toBooleanStrictOrNull() ?: true
-        // Skip the overwrite once loaded: a recreation mid-write would
-        // re-run this effect, and an in-flight read could still see the
-        // pre-write value and revert the user's just-made toggle. The
-        // flag is saveable, so the fold/unfold that recreated us does
-        // not retry and re-stomp the choice either.
-        if (!commandBarLoaded) {
-            commandBar = loaded
-            commandBarLoaded = true
+        if (!loadedOnce) {
+            commandBar = settings.getString(COMMAND_BAR_KEY)?.toBooleanStrictOrNull() ?: true
+            loadedOnce = true
         }
+        readLanded = true
     }
 
     LaunchedEffect(checking) {
@@ -211,7 +210,7 @@ fun SettingsScreen(
                     // Disabled for the one frame before the DataStore read
                     // lands, so the flash of the default cannot be flipped
                     // and written back over a saved "off".
-                    enabled = commandBarLoaded,
+                    enabled = readLanded,
                     checked = commandBar,
                     onCheckedChange = { value ->
                         commandBar = value

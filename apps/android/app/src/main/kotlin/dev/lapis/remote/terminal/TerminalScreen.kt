@@ -40,6 +40,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -379,6 +380,7 @@ fun TerminalScreen(
                     if (fullScreen) frame?.text.orEmpty() else cache.accessibleText
                     )
                 val stateLine = if (fullScreen) "" else if (followBottom) "Following live output. " else "Reading earlier output. "
+                stateDescription = stateLine.trim()
                 contentDescription = stateLine + screenText.ifBlank { "Agent screen" }
             }
             .pointerInput(fullScreen, metrics.cellWidth, metrics.lineHeight, fitColumns, viewportWidth, onWheel) {

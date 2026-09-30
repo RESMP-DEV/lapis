@@ -264,31 +264,59 @@ def reveal(device, target_id, max_swipes=8):
     The swipe row comes from the chip's own bounds, so a snippet chip
     swipes the snippet row, not the key row above it. Returns None when the
     bar itself is absent, so callers can name that failure instead of
-    blaming the chip."""
+    blaming the chip.
+
+    Overshoot is terminal, not retryable: a fling can carry the chip past
+    either edge the containment test measures, and repeating the same
+    direction only pushes it farther out. The loop reverses at most once —
+    a second reversal means this swipe length cannot settle the chip inside
+    the bar's window, which a retry of the same gesture will not fix — and
+    gives up as soon as a swipe leaves the chip's bounds unmoved, instead
+    of burning the whole budget on a row that is not responding."""
+    reversed_once = False
+    previous = None
     for _ in range(max_swipes):
         bar = device.find(id="command-bar")
         if bar is None:
             return None
         bar_right = bar["bounds"][2]
+        # A bar narrower than twice the margin would turn
+        # `bar_right - margin -> margin` into a zero-width or backwards
+        # gesture; a bar that narrow also cannot hide a chip off-window,
+        # so treat it as unrevealable rather than flinging a degenerate
+        # swipe.
+        margin = min(80, (bar_right - 16) // 2)
+        if margin < 16:
+            return False
         node = device.find(id=target_id)
         if node is not None:
             left, top, right, bottom = node["bounds"]
             if left >= 0 and right <= bar_right:
                 return True
+            if previous is not None and all(
+                abs(current - seen) <= 1
+                for current, seen in zip((left, right), previous)
+            ):
+                # The last swipe moved the chip nothing measurable.
+                return False
+            previous = (left, right)
             row_y = (top + bottom) // 2
             if left < 0:
+                if reversed_once:
+                    return False
+                reversed_once = True
                 # The chip was carried past the row's left edge (the swipe
                 # ends with fling momentum), and a further leftward swipe
                 # only pushes it farther out — the containment test then
                 # can never pass again and the loop exhausts. Swipe back
-                # toward the row start instead.
-                device.swipe(80, row_y, bar_right - 80, row_y, 250)
+                # toward the row start instead, once.
+                device.swipe(margin, row_y, bar_right - margin, row_y, 250)
                 time.sleep(0.4)
                 continue
         else:
             _, bar_top, _, bar_bottom = bar["bounds"]
             row_y = bar_top + (bar_bottom - bar_top) // 4
-        device.swipe(bar_right - 80, row_y, 80, row_y, 250)
+        device.swipe(bar_right - margin, row_y, margin, row_y, 250)
         time.sleep(0.4)
     return False
 
@@ -372,6 +400,13 @@ def fixture(run):
             str(tailscale),
         ],
     )
+    # serve() retries its bind forever (EADDRINUSE is caught like a missing
+    # Tailscale and retried after 5s), so a stale --keep gateway holding the
+    # port never surfaces through gateway.poll(): this run's gateway stays
+    # alive waiting to bind. The only reliable stale-owner test is whether
+    # the responder knows this run's freshly minted agent ids — a stale
+    # fixture can echo the fixture titles but never this run's uuids.
+    run_ids = {agent["id"] for agent in agents}
     deadline = time.monotonic() + 10
     while True:
         try:
@@ -381,31 +416,35 @@ def fixture(run):
             )
             with urllib.request.urlopen(request, timeout=1) as response:
                 listing = json.load(response)
-            if any(
-                item["title"] == "echo agent"
-                for category in listing["categories"]
-                for item in category["agents"]
-            ):
-                exit_code = gateway.poll()
-                if exit_code is not None:
-                    # A stale gateway (an earlier --keep run) can still own
-                    # the port: this probe is then answered by that fixture,
-                    # the phone drives its agents while the Mac client
-                    # watches this run's silent ones, and every Mac-side
-                    # check fails against the wrong session. The bind
-                    # failure already killed this run's gateway, so say so
-                    # instead of validating against the wrong fixture.
-                    raise SystemExit(
-                        f"a stale gateway owns 127.0.0.1:{PORT} "
-                        f"(this run's exited {exit_code}); stop it and rerun; "
-                        f"see {run.logs / 'gateway.log'}"
-                    )
+            answered = [
+                item
+                for category in listing.get("categories", ())
+                for item in category.get("agents", ())
+            ]
+        except (OSError, ValueError):
+            answered = None
+        if answered is not None:
+            if not any(item.get("id") in run_ids for item in answered):
+                # The phone would drive the stale fixture's agents while the
+                # Mac client watches this run's silent ones, and every
+                # Mac-side check would fail against the wrong session;
+                # refuse before any check runs.
+                raise SystemExit(
+                    f"a stale gateway owns 127.0.0.1:{PORT} (this run's is "
+                    f"alive but cannot bind while it holds the port); stop "
+                    f"it and rerun; see {run.logs / 'gateway.log'}"
+                )
+            if any(item.get("title") == "echo agent" for item in answered):
                 # The gateway's own normalization of the registry, with the
                 # mode field WireSession needs.
                 return lapis_remote.load_workspace(str(registry))["agents"], gateway
-        except (OSError, ValueError, KeyError):
-            pass
-        if gateway.poll() is not None or time.monotonic() >= deadline:
+        exit_code = gateway.poll()
+        if exit_code is not None:
+            raise SystemExit(
+                f"the fixture gateway exited early with {exit_code}; "
+                f"see {run.logs / 'gateway.log'}"
+            )
+        if time.monotonic() >= deadline:
             raise SystemExit(
                 f"fixture gateway did not start; see {run.logs / 'gateway.log'}"
             )
@@ -822,6 +861,17 @@ def main():
         )
         return 1
     device = android_ctl.Device(serial=serial or attached[0])
+    if device.locked():
+        # The app launches behind the keyguard and its networking still
+        # works, so a locked phone produces a full run of misleading
+        # failures (missing composer, "command bar disabled in settings")
+        # instead of the real cause. Fail before spawning any fixture.
+        print(
+            "the phone is locked; unlock it and rerun — UI checks cannot "
+            "see behind the keyguard",
+            file=sys.stderr,
+        )
+        return 1
 
     if not arguments.no_install or not device.state().get("app_version"):
         if not install_apk(device, allow_build=not arguments.no_install):

@@ -36,6 +36,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.lapis.remote.ui.LapisColors
 
+// Whitespace the trim will remove may push the raw text past the persisted
+// bound (a 512-char snippet with a leading space must stay typeable), but
+// not without limit: a whitespace-only paste would otherwise grow the field
+// unbounded while the trimmed counter sits far below the cap.
+private const val TRIMMABLE_SLACK = 32
+
 /**
  * Edits the snippet list: rows are editable in place, arrows reorder,
  * the close button removes, the field at the bottom adds. Done commits
@@ -90,8 +96,13 @@ fun SnippetEditorDialog(
                                 // trimmed text, so a snippet at the bound
                                 // must not visibly shrink on Done, and a
                                 // 512-char one with a leading space must
-                                // still be typeable.
-                                if (value.trim().length <= SnippetStore.MAX_LENGTH) {
+                                // still be typeable. The raw length is
+                                // capped too, so whitespace cannot grow the
+                                // field without bound while the counter
+                                // reads below the cap.
+                                if (value.trim().length <= SnippetStore.MAX_LENGTH &&
+                                    value.length <= SnippetStore.MAX_LENGTH + TRIMMABLE_SLACK
+                                ) {
                                     rows = rows.toMutableList().also { it[index] = value }
                                 }
                             },
@@ -147,8 +158,11 @@ fun SnippetEditorDialog(
                     OutlinedTextField(
                         value = draft,
                         onValueChange = { value ->
-                            // Same trimmed-count rule as the row fields above.
-                            if (value.trim().length <= SnippetStore.MAX_LENGTH) {
+                            // Same trimmed-count rule and raw slack cap as
+                            // the row fields above.
+                            if (value.trim().length <= SnippetStore.MAX_LENGTH &&
+                                value.length <= SnippetStore.MAX_LENGTH + TRIMMABLE_SLACK
+                            ) {
                                 draft = value
                             }
                         },
