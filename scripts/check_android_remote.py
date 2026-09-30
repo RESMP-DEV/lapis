@@ -187,7 +187,9 @@ class MacClient(threading.Thread):
             self.sizes.add((rendered["columns"], rendered["rows"]))
             if self.saw_phone:
                 continue
-            screen = "\n".join("".join(run[0] for run in line) for line in rendered["lines"])
+            screen = "\n".join(
+                "".join(run[0] for run in line) for line in rendered["lines"]
+            )
             if "echo: ping from phone" in screen:
                 self.saw_phone = True
                 self.session.text(b"pong from mac\r")
