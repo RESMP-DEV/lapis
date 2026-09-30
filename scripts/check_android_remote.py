@@ -400,12 +400,15 @@ def fixture(run):
             str(tailscale),
         ],
     )
-    # serve() retries its bind forever (EADDRINUSE is caught like a missing
-    # Tailscale and retried after 5s), so a stale --keep gateway holding the
-    # port never surfaces through gateway.poll(): this run's gateway stays
-    # alive waiting to bind. The only reliable stale-owner test is whether
-    # the responder knows this run's freshly minted agent ids — a stale
-    # fixture can echo the fixture titles but never this run's uuids.
+    # serve() — apps/remote/lapis_remote.py, the bind loop at the bottom of
+    # the file — retries its bind forever (EADDRINUSE is caught like a
+    # missing Tailscale, logged as "waiting to serve", and retried after
+    # 5s; also reproduced locally in the round-8 review), so a stale --keep
+    # gateway holding the port never surfaces through gateway.poll(): this
+    # run's gateway stays alive waiting to bind. The only reliable
+    # stale-owner test is whether the responder knows this run's freshly
+    # minted agent ids — a stale fixture can echo the fixture titles but
+    # never this run's uuids.
     run_ids = {agent["id"] for agent in agents}
     deadline = time.monotonic() + 10
     while True:
@@ -494,8 +497,14 @@ def checks(device, mac, screens):
         device.screenshot(screens / f"{name}.png")
 
     def bar_absent():
+        # SKIPPED-prefixed like the wedged messages below: a setting the
+        # harness cannot flip is a precondition the check cannot run
+        # through, not a product failure, and the runner's classifier
+        # routes by this prefix.
         if device.find(id="command-bar") is None:
-            return "the command bar is disabled in settings; enable it and rerun"
+            return (
+                "SKIPPED: the command bar is disabled in settings; enable it and rerun"
+            )
         return None
 
     def long_press(device, node):

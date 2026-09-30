@@ -57,9 +57,13 @@ fun SnippetEditorDialog(
     // Saveable to match the saveable `editing` flag that reopens this
     // dialog: a fold/unfold recreation keeps the editor open, so its
     // in-progress rows and draft must survive too, not reset to the
-    // committed list. List needs an explicit saver; Bundle has no
-    // plain-List slot.
-    var rows by rememberSaveable(snippets, stateSaver = SnippetListSaver) {
+    // committed list. `snippets` seeds the initial rows only — it must not
+    // be an input key: the parent's list reference changes on every load
+    // and save (its own saveable restore, then the settings read after a
+    // recreation), and a keyed rememberSaveable discards the saved rows on
+    // that change, which is the exact loss this saver exists to prevent.
+    // List needs an explicit saver; Bundle has no plain-List slot.
+    var rows by rememberSaveable(stateSaver = SnippetListSaver) {
         mutableStateOf(snippets.toList())
     }
     var draft by rememberSaveable { mutableStateOf("") }

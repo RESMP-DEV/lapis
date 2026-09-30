@@ -385,11 +385,22 @@ fun TerminalScreen(
                 // properties would make TalkBack announce it twice per
                 // focus. Revisit only with a measured dump showing
                 // state-desc visible, moving the anchor with it.
-                contentDescription = (
-                    if (fullScreen) ""
-                    else if (followBottom) "Following live output. "
-                    else "Reading earlier output. "
-                    ) + screenText.ifBlank { "Agent screen" }
+                val stateSentence = when {
+                    fullScreen -> null
+                    followBottom -> "Following live output."
+                    else -> "Reading earlier output."
+                }
+                // A blank screen reads as the state sentence alone, never
+                // the state bolted onto the "Agent screen" placeholder: the
+                // first non-fullscreen frame (the cache seeds empty and its
+                // read lands after composition) would otherwise announce
+                // live output the body does not show yet.
+                contentDescription = when {
+                    stateSentence != null && screenText.isNotBlank() ->
+                        "$stateSentence $screenText"
+                    stateSentence != null -> stateSentence
+                    else -> screenText.ifBlank { "Agent screen" }
+                }
             }
             .pointerInput(fullScreen, metrics.cellWidth, metrics.lineHeight, fitColumns, viewportWidth, onWheel) {
                 if (!fullScreen || onWheel == null) return@pointerInput
