@@ -8,8 +8,165 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from xml.etree import ElementTree as ET
 
 from scripts import package_macos as package
+
+
+MARK_FIXTURE = """<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024">
+  <defs><filter id="glow"><feGaussianBlur stdDeviation="10"/></filter></defs>
+  <g id="cabochon">
+    <g id="stone"><ellipse cx="600" cy="500" rx="100" ry="200" fill="#000"/></g>
+    <g id="star"><polygon points="600,300 620,500 580,500"/></g>
+  </g>
+</svg>
+"""
+
+
+def mark_svg(body):
+    return f'<svg xmlns="http://www.w3.org/2000/svg">{body}</svg>'
+
+
+class WriteMarkIconTests(unittest.TestCase):
+    def write(self, svg):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        source = Path(temporary.name) / "source.svg"
+        source.write_text(svg)
+        target = Path(temporary.name) / "mark.svg"
+        with patch.object(package, "ICON_SOURCE", source):
+            package.write_mark_icon(target)
+        return ET.parse(target).getroot()
+
+    def test_square_view_box_over_stone_star_and_blur_margin(self):
+        # Stone spans x 500..700, y 300..700; the margin is 3 x stdDeviation
+        # (30); the square side is the height (460) and x pads by 100.
+        root = self.write(MARK_FIXTURE)
+        self.assertEqual(root.get("width"), "1024")
+        self.assertEqual(root.get("height"), "1024")
+        self.assertEqual(root.get("viewBox"), "370.0 270.0 460.0 460.0")
+        self.assertIsNotNone(root.find(".//*[@id='glow']"))
+        self.assertIsNotNone(root.find(".//*[@id='cabochon']"))
+
+    def test_star_reaching_past_the_stone_expands_the_bounds(self):
+        root = self.write(
+            mark_svg(
+                '<defs><filter id="glow"><feGaussianBlur stdDeviation="10"/>'
+                "</filter></defs>"
+                '<g id="cabochon"><g id="stone">'
+                '<ellipse cx="600" cy="500" rx="100" ry="200"/>'
+                '</g><g id="star"><polygon points="600,100 620,500 580,500"/>'
+                "</g></g>"
+            )
+        )
+        self.assertEqual(root.get("viewBox"), "270.0 70.0 660.0 660.0")
+
+    def test_wide_stone_pads_the_other_axis(self):
+        root = self.write(
+            mark_svg(
+                '<defs><filter id="glow"><feGaussianBlur stdDeviation="10"/>'
+                "</filter></defs>"
+                '<g id="cabochon"><g id="stone">'
+                '<ellipse cx="600" cy="500" rx="300" ry="100"/>'
+                "</g></g>"
+            )
+        )
+        self.assertEqual(root.get("viewBox"), "270.0 170.0 660.0 660.0")
+
+    def test_flat_coordinate_polygon_points_match_pair_form(self):
+        flat = MARK_FIXTURE.replace(
+            'points="600,300 620,500 580,500"', 'points="600 300 620 500 580 500"'
+        )
+        self.assertEqual(self.write(flat).get("viewBox"), "370.0 270.0 460.0 460.0")
+
+    def test_two_value_std_deviation_uses_the_wider_axis(self):
+        non_uniform = MARK_FIXTURE.replace('stdDeviation="10"', 'stdDeviation="4 10"')
+        self.assertEqual(
+            self.write(non_uniform).get("viewBox"), "370.0 270.0 460.0 460.0"
+        )
+
+    def test_malformed_star_points_and_blurs_are_rejected(self):
+        cases = {
+            "odd point count": (
+                MARK_FIXTURE.replace(
+                    'points="600,300 620,500 580,500"',
+                    'points="600,300 620,500 580"',
+                ),
+                "x/y pairs",
+            ),
+            "non-numeric point": (
+                MARK_FIXTURE.replace(
+                    'points="600,300 620,500 580,500"',
+                    'points="600,300 620,abc 580,500"',
+                ),
+                "points are not numeric",
+            ),
+            "non-numeric deviation": (
+                MARK_FIXTURE.replace('stdDeviation="10"', 'stdDeviation="wide"'),
+                "stdDeviation is not numeric",
+            ),
+            "three-value deviation": (
+                MARK_FIXTURE.replace('stdDeviation="10"', 'stdDeviation="1 2 3"'),
+                "one or two numbers",
+            ),
+        }
+        for name, (svg, message) in cases.items():
+            with self.subTest(malformed=name):
+                temporary = tempfile.TemporaryDirectory()
+                self.addCleanup(temporary.cleanup)
+                source = Path(temporary.name) / "source.svg"
+                source.write_text(svg)
+                target = Path(temporary.name) / "mark.svg"
+                with patch.object(package, "ICON_SOURCE", source):
+                    with self.assertRaisesRegex(package.PackageError, message):
+                        package.write_mark_icon(target)
+
+    def test_missing_parts_are_rejected(self):
+        cases = {
+            "cabochon": (
+                mark_svg(
+                    '<defs><filter id="g">'
+                    '<feGaussianBlur stdDeviation="1"/></filter></defs>'
+                ),
+                "cabochon and defs",
+            ),
+            "defs": (mark_svg('<g id="cabochon"/>'), "cabochon and defs"),
+            "stone": (
+                mark_svg(
+                    '<defs><filter id="g">'
+                    '<feGaussianBlur stdDeviation="1"/></filter></defs>'
+                    '<g id="cabochon"/>'
+                ),
+                "stone group",
+            ),
+            "geometry": (
+                mark_svg(
+                    '<defs><filter id="g">'
+                    '<feGaussianBlur stdDeviation="1"/></filter></defs>'
+                    '<g id="cabochon"><g id="stone"/></g>'
+                ),
+                "ellipse or star geometry",
+            ),
+            "blur": (
+                mark_svg(
+                    '<defs><filter id="g"/></defs>'
+                    '<g id="cabochon"><g id="stone">'
+                    '<ellipse cx="600" cy="500" rx="100" ry="200"/>'
+                    "</g></g>"
+                ),
+                "feGaussianBlur",
+            ),
+        }
+        for name, (svg, message) in cases.items():
+            with self.subTest(missing=name):
+                temporary = tempfile.TemporaryDirectory()
+                self.addCleanup(temporary.cleanup)
+                source = Path(temporary.name) / "source.svg"
+                source.write_text(svg)
+                target = Path(temporary.name) / "mark.svg"
+                with patch.object(package, "ICON_SOURCE", source):
+                    with self.assertRaisesRegex(package.PackageError, message):
+                        package.write_mark_icon(target)
 
 
 class IconGenerationTests(unittest.TestCase):
@@ -86,9 +243,14 @@ class IconGenerationTests(unittest.TestCase):
                 new_icon = site / "icon.png"
                 favicon = site / "favicon.png"
                 site_svg = site / "icon.svg"
+                imageset = root / "apps/ios/Lapis/Assets.xcassets/LapisMark.imageset"
+                mark_2x = imageset / "mark@2x.png"
+                mark_3x = imageset / "mark@3x.png"
                 assets = {
                     mac: b"previous mac",
                     phone: b"previous phone",
+                    mark_2x: b"previous mark 2x",
+                    mark_3x: b"previous mark 3x",
                     favicon: b"previous favicon",
                     site_svg: b"previous site svg",
                 }

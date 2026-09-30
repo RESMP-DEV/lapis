@@ -1,18 +1,37 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"
      viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
-  <title id="title">lapis — gold-star Cabochon</title>
+  <title id="title">lapis — Silk</title>
   <defs>
-    <linearGradient id="rim" x1="0" y1="0" x2=".78" y2="1">
-      <stop stop-color="#D2DCFF"/>
-      <stop offset=".32" stop-color="#899CE7"/>
-      <stop offset=".55" stop-color="#556BB7"/>
-      <stop offset="1" stop-color="#101B51"/>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#4A5FC8"/>
+      <stop offset="1" stop-color="#16225E"/>
     </linearGradient>
+    <linearGradient id="dome" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#3348BC"/>
+      <stop offset="1" stop-color="#1F2D79"/>
+    </linearGradient>
+    <radialGradient id="light" cx=".5" cy=".3" r=".8">
+      <stop stop-color="#FFFFFF" stop-opacity=".13"/>
+      <stop offset=".62" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="band" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset=".5" stop-color="#FFFFFF" stop-opacity=".17"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="shade" gradientUnits="userSpaceOnUse" cx="472" cy="400" r="430">
+      <stop offset=".55" stop-color="#0A1027" stop-opacity="0"/>
+      <stop offset="1" stop-color="#0A1027" stop-opacity=".55"/>
+    </radialGradient>
     <linearGradient id="edge" x1="0" y1="0" x2=".45" y2="1">
       <stop stop-color="#A3ADC6"/>
       <stop offset=".46" stop-color="#4C5874"/>
       <stop offset="1" stop-color="#0D1221"/>
     </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+    <clipPath id="fc"><ellipse cx="512" cy="502" rx="259" ry="330"/></clipPath>
   </defs>
   <g id="tile">
     <rect x="76" y="88" width="872" height="872" rx="206" fill="#0B0E19"/>
@@ -20,13 +39,17 @@
     <rect id="tile-face" x="84" y="84" width="856" height="856" rx="198" fill="#1C2234"/>
   </g>
   <g id="cabochon">
-    <ellipse cx="512" cy="522" rx="283" ry="354" fill="#0A1027"/>
-    <ellipse cx="512" cy="502" rx="283" ry="354" fill="url(#rim)"/>
-    <ellipse cx="512" cy="505" rx="265" ry="336" fill="#142466"/>
-    <ellipse cx="512" cy="502" rx="259" ry="330" fill="#293D9B"/>
-    <polygon points="512.00,257.40 526.50,458.87 689.54,372.20 541.00,487.00
-                     689.54,601.80 526.50,515.13 512.00,716.60 497.50,515.13
-                     334.46,601.80 483.00,487.00 334.46,372.20 497.50,458.87"
-             fill="#E5BF67"/>
+    <g id="stone">
+      <ellipse cx="512" cy="522" rx="283" ry="354" fill="#0A1027"/>
+      <ellipse cx="512" cy="502" rx="283" ry="354" fill="url(#rim)"/>
+      <ellipse cx="512" cy="502" rx="259" ry="330" fill="url(#dome)"/>
+      <ellipse cx="512" cy="502" rx="259" ry="330" fill="url(#light)"/>
+    </g>
+    <g id="silk" clip-path="url(#fc)"><rect x="352" y="110" width="150" height="800" fill="url(#band)" transform="rotate(28 512 512)"/></g>
+    <g id="star" fill="#FFFFFF">
+      <polygon points="512.00,172.00 530.00,452.08 738.02,340.85 548.00,487.00 747.52,639.29 530.00,521.92 512.00,832.00 494.00,521.92 276.48,639.29 476.00,487.00 285.98,340.85 494.00,452.08" filter="url(#glow)" opacity=".5"/>
+      <circle cx="512" cy="487" r="24" filter="url(#glow)" opacity=".5"/>
+      <polygon points="512.00,175.15 530.00,452.08 735.76,342.31 548.00,487.00 745.16,637.77 530.00,521.92 512.00,828.55 494.00,521.92 278.84,637.77 476.00,487.00 288.24,342.31 494.00,452.08" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round"/>
+    </g>
   </g>
 </svg>

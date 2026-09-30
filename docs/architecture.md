@@ -2137,11 +2137,16 @@ A release is `lapis.app` in a signed DMG, built by `scripts/package_macos.py`
 (procedure in [Contributing](../CONTRIBUTING.md#build-the-mac-app)).
 
 - **One icon source.** [assets/lapis.svg](../assets/lapis.svg) is the selected
-  gold-star Cabochon: solid ultramarine, a six-ray gold star and narrow edge
-  relief. The `icon` packaging command derives the Mac ICNS, iPhone asset and
-  website icons from it. The Mac keeps the approved framing; the iPhone uses
-  the same stone relative to an opaque tile, with corners supplied by iOS.
-  White-star and Material treatments remain design-study alternatives.
+  silk Cabochon: an ultramarine dome with raised rim and narrow edge relief, a
+  white six-ray star and a diagonal silk sheen. The `icon` packaging command
+  derives the Mac ICNS, iPhone asset, in-app mark and website icons from it.
+  The Mac keeps the approved framing; the iPhone uses the same stone relative
+  to an opaque tile, with corners supplied by iOS, and its toolbar mark is the
+  stone alone on transparency. The unpicked study variant is Contour: the same
+  artwork with the `shade` rim vignette painted on. Its signature is exactly
+  that painted `shade` reference, so the canonical silk SVG keeps the gradient
+  defined but unreferenced; the def is the template's variant switch, not dead
+  weight.
 - **Qt built for lapis.** The official Qt 6.11.2 macOS binaries are built without
   Vulkan (`QT_FEATURE_vulkan` is off), and Homebrew's Qt requires macOS 26 and
   brings glib, ICU, OpenSSL and a dozen other libraries. The release builds
@@ -2971,17 +2976,19 @@ must be closed before publishing binaries; the Mac app's are collected above. Th
 of a local milestone passing. Keep current implementation status in the README;
 the tables here define work order and acceptance only.
 
-### The gold star cabochon icon (September 27)
+### The silk cabochon icon (September 28)
 
-The icon is a tall cabochon of solid lapis blue (#293D9B) with a raised rim
-and a gold (#E5BF67) six-ray star on #1C2234. Its simplified shape remains
-readable at 16 px. [assets/lapis.svg](../assets/lapis.svg) is the single SVG
-source for the app and website icons.
+The icon is a tall cabochon of lapis blue with a raised rim, a white six-ray
+star and a diagonal silk sheen band, on the dark #1C2234 tile. Its simplified
+shape remains readable at 16 px. [assets/lapis.svg](../assets/lapis.svg) is the
+single SVG source for the app and website icons.
 
 `package_macos.py icon` renders the Mac ICNS at every scale, the iPhone app
-icon, and the website SVG/PNG directly from that source. The iPhone export
-uses the tile bounds and background color for an opaque square, leaving corner
-masking to iOS. The phone's in-app LapisMark assets remain the stone alone.
+icon, the phone's in-app LapisMark and the website SVG/PNG directly from that
+source. The iPhone export uses the tile bounds and background color for an
+opaque square, leaving corner masking to iOS. The in-app LapisMark assets are
+the stone alone on transparency, regenerated at 48 and 72 px for its 24 pt
+toolbar frame.
 
 ### The phone follows the Mac's category order (September 28)
 
