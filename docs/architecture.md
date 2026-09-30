@@ -2954,7 +2954,7 @@ these tables, not the parity statements.
 Splits and tiling, window arrangements with process restore, request-aware
 notifications, undo-close and the command palette are already at parity or
 better. Rectangular and multi-click selection, link hover feedback and
-terminal accessibility remain tracked terminal-fidelity gaps in the README
+terminal accessibility remain tracked terminal-fidelity gaps in [status](status.md)
 status table; this re-ordering does not change their queue. The valuable
 deltas are attention reach and ergonomics:
 
@@ -3140,7 +3140,7 @@ planned; they are not implied by Milestone 3 passing.
 
 Dependency notices, a complete bundled inventory/SBOM and redistribution obligations
 must be closed before publishing binaries; the Mac app's are collected above. This release requirement is independent
-of a local milestone passing. Keep current implementation status in the README;
+of a local milestone passing. Keep current implementation status in [status](status.md);
 the tables here define work order and acceptance only.
 
 ### The silk cabochon icon (September 28)
