@@ -272,7 +272,8 @@ def acceptance(events):
     failures = defaultdict(int)
     for e in events:
         if e.get("event") == "failed":
-            reason = re.sub(r"[0-9]+", "#", str(e.get("error", "")))[:60]
+            # Long numbers (ids, times) vary; short ones (exit codes) matter.
+            reason = re.sub(r"[0-9]{4,}", "#", str(e.get("error", "")))[:60]
             failures["{}: {}".format(e.get("stage", "?"), reason)] += 1
     shown = [o for o in offers.values() if o.get("shown")]
     seen = [o for o in shown if o["seen"]]
@@ -362,6 +363,11 @@ def log(arguments):
                 str(o["turn"]),
             ],
         )
+        if answer.get("error"):
+            print(
+                "actual for {}: {}".format(o["conversation"], answer["error"]),
+                file=sys.stderr,
+            )
         if answer.get("text"):
             graded.append(
                 {

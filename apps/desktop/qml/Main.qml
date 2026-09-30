@@ -3285,7 +3285,9 @@ ApplicationWindow {
                         if (predicting)
                             nextPrompt.used(document.sessionId, sent, typedFirst)
                     }
-                    suggestionKey: suggestion.length > 0 ? nextPrompt.offerKey(document.sessionId) : ""
+                    // Follows every offer, even one with the same words as the last.
+                    suggestionKey: suggestion.length > 0 && nextPrompt.revision >= 0
+                                   ? nextPrompt.offerKey(document.sessionId) : ""
                     tabAway: function() {
                         return predicting && workspace.nextPriorityAttention(nextPrompt.readyAgents())
                     }

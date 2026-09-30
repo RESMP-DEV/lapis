@@ -481,8 +481,12 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
     // by an earlier build moves there.
     const auto log = data.filePath(QStringLiteral("runtime/next_prompt.jsonl"));
     if (const auto earlier = data.filePath(QStringLiteral("next_prompt.jsonl"));
-        QFileInfo::exists(earlier) && !QFileInfo::exists(log))
-        QFile::rename(earlier, log);
+        QFileInfo::exists(earlier) && !QFileInfo::exists(log)) {
+        QDir().mkpath(data.filePath(QStringLiteral("runtime")),
+                      QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        if (!QFile::rename(earlier, log))
+            qWarning().noquote() << "Next prompt: could not move the earlier log into runtime/";
+    }
     auto& next = kept.emplace(
         [&workspace](const QString& id) -> std::optional<NextPrompt::Agent> {
             const auto* item = workspace.session(id);

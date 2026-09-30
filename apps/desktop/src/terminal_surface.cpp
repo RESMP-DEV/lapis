@@ -1558,7 +1558,7 @@ bool TerminalSurface::suggestionWhole() const {
 // moves to the next agent that needs you, and is the program's own when none
 // does. Typing keeps the suggestion; what was typed first is counted.
 bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
-    if (!tab_flow_ || modifier_key(event.key()))
+    if (!tab_flow_ || !document_ || modifier_key(event.key()))
         return false;
     const auto modifiers = event.modifiers() & ~Qt::KeypadModifier;
     const bool tab = event.key() == Qt::Key_Tab && modifiers == Qt::NoModifier;
