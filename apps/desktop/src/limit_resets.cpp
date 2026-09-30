@@ -198,7 +198,7 @@ LimitResets::~LimitResets() {
         if (run->process)
             run->process->stopGroup();
 }
-void LimitResets::setSettings(LimitResetSettings settings) {
+void LimitResets::setSettings(const LimitResetSettings& settings) {
     settings_ = settings;
     if (!settings_.automatic) {
         timer_.stop();
@@ -292,7 +292,8 @@ bool LimitResets::loadState(const std::shared_ptr<Run>& pending) {
 }
 void LimitResets::readCredentials(const std::shared_ptr<Run>& pending) {
     const auto& t = pending->target;
-    const bool ownClaude = t.machine.isEmpty() && t.cli == QLatin1String("claude") &&
+    const bool ownClaude = t.credential.isEmpty() && t.machine.isEmpty() &&
+                           t.cli == QLatin1String("claude") &&
                            (t.account.isEmpty() || (t.hasHome && t.home.isEmpty()));
     if (!ownClaude || !credentials_) {
         start(pending);
@@ -344,6 +345,10 @@ QStringList LimitResets::arguments(const Run& run) const {
                  : QString());
     args << QStringLiteral("--machine")
          << (run.target.machine.isEmpty() ? QStringLiteral("local") : run.target.machine);
+    if (!run.target.credential.isEmpty())
+        args << (run.target.cli == QLatin1String("claude") ? QStringLiteral("--claude-token-file")
+                                                           : QStringLiteral("--codex-home"))
+             << run.target.credential;
     if (run.phase == Phase::prepare)
         args << QStringLiteral("--prepare");
     else {

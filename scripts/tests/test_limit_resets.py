@@ -150,6 +150,91 @@ class PlanTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
+    def test_codex_reports_its_windows_and_soonest_reset(self):
+        answers = {
+            "/wham/usage": {
+                "email": "someone@example.com",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 100,
+                        "limit_window_seconds": 5 * HOUR,
+                        "reset_at": NOW + 2 * HOUR,
+                    },
+                    "secondary_window": {
+                        "used_percent": 40,
+                        "limit_window_seconds": 7 * 24 * HOUR,
+                        "reset_at": NOW + 3 * 24 * HOUR,
+                    },
+                },
+            },
+            "/wham/rate-limit-reset-credits": {
+                "credits": [
+                    {"title": "No id", "expires_at": NOW + HOUR},
+                    {"id": "used", "status": "redeemed", "expires_at": NOW + HOUR},
+                    {"id": "later", "expires_at": NOW + 9 * 24 * HOUR},
+                    {
+                        "id": "soon",
+                        "title": "Banked",
+                        "expires_at": NOW + 2 * 24 * HOUR,
+                    },
+                ]
+            },
+        }
+
+        def answer(url, headers, body=None, timeout=15):
+            self.assertEqual(headers.get("ChatGPT-Account-Id"), "acct")
+            return 200, answers[url.removeprefix(limit_resets.CODEX_API)]
+
+        with tempfile.TemporaryDirectory() as home:
+            Path(home, "auth.json").write_text(
+                json.dumps({"tokens": {"access_token": "a", "account_id": "acct"}})
+            )
+            with (
+                patch.object(limit_resets, "request", answer),
+                patch.object(limit_resets.time, "time", return_value=NOW),
+            ):
+                account = limit_resets.Codex(home=home)
+                windows, spend = account.read()
+        self.assertEqual(account.email, "someone@example.com")
+        self.assertEqual(
+            windows,
+            {
+                "five_hour": (1.0, NOW + 2 * HOUR),
+                "seven_day": (0.4, NOW + 3 * 24 * HOUR),
+            },
+        )
+        self.assertEqual(
+            (spend["id"], spend["title"], spend["remaining"]), ("soon", "Banked", 2)
+        )
+
+    def test_a_plan_token_file_and_an_undated_sign_in_are_used(self):
+        with tempfile.TemporaryDirectory() as folder:
+            token = Path(folder, "work.token")
+            token.write_text("plan-token\n")
+            self.assertEqual(limit_resets.claude_token(None, str(token)), "plan-token")
+            with self.assertRaises(limit_resets.Unavailable):
+                limit_resets.claude_token(None, str(Path(folder, "missing.token")))
+        undated = {"claudeAiOauth": {"accessToken": "kept", "expiresAt": 0}}
+        with patch.dict(limit_resets.os.environ, {"CLAUDE_CONFIG_DIR": "/nonexistent"}):
+            self.assertEqual(limit_resets.claude_token(undated), "kept")
+
+    def test_a_retried_spend_reuses_its_request_id(self):
+        sent = []
+
+        def answer(url, headers, body=None, timeout=15):
+            sent.append(body)
+            return 200, {"result": "reset"}
+
+        claude = limit_resets.Claude.__new__(limit_resets.Claude)
+        claude.headers, claude.org = {}, "org"
+        with patch.object(limit_resets, "request", answer):
+            claude.spend(credit(), "block|k")
+            claude.spend(credit(), "block|k")
+            claude.spend(credit(), "block|other")
+        ids = [body["request_id"] for body in sent]
+        self.assertEqual(ids[0], ids[1])
+        self.assertNotEqual(ids[0], ids[2])
+
     def test_claude_reports_its_windows_and_selected_reset(self):
         usage = {
             "five_hour": {
@@ -406,10 +491,6 @@ class TwoPhaseTests(unittest.TestCase):
             ([("other", operation)], "reset", True),
         )
         self.assertEqual(self.Account.reads, ["other"])
-        request_id = limit_resets.Claude.consume_id(operation, {"id": "other"})
-        self.assertEqual(
-            limit_resets.Claude.consume_id(operation, {"id": "other"}), request_id
-        )
 
     def test_transport_failure_is_unknown_and_keeps_the_operation(self):
         def fail(self, chosen, operation=None):

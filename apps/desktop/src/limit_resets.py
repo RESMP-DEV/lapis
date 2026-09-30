@@ -104,9 +104,11 @@ def parse_time(value):
 # Claude Code ---------------------------------------------------------------
 
 
-def claude_token(given=None):
+def claude_token(given=None, token_file=None):
     """Claude Code's current access token: what lapis read from the Mac's
     keychain and passed on stdin, else Claude Code's credentials file."""
+    if token_file is not None:
+        return read_claude_token_file(token_file)
     home = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
     candidates = [given] if given is not None else []
     if given is None:
@@ -142,16 +144,24 @@ def claude_plan_token(name: str) -> str:
         or name in (".", "..")
     ):
         raise Unavailable("invalid Claude plan name")
-    path = os.path.expanduser(f"~/.lapis/accounts/claude/{name}.token")
+    return read_claude_token_file(f"~/.lapis/accounts/claude/{name}.token", name)
+
+
+def read_claude_token_file(path: str, plan: str = "") -> str:
     try:
-        with open(path, encoding="utf-8") as file:
-            token = file.read(8192).strip()
-    except OSError:
+        with open(os.path.expanduser(path), encoding="utf-8") as file:
+            text = file.read(8193)
+    except (OSError, UnicodeError):
         raise Unavailable(
-            f"Claude plan {name} has no usable token on this machine"
+            f"Claude plan {plan} has no usable token on this machine"
         ) from None
-    if not token or "\n" in token or "\0" in token:
-        raise Unavailable(f"Claude plan {name} has no usable token on this machine")
+    token = text.strip()
+    if (
+        len(text) > 8192
+        or not token
+        or any(char in token for char in ("\n", "\r", "\0"))
+    ):
+        raise Unavailable(f"Claude plan {plan} has no usable token on this machine")
     return token
 
 
@@ -253,8 +263,12 @@ def claude_credit(usage, at_wall):
 class Claude:
     cli = "claude"
 
-    def __init__(self, given=None, plan="", plan_home="local", machine="local"):
-        if plan:
+    def __init__(
+        self, given=None, plan="", plan_home="local", machine="local", token_file=None
+    ):
+        if token_file is not None:
+            self.token = claude_token(given, token_file)
+        elif plan:
             if plan_home == machine:
                 self.token = claude_token(given if machine == "local" else None)
             else:
@@ -387,9 +401,15 @@ def codex_credits(listing):
 class Codex:
     cli = "codex"
 
-    def __init__(self, given=None, plan="", plan_home="local", machine="local"):
+    def __init__(
+        self, given=None, plan="", plan_home="local", machine="local", home=None
+    ):
         del given
-        if plan:
+        if home is not None:
+            if not home:
+                raise Unavailable("selected Codex home is empty")
+            home = os.path.expanduser(home)
+        elif plan:
             if (
                 not isinstance(plan, str)
                 or not PLAN_NAME.fullmatch(plan)
@@ -710,17 +730,25 @@ def sweep(arguments):
         report = {"cli": kind.cli, "plan": selected_plan, "machine": machine}
         accounts.append(report)
         try:
+            credential = getattr(
+                arguments, "claude_token_file" if kind is Claude else "codex_home", None
+            )
+            options = (
+                {}
+                if credential is None
+                else {"token_file" if kind is Claude else "home": credential}
+            )
             if kind is Claude:
                 account = (
-                    kind(given)
+                    kind(given, **options)
                     if not selected_plan
-                    else kind(given, selected_plan, plan_home, machine)
+                    else kind(given, selected_plan, plan_home, machine, **options)
                 )
             else:
                 account = (
-                    kind()
+                    kind(**options)
                     if not selected_plan
-                    else kind(None, selected_plan, plan_home, machine)
+                    else kind(None, selected_plan, plan_home, machine, **options)
                 )
 
             if not prepare and not reconcile and not wants_spend:
@@ -1008,6 +1036,12 @@ def main(argv=None):
         "--reconcile-only",
         action="store_true",
         help="read the persisted credit without consuming it again",
+    )
+    parser.add_argument(
+        "--claude-token-file", help="exact token path supplied by the workspace"
+    )
+    parser.add_argument(
+        "--codex-home", help="exact Codex home supplied by the workspace"
     )
     parser.add_argument("--claude-plan", help="use this configured Claude plan")
     parser.add_argument("--claude-plan-home", default="local")

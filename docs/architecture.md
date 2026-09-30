@@ -3396,8 +3396,10 @@ quits on a Mac with no BTM entry for it yet; that is not yet measured.
 The reset controller targets the account actually selected for a Claude Code or
 Codex session. `Workspace::agentAccount()` supplies the configured plan; its
 home uses the machine sign-in, while a visiting plan uses only that plan's setup
-token or Codex home. Missing credentials or a changed provider email refuse the
-operation. Local Claude keychain data travels on stdin and never silently falls
+token or Codex home. The workspace supplies the exact credential location through
+`agentPlanCredential()`, including custom roots, rather than deriving a second
+path in the reset controller. Missing credentials or a changed provider identity
+refuse the operation. Local Claude keychain data travels on stdin and never silently falls
 back to a different credential file.
 
 The helper retains the restore/salvage policy from OMP: restore when a window is

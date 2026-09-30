@@ -69,7 +69,7 @@ if phase == 'prepare' and (root/'block-state').exists():
 module = types.ModuleType('tested_reset_helper')
 exec(compile(source, 'embedded_limit_resets.py', 'exec'), module.__dict__)
 class Account:
-    def __init__(self, *unused):
+    def __init__(self, *unused, **options):
         self.org, self.account = 'fixture-org', 'fixture-account'
         if phase != 'prepare' and (root/'change-account-id').exists():
             self.org, self.account = 'another-org', 'another-account'
@@ -126,6 +126,9 @@ struct Fixture {
                         {}});
     }
     void start() {
+        for (auto& target : targets)
+            if (!target.account.isEmpty())
+                target.credential = root.filePath(target.account + QStringLiteral(".credential"));
         controller = std::make_unique<LimitResets>(
             [this] { return targets; },
             [this](const QString& id) { return targets.at(id.toInt()); },
@@ -192,6 +195,9 @@ void admissionAndAccountIsolation() {
     require(f.declined.size() == 1, "concurrent manual reset was refused");
     require(f.credential_reads == 0, "a visiting plan must not read the machine keychain");
     const auto args = calls[1].value("args").toArray();
+    require(args.contains(QStringLiteral("--claude-token-file")) &&
+                args.contains(f.targets[0].credential),
+            "the workspace's exact credential override reaches the helper");
     require(args.contains(QStringLiteral("visiting")) &&
                 args.contains(QStringLiteral("account-home")) &&
                 args.contains(QStringLiteral("--expected-email")),

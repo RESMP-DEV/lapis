@@ -1982,6 +1982,8 @@ exec sleep 600
         require(here != nullptr && shows(here, "plan own") &&
                     workspace.agentAccount(here->sessionId()) == QStringLiteral("mine"),
                 "it runs on this Mac's own sign-in");
+        require(workspace.agentPlanCredential(here->sessionId()).isEmpty(),
+                "an own sign-in has no visiting credential override");
         require(workspace.createAgent(QStringLiteral("~/far"), QStringLiteral("far"), claude, {},
                                       {}, QStringLiteral("devbox")),
                 "a Claude agent on another machine");
@@ -2008,6 +2010,8 @@ exec sleep 600
         require(next != nullptr && shows(next, "plan token-for-spare") &&
                     workspace.agentAccount(next->sessionId()) == QStringLiteral("spare"),
                 "a new session takes the plan with room, its token in the environment");
+        require(workspace.agentPlanCredential(next->sessionId()) == token.fileName(),
+                "reset and launch use the same configured credential root");
 
         require(waitFor([&] { return far->inputReady(); }, 10000), "remote input is ready");
         // Drive the output estimate explicitly: instrumented transports may
@@ -2058,6 +2062,9 @@ exec sleep 600
                         conversation.match(first).captured(1) &&
                     workspace.agentAccount(far_id) == QStringLiteral("spare"),
                 "it reads the kept token there and resumes the same conversation");
+        require(workspace.agentPlanCredential(far_id) ==
+                    QStringLiteral("~/.lapis/accounts/claude/spare.token"),
+                "remote credential lookup retains the remote user's home");
 
         workspace.setAccountLoads({});
         require(

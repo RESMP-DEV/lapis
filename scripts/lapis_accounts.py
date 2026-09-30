@@ -372,7 +372,7 @@ def command_sign_in(config: dict, hosts: list[str] | None = None, ask=input) -> 
         if not isinstance(name, str) or not NAME.fullmatch(name) or name in (".", ".."):
             print("skipping a plan with an unusable name")
             continue
-        if not isinstance(email, str) or not email.strip():
+        if not isinstance(email, str) or not email.strip() or "@" not in email:
             print(f"skipping {name}: plan has no usable email")
             continue
         if not (ACCOUNTS / "claude" / f"{name}.token").exists():

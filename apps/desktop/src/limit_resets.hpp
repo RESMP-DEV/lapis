@@ -41,6 +41,7 @@ class LimitResets final : public QObject {
         bool hasHome{};
         QString email;
         QString refusal;
+        QString credential{};
     };
     using Agents = std::function<QVector<AgentTarget>()>;
     using Agent = std::function<AgentTarget(const QString& id)>;
@@ -52,7 +53,7 @@ class LimitResets final : public QObject {
     LimitResets(const LimitResets&) = delete;
     LimitResets& operator=(const LimitResets&) = delete;
 
-    void setSettings(LimitResetSettings settings);
+    void setSettings(const LimitResetSettings& settings);
     void setInterval(int ms) { timer_.setInterval(ms); }
     void sweep();
     Q_INVOKABLE [[nodiscard]] bool canUseNow(const QString& id) const;

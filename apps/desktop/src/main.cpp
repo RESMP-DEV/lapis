@@ -468,6 +468,7 @@ lapis::desktop::LimitResets::AgentTarget reset_target(const lapis::desktop::Work
     result.machine = workspace.agentPlace(id).value(QStringLiteral("machine")).toString();
     result.cli = item->harnessId();
     result.account = workspace.agentAccount(id);
+    result.credential = workspace.agentPlanCredential(id);
     if (!result.account.isEmpty()) {
         result.refusal = QStringLiteral("the selected plan is no longer configured");
         for (const auto& account : keymap.accounts().accounts)
