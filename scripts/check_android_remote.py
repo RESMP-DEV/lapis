@@ -805,16 +805,35 @@ def checks(device, mac, screens):
         # the bar through the stored setting. Runs on a plain launch (no
         # commandBarEnabled extra) so no override masks the setting — every
         # other launch in this suite forces the bar on.
-        def set_switch(on):
-            device.tap_node(id="settings")
+        def set_switch(on, already_open=False):
+            if not already_open:
+                device.tap_node(id="settings")
             switch = device.wait(id="command-bar-setting", timeout=10)
             if switch is None:
                 return "the command bar switch never appeared"
-            # Read the state instead of tapping blind, so the check is
-            # deterministic whatever a previous run or manual session left.
-            if switch.get("checked") != on:
+            # The switch stays disabled until its stored-value read lands
+            # (SettingsScreen gates it on readLanded), and a tap on a
+            # disabled control is a silent no-op: poll for the node to
+            # report itself enabled first. Dumps that never carry the
+            # attribute fall through after the poll instead of wedging.
+            deadline = time.monotonic() + 5
+            while switch.get("enabled") is not True and time.monotonic() < deadline:
+                time.sleep(0.2)
+                switch = device.find(id="command-bar-setting")
+                if switch is None:
+                    return "the command bar switch vanished from the settings screen"
+            checked = switch.get("checked")
+            if checked is None:
+                # Without a reported state the tap would be blind and could
+                # invert an already-correct switch: fail as a harness-side
+                # probe gap, not a product defect.
+                return "the settings switch reported no checked state to the dump"
+            if checked != on:
                 device.tap_node(id="command-bar-setting")
                 time.sleep(0.4)
+                after = device.find(id="command-bar-setting")
+                if after is None or after.get("checked") != on:
+                    return "the settings switch did not flip after the tap"
             device.tap_node(text="Done")
             if device.wait(id="settings", timeout=10) is None:
                 return "Done never returned to the workspace list"
@@ -841,26 +860,36 @@ def checks(device, mac, screens):
         device.launch(fresh=True, command_bar=None)
         if device.wait(text="echo agent", timeout=25) is None:
             return "the workspace list never came back"
-        # From a known-on state: the read path shows the bar...
-        problem = set_switch(True)
-        if problem is not None:
+        problem: str | None = None
+        try:
+            # From a known-on state: the read path shows the bar...
+            problem = set_switch(True)
+            if problem is None:
+                problem = open_stage(expect_bar=True)
+            if problem is None:
+                shot("13-bar-shown")
+                # ...and hiding it through Settings removes it on re-entry.
+                device.tap_node(id="back")
+                problem = set_switch(False)
+            if problem is None:
+                problem = open_stage(expect_bar=False)
+            if problem is None:
+                shot("14-bar-hidden")
             return problem
-        problem = open_stage(expect_bar=True)
-        if problem is not None:
-            return problem
-        shot("13-bar-shown")
-        # ...and hiding it through Settings removes it on the next entry.
-        device.tap_node(id="back")
-        problem = set_switch(False)
-        if problem is not None:
-            return problem
-        problem = open_stage(expect_bar=False)
-        if problem is not None:
-            return problem
-        shot("14-bar-hidden")
-        # Leave the setting on for the next run.
-        device.tap_node(id="back")
-        return set_switch(True)
+        finally:
+            # Leave the setting on whatever happened above: a failed run
+            # must not leave the device stored-off for the next
+            # store-honoring launch (this check's own next run). Best
+            # effort — a device wedged hard enough to break the restore
+            # too will surface that in its own right.
+            if device.find(id="terminal") is not None:
+                device.tap_node(id="back")
+                time.sleep(0.3)
+            already_open = device.find(id="command-bar-setting") is not None
+            try:
+                set_switch(True, already_open=already_open)
+            except Exception:
+                pass
 
     def check_crash():
         crashes = device.crash_lines()

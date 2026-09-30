@@ -16,7 +16,8 @@ DUMP = """<?xml version='1.0' encoding='UTF-8'?>
         clickable="false" />
   <node index="1" text="echo agent" resource-id="agent-echo agent"
         class="android.view.View" package="dev.lapis.remote" content-desc=""
-        bounds="[16,200][892,280]" clickable="true" checked="true" />
+        bounds="[16,200][892,280]" clickable="true" checked="true"
+        enabled="true" />
   <node index="2" text="" resource-id="terminal" class="android.view.View"
         package="dev.lapis.remote"
         content-desc="&#8250; ping from phone&#10;echo: ping from phone"
@@ -24,7 +25,7 @@ DUMP = """<?xml version='1.0' encoding='UTF-8'?>
   <node index="3" text="Settings" resource-id="settings"
         class="android.widget.TextView" package="dev.lapis.remote"
         content-desc="" bounds="[700,80][860,140]" clickable="false"
-        checked="false" />
+        checked="false" enabled="false" />
   <node index="4" text="echo agent" resource-id="" class="android.widget.TextView"
         package="dev.lapis.remote" content-desc="" bounds="[80,220][700,260]"
         clickable="false" />
@@ -62,8 +63,11 @@ class DumpTest(unittest.TestCase):
         self.assertEqual(by_id["settings"]["text"], "Settings")
         self.assertTrue(by_id["agent-echo agent"]["clickable"])
         self.assertTrue(by_id["agent-echo agent"]["checked"])
+        self.assertTrue(by_id["agent-echo agent"]["enabled"])
         self.assertFalse(by_id["settings"]["checked"])
+        self.assertFalse(by_id["settings"]["enabled"])
         self.assertNotIn("checked", by_id["terminal"])
+        self.assertNotIn("enabled", by_id["terminal"])
 
     def test_select_by_exact_id_text_and_desc(self):
         self.assertEqual(len(android_ctl.select(self.nodes, id="terminal")), 1)

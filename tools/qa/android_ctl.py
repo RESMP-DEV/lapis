@@ -110,10 +110,15 @@ def parse_dump(xml_text: str) -> list[dict]:
             continue
         node = {"bounds": list(bounds), "clickable": element.get("clickable") == "true"}
         # Switches and checkables expose their state only here; the settings
-        # toggle check reads it to avoid tapping blind.
+        # toggle check reads it to avoid tapping blind, and `enabled` tells
+        # the caller a disabled control (the settings switch stays disabled
+        # until its stored-value read lands) will ignore taps.
         checked = element.get("checked")
         if checked is not None:
             node["checked"] = checked == "true"
+        enabled = element.get("enabled")
+        if enabled is not None:
+            node["enabled"] = enabled == "true"
         for key, attribute in (
             ("id", "resource-id"),
             ("text", "text"),
