@@ -2,7 +2,8 @@
 
     uv run --no-project python apps/remote/launch_agent.py install|uninstall|status
 
-The agent starts at login, restarts if it exits, and waits for Tailscale.
+The agent starts at login, restarts if it exits, and serves whichever of
+Tailscale or ZeroTier answers.
 It logs requests (paths and status only) to ~/Library/Logs/lapis-remote.log.
 """
 
@@ -28,20 +29,23 @@ def launchctl(*arguments, check=False):
 
 
 def install():
+    """Install with whichever overlays the Mac has; the gateway refuses to
+    serve without at least one of tailscale or zerotier-cli answering."""
     tailscale = shutil.which("tailscale")
-    if tailscale is None:
-        raise SystemExit("tailscale is not on PATH")
+    zerotier = shutil.which("zerotier-cli")
+    if tailscale is None and zerotier is None:
+        raise SystemExit("neither tailscale nor zerotier-cli is on PATH")
+    arguments = [sys.executable, str(GATEWAY)]
+    if tailscale is not None:
+        arguments += ["--tailscale", tailscale]
+    if zerotier is not None:
+        arguments += ["--zerotier", zerotier]
     PLIST.parent.mkdir(parents=True, exist_ok=True)
     PLIST.write_bytes(
         plistlib.dumps(
             {
                 "Label": LABEL,
-                "ProgramArguments": [
-                    sys.executable,
-                    str(GATEWAY),
-                    "--tailscale",
-                    tailscale,
-                ],
+                "ProgramArguments": arguments,
                 "RunAtLoad": True,
                 "KeepAlive": True,
                 "ThrottleInterval": 10,

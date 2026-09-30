@@ -28,6 +28,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -87,6 +88,7 @@ fun WorkspaceScreen(
     refreshing: Boolean,
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenAgent: (Agent) -> Unit,
 ) {
     Scaffold(
         containerColor = LapisColors.background,
@@ -99,7 +101,10 @@ fun WorkspaceScreen(
                     )
                 },
                 actions = {
-                    TextButton(onClick = onOpenSettings) { Text("Settings") }
+                    TextButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier.testTag("settings"),
+                    ) { Text("Settings") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = LapisColors.background,
@@ -115,7 +120,7 @@ fun WorkspaceScreen(
         ) {
             when {
                 host.isEmpty() -> ConnectToMac(onOpenSettings)
-                listing != null -> WorkspaceList(listing, error, onRefresh)
+                listing != null -> WorkspaceList(listing, error, onOpenAgent)
                 error != null -> CantReach(error, onRefresh, onOpenSettings)
                 else -> Row(
                     modifier = Modifier.align(Alignment.Center),
@@ -190,7 +195,11 @@ private fun CantReach(error: String, onRefresh: () -> Unit, onOpenSettings: () -
 }
 
 @Composable
-private fun WorkspaceList(listing: WorkspaceListing, error: String?, onRefresh: () -> Unit) {
+private fun WorkspaceList(
+    listing: WorkspaceListing,
+    error: String?,
+    onOpenAgent: (Agent) -> Unit,
+) {
     LazyColumn(Modifier.fillMaxSize()) {
         if (error != null) {
             item(key = "error") {
@@ -218,9 +227,7 @@ private fun WorkspaceList(listing: WorkspaceListing, error: String?, onRefresh: 
                 }
             }
             items(category.agents, key = { it.id }) { agent ->
-                // Cards are the list's navigation affordance; the stage opens
-                // in milestone B, so tapping refreshes for now.
-                AgentCard(agent = agent, onClick = onRefresh)
+                AgentCard(agent = agent, onClick = { onOpenAgent(agent) })
             }
         }
     }
@@ -249,6 +256,9 @@ private fun AgentCard(agent: Agent, onClick: () -> Unit) {
         modifier = Modifier
             .padding(horizontal = 16.dp, vertical = 5.dp)
             .fillMaxWidth()
+            // The id, not the title: titles repeat (two agents named the
+            // same) and rename, which made uiautomator matches ambiguous.
+            .testTag("agent-${agent.id}")
             .clickable(onClick = onClick)
             .background(
                 Brush.verticalGradient(listOf(LapisColors.panel, LapisColors.panelDeep)),

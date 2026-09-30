@@ -221,10 +221,18 @@ class LapisGateway(
         )
     }
 
-    /** The page before [before] (0: the newest), or with [after], the page after it. */
-    suspend fun history(agent: String, before: Long = 0, after: Long? = null): HistoryPage {
-        val item = if (after != null) "after=$after" else "before=$before"
-        return get("api/agents/$agent/history", item, HistoryPage.serializer())
+    /** The page before [before] (0: the newest), with [after] the page after it, or with [at] the page holding that row (0 the oldest kept row). */
+    suspend fun history(agent: String, before: Long = 0, after: Long? = null, at: Int? = null): HistoryPage {
+        require(after == null || at == null) { "history: at and after are mutually exclusive" }
+        return get(
+            "api/agents/$agent/history",
+            query(
+                "at" to at?.toString(),
+                "after" to after?.toString(),
+                "before" to before.takeIf { at == null && after == null }?.toString(),
+            ),
+            HistoryPage.serializer(),
+        )
     }
 
     /**

@@ -1,9 +1,23 @@
 # lapis Android client design
 
-Date: 2026-09-27. Status: in execution on `feature/android-client`. The
+Date: 2026-09-27. Status: in execution on `feature/android-stage` (cut from
+origin/main at 87999470a043 after the earlier scaffold consolidated through
+the android-local and android-tools merges; supersedes the pushed
+`feature/android-client` head). The
 gateway changes (Android admission, ZeroTier overlay) and iOS transport
 compatibility are implemented and checked; milestone A's Android scaffold is
-code-complete with JVM tests, pending device verification. This file is the
+code-complete with JVM tests, pending overlay device verification (the phone
+must join the private network). Milestone B (AgentSession, terminal
+renderer, composer, history paging) is implemented, unit-tested, and
+device-verified on the Z Fold cover screen with the fake-agent harness
+(`scripts/check_android_remote.py` over `adb reverse`): list, open, typing
+and Mac/phone sync, draft retention, scrollback paging, resize re-grid,
+background/return, and crash scan all green. The live agent in those runs is
+the deterministic `fake_agent` fixture riding the same PTY/service path a
+real Codex agent would; no real Codex CLI session has been driven from the
+Android app yet. That live-CLI run is pending, folded into the milestone
+A/D overlay device gates so it exercises the production transport rather
+than adb reverse. This file is the
 working spec for the Android companion client. When the first milestone
 lands on a device, this content consolidates into `docs/architecture.md`
 and this file is removed, per the workspace rule that architecture.md is

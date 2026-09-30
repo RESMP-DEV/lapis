@@ -136,6 +136,8 @@ data class ScreenFrame(
     val cursor: Cursor,
     val alternateScreen: Boolean,
     val applicationCursor: Boolean,
+    /** A full-screen program whose Mac service takes the wheel: dragging scrolls the program, not the archived history. Older gateways send none. */
+    val wheel: Boolean? = null,
     val foreground: String,
     val background: String,
     val lines: List<List<Run>>,
@@ -240,7 +242,18 @@ data class HistoryPage(
     val busy: Boolean,
     val columns: Int? = null,
     val lines: List<List<Run>>? = null,
-)
+    /** Where the page sits among every kept row, when the service says so; a service that reports it can jump to any row. Older gateways send none. */
+    val place: Place? = null,
+) {
+    @Serializable
+    data class Place(
+        val total: Int,
+        val offset: Int,
+        val rows: Int,
+        /** Older gateways send none; absent means "unchanged from the last word". */
+        val scrubbable: Boolean? = null,
+    )
+}
 
 @Serializable
 data class StreamStatus(
@@ -290,10 +303,25 @@ data class Input(
     val key: String? = null,
     val modifiers: Int? = null,
     val resize: List<Int>? = null,
+    /** Wheel notches (positive scrolls back), column, row. */
+    val wheel: List<Int>? = null,
 ) {
     companion object {
         /** Modifier nibble on `key`: shift = 1, control = 2, alt = 4. */
         fun key(key: Key, shift: Boolean = false): Input =
             Input(key = key.wire, modifiers = if (shift) 1 else 0)
+
+        /** Wheel notches, column, row, clamped to the gateway's bounds. The
+         *  gateway refuses zero notches, so a zero never becomes a request. */
+        fun wheel(notches: Int, column: Int, row: Int): Input {
+            require(notches != 0, { "wheel notches must not be zero" })
+            return Input(
+                wheel = listOf(
+                    notches.coerceIn(-64, 64),
+                    column.coerceIn(0, 0xFFFF),
+                    row.coerceIn(0, 0xFFFF),
+                ),
+            )
+        }
     }
 }
