@@ -1,7 +1,7 @@
 # Architecture and near-term plan
 
 This is the single implementation plan for lapis. See the
-[current status](../README.md#current-status) for what has been implemented and exercised.
+[current status](status.md) for what has been implemented and exercised.
 macOS is the active target, and the signed Mac app is now the working daily
 environment; the [pseudo-production section](#pseudo-production-direction-and-integration-spread-september-27)
 below owns the current work order and re-weights the remaining milestones.
@@ -356,7 +356,7 @@ optional checks once the affected behavior passes.
 ### Persistent terminal acceptance
 
 The explicit launch slice is implemented. Current exercise status is in the
-[README](../README.md#current-status), with a
+[status](status.md), with a
 [sanitized receipt](../evidence/cli-launch.json). The macOS acceptance below is
 complete; the [assembled receipt](../evidence/milestone-one.json) records its scope.
 Visual review of the earlier UI refinements remains pending.
@@ -881,7 +881,7 @@ Preserving the ordinary CLI interface is the product preference. A shared-server
 route is eligible only if live evidence establishes event delivery, response
 ownership and reconciliation for that same TUI session. A method in an exported
 schema or an empty list from another server cannot establish those capabilities.
-The [Codex investigation](../adapters/codex/README.md#next-qualification) owns the
+The [Codex investigation](../adapters/codex/README.md#requalifying-a-codex-binary) owns the
 probe details and capability matrix.
 
 Hooks that only notify are useful partial integration. Keep answers in the
@@ -2954,8 +2954,8 @@ these tables, not the parity statements.
 Splits and tiling, window arrangements with process restore, request-aware
 notifications, undo-close and the command palette are already at parity or
 better. Rectangular and multi-click selection, link hover feedback and
-terminal accessibility remain tracked terminal-fidelity gaps in the README
-status table; this re-ordering does not change their queue. The valuable
+terminal accessibility remain tracked terminal-fidelity gaps in the
+[status](status.md) table; this re-ordering does not change their queue. The valuable
 deltas are attention reach and ergonomics:
 
 | Feature | Direction | Acceptance |
@@ -3140,7 +3140,7 @@ planned; they are not implied by Milestone 3 passing.
 
 Dependency notices, a complete bundled inventory/SBOM and redistribution obligations
 must be closed before publishing binaries; the Mac app's are collected above. This release requirement is independent
-of a local milestone passing. Keep current implementation status in the README;
+of a local milestone passing. Keep current implementation status in [status](status.md);
 the tables here define work order and acceptance only.
 
 ### The silk cabochon icon (September 28)
@@ -3391,7 +3391,7 @@ impact (#25, #26, #27, #34, #42). Reviewed against how lapis starts Claude:
   for up to two hours; `BASH_MAX_TIMEOUT_MS` raises the ceiling and
   `BASH_DEFAULT_TIMEOUT_MS` the default for foreground and background alike.
   Session ownership is unchanged: this is the CLI's policy for its own
-  children, documented for users in the README.
+  children, documented for users in [agents](agents.md#long-jobs).
 - **Fixes lapis benefits from:** bracketed paste after a mode reset (2.1.282)
   and fast type-ahead (2.1.283), which lapis's paste and Tab rely on; synchronous
   hooks no longer hanging on a background child (2.1.285); and resume fixes for

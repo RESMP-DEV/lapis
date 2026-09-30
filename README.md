@@ -2,165 +2,44 @@
 
 <img src="assets/lapis.svg" width="80" height="80" alt="lapis silk Cabochon icon">
 
-Repository: [RESMP-DEV/lapis](https://github.com/RESMP-DEV/lapis).
+lapis is a Mac app for running many coding agents at once. Each agent (Claude
+Code, Codex, Grok, OpenCode, OMP, Kimi or Antigravity) gets its own live
+terminal. You group agents into categories, watch every agent's latest lines in
+a strip under the one you are working with, and jump straight to whichever needs
+you. Each agent runs in its own session service, so closing or updating lapis
+normally leaves it running (macOS 27 adds [conditions](docs/install.md#updates)),
+and one whose service is gone (after a crash or a power cut) starts again in its
+card, resuming its conversation where its CLI can.
 
-lapis is a desktop workspace for live CLI agents. Categories contain ordered
-agents; one terminal stage shows the selected agent above a strip of live
-previews that is the category's navigation. Normal launch has no sample cards;
-the only plain shells are the side terminal's, for a quick command. Managed
-Codex is the first adapter; Claude Code reports through a service-side hook
-adapter.
-macOS is the active live-agent qualification target. Linux desktop work remains
-deferred; an explicitly selected Linux host can run isolated software-rendered checks.
+It is built for speed first: switching agents and typing should feel instant on
+an Apple silicon Mac with a high-refresh display.
 
-The priority is **responsiveness, then ergonomics, then visuals**. Design for
-high-end M-series hardware and high-refresh displays; use generous, bounded RAM
-caches to keep sessions ready for immediate switching. Use minimal, mostly opaque
-surfaces and short, interruptible animations, drawing on Apple and Material design.
+## Download
 
-Agents start with [AGENTS.md](AGENTS.md), which defines implementation boundaries,
-parallel work areas, milestones, and verification requirements. `CLAUDE.md` links
-to that same file so Codex and Claude Code share one set of project instructions.
+Get `lapis-macos-arm64.dmg` from the
+[latest release](https://github.com/RESMP-DEV/lapis/releases/latest), open it
+and drag lapis to Applications. It needs an Apple silicon Mac with macOS 14 or
+later, uses the agent CLIs you already have installed, and offers updates as
+they are released. See
+[install](docs/install.md) for what it keeps where and how upgrades work.
 
-## Current status
+## A quick tour
 
-The next delivery target is a dependable macOS Apple Silicon early-access
-release. The [rollout gates](docs/architecture.md#broader-macos-rollout-readiness-september-29)
-prioritize process survival, input integrity, account identity, verified upgrades
-and operational bounds before more integrations. Source checks, daily use and
-the published app are distinct evidence: the latest v0.5.0 release targets
-`0ec13cb`, not every fix now on main. Support claims follow the OS, CLI versions
-and artifact actually exercised.
+- **Start an agent** with Command-T: pick a CLI, a folder, a model and how much it
+  may do without asking, on this Mac or any machine in your ssh config.
+  [Agents](docs/agents.md)
+- **Categories** group agents. The strip under the stage shows each agent's
+  latest lines; drag a card onto the stage to tile it beside another.
+  [Workspace](docs/workspace.md)
+- **Jump to what needs you** with Command-J (the next) or Command-L (the latest),
+  even from another app with Command-Option-L. Chimes and notifications say when.
+- **Plan usage** for every CLI you are signed in to, on this Mac and your other
+  machines, with several plans shared across sessions. [Usage](docs/usage.md)
+- **Your phone** shows and drives the same agents. [Phone](docs/phone.md)
+- Every shortcut is in [keys](docs/keys.md) and every setting in
+  [config](docs/config.md).
 
-The category workspace supports creating Codex agents, moving and renaming tabs,
-remembering each category's selection, restoring the same service-owned processes,
-and displaying source-derived activity and pending requests. Window placement is
-saved locally and narrow windows use a category selector. The Command theme uses
-dark opaque surfaces, restrained teal accents and short selection feedback.
-On macOS the native title bar follows the selected theme while retaining the
-standard window controls and drag region. There is no tab row: the strip under
-the stage shows each agent's latest lines (the rows ending at its cursor) at
-most four times a second, in tab order. Moving through it keeps part of the
-neighboring card in view, like Neovim's `sidescrolloff`; the last card is
-**+** for a new agent. A card whose agent finished a turn or started needing a
-response while another was selected pulses until you select it, and its
-category shows a pulsing dot. The Dock badge counts agents in any category that
-need you and have not been looked at. A request (a permission prompt, a question)
-pings once and marks the agent exactly as a finished turn does; lapis shows no
-separate request state, and you answer it in the agent's terminal (Commands'
-**Review requests** still lists what a Codex agent is asking). Codex reports working/finished through its
-observer; Claude agents run under the session service's Claude Code hook
-adapter (`--claude`), which reports turns, permission prompts and input
-requests; other harnesses show an output estimate labelled
-**Output active** / **Quiet**. Command-W closes the focused agent, and the
-window (lapis keeps running) once the category has no agent left. Agents always start as top-level sessions: when lapis itself was opened
-from inside another agent's terminal, that agent's session markers (Claude
-Code's child-session and transcript flags, Grok, OpenCode, OMP and Codex
-sandbox markers) are removed before any agent starts.
-Categories read as group labels and tabs as sessions; keyboard focus, activity,
-pending requests and lost connections have separate colors and shapes. One
-configurable fixed-width font serves the terminal and machine readouts.
-
-The underlying terminal and managed-attention milestones retain their earlier
-qualification receipts. The two-session Milestone 3 workspace (flat manifest,
-shared attention queue and guarded carousel) was
-[qualified on macOS](evidence/milestone-three-workspace.json) and then replaced
-by this category workspace; its service, Codex and Claude Code work carries over. The category workspace's current checks and remaining
-acceptance are recorded in [the evidence](evidence/agent-workspace.json) and
-[architecture](docs/architecture.md#daily-use-agent-workspace-direction-september-21-review).
-
-| Component | Exercised | Remaining |
-| --- | --- | --- |
-| POSIX resources and terminal adapter | Descriptor ownership and 14 Ghostty adapter cases on macOS and Linux ARM64 | Broader terminal compatibility |
-| PTY and separate session service | Explicit executable/argv/cwd, shell default, resize/paste/exit, failed launch, detached output and same-child reattachment on macOS; after two simulated power losses, the login helper resumes real Codex/Claude conversations and terminal-checkpoint stand-ins for four other CLIs with durable managed resume arguments ([check](scripts/check_restore.py)) | An actual reboot through the login helper, native resume qualification for the four stand-in CLIs, and later Linux qualification; on macOS 27 services share the window's coalition, so surviving a window quit depends on macOS allowing lapis in the background |
-| Local transport | Version 6 identity/epoch/generation attachment, correlated history paging and service attention messages, restored-screen input gating, bounded queues and explicit reconnect; stale sockets left by a simulated power loss are replaced | Qualification across an actual reboot |
-| Desktop and Vulkan surface | Qt key input through the live PTY, restored state, default/compact captures and cell-grid/font/decoration regression on M4 Max via MoltenVK; mouse selection, copy, wheel history paging, Command-hover destinations and Command-click opening of visible/OSC 8 links and local files; 14-pixel default and direct size controls (macOS background Qt tests, with URL dispatch intercepted) | Cross-cell contextual shaping, rectangular/multi-click selection and accessibility; opening a file at its line in an editor; native Mac selection not yet exercised; Linux GUI port is deferred |
-| History and input lifecycle | Disk quotas, history scrolled by rows as one strip, live-screen retention, same-PID reattach, real disk-full/corruption recovery; Qt and native macOS composition/paste/focus ownership tests | Archived rows keep their original width (cut or padded, not reflowed) |
-| UI iteration and attention | Isolated source-QML reload, captures, configurable navigation and appearance; tiles on the stage (drag from the strip, dividers, keys, zoom), dragging cards to reorder and between categories with multi-select, find in the terminal and text size (Qt tests on the Linux test host); live request badges, explicit approval/answer dialog, stale-state gating and draft preservation; live config reload, alert chimes and their repeat rules, Command-K agent search, the usage meter and per-machine dashboard, the keyboard home list, Command-O resume and the side terminal with its machine picker (Qt tests on the Linux test host); usage answers from the installed Codex 0.156.1, Claude Code 2.1.282, Grok 1.0.41, Kimi Code 0.39.1 and OMP 18.2.9, here and on a Linux host over ssh | Automatic carousel and larger session-count qualification; the chimes and usage view have not been seen and heard on a Mac by a test |
-| Attention core | C++20 single-source reducer; typed IDs, exact retirement, bounded state, explicit decisions, recovery guards and deterministic ordering | Larger-workload profiling |
-| Claude Code hooks | Claude Code 2.1.280 permission and structured-input hooks, terminal-only notices, same-child reconnect, `/clear` continuation and actual GUI capture | No GUI responses or authoritative hook-history reconciliation |
-| iPhone app (prototype) | Gateway on the Mac over Tailscale or ZeroTier, admitting the owner's iOS or Android devices or members of its private ZeroTier networks; SwiftUI app listing categories and agents, drawing the Mac's cell grid and sending text, paste and keys; the phone joins beside the desktop so both stay in sync (services started by this build); starting an agent in a category from the phone through the Mac's lapis; a terminal on the Mac from the phone, and the resume list; renaming, ordering and removing categories, moving and restarting agents, and the Mac's awake, alert and usage settings from the phone; UI tests in the iOS 26.5 Simulator against real services and the real windowless lapis host with a Mac-side client attached, fake agents, and real Codex and Claude Code on a fake model; installed and used on an iPhone 17 Pro | Agents started before sync are taken over instead; no structured requests or push notifications; starting agents needs a lapis window or the login helper running |
-| Mac app package | Qt 6.11.2 built with Vulkan (arm64, macOS 14 or later) with MoltenVK loaded directly; signed with the hardened runtime and notarized; Sparkle 2.10.0 updates signed with an EdDSA key and fed from the latest release; a login item for keeping agents running; release checks for architecture, minimum macOS, links outside the bundle, identifying strings, the update key, the bundled MoltenVK on an M4 Max, the windowless host and a launchd start taking the login shell's PATH; 0.1.0 opened and used with a live agent by a person | An update installed through Sparkle (the first comes with the release after 0.2.0); notifications, the login item and the Finder and editor actions not yet exercised by a check on a Mac; macOS 14 and 15 untested |
-| Codex integration | Managed ordinary TUI, service-owned observer, live desktop approval/input responses, same-child reattachment, source close/restore reconciliation, cancellation and simultaneous live approvals; [installed binary qualification](evidence/codex-binary-update.json) | Broader binary and request-kind qualification |
-
-The [first quality repair batch](evidence/quality-repairs.json) exercises iPhone
-history retirement across reconnects, atomic managed-session reopening, and the
-expanded verification gates. Remaining repairs have bounded acceptance in the
-[quality goals](docs/architecture.md#quality-repair-goals-september-25-audit).
-The [follow-up audit and repairs](evidence/quality-followup.json) cover paste and
-gateway ownership, bounded remote discovery, explicit build dependencies, and
-focused CLI checks. The receipt distinguishes exercised behavior from remaining
-native-input, deferred-history and TSan qualification gaps.
-The [adapter-boundary follow-up](evidence/adapter-boundaries.json) carries typed
-observation phases over negotiated v6 IPC, centralizes CLI launch/resume
-configuration, persists restart plans before creating connections and cancels
-superseded descriptor writers. Legacy peers retain their existing protocol;
-the receipt records background UI, compatibility and scoped sanitizer evidence.
-The [local consolidation receipt](evidence/local-consolidation.json) records the
-rebased repairs, fresh checks and source hashes after integration with PRs 18–19.
-
-[Desktop evidence](evidence/desktop-preview.json),
-[UI refinement evidence](evidence/ui-preview.json),
-[reconciled UI and test evidence](evidence/reconciliation.json) and
-[adapter evidence](evidence/terminal-adapter.json) delimit these observations.
-The [downloadable Mac app](#download-for-macos) carries its own Qt, MoltenVK
-and dependency notices; a build from the repository is a developer build.
-The old multi-layout preview is no longer the product surface. The explicit
-`--ui-preview` developer fixture exercises the same category UI with synthetic
-data; it is never added to a normal workspace. See the
-[Milestone 2 plan](docs/architecture.md#milestone-2-attention-and-codex-plan)
-for the underlying attention route and its acceptance evidence.
-The first checkpoint implemented the standalone attention core and exercised real
-Codex request round trips. [Milestone 2 evidence](evidence/milestone-two.json) now
-records assembled service/desktop acceptance on macOS. The
-[PR #7 review receipt](evidence/pr7-review.json) covers subsequent lifecycle,
-startup, queue-boundary and multi-question fixes. Its
-[follow-up receipt](evidence/pr7-review-followup.json) records request-ID and
-reconciliation fixes, order-independent question checks and refreshed validation.
-The [thread-repair receipt](evidence/pr7-thread-repairs.json) records initial-thread
-classification, config separator validation, preserved cleanup diagnostics and
-the disposition of the remaining review threads.
-The [latest PR #7 receipt](evidence/pr7-classification-repairs.json) records
-post-binding thread isolation, transport and fixture cleanup, backend exit
-diagnostics, and the evidence-based disposition of the new review batch.
-Following the quality cleanup in PR #6, Milestone 2
-now includes the production Codex adapter, session-service integration and explicit
-desktop response controls. Request arrival never moves keyboard focus. See the
-[attention test procedure](CONTRIBUTING.md#codex-attention-qualification).
-Latency and warm-switch targets remain provisional.
-
-Qualification history remains in [Milestone 1](evidence/milestone-one.json),
-[Milestone 2](evidence/milestone-two.json), the
-[PR #7 repairs](evidence/pr7-classification-repairs.json), and the dated receipts
-under [evidence/](evidence/). These distinguish terminal behavior, native input,
-GPU pixel checks, real adapter traffic, and timing measurements. The
-[Codex route comparison](adapters/codex/README.md#integration-route-comparison)
-separates terminal operation from attention delivery.
-
-Claude Code's permission and input notices appear under **Requests**; answer
-them in Claude's terminal. Lapis does not change Claude's approval policy or
-install global hooks. The [Claude hook receipt](evidence/claude-code-hooks.json)
-records runtime qualification. See the
-[hook contract and limitations](docs/architecture.md#claude-code-hooks-an-observation-only-extension).
-
-## Download for macOS
-
-The Mac app is on the [releases page](https://github.com/RESMP-DEV/lapis/releases/latest):
-open `lapis-macos-arm64.dmg` and drag lapis to Applications. It needs an Apple
-silicon Mac with macOS 14 or later; it is signed with a Developer ID and built
-and checked on macOS 26.5. The app keeps `lapis.json` and its runtime state in
-`~/.lapis` (or `$LAPIS_HOME`), and uses the agent CLIs you already have
-installed. Opened from Finder or the Dock, it starts agents with your login
-shell's environment, so they find the same tools and keys as in your terminal.
-It checks the latest release for updates once a day and installs them after
-asking (Sparkle). Settings can keep agents running at login. The phone gateway
-is set up from this repository; the app does not include it yet.
-[Contributing](CONTRIBUTING.md#build-the-mac-app) describes how the app is built,
-signed and notarized.
-
-## Run the workspace
-
-To build it yourself, after the [dependency setup](CONTRIBUTING.md#desktop-preview):
+## Build from source
 
 ```sh
 uv run --no-project python scripts/lapis.py doctor
@@ -169,454 +48,30 @@ uv run --no-project python scripts/lapis.py build
 uv run --no-project python scripts/lapis.py run
 ```
 
-Use **New agent** (Command-T), choose a harness with arrows and Return, then
-enter a project folder and press Return. Claude, Codex, OpenCode, Grok, OMP,
-Antigravity and Kimi appear in the picker, in that order; missing executables
-are marked unavailable. Escape returns from the folder step to harness selection. The field
-starts at your platform home directory; arrows select folder suggestions and
-Tab or Return completes the selected folder. The browse button opens the native
-folder picker. Chips under the folder choose a model, from the models the CLI
-itself lists for your account (its default first; Kimi, OpenCode and OMP from
-their config, recent models and roles), and one of three approval modes:
-Accept edits, Auto or Full access (the first time, Full access, or
-`newAgent.mode`), each passed as that CLI's own flag. An agent asked for
-without a mode (from the phone, or a resumed conversation) gets that same
-default, or the nearest one that CLI offers: since Claude Code 2.1.284 (2.1.283
-on third-party providers) no flag means auto mode rather than asking, so lapis
-always passes one, unless `harnessArguments` already sets one. The mode
-stays when the CLI changes; a CLI without it (OMP, OpenCode and Antigravity
-have no Auto, Kimi and OpenCode no Accept edits) uses its nearest, less access
-first. The next agent starts with the same CLI, mode and model. Everything else
-stays in each CLI's own config.
-To add your own flags to every new agent of a harness (lapis adds none itself),
-set `harnessArguments` in `lapis.json`, for example
-`{"harnessArguments": {"claude": ["--dangerously-skip-permissions"]}}`; shell
-aliases do not apply, because lapis starts the executable directly.
-Since Claude Code 2.1.285 a shell command Claude runs in the background stops
-after 30 minutes unless it asks for more (at most 2 hours; `BASH_MAX_TIMEOUT_MS`
-raises that ceiling). That is Claude Code's limit, not lapis's: start a longer job
-detached (`nohup`, `setsid` or `tmux`, writing to a log the agent reads), which
-also outlives restarts, reloads and plan switches.
-New tabs show the harness mark and a home-relative project path such as `~/dev/lapis`.
-Codex and Claude Code have verified activity integration. Other harnesses run
-their native CLI and show an output estimate instead of guessing turns.
-Each agent gets a
-separate service, identity and endpoint. No approval settings or global hooks are
-changed; a Claude agent's hooks are passed to that one process by its service. Unsupported Codex binaries keep explicit status/response limitations;
-there is no qualification bypass.
+[Build](docs/build.md) covers checks and development fixtures;
+[CONTRIBUTING](CONTRIBUTING.md) covers setup, tests and pull requests.
 
-Drag a card from the strip onto an edge of the stage to tile that agent beside
-the one shown, as iTerm2 splits a tab (onto a tile's middle to swap it in).
-Dividers drag to share the space, and agents are resized once, when the drag
-ends. Command-D starts an agent like the selected one (folder, CLI, model and
-mode) tiled to the right, Command-Shift-D below it; Command-Control-arrows move
-between tiles, Command-Shift-Return fills the stage with one, and a tile's ×
-or a drag back to the strip takes it off the stage while it keeps running. A
-strip agent that is not tiled takes the selected tile when you click it. Each
-category keeps its tiles. Cards also drag along the strip to reorder, onto a
-category in the rail to move there, and onto the rail's **+** to start a new
-category; Command-click and Shift-click pick several to drag together, and
-categories drag up and down the rail.
+## Docs
 
-Command-F finds text in the selected terminal: the screen shown first, then older
-history a screen at a time (Return goes older, Shift-Return newer). Command-plus, minus and
-zero change the text size. Files dropped on a terminal paste their quoted paths.
-The card menu and Commands show an agent's folder in Finder, open it in your
-editor (`editor` in `lapis.json`, else the first of Cursor, VS Code, Zed,
-Windsurf and Sublime Text installed) or copy its path. Command-Shift-T reopens
-the last agent you closed, resuming its conversation where its CLI can.
+| Page | What it covers |
+| --- | --- |
+| [install](docs/install.md) | Download, where lapis keeps things, closing, upgrading |
+| [agents](docs/agents.md) | Starting agents, CLIs and modes, requests, restarts, reboots |
+| [workspace](docs/workspace.md) | Categories, the strip, tiles, finding, links, history |
+| [keys](docs/keys.md) | Every keyboard shortcut |
+| [config](docs/config.md) | `lapis.json`: defaults, alerts, editor, CLI flags |
+| [usage](docs/usage.md) | Plan usage and plans shared across sessions |
+| [phone](docs/phone.md) | The iPhone app and its gateway |
+| [build](docs/build.md) | Building, checks, probes and fixtures |
+| [status](docs/status.md) | What is qualified, what remains, and the evidence |
+| [architecture](docs/architecture.md) | Design decisions and the plan |
 
-Open **Commands** to search or scroll through actions and their configured
-shortcuts. Create categories with **New category** there. The category rail and that category's
-agent strip are separate navigation levels. Every category remembers its selected
-agent. Commands and the card's context menu rename, reorder or move the selected agent without
-restarting it. Attention counts do not reorder categories or steal input.
-
-On macOS, Command-Shift-J/K (down and up the rail, from the home row),
-Command-Shift-up/down or Command-Option-left/right changes category;
-Command-Shift-[ and ] moves through the category's agents. Command-1 through 9
-selects one of the first nine categories. Command-J jumps to the next agent, in any category, that
-finished or asked for something while you were elsewhere; Command-L jumps to the one that did so
-most recently, and again to the one before it. Command-Option-L does the same from any app,
-bringing lapis to the front.
-Command-W closes what is in front, as in a browser: the side terminal's panel
-(its shell keeps running), else the focused agent (a running agent is confirmed,
-then ended by its session service), and only when the category has no agent
-left, the window. Command-Shift-W closes the window. lapis keeps running with
-its window closed; click its Dock icon to bring it back. Command-M minimizes.
-Command-Shift-P opens Commands; Command-B hides or shows the category sidebar
-and remembers that choice. Command-V remains paste. As in a browser, Command-T
-creates an agent (its tab defaults to the project path) and Command-N creates a
-category. The new-agent form's Machine row offers this Mac and the hosts in your
-ssh config (left and right arrows while up and down choose the CLI); on another
-machine the agent runs over ssh in that machine's `newAgent` folder, else its
-home, in its login shell; the **+** under the last category does the same. When
-such a Claude Code agent's connection drops (the Mac changed networks or slept),
-lapis reconnects it and it resumes its conversation. Command-comma
-opens Appearance, and Command-R reloads configuration. Command-K finds an agent
-as you type: by the letters of its name, folder, category, CLI or machine, or by
-text on its screen, and Return shows it. Command-O resumes a past conversation:
-the Claude Code and Codex conversations you opened on this Mac, newest first
-under their CLI's own title, narrowed as you type by title, folder or CLI;
-Return resumes one as a new agent in its folder. ``Command-` `` (or ``Control-` ``, as in
-VS Code) shows a plain shell over the stage's right half for a quick command,
-with nothing around it but its border, and hides it again; Command-~ picks its machine, this Mac or an ssh host from
-your ssh config, by up, down and Return. It is never an agent: one shell per
-machine, in no category and with no alerts, which keeps running when lapis
-closes and closes itself when you type `exit`. With nothing open, the stage
-lists what to do next (new agent, resume, terminal, reopen, the latest
-conversations and the other categories that have agents), moved with up and
-down and run with Return, so no step needs the mouse. Folder lists put the ten
-folders with the most recent and frequent agent work first (work in a folder
-below counts for it), then the rest by name with `_folders` last. Linux uses
-Control-Shift bindings. Terminal Control chords and Command-left/right editing
-stay with the agent. Bindings remain configurable in `lapis.json`, and
-Appearance lists every action's keys.
-
-`lapis.json` applies as soon as it changes, whether Appearance, you or an agent
-edits it. Besides bindings and appearance it holds the defaults for new agents,
-per machine where they differ:
-
-```json
-{
-  "newAgent": {
-    "harness": "codex",
-    "folder": "~/dev",
-    "mode": "edits",
-    "machines": {"devbox": {"folder": "~/work"}},
-    "models": {"codex": ["gpt-6-astra", "gpt-6-sol"]}
-  },
-  "alerts": {"sound": true, "finished": true, "repeat": 3, "notify": true},
-  "editor": "Cursor",
-  "keepAwake": true,
-  "usage": {"show": true, "meter": ["codex", "claude", "grok"], "machines": ["devbox"]}
-}
-```
-
-An agent that needs you chimes (two taps, rising), and again every few seconds
-while the request waits and you are looking elsewhere, up to `repeat` times; a
-Codex or Claude turn that ends out of view chimes once, quietly. While lapis is
-in the background the same moments post a notification (`notify`), titled with
-the agent and naming its CLI ("Claude finished a turn"); clicking it
-shows the agent. Appearance has the switches and a Play button for each. In the
-downloaded app it also keeps agents running at login and checks for updates,
-which install from the latest release. `keepAwake` keeps the Mac from
-sleeping while it is plugged in, so the phone can reach it.
-
-`usage.show` puts plan usage under the categories: every plan a CLI here is
-signed in to (Codex, Claude, Grok and Kimi, plus every account OMP's logins
-hold), each showing what is left of its tightest window: a green bar with
-plenty left, orange under 30%, red under 10%. `usage.meter` picks which appear and in
-what order; one that is not signed in is left out. Clicking it opens a
-dashboard per machine, this Mac and each ssh host in `usage.machines`: every
-account's windows with what is left, reset times, and when the current pace
-runs out or how much it leaves at the reset, and the
-Codex and Claude tokens used on that machine today, this month and per day
-for 30 days, by model. Each CLI is asked through its own interface every five
-minutes, without a prompt, a hook or a saved session; another machine's CLIs
-are asked over ssh, and its transcripts are counted there by its own python3.
-There are no prices.
-
-Claude Code and Codex sessions can share several plans. List them under
-`accounts` in `~/.lapis/lapis.json`: each plan's name, its email, its `home`
-(the machine that signs in as it, `local` for this Mac) and the `machines`
-where lapis keeps a credential for it. A session takes its machine's own
-sign-in; when that plan is at `switchAt` percent (95 by default) a new session
-takes the plan with the most room that its machine can use, as OMP ranks its
-accounts. A running session moves only when a ready observer reports idle or a
-finished turn, restarting on the other plan and resuming its conversation. Output
-silence alone never triggers a switch. **Switch plan** in Commands moves an agent
-by hand. `scripts/lapis_accounts.py` fills the section: `homes` records each
-machine's own sign-ins, `add-claude NAME --email E` runs `claude setup-token`
-and keeps the token (0600) on this Mac and the usage machines, and `add-codex
-NAME --email E --on local devbox` signs Codex in to a home kept for that plan,
-which shares its sessions and settings with `~/.codex`. Credentials never
-appear on a command line: a remote session reads its plan's credential there.
-
-On the Mac, closing the window (its close button, Command-Shift-W, or Command-W
-with no agent left) only hides it:
-lapis keeps running, with alerts and the phone, and its Dock icon brings the
-window back. Quit (Command-Q) to detach. Reopen lapis to reconnect the same
-agents and restore category selections and window placement. Neither stops
-agents; Command-W on an agent does.
-If an agent's session service is gone when lapis opens (after a reboot or a
-crash), lapis restarts it in its card, like a restored terminal tab: Codex,
-Claude, Grok, OpenCode, OMP, Kimi and Antigravity resume their saved
-conversation with their own resume option; other CLIs, or a conversation with
-no saved transcript yet, start fresh in the same folder. Explicit resume arguments
-remain authoritative; lapis adds a resume selection only when none is already
-present. Codex transcript lookup stays within the `sessions/YYYY/MM/DD` layout
-and does not follow directory symlinks. Each service records
-the conversation beside its endpoint (`<endpoint>.resume`) from the Codex
-observer, the Claude hook adapter, or the `agent_checkpoint` sequence that
-iTerm2 restore hooks print. For Codex builds lapis has not qualified, and
-Codex agents whose service predates these records, lapis reads the thread from
-the rollouts its app-server holds open, following `/new` and `/resume`.
-Command-W on an agent is what removes it for good. Restore runs when lapis opens.
-To have agents come back at login without opening a window, install the login
-helper once with `uv run --no-project python scripts/restore_at_login.py
-install`. It runs `lapis_desktop --restore-agents --serve`, restarts the agents
-whose services died with the Mac (restart, crash, power cut), and then keeps the
-workspace without a window so the phone can start agents; opening lapis takes
-the workspace from it and it exits. It leaves agents that are still running
-alone, and it needs a logged-in user session.
-The development login helper preserves custom `CODEX_HOME`, `CLAUDE_CONFIG_DIR`
-and `LAPIS_HISTORY_ROOT` values from the installing shell. Reinstall that helper
-after changing those locations.
-An agent that has ended or cannot be reached keeps its last screen, with a bar
-on the stage giving the reason and the key that closes it. **Restart agent**
-in Commands starts it again in the same card, resuming its conversation the
-same way.
-**Reload tab**, **Reload category** and **Reload window** in Commands do that
-for running agents too: each CLI ends and starts again in its card, resuming
-its conversation, so it rereads settings such as Claude Code's permissions. An
-agent on another machine that started before lapis named its conversation is
-left running, since reloading it would start a new one.
-
-A new agent's CLI updates itself first (`claude update`, `omp update`, `grok
-update`, `kimi upgrade`, `opencode upgrade`, `agy update`), at most every 30
-minutes per CLI; the card reads **Updating Claude…** until the agent starts on
-the new version, and results go to `runtime/harness-updates.log`. Codex is the
-exception: lapis observes only Codex builds it has qualified, so it keeps the
-qualified build and starts Codex with its update prompt turned off
-(`check_for_update_on_startup=false`).
-Explicit supported-CLI creation uses the same update queue; reconnect and
-discovery do not. Pass `--no-harness-updates` to keep a chosen CLI installation
-unchanged. Queued agents wait until the updater and its installer children have
-stopped; restarting a queued agent cannot bypass that wait.
-A running agent keeps the version it started with. **Update this tab's CLI and
-reload it** and **Update Claude Code and reload its tabs** in Commands run the
-update where each agent runs (over ssh, without a terminal or password prompt,
-for an agent on another machine), once per CLI and machine however many agents
-wait on it, then reload those agents. They read **Updating Claude…** meanwhile
-and keep working; an update that fails says why and leaves them running.
-
-Upgrading lapis does not disturb running agents: quit the old build and open
-the new one, and it reattaches to the same processes. Launch fingerprints,
-the service protocol, the workspace registry and resume records are kept
-compatible across builds, and a test pins the fingerprints. On macOS 27 two
-conditions apply, because agents started from the window count as its
-background processes: lapis must be allowed under **Allow in the Background**
-(System Settings, General, Login Items & Extensions; macOS adds it on the
-first quit that leaves agents running), and the old `lapis.app` must stay in
-place until the old window has exited. Otherwise macOS ends every agent when
-the window quits.
-
-**Requests** appears when the selected agent needs a response. Open it, select a
-request, then explicitly approve, decline, cancel or send answers. Opening or
-selecting never approves. Stale sources disable responses. **Turn finished**
-means the agent finished a turn, not that the task or process ended. Claude
-Code's idle reminder after a finished turn is not a request. A new Codex agent
-reads **No prompt yet** until its first turn. Agents
-started in the same folder are numbered in cards and menus.
-
-Command-Left/Right move to the start or end of the line, Command-Backspace
-deletes to the line start and Command-Delete to the line end (Control-A, -E, -U
-and -K to the agent). Hold Command (Control on Linux) over a web link or a
-file or folder the agent names, and it is underlined and the pointer becomes a
-hand and the destination appears on hover; Command-click opens it as the Finder would: a link in the browser, an
-image in Preview, a folder in the Finder (an app or a program is shown in its
-folder, not run). Paths count from the agent's folder, `~` and `/` included,
-and `file.cpp:12` finds the file; an agent over ssh prints paths on another
-machine, so only its web links open. Visible HTTP(S) URLs, `www.` addresses,
-and CLI-supplied OSC 8 links (including labels whose destination is hidden) work
-across wrapped rows and scrollback. OSC 8 destinations support HTTP(S) and local
-`file:` URIs; other URI schemes are not opened. An older running service still
-supports visible links; restart that agent's service to receive labeled-link
-metadata. Existing agents keep running when the desktop reconnects.
-
-Terminal text defaults to **14 pixels**. Appearance offers direct size entry
-(10–32 pixels), plus/minus buttons, and reset; Command-plus/minus/zero also adjust or reset text
-size. Existing saved sizes are preserved.
-Drag across the terminal to select text,
-or double-click a word; Command-C
-(Control-Shift-C on Linux) copies it, and typing clears it. The mouse wheel scrolls
-through history (read-only; scrolling past the newest row or typing returns to
-the live screen, and the typed key reaches the agent), or sends arrow keys to a
-full-screen program on the alternate screen.
-History actions are also under **Agent**. Private
-workspace metadata and window geometry live under ignored `runtime/` (in
-`~/.lapis/runtime/` for the downloaded app). Builds and
-local captures live under ignored `build/`. Runtime state is not project config
-and must not be copied between hosts.
-
-For routine UI reviews during development, run `python3 scripts/lapis.py ui-review`
-(or `just ui-review`). It builds only the required fixtures and checks workspace
-UI, shortcuts and terminal input in Qt's offscreen/software mode, without taking
-OS focus or moving the pointer. It saves PNGs for visual review alongside its
-logs; add `--json` for the result and artifact paths.
-See the [background and native test procedure](CONTRIBUTING.md#history-and-input-qualification).
-`build` remains the full desktop validation gate; `ui-check` and native input
-checks retain their separate display/GPU and macOS acceptance scope. Use focused
-CMake targets and CTest expressions for other edits. macOS is the active target;
-`linux-gui` is available only for an explicitly selected Linux port check.
-
-Standalone shell fixtures require `--development-shell` and are not offered in
-the product. Explicit managed probes retain `--codex --socket ... --cwd ...
--- codex` and `--claude ... -- claude`. Existing v6 endpoints are neither automatically adopted nor terminated
-by the new category registry.
-
-Omit `--codex` and `--claude` for plain terminal launch, which forwards agent
-options literally and installs no attention hooks or approval settings.
-
-- [Architecture](docs/architecture.md): product direction and acceptance.
-- [Codex investigation](adapters/codex/README.md): protocol and qualification.
-- [Contributing](CONTRIBUTING.md): setup, tests, profiling and review.
-
-## Use it from your iPhone
-
-The iPhone app (`apps/ios`) talks to a small gateway on the Mac
-(`apps/remote/lapis_remote.py`) over Tailscale or ZeroTier. There is nothing
-to sign in to: the gateway serves a request only when `tailscale whois` names
-the Mac owner's login on an iOS or Android device, or when the peer belongs
-to one of the Mac's private ZeroTier networks. The phone must be signed in to
-Tailscale with the same account as the Mac, or joined to its ZeroTier network.
-Keep Tailscale active on both devices when using HTTP; its WireGuard connection
-provides transport encryption. The configured gateway address is trusted input,
-and arbitrary LAN hosts are outside this transport contract. An explicit HTTPS
-URL keeps HTTPS, and unsupported URL schemes are rejected.
-
-Keep the gateway running at login with
-`uv run --no-project python apps/remote/launch_agent.py install` (`status`,
-`uninstall`; log in `~/Library/Logs/lapis-remote.log`). It serves the workspace
-lapis uses, as the desktop decides: `LAPIS_HOME` if set, else the downloaded
-app's `~/.lapis` once that has a workspace, else the checkout's `runtime/`
-(`--registry` and `--config` pin another). With the phone unlocked
-on the same Wi-Fi or a cable,
-`uv run --no-project python scripts/install_ios_app.py` builds, signs and
-installs the app with your development profile, set to reach this Mac by its
-Tailscale name. To work on it in Xcode, run `xcodegen` in `apps/ios`
-(`Config/Local.xcconfig`, not committed, holds your team and default host).
-
-The app lists the categories in the Mac's order, numbered as the Mac numbers
-them, and follows the Mac at once when a category is moved, added or renamed
-there. It lists each category's agents as cards with the harness mark and the
-folder in path form (`~/dev/infinity`; an agent reached over ssh shows its host
-first, `devbox:~/lapis`). Opening an agent shows its screen at phone width, with
-a key bar (esc, ^C, arrows, enter, backspace, tab, ^U, ^D) and a message field
-that pastes and presses Enter; dictation works there. Scrolling up loads the
-agent's earlier output from the service's archived history. **Send screen to
-Mac** in the agent's menu saves a screenshot and the exact screen data under
-`runtime/phone-captures/` for debugging what the phone drew. The phone
-reports capture failures in the same alert used for delivery results. Rotation
-updates the terminal grid while composing; keyboard appearance alone keeps its
-row count. The phone
-joins the agent beside the desktop: both show the same screen, either can type,
-and the terminal takes the size of the device in use. Opening the agent on the
-phone gives it the phone's size; closing it or locking the phone, activating the
-lapis window, moving the pointer over the agent, or typing on the Mac gives it
-back. Agents started
-before this build run services that cannot be joined; opening one on the phone
-takes it from the desktop (its card offers **Reconnect agent**), and the phone
-says so. Restarting such an agent gives it a service that can. The Mac must be
-awake.
-
-The **+** at the top offers a new agent, **Resume conversation** (the Mac's
-latest Claude Code and Codex conversations, searchable, each resumed as a new
-agent in its folder), **Terminal** (pick the Mac or one of its ssh machines and
-a plain shell opens there, for a quick command) or a new category (added on the
-Mac without moving its window). Open terminals are listed above the agents and
-swipe away the same way. Swiping an agent right (or a long press) offers
-**Rename**. On an agent's screen, swiping left or right moves to the next or
-previous agent in its category (the title shows "2 of 4"), so the list is only
-needed to change category.
-
-Everything an agent prints is kept, compressed, back to its first line. Scroll
-back and history scrolls by rows as in other terminals, a whole screen at a
-time, and a bar appears down the terminal's right edge, on the Mac and the phone:
-drag it to jump anywhere in the agent's history, the top being its first line.
-Scrolling forward to the newest row, typing, or **Live** returns to live.
-
-Scrolling over a full-screen program, such as Claude Code with
-`"tui": "fullscreen"`, scrolls the program itself on both devices, as the
-wheel does in other terminals; on the phone a vertical drag turns the wheel.
-An agent started before this version scrolls that way once it restarts.
-lapis runs Claude Code and Grok full screen (Claude Code through
-`CLAUDE_CODE_NO_FLICKER=1`, also over ssh, and Grok with `--fullscreen`); Codex
-and OpenCode are full screen already. A full-screen program repaints when its
-terminal is resized, where a CLI's classic renderer can leave a torn prompt.
-Set `CLAUDE_CODE_NO_FLICKER=0` in your login shell to keep Claude Code's
-classic renderer. Every CLI starts at the stage's size.
-
-Holding an agent also offers **Move to** another category, **Move earlier** and
-**Move later**, **Restart** once it has stopped, and **Close**. Each category's
-heading ends in a menu: a new agent there, **Rename**, **Arrange categories**
-(drag to order, tap to rename, add one) and **Remove**, which the Mac allows
-once the category is empty and while another remains. Settings on the phone has
-its text size, the categories, and the Mac's settings that matter away from it:
-keeping the Mac awake, its chimes, background notifications and plan usage,
-saved to the Mac's `lapis.json` as its own Settings window saves them.
-
-An agent that still has the name it started with (its folder's) takes its
-conversation's title, on the Mac and the phone alike: Claude Code's own title,
-Codex's thread name, else the first message typed. A name you choose, on either
-device, stays. Swiping an agent left offers **Close**, and a full
-swipe closes it, as Command-W does on the Mac. A new agent from the phone: pick the
-machine (this Mac, or an ssh host from your ssh config and shell history,
-reachable and most used first), the CLI, the category, a folder (starting at
-that machine's `newAgent` folder), a model and an approval mode, and it opens
-as a new tab in that category in lapis on the Mac, then on the phone once it
-runs. Another machine keeps the chosen CLI when it has it, and the mode and
-each CLI's model are remembered. The folder starts at `newAgent.folder` (the
-machine's own in `machines`, else the one for every machine) when that machine
-has it, and opens its own screen: that preset, pinned and marked, then the ten
-folders where you have started the most Codex, Claude Code and lapis agents,
-most first, then the machine's folders to browse (the ten most active first,
-then by name with `_folders` and hidden ones last), or a search by a few of
-their letters;
-both run on the phone. The list, the CLIs, the
-machines, the folder indexes and each running agent's screen are fetched in
-the background, so opening the sheet or an agent does not wait. A shown agent on the Mac keeps the stage. This needs lapis running on
-the Mac: an open window, or the login helper (`scripts/restore_at_login.py`),
-which after a restart keeps the workspace without a window until lapis opens.
-`uv run --no-project python scripts/check_ios_remote.py [--codex] [--claude]`
-runs the app's UI tests in a headless simulator against disposable services.
-
-## Check the C++ baseline
-
-```sh
-python3 scripts/lapis.py check         # Compile, lint, format-check and run CTest
-python3 scripts/lapis.py asan          # Memory errors and undefined behavior
-python3 scripts/lapis.py tsan          # Data races
-python3 scripts/lapis.py verify-tools  # Prove the tools detect faulty fixtures
-```
-
-The contribution guide covers installation. Default CTest covers the toolchain,
-POSIX descriptor ownership, the production terminal adapter and the attention
-reducer; run `python3 scripts/lapis.py bootstrap` once first.
-`python3 scripts/lapis.py build` additionally covers PTY, local transport and UI reload/attention
-behavior; isolated captures and the live input probe are described in the
-contribution guide. The engine comparison runs separately below.
-
-Run the separate engine experiment with `python3 scripts/probe_terminal.py`.
-It verifies pinned source/toolchain archives, builds both consumers and keeps each
-result. The comparison currently exits nonzero for Contour's preserved failure.
-Use `--engine ghostty` for the passing candidate. See the
-[experiment receipt](evidence/terminal-engine-probe.json) and contribution guide.
-
-## Probe the installed Codex
-
-Requires Python 3.11+ and `codex` on PATH; no Python packages are needed.
-
-```sh
-python3 scripts/probe_codex.py --output build/reports/codex-probe.json
-```
-
-The probe exports the installed binary's schema to a temporary directory, starts
-a private stdio app-server, initializes a client, and lists its loaded threads.
-It does not start a turn or send a prompt. It uses the existing Codex profile;
-Codex itself may perform normal startup discovery and write runtime logs.
-The receipt retains method names and counts, not thread content or credentials.
-Local receipts may include machine paths; review and sanitize a dated copy before
-adding it to `evidence/`.
-
-No hooks have been installed into existing CLI configurations. Later milestones
-and their acceptance criteria live in the architecture document.
+Agents working on lapis start with [AGENTS.md](AGENTS.md) (`CLAUDE.md` is the
+same file).
 
 ## License
 
-lapis is licensed under [MIT](LICENSE). Third-party components retain their own
-licenses. The Mac app carries Qt under the LGPL-3.0, MoltenVK under Apache-2.0
-and Ghostty's VT library under MIT; their notices are in
+MIT; see [LICENSE](LICENSE). The Mac app also carries Qt (LGPL-3.0), MoltenVK
+(Apache-2.0) and Ghostty's VT library (MIT); their notices are in
 [third_party/](third_party) and in the app under `Contents/Resources/Notices`,
-and each release attaches the Qt source archives the app was built from.
+and each release attaches the Qt source it was built from.
