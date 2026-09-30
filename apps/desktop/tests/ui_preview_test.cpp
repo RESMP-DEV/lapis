@@ -2161,8 +2161,9 @@ int run_strip_ui_tests() {
                            },
                        .copy = [&copied](const QString& text) { copied << text; },
                        .open = [](const QString&) {},
-                       .record = [](const QString&, const QString&, QString*) { return QString(); },
-                       .machines = [] { return QStringList(); }},
+                       .record = [](const QString&, const QString&, const QString&,
+                                    const PlanSignIn::Prepare&, QString*) { return QString(); },
+                       .machines = [](const QString&) { return QStringList(); }},
                       {.helper = config.filePath(QStringLiteral("runtime/plan_sign_in.py")),
                        .accounts = config.filePath(QStringLiteral("accounts"))});
     UiPreview preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),

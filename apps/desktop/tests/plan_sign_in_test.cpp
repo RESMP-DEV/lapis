@@ -13,10 +13,13 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPointer>
+#include <QProcess>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QThread>
 
+#include <algorithm>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -140,8 +143,10 @@ raise SystemExit(subprocess.run(["/bin/sh", "-c", command], input=data).returnco
          .copy = [&copied](const QString& text) { copied << text; },
          .open = [&opened](const QString& text) { opened << text; },
          .record =
-             [&recorded](const QString& email, const QString& machine, const QString&,
+             [&recorded](const QString& email, const QString& machine, const QString& expected,
                          const PlanSignIn::Prepare& prepare, QString* reason) {
+                 require(expected == (machine.isEmpty() ? QString() : QStringLiteral("work")),
+                         "copy completion must carry the captured plan identity");
                  if (prepare && !prepare(QStringLiteral("work"), reason))
                      return QString();
                  recorded << email + QLatin1Char('@') +
@@ -188,7 +193,9 @@ raise SystemExit(subprocess.run(["/bin/sh", "-c", command], input=data).returnco
             "the token goes on stdin into a remote temporary file, then is moved whole");
     require(signIn.message().contains(QStringLiteral("Not reachable: gone")),
             "a machine that did not take it is named");
-    require(!QFileInfo::exists(root.filePath(QStringLiteral("accounts/claude/.signing-in.token"))),
+    require(QDir(root.filePath(QStringLiteral("accounts/claude")))
+                .entryList({QStringLiteral(".signing-in-*.token")}, QDir::Files | QDir::Hidden)
+                .isEmpty(),
             "nothing is left pending");
 
     // A second attempt has no identity left over. The token may arrive before
@@ -223,8 +230,9 @@ raise SystemExit(subprocess.run(["/bin/sh", "-c", command], input=data).returnco
     signIn.cancel();
     require(signIn.state() == QLatin1String("idle"), "cancel ends it");
     require(waitFor([&] {
-                return !QFileInfo::exists(
-                    root.filePath(QStringLiteral("accounts/claude/.signing-in.token")));
+                return QDir(root.filePath(QStringLiteral("accounts/claude")))
+                    .entryList({QStringLiteral(".signing-in-*.token")}, QDir::Files | QDir::Hidden)
+                    .isEmpty();
             }),
             "without keeping a token");
 
@@ -245,6 +253,42 @@ raise SystemExit(subprocess.run(["/bin/sh", "-c", command], input=data).returnco
 
 // A replacement is committed whole, and an unsafe recorder cannot use the
 // sign-in flow to put a token at a shell-controlled path.
+void discardsUnregisteredTokenOnDestruction() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "private unregistered-token fixture");
+    const QDir root(directory.path());
+    auto command = root.filePath(QStringLiteral("command"));
+    write(command, "#!/bin/sh\nmkdir -p \"$(dirname \"$3\")\"\nprintf '" + token() +
+                       "\n' > \"$3\"\nprintf '%s\n' '{\"signedIn\": true}'\n");
+    QFile::setPermissions(command, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    const auto pending = [&] {
+        return QDir(root.filePath(QStringLiteral("accounts/claude")))
+            .entryList({QStringLiteral(".signing-in-*.token")}, QDir::Files | QDir::Hidden);
+    };
+    {
+        PlanSignIn signIn({.program = [command](const QString&) { return command; },
+                           .copy = [](const QString&) {},
+                           .open = [](const QString&) {},
+                           .record = [](const QString&, const QString&, const QString&,
+                                        const PlanSignIn::Prepare&, QString*) { return QString(); },
+                           .machines = [](const QString&) { return QStringList{}; }},
+                          {.helper = root.filePath(QStringLiteral("runtime/helper.py")),
+                           .accounts = root.filePath(QStringLiteral("accounts"))});
+        signIn.start();
+        require(waitFor([&] { return signIn.state() == QLatin1String("signedIn"); }) &&
+                    pending().size() == 1,
+                "received token remains private while this attempt waits for an email");
+        require(waitFor([&] {
+                    const auto processes = signIn.findChildren<QProcess*>();
+                    return std::all_of(processes.cbegin(), processes.cend(), [](const QProcess* p) {
+                        return p->state() == QProcess::NotRunning;
+                    });
+                }),
+                "helper has exited before the abandoned controller is destroyed");
+    }
+    require(pending().isEmpty(), "normal destruction removes an unregistered staging credential");
+}
+
 void keepsTokensWholeAndNamedSafely() {
     QTemporaryDir directory;
     require(directory.isValid(), "fixture directory");
@@ -392,8 +436,10 @@ void stopsOldCopiesBeforeANewAttempt() {
          .copy = [](const QString&) {},
          .open = [](const QString&) {},
          .record =
-             [&recorded](const QString& email, const QString& machine, const QString&,
+             [&recorded](const QString& email, const QString& machine, const QString& expected,
                          const PlanSignIn::Prepare& prepare, QString* reason) {
+                 require(expected == (machine.isEmpty() ? QString() : QStringLiteral("work")),
+                         "copy completion must carry the captured plan identity");
                  if (prepare && !prepare(QStringLiteral("work"), reason))
                      return QString();
                  recorded << email + QLatin1Char('@') +
@@ -408,13 +454,21 @@ void stopsOldCopiesBeforeANewAttempt() {
     signIn.setEmail(QStringLiteral("first@example.com"));
     require(waitFor([&] { return signIn.state() == QLatin1String("done"); }), "the first plan");
     require(signIn.spreading(), "the slow old copy is still in flight");
+    QPointer<QProcess> old_copy;
+    for (auto* process : signIn.findChildren<QProcess*>())
+        if (process->program() == ssh)
+            old_copy = process;
+    require(old_copy, "the old copy process is observable");
     signIn.start();
     require(!signIn.spreading(), "a new attempt stops the old token's copies");
     require(waitFor([&] { return signIn.state() == QLatin1String("signedIn"); }), "the new token");
     require(recorded == QStringList{QStringLiteral("first@example.com@mac")},
             "the stopped copy records nothing else");
-    QThread::msleep(100);
-    QCoreApplication::processEvents(QEventLoop::AllEvents);
+    require(waitFor([&] {
+                QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+                return old_copy.isNull();
+            }),
+            "the old copy guard completed and released its process");
     require(recorded == QStringList{QStringLiteral("first@example.com@mac")},
             "the killed copy cannot adopt the new attempt");
     signIn.cancel();
@@ -427,6 +481,7 @@ int main(int argc, char** argv) {
         plansRecordThisMac();
         signsInAnyAccount();
         keepsTokensWholeAndNamedSafely();
+        discardsUnregisteredTokenOnDestruction();
         rejectsMalformedHelperOutputAndUnsafeNames();
         stopsOldCopiesBeforeANewAttempt();
     } catch (const std::exception& error) {

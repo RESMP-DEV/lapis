@@ -3386,7 +3386,9 @@ the form clears earlier identity and copy state.
 
 `KeyMap::addPlanMachine` chooses the first effective email match from the current
 file, or allocates an unused name, including a suffix when derived names collide.
-Names alone never merge accounts. Before publishing local availability, its
+Names alone never merge accounts. Cooperating KeyMap writers share a nonblocking
+config lock across allocation, credential preparation and publication. Before
+publishing local availability, its
 preparation callback atomically stores the token; a write failure leaves the
 existing credential and config intact. A later config-write failure may leave a
 valid unregistered credential, but cannot advertise a missing one. Malformed
@@ -3398,7 +3400,11 @@ captures the attempt, email and plan name, sends bytes on stdin, validates the
 complete byte count in a private temporary file, then atomically replaces the
 remote token. Completion records a machine only if the current plan still matches
 the captured identity. Output tails are bounded and credential shapes are masked.
-Cancellation or a new attempt retires the prior helpers and callbacks.
+Cancellation or a new attempt retires the prior helpers and callbacks. The
+Python guardian is forked inside the PTY child's session before exec; helper
+death closes its pipe and makes it signal its own anchored process group.
+Token parsing requires a delimiter or actual EOF, never a quiet-time guess.
+These local fixtures exercise forced helper death without running a real agent.
 
 The token's `user:inference` scope cannot identify the account, so the person
 supplies its email. The tests use private stand-in CLIs and token files; they do

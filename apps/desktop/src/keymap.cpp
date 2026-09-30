@@ -12,6 +12,7 @@
 #include <QJsonParseError>
 #include <QJsonValue>
 #include <QKeySequence>
+#include <QLockFile>
 #include <QSaveFile>
 #include <QSet>
 #include <QSignalBlocker>
@@ -1106,6 +1107,11 @@ bool KeyMap::save_without_tentative_change() {
 bool KeyMap::save() { return persist(); }
 
 namespace {
+QString config_lock_path(const QString& path) {
+    const QFileInfo source(path);
+    const auto canonical = source.canonicalFilePath();
+    return (canonical.isEmpty() ? source.absoluteFilePath() : canonical) + QStringLiteral(".lock");
+}
 bool read_config_for_update(const QString& path, QJsonObject& root, QString* reason) {
     const auto fail = [reason](const QString& why) {
         *reason = why;
@@ -1144,6 +1150,9 @@ bool KeyMap::persist() {
         emit changed();
         return false;
     };
+    QLockFile writer(config_lock_path(source_path_));
+    if (!writer.tryLock(0))
+        return fail(QStringLiteral("configuration is busy or its lock is not writable"));
     QJsonObject root;
     QString read_reason;
     if (!read_config_for_update(source_path_, root, &read_reason))

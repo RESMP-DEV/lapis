@@ -1031,22 +1031,42 @@ void added_plans_preserve_account_identity() {
                     .isEmpty() &&
                 read_config(path) == before,
             "an asynchronous copy cannot advertise a different plan than it delivered");
+    KeyMap competing;
+    competing.setSourcePathForTesting(path);
+    require(competing.load(), "another controller reads the same config");
+    bool competing_prepared = false;
     bool prepared = false;
     QString failed_write;
-    require(keymap.addPlanMachine({.cli = QStringLiteral("claude"),
-                                   .email = QStringLiteral("failure@example.net"),
-                                   .machine = {}},
-                                  &failed_write,
-                                  [&](const QString& name, QString* reason) {
-                                      prepared = name == QStringLiteral("failure-example") &&
-                                                 read_config(path) == before;
-                                      *reason = QStringLiteral("fixture credential write failed");
-                                      return false;
-                                  })
-                    .isEmpty() &&
-                prepared && read_config(path) == before &&
-                failed_write.contains(QStringLiteral("fixture credential write failed")),
-            "credential preparation precedes config commit and failure publishes no availability");
+    require(
+        keymap.addPlanMachine(
+                  {.cli = QStringLiteral("claude"),
+                   .email = QStringLiteral("failure@example.net"),
+                   .machine = {}},
+                  &failed_write,
+                  [&](const QString& name, QString* reason) {
+                      prepared =
+                          name == QStringLiteral("failure-example") && read_config(path) == before;
+                      QString busy;
+                      require(competing
+                                      .addPlanMachine({.cli = QStringLiteral("claude"),
+                                                       .email = QStringLiteral("other@example.net"),
+                                                       .machine = {}},
+                                                      &busy,
+                                                      [&](const QString&, QString*) {
+                                                          competing_prepared = true;
+                                                          return true;
+                                                      })
+                                      .isEmpty() &&
+                                  !competing_prepared && busy.contains(QStringLiteral("busy")),
+                              "a competing controller cannot prepare a credential under a held "
+                              "config lock");
+                      *reason = QStringLiteral("fixture credential write failed");
+                      return false;
+                  })
+                .isEmpty() &&
+            prepared && read_config(path) == before &&
+            failed_write.contains(QStringLiteral("fixture credential write failed")),
+        "credential preparation precedes config commit and failure publishes no availability");
     require(add(QStringLiteral("bad-email")).isEmpty() && read_config(path) == before,
             "invalid identity cannot mutate config");
     static_cast<void>(write_config(root, R"({"accounts":{"claude":"malformed"}})"));

@@ -78,8 +78,16 @@ PlanSignIn::PlanSignIn(Hooks hooks, Places places, QObject* parent)
     : QObject(parent), hooks_(std::move(hooks)), places_(std::move(places)) {}
 
 PlanSignIn::~PlanSignIn() {
+    const auto active = process_;
     stopSignIn();
     stopCopies();
+    // On normal destruction finish the one active helper before removing its
+    // unregistered credential. Its Python guardian also ends the PTY group.
+    if (active && active->state() != QProcess::NotRunning) {
+        active->kill();
+        static_cast<void>(active->waitForFinished(1000));
+    }
+    QFile::remove(pendingToken());
     // QObject destroys the owned UpdaterProcesses; their guards also cover
     // application shutdown before asynchronous cleanup callbacks run.
 }
@@ -90,7 +98,7 @@ QStringList PlanSignIn::machines() const {
     return QStringList{tr("this Mac")} + reached_;
 }
 
-QString PlanSignIn::pendingToken() const { return pending_token_; }
+const QString& PlanSignIn::pendingToken() const { return pending_token_; }
 
 void PlanSignIn::set(const QString& state, const QString& message) {
     state_ = state;
@@ -349,11 +357,14 @@ void PlanSignIn::spread(const QByteArray& token) {
         if (machine.isEmpty() || machine.startsWith(QLatin1Char('-')) || copying_.contains(machine))
             continue;
         ++admitted;
-        copyTo(machine, ssh, target, token);
+        copyTo({.machine = machine, .program = ssh, .command = target, .token = token});
     }
 }
-void PlanSignIn::copyTo(const QString& machine, const QString& ssh, const QString& target,
-                        const QByteArray& token) {
+void PlanSignIn::copyTo(const CopyLaunch& launch) {
+    const auto& machine = launch.machine;
+    const auto& ssh = launch.program;
+    const auto& target = launch.command;
+    const auto& token = launch.token;
     auto* process = new UpdaterProcess(this);
     copying_.insert(machine, {.process = process,
                               .email = email_,

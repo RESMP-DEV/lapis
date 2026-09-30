@@ -90,12 +90,17 @@ class PlanSignIn final : public QObject {
     void finish();
     void fail(const QString& why);
     void set(const QString& state, const QString& message = {});
-    [[nodiscard]] QString pendingToken() const;
+    [[nodiscard]] const QString& pendingToken() const;
     void stopCopies();
     void stopSignIn();
     void spread(const QByteArray& token);
-    void copyTo(const QString& machine, const QString& ssh, const QString& target,
-                const QByteArray& token);
+    struct CopyLaunch {
+        QString machine;
+        QString program;
+        QString command;
+        QByteArray token;
+    };
+    void copyTo(const CopyLaunch& launch);
     void report();
     Hooks hooks_;
     Places places_;

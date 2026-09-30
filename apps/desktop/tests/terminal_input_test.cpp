@@ -1040,7 +1040,8 @@ void long_pastes() {
     require(peer.read().kind == wire::Kind::paste_request, "Pending paste request missing");
     peer.socket->abort();
     until([&] { return !refusals.isEmpty(); });
-    require(refusals.back().contains(QStringLiteral("unknown")) && !f.document.inputReady(),
+    require(!refusals.empty() && refusals.back().contains(QStringLiteral("unknown")) &&
+                !f.document.inputReady(),
             "Lost paste receipt must report uncertainty without replay");
 }
 
