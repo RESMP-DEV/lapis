@@ -280,6 +280,13 @@ def command_actual(arguments):
     }
 
 
+def utc_timestamp(value):
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
 def command_sample(arguments):
     """Random past prompts, each with the conversation before it."""
     paths = [
@@ -294,13 +301,7 @@ def command_sample(arguments):
         if codex_interactive(codex_meta(p))
     ]
     since = arguments.since or ""
-    oldest = (
-        datetime.fromisoformat(since.replace("Z", "+00:00"))
-        .replace(tzinfo=timezone.utc)
-        .timestamp()
-        if since
-        else 0
-    )
+    oldest = utc_timestamp(since) if since else 0
     exclude = set(arguments.exclude or ())
     eligible = []
     for cli, path in paths:
@@ -312,11 +313,11 @@ def command_sample(arguments):
             if turn["role"] != "person":
                 continue
             seen += 1
-            if (
-                seen > 2
-                and turn["time"] >= since
-                and turns[index - 1]["role"] == "agent"
-            ):
+            try:
+                after_cutoff = not since or utc_timestamp(turn["time"]) >= oldest
+            except (ValueError, TypeError):
+                continue
+            if seen > 2 and after_cutoff and turns[index - 1]["role"] == "agent":
                 eligible.append((cli, path, index))
     random.Random(arguments.seed).shuffle(eligible)
     items = []

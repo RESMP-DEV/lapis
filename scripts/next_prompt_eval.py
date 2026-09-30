@@ -72,6 +72,10 @@ def on_machine(machine, arguments):
             )
     except subprocess.TimeoutExpired:
         return {"error": "timed out"}
+    except OSError:
+        return {"error": "helper unavailable"}
+    if run.returncode != 0:
+        return {"error": "helper failed"}
     try:
         return json.loads(run.stdout)
     except ValueError:

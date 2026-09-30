@@ -201,6 +201,13 @@ class TranscriptTests(Homes):
         item = sample["items"][0]
         self.assertEqual((item["conversation"], item["actual"]), (path.stem, "three"))
         self.assertEqual([t["text"] for t in item["turns"]], ["one", "a", "two", "b"])
+        for since in ("2026-09-28T11:01:00Z", "2026-09-28T14:01:00+03:00"):
+            same = next_prompt.command_sample(
+                next_prompt.argparse.Namespace(
+                    count=5, since=since, seed=1, exclude=["c1"]
+                )
+            )
+            self.assertEqual(same["items"], sample["items"])
 
     def test_history_keeps_the_newest_turns_that_fit(self):
         turns = [{"role": "person", "text": "%02d" % n * 500} for n in range(40)]
