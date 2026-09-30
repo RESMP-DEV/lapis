@@ -88,7 +88,7 @@ void hyperlink_messages() {
                 (static_cast<unsigned char>(old[36]) | 0xc0U));
         capable[36] = static_cast<char>(static_cast<unsigned char>(capable[36]) & 0x3fU);
         require(capable == old);
-        capable[36] = static_cast<char>(static_cast<unsigned char>(capable[36]) | 0x20U);
+        capable[36] = static_cast<char>(static_cast<unsigned char>(capable[36]) | 0x10U);
         rejects([&] { static_cast<void>(wire::decode_attach(capable)); });
     }
 }
@@ -162,6 +162,39 @@ void identity_messages() {
     require(decoded_ready.attachment == attachment && decoded_ready.sequence == ready.sequence);
     rejects([&] { static_cast<void>(wire::encode_ready({attachment, 0})); });
     rejects([&] { static_cast<void>(wire::decode_ready(encoded_ready + 'x')); });
+}
+void paste_messages() {
+    using namespace lapis::session;
+    const wire::Attachment attachment{{wire::new_id(), wire::new_id()}, 3};
+    wire::AttachRequest attach{.fingerprint = QByteArray(32, 'f'), .expected = {}};
+    attach.paste_transactions = true;
+    require(wire::decode_attach(wire::encode_attach(attach)).paste_transactions);
+    const auto legacy = wire::encode_hello({attachment, 99});
+    require(legacy.size() == 52 && !wire::decode_hello(legacy).paste_transactions);
+    const auto capable = wire::encode_hello({attachment, 99, true});
+    require(capable.size() == 56 && wire::decode_hello(capable).paste_transactions);
+    wire::PasteRequest request{attachment, 1, true, QByteArray(wire::max_paste_bytes, 'x')};
+    const auto encoded = wire::encode_paste_request(request);
+    const auto decoded = wire::decode_paste_request(encoded);
+    require(decoded.attachment == attachment && decoded.request_id == 1 && decoded.submit &&
+            decoded.text == request.text);
+    auto partial = wire::frame(wire::Kind::paste_request, encoded);
+    const auto final_byte = partial.back();
+    partial.chop(1);
+    wire::Frame frame;
+    require(!wire::take_frame(partial, frame));
+    partial += final_byte;
+    require(wire::take_frame(partial, frame) && frame.kind == wire::Kind::paste_request);
+    request.text += 'x';
+    rejects([&] { static_cast<void>(wire::encode_paste_request(request)); });
+    rejects([&] { static_cast<void>(wire::decode_paste_request(encoded + 'x')); });
+    auto bad = encoded;
+    bad[48] = char{2};
+    rejects([&] { static_cast<void>(wire::decode_paste_request(bad)); });
+    const auto receipt = wire::decode_paste_result(
+        wire::encode_paste_result({attachment, 1, false, QStringLiteral("full")}));
+    require(receipt.attachment == attachment && receipt.request_id == 1 && !receipt.queued &&
+            receipt.message == QStringLiteral("full"));
 }
 void history_messages() {
     using namespace lapis::session;
@@ -268,7 +301,7 @@ void wheel_messages() {
     wire::Frame frame;
     require(wire::take_frame(buffer, frame) && frame.kind == wire::Kind::wheel);
     QByteArray unknown = packet;
-    unknown[4] = static_cast<char>(static_cast<quint8>(wire::Kind::wheel) + 1);
+    unknown[4] = static_cast<char>(static_cast<quint8>(wire::Kind::paste_result) + 1);
     rejects([&] { static_cast<void>(wire::take_frame(unknown, frame)); });
 
     Terminal terminal({20, 4});
@@ -291,6 +324,7 @@ int main() {
     using namespace lapis::session;
     try {
         identity_messages();
+        paste_messages();
         hyperlink_messages();
         envelope_messages();
         history_messages();
@@ -354,11 +388,11 @@ int main() {
         rejects([&] { static_cast<void>(wire::encode_snapshot(invalid)); });
         const QByteArray framed = wire::frame(wire::Kind::text, QByteArrayLiteral("x"));
         require(framed.size() == 6);
-        // Kind 15 (terminate) is the last defined kind; 16 is unknown.
+        // Terminate remains kind15; kinds beyond paste_result are unknown.
         auto terminate = QByteArray::fromHex("000000010f");
         require(wire::take_frame(terminate, frame) && frame.kind == wire::Kind::terminate &&
                 frame.payload.isEmpty());
-        for (const auto* hex : {"00000000", "00800001", "0000000100", "0000000111"}) {
+        for (const auto* hex : {"00000000", "00800001", "0000000100", "0000000113"}) {
             auto malformed = QByteArray::fromHex(hex);
             rejects([&] { static_cast<void>(wire::take_frame(malformed, frame)); });
         }

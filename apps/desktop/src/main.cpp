@@ -5,6 +5,7 @@
 #include "desktop_actions.hpp"
 #include "keymap.hpp"
 #include "limit_resets.hpp"
+#include "next_prompt.hpp"
 #include "platform_desktop.hpp"
 #include "platform_preferences.hpp"
 #include "shell_environment.hpp"
@@ -26,6 +27,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QPointer>
 #include <QQmlEngine>
 #include <QQuickStyle>
@@ -555,6 +558,73 @@ void follow_usage_setting(lapis::desktop::Usage& usage, const lapis::desktop::Ke
     QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &usage, show);
 }
 
+// Predicts what the person will type next to an agent that finished a turn,
+// while the setting is on and only in the real workspace (see NextPrompt).
+QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
+                          lapis::desktop::Workspace& workspace,
+                          const lapis::desktop::KeyMap& keymap, bool isolated) {
+    using lapis::desktop::NextPrompt;
+    using lapis::desktop::SessionPreview;
+    if (isolated)
+        return nullptr;
+    const QDir data(lapis::desktop::data_directory());
+    // The log lives in the private, ignored runtime folder; one kept beside it
+    // by an earlier build moves there.
+    const auto log = data.filePath(QStringLiteral("runtime/next_prompt.jsonl"));
+    if (const auto earlier = data.filePath(QStringLiteral("next_prompt.jsonl"));
+        QFileInfo::exists(earlier) && !QFileInfo::exists(log)) {
+        QDir().mkpath(data.filePath(QStringLiteral("runtime")),
+                      QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        if (!QFile::rename(earlier, log))
+            qWarning().noquote() << "Next prompt: could not move the earlier log into runtime/";
+    }
+    auto& next = kept.emplace(
+        [&workspace](const QString& id) -> std::optional<NextPrompt::Agent> {
+            const auto* item = workspace.session(id);
+            if (item == nullptr)
+                return std::nullopt;
+            const auto place = workspace.agentPlace(id);
+            const auto machine = place.value(QStringLiteral("machine")).toString();
+            auto folder = place.value(QStringLiteral("place")).toString();
+            if (!machine.isEmpty())
+                folder = folder.mid(machine.size() + 1);
+            return NextPrompt::Agent{machine,
+                                     folder,
+                                     item->harnessId(),
+                                     workspace.agentConversation(id),
+                                     item->title(),
+                                     place.value(QStringLiteral("category")).toString(),
+                                     lapis::desktop::terminal_screen_text(item->snapshot())};
+        },
+        [&workspace] {
+            QJsonArray agents;
+            for (const auto& value : workspace.sessions()) {
+                const auto* item = value.value<SessionPreview*>();
+                if (item == nullptr)
+                    continue;
+                agents.append(QJsonObject{
+                    {QStringLiteral("title"), item->title()},
+                    {QStringLiteral("category"), workspace.agentPlace(item->sessionId())
+                                                     .value(QStringLiteral("category"))
+                                                     .toString()},
+                    {QStringLiteral("status"), item->statusLabel()},
+                    {QStringLiteral("waiting"), item->unseen() || item->attentionPending()}});
+            }
+            return agents;
+        },
+        [](const QString& name) { return QStandardPaths::findExecutable(name); },
+        NextPrompt::Files{data.filePath(QStringLiteral("runtime")), log});
+    const auto follow = [&next, &keymap] { next.setSettings(keymap.nextPrompt()); };
+    follow();
+    QObject::connect(&keymap, &lapis::desktop::KeyMap::changed, &next, follow);
+    QObject::connect(&workspace, &lapis::desktop::Workspace::turnFinished, &next,
+                     [&next](SessionPreview* item) {
+                         if (item != nullptr)
+                             next.turnFinished(item->sessionId());
+                     });
+    return &next;
+}
+
 // The quick-command terminals beside this workspace, with ssh hosts from the
 // user's ssh config; those still running come back.
 std::unique_ptr<lapis::desktop::Terminals>
@@ -764,6 +834,8 @@ int main(int argc, char** argv) {
         }
         std::optional<LimitResets> limitResets;
         QObject* const resetsForQml = keep_limit_resets(limitResets, workspace, keymap, isolated);
+        std::optional<NextPrompt> nextPrompt;
+        QObject* const nextForQml = keep_next_prompt(nextPrompt, workspace, keymap, isolated);
         const auto conversations = conversation_index(workspace);
         if (!isolated) {
             follow_conversation_titles(workspace, *conversations);
@@ -780,6 +852,7 @@ int main(int argc, char** argv) {
                                    .conversations = conversations.get(),
                                    .terminals = terminals.get(),
                                    .limitResets = resetsForQml,
+                                   .nextPrompt = nextForQml,
                                    .persistGeometry = !isolated && !options.launch &&
                                                       options.endpoint.isEmpty() &&
                                                       !parser.isSet(QStringLiteral("capture")),

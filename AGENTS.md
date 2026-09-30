@@ -39,7 +39,7 @@ component or launch an unbounded set of agents.
 4. Verify live interfaces. Documentation, source definitions, exported schemas,
    replay fixtures, and actual runtime events are different kinds of evidence.
 
-[README.md](README.md#current-status) owns the current implementation status.
+[docs/status.md](docs/status.md) owns the current implementation status.
 Determine status from code and tests, update that table as components land, and
 treat saved receipts as dated observations. Keep milestone acceptance in the
 architecture document instead of creating another status or roadmap file.
@@ -292,12 +292,15 @@ Keep `.sindexer/` in the root `.gitignore`. Preserve the instruction symlink.
 
 ## Completion and review
 
-Keep `README.md` as the entry point and `docs/architecture.md` as the single
-implementation plan. Consolidate decisions there; avoid parallel roadmap,
-component-summary or research Markdown files. Keep specialized documentation only
-when it supplies distinct operational detail, as CONTRIBUTING.md and the Codex
-investigation do. Use the single `.github/PULL_REQUEST_TEMPLATE.md` for PRs.
-Store sanitized evidence in `evidence/`.
+Keep `README.md` a short entry point (what lapis is, download, a tour, build, links)
+and `docs/architecture.md` the single implementation plan. User documentation lives
+in `docs/`, one page per topic named with one lowercase word (`agents.md`,
+`keys.md`, `config.md`); add to the page a change belongs to rather than to the
+README. Consolidate design decisions in the architecture document; avoid parallel
+roadmap, component-summary or research Markdown files. Keep specialized
+documentation only when it supplies distinct operational detail, as CONTRIBUTING.md
+and the Codex investigation do. Use the single `.github/PULL_REQUEST_TEMPLATE.md`
+for PRs. Store sanitized evidence in `evidence/`.
 
 Finish with the concrete outcome, relevant checks, evidence paths, and material
 limitations. Update documentation when behavior or an architectural choice changes.

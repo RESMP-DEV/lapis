@@ -17,6 +17,7 @@
 #include <QGuiApplication>
 #include <QInputMethod>
 #include <QInputMethodEvent>
+#include <QJSEngine>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QLocalServer>
@@ -119,9 +120,10 @@ struct Fixture {
                 "Wrong launch fingerprint");
         return request;
     }
-    void hello(Peer& peer, quint64 generation = 1) {
+    void hello(Peer& peer, quint64 generation = 1, bool paste_transactions = false) {
         generation_ = generation;
-        peer.send(wire::Kind::hello, wire::encode_hello({{identity, generation}, 123}));
+        peer.send(wire::Kind::hello,
+                  wire::encode_hello({{identity, generation}, 123, paste_transactions}));
         until([&] { return document.connectionState() == QStringLiteral("synchronizing"); });
         require(!document.inputReady(), "Hello enabled input before the screen");
     }
@@ -724,6 +726,324 @@ void command_links_open() {
             "A valid encoded replacement-character filename did not open");
     require(text_frames(peer).isEmpty(), "Command-click sent input to the agent");
 }
+// A next prompt offered at the cursor, with the Tab flow on: drawn there and
+// seen once; Tab sends it, Option-Tab only types it; typing keeps it and is
+// counted; and Tab with nothing offered and nothing typed asks for the next
+// agent, while Tab after typing goes to the agent.
+std::vector<wire::Frame> suggestion_operations(Peer& peer, std::size_t count) {
+    std::vector<wire::Frame> found;
+    until([&] {
+        peer.bytes += peer.socket->readAll();
+        wire::Frame frame;
+        while (wire::take_frame(peer.bytes, frame)) {
+            if (frame.kind == wire::Kind::paste_request) {
+                const auto request = wire::decode_paste_request(frame.payload);
+                peer.send(
+                    wire::Kind::paste_result,
+                    wire::encode_paste_result({request.attachment, request.request_id, true, {}}));
+                // Expose the admitted logical operations to this UI test.
+                // The actual service byte ordering is covered by paste-admission.
+                found.push_back(
+                    {wire::Kind::paste, wire::encode_control({request.attachment, request.text})});
+                if (request.submit)
+                    found.push_back(
+                        {wire::Kind::key,
+                         wire::encode_control(
+                             {request.attachment,
+                              QByteArray(1, static_cast<char>(lapis::session::TerminalKey::enter)) +
+                                  QByteArray(1, char{0})})});
+            } else if (frame.kind != wire::Kind::resize) {
+                found.push_back(frame);
+            }
+        }
+        return found.size() >= count;
+    });
+    settle(); // Let the correlated admission receipt reach the view.
+    return found;
+}
+
+void suggestions() {
+    Fixture f;
+    QQuickWindow window;
+    window.setGeometry(100, 100, 640, 360);
+    lapis::desktop::TerminalSurface surface(window.contentItem());
+    surface.setSize(QSizeF(640, 360));
+    surface.setHoldResize(true);
+    surface.setDocument(&f.document);
+    surface.setInteractive(true);
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer, 1, true);
+    f.screen(peer);
+    window.show();
+    until([&] { return window.isExposed(); });
+    lapis::desktop::test::activate_test_window(window);
+    until([&] { return window.isActive(); });
+    settle();
+    until([&] {
+        surface.forceActiveFocus();
+        return surface.hasActiveFocus();
+    });
+    static_cast<void>(text_frames(peer));
+    lapis::session::Terminal wide{{40, 4}};
+    wide.feed("> ");
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 2, wide.snapshot()}));
+    until([&] { return f.document.snapshot().size.columns == 40; });
+    settle();
+    std::vector<std::pair<bool, int>> used;
+    int seen = 0;
+    QObject::connect(&surface, &lapis::desktop::TerminalSurface::suggestionUsed,
+                     [&used, &f](const QString& id, const QString&, bool sent, int typed) {
+                         require(id == f.document.sessionId(),
+                                 "Suggestion result changed sessions");
+                         used.emplace_back(sent, typed);
+                     });
+    QObject::connect(&surface, &lapis::desktop::TerminalSurface::suggestionSeen,
+                     [&seen, &f](const QString& id, const QString&) {
+                         require(id == f.document.sessionId(),
+                                 "Suggestion impression changed sessions");
+                         ++seen;
+                     });
+    // Tab-away is QML's function: here it counts calls and answers `moves`.
+    QJSEngine engine;
+    engine.globalObject().setProperty(QStringLiteral("calls"), 0);
+    engine.globalObject().setProperty(QStringLiteral("moves"), true);
+    surface.setTabAway(
+        engine.evaluate(QStringLiteral("(function() { calls += 1; return moves; })")));
+    const auto calls = [&engine] {
+        return engine.globalObject().property(QStringLiteral("calls")).toInt();
+    };
+    const auto frames = [&peer](std::size_t count) { return suggestion_operations(peer, count); };
+    const auto nothing_sent = [&frames] {
+        settle();
+        return frames(0).empty();
+    };
+    const auto payload = [](const wire::Frame& frame) {
+        return wire::decode_control(frame.payload).payload;
+    };
+    const auto is_key = [&payload](const wire::Frame& frame, lapis::session::TerminalKey key) {
+        return frame.kind == wire::Kind::key &&
+               static_cast<unsigned char>(payload(frame).at(0)) == static_cast<unsigned char>(key);
+    };
+    const auto press = [&surface](int key, Qt::KeyboardModifiers modifiers, const QString& text) {
+        QKeyEvent event(QEvent::KeyPress, key, modifiers, text);
+        QCoreApplication::sendEvent(&surface, &event);
+    };
+
+    // Without the Tab flow (a shell, or a CLI lapis does not guess for) Tab
+    // is the program's.
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    auto typed = frames(1);
+    require(is_key(typed[0], lapis::session::TerminalKey::tab) && calls() == 0,
+            "Tab was taken without the Tab flow");
+    surface.setTabFlow(true);
+
+    // Drawn dim on the cursor's row only, after the cursor.
+    const auto plain = window.grabWindow();
+    surface.setSuggestionKey(QStringLiteral("a:1"));
+    surface.setSuggestion(QStringLiteral("go now"));
+    settle();
+    const auto shown = window.grabWindow();
+    QRect changed;
+    for (int y = 0; y < shown.height(); ++y)
+        for (int x = 0; x < shown.width(); ++x)
+            if (shown.pixel(x, y) != plain.pixel(x, y))
+                changed |= QRect(x, y, 1, 1);
+    require(!changed.isEmpty() && changed.height() <= shown.height() / 4 &&
+                changed.left() > shown.width() / 40,
+            "The suggestion was not drawn on the cursor's row after the cursor");
+    require(seen == 1, "The suggestion on screen was not reported seen");
+
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(2);
+    require(typed[0].kind == wire::Kind::paste && payload(typed[0]) == QByteArray("go now") &&
+                is_key(typed[1], lapis::session::TerminalKey::enter),
+            "Tab did not type and send the suggestion");
+    require(used == std::vector<std::pair<bool, int>>{{true, 0}} && surface.suggestion().isEmpty(),
+            "Tab was not reported as sent");
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    require(calls() == 1 && nothing_sent(), "The second Tab did not move to the next agent");
+    engine.globalObject().setProperty(QStringLiteral("moves"), false);
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(calls() == 2 && is_key(typed[0], lapis::session::TerminalKey::tab),
+            "With nowhere to go Tab was not the program's");
+
+    // The same words offered again are a new offer, seen again.
+    surface.setSuggestionKey(QStringLiteral("a:2"));
+    surface.setSuggestion(QStringLiteral("go now"));
+    settle();
+    require(seen == 2, "A new offer with the same words was not seen again");
+
+    // Typing is not a refusal: the suggestion stays, and what was typed first
+    // (here "no", then Command-Delete) is counted when Tab takes it.
+    surface.setSuggestion(QStringLiteral("status?"));
+    settle();
+    press(Qt::Key_N, Qt::NoModifier, QStringLiteral("n"));
+    press(Qt::Key_O, Qt::NoModifier, QStringLiteral("o"));
+    press(Qt::Key_Backspace, Qt::MetaModifier, {});
+    typed = frames(3);
+    require(surface.suggestion() == QLatin1String("status?"), "Typing withdrew the suggestion");
+    press(Qt::Key_C, Qt::MetaModifier, QStringLiteral("c"));
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(2);
+    require(payload(typed[0]) == QByteArray("status?") &&
+                is_key(typed[1], lapis::session::TerminalKey::enter) &&
+                used.back() == std::pair{true, 3},
+            "Tab after typing did not send it, counting three keys typed first");
+
+    // The Enter belongs to the same admitted operation; later typing cannot
+    // be accidentally submitted by a delayed GUI timer.
+    surface.setSuggestion(QStringLiteral("rerun"));
+    settle();
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    press(Qt::Key_S, Qt::NoModifier, QStringLiteral("s"));
+    typed = frames(3);
+    require(payload(typed[0]) == QByteArray("rerun") &&
+                is_key(typed[1], lapis::session::TerminalKey::enter) &&
+                payload(typed[2]) == QByteArray("s") && nothing_sent(),
+            "Later typing was interleaved before the admitted Enter");
+
+    // A fresh offer has not been presented yet: Tab may fill it, but must not
+    // submit text the person could not have read in a completed frame.
+    surface.setSuggestion(QStringLiteral("not yet drawn"));
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(payload(typed[0]) == QByteArray("not yet drawn") &&
+                used.back() == std::pair{false, 0} && nothing_sent(),
+            "An unpresented suggestion was submitted");
+
+    // A suggestion that does not show whole is only typed, for the person to
+    // read before sending.
+    const QString longer(60, QLatin1Char('w'));
+    surface.setSuggestion(longer);
+    settle();
+    lapis::session::Terminal expanded{{100, 4}};
+    expanded.feed("> ");
+    // The live snapshot now fits the whole text, but the last presented
+    // frame still showed it elided. Input must follow that presented frame.
+    f.document.applySnapshot(expanded.snapshot());
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(payload(typed[0]) == longer.toUtf8() && used.back() == std::pair{false, 0} &&
+                nothing_sent(),
+            "A suggestion not shown whole was sent");
+
+    // A pending request (a permission dialog) is never answered by Tab: the
+    // suggestion is not sent, and Tab moves on instead.
+    engine.globalObject().setProperty(QStringLiteral("moves"), true);
+    surface.setDocument(nullptr);
+    surface.setDocument(&f.document);
+    surface.forceActiveFocus();
+    surface.setSuggestion(QStringLiteral("yes do it"));
+    require(f.document.addPreviewRequest(QStringLiteral("r1"), QStringLiteral("rm -rf")),
+            "Fixture request was not added");
+    const int before = calls();
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    require(nothing_sent() && calls() == before + 1 &&
+                surface.suggestion() == QLatin1String("yes do it"),
+            "Tab answered a pending request with the suggestion");
+    require(f.document.resolvePreviewRequest(QStringLiteral("r1")), "Fixture request stayed");
+    surface.setSuggestion({});
+
+    // Option-Tab only types it; Tab after typing is the program's.
+    surface.setSuggestion(QStringLiteral("rerun it"));
+    press(Qt::Key_Tab, Qt::AltModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(typed.size() == 1 && payload(typed[0]) == QByteArray("rerun it") &&
+                used.back() == std::pair{false, 0},
+            "Option-Tab did not only type the suggestion");
+    const int after_fill = calls();
+    press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
+    typed = frames(1);
+    require(is_key(typed[0], lapis::session::TerminalKey::tab) && calls() == after_fill,
+            "Tab after typing did not reach the agent");
+}
+
+void long_pastes() {
+    Fixture f;
+    QQuickWindow window;
+    window.setGeometry(100, 100, 640, 360);
+    lapis::desktop::TerminalSurface surface(window.contentItem());
+    surface.setSize(QSizeF(640, 360));
+    surface.setHoldResize(true);
+    surface.setDocument(&f.document);
+    surface.setInteractive(true);
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer, 1, true);
+    f.screen(peer);
+    window.show();
+    until([&] { return window.isExposed(); });
+    lapis::desktop::test::activate_test_window(window);
+    until([&] { return window.isActive(); });
+    settle();
+    until([&] {
+        surface.forceActiveFocus();
+        return surface.hasActiveFocus();
+    });
+    static_cast<void>(text_frames(peer));
+    QStringList refusals;
+    QObject::connect(&surface, &lapis::desktop::TerminalSurface::pasteRefused,
+                     [&refusals](const QString& reason) { refusals << reason; });
+    QString transcript;
+    while (transcript.toUtf8().size() <= 3 * wire::max_input_bytes)
+        transcript += QStringLiteral("speaker 界: a line with an escape \x1b[31m in it\n");
+    const auto utf8 = transcript.toUtf8();
+    require(surface.pasteText(transcript), "Expected a supported long paste to be submitted");
+    auto packet = peer.read();
+    require(packet.kind == wire::Kind::paste_request, "A paste must be one complete request");
+    auto request = wire::decode_paste_request(packet.payload);
+    require(request.text == utf8 && !request.submit, "The desktop must retain raw paste bytes");
+    peer.send(wire::Kind::paste_result,
+              wire::encode_paste_result({request.attachment, request.request_id, true, {}}));
+    settle();
+    f.terminal.feed("\x1b[?2004h");
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 2, f.terminal.snapshot()}));
+    until([&] { return f.document.snapshot().bracketed_paste; });
+    require(surface.pasteText(transcript),
+            "Expected raw long paste even with bracketed mode advertised");
+    packet = peer.read();
+    auto later = wire::decode_paste_request(packet.payload);
+    require(later.request_id > request.request_id && later.text == utf8,
+            "Each paste has a new ID and service-owned encoding");
+    peer.send(wire::Kind::paste_result,
+              wire::encode_paste_result({later.attachment, later.request_id, false,
+                                         QStringLiteral("fixture queue full")}));
+    until([&] { return !refusals.isEmpty(); });
+    require(refusals.back() == QStringLiteral("fixture queue full") && f.document.inputReady(),
+            "Service refusal must be visible without losing the connection");
+    const auto submit = f.document.sendPasteAndSubmit("go");
+    require(submit != 0, "Combined paste and submit needs an admitted request ID");
+    const auto combined = wire::decode_paste_request(peer.read().payload);
+    require(combined.submit && combined.request_id == submit && combined.text == "go",
+            "Submit belongs to the same paste request");
+    peer.send(wire::Kind::paste_result,
+              wire::encode_paste_result({combined.attachment, submit, true, {}}));
+    settle();
+    refusals.clear();
+    const QString tooLong(static_cast<qsizetype>(wire::max_paste_bytes) + 1, QLatin1Char('x'));
+    require(!surface.pasteText(tooLong), "An oversized paste was accepted");
+    require(refusals.size() == 1 &&
+                refusals.front().startsWith(
+                    QStringLiteral("This paste is 961 KiB; lapis pastes up to 960 KiB at a time.")),
+            "Size refusal must state its real binary-byte limit");
+    require(text_frames(peer).isEmpty(), "A refused paste sent part of itself");
+    require(!surface.pasting(), "A refused paste kept input ownership");
+    refusals.clear();
+    require(surface.pasteText(QStringLiteral("pending")),
+            "Expected a pending paste before disconnect");
+    require(peer.read().kind == wire::Kind::paste_request, "Pending paste request missing");
+    peer.socket->abort();
+    until([&] { return !refusals.isEmpty(); });
+    require(refusals.back().contains(QStringLiteral("unknown")) && !f.document.inputReady(),
+            "Lost paste receipt must report uncertainty without replay");
+}
+
 // Dragging selects screen text and double-clicking selects a word. The copy
 // chord copies without sending input, typing clears the selection, and the
 // wheel asks for older history on the normal screen.
@@ -929,16 +1249,19 @@ int main(int argc, char** argv) {
         require(background == (QGuiApplication::platformName() == QStringLiteral("offscreen")),
                 "Offscreen input tests require explicit --background mode");
         input_contract(background);
+        suggestions();
+        long_pastes();
         selection_and_scroll();
         links_follow_wrapped_rows();
         command_links_open();
         size_returns_to_this_window();
         if (background)
             std::cout << "Background Qt/software mode; native macOS input and GPU not exercised\n";
-        std::cout
-            << "Qt IME commit/cancel, replacement rejection, paste, selection/copy, wheel, links, "
-               "history, focus, document, size claims "
-               "and disconnect ownership passed\n";
+        std::cout << "Qt IME commit/cancel, replacement rejection, paste, long paste, suggestions, "
+                     "selection/copy, "
+                     "wheel, links, "
+                     "history, focus, document, size claims "
+                     "and disconnect ownership passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
