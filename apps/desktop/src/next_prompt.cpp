@@ -1,6 +1,7 @@
 #include "next_prompt.hpp"
 
 #include "next_prompt_script.hpp"
+#include "platform/updater_process.hpp"
 
 #include <QDateTime>
 #include <QDebug>
@@ -8,9 +9,12 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QJsonParseError>
 #include <QSaveFile>
 #include <QTimer>
+#include <QUuid>
 #include <lapis/session/terminal.hpp>
+#include <memory>
 
 #include <algorithm>
 #include <utility>
@@ -23,6 +27,46 @@ constexpr qint64 kHourMs = qint64{60} * 60 * 1000;
 constexpr int kScreenChars = 6000;
 // The log's record format: offer ids and seen/used/withdrawn events.
 constexpr int kLogVersion = 2;
+constexpr qsizetype kHelperOutputLimit = qsizetype{1024} * 1024;
+constexpr qsizetype kHelperErrorLimit = qsizetype{64} * 1024;
+constexpr qint64 kLogLimit = qint64{4} * 1024 * 1024;
+struct HelperResult {
+    QByteArray output;
+    qsizetype error_bytes{};
+    bool oversized{};
+    bool timed_out{};
+    void drain(UpdaterProcess& process) {
+        const auto bytes = process.readAllStandardOutput();
+        if (output.size() + bytes.size() > kHelperOutputLimit)
+            oversized = true;
+        else if (!oversized)
+            output.append(bytes);
+        error_bytes += process.readAllStandardError().size();
+        if (error_bytes > kHelperErrorLimit)
+            oversized = true;
+        if (oversized)
+            process.stopGroup();
+    }
+    [[nodiscard]] QString failure(const QProcess& process, const QJsonDocument& document,
+                                  const QJsonParseError& error) const {
+        if (timed_out)
+            return QStringLiteral("timeout");
+        if (oversized)
+            return QStringLiteral("output too large");
+        if (process.error() == QProcess::FailedToStart)
+            return QStringLiteral("helper unavailable");
+        if (error.error != QJsonParseError::NoError)
+            return QStringLiteral("invalid helper JSON");
+        const auto answer = document.object();
+        if (!document.isObject() || answer.isEmpty() || process.exitCode() != 0)
+            return QStringLiteral("helper failed");
+        if (answer.contains(QStringLiteral("error"))) {
+            const auto message = answer.value(QStringLiteral("error")).toString();
+            return message.isEmpty() ? QStringLiteral("helper failed") : message;
+        }
+        return {};
+    }
+};
 QString quoted(const QString& word) {
     return QLatin1Char('\'') + QString(word).replace(QLatin1Char('\''), QStringLiteral("'\\''")) +
            QLatin1Char('\'');
@@ -81,7 +125,7 @@ NextPrompt::NextPrompt(Lookup lookup, Agents agents, Program program, const File
       script_path_(QDir(files.folder).filePath(QStringLiteral("next_prompt.py"))),
       log_path_(files.log),
       // Offer ids are unique across launches: the log outlives any one.
-      run_(QString::number(QDateTime::currentMSecsSinceEpoch(), 36)) {
+      run_(QUuid::createUuid().toString(QUuid::WithoutBraces)) {
     QDir().mkpath(files.folder, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
     QSaveFile script(script_path_);
     if (script.open(QIODevice::WriteOnly)) {
@@ -96,7 +140,7 @@ NextPrompt::NextPrompt(Lookup lookup, Agents agents, Program program, const File
 NextPrompt::~NextPrompt() {
     for (const auto& run : std::as_const(running_))
         if (run.process)
-            run.process->kill();
+            run.process->stopGroup();
 }
 
 void NextPrompt::setSettings(NextPromptSettings settings) {
@@ -107,7 +151,7 @@ void NextPrompt::setSettings(NextPromptSettings settings) {
             withdraw(id, Withdrawal::off);
         for (const auto& run : std::as_const(running_))
             if (run.process)
-                run.process->kill();
+                run.process->stopGroup();
         running_.clear();
     }
     if (was != settings_.automatic) {
@@ -139,7 +183,7 @@ void NextPrompt::turnFinished(const QString& id) {
         return;
     }
     if (auto old = running_.take(id); old.process)
-        old.process->kill();
+        old.process->stopGroup();
     const auto generation = ++generation_;
     running_.insert(id, {generation, *agent, {}});
     QStringList words{
@@ -169,26 +213,28 @@ void NextPrompt::turnFinished(const QString& id) {
 void NextPrompt::start(const QString& id, quint64 generation, const QString& program,
                        const QStringList& arguments, const QByteArray& input, Stage stage,
                        const std::function<void(const QJsonObject&)>& done) {
-    auto* process = new QProcess(this);
+    auto* process = new UpdaterProcess(this);
     running_[id].process = process;
     process->setProgram(program);
     process->setArguments(arguments);
-    const auto finish = [this, id, generation, process, stage, done] {
+    const auto result = std::make_shared<HelperResult>();
+    const auto drain = [process, result] { result->drain(*process); };
+    connect(process, &QProcess::readyReadStandardOutput, process, drain);
+    connect(process, &QProcess::readyReadStandardError, process, drain);
+    const auto finish = [this, id, generation, process, stage, done, result] {
+        result->drain(*process);
         process->deleteLater();
         if (!current(id, generation) || running_.value(id).process != process)
             return;
-        const auto answer = QJsonDocument::fromJson(process->readAllStandardOutput()).object();
-        if (answer.isEmpty() || answer.contains(QStringLiteral("error"))) {
+        QJsonParseError error{};
+        const auto document = QJsonDocument::fromJson(result->output, &error);
+        const auto why = result->failure(*process, document, error);
+        if (!why.isEmpty()) {
             const auto agent = running_.take(id).agent;
-            const auto why =
-                answer.isEmpty()
-                    ? QString::fromUtf8(process->readAllStandardError()).simplified().right(200)
-                    : answer.value(QStringLiteral("error")).toString();
-            failed(id, agent, stage,
-                   why.isEmpty() ? QStringLiteral("no answer (timed out or ended)") : why);
+            failed(id, agent, stage, why);
             return;
         }
-        done(answer);
+        done(document.object());
     };
     connect(process, &QProcess::finished, this, finish);
     connect(process, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError error) {
@@ -196,7 +242,10 @@ void NextPrompt::start(const QString& id, quint64 generation, const QString& pro
             finish();
     });
     QTimer::singleShot(stage == Stage::predict ? kPredictTimeoutMs : kContextTimeoutMs, process,
-                       [process] { process->kill(); });
+                       [process, result] {
+                           result->timed_out = true;
+                           process->stopGroup();
+                       });
     process->start();
     process->write(input);
     process->closeWriteChannel();
@@ -267,8 +316,13 @@ QString NextPrompt::suggestion(const QString& id) const { return offers_.value(i
 // A prediction that came to nothing is recorded too, with the stage and why:
 // the log accounts for every finished turn it was asked about.
 void NextPrompt::failed(const QString& id, const Agent& agent, Stage stage, const QString& why) {
-    auto reason = why.left(300);
-    reason.replace(QDir::homePath(), QStringLiteral("~"));
+    const QStringList known{QStringLiteral("no transcript"),
+                            QStringLiteral("invalid conversation id"),
+                            QStringLiteral("timeout"),
+                            QStringLiteral("output too large"),
+                            QStringLiteral("invalid helper JSON"),
+                            QStringLiteral("helper unavailable")};
+    const auto reason = known.contains(why) ? why : QStringLiteral("helper failed");
     record({{QStringLiteral("event"), QStringLiteral("failed")},
             {QStringLiteral("agent"), id},
             {QStringLiteral("machine"), agent.machine},
@@ -295,8 +349,14 @@ QJsonObject NextPrompt::about(const Offer& offer, const QString& id) {
 }
 
 void NextPrompt::seen(const QString& id) {
+    seenOffer({{QStringLiteral("session"), id}, {QStringLiteral("offer"), offers_.value(id).key}});
+}
+void NextPrompt::seenOffer(const QVariantMap& identity) {
+    const auto id = identity.value(QStringLiteral("session")).toString();
+    const auto expectedKey = identity.value(QStringLiteral("offer")).toString();
     const auto offer = offers_.find(id);
-    if (offer == offers_.end() || offer->seen_ms != 0)
+    if (offer == offers_.end() || (expectedKey.isEmpty() || offer->key != expectedKey) ||
+        offer->seen_ms != 0)
         return;
     offer->seen_ms = QDateTime::currentMSecsSinceEpoch();
     auto event = about(*offer, id);
@@ -304,9 +364,9 @@ void NextPrompt::seen(const QString& id) {
     record(event);
 }
 
-void NextPrompt::used(const QString& id, bool sent, int typed_first) {
+void NextPrompt::used(const QString& id, bool sent, int typed_first, const QString& expectedKey) {
     const auto offer = offers_.value(id);
-    if (offer.text.isEmpty())
+    if (offer.text.isEmpty() || (!expectedKey.isEmpty() && offer.key != expectedKey))
         return;
     auto event = about(offer, id);
     event.insert(QStringLiteral("event"), QStringLiteral("used"));
@@ -339,7 +399,25 @@ void NextPrompt::record(QJsonObject event) const {
         return;
     event.insert(QStringLiteral("v"), kLogVersion);
     event.insert(QStringLiteral("t"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    const auto encoded = line(event);
+    if (encoded.size() > kHelperOutputLimit) {
+        qWarning() << "Next prompt: log record exceeds its byte limit";
+        return;
+    }
     QFile file(log_path_);
+    if (file.exists() && !file.setPermissions(QFile::ReadOwner | QFile::WriteOwner)) {
+        qWarning() << "Next prompt: cannot make the log private";
+        return;
+    }
+    if (file.exists() && file.size() + encoded.size() > kLogLimit) {
+        const auto previous = log_path_ + QStringLiteral(".1");
+        QFile::remove(previous);
+        if (!file.rename(previous)) {
+            qWarning() << "Next prompt: cannot rotate log";
+            return;
+        }
+        file.setFileName(log_path_);
+    }
     const bool created = !file.exists();
     if (created)
         QDir().mkpath(QFileInfo(log_path_).absolutePath(),
@@ -349,8 +427,11 @@ void NextPrompt::record(QJsonObject event) const {
         return;
     }
     // Owner-only however it was created: it holds screens and conversations.
-    file.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
-    file.write(line(event));
+    if (!file.setPermissions(QFile::ReadOwner | QFile::WriteOwner)) {
+        qWarning() << "Next prompt: cannot make the log private";
+        return;
+    }
+    file.write(encoded);
 }
 
 } // namespace lapis::desktop

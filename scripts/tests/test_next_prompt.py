@@ -371,6 +371,17 @@ class AcceptanceTests(unittest.TestCase):
             row for row in report["by_confidence"] if row["min_confidence"] == 0.5
         ][0]
         self.assertEqual((at_half["seen"], at_half["acceptance"]), (1, 1.0))
+        _, bounded = next_prompt_eval.acceptance(
+            [
+                {
+                    "event": "failed",
+                    "stage": "context",
+                    "error": f"private-path-{i}: arbitrary output",
+                }
+                for i in range(100)
+            ]
+        )
+        self.assertEqual(bounded["failed"], {"context: helper failed": 100})
 
 
 if __name__ == "__main__":

@@ -138,8 +138,6 @@ constexpr auto kLinkKey = Qt::Key_Meta;
 constexpr auto kLinkModifier = Qt::ControlModifier;
 constexpr auto kLinkKey = Qt::Key_Control;
 #endif
-// A suggestion sent with Tab is submitted once its paste settled.
-constexpr int kSubmitAfterPasteMs = 150;
 
 void add_rectangle(QSGNode& node, const QRectF& bounds, const QColor& value) {
     auto rectangle = std::make_unique<QSGSimpleRectNode>(bounds, value);
@@ -756,14 +754,6 @@ bool TerminalSurface::acceptsTerminalInput() const {
 TerminalSurface::TerminalSurface(QQuickItem* parent)
     : QQuickItem(parent),
       resolved_font_family_(QFontDatabase::systemFont(QFontDatabase::FixedFont).family()) {
-    submit_timer_.setSingleShot(true);
-    connect(&submit_timer_, &QTimer::timeout, this, [this] {
-        // Still never into a request that arrived meanwhile.
-        if (submit_owner_ && submit_owner_->live() && submit_owner_->inputReady() &&
-            !submit_owner_->attentionPending())
-            submit_owner_->sendKey(session::TerminalKey::enter, {});
-        submit_owner_.clear();
-    });
     setFlag(ItemHasContents);
     setClip(true);
     setAcceptHoverEvents(true);
@@ -787,6 +777,11 @@ void TerminalSurface::bindWindow(QQuickWindow* current) {
         disconnect(window_active_connection_);
     if (window_visible_connection_)
         disconnect(window_visible_connection_);
+    if (suggestion_frame_connection_)
+        disconnect(suggestion_frame_connection_);
+    if (current)
+        suggestion_frame_connection_ =
+            connect(current, &QQuickWindow::frameSwapped, this, &TerminalSurface::reportSeen);
     if (current)
         window_visible_connection_ =
             connect(current, &QWindow::visibleChanged, this, &TerminalSurface::updateViewing);
@@ -799,7 +794,7 @@ void TerminalSurface::bindWindow(QQuickWindow* current) {
             } else {
                 updateInputContext(Qt::ImEnabled | Qt::ImCursorRectangle);
                 claimSize();
-                reportSeen();
+                publishFrame(false);
             }
         });
 }
@@ -808,6 +803,7 @@ TerminalSurface::~TerminalSurface() {
     disconnect(window_changed_connection_);
     disconnect(window_active_connection_);
     disconnect(window_visible_connection_);
+    disconnect(suggestion_frame_connection_);
     disconnect(warm_connection_);
     if (viewed_)
         viewed_->removeViewer(viewed_interval_);
@@ -1515,7 +1511,6 @@ void TerminalSurface::setSuggestion(const QString& suggestion) {
     typed_while_offered_ = 0;
     emit suggestionChanged();
     publishFrame(false);
-    reportSeen();
 }
 
 void TerminalSurface::setSuggestionKey(const QString& key) {
@@ -1523,7 +1518,6 @@ void TerminalSurface::setSuggestionKey(const QString& key) {
         return;
     suggestion_key_ = key;
     emit suggestionChanged();
-    reportSeen();
 }
 
 void TerminalSurface::setTabFlow(bool enabled) {
@@ -1542,20 +1536,18 @@ void TerminalSurface::setTabAway(const QJSValue& move) {
 // per offer: the same words offered again after another turn are a new offer.
 void TerminalSurface::reportSeen() {
     const auto& key = suggestion_key_.isEmpty() ? suggestion_ : suggestion_key_;
-    if (suggestion_.isEmpty() || seen_ == key || !isVisible() || !window() || !window()->isActive())
+    if (!document_ || suggestion_.isEmpty() || seen_ == key || !isVisible() || !window() ||
+        !window()->isActive())
         return;
     seen_ = key;
-    emit suggestionSeen();
+    emit suggestionSeen(document_->sessionId(), suggestion_key_);
 }
 
-// Input the person sent the agent: it counts against a pending Tab's Return,
-// which then waits for them instead.
+// Count manual input separately from the already-ordered paste transaction.
 void TerminalSurface::noteTyped() {
     typed_since_arrival_ = true;
     if (!suggestion_.isEmpty())
         ++typed_while_offered_;
-    if (submit_owner_ && submit_owner_ == document_)
-        submit_timer_.stop();
 }
 
 bool TerminalSurface::suggestionWhole() const {
@@ -1567,9 +1559,8 @@ bool TerminalSurface::suggestionWhole() const {
 }
 
 // With the Tab flow on (an agent lapis guesses for), Tab sends the offered
-// suggestion when it shows whole: typed as a paste, then Return once it
-// settled, as the phone does, to that agent even if Tab moved on meanwhile,
-// unless the person typed to it first. Otherwise, and with Option-Tab, Tab
+// suggestion when it shows whole: one service-admitted paste plus Return,
+// bound to that agent even if Tab moves on. Otherwise, and with Option-Tab, Tab
 // only types it. With nothing offered and nothing typed since arriving, Tab
 // moves to the next agent that needs you, and is the program's own when none
 // does. Typing keeps the suggestion; what was typed first is counted.
@@ -1584,15 +1575,25 @@ bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
     if (offered && (tab || fill)) {
         const bool send = tab && suggestionWhole();
         const int typed_first = typed_while_offered_;
-        if (!pasteText(suggestion_))
+        const auto owner = document_;
+        const auto session_id = owner->sessionId();
+        const auto offer_key = suggestion_key_;
+        const auto request_id = pasteTextRequest(suggestion_, send);
+        if (request_id == 0)
             return true;
         setSuggestion({});
         typed_since_arrival_ = !send;
-        if (send) {
-            submit_owner_ = document_;
-            submit_timer_.start(kSubmitAfterPasteMs);
-        }
-        emit suggestionUsed(send, typed_first);
+        const auto connection = std::make_shared<QMetaObject::Connection>();
+        *connection =
+            connect(owner.data(), &SessionPreview::pasteResult, owner.data(),
+                    [surface = QPointer<TerminalSurface>(this), connection, request_id, session_id,
+                     offer_key, send, typed_first](quint64 id, bool queued, bool, const QString&) {
+                        if (id != request_id)
+                            return;
+                        QObject::disconnect(*connection);
+                        if (surface && queued)
+                            emit surface->suggestionUsed(session_id, offer_key, send, typed_first);
+                    });
         return true;
     }
     if (tab && !typed_since_arrival_ && tab_away_.isCallable() && tab_away_.call().toBool())
@@ -1606,6 +1607,9 @@ bool TerminalSurface::takeSuggestion(const QKeyEvent& event) {
 }
 
 bool TerminalSurface::pasteText(const QString& text) {
+    return pasteTextRequest(text, std::nullopt) != 0;
+}
+quint64 TerminalSurface::pasteTextRequest(const QString& text, std::optional<bool> submit) {
     if (!document_ || text.isEmpty() || !interactive_ || !document_->live() || pasting_)
         return false;
     const QByteArray bytes = text.toUtf8();
@@ -1635,11 +1639,12 @@ bool TerminalSurface::pasteText(const QString& text) {
     if (document_ != owner || !acceptsTerminalInput())
         return false;
     clearSelection();
-    if (!document_->sendText(bytes, true)) {
+    const auto request = submit.has_value() ? document_->requestPaste(bytes, *submit)
+                         : document_->sendText(bytes, true) ? quint64{1}
+                                                            : quint64{0};
+    if (request == 0)
         emit pasteRefused(document_->activity());
-        return false;
-    }
-    return true;
+    return request;
 }
 
 QString TerminalSurface::localFilePath(const QString& url) const {

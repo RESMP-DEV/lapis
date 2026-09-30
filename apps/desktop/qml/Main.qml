@@ -3277,13 +3277,13 @@ ApplicationWindow {
                     suggestion: predicting && nextPrompt.revision >= 0 && !document.historyActive
                                 && ["finished", "idle"].indexOf(document.statusKind) >= 0
                                 ? nextPrompt.suggestion(document.sessionId) : ""
-                    onSuggestionSeen: {
-                        if (predicting)
-                            nextPrompt.seen(document.sessionId)
+                    onSuggestionSeen: (sessionId, offerKey) => {
+                        if (typeof nextPrompt !== "undefined" && nextPrompt !== null)
+                            nextPrompt.seenOffer({session: sessionId, offer: offerKey})
                     }
-                    onSuggestionUsed: (sent, typedFirst) => {
-                        if (predicting)
-                            nextPrompt.used(document.sessionId, sent, typedFirst)
+                    onSuggestionUsed: (sessionId, offerKey, sent, typedFirst) => {
+                        if (typeof nextPrompt !== "undefined" && nextPrompt !== null)
+                            nextPrompt.used(sessionId, sent, typedFirst, offerKey)
                     }
                     // Follows every offer, even one with the same words as the last.
                     suggestionKey: suggestion.length > 0 && nextPrompt.revision >= 0

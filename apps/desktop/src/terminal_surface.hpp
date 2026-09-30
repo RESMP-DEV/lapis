@@ -186,10 +186,11 @@ class TerminalSurface : public QQuickItem {
     void suggestionChanged();
     void tabFlowChanged();
     // The suggestion is on screen in the active window, once per suggestion.
-    void suggestionSeen();
+    void suggestionSeen(const QString& sessionId, const QString& offerKey);
     // The offered suggestion was typed into the agent, and `sent` when also
     // submitted; `typedFirst` keys went to the agent while it was offered.
-    void suggestionUsed(bool sent, int typedFirst);
+    void suggestionUsed(const QString& sessionId, const QString& offerKey, bool sent,
+                        int typedFirst);
 
     void pasteRefused(const QString& reason);
 
@@ -244,6 +245,7 @@ class TerminalSurface : public QQuickItem {
     QPointer<SessionPreview> document_;
     QMetaObject::Connection window_active_connection_;
     QMetaObject::Connection window_visible_connection_;
+    QMetaObject::Connection suggestion_frame_connection_;
     // The agent this view is showing, registered as its viewer while this
     // view and its window are visible, so unseen agents' screens stay encoded.
     QPointer<SessionPreview> viewed_;
@@ -286,14 +288,12 @@ class TerminalSurface : public QQuickItem {
     QString suggestion_key_;
     QString seen_;
     QJSValue tab_away_;
-    // A Tab-sent suggestion's Return, for the agent that got the paste.
-    QPointer<SessionPreview> submit_owner_;
-    QTimer submit_timer_;
     [[nodiscard]] bool suggestionWhole() const;
     bool tab_flow_{};
     bool typed_since_arrival_{};
     int typed_while_offered_{};
     bool takeSuggestion(const QKeyEvent& event);
+    quint64 pasteTextRequest(const QString& text, std::optional<bool> submit);
     void reportSeen();
     void noteTyped();
     quint64 ime_epoch_{};

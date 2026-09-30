@@ -730,6 +730,38 @@ void command_links_open() {
 // seen once; Tab sends it, Option-Tab only types it; typing keeps it and is
 // counted; and Tab with nothing offered and nothing typed asks for the next
 // agent, while Tab after typing goes to the agent.
+std::vector<wire::Frame> suggestion_operations(Peer& peer, std::size_t count) {
+    std::vector<wire::Frame> found;
+    until([&] {
+        peer.bytes += peer.socket->readAll();
+        wire::Frame frame;
+        while (wire::take_frame(peer.bytes, frame)) {
+            if (frame.kind == wire::Kind::paste_request) {
+                const auto request = wire::decode_paste_request(frame.payload);
+                peer.send(
+                    wire::Kind::paste_result,
+                    wire::encode_paste_result({request.attachment, request.request_id, true, {}}));
+                // Expose the admitted logical operations to this UI test.
+                // The actual service byte ordering is covered by paste-admission.
+                found.push_back(
+                    {wire::Kind::paste, wire::encode_control({request.attachment, request.text})});
+                if (request.submit)
+                    found.push_back(
+                        {wire::Kind::key,
+                         wire::encode_control(
+                             {request.attachment,
+                              QByteArray(1, static_cast<char>(lapis::session::TerminalKey::enter)) +
+                                  QByteArray(1, char{0})})});
+            } else if (frame.kind != wire::Kind::resize) {
+                found.push_back(frame);
+            }
+        }
+        return found.size() >= count;
+    });
+    settle(); // Let the correlated admission receipt reach the view.
+    return found;
+}
+
 void suggestions() {
     Fixture f;
     QQuickWindow window;
@@ -742,7 +774,7 @@ void suggestions() {
     f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
     auto peer = f.accept();
     static_cast<void>(f.request(peer));
-    f.hello(peer);
+    f.hello(peer, 1, true);
     f.screen(peer);
     window.show();
     until([&] { return window.isExposed(); });
@@ -763,9 +795,17 @@ void suggestions() {
     std::vector<std::pair<bool, int>> used;
     int seen = 0;
     QObject::connect(&surface, &lapis::desktop::TerminalSurface::suggestionUsed,
-                     [&used](bool sent, int typed) { used.emplace_back(sent, typed); });
+                     [&used, &f](const QString& id, const QString&, bool sent, int typed) {
+                         require(id == f.document.sessionId(),
+                                 "Suggestion result changed sessions");
+                         used.emplace_back(sent, typed);
+                     });
     QObject::connect(&surface, &lapis::desktop::TerminalSurface::suggestionSeen,
-                     [&seen] { ++seen; });
+                     [&seen, &f](const QString& id, const QString&) {
+                         require(id == f.document.sessionId(),
+                                 "Suggestion impression changed sessions");
+                         ++seen;
+                     });
     // Tab-away is QML's function: here it counts calls and answers `moves`.
     QJSEngine engine;
     engine.globalObject().setProperty(QStringLiteral("calls"), 0);
@@ -775,18 +815,7 @@ void suggestions() {
     const auto calls = [&engine] {
         return engine.globalObject().property(QStringLiteral("calls")).toInt();
     };
-    const auto frames = [&peer](std::size_t count) {
-        std::vector<wire::Frame> found;
-        until([&] {
-            peer.bytes += peer.socket->readAll();
-            wire::Frame frame;
-            while (wire::take_frame(peer.bytes, frame))
-                if (frame.kind != wire::Kind::resize)
-                    found.push_back(frame);
-            return found.size() >= count;
-        });
-        return found;
-    };
+    const auto frames = [&peer](std::size_t count) { return suggestion_operations(peer, count); };
     const auto nothing_sent = [&frames] {
         settle();
         return frames(0).empty();
@@ -864,19 +893,16 @@ void suggestions() {
                 used.back() == std::pair{true, 3},
             "Tab after typing did not send it, counting three keys typed first");
 
-    // Typing to the agent before its Return goes cancels the Return: the
-    // person is editing and presses Return themselves.
+    // The Enter belongs to the same admitted operation; later typing cannot
+    // be accidentally submitted by a delayed GUI timer.
     surface.setSuggestion(QStringLiteral("rerun"));
     press(Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
     press(Qt::Key_S, Qt::NoModifier, QStringLiteral("s"));
-    typed = frames(2);
-    QElapsedTimer past_return;
-    past_return.start();
-    while (past_return.elapsed() < 400)
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-    require(payload(typed[0]) == QByteArray("rerun") && payload(typed[1]) == QByteArray("s") &&
-                frames(0).empty(),
-            "A key typed before the Return did not cancel it");
+    typed = frames(3);
+    require(payload(typed[0]) == QByteArray("rerun") &&
+                is_key(typed[1], lapis::session::TerminalKey::enter) &&
+                payload(typed[2]) == QByteArray("s") && nothing_sent(),
+            "Later typing was interleaved before the admitted Enter");
 
     // A suggestion that does not show whole is only typed, for the person to
     // read before sending.

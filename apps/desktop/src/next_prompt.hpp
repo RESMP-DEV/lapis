@@ -51,6 +51,8 @@ struct NextPromptSettings {
 // private log (JSON lines, owner-only), which scripts/next_prompt_eval.py
 // turns into the acceptance rate and joins with what the person actually
 // typed: the measure of this, and the data for a model of one's own.
+class UpdaterProcess;
+
 class NextPrompt final : public QObject {
     Q_OBJECT
     // Changes with every suggestion offered or withdrawn, for QML bindings.
@@ -94,10 +96,12 @@ class NextPrompt final : public QObject {
     Q_INVOKABLE [[nodiscard]] QString offerKey(const QString& id) const;
     // The suggestion is on screen in the active window: an impression.
     Q_INVOKABLE void seen(const QString& id);
+    Q_INVOKABLE void seenOffer(const QVariantMap& identity);
     // The person took it: typed into the agent, and `sent` when submitted;
     // `typedFirst` keys went to the agent while it was offered. Typing is not
     // a refusal: an offer stays until used or replaced by the next turn's.
-    Q_INVOKABLE void used(const QString& id, bool sent, int typedFirst);
+    Q_INVOKABLE void used(const QString& id, bool sent, int typedFirst,
+                          const QString& expectedKey = {});
     [[nodiscard]] int revision() const { return revision_; }
     [[nodiscard]] bool enabled() const { return settings_.automatic; }
 
@@ -108,7 +112,7 @@ class NextPrompt final : public QObject {
     struct Run {
         quint64 generation{};
         Agent agent;
-        QPointer<QProcess> process;
+        QPointer<UpdaterProcess> process;
     };
     struct Offer {
         QString key; // "<agent>:<n>", on each of its log records

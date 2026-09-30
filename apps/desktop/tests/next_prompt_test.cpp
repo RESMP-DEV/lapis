@@ -205,6 +205,11 @@ void predictsAndOffers() {
                         QFile::WriteOther | QFile::ExeOther;
     require((QFileInfo(log).permissions() & others) == 0, "and only its owner can read the log");
 
+    next.seenOffer({{QStringLiteral("session"), QStringLiteral("a")},
+                    {QStringLiteral("offer"), QStringLiteral("stale")}});
+    next.used(QStringLiteral("a"), true, 0, QStringLiteral("stale"));
+    require(events(log).size() == 1 && !next.suggestion(QStringLiteral("a")).isEmpty(),
+            "stale identities cannot mark or consume a newer offer");
     next.seen(QStringLiteral("a"));
     next.seen(QStringLiteral("a"));
     require(next.readyAgents() == QVariantMap{{QStringLiteral("a"), true}}, "now seen");
@@ -254,7 +259,7 @@ void predictsAndOffers() {
     next.turnFinished(QStringLiteral("a"));
     require(next.suggestion(QStringLiteral("a")).isEmpty(), "the next turn withdraws the offer");
     const auto tail = events(log);
-    const auto withdrawn = tail.at(tail.size() - 2);
+    const auto& withdrawn = tail.at(tail.size() - 2);
     require(tail.last().value(QStringLiteral("event")) == QLatin1String("skipped") &&
                 tail.last().value(QStringLiteral("reason")) == QLatin1String("hourly_cap"),
             "a turn past the hourly cap is recorded as skipped");
@@ -280,6 +285,20 @@ void predictsAndOffers() {
                 failure.value(QStringLiteral("error")) == QLatin1String("no transcript") &&
                 failure.value(QStringLiteral("cli")) == QLatin1String("claude"),
             "with where and why it failed");
+    write(root.filePath(QStringLiteral("context.reply")),
+          R"({"error": "private path and transcript must not become a log category"})");
+    const auto before_private_failure = events(log).size();
+    next.turnFinished(QStringLiteral("a"));
+    require(waitFor([&] { return events(log).size() > before_private_failure; }),
+            "arbitrary helper failures are recorded");
+    require(events(log).last().value(QStringLiteral("error")) == QLatin1String("helper failed"),
+            "raw helper output must not be persisted in the failure log");
+    write(log, QByteArray(qsizetype{4} * 1024 * 1024, '\n'));
+    next.setSettings(on(0));
+    next.turnFinished(QStringLiteral("a"));
+    require(QFileInfo::exists(log + QStringLiteral(".1")) && QFileInfo(log).size() < 4096 &&
+                events(log).size() == 1,
+            "log rotation retains one backup and writes the new event to the active file");
     next.setSettings({});
     require(!next.enabled(), "off");
     require(next.suggestion(QStringLiteral("a")).isEmpty(), "turning it off withdraws offers");

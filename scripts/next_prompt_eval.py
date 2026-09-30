@@ -15,7 +15,6 @@ prompts, which never belong in the repository.
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 from collections import defaultdict
@@ -272,9 +271,23 @@ def acceptance(events):
     failures = defaultdict(int)
     for e in events:
         if e.get("event") == "failed":
-            # Long numbers (ids, times) vary; short ones (exit codes) matter.
-            reason = re.sub(r"[0-9]{4,}", "#", str(e.get("error", "")))[:60]
-            failures["{}: {}".format(e.get("stage", "?"), reason)] += 1
+            known = {
+                "no transcript",
+                "invalid conversation id",
+                "timeout",
+                "output too large",
+                "invalid helper JSON",
+                "helper unavailable",
+                "helper failed",
+            }
+            raw = e.get("error")
+            reason = raw if isinstance(raw, str) and raw in known else "helper failed"
+            stage = (
+                e.get("stage")
+                if e.get("stage") in {"context", "predict"}
+                else "unknown"
+            )
+            failures["{}: {}".format(stage, reason)] += 1
     shown = [o for o in offers.values() if o.get("shown")]
     seen = [o for o in shown if o["seen"]]
     used = [o for o in seen if o["used"]]
