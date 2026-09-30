@@ -181,6 +181,7 @@ class SessionPreview final : public QObject {
     bool sendText(const QByteArray& bytes, bool paste = false);
     // Requires service admission; pasteResult reports the eventual outcome.
     quint64 sendPasteAndSubmit(const QByteArray& bytes);
+    quint64 requestPaste(const QByteArray& bytes, bool submit = false);
     void sendKey(session::TerminalKey key, session::KeyModifiers modifiers);
     // A turn of the wheel for the program on the alternate screen, over a
     // viewport cell; only when its snapshot says the service accepts wheels.

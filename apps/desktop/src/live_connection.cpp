@@ -306,9 +306,12 @@ bool SessionPreview::sendText(const QByteArray& bytes, bool paste) {
     return live_->send(paste ? wire::Kind::paste : wire::Kind::text, bytes);
 }
 quint64 SessionPreview::sendPasteAndSubmit(const QByteArray& bytes) {
+    return requestPaste(bytes, true);
+}
+quint64 SessionPreview::requestPaste(const QByteArray& bytes, bool submit) {
     if (!live_ || history_active_ || history_request_pending_)
         return 0;
-    return live_->sendPaste(bytes, true);
+    return live_->sendPaste(bytes, submit);
 }
 bool SessionPreview::terminate() {
     return live_ && input_ready_ && live_->send(wire::Kind::terminate, {});
