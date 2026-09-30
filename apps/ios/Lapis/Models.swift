@@ -592,6 +592,19 @@ func describe(_ error: Error) -> String {
     return error.localizedDescription
 }
 
+protocol HistoryClock: Sendable {
+    func now() -> Date
+    func sleep(for interval: TimeInterval) async throws
+}
+
+struct WallHistoryClock: HistoryClock {
+    func now() -> Date { .now }
+
+    func sleep(for interval: TimeInterval) async throws {
+        try await Task.sleep(for: .seconds(interval))
+    }
+}
+
 // One agent shown on the phone. Showing it joins the agent's session beside
 // the Mac, so both stay in sync; a session started before joining existed is
 // taken from the Mac instead, until Reconnect agent there.
@@ -630,6 +643,9 @@ final class AgentSession {
     private var lastEmptyCheck = Date.distantPast
     private var newerTask: Task<Void, Never>?
     private var historyTask: Task<Void, Never>?
+    // The Foundation probe controls this seam; production stays on one clock.
+    var historyClock: any HistoryClock = WallHistoryClock()
+    private var lastNewerAttempt: Date?
     // One identity for the attachment that owns stream, input and history work.
     private var connectionGeneration = UUID()
     private(set) var lastFrameJSON: Data?
@@ -665,6 +681,7 @@ final class AgentSession {
         jumpedTo = nil
         pendingJumpFraction = nil
         lastEmptyCheck = .distantPast
+        lastNewerAttempt = nil
         let events = gateway.stream(agent: agent.id, columns: columns, rows: rows)
         task = Task { [weak self] in
             do {
@@ -741,6 +758,7 @@ final class AgentSession {
         historyTask = nil
         newerTask?.cancel()
         newerTask = nil
+        lastNewerAttempt = nil
         historyPrefetched = false
         loadingHistory = false
     }
@@ -815,12 +833,24 @@ final class AgentSession {
         guard connectionGeneration == generation, !history.isEmpty, !gapAfter,
               newerTask == nil else { return }
         newerTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1))
-            guard let self, self.connectionGeneration == generation, !Task.isCancelled else { return }
+            guard let self else { return }
+            await self.waitForNewerHistory(generation: generation)
+            guard self.connectionGeneration == generation, !Task.isCancelled else { return }
             await self.loadNewer(generation: generation)
             guard self.connectionGeneration == generation else { return }
             self.newerTask = nil
         }
+    }
+
+    // Pace from the last actual attempt, not the newest frame: after a quiet
+    // interval a frame is immediately eligible, while a burst waits only the
+    // unused part of that same interval.
+    private func waitForNewerHistory(generation: UUID) async {
+        guard connectionGeneration == generation, !Task.isCancelled,
+              let attempted = lastNewerAttempt else { return }
+        let remaining = 1 - historyClock.now().timeIntervalSince(attempted)
+        guard remaining > 0 else { return }
+        try? await historyClock.sleep(for: remaining)
     }
 
     private func loadNewer(generation: UUID) async {
@@ -828,6 +858,7 @@ final class AgentSession {
         // await. Intentionally skipped pages stay skipped until closeGap.
         guard connectionGeneration == generation, self.gateway != nil, isLive,
               let newest = history.last?.page, !loadingHistory, !gapAfter else { return }
+        lastNewerAttempt = historyClock.now()
         loadingHistory = true
         defer {
             if connectionGeneration == generation { loadingHistory = false }

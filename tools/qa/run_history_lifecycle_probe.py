@@ -68,6 +68,15 @@ def history_response(key: str, call: int) -> dict:
     elif key == "retry":
         held = {}
         ordinary = {1: (0, 0), 2: (10, 80), 3: (0, 0)}
+    elif key == "pacing":
+        held = {}
+        ordinary = {
+            1: (10, 80),
+            2: (11, 80),
+            3: (0, 0),
+            4: (12, 80),
+            5: (0, 0),
+        }
     else:  # Keep unknown fixture keys visibly bounded and inert.
         held = {}
         ordinary = {1: (0, 0)}
@@ -414,11 +423,15 @@ class LifecycleServer:
                     with server.lock:
                         server.stream_releases.append(release)
                     try:
-                        if server.event(key, "frame-request", stream).wait():
+                        # A replacement owns the next stream index, while the
+                        # same stream can receive multiple paced frame requests.
+                        request = stream
+                        while server.event(key, "frame-request", request).wait():
                             revision = server.increment(key, "frames")
                             self.wfile.write(server.frame(revision))
                             self.wfile.flush()
-                            server.event(key, "frame-done", stream).set()
+                            server.event(key, "frame-done", request).set()
+                            request += 1
                         release.wait()
                     except (BrokenPipeError, ConnectionResetError):
                         pass
@@ -452,6 +465,7 @@ class LifecycleServer:
                 "prefetch",
                 "paging",
                 "retry",
+                "pacing",
                 "input",
                 "terminals",
                 "machine-failure",
