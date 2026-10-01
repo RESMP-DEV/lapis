@@ -48,6 +48,13 @@ void SeenScreens::sample() {
 }
 
 bool SeenScreens::unchanged(const SessionPreview* item) const {
+    // Null matches see()'s tolerance: an item that was never on screen has
+    // nothing seen to compare against, so it counts as changed (the chime
+    // plays), the same behavior the signal path had before this class
+    // existed. Both turnFinished emission sites pass a live item, but this
+    // is the one boundary every caller shares.
+    if (item == nullptr)
+        return false;
     const auto found = seen_.constFind(item);
     return found != seen_.cend() && *found == fingerprint(item);
 }

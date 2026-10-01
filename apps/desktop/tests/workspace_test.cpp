@@ -3552,6 +3552,9 @@ void alertsChimeWhileAnAgentWaits() {
         alerts.setSeen(&seen);
         alerts.setLog([&lines](const QJsonObject& entry) { lines.push_back(entry); });
         seen.see(&agent);
+        // The null tolerance see() already documents: never on screen means
+        // changed, so the chime path can never dereference a null item.
+        require(!seen.unchanged(nullptr), "an item never on screen counts as changed");
         played.clear();
         waitFor([] { return false; }, 60);
         show("\x1b[5;1H5h 54%"); // the status line ticks
